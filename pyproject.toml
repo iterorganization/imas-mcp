@@ -1,0 +1,66 @@
+[build-system]
+requires = ["poetry-core>=2.0.0", "poetry-dynamic-versioning>=1.8.2"]
+build-backend = "poetry.dynamic_versioning.backend"
+
+[project]
+name = "imas-mcp-server"
+version = "0.0.0" # Version is set by poetry-dynamic-versioning at build time
+description = "An MCP Server for accessing the IMAS Data Dictionary"
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+authors = [{ name = "Simon McIntosh", email = "simon.mcintosh@example.com" }]
+license = { text = "CC BY-ND 4.0" }
+dependencies = [
+    "imas-python>=2.0.0.post1",
+    "mcp-cli>=0.1.0",
+    "fastmcp (>=2.2.8,<3.0.0)",
+    "pydantic (>=2.11.4,<3.0.0)",
+    "whoosh (>=2.7.4,<3.0.0)",
+    "pytest-cov (>=6.1.1,<7.0.0)",
+    "pint (>=0.24.4,<0.25.0)",
+]
+
+[project.optional-dependencies]
+test = ["pytest (>=8.3.5,<9.0.0)"]
+
+[project.urls]
+Repository = "https://github.com/simon-mcintosh/imas-mcp-server"
+
+[project.scripts]
+build-index = "imas_mcp_server.build_index:build_path_index"
+run-server = "imas_mcp_server.mcp_imas:run_server"
+find-paths = "bin.find_imas_path:main"
+
+[tool.poetry]
+packages = [{ include = "imas_mcp_server" }]
+include = [
+    "*.py",
+    "README.md",
+    "LICENSE",
+    "imas_mcp_server/cache/*.json",
+    "imas_mcp_server/cache/*.pkl",
+    "imas_mcp_server/cache/*.py",
+]
+exclude = ["*.pyc", "__pycache__/*"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0.0"
+black = ">=23.0.0"
+ruff = ">=0"
+ipython = ">=9.2.0"
+ipykernel = "^6.29.5"
+mypy = "^1.15.0"
+
+
+[tool.poetry-dynamic-versioning]
+enable = true
+vcs = "git"
+style = "semver"
+pattern = "^(?P<base>\\d+\\.\\d+\\.\\d+)(-(?P<stage>[a-zA-Z]+)\\.(?P<revision>\\d+))?"
+format-jinja = "{% if distance == 0 %}{{ base }}{% else %}{{ base }}.{{ distance }}+{{ commit }}{% endif %}"
+format = "{base}.{distance}+{commit}"
+dirty = true
+metadata = true
+
+[tool.poetry-dynamic-versioning.substitution]
+files = ["imas_mcp_server/version.py"]

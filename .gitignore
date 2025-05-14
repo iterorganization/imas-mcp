@@ -1,0 +1,57 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Whoosh index 
+cache/
+index/
+
+# Distribution / packaging
+dist/
+build/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.env/
+.venv/
+.tox/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.coverage.*
+coverage.xml
+*.cover
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project specific
+*/cache/*.pkl
+*/cache/*.json
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Poetry & other tools
+poetry.lock
+.python-version
+
+# Log files
+*.log
