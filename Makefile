@@ -1,6 +1,6 @@
 # Makefile for imas-mcp-server
 
-.PHONY: build-index install install-dev clean test run package publish
+.PHONY: build-index install install-dev clean test run package publish typecheck
 
 # Build the path index
 build-index:
@@ -26,6 +26,10 @@ clean:
 # Run tests
 test:
 	poetry run pytest
+
+# Type check with mypy
+typecheck:
+	poetry run mypy .
 
 # Run the server
 run:

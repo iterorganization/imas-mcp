@@ -1,50 +1,40 @@
 # Start with a Python 3.12 slim image
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim
 
-# Set environment variables
-ENV PYTHONFAULTHANDLER=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONHASHSEED=random \
-    POETRY_VERSION=1.7.1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
-
-# Install system dependencies
+# Install system dependencies including git for git dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    build-essential \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python - && \
-    ln -s /root/.local/bin/poetry /usr/local/bin/
+# Install uv package manager
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Create and set working directory
+# Set working directory
 WORKDIR /app
 
-# Copy Poetry configuration files
-COPY pyproject.toml poetry.lock* ./
+# Copy uv configuration files first for better caching
+COPY pyproject.toml uv.lock* ./
+
+# Install dependencies using uv
+RUN uv sync --frozen --no-cache
+
+# Copy only the source package and essential files
 COPY imas_mcp_server/ ./imas_mcp_server/
+COPY scripts/get_index_name.py ./scripts/
 
-# Configure Poetry to not create a virtual environment
-RUN poetry config virtualenvs.create false
+# Get the exact index name from LexicographicSearch class and copy only those files
+RUN mkdir -p ./index/ && \
+    INDEX_NAME=$(uv run python scripts/get_index_name.py) && \
+    echo "Copying index: $INDEX_NAME" && \
+    cp index/${INDEX_NAME}_*.* ./index/ 2>/dev/null || true && \
+    cp index/_${INDEX_NAME}_*.toc ./index/ 2>/dev/null || true
 
-# Install dependencies
-RUN poetry install --no-root --no-dev --no-interaction
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 
-# Create a slim production image
-FROM python:3.12-slim AS runtime
+# Expose port 
+EXPOSE 8000
 
-WORKDIR /app
-
-# Copy installed packages and application files
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /app/imas_mcp_server /app/imas_mcp_server
-COPY --from=builder /app/pyproject.toml /app/
-COPY --from=builder /app/build_index.py /app/
-COPY --from=builder /app/path_index.py /app/
-COPY --from=builder /app/mcp_imas.py /app/
-
-# Set the entrypoint
-ENTRYPOINT ["python", "-m", "mcp_imas"]
+# Run the application using the script entrypoint
+CMD ["uv", "run", "run-server"]

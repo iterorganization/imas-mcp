@@ -1,27 +1,40 @@
 [build-system]
-requires = ["poetry-core>=2.0.0", "poetry-dynamic-versioning>=1.8.2"]
-build-backend = "poetry.dynamic_versioning.backend"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "imas-mcp-server"
-version = "0.0.0" # Version is set by poetry-dynamic-versioning at build time
+dynamic = ["version"]
 description = "An MCP Server for accessing the IMAS Data Dictionary"
 readme = "README.md"
-requires-python = ">=3.12,<4.0"
-authors = [{ name = "Simon McIntosh", email = "simon.mcintosh@example.com" }]
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Simon McIntosh", email = "simon.mcintosh@iter.org" }]
 license = { text = "CC BY-ND 4.0" }
 dependencies = [
-    "imas-python>=2.0.0.post1",
     "mcp-cli>=0.1.0",
-    "fastmcp (>=2.2.8,<3.0.0)",
-    "pydantic (>=2.11.4,<3.0.0)",
-    "whoosh (>=2.7.4,<3.0.0)",
-    "pytest-cov (>=6.1.1,<7.0.0)",
-    "pint (>=0.24.4,<0.25.0)",
+    "fastmcp>=2.2.8,<3.0.0",
+    "pydantic>=2.11.4,<3.0.0",
+    "whoosh>=2.7.4,<3.0.0",
+    "pint>=0.24.4,<0.25.0",
+    "rich>=13.7.0,<14.0.0",
+    "packaging>=25.0,<26.0",
+    "chromadb>=1.0.9,<2.0.0",
+    "s3fs>=2025.5.0,<2026.0.0",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@feature/packaging",
 ]
 
 [project.optional-dependencies]
-test = ["pytest (>=8.3.5,<9.0.0)"]
+test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
+dev = [
+    "black>=23.0.0",
+    "ruff>=0",
+    "ipython>=9.2.0",
+    "ipykernel>=6.29.5",
+    "mypy>=1.15.0",
+    "pre-commit>=4.2.0",
+    "tqdm-stubs>=0.2.1",
+    "ipywidgets>=8.1.7",
+]
 
 [project.urls]
 Repository = "https://github.com/simon-mcintosh/imas-mcp-server"
@@ -31,36 +44,60 @@ build-index = "imas_mcp_server.build_index:build_path_index"
 run-server = "imas_mcp_server.mcp_imas:run_server"
 find-paths = "bin.find_imas_path:main"
 
-[tool.poetry]
-packages = [{ include = "imas_mcp_server" }]
-include = [
-    "*.py",
-    "README.md",
-    "LICENSE",
-    "imas_mcp_server/cache/*.json",
-    "imas_mcp_server/cache/*.pkl",
-    "imas_mcp_server/cache/*.py",
-]
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+local_scheme = "no-local-version"
+
+[tool.hatch.build.targets.wheel]
+packages = ["imas_mcp_server"]
+include = ["README.md", "LICENSE", "imas_mcp_server/resources/*.txt"]
 exclude = ["*.pyc", "__pycache__/*"]
 
-[tool.poetry.group.dev.dependencies]
-pytest = ">=7.0.0"
-black = ">=23.0.0"
-ruff = ">=0"
-ipython = ">=9.2.0"
-ipykernel = "^6.29.5"
-mypy = "^1.15.0"
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
 
+[[tool.mypy.overrides]]
+module = ["whoosh.*", "imas.*", "pint.*", "chromadb.*", "pydantic.*"]
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
 
-[tool.poetry-dynamic-versioning]
-enable = true
-vcs = "git"
-style = "semver"
-pattern = "^(?P<base>\\d+\\.\\d+\\.\\d+)(-(?P<stage>[a-zA-Z]+)\\.(?P<revision>\\d+))?"
-format-jinja = "{% if distance == 0 %}{{ base }}{% else %}{{ base }}.{{ distance }}+{{ commit }}{% endif %}"
-format = "{base}.{distance}+{commit}"
-dirty = true
-metadata = true
+[[tool.mypy.overrides]]
+module = ["whoosh.*", "imas.*", "pint.*", "chromadb.*", "pydantic.*"]
+ignore_missing_imports = true
 
-[tool.poetry-dynamic-versioning.substitution]
-files = ["imas_mcp_server/version.py"]
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "--strict-config", "--verbose"]
+
+[tool.coverage.run]
+source = ["imas_mcp_server"]
+omit = ["tests/*", "*/tests/*", "**/test_*.py", "**/conftest.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+]
+show_missing = true
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"

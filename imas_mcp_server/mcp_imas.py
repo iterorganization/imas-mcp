@@ -1,19 +1,16 @@
 # filepath: c:\Users\mcintos\Code\imas-mcp-server\imas_mcp_server\mcp_imas.py
 # Standard library imports
-import functools
 import logging
-import re
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Annotated, ClassVar, Dict, Pattern
+from typing import Annotated, List, Union
+
+import nest_asyncio
 
 # Third-party imports
 from fastmcp import FastMCP
-import nest_asyncio
 from pydantic import Field
 
 # Local imports
-from imas_mcp_server.path_index_cache import PathIndexCache
+from imas_mcp_server.lexicographic_search import LexicographicSearch
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -24,423 +21,442 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize shared index instance
+_search_index = LexicographicSearch()
+
 # Initialize MCP server
 mcp = FastMCP("IMAS")
 
 
-@dataclass
-class DataDictionaryServer:
-    """An IMAS MCP server class to serve IMAS Data Dictionary context."""
+@mcp.tool
+def ids_names() -> List[str]:
+    """Return a list of IDS names available in the Data Dictionary.
 
-    mcp: FastMCP  # MCP server instance
-    version: str | None = None  # IMAS version to use
-    xml_path: Path | None = (
-        None  # Path to the XML file    # Cache for compiled regex patterns to improve performance
+    Returns:
+        A list of IMAS IDS (Interface Data Structure) names that can be
+        searched and queried through this server.
+    """
+    return _search_index.ids_names
+
+
+@mcp.tool
+def ids_info() -> dict[str, Union[str, int, List[str]]]:
+    """Return high-level information about the IMAS Data Dictionary.
+
+    Returns:
+        A dictionary containing metadata about the Data Dictionary including
+        version, total IDS count, and available IDS names.
+    """
+    return {
+        "version": str(_search_index.dd_version),
+        "total_ids_count": len(_search_index.ids_names),
+        "available_ids": _search_index.ids_names,
+        "index_type": _search_index.index_prefix,
+        "total_documents": len(_search_index),
+    }
+
+
+@mcp.tool
+def search_by_keywords(
+    query_str: Annotated[
+        str,
+        Field(
+            description="Natural language search query. Supports field prefixes "
+            "(e.g., 'documentation:plasma'), wildcards (e.g., 'core*'), "
+            "boolean operators (AND, OR, NOT), and phrases in quotes."
+        ),
+    ],
+    page_size: Annotated[
+        int,
+        Field(
+            default=10,
+            ge=1,
+            le=100,
+            description="Maximum number of results to return (1-100)",
+        ),
+    ] = 10,
+    page: Annotated[
+        int, Field(default=1, ge=1, description="Page number for pagination (1-based)")
+    ] = 1,
+    enable_fuzzy: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Enable fuzzy matching for typos and approximate matches",
+        ),
+    ] = False,
+    search_fields: Annotated[
+        Union[List[str], None],
+        Field(
+            default=None,
+            description="List of fields to search in (defaults to documentation and path_segments)",
+        ),
+    ] = None,
+    sort_by: Annotated[
+        Union[str, None],
+        Field(default=None, description="Field name to sort results by"),
+    ] = None,
+    sort_reverse: Annotated[
+        bool, Field(default=False, description="Whether to reverse the sort order")
+    ] = False,
+) -> List[dict]:
+    """Search the IMAS Data Dictionary by keywords.
+
+    Performs full-text search across IMAS Data Dictionary documentation and paths.
+    Supports advanced query syntax including field-specific searches, wildcards,
+    boolean operators, and fuzzy matching.
+
+    Args:
+        query_str: Search query with optional field prefixes and operators
+        page_size: Number of results per page (1-100)
+        page: Page number for pagination
+        enable_fuzzy: Enable fuzzy matching for typos
+        search_fields: Fields to search in (defaults to documentation and path_segments)
+        sort_by: Field to sort results by
+        sort_reverse: Whether to reverse sort order
+
+    Returns:
+        List of search results containing path, documentation, units, and metadata.
+
+    Examples:
+        - Basic search: "plasma current"
+        - Field-specific: "documentation:temperature ids:core_profiles"
+        - Wildcards: "core_profiles/prof*"
+        - Boolean: "density AND NOT temperature"
+        - Phrases: "ion temperature"
+    """
+    if search_fields is None:
+        search_fields = ["documentation", "path_segments"]
+
+    results = _search_index.search_by_keywords(
+        query_str=query_str,
+        page_size=page_size,
+        page=page,
+        fuzzy=enable_fuzzy,
+        search_fields=search_fields,
+        sort_by=sort_by,
+        sort_reverse=sort_reverse,
     )
-    _compiled_patterns: Dict[tuple[str, int], Pattern] = field(default_factory=dict)
 
-    tools: ClassVar[list[str]] = [
-        "list_ids",
-        "find_paths_by_pattern",
-        "get_path_documentation",
-    ]
+    return [result.model_dump() for result in results]
 
-    def __post_init__(self):
-        """Initialize MCP servers."""
-        for tool in self.tools:
-            self.mcp.add_tool(getattr(self, tool))
 
-        # Initialize the patterns cache
-        self._compiled_patterns = {}
+@mcp.tool
+def search_by_exact_path(
+    path_value: Annotated[
+        str,
+        Field(
+            description="The exact IDS path to retrieve (e.g., 'core_profiles/profiles_1d/temperature')"
+        ),
+    ],
+) -> Union[dict, None]:
+    """Return documentation and metadata for an exact IDS path lookup.
 
-    @functools.cached_property
-    def path_index(self):
-        """Return a DD path index instance."""
-        return PathIndexCache(version=self.version, xml_path=self.xml_path).path_index
+    Performs an exact path match to retrieve a specific entry from the IMAS
+    Data Dictionary. Useful when you know the precise path you want to query.
 
-    def list_ids(self) -> set[str]:
-        """Return a set of all the IDSs defined by the IMAS Data Dictionary."""
-        return self.path_index.ids
+    Args:
+        path_value: The exact path of the document to retrieve
 
-    def _get_pattern_cache(self, pattern: str, flags: int = 0) -> Pattern:
-        """Get a cached compiled regex pattern or compile and cache a new one."""
-        key = (pattern, flags)
-        if key not in self._compiled_patterns:
-            self._compiled_patterns[key] = re.compile(pattern, flags)
-        return self._compiled_patterns[key]
+    Returns:
+        A dictionary containing the search result with path, documentation,
+        units, and metadata if found, otherwise None.
 
-    @staticmethod
-    def _extract_literal_substring(pattern: str) -> str:
-        """Extract a literal substring from a regex pattern for pre-filtering."""
-        # Simple heuristic to find a significant literal part in the regex
-        # This won't handle all cases perfectly but helps in common scenarios
-        parts = re.split(r"[.*+?()|\[\]{}^$]", pattern)
-        parts = [p for p in parts if p and len(p) > 2]
-        if parts:
-            return max(parts, key=len)
-        return ""
+    Examples:
+        - "core_profiles/profiles_1d/temperature"
+        - "equilibrium/time_slice/boundary/outline/r"
+        - "pf_active/coil/name"
+    """
+    result = _search_index.search_by_exact_path(path_value)
+    return result.model_dump() if result else None
 
-    def find_paths_by_pattern(
-        self,
-        pattern: Annotated[
-            str,
-            Field(
-                description="A regular expression pattern to match against IDS paths",
-                examples=[
-                    ".*diagnostic.*",  # Find all paths containing 'diagnostic'
-                    "equilibrium",  # Simple search for a specific IDS
-                    "time_slice\\[\\]",  # Find array elements with escaped brackets
-                    ".*profiles_1d/.*",  # Find all paths with 'profiles_1d' component
-                    "equilibrium/time_slice.*/q_safety_factor",  # Specific property with wildcard time slice
-                    "pulse/.*",  # All paths under the pulse IDS
-                    "^core_profiles/.*electron.*",  # Paths starting with core_profiles and containing 'electron'
-                    ".*/psi$",  # Match 'psi' as the final segment of any path
-                ],
-            ),
+
+@mcp.tool
+def search_by_path_prefix(
+    path_prefix: Annotated[
+        str,
+        Field(
+            description="The path prefix to search for (e.g., 'core_profiles/profiles_1d')"
+        ),
+    ],
+    page_size: Annotated[
+        int,
+        Field(
+            default=10,
+            ge=1,
+            le=100,
+            description="Maximum number of results to return (1-100)",
+        ),
+    ] = 10,
+    page: Annotated[
+        int, Field(default=1, ge=1, description="Page number for pagination (1-based)")
+    ] = 1,
+    sort_by: Annotated[
+        Union[str, None],
+        Field(default=None, description="Field name to sort results by"),
+    ] = None,
+    sort_reverse: Annotated[
+        bool, Field(default=False, description="Whether to reverse the sort order")
+    ] = False,
+) -> List[dict]:
+    """Return all entries matching a given IDS path prefix.
+
+    Searches for all paths that start with the specified prefix. Useful for
+    exploring the hierarchical structure of IMAS data and finding all
+    sub-elements under a particular path.
+
+    Args:
+        path_prefix: The prefix of the path to search for
+        page_size: Number of results per page (1-100)
+        page: Page number for pagination
+        sort_by: Field to sort results by
+        sort_reverse: Whether to reverse sort order
+
+    Returns:
+        List of search results containing all paths that match the prefix.
+
+    Examples:
+        - "core_profiles" - Returns all core_profiles paths
+        - "core_profiles/profiles_1d" - Returns all 1D profile data paths
+        - "equilibrium/time_slice" - Returns all equilibrium time slice paths
+    """
+    results = _search_index.search_by_path_prefix(
+        path_prefix=path_prefix,
+        page_size=page_size,
+        page=page,
+        sort_by=sort_by,
+        sort_reverse=sort_reverse,
+    )
+
+    return [result.model_dump() for result in results]
+
+
+@mcp.tool
+def filter_search_results(
+    search_query: Annotated[
+        str, Field(description="Initial search query to get base results to filter")
+    ],
+    filters: Annotated[
+        dict[str, str],
+        Field(
+            description="Dictionary of field names and values to filter by "
+            "(e.g., {'ids_name': 'core_profiles', 'units': 'm'})"
+        ),
+    ],
+    enable_regex: Annotated[
+        bool,
+        Field(
+            default=True, description="Enable regex pattern matching in filter values"
+        ),
+    ] = True,
+    page_size: Annotated[
+        int,
+        Field(
+            default=10,
+            ge=1,
+            le=100,
+            description="Maximum number of results to return (1-100)",
+        ),
+    ] = 10,
+) -> List[dict]:
+    """Filter search results based on field values with optional regex support.
+
+    First performs a keyword search, then filters the results based on specific
+    field criteria. Supports both exact matching and regex pattern matching for
+    advanced filtering capabilities.
+
+    Args:
+        search_query: Initial search query to get base results
+        filters: Dictionary where keys are field names (path, documentation,
+                units, ids_name) and values are the desired filter criteria
+        enable_regex: Enable regex pattern matching for filter values
+        page_size: Maximum number of filtered results to return
+
+    Returns:
+        List of filtered search results that match all specified criteria.
+
+    Examples:
+        - Basic filter: search_query="temperature", filters={"ids_name": "core_profiles"}
+        - Regex filter: search_query="density", filters={"path": ".*profiles_1d.*"}
+        - Multi-field: search_query="current", filters={"units": "A", "ids_name": "pf_active"}
+    """
+    # First get initial results from keyword search
+    initial_results = _search_index.search_by_keywords(
+        query_str=search_query,
+        page_size=100,  # Get more results initially to have enough to filter
+        page=1,
+    )
+
+    # Then filter those results
+    filtered_results = _search_index.filter_search_results(
+        search_results=initial_results,
+        filters=filters,
+        regex=enable_regex,
+    )
+
+    # Limit to requested page size
+    limited_results = filtered_results[:page_size]
+
+    return [result.model_dump() for result in limited_results]
+
+
+@mcp.tool
+def get_index_stats() -> dict[str, Union[str, int, List[str]]]:
+    """Return statistics and metadata about the search index.
+
+    Provides information about the current state of the search index including
+    document counts, index configuration, and available fields.
+
+    Returns:
+        Dictionary containing index statistics and metadata including document
+        count, index name, schema fields, and configuration details.
+    """
+    schema_fields = list(_search_index.resolved_schema.names())
+
+    return {
+        "total_documents": len(_search_index),
+        "index_name": _search_index.indexname or "unknown",
+        "index_type": _search_index.index_prefix,
+        "data_dictionary_version": str(_search_index.dd_version),
+        "schema_fields": schema_fields,
+        "index_directory": str(_search_index.dirname),
+        "available_ids_count": len(_search_index.ids_names),
+    }
+
+
+@mcp.tool
+def get_ids_structure(
+    ids_name: Annotated[
+        str,
+        Field(
+            description="Name of the IDS to explore (e.g., 'core_profiles', 'equilibrium')"
+        ),
+    ],
+    max_depth: Annotated[
+        int,
+        Field(
+            default=3, ge=1, le=10, description="Maximum depth level to explore (1-10)"
+        ),
+    ] = 3,
+    page_size: Annotated[
+        int,
+        Field(
+            default=50,
+            ge=1,
+            le=200,
+            description="Maximum number of paths to return (1-200)",
+        ),
+    ] = 50,
+) -> dict:
+    """Explore the hierarchical structure of a specific IDS.
+
+    Returns the hierarchical structure of an IDS showing all available paths
+    up to a specified depth. Useful for understanding the organization and
+    available data within a particular IDS.
+
+    Args:
+        ids_name: Name of the IDS to explore
+        max_depth: Maximum depth level to traverse
+        page_size: Maximum number of paths to return
+
+    Returns:
+        Dictionary containing the IDS structure with paths organized by depth
+        level, total path count, and metadata.
+
+    Examples:
+        - ids_name="core_profiles", max_depth=2
+        - ids_name="equilibrium", max_depth=3
+        - ids_name="pf_active", max_depth=1
+    """
+    # Get all paths for this IDS
+    all_results = _search_index.search_by_path_prefix(
+        path_prefix=ids_name,
+        page_size=page_size,
+        page=1,
+        sort_by="path",
+    )
+
+    # Organize results by depth
+    structure_by_depth = {}
+    for result in all_results:
+        path = result.path
+        depth = path.count("/")
+
+        if depth <= max_depth:
+            if depth not in structure_by_depth:
+                structure_by_depth[depth] = []
+
+            structure_by_depth[depth].append(
+                {
+                    "path": path,
+                    "documentation": result.documentation[:100] + "..."
+                    if len(result.documentation) > 100
+                    else result.documentation,
+                    "units": result.units,
+                    "depth": depth,
+                }
+            )
+
+    return {
+        "ids_name": ids_name,
+        "max_depth_explored": max_depth,
+        "total_paths_found": len(all_results),
+        "structure_by_depth": structure_by_depth,
+        "depth_summary": {
+            str(depth): len(paths) for depth, paths in structure_by_depth.items()
+        },
+    }
+
+
+@mcp.tool
+def get_common_units() -> dict:
+    """Get a summary of the most commonly used units in the Data Dictionary.
+
+    Analyzes all indexed documents to provide statistics on unit usage across
+    the IMAS Data Dictionary. Useful for understanding the measurement systems
+    and units used throughout IMAS.
+
+    Returns:
+        Dictionary containing unit usage statistics including most common units,
+        total unique units count, and unit categories.
+    """
+    # Get a large sample of results to analyze units
+    sample_results = _search_index.search_by_keywords(
+        query_str="*",  # Match everything
+        page_size=100,
+        page=1,
+    )
+
+    # Count unit occurrences
+    unit_counts = {}
+    for result in sample_results:
+        unit = result.units
+        if unit and unit != "none":
+            unit_counts[unit] = unit_counts.get(unit, 0) + 1
+
+    # Sort by frequency
+    sorted_units = sorted(unit_counts.items(), key=lambda x: x[1], reverse=True)
+
+    return {
+        "total_unique_units": len(unit_counts),
+        "most_common_units": [
+            {"unit": unit, "count": count} for unit, count in sorted_units[:20]
         ],
-        use_regex: Annotated[
-            bool,
-            Field(
-                default=True,
-                description="Whether to interpret the pattern as regex or simple string",
-            ),
-        ] = True,
-        case_sensitive: Annotated[
-            bool,
-            Field(
-                default=True,
-                description="Whether the search should be case-sensitive",
-            ),
-        ] = True,
-    ) -> list[str]:
-        """Find all IDS paths that match a given regex pattern using precomputed paths.
-
-        Parameters:
-        -----------
-        pattern : str
-            A regular expression pattern to match against IDS paths
-        use_regex : bool, optional
-            Whether to interpret the pattern as regex or simple string (default: True)
-        case_sensitive : bool, optional
-            Whether the search should be case-sensitive (default: True)
-
-        Returns:
-        --------
-        list[str]
-            A list of IDS paths that match the given pattern
-        """
-
-        try:
-            # Handle non-regex search (faster)
-            if not use_regex:
-                if not case_sensitive:
-                    pattern = pattern.lower()
-                    matching_paths = [
-                        p for p in self.path_index.paths if pattern in p.lower()
-                    ]
-                else:
-                    matching_paths = [p for p in self.path_index.paths if pattern in p]
-            else:
-                # Handle regex search with optimizations
-                try:
-                    # Use cached regex pattern compilation for better performance
-                    flags = 0 if case_sensitive else re.IGNORECASE
-                    compiled_pattern = self._get_pattern_cache(pattern, flags)
-
-                    # Attempt to optimize search by looking for common substrings first
-                    common_substr = self._extract_literal_substring(pattern)
-                    if common_substr and len(common_substr) > 2:
-                        # Pre-filter paths using the literal substring for speed
-                        candidate_paths = [
-                            p for p in self.path_index.paths if common_substr in p
-                        ]
-                        matching_paths = [
-                            p for p in candidate_paths if compiled_pattern.search(p)
-                        ]
-                    else:
-                        # Fall back to full regex search on all paths
-                        matching_paths = [
-                            p
-                            for p in self.path_index.paths
-                            if compiled_pattern.search(p)
-                        ]
-                except re.error as e:
-                    return [f"Error in regex pattern: {str(e)}"]
-
-            return sorted(matching_paths)
-
-        except Exception as e:
-            return [f"Error searching paths: {str(e)}"]
-
-    def get_path_documentation(
-        self,
-        path: Annotated[
-            str,
-            Field(
-                description="The IDS path for which to retrieve documentation",
-                examples=[
-                    "/equilibrium/time_slice[]/profiles_1d/psi",  # Full path with array notation
-                    "equilibrium",  # Root-level IDS
-                    "core_profiles/electrons/density",  # Specific property path
-                    "core_profiles/time_slice/ion/",  # Path ending with slash
-                    "edge_profiles/ggd/*/electron_density",  # Path with wildcard character
-                    "wall/description/limiter/unit/*/outline/",  # Complex nested path with wildcards
-                ],
-            ),
-        ],
-        search_method: Annotated[
-            str,
-            Field(
-                default="smart",
-                description="Method to use for finding the path documentation",
-                examples=["exact", "prefix", "segments", "keywords", "regex", "smart"],
-            ),
-        ] = "smart",
-        max_results: Annotated[
-            int,
-            Field(
-                default=5,
-                description="Maximum number of results to return for non-exact matches",
-            ),
-        ] = 5,
-    ) -> str:
-        """Return documentation for a given IDS path.
-
-        Parameters:
-        -----------
-        path : str
-            The IDS path for which to retrieve documentation
-        search_method : str, optional
-            Method to use for finding paths:
-            - 'exact': Require exact match
-            - 'prefix': Return paths that start with or are prefixes of the given path
-            - 'segments': Match based on path segments/components
-            - 'keywords': Match based on keywords extracted from the path
-            - 'regex': Use regular expression pattern matching for flexible searches
-            - 'smart': Try multiple methods automatically in succession (default)
-        max_results : int, optional
-            Maximum number of results to return for non-exact matches (default: 5)
-
-        Returns:
-        --------
-        str
-            Documentation string for the specified path, or error message if not found
-        """
-        try:
-            # Clean up the path (remove leading/trailing whitespace and slashes)
-            clean_path = path.strip().strip("/")
-
-            # For exact match, simply look up in the docs dictionary
-            if search_method == "exact":
-                if clean_path in self.path_index.docs:
-                    return self.path_index.docs[clean_path]
-                return f"No documentation found for exact path: {path}"
-
-            # First check if the path exists directly regardless of method
-            if clean_path in self.path_index.docs:
-                return self.path_index.docs[clean_path]
-
-            matching_paths = set()  # Smart search tries multiple methods in succession
-            if search_method == "smart":
-                methods = ["prefix", "segments", "keywords", "regex"]
-                for method in methods:
-                    result = self.get_path_documentation(path, method, max_results)
-                    if not result.startswith("No documentation found"):
-                        return f"Smart search found results using {method} method:\n{result.split(':', 1)[1]}"
-                return f"No documentation found for path: {path} using smart search"
-
-            elif search_method == "regex":
-                # Create a regex pattern to match against paths
-                # Escape special regex characters in the path to treat it as literal
-                # unless the user provided actual regex expressions
-                if any(c in path for c in ".*+?()[]{}|^$"):
-                    # Path likely contains regex already, use as is
-                    pattern = path
-                else:
-                    # Treat as a partial match (contains search)
-                    pattern = f".*{re.escape(clean_path)}.*"
-
-                # Call find_paths_by_pattern with the created pattern
-                # This leverages all the optimization and caching already present
-                found_paths = self.find_paths_by_pattern(
-                    pattern=pattern, use_regex=True, case_sensitive=True
-                )
-
-                # Convert to set for consistency with other methods
-                matching_paths.update(found_paths)
-
-            elif search_method == "prefix":
-                # First use the prefixes index for paths this is a prefix of (more efficient)
-                if hasattr(self.path_index, "prefixes"):
-                    # Find all prefixes of the path that are in the index
-                    for i in range(1, len(clean_path) + 1):
-                        prefix = clean_path[:i]
-                        if prefix in self.path_index.prefixes:
-                            matching_paths.update(self.path_index.prefixes[prefix])
-                            # If we have enough results, we can stop early
-                            if (
-                                len(matching_paths) >= max_results * 2
-                            ):  # Get 2x to allow for sorting later
-                                break
-
-                # Then find paths that are prefixes of the query path
-                # This is for cases where the user has entered a longer path but we only have docs
-                # for a parent path
-                prefix_matches = [
-                    p for p in self.path_index.paths if p.startswith(clean_path)
-                ]
-                matching_paths.update(prefix_matches)
-
-                # If still not enough, look for paths that this is a prefix of
-                if len(matching_paths) < max_results:
-                    parent_matches = [
-                        p for p in self.path_index.paths if clean_path.startswith(p)
-                    ]
-                    matching_paths.update(parent_matches)
-
-            elif search_method == "segments":
-                # Split the path into segments and find paths that contain these segments
-                segments = clean_path.split("/")
-
-                # Use the segments index if available
-                if hasattr(self.path_index, "segments"):
-                    # Start with the more specific segments (longer ones)
-                    # This improves relevance by prioritizing more specific matches
-                    sorted_segments = sorted(segments, key=len, reverse=True)
-
-                    # Use a weighted approach - paths that match more segments are more relevant
-                    segment_matches = {}
-
-                    for segment in sorted_segments:
-                        if segment and segment in self.path_index.segments:
-                            for p in self.path_index.segments[segment]:
-                                if p in segment_matches:
-                                    segment_matches[p] += (
-                                        1 + len(segment) * 0.1
-                                    )  # Weight by segment length
-                                else:
-                                    segment_matches[p] = 1 + len(segment) * 0.1
-
-                    # Sort by the number of matching segments
-                    matching_paths.update(
-                        [
-                            p
-                            for p, _ in sorted(
-                                segment_matches.items(),
-                                key=lambda x: x[1],
-                                reverse=True,
-                            )[: max_results * 2]
-                        ]
-                    )
-                else:
-                    # Fall back to a simpler approach if no segments index
-                    for segment in segments:
-                        if segment:  # Skip empty segments
-                            segment_matches = [
-                                p
-                                for p in self.path_index.paths
-                                if segment in p.split("/")
-                            ]
-                            matching_paths.update(segment_matches)
-
-            elif search_method == "keywords":
-                # Extract keywords and find paths that contain these keywords
-                keywords = set()
-                for part in clean_path.split("/"):
-                    # Add smaller parts of each segment as keywords (min 3 chars)
-                    for i in range(len(part)):
-                        for j in range(i + 3, len(part) + 1):
-                            keywords.add(part[i:j].lower())
-
-                # Use the keywords index if available
-                if hasattr(self.path_index, "keywords"):
-                    # Prioritize longer keywords (more specific)
-                    sorted_keywords = sorted(keywords, key=len, reverse=True)
-
-                    # Use a weighted approach for keyword matching
-                    keyword_matches = {}
-
-                    for keyword in sorted_keywords:
-                        if keyword in self.path_index.keywords:
-                            for p in self.path_index.keywords[keyword]:
-                                if p in keyword_matches:
-                                    keyword_matches[p] += (
-                                        1 + len(keyword) * 0.05
-                                    )  # Weight by keyword length
-                                else:
-                                    keyword_matches[p] = 1 + len(keyword) * 0.05
-
-                    # Sort by the number of matching keywords
-                    matching_paths.update(
-                        [
-                            p
-                            for p, _ in sorted(
-                                keyword_matches.items(),
-                                key=lambda x: x[1],
-                                reverse=True,
-                            )[: max_results * 2]
-                        ]
-                    )
-                else:
-                    # Fall back to a simpler approach if no keywords index
-                    # Sort keywords by length to prioritize longer (more specific) keywords
-                    sorted_keywords = sorted(keywords, key=len, reverse=True)
-                    for keyword in sorted_keywords[
-                        :10
-                    ]:  # Limit to top 10 keywords for performance
-                        if len(keyword) > 2:  # Only consider keywords with length > 2
-                            keyword_matches = [
-                                p for p in self.path_index.paths if keyword in p.lower()
-                            ]
-                            matching_paths.update(keyword_matches)
-                            if len(matching_paths) >= max_results * 2:
-                                break
-
-            # Limit results and prepare response
-            matching_paths = list(matching_paths)
-            if not matching_paths:
-                return f"No documentation found for path: {path} using {search_method} search method"
-
-            # Sort by relevance - for now using length as a proxy for relevance
-            # Shorter paths for prefix matches, longer paths for keyword/segment matches
-            if search_method == "prefix":
-                matching_paths.sort(key=len)
-            else:
-                # For keywords and segments, use path similarity for sorting
-                # Using Levenshtein distance would be ideal, but we'll use a simpler approach
-                matching_paths.sort(key=lambda p: abs(len(p) - len(clean_path)))
-
-            # Limit the number of results
-            matching_paths = matching_paths[:max_results]
-
-            # Format the result
-            if len(matching_paths) == 1:
-                match = matching_paths[0]
-                return (
-                    f"Documentation for match '{match}':\n{self.path_index.docs[match]}"
-                )
-            else:
-                result = f"Found {len(matching_paths)} matches using {search_method} search method:\n"
-                for i, match in enumerate(matching_paths, 1):
-                    result += f"\n{i}. {match}\n"
-                    doc = self.path_index.docs[match].strip()
-                    result += f"   {doc[:200]}"
-                    if len(doc) > 200:
-                        result += "..."
-                        result += "\n   (truncated for brevity)"
-                return result
-
-        except Exception as e:
-            return f"Error retrieving documentation: {str(e)}"
+        "all_units": list(unit_counts.keys()),
+        "sample_size": len(sample_results),
+        "dimensionless_count": sum(
+            1
+            for result in sample_results
+            if result.units in ["none", "", "1", "dimensionless"]
+        ),
+    }
 
 
-def run_server() -> None:
+def run_server(**kwargs) -> None:
     """Run the MCP server."""
     logger.info("Starting MCP server...")
-    mcp = FastMCP("IMAS")
     try:
-        DataDictionaryServer(mcp)
-        mcp.run()
+        mcp.run(**kwargs)
     except KeyboardInterrupt:
         logger.info("Stopping MCP server...")
 
