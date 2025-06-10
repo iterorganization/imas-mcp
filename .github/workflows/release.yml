@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --dev
+
+    - name: Build package
+      run: uv build
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the tag name
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        
+        # Generate changelog from commits since last tag
+        if git describe --tags --abbrev=0 HEAD^ >/dev/null 2>&1; then
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^)
+          CHANGELOG=$(git log --pretty=format:"- %s" ${PREV_TAG}..HEAD)
+        else
+          CHANGELOG=$(git log --pretty=format:"- %s")
+        fi
+        
+        # Create release notes
+        cat > release_notes.md << EOF
+        ## What's Changed
+        
+        ${CHANGELOG}
+        
+        **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG:-$(git rev-list --max-parents=0 HEAD)}...${TAG_NAME}
+        EOF
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.changelog.outputs.tag_name }}
+        name: Release ${{ steps.changelog.outputs.tag_name }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ contains(steps.changelog.outputs.tag_name, '-') }}
+        files: |
+          dist/*.whl
+          dist/*.tar.gz
