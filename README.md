@@ -168,3 +168,17 @@ Future enhancements could include:
 - Word embeddings for semantic search capabilities
 - TF-IDF weighting for better keyword ranking
 - Fuzzy matching for typo tolerance
+
+## Docker Usage
+
+The server is available as a pre-built Docker container with the index already built:
+
+```bash
+# Pull and run the latest container
+docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp-server:latest
+
+# Or use Docker Compose
+docker-compose up -d
+```
+
+See [DOCKER.md](DOCKER.md) for detailed container usage, deployment options, and troubleshooting.
