@@ -1,0 +1,11 @@
+# IMAS Data Dictionary Unit Aliases
+# This file defines aliases for malformed units used in the IMAS Data Dictionary
+
+# define unit_error base unit 
+unit_error = [error]
+
+# alias 
+@alias unit_error = mixed
+@alias unit_error = m__pow__dimension
+@alias unit_error = UTC  # UTC is not a unit of measurement but rather a time standard.
+
