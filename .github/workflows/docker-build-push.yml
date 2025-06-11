@@ -60,8 +60,7 @@ jobs:
             IMAS_INFO="${VERSION}-${GIT_HASH}"
           else
             IMAS_INFO="no-lock-file"
-          fi
-          echo "info=${IMAS_INFO}" >> $GITHUB_OUTPUT
+          fi          echo "info=${IMAS_INFO}" >> $GITHUB_OUTPUT
           echo "Found imas-data-dictionary info: ${IMAS_INFO}"
 
       - name: Get cache key components
@@ -73,9 +72,7 @@ jobs:
 
           # Use the imas info from uv.lock
           IMAS_INFO="${{ steps.imas-info.outputs.info }}"
-          echo "imas-info=${IMAS_INFO}" >> $GITHUB_OUTPUT
-
-          # Get hash of indexing-related Python files
+          echo "imas-info=${IMAS_INFO}" >> $GITHUB_OUTPUT          # Get hash of indexing-related Python files
           INDEX_FILES_HASH=$(find imas_mcp_server/ -name "*.py" -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
           echo "index-files-hash=${INDEX_FILES_HASH}" >> $GITHUB_OUTPUT
 
@@ -93,12 +90,13 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          no-cache: true
           build-args: |
             IMAS_INFO=${{ steps.imas-info.outputs.info }}
             BUILDKIT_INLINE_CACHE=1
             SOURCE_HASH=${{ steps.cache-key.outputs.index-files-hash }}
-          cache-from: type=gha,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
-          cache-to: type=gha,mode=max,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
+          # cache-from: type=gha,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
+          # cache-to: type=gha,mode=max,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
 
       - name: Generate artifact attestation
         if: github.event_name != 'pull_request'
