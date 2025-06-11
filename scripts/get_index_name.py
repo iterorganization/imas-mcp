@@ -12,7 +12,7 @@ def main():
     """Get the exact index name."""
     try:
         # Initialize the search class (without building)
-        search = LexicographicSearch()
+        search = LexicographicSearch(build=False)
         print(search.indexname)
         return 0
     except Exception as e:

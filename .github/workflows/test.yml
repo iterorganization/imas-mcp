@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -14,37 +14,33 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v4
-      with:
-        enable-cache: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
 
-    - name: Set up Python ${{ matrix.python-version }}
-      run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
-    - name: Install dependencies
-      run: uv sync --all-extras --dev
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
 
-    - name: Lint with ruff
-      run: uv run ruff check .
+      - name: Lint with ruff
+        run: uv run ruff check .
 
-    - name: Format check with ruff
-      run: uv run ruff format --check .
+      - name: Format check with ruff
+        run: uv run ruff format --check .
 
-    - name: Type check with mypy
-      run: uv run mypy imas_mcp_server/ --ignore-missing-imports
-      continue-on-error: true
+      - name: Test with pytest
+        run: uv run pytest --cov=imas_mcp_server --cov-report=xml --cov-report=term-missing
 
-    - name: Test with pytest
-      run: uv run pytest --cov=imas_mcp_server --cov-report=xml --cov-report=term-missing
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4
-      if: ${{ !cancelled() }}
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        if: ${{ !cancelled() }}
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false

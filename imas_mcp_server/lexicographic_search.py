@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from typing import Final, Literal
 
 from imas_mcp_server.data_dictionary_index import DataDictionaryIndex
@@ -18,10 +18,11 @@ class LexicographicSearch(WhooshIndex, DataDictionaryIndex):
 
     INDEX_PREFIX: Final[IndexPrefixT] = "lexicographic"
 
-    def __post_init__(self) -> None:
+    build: InitVar[bool] = True
+
+    def __post_init__(self, build: bool) -> None:
         super().__post_init__()
-        if len(self) == 0:
-            # build index if it is empty
+        if build and len(self) == 0:
             self.build_index()
 
     @property
@@ -44,5 +45,5 @@ if __name__ == "__main__":
     # Use a smaller subset for testing to avoid hanging on large datasets
     index = LexicographicSearch()
 
-    index.build_index()
+    # index.build_index()
     print(index.search_by_exact_path("pf_active/coil/name"))

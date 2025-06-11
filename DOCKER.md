@@ -60,17 +60,17 @@ docker run -d \
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PYTHONPATH` | Python path | `/app` |
-| `PORT` | Port to run the server on | `8000` |
+| Variable     | Description               | Default |
+| ------------ | ------------------------- | ------- |
+| `PYTHONPATH` | Python path               | `/app`  |
+| `PORT`       | Port to run the server on | `8000`  |
 
 ## Volume Mounts
 
-| Path | Description |
-|------|-------------|
+| Path         | Description                                |
+| ------------ | ------------------------------------------ |
 | `/app/index` | Index files directory (mount as read-only) |
-| `/app/logs` | Application logs (optional) |
+| `/app/logs`  | Application logs (optional)                |
 
 ## Health Check
 
@@ -114,33 +114,33 @@ spec:
         app: imas-mcp-server
     spec:
       containers:
-      - name: imas-mcp-server
-        image: ghcr.io/iterorganization/imas-mcp-server:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: PYTHONPATH
-          value: "/app"
-        volumeMounts:
-        - name: index-data
-          mountPath: /app/index
-          readOnly: true
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
+        - name: imas-mcp-server
+          image: ghcr.io/iterorganization/imas-mcp-server:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: PYTHONPATH
+              value: "/app"
+          volumeMounts:
+            - name: index-data
+              mountPath: /app/index
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
-      - name: index-data
-        persistentVolumeClaim:
-          claimName: imas-index-pvc
+        - name: index-data
+          persistentVolumeClaim:
+            claimName: imas-index-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -150,9 +150,9 @@ spec:
   selector:
     app: imas-mcp-server
   ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 8000
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
   type: LoadBalancer
 ```
 
@@ -191,11 +191,13 @@ docker logs -f imas-mcp-server
 ### Common Issues
 
 1. **Container fails to start**
+
    - Check that port 8000 is available
    - Verify index files are properly mounted
    - Check logs: `docker-compose logs imas-mcp-server`
 
 2. **Index files not found**
+
    - Ensure the index directory exists and contains the necessary files
    - Check volume mount permissions
    - Verify the index files were built correctly
@@ -221,10 +223,12 @@ docker run -d \
 The project includes GitHub Actions workflows for:
 
 1. **Testing** (`.github/workflows/test.yml`)
+
    - Runs on every push and PR
    - Executes linting, formatting, and tests
 
 2. **Container Build** (`.github/workflows/docker-build-push.yml`)
+
    - Builds and pushes containers to GHCR
    - Supports multi-architecture builds (amd64, arm64)
    - Runs on pushes to main and tagged releases
