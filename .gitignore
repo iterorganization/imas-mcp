@@ -34,7 +34,6 @@ coverage.xml
 
 # IDE files
 .idea/
-.vscode/
 *.swp
 *.swo
 

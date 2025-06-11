@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "imas-mcp-server": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "run-server"]
+    }
+  }
+}
