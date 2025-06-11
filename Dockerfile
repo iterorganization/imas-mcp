@@ -25,21 +25,26 @@ COPY scripts/ ./scripts/
 # Force fresh install to ensure imas-data-dictionary is up to date
 RUN uv sync --no-cache
 
-# Discover the required index name and copy only necessary index files
-RUN INDEX_NAME=$(uv run get-index-name) && \
-    echo "Discovered index name: $INDEX_NAME" && \
-    mkdir -p ./index_temp && \
-    echo "Copying index files for: $INDEX_NAME"
+# Build the index to ensure it exists for CI/CD deployments
+# This will create the index if it doesn't exist or verify it exists
+RUN echo "Building/verifying index..." && \
+    INDEX_NAME=$(uv run build-index) && \
+    echo "Index name: $INDEX_NAME"
 
-# Copy only the necessary index files based on the discovered index name
+# Copy existing index files from host if they exist, otherwise use the built index
 COPY index/ ./index_temp/
 RUN INDEX_NAME=$(uv run get-index-name) && \
-    mkdir -p ./index && \
+    echo "Processing index files for: $INDEX_NAME" && \
+    if [ "$(ls -A ./index_temp/${INDEX_NAME}* 2>/dev/null)" ]; then \
+    echo "Using existing index files from host..." && \
     cp ./index_temp/${INDEX_NAME}*.seg ./index/ 2>/dev/null || true && \
     cp ./index_temp/_${INDEX_NAME}*.toc ./index/ 2>/dev/null || true && \
-    cp ./index_temp/${INDEX_NAME}*WRITELOCK ./index/ 2>/dev/null || true && \
+    cp ./index_temp/${INDEX_NAME}*WRITELOCK ./index/ 2>/dev/null || true; \
+    else \
+    echo "Using built index files..."; \
+    fi && \
     rm -rf ./index_temp && \
-    echo "Copied index files for: $INDEX_NAME" && \
+    echo "Final index files:" && \
     ls -la ./index/
 
 # Verify that imas-data-dictionary is properly installed with IDSDef.xml

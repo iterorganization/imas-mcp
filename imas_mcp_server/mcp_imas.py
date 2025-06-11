@@ -497,19 +497,19 @@ def run_server(transport: str, host: str, port: int, log_level: str) -> None:
     logging.basicConfig(level=getattr(logging, log_level))
     logger.info(f"Starting MCP server with transport={transport}")
 
-    if transport == "stdio":
-        logger.info("Using STDIO transport")
-    else:
-        logger.info(f"Using {transport} transport on {host}:{port}")
+    match transport:
+        case "stdio":
+            logger.info("Using STDIO transport")
+        case _:
+            logger.info(f"Using {transport} transport on {host}:{port}")
 
     try:
         # Build kwargs for mcp.run()
-        if transport == "stdio":
-            mcp.run(transport="stdio")
-        elif transport == "sse":
-            mcp.run(transport="sse", host=host, port=port)
-        elif transport == "streamable-http":
-            mcp.run(transport="streamable-http", host=host, port=port)
+        match transport:
+            case "stdio":
+                mcp.run(transport="stdio")
+            case "sse" | "streamable-http":
+                mcp.run(transport=transport, host=host, port=port)
     except KeyboardInterrupt:
         logger.info("Stopping MCP server...")
 
