@@ -1,44 +1,71 @@
 # Makefile for imas-mcp-server
 
-.PHONY: build-index install install-dev clean test run package publish typecheck
+.PHONY: install install-dev clean test run package docker-build docker-run
 
-# Build the path index
-build-index:
-	python build_index.py
-
-# Install in development mode
+# Install dependencies
 install:
-	poetry install
+	uv sync --no-dev
 
 # Install with development dependencies
 install-dev:
-	poetry install --with dev
+	uv sync
 
-# Clean up build artifacts
+# Clean up build artifacts and cache
 clean:
-	@if exist imas_mcp_server\cache\*.pkl del /q imas_mcp_server\cache\*.pkl
+	@if exist imas_mcp_server\__pycache__ rmdir /s /q imas_mcp_server\__pycache__
+	@if exist tests\__pycache__ rmdir /s /q tests\__pycache__
+	@if exist scripts\__pycache__ rmdir /s /q scripts\__pycache__
 	@if exist build rmdir /s /q build
 	@if exist dist rmdir /s /q dist
 	@if exist *.egg-info rmdir /s /q *.egg-info
 	@if exist __pycache__ rmdir /s /q __pycache__
-	poetry cache clear --all --no-interaction
+	@if exist .coverage del /q .coverage
+	@if exist htmlcov rmdir /s /q htmlcov
 
-# Run tests
+# Run tests with coverage
 test:
-	poetry run pytest
+	uv run pytest --cov=imas_mcp_server --cov-report=html --cov-report=term
 
-# Type check with mypy
-typecheck:
-	poetry run mypy .
+# Run tests without coverage
+test-fast:
+	uv run pytest
 
-# Run the server
+# Run the server (default STDIO transport)
 run:
-	poetry run python -m mcp_imas
+	uv run run-server
+
+# Run the server with SSE transport
+run-sse:
+	uv run run-server --transport sse --host 0.0.0.0 --port 8000
+
+# Run the server with streamable-http transport
+run-http:
+	uv run run-server --transport streamable-http --host 0.0.0.0 --port 8000
+
+# Get index name (useful for debugging)
+index-name:
+	uv run get-index-name
 
 # Build the package
 package:
-	poetry build
+	uv build
 
-# Publish to PyPI (requires credentials)
-publish:
-	poetry publish --build
+# Docker build
+docker-build:
+	docker build -t imas-mcp-server .
+
+# Docker run
+docker-run:
+	docker run -p 8000:8000 imas-mcp-server
+
+# Format code with black
+format:
+	uv run black imas_mcp_server tests scripts
+
+# Lint with ruff
+lint:
+	uv run ruff check imas_mcp_server tests scripts
+
+# Fix linting issues
+lint-fix:
+	uv run ruff check --fix imas_mcp_server tests scripts
