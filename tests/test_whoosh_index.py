@@ -21,6 +21,7 @@ def test_whoosh_index_with_dir(tmp_path):
 
     # Create an instance of WhooshIndex
     whoosh_index = WhooshIndex(dirname)
+    _ = whoosh_index._index  # Access the index to ensure it is created
 
     # Check if the index is created with the correct schema
     assert whoosh_index.schema == schema
