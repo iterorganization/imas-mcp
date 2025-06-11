@@ -27,7 +27,12 @@ RUN uv sync --no-cache
 
 # Build the index to ensure it exists for CI/CD deployments
 # This will create the index if it doesn't exist or verify it exists
-RUN echo "Building/verifying index..." && \
+# Add build args to bust cache when source code or dependencies change
+ARG IMAS_INFO
+ARG SOURCE_HASH
+ENV IMAS_INFO=${IMAS_INFO}
+ENV SOURCE_HASH=${SOURCE_HASH}
+RUN echo "Building/verifying index with IMAS_INFO: $IMAS_INFO, SOURCE_HASH: $SOURCE_HASH" && \
     INDEX_NAME=$(uv run build-index) && \
     echo "Index name: $INDEX_NAME"
 
