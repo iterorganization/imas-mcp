@@ -41,7 +41,6 @@ if __name__ == "__main__":
     # Set up logging
     logging.basicConfig(level=logging.INFO)
 
-    # Example usage with Rich progress bar including time remaining indicator
     # Use a smaller subset for testing to avoid hanging on large datasets
     index = LexicographicSearch()
 

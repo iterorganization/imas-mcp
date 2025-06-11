@@ -95,6 +95,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             IMAS_INFO=${{ steps.imas-info.outputs.info }}
+            BUILDKIT_INLINE_CACHE=1
+            SOURCE_HASH=${{ steps.cache-key.outputs.index-files-hash }}
           cache-from: type=gha,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
           cache-to: type=gha,mode=max,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
 
