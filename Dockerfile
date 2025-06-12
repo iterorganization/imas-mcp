@@ -2,12 +2,15 @@
 FROM python:3.12-slim
 
 # Install system dependencies including git for git dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Use --mount=cache for apt cache to speed up builds
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# Install uv package manager - use specific version for reproducibility
+COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
@@ -17,23 +20,26 @@ COPY .git/ ./.git/
 COPY pyproject.toml uv.lock* ./
 COPY README.md ./
 
-# Install dependencies using uv (git context is now available for hatch-vcs)
-RUN uv sync
+# Install dependencies using uv with cache mount for faster builds
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --frozen
 
 # Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 
+# Copy index files if present in build context
+COPY index/ ./index/
+
 # Add build arg for IDS filter - supports space-separated list or empty for all IDS
 ARG IDS_FILTER=""
 
-# Set environment variables before running scripts
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
-ENV IDS_FILTER=${IDS_FILTER}
-
-# Copy index files if present in build context, using a pattern that won't fail
-COPY index/ ./index/
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app" \
+    IDS_FILTER=${IDS_FILTER} \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Build IDS arguments, filter existing index files, and build/verify index in single layer
 RUN set -e && \
