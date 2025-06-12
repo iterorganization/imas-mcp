@@ -15,12 +15,13 @@ WORKDIR /app
 # Copy git directory and essential files for versioning with hatch-vcs
 COPY .git/ ./.git/
 COPY pyproject.toml uv.lock* ./
+COPY README.md ./
 
 # Install dependencies using uv (git context is now available for hatch-vcs)
 # Force fresh install to ensure imas-data-dictionary is up to date
 RUN uv sync --no-cache
 
-# Copy source code, scripts, and documentation after dependency installation
+# Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 COPY README.md ./
