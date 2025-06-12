@@ -20,4 +20,14 @@
   "python.testing.cwd": "${workspaceFolder}",
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
   "python.analysis.typeCheckingMode": "basic",
+  "chat.mcp.serverSampling": {
+    "imas-mcp-server/.vscode/mcp.json: docker_mcp": {
+      "allowedModels": [
+        "github.copilot-chat/gpt-4.1",
+        "github.copilot-chat/claude-3.7-sonnet",
+        "github.copilot-chat/claude-sonnet-4",
+        "github.copilot-chat/gemini-2.5-pro"
+      ]
+    }
+  }
 }

@@ -3,16 +3,11 @@
     "run-server": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server"]
-    },
-    "imas-mcp-docker": {
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "ghcr.io/simon-mcintosh/imas-mcp-server:latest"
-      ]
+      "args": ["run", "run-server", "--auto-build"]
+    }, 
+    "docker_mcp": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp/"
     }
   }
 }

@@ -5,7 +5,6 @@ from typing import Final, Literal
 from imas_mcp_server.data_dictionary_index import DataDictionaryIndex
 from imas_mcp_server.whoosh_index import WhooshIndex
 
-
 IndexPrefixT = Literal["lexicographic"]
 
 # Module-level logger
@@ -42,7 +41,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # Use a smaller subset for testing to avoid hanging on large datasets
-    index = LexicographicSearch()
+    index = LexicographicSearch(auto_build=False)
 
     # index.build_index()
     print(index.search_by_exact_path("pf_active/coil/name"))
