@@ -17,17 +17,19 @@ WORKDIR /app
 
 # Copy git directory and essential files for versioning with hatch-vcs
 COPY .git/ ./.git/
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml ./
 COPY README.md ./
 
 # Install dependencies using uv with cache mount for faster builds
-# Use --no-editable to avoid issues with dynamic versioning in editable packages
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --frozen --no-editable
+    uv sync --no-install-project --link-mode=copy
 
 # Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
+
+# Install the project itself (non-editable) after copying source code
+RUN uv pip install --no-deps --link-mode=copy .
 
 # Copy index files if present in build context
 COPY index/ ./index/
