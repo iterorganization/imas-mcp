@@ -25,7 +25,9 @@ COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 COPY README.md ./
 
-# Copy any existing index files from host, then build/verify index
+# Create index directory and copy any existing index files (for local development)
+# Note: Ensure index/ directory exists in build context (even if empty)
+RUN mkdir -p ./index
 COPY index/ ./index/
 RUN echo "Building/verifying index" && \
     INDEX_NAME=$(uv run build-index) && \
