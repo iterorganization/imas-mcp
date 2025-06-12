@@ -1,1 +1,1 @@
-# Scripts package for imas-mcp-server
+# Scripts package for run-server

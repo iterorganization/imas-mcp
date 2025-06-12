@@ -30,8 +30,8 @@ Examples:
 See __main__.py in the root directory for complete documentation and examples.
 """
 
-if __name__ == "__main__":
-    from .mcp_imas import run_server
+from scripts.run_server import run_server
 
+if __name__ == "__main__":
     # Expose the full Click CLI interface
     run_server()

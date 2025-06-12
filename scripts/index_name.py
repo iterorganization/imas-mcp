@@ -14,13 +14,13 @@ from imas_mcp_server.lexicographic_search import LexicographicSearch
 @click.command()
 @click.option(
     "--ids-filter",
-    multiple=True,
-    help="Specific IDS names to include in the index name calculation (can be used multiple times)",
+    type=str,
+    help="Specific IDS names to include in the index name calculation as a space-separated string (e.g., 'core_profiles equilibrium')",
 )
 @click.option(
     "--verbose", "-v", is_flag=True, help="Show additional information about the index"
 )
-def main(ids_filter: tuple, verbose: bool) -> int:
+def index_name(ids_filter: str, verbose: bool) -> int:
     """Get the exact index name for the LexicographicSearch class.
 
     This command prints the exact index name that would be used for the given
@@ -29,10 +29,11 @@ def main(ids_filter: tuple, verbose: bool) -> int:
 
     Examples:
         get-index-name                                      # Get default index name
-        get-index-name --ids-filter core_profiles           # Get name for specific IDS
-        get-index-name -v                                   # Show additional info"""
-    try:  # Convert ids_filter tuple to set if provided
-        ids_set: Optional[set] = set(ids_filter) if ids_filter else None
+        get-index-name --ids-filter "core_profiles equilibrium"   # Get name for specific IDS
+        get-index-name -v                                   # Show additional info
+    """
+    try:  # Parse ids_filter string into a set if provided
+        ids_set: Optional[set] = set(ids_filter.split()) if ids_filter else None
 
         # Initialize the search class (without building)
         search = LexicographicSearch(ids_set=ids_set, auto_build=False)
@@ -55,4 +56,4 @@ def main(ids_filter: tuple, verbose: bool) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(index_name())

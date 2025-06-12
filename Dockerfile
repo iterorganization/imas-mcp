@@ -17,22 +17,24 @@ WORKDIR /app
 
 # Copy git directory and essential files for versioning with hatch-vcs
 COPY .git/ ./.git/
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml ./
 COPY README.md ./
 
 # Install dependencies using uv with cache mount for faster builds
-# Use --no-editable to avoid issues with dynamic versioning in editable packages
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --frozen --no-editable
+    uv sync --no-install-project --link-mode=copy
 
 # Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 
+# Install the project itself (non-editable) after copying source code
+RUN uv pip install --no-deps --link-mode=copy .
+
 # Copy index files if present in build context
 COPY index/ ./index/
 
-# Add build arg for IDS filter - supports space-separated list or empty for all IDS
+# Add build arg for IDS filter - supports space-separated string (e.g., "core_profiles equilibrium") or empty for all IDS
 ARG IDS_FILTER=""
 
 # Set environment variables
@@ -42,29 +44,17 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Build IDS arguments, filter existing index files, and build/verify index in single layer
+# Build/verify index in single layer
 RUN set -e && \
-    echo "Processing IDS filter: '${IDS_FILTER}'" && \
-    if [ -n "${IDS_FILTER}" ]; then \
-    IDS_ARGS=""; \
-    for ids in ${IDS_FILTER}; do \
-    IDS_ARGS="$IDS_ARGS --ids-filter $ids"; \
-    done; \
-    else \
-    IDS_ARGS=""; \
-    echo "No IDS filter - using all IDS"; \
-    fi && \
-    echo "IDS arguments: $IDS_ARGS" && \
-    \
-    echo "Getting expected index name..." && \
-    INDEX_NAME=$(uv run index-name $IDS_ARGS) && \
+    echo "Get index name..." && \
+    INDEX_NAME=$(uv run index-name ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"}) && \
     echo "Pre-filtering index files to keep: $INDEX_NAME" && \
     find ./index/ -not -name "${INDEX_NAME}*" -not -name "." -not -name ".." -type f -delete && \
     echo "Pre-filtered index files:" && \
     ls -la ./index/ && \
     \
     echo "Building/verifying index..." && \
-    FINAL_INDEX_NAME=$(uv run build-index $IDS_ARGS | tail -n 1) && \
+    FINAL_INDEX_NAME=$(uv run build-index ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"} | tail -n 1) && \
     echo "Index built/verified: $FINAL_INDEX_NAME" && \
     \
     echo "Asserting index names match..." && \
@@ -82,4 +72,11 @@ RUN set -e && \
 EXPOSE 8000
 
 # Run the application using the script entrypoint with streamable-http transport
-CMD ["uv", "run", "run-server", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "\
+    exec uv run run-server \
+    --transport streamable-http \
+    --host 0.0.0.0 \
+    --port 8000 \
+    ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
+    --no-auto-build\
+    "]
