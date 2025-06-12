@@ -1,35 +1,60 @@
-# Start with a Python 3.12 slim image
-FROM python:3.12-slim
+# Build stage - handles git dependencies and creates virtual environment
+FROM python:3.12-slim AS builder
 
 # Install system dependencies including git for git dependencies
-# Use --mount=cache for apt cache to speed up builds
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager - use specific version for reproducibility
+# Install uv package manager
 COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files and git metadata 
-COPY .git/ ./.git/
+# Copy dependency and git metadata files first (for better caching)
 COPY pyproject.toml ./
 COPY README.md ./
+COPY .git/ ./.git/
 
-# Install dependencies using uv with cache mount for faster builds
+# Install dependencies only (without the project itself)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-install-project --link-mode=copy
 
-# Copy source code and scripts after dependency installation
+# Copy source code and git metadata for dynamic versioning
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 
-# Install the project itself (non-editable) after copying source code
+# Install the project itself with no-deps (dependencies already installed)
 RUN uv pip install --no-deps --link-mode=copy .
+
+# Runtime stage - minimal image with only installed packages
+FROM python:3.12-slim AS runtime
+
+# Install minimal runtime dependencies (git might be needed for some packages at runtime)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv package manager for runtime
+COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
+
+# Set working directory
+WORKDIR /app
+
+# Copy the virtual environment from builder stage
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy source code (needed for runtime)
+COPY --from=builder /app/imas_mcp_server ./imas_mcp_server/
+COPY --from=builder /app/scripts ./scripts/
+
+# Copy git metadata for runtime version detection (smaller impact on cache)
+COPY .git/ ./.git/
 
 # Copy index files if present in build context
 COPY index/ ./index/
