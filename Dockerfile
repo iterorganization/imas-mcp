@@ -24,19 +24,24 @@ RUN uv sync --no-cache
 # Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
-COPY README.md ./
+
+# Add build args to bust cache when source code or dependencies change
+ARG IMAS_INFO
+ARG SOURCE_HASH
+ENV IMAS_INFO=${IMAS_INFO}
+ENV SOURCE_HASH=${SOURCE_HASH}
+
+# Set environment variables before running scripts
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 
 # Copy index files if present in build context, using a pattern that won't fail
-COPY index ./index/
+COPY index/ ./index/
 RUN echo "Building/verifying index" && \
     INDEX_NAME=$(uv run build-index) && \
     echo "Index built/verified: $INDEX_NAME" && \
     echo "Final index files:" && \
     ls -la ./index/
-
-# Set environment variables
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
 
 # Expose port 
 EXPOSE 8000
