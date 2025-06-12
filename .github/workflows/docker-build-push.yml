@@ -49,38 +49,6 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Get imas-data-dictionary info from uv.lock
-        id: imas-info
-        run: |
-          if [ -f "uv.lock" ]; then
-            # Extract version from uv.lock
-            VERSION=$(grep -A 2 'name = "imas-data-dictionary"' uv.lock | grep 'version = ' | cut -d'"' -f2)
-            # Extract git hash from source line
-            GIT_HASH=$(grep -A 3 'name = "imas-data-dictionary"' uv.lock | grep 'source = ' | grep -o '#[a-f0-9]*' | cut -c2- | head -c8)
-            IMAS_INFO="${VERSION}-${GIT_HASH}"
-          else
-            IMAS_INFO="no-lock-file"
-          fi          echo "info=${IMAS_INFO}" >> $GITHUB_OUTPUT
-          echo "Found imas-data-dictionary info: ${IMAS_INFO}"
-
-      - name: Get cache key components
-        id: cache-key
-        run: |
-          # Get hash of Dockerfile
-          DOCKERFILE_HASH=$(sha256sum Dockerfile | cut -d' ' -f1)
-          echo "dockerfile-hash=${DOCKERFILE_HASH}" >> $GITHUB_OUTPUT
-
-          # Use the imas info from uv.lock
-          IMAS_INFO="${{ steps.imas-info.outputs.info }}"
-          echo "imas-info=${IMAS_INFO}" >> $GITHUB_OUTPUT          # Get hash of indexing-related Python files
-          INDEX_FILES_HASH=$(find imas_mcp_server/ -name "*.py" -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
-          echo "index-files-hash=${INDEX_FILES_HASH}" >> $GITHUB_OUTPUT
-
-          # Create combined cache key
-          CACHE_KEY="${DOCKERFILE_HASH}-${IMAS_INFO}-${INDEX_FILES_HASH}"
-          echo "cache-key=${CACHE_KEY}" >> $GITHUB_OUTPUT
-          echo "Cache key: ${CACHE_KEY}"
-
       - name: Build and push Docker image
         id: build
         uses: docker/build-push-action@v6
@@ -90,13 +58,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true
-          build-args: |
-            IMAS_INFO=${{ steps.imas-info.outputs.info }}
-            BUILDKIT_INLINE_CACHE=1
-            SOURCE_HASH=${{ steps.cache-key.outputs.index-files-hash }}
-          # cache-from: type=gha,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
-          # cache-to: type=gha,mode=max,scope=buildcache-${{ steps.cache-key.outputs.cache-key }}
+          cache-from: type=gha,scope=build-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 
       - name: Generate artifact attestation
         if: github.event_name != 'pull_request'
