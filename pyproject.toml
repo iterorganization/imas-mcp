@@ -22,7 +22,7 @@ dependencies = [
     "s3fs>=2025.5.0,<2026.0.0",
     "nest-asyncio>=1.5.0,<2.0.0",
     "click>=8.0.0,<9.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@feature/packaging",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop",
 ]
 
 [project.optional-dependencies]
