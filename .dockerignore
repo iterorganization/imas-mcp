@@ -1,6 +1,5 @@
-# Git directory - excluded from build context for better caching
-# Will be copied explicitly in Dockerfile when needed for versioning
-.git/
+# Multi-stage build optimization
+# Keep .git for dynamic versioning but minimize other cache-busting files
 
 # Python cache files
 __pycache__/
