@@ -58,6 +58,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IDS_FILTER=pf_active pf_passive
           cache-from: type=gha,scope=build-${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 

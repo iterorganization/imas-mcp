@@ -57,7 +57,7 @@ def main(verbose: bool, quiet: bool, force: bool, ids_filter: tuple) -> int:
             logger.info(f"Building index for specific IDS: {sorted(ids_set_filter)}")
 
         # Initialize the search class
-        search = LexicographicSearch(ids_set=ids_set_filter, build=False)
+        search = LexicographicSearch(ids_set=ids_set_filter, auto_build=False)
 
         # Check if we need to build
         should_build = force or len(search) == 0
