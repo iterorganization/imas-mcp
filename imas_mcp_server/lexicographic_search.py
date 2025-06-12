@@ -18,11 +18,11 @@ class LexicographicSearch(WhooshIndex, DataDictionaryIndex):
 
     INDEX_PREFIX: Final[IndexPrefixT] = "lexicographic"
 
-    build: InitVar[bool] = True
+    auto_build: InitVar[bool] = True
 
-    def __post_init__(self, build: bool) -> None:
+    def __post_init__(self, auto_build: bool) -> None:
         super().__post_init__()
-        if build and len(self) == 0:
+        if auto_build and len(self) == 0:
             self.build_index()
 
     @property

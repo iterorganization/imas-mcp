@@ -44,7 +44,7 @@ Repository = "https://github.com/simon-mcintosh/imas-mcp-server"
 [project.scripts]
 imas-mcp-server = "imas_mcp_server.mcp_imas:run_server"
 run-server = "imas_mcp_server.mcp_imas:run_server"
-get-index-name = "scripts.get_index_name:main"
+index-name = "scripts.index_name:main"
 build-index = "scripts.build_index:main"
 
 [tool.hatch.version]

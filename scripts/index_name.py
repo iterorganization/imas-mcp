@@ -35,7 +35,7 @@ def main(ids_filter: tuple, verbose: bool) -> int:
         ids_set: Optional[set] = set(ids_filter) if ids_filter else None
 
         # Initialize the search class (without building)
-        search = LexicographicSearch(ids_set=ids_set, build=False)
+        search = LexicographicSearch(ids_set=ids_set, auto_build=False)
 
         if verbose:
             click.echo(f"Data Dictionary version: {search.dd_version}", err=True)
