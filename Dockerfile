@@ -21,8 +21,9 @@ COPY pyproject.toml uv.lock* ./
 COPY README.md ./
 
 # Install dependencies using uv with cache mount for faster builds
+# Use --no-editable to avoid issues with dynamic versioning in editable packages
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --frozen
+    uv sync --frozen --no-editable
 
 # Copy source code and scripts after dependency installation
 COPY imas_mcp_server/ ./imas_mcp_server/
