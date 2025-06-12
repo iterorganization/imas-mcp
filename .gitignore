@@ -5,8 +5,9 @@ __pycache__/
 *.so
 
 # Whoosh index 
-cache/
-index/
+# Ignore all files in index directory but keep the directory structure
+index/*
+!index/.gitkeep
 
 # Distribution / packaging
 dist/

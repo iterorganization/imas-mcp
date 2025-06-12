@@ -1,0 +1,2 @@
+# This file ensures the index/ directory is tracked by Git
+# while all other files in this directory are ignored via .gitignore

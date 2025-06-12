@@ -25,10 +25,8 @@ COPY imas_mcp_server/ ./imas_mcp_server/
 COPY scripts/ ./scripts/
 COPY README.md ./
 
-# Create index directory and copy any existing index files (for local development)
-# Note: Ensure index/ directory exists in build context (even if empty)
-RUN mkdir -p ./index
-COPY index/ ./index/
+# Copy index files if present in build context, using a pattern that won't fail
+COPY index ./index/
 RUN echo "Building/verifying index" && \
     INDEX_NAME=$(uv run build-index) && \
     echo "Index built/verified: $INDEX_NAME" && \
