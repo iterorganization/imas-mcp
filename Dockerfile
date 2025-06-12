@@ -15,7 +15,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
-# Copy git directory and essential files for versioning with hatch-vcs
+# Copy dependency files and git metadata 
 COPY .git/ ./.git/
 COPY pyproject.toml ./
 COPY README.md ./
