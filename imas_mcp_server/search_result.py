@@ -37,8 +37,14 @@ class DataDictionaryEntry(IndexableDocument):
 
     @pydantic.field_validator("units", mode="after")
     @classmethod
-    def parse_units(cls, units: str) -> str:
+    def parse_units(cls, units: str, info: pydantic.ValidationInfo) -> str:
         """Return units formatted as custom UDUNITS."""
+        context = info.context or {}
+        skip_unit_parsing = context.get("skip_unit_parsing", False)
+
+        if skip_unit_parsing:
+            return units
+
         if units.endswith("^dimension"):
             # Handle units with '^dimension' suffix
             # This is a workaround for the IMAS DD units that have a '^dimension' suffix
@@ -57,7 +63,7 @@ class DataDictionaryEntry(IndexableDocument):
         """Update unset fields."""
         if self.ids_name is None:
             self.ids_name = self.path.split("/")[0]
-        if self.path_segments is None:  # Updated to use self.path_segments
+        if self.path_segments is None:
             self.path_segments = " ".join(self.path.split("/"))
         return self
 

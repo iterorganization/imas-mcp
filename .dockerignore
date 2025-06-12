@@ -35,3 +35,9 @@ build/
 
 # Logs
 *.log
+
+# Git files
+.git/objects/
+.git/refs/remotes/
+.git/logs/
+.git/hooks/
