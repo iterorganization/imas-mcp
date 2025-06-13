@@ -20,7 +20,7 @@ pip install imas-mcp-server
 uv add imas-mcp-server
 
 # From source using uv
-git clone https://github.com/simon-mcintosh/imas-mcp-server.git
+git clone https://github.com/iterorganization/imas-mcp-server.git
 cd imas-mcp-server
 uv sync
 ```
@@ -33,10 +33,10 @@ During installation, the package will automatically build a path index that spee
 
 ```bash
 # Using the installed command
-imas-mcp
+run-server
 
 # Or directly with Python
-python -m imas-mcp-server
+python -m imas_mcp_server
 ```
 
 ### Python API
