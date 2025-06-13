@@ -14,12 +14,14 @@ COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
 # Set working directory
 WORKDIR /app
 
-# Add build arg for IDS filter
+# Add build args for IDS filter and transport
 ARG IDS_FILTER=""
+ARG TRANSPORT="streamable-http"
 
 # Set environment variables
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
+    TRANSPORT=${TRANSPORT} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
@@ -68,13 +70,13 @@ RUN set -e && \
     echo "Final index files:" && \
     ls -la ./index/ 2>/dev/null || echo "No index files"
 
-# Expose port
+# Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
-# Run the application
+# Run the application (host and port only needed for streamable-http transport)
 CMD ["sh", "-c", "\
     exec uv run run-server \
-    --transport streamable-http \
+    --transport ${TRANSPORT} \
     --host 0.0.0.0 \
     --port 8000 \
     ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
