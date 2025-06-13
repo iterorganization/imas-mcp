@@ -115,7 +115,7 @@ More Information:
 """
 
 if __name__ == "__main__":
-    from imas_mcp_server.mcp_imas import run_server
+    from imas_mcp_server.server import run_server
 
     # Expose the Click CLI interface directly
     run_server()
