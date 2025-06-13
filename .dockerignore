@@ -36,8 +36,9 @@ build/
 # Logs
 *.log
 
-# Git files
-.git/objects/
+# Git files - keep essential ones for dynamic versioning
+# .git/objects/  # Keep objects for setuptools-scm
+# .git/refs/     # Keep refs for setuptools-scm
 .git/refs/remotes/
 .git/logs/
 .git/hooks/
