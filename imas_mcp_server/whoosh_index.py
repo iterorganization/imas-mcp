@@ -40,6 +40,7 @@ class WhooshIndex:
     indexname: Optional[str] = field(default=None)
     schema: Optional[whoosh.fields.Schema] = field(default=None, repr=False)
     document_model: Type[DataDictionaryEntry] = field(default=DataDictionaryEntry)
+    skip_unit_parsing: bool = True
 
     _writer: whoosh.writing.IndexWriter | None = field(
         init=False, default=None, repr=False
@@ -47,6 +48,13 @@ class WhooshIndex:
     _unit_error: dict[str, list[str]] = field(
         init=False, repr=False, default_factory=dict
     )
+
+    @property
+    def _validation_context(self) -> Dict[str, Any]:
+        """Build validation context for Pydantic models."""
+        return {
+            "skip_unit_parsing": self.skip_unit_parsing,
+        }
 
     def __len__(self) -> int:
         """Return the number of documents in the Whoosh index."""
@@ -112,7 +120,9 @@ class WhooshIndex:
         Raises:
             pydantic.ValidationError: If document does not match the model schema.
         """
-        validated_document = self.document_model(**document).model_dump()
+        validated_document = self.document_model.model_validate(
+            document, context=self._validation_context
+        ).model_dump()
         assert isinstance(validated_document, dict)
         return validated_document
 

@@ -1,0 +1,44 @@
+# Multi-stage build optimization
+# Keep .git for dynamic versioning but minimize other cache-busting files
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# Git files - keep essential ones for dynamic versioning
+# .git/objects/  # Keep objects for setuptools-scm
+# .git/refs/     # Keep refs for setuptools-scm
+.git/refs/remotes/
+.git/logs/
+.git/hooks/

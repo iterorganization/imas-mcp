@@ -20,10 +20,10 @@ from imas_mcp_server.lexicographic_search import LexicographicSearch
 )
 @click.option(
     "--ids-filter",
-    multiple=True,
-    help="Specific IDS names to include in the index (can be used multiple times)",
+    type=str,
+    help="Specific IDS names to include in the index as a space-separated string (e.g., 'core_profiles equilibrium')",
 )
-def main(verbose: bool, quiet: bool, force: bool, ids_filter: tuple) -> int:
+def build_index(verbose: bool, quiet: bool, force: bool, ids_filter: str) -> int:
     """Build the lexicographic search index for the IMAS Data Dictionary.
 
     This command initializes a LexicographicSearch instance and builds the index
@@ -33,7 +33,7 @@ def main(verbose: bool, quiet: bool, force: bool, ids_filter: tuple) -> int:
         build-index                    # Build index with default settings
         build-index -v                 # Build with verbose logging
         build-index -f                 # Force rebuild even if exists
-        build-index --ids-filter core_profiles --ids-filter equilibrium  # Build specific IDS only"""
+        build-index --ids-filter "core_profiles equilibrium"  # Build specific IDS only"""
     # Set up logging level
     if quiet:
         log_level = logging.ERROR
@@ -49,15 +49,15 @@ def main(verbose: bool, quiet: bool, force: bool, ids_filter: tuple) -> int:
     logger = logging.getLogger(__name__)
 
     try:
-        logger.info("Starting index build process...")
-
-        # Convert ids_filter tuple to set if provided
-        ids_set_filter: Optional[set] = set(ids_filter) if ids_filter else None
-        if ids_set_filter:
-            logger.info(f"Building index for specific IDS: {sorted(ids_set_filter)}")
+        logger.info(
+            "Starting index build process..."
+        )  # Parse ids_filter string into a set if provided
+        ids_set: Optional[set] = set(ids_filter.split()) if ids_filter else None
+        if ids_set:
+            logger.info(f"Building index for specific IDS: {sorted(ids_set)}")
 
         # Initialize the search class
-        search = LexicographicSearch(ids_set=ids_set_filter, auto_build=False)
+        search = LexicographicSearch(ids_set=ids_set, auto_build=False)
 
         # Check if we need to build
         should_build = force or len(search) == 0
@@ -91,4 +91,4 @@ def main(verbose: bool, quiet: bool, force: bool, ids_filter: tuple) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(build_index())

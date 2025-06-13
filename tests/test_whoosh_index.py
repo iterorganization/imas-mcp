@@ -178,7 +178,7 @@ def test_unit_error(tmp_path):
     dirname = tmp_path
 
     # Create an instance of WhooshIndex
-    whoosh_index = WhooshIndex(dirname)
+    whoosh_index = WhooshIndex(dirname, skip_unit_parsing=False)
 
     # Add a document to the index
     with whoosh_index.writer():

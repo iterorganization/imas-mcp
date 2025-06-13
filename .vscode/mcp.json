@@ -1,9 +1,19 @@
 {
   "servers": {
-    "imas-mcp-server": {
+    "imas-local-stdio": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server"]
-    }
+      "args": ["run", "run-server", "--auto-build"]
+    },
+    "imas-docker-stdio": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "ghcr.io/simon-mcintosh/imas-mcp-server:latest-stdio"
+      ]
+    },
   }
 }
