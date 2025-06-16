@@ -94,6 +94,7 @@ jobs:
           cache-from: |
             type=gha,scope=build-main
             type=gha,scope=build-${{ github.ref_name }}
+          cache-from: type=gha,scope=build-${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 
       - name: Generate artifact attestation
