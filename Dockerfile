@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Install imas-data-dictionary manually from git (needed for index building)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv add "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
+    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
 
 # Copy source code (separate layer for better caching)
 COPY imas_mcp/ ./imas_mcp/
