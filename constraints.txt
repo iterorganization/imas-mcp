@@ -1,2 +1,0 @@
-# constraints.txt - Shared dependency versions
-imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89
