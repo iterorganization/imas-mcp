@@ -507,12 +507,18 @@ class Server:
             host: Host to bind to
             port: Port to bind to
         """
-        # Get the FastMCP ASGI app
-        app = self.mcp.http_app()
+        try:
+            # Get the FastMCP ASGI app
+            app = self.mcp.http_app()
 
-        # Add health endpoint using Starlette routing
-        from starlette.responses import JSONResponse
-        from starlette.routing import Route
+            # Add health endpoint using Starlette routing
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+        except ImportError as e:
+            raise ImportError(
+                "HTTP transport requires additional dependencies. "
+                "Install with: pip install imas-mcp[http]"
+            ) from e
 
         async def health_endpoint(request):
             """Health check endpoint that verifies the search index is accessible."""
@@ -542,9 +548,8 @@ class Server:
                         "transport": "streamable-http",
                     },
                     status_code=503,
-                )
+                )  # Add the health route to the existing app
 
-        # Add the health route to the existing app
         health_route = Route("/health", health_endpoint, methods=["GET"])
         app.routes.append(health_route)
 
@@ -553,7 +558,13 @@ class Server:
         )
 
         # Run with uvicorn
-        import uvicorn
+        try:
+            import uvicorn
+        except ImportError as e:
+            raise ImportError(
+                "HTTP transport requires additional dependencies. "
+                "Install with: pip install imas-mcp[http]"
+            ) from e
 
         uvicorn.run(app, host=host, port=port, log_level="info")
 

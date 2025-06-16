@@ -19,7 +19,6 @@ from typing import (
 )
 import xml.etree.ElementTree as ET
 
-import imas_data_dictionary
 from packaging.version import Version
 from rich.progress import (
     BarColumn,
@@ -30,6 +29,8 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+
+from imas_mcp.dd_accessor import create_dd_accessor, DataDictionaryAccessor
 
 IndexPrefixT = Literal["lexicographic", "semantic"]
 
@@ -50,12 +51,23 @@ class DataDictionaryIndex(abc.ABC):
         default_factory=lambda: Path(__file__).resolve().parents[1] / "index"
     )
     indexname: Optional[str] = field(default=None)
+    _dd_accessor: Optional[DataDictionaryAccessor] = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Common initialization for all handlers."""
         logger.info(f"Initializing DataDictionaryIndex with ids_set: {self.ids_set}")
         self.indexname = self._get_index_name()
         self.dirname.mkdir(parents=True, exist_ok=True)
+
+        # Create the DD accessor with fallback chain
+        self._dd_accessor = create_dd_accessor(
+            metadata_dir=self.dirname,
+            index_name=self.indexname,
+            index_prefix=self.index_prefix,
+        )
+
         logger.info(
             f"Initialized Data Dictionary index: {self.indexname} in {self.dirname}"
         )
@@ -93,26 +105,12 @@ class DataDictionaryIndex(abc.ABC):
     @functools.cached_property
     def dd_version(self) -> Version:
         """Return the IMAS DD version."""
-        return self._get_dd_version()
-
-    def _get_dd_version(self) -> Version:
-        """Return version from the IMAS DD XML tree."""
-        root = self._dd_etree.getroot()
-        assert root is not None, "Root element not found in XML tree after parsing."
-        version_elem = root.find(".//version")
-        if version_elem is None or version_elem.text is None:
-            # More specific error if version tag or its text is missing
-            raise ValueError(
-                "Version element or its text content not found in XML tree"
-            )
-        return Version(version_elem.text)
+        return self.dd_accessor.get_version()
 
     @functools.cached_property
     def _dd_etree(self) -> ET.ElementTree:
         """Return the IMAS DD XML element tree."""
-        xml_path = imas_data_dictionary.get_xml_resource("IDSDef.xml")
-        with xml_path.open("rb") as f:
-            return ET.parse(f)  # type: ignore
+        return self.dd_accessor.get_xml_tree()
 
     def _get_index_name(self) -> str:
         """Return the full index name based on prefix, IMAS DD version, and ids_set."""
@@ -609,3 +607,10 @@ class DataDictionaryIndex(abc.ABC):
             return False
 
         return True
+
+    @property
+    def dd_accessor(self) -> DataDictionaryAccessor:
+        """Return the data dictionary accessor."""
+        if self._dd_accessor is None:
+            raise RuntimeError("Data dictionary accessor not initialized")
+        return self._dd_accessor

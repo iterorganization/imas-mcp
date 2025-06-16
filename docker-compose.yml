@@ -1,11 +1,11 @@
 services:
   imas-mcp:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
       args:
         - BUILDKIT_INLINE_CACHE=1
-        - IDS_FILTER=${IDS_FILTER:-pf_active}
+        - IDS_FILTER=${IDS_FILTER}
         - TRANSPORT=${TRANSPORT:-streamable-http}
     ports:
       - "8000:8000"
