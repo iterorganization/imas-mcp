@@ -17,6 +17,13 @@ class CustomBuildHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: Dict[str, Any]) -> None:
         """Initialize the build hook and initialize the lexicographic index."""
+        # Configure logging to ensure progress messages are visible during build
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            force=True,  # Override any existing configuration
+        )
+
         logger = logging.getLogger(__name__)
         logger.info("Initializing lexicographic index build hook")
 
@@ -25,16 +32,23 @@ class CustomBuildHook(BuildHookInterface):
         ids_filter = self.config.get("ids-filter", "")  # Default builds full Dictionary
 
         if verbose:
+            logging.getLogger().setLevel(logging.DEBUG)
             logger.setLevel(logging.DEBUG)
 
-        logger.info("Initializing lexicographic index as part of wheel creation")
-
-        # Transform ids_filter from space-separated string to set
+        logger.info(
+            "Initializing lexicographic index as part of wheel creation"
+        )  # Transform ids_filter from space-separated string to set
         ids_set = None
         if ids_filter:
             ids_set = set(ids_filter.split())
             logger.info(f"Using IDS filter: {ids_filter}")
+        else:
+            logger.info("Building index for all available IDS (no filter specified)")
 
         # Initialize the index (this will create the index structure if needed)
-        LexicographicSearch(ids_set=ids_set)
-        logger.info("Lexicographic index initialized successfully")
+        logger.info("Starting lexicographic index creation...")
+        index = LexicographicSearch(ids_set=ids_set)
+        logger.info(
+            f"Lexicographic index created successfully with {len(index)} documents"
+        )
+        logger.info("Build hook initialization completed")

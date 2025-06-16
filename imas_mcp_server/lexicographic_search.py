@@ -21,8 +21,17 @@ class LexicographicSearch(WhooshIndex, DataDictionaryIndex):
 
     def __post_init__(self, auto_build: bool) -> None:
         super().__post_init__()
-        if auto_build and len(self) == 0:
-            self.build_index()
+        if auto_build:
+            current_count = len(self)
+            if current_count == 0:
+                logger.info("Index is empty, starting build process")
+                self.build_index()
+            else:
+                logger.info(
+                    f"Index already exists with {current_count} documents, skipping build"
+                )
+        else:
+            logger.info("Auto-build disabled, index will not be built automatically")
 
     @property
     def index_prefix(self) -> IndexPrefixT:
@@ -31,9 +40,24 @@ class LexicographicSearch(WhooshIndex, DataDictionaryIndex):
 
     def build_index(self):
         """Build the lexicographic search index."""
+        logger.info("Starting lexicographic index build process")
+        logger.info(
+            f"Target IDS set: {sorted(list(self.ids_set)) if self.ids_set else 'All available IDS'}"
+        )
+
+        batch_count = 0
+        total_documents = 0
+
         for document_batch in self._get_document_batch():
+            batch_count += 1
+            batch_size = len(document_batch)
+            total_documents += batch_size
+            logger.info(f"Processing batch {batch_count}: {batch_size} documents")
             self.add_document_batch(document_batch)
-        logger.info("Index building completed")
+
+        logger.info(
+            f"Index building completed: {total_documents} documents processed in {batch_count} batches"
+        )
 
 
 if __name__ == "__main__":
@@ -41,7 +65,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # Use a smaller subset for testing to avoid hanging on large datasets
-    index = LexicographicSearch(auto_build=False)
+    index = LexicographicSearch(auto_build=False, ids_set={"pf_active"})
 
-    # index.build_index()
+    index.build_index()
     print(index.search_by_exact_path("pf_active/coil/name"))

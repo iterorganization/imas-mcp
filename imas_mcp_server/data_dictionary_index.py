@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 import functools
 import hashlib
 import logging
+import os
 from pathlib import Path
+import sys
 import time
 from typing import (
     Any,
@@ -302,9 +304,9 @@ class DataDictionaryIndex(abc.ABC):
         """Return a list of IDS names relevant to this index.
         Extracts from DD based on current configuration.
         """
-        logger.info("Extracting IDS names from DD for current configuration.")
-
-        # Use _get_ids_set() which respects self.ids_set if provided, or gets all from DD
+        logger.info(
+            "Extracting IDS names from DD for current configuration."
+        )  # Use _get_ids_set() which respects self.ids_set if provided, or gets all from DD
         ids_set = self._get_ids_set()
         relevant_names = sorted(list(ids_set))  # Sort for consistency
 
@@ -312,18 +314,80 @@ class DataDictionaryIndex(abc.ABC):
 
     @contextmanager
     def _progress_tracker(self, description: str, total: Optional[int] = None):
-        """Context manager for Rich progress tracking with standardized columns."""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=20),
-            MofNCompleteColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-        ) as progress:
-            task = progress.add_task(description, total=total)
-            yield progress, task
+        """Context manager for progress tracking with fallback for non-interactive environments."""
+        if self._is_interactive_environment():
+            # Use rich progress for interactive environments
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(bar_width=20),
+                MofNCompleteColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+            ) as progress:
+                task = progress.add_task(description, total=total)
+                yield progress, task
+        else:
+            # Use fallback logging for non-interactive environments (Docker, CI/CD, etc.)
+            logger.info(f"Starting: {description} (total: {total or 'unknown'})")
+            start_time = (
+                time.time()
+            )  # Simple progress tracker for non-interactive environments
+
+            class SimpleProgressTracker:
+                def __init__(self):
+                    self.completed = 0
+                    self.last_log_time = start_time
+                    self.last_percentage = 0
+
+                def advance(self, task_id=None):
+                    """Advance progress counter. Task parameter accepted but ignored for compatibility."""
+                    self.completed += 1
+                    current_time = time.time()
+
+                    # Log progress every 5% or every 15 seconds for better visibility
+                    if total:
+                        percentage = (self.completed / total) * 100
+                        time_since_log = current_time - self.last_log_time
+
+                        if (percentage - self.last_percentage >= 5) or (
+                            time_since_log >= 15
+                        ):
+                            elapsed = current_time - start_time
+                            remaining = 0
+                            if percentage > 0:
+                                remaining = (elapsed / percentage) * (100 - percentage)
+                            logger.info(
+                                f"Progress: {self.completed}/{total} "
+                                f"({percentage:.1f}%) - {elapsed:.1f}s elapsed, "
+                                f"~{remaining:.1f}s remaining"
+                            )
+                            self.last_log_time = current_time
+                            self.last_percentage = percentage
+                    else:
+                        # Log every 50 items if total is unknown
+                        if self.completed % 50 == 0:
+                            elapsed = current_time - start_time
+                            logger.info(
+                                f"Progress: {self.completed} items - {elapsed:.1f}s elapsed"
+                            )
+
+                def update(self, task_id=None, **kwargs):
+                    """Update progress description. Parameters accepted but ignored for compatibility."""
+                    pass
+
+            simple_progress = SimpleProgressTracker()
+            simple_task = object()  # Dummy task object for compatibility
+
+            try:
+                yield simple_progress, simple_task
+            finally:
+                elapsed = time.time() - start_time
+                logger.info(
+                    f"Completed: {description} - {simple_progress.completed} items "
+                    f"processed in {elapsed:.1f}s"
+                )
 
     @functools.cached_property
     def _total_elements(self) -> int:
@@ -395,11 +459,21 @@ class DataDictionaryIndex(abc.ABC):
 
         try:
             document_count = 0
+            ids_count = len(ids_nodes)
+            current_ids_index = 0
 
             for ids_node in ids_nodes:
                 ids_name = ids_node.get("name")
                 if not ids_name:
-                    continue  # Yield IDS root entry
+                    continue
+
+                current_ids_index += 1
+
+                # Log per-IDS progress for non-interactive environments
+                if not self._is_interactive_environment():
+                    logger.info(
+                        f"Processing IDS {current_ids_index}/{ids_count}: {ids_name}"
+                    )  # Yield IDS root entry
                 yield {
                     "path": ids_name,
                     "documentation": ids_node.get("documentation", ""),
@@ -408,10 +482,15 @@ class DataDictionaryIndex(abc.ABC):
                 }
                 document_count += 1
                 if progress:
-                    progress.advance(task)
+                    progress.advance(task)  # type: ignore[arg-type]                # Count descendants for per-IDS logging
+                descendants = ids_node.findall(".//*[@name]")
+                if not self._is_interactive_environment() and descendants:
+                    logger.info(
+                        f"  Processing {len(descendants)} elements in {ids_name}"
+                    )
 
                 # Process all named descendants
-                for elem in ids_node.findall(".//*[@name]"):
+                for elem in descendants:
                     entry = self._build_element_entry(
                         elem, ids_node, ids_name, parent_map
                     )
@@ -419,14 +498,18 @@ class DataDictionaryIndex(abc.ABC):
                         yield entry
                         document_count += 1
                         if progress:
-                            progress.advance(task)
-
-                            # Update description periodically for better time estimates
-                            if document_count % PROGRESS_LOG_INTERVAL == 0:
+                            progress.advance(task)  # type: ignore[arg-type]                        # Update description periodically for better time estimates (Rich only)
+                        if document_count % PROGRESS_LOG_INTERVAL == 0:
+                            if progress and hasattr(progress, "update"):
                                 progress.update(
-                                    task,
-                                    description=f"Processing {ids_name}",
-                                )
+                                    task, description=f"Processing {ids_name}"
+                                )  # type: ignore[arg-type]
+
+                # Log completion for each IDS in non-interactive environments
+                if not self._is_interactive_environment():
+                    logger.info(
+                        f"  Completed {ids_name}: {len(descendants) + 1} elements processed"
+                    )
 
         finally:
             # Only exit context manager if we created it
@@ -499,3 +582,30 @@ class DataDictionaryIndex(abc.ABC):
     def build_index(self) -> None:
         """Builds the index from the Data Dictionary IDSDef XML file."""
         raise NotImplementedError
+
+    def _is_interactive_environment(self) -> bool:
+        """
+        Detect if we're running in an interactive environment where rich progress is viewable.
+
+        Returns:
+            bool: True if rich progress should be displayed, False for fallback logging
+        """
+        # Check if we're in a Docker container
+        if os.path.exists("/.dockerenv"):
+            return False
+
+        # Check if stdout is a TTY (terminal)
+        if not sys.stdout.isatty():
+            return False
+
+        # Check for CI/CD environment variables
+        ci_vars = ["CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI"]
+        if any(os.getenv(var) for var in ci_vars):
+            return False
+
+        # Check if TERM is set to a non-interactive value
+        term = os.getenv("TERM", "")
+        if term in ["dumb", ""]:
+            return False
+
+        return True
