@@ -35,7 +35,7 @@ class WhooshIndex:
     """Index class for creating and managing a Whoosh index for IMAS DD entries."""
 
     dirname: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parents[1] / "index"
+        default_factory=lambda: Path(__file__).resolve().parent / "resources"
     )
     indexname: Optional[str] = field(default=None)
     schema: Optional[whoosh.fields.Schema] = field(default=None, repr=False)
