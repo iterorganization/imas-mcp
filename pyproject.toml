@@ -1,9 +1,19 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = [
+    "hatchling",
+    "hatch-vcs",
+    "pydantic>=2.11.4,<3.0.0",
+    "whoosh>=2.7.4,<3.0.0",
+    "pint>=0.24.4,<0.25.0",
+    "rich>=13.7.0,<14.0.0",
+    "packaging>=25.0,<26.0",
+    "click>=8.0.0,<9.0.0",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop",
+]
 build-backend = "hatchling.build"
 
 [project]
-name = "imas-mcp-server"
+name = "imas-mcp"
 dynamic = ["version"]
 description = "An MCP Server for accessing the IMAS Data Dictionary"
 readme = "README.md"
@@ -40,9 +50,10 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/simon-mcintosh/imas-mcp-server"
+Repository = "https://github.com/simon-mcintosh/imas-mcp"
 
 [project.scripts]
+imas-mcp = "scripts.run_server:run_server"
 run-server = "scripts.run_server:run_server"
 index-name = "scripts.index_name:index_name"
 build-index = "scripts.build_index:build_index"
@@ -52,8 +63,33 @@ source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["imas_mcp_server"]
-include = ["README.md", "LICENSE"]
+include = ["README.md", "LICENSE", "index/"]
 exclude = ["*.pyc", "__pycache__/*"]
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build_hooks.py"
+verbose = true
+ids-filter = "pf_active"
+
+[tool.hatch.envs.default]
+env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning:whoosh.*,ignore:\"is\" with 'int' literal:SyntaxWarning:whoosh.*" }
+
+[tool.hatch.envs.test]
+dependencies = [
+    "pytest>=8.3.5,<9.0.0",
+    "pytest-cov>=6.1.1,<7.0.0",
+    "coverage>=7.0.0",
+]
+
+[tool.hatch.envs.dev]
+dependencies = [
+    "black>=23.0.0",
+    "ruff>=0",
+    "ipython>=9.2.0",
+    "ipykernel>=6.29.5",
+    "mypy>=1.15.0",
+    "pre-commit>=4.2.0",
+]
 
 [tool.mypy]
 python_version = "3.12"
