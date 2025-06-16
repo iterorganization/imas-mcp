@@ -44,7 +44,7 @@ run-http:
 
 # Get index name (useful for debugging)
 index-name:
-	uv run get-index-name
+	uv run index-name
 
 # Build the package
 package:

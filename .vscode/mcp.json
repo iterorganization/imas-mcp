@@ -18,6 +18,10 @@
     "imas-local-http": {
       "type": "http",
       "url": "http://localhost:8000/mcp/"
+    },
+    "my-mcp-server-f55d8b64": {
+      "type": "http",
+      "url": "https://localhost:8000/mcp/"
     }
   }
 }
