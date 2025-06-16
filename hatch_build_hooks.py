@@ -43,10 +43,11 @@ class CustomBuildHook(BuildHookInterface):
             ids_set = set(ids_filter.split())
             logger.info(f"Using IDS filter: {ids_filter}")
         else:
-            logger.info("Building index for all available IDS (no filter specified)")
-
-        # Initialize the index (this will create the index structure if needed)
+            logger.info(
+                "Building index for all available IDS (no filter specified)"
+            )  # Initialize the index (this will create the index structure if needed)
         logger.info("Starting lexicographic index creation...")
+
         index = LexicographicSearch(ids_set=ids_set)
         logger.info(
             f"Lexicographic index created successfully with {len(index)} documents"
