@@ -151,13 +151,34 @@ For local development and customization:
 
 ### Setup
 
-````bash
+```bash
 # Clone repository
 git clone https://github.com/iterorganization/imas-mcp.git
 cd imas-mcp
 
 # Install development dependencies (search index build takes ~8 minutes first time)
 uv sync --all-extras
+```
+
+### Build Dependencies
+
+This project requires additional dependencies during the build process that are not part of the runtime dependencies. These include:
+
+- **`imas-data-dictionary`** - Required for generating the search index during build
+- **`rich`** - Used for enhanced console output during build processes
+
+**For developers:** These build dependencies are included in the `dev` dependency group and can be installed with:
+
+```bash
+uv sync --group dev
+```
+
+**Location in configuration:**
+
+- **Build-time dependencies**: Listed in `[build-system.requires]` in `pyproject.toml`
+- **Development access**: Also available in `[dependency-groups.dev]` for local development
+
+**Note:** Regular users installing the package don't need these dependencies - they're only required when building from source or working with the data dictionary directly.
 
 ### Development Commands
 
@@ -175,7 +196,7 @@ uv run python -m imas_mcp --transport streamable-http --port 8000
 
 # Run with stdio transport for MCP development
 uv run python -m imas_mcp --transport stdio --auto-build
-````
+```
 
 ### Local Development MCP Configuration
 
