@@ -202,6 +202,38 @@ uv run python -m imas_mcp --transport stdio --auto-build
 3. **Serialization**: The system stores the Whoosh index in the `index/` directory with persistent storage
 4. **Import**: When importing the module, the pre-built index loads in ~1 second
 
+## Optional Dependencies and Runtime Requirements
+
+The IMAS MCP server uses a composable pattern that allows it to work with or without the `imas-data-dictionary` package at runtime:
+
+### Package Installation Options
+
+- **Runtime only**: `pip install imas-mcp` - Uses pre-built indexes, stdio transport only
+- **With HTTP support**: `pip install imas-mcp[http]` - Adds support for sse/streamable-http transports
+- **With build support**: `pip install imas-mcp[build]` - Includes `imas-data-dictionary` for index building
+- **Full installation**: `pip install imas-mcp[all]` - Includes all optional dependencies
+
+### Data Dictionary Access
+
+The system uses multiple fallback strategies to access IMAS Data Dictionary version and metadata:
+
+1. **Environment Variable**: `IMAS_DD_VERSION` (highest priority)
+2. **Metadata File**: JSON metadata stored alongside indexes
+3. **Index Name Parsing**: Extracts version from index filename
+4. **IMAS Package**: Direct access to `imas-data-dictionary` (if available)
+
+This design ensures the server can:
+
+- **Build indexes** when the IMAS package is available
+- **Run with pre-built indexes** without requiring the IMAS package
+- **Access version/metadata** through multiple reliable fallback mechanisms
+
+### Index Building vs Runtime
+
+- **Index Building**: Requires `imas-data-dictionary` package to parse XML and create indexes
+- **Runtime Search**: Only requires pre-built indexes and metadata, no IMAS package dependency
+- **Version Access**: Uses composable accessor pattern with multiple fallback strategies
+
 ## Implementation Details
 
 ### LexicographicSearch Class
