@@ -91,15 +91,11 @@ source = "vcs"
 packages = ["imas_mcp"]
 include = ["README.md", "LICENSE", "index/"]
 exclude = ["*.pyc", "__pycache__/*"]
-# env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning" }
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
 verbose = false
 ids-filter = ""
-
-[tool.hatch.envs.default]
-env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning" }
 
 [tool.hatch.envs.test]
 dependencies = [
