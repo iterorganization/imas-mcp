@@ -40,10 +40,6 @@ RUN git config --global --add safe.directory /app
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project --extra http --extra build
 
-# Install imas-data-dictionary manually from git (needed for index building)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
-
 # Copy source code (separate layer for better caching)
 COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
@@ -51,6 +47,10 @@ COPY scripts/ ./scripts/
 # Install project with HTTP and build support for container deployment
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --extra http --extra build
+
+# Install imas-data-dictionary manually from git (needed for index building)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
 
 # Build search index
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
