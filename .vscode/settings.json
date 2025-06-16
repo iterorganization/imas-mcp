@@ -9,6 +9,7 @@
     "pagenum",
     "procs",
     "pydantic",
+    "PYTHONWARNINGS",
     "qparser",
     "UDUNITS",
     "ureg"

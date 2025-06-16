@@ -5,13 +5,15 @@ services:
       dockerfile: Dockerfile
       args:
         - BUILDKIT_INLINE_CACHE=1
+        - IDS_FILTER=${IDS_FILTER:-pf_active}
+        - TRANSPORT=${TRANSPORT:-streamable-http}
     ports:
       - "8000:8000"
     environment:
       - PYTHONPATH=/app
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,7 +26,8 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro    depends_on:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
       - imas-mcp
     restart: unless-stopped
     profiles:
