@@ -46,7 +46,7 @@ COPY scripts/ ./scripts/
 
 # Install project with HTTP support for container deployment
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --extra build --extra http
+    uv sync --no-dev --extra http
 
 # Build search index
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
