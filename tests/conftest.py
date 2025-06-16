@@ -1,6 +1,6 @@
 import pytest
 
-from imas_mcp_server.whoosh_index import WhooshIndex
+from imas_mcp.whoosh_index import WhooshIndex
 
 
 @pytest.fixture(scope="session")

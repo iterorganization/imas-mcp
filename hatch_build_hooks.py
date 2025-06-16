@@ -9,7 +9,7 @@ from typing import Any, Dict
 # but will work correctly when hatchling loads the plugin
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore
 
-from imas_mcp_server.lexicographic_search import LexicographicSearch
+from imas_mcp.lexicographic_search import LexicographicSearch
 
 
 class CustomBuildHook(BuildHookInterface):

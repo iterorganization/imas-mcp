@@ -34,7 +34,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Test with pytest
-        run: uv run pytest --cov=imas_mcp_server --cov-report=xml --cov-report=term-missing
+        run: uv run pytest --cov=imas_mcp --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4

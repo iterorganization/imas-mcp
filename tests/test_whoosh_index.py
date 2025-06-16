@@ -3,7 +3,7 @@ import pytest
 import whoosh.fields
 import whoosh.index
 
-from imas_mcp_server.whoosh_index import DataDictionaryEntry, SearchResult, WhooshIndex
+from imas_mcp.whoosh_index import DataDictionaryEntry, SearchResult, WhooshIndex
 
 
 def test_whoosh_index_with_dir(tmp_path):
