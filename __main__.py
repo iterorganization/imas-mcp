@@ -10,7 +10,7 @@ Command Line Interface:
 
     Usage:
       python -m imas_mcp_server [OPTIONS]   # Module execution (recommended)
-      imas-mcp-server [OPTIONS]             # Console script (after pip install)
+      imas-mcp [OPTIONS]             # Console script (after pip install)
       run-server [OPTIONS]                  # Alternative console script
 
     Options:
@@ -31,9 +31,8 @@ Usage Examples:
     python -m imas_mcp_server --help                   # Show help
     python -m imas_mcp_server --log-level DEBUG        # Debug logging
 
-    # After installation with pip, use console scripts
-    imas-mcp-server                                     # Default stdio transport
-    imas-mcp-server --transport sse --port 8080        # Server-Sent Events
+    # After installation with pip, use console scripts    imas-mcp                                     # Default stdio transport
+    imas-mcp --transport sse --port 8080        # Server-Sent Events
 
     # Different transport protocols
     python -m imas_mcp_server --transport stdio                    # Default: stdio for MCP clients
@@ -81,13 +80,11 @@ Transport Protocols:
 
 Installation & CLI:
     # Install from source
-    pip install -e .
-
-    # Install from Git repository
-    pip install git+https://github.com/your-repo/imas-mcp-server.git
+    pip install -e .    # Install from Git repository
+    pip install git+https://github.com/your-repo/imas-mcp.git
 
     # After installation, console scripts are available:
-    imas-mcp-server --help
+    imas-mcp --help
     run-server --help
 
     # Module execution works without installation:
@@ -111,7 +108,7 @@ Environment:
 More Information:
     - IMAS Documentation: https://imas.iter.org/
     - MCP Protocol: https://modelcontextprotocol.io/
-    - GitHub Repository: https://github.com/your-repo/imas-mcp-server
+    - GitHub Repository: https://github.com/your-repo/imas-mcp
 """
 
 if __name__ == "__main__":

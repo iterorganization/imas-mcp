@@ -1,4 +1,4 @@
-# Makefile for imas-mcp-server
+# Makefile for imas-mcp
 
 .PHONY: install install-dev clean test run package docker-build docker-run
 
@@ -52,11 +52,11 @@ package:
 
 # Docker build
 docker-build:
-	docker build -t imas-mcp-server .
+	docker build -t imas-mcp .
 
 # Docker run
 docker-run:
-	docker run -p 8000:8000 imas-mcp-server
+	docker run -p 8000:8000 imas-mcp
 
 # Format code with black
 format:

@@ -14,18 +14,18 @@ A server providing Model Context Protocol (MCP) access to IMAS data structures t
 
 ```bash
 # From PyPI (once published)
-pip install imas-mcp-server
+pip install imas-mcp
 
 # Using uv (recommended)
-uv add imas-mcp-server
+uv add imas-mcp
 
 # From source using uv
-git clone https://github.com/iterorganization/imas-mcp-server.git
-cd imas-mcp-server
+git clone https://github.com/iterorganization/imas-mcp.git
+cd imas-mcp
 uv sync
 ```
 
-During installation, the package will automatically build a path index that speeds up imports. This one-time process takes 1-2 minutes but reduces future startup times to seconds.
+During installation, the package will automatically build a Whoosh index that speeds up imports. This one-time process takes ~8 minutes but reduces future startup times to seconds.
 
 ## Usage
 
@@ -195,7 +195,7 @@ The server is available as a pre-built Docker container with the index already b
 
 ```bash
 # Pull and run the latest container
-docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp-server:latest
+docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp:latest
 
 # Or use Docker Compose
 docker-compose up -d

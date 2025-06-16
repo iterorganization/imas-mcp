@@ -562,7 +562,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "imas-mcp-server"
+name = "imas-mcp"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

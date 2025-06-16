@@ -21,7 +21,7 @@
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
   "python.analysis.typeCheckingMode": "basic",
   "chat.mcp.serverSampling": {
-    "imas-mcp-server/.vscode/mcp.json: docker_mcp": {
+    "imas-mcp/.vscode/mcp.json: docker_mcp": {
       "allowedModels": [
         "github.copilot-chat/gpt-4.1",
         "github.copilot-chat/claude-3.7-sonnet",
