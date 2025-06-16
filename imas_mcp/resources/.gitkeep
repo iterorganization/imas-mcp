@@ -1,0 +1,4 @@
+# Keep this directory in git but ignore the contents
+# The contents will be populated during build
+*
+!.gitkeep

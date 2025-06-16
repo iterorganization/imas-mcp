@@ -65,7 +65,6 @@ class CustomBuildHook(BuildHookInterface):
 
         # Initialize the index (this will create the index structure if needed)
         logger.info("Starting lexicographic index creation...")
-
         index = LexicographicSearch(ids_set=ids_set)
         logger.info(
             f"Lexicographic index created successfully with {len(index)} documents"

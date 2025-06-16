@@ -48,7 +48,7 @@ class DataDictionaryIndex(abc.ABC):
 
     ids_set: Optional[Set[str]] = None  # Set of IDS names to index
     dirname: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parents[1] / "index"
+        default_factory=lambda: Path(__file__).resolve().parent / "resources"
     )
     indexname: Optional[str] = field(default=None)
     _dd_accessor: Optional[DataDictionaryAccessor] = field(
@@ -58,15 +58,19 @@ class DataDictionaryIndex(abc.ABC):
     def __post_init__(self) -> None:
         """Common initialization for all handlers."""
         logger.info(f"Initializing DataDictionaryIndex with ids_set: {self.ids_set}")
-        self.indexname = self._get_index_name()
+
+        # Ensure the resources directory exists
         self.dirname.mkdir(parents=True, exist_ok=True)
 
-        # Create the DD accessor with fallback chain
+        # Create the DD accessor first
         self._dd_accessor = create_dd_accessor(
             metadata_dir=self.dirname,
-            index_name=self.indexname,
+            index_name=None,  # We'll set this after we can determine the name
             index_prefix=self.index_prefix,
         )
+
+        # Now we can get the index name
+        self.indexname = self._get_index_name()
 
         logger.info(
             f"Initialized Data Dictionary index: {self.indexname} in {self.dirname}"
