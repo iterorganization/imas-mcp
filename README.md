@@ -36,14 +36,14 @@ During installation, the package will automatically build a Whoosh index that sp
 run-server
 
 # Or directly with Python
-python -m imas_mcp_server
+python -m imas_mcp
 ```
 
 ### Python API
 
 ```python
 # Start the server
-from imas_mcp_server import run_server
+from imas_mcp import run_server
 run_server()
 
 # Or use the tools directly
@@ -59,7 +59,7 @@ You can now search for IMAS paths using natural language descriptions rather tha
 From Python code:
 
 ```python
-from imas_mcp_server.lexicographic_search import LexicographicSearch
+from imas_mcp.lexicographic_search import LexicographicSearch
 
 # Create search instance
 search = LexicographicSearch()

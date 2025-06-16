@@ -11,7 +11,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 # Local imports
-from imas_mcp_server.lexicographic_search import LexicographicSearch
+from imas_mcp.lexicographic_search import LexicographicSearch
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments

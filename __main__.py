@@ -9,7 +9,7 @@ Command Line Interface:
     The server exposes a full CLI with options for transport, host, port, and logging.
 
     Usage:
-      python -m imas_mcp_server [OPTIONS]   # Module execution (recommended)
+      python -m imas_mcp [OPTIONS]   # Module execution (recommended)
       imas-mcp [OPTIONS]             # Console script (after pip install)
       run-server [OPTIONS]                  # Alternative console script
 
@@ -26,28 +26,25 @@ Command Line Interface:
       --help                          Show this message and exit.
 
 Usage Examples:
-    # Module execution (recommended)
-    python -m imas_mcp_server                          # Default stdio transport
-    python -m imas_mcp_server --help                   # Show help
-    python -m imas_mcp_server --log-level DEBUG        # Debug logging
+    # Module execution (recommended)    python -m imas_mcp                          # Default stdio transport
+    python -m imas_mcp --help                   # Show help
+    python -m imas_mcp --log-level DEBUG        # Debug logging
 
     # After installation with pip, use console scripts    imas-mcp                                     # Default stdio transport
     imas-mcp --transport sse --port 8080        # Server-Sent Events
 
-    # Different transport protocols
-    python -m imas_mcp_server --transport stdio                    # Default: stdio for MCP clients
-    python -m imas_mcp_server --transport sse --port 8080          # Server-Sent Events
-    python -m imas_mcp_server --transport streamable-http --port 9000  # HTTP streaming
+    # Different transport protocols    python -m imas_mcp --transport stdio                    # Default: stdio for MCP clients
+    python -m imas_mcp --transport sse --port 8080          # Server-Sent Events
+    python -m imas_mcp --transport streamable-http --port 9000  # HTTP streaming
 
-    # Different log levels
-    python -m imas_mcp_server --log-level DEBUG        # Verbose debugging output
-    python -m imas_mcp_server --log-level WARNING      # Only warnings and errors
+    # Different log levels    python -m imas_mcp --log-level DEBUG        # Verbose debugging output
+    python -m imas_mcp --log-level WARNING      # Only warnings and errors
 
     # Custom host/port (for sse and streamable-http)
-    python -m imas_mcp_server --transport sse --host 0.0.0.0 --port 8080
+    python -m imas_mcp --transport sse --host 0.0.0.0 --port 8080
 
     # Multiple options
-    python -m imas_mcp_server --transport streamable-http --host 0.0.0.0 --port 8080 --log-level DEBUG
+    python -m imas_mcp --transport streamable-http --host 0.0.0.0 --port 8080 --log-level DEBUG
 
 Available Tools:
     The server provides the following MCP tools for querying IMAS data:
@@ -88,7 +85,7 @@ Installation & CLI:
     run-server --help
 
     # Module execution works without installation:
-    python -m imas_mcp_server --help
+    python -m imas_mcp --help
 
     The CLI is built with Click and supports:
     - Full argument validation and type checking

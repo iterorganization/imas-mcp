@@ -19,7 +19,7 @@ unit_registry = pint.UnitRegistry()
 
 # Load non-SI Data Dictionary unit aliases
 with importlib.resources.as_file(
-    importlib.resources.files("imas_mcp_server.units").joinpath(
+    importlib.resources.files("imas_mcp.units").joinpath(
         "data_dictionary_unit_aliases.txt"
     )
 ) as resource_path:

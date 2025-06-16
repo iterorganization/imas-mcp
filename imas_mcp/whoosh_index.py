@@ -24,7 +24,7 @@ import whoosh.query
 import whoosh.searching
 import whoosh.writing
 
-from imas_mcp_server.search_result import DataDictionaryEntry, SearchResult
+from imas_mcp.search_result import DataDictionaryEntry, SearchResult
 
 # Module-level logger
 logger = logging.getLogger(__name__)

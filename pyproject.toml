@@ -88,7 +88,7 @@ build-index = "scripts.build_index:build_index"
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["imas_mcp_server"]
+packages = ["imas_mcp"]
 include = ["README.md", "LICENSE", "index/"]
 exclude = ["*.pyc", "__pycache__/*"]
 # env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning" }
@@ -145,7 +145,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "--verbose"]
 
 [tool.coverage.run]
-source = ["imas_mcp_server"]
+source = ["imas_mcp"]
 omit = ["tests/*", "*/tests/*", "**/test_*.py", "**/conftest.py"]
 
 [tool.coverage.report]

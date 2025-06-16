@@ -12,7 +12,7 @@ import pydantic
 import whoosh.searching
 from pydantic import ConfigDict
 
-from imas_mcp_server.units import unit_registry
+from imas_mcp.units import unit_registry
 
 
 # Base model for document validation

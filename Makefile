@@ -12,7 +12,7 @@ install-dev:
 
 # Clean up build artifacts and cache
 clean:
-	@if exist imas_mcp_server\__pycache__ rmdir /s /q imas_mcp_server\__pycache__
+	@if exist imas_mcp\__pycache__ rmdir /s /q imas_mcp\__pycache__
 	@if exist tests\__pycache__ rmdir /s /q tests\__pycache__
 	@if exist scripts\__pycache__ rmdir /s /q scripts\__pycache__
 	@if exist build rmdir /s /q build
@@ -24,7 +24,7 @@ clean:
 
 # Run tests with coverage
 test:
-	uv run pytest --cov=imas_mcp_server --cov-report=html --cov-report=term
+	uv run pytest --cov=imas_mcp --cov-report=html --cov-report=term
 
 # Run tests without coverage
 test-fast:
@@ -60,12 +60,12 @@ docker-run:
 
 # Format code with black
 format:
-	uv run black imas_mcp_server tests scripts
+	uv run black imas_mcp tests scripts
 
 # Lint with ruff
 lint:
-	uv run ruff check imas_mcp_server tests scripts
+	uv run ruff check imas_mcp tests scripts
 
 # Fix linting issues
 lint-fix:
-	uv run ruff check --fix imas_mcp_server tests scripts
+	uv run ruff check --fix imas_mcp tests scripts

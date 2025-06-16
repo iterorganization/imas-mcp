@@ -2,8 +2,8 @@ import logging
 from dataclasses import InitVar, dataclass
 from typing import Final, Literal
 
-from imas_mcp_server.data_dictionary_index import DataDictionaryIndex
-from imas_mcp_server.whoosh_index import WhooshIndex
+from imas_mcp.data_dictionary_index import DataDictionaryIndex
+from imas_mcp.whoosh_index import WhooshIndex
 
 IndexPrefixT = Literal["lexicographic"]
 

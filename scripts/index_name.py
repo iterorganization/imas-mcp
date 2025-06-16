@@ -8,7 +8,7 @@ import sys
 from typing import Optional
 
 import click
-from imas_mcp_server.lexicographic_search import LexicographicSearch
+from imas_mcp.lexicographic_search import LexicographicSearch
 
 
 @click.command()

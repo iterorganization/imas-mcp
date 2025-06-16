@@ -6,7 +6,7 @@ from typing import Optional
 
 import click
 
-from imas_mcp_server.server import Server
+from imas_mcp.server import Server
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

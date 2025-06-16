@@ -16,8 +16,8 @@ from chromadb.api import ClientAPI  # Changed import for ClientAPI
 from chromadb.types import Metadata
 from pydantic import ValidationError
 
-from imas_mcp_server.whoosh_index import DataDictionaryEntry, SearchResult
-from imas_mcp_server.data_dictionary_index import DataDictionaryBase  # Renamed
+from imas_mcp.whoosh_index import DataDictionaryEntry, SearchResult
+from imas_mcp.data_dictionary_index import DataDictionaryBase  # Renamed
 
 DEFAULT_EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Or your preferred default
 logger = logging.getLogger(__name__)
