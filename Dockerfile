@@ -44,9 +44,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
 
-# Install project without building
+# Install project with HTTP support for container deployment
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev
+    uv sync --no-dev --extra build --extra http
 
 # Build search index
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
