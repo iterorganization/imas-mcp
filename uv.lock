@@ -426,14 +426,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "rich" },
-    { name = "starlette" },
-    { name = "uvicorn" },
-]
-build = [
-    { name = "rich" },
-]
 http = [
     { name = "starlette" },
     { name = "uvicorn" },
@@ -468,15 +460,11 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.4,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5,<9.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1,<7.0.0" },
-    { name = "rich", marker = "extra == 'all'", specifier = ">=13.7.0,<14.0.0" },
-    { name = "rich", marker = "extra == 'build'", specifier = ">=13.7.0,<14.0.0" },
-    { name = "starlette", marker = "extra == 'all'", specifier = ">=0.37.0,<1.0.0" },
     { name = "starlette", marker = "extra == 'http'", specifier = ">=0.37.0,<1.0.0" },
-    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.30.0,<1.0.0" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.30.0,<1.0.0" },
     { name = "whoosh", specifier = ">=2.7.4,<3.0.0" },
 ]
-provides-extras = ["all", "build", "http", "test"]
+provides-extras = ["http", "test"]
 
 [package.metadata.requires-dev]
 dev = [
