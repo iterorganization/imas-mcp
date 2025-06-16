@@ -2,8 +2,8 @@
 Custom build hooks for hatchling to initialize lexicographic index during wheel creation.
 """
 
-import importlib.util
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -23,17 +23,17 @@ class CustomBuildHook(BuildHookInterface):
             version: The version string for the build
             build_data: Dictionary containing build configuration data
         """
-        # Load the module using importlib for proper module resolution
-        module_path = Path(__file__).parent / "imas_mcp" / "lexicographic_search.py"
-        spec = importlib.util.spec_from_file_location(
-            "lexicographic_search", module_path
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Could not load module from {module_path}")
+        # Add package root to sys.path temporarily to resolve internal imports
+        package_root = Path(__file__).parent
+        original_path = sys.path[:]
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
 
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        lexicographic_search = module.LexicographicSearch
+        try:
+            from imas_mcp.lexicographic_search import LexicographicSearch
+        finally:
+            # Restore original sys.path
+            sys.path[:] = original_path
 
         # Configure logging to ensure progress messages are visible during build
         logging.basicConfig(
@@ -66,7 +66,7 @@ class CustomBuildHook(BuildHookInterface):
         # Initialize the index (this will create the index structure if needed)
         logger.info("Starting lexicographic index creation...")
 
-        index = lexicographic_search(ids_set=ids_set)
+        index = LexicographicSearch(ids_set=ids_set)
         logger.info(
             f"Lexicographic index created successfully with {len(index)} documents"
         )
