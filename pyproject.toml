@@ -23,6 +23,8 @@ license = { text = "CC BY-ND 4.0" }
 dependencies = [
     "mcp-cli>=0.1.0",
     "fastmcp>=2.2.8,<3.0.0",
+    "starlette>=0.37.0,<1.0.0",
+    "uvicorn>=0.30.0,<1.0.0",
     "pydantic>=2.11.4,<3.0.0",
     "whoosh>=2.7.4,<3.0.0",
     "pint>=0.24.4,<0.25.0",
@@ -65,14 +67,15 @@ source = "vcs"
 packages = ["imas_mcp_server"]
 include = ["README.md", "LICENSE", "index/"]
 exclude = ["*.pyc", "__pycache__/*"]
+# env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning" }
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
-verbose = true
-ids-filter = "pf_active"
+verbose = false
+ids-filter = ""
 
 [tool.hatch.envs.default]
-env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning:whoosh.*,ignore:\"is\" with 'int' literal:SyntaxWarning:whoosh.*" }
+env-vars = { PYTHONWARNINGS = "ignore::SyntaxWarning" }
 
 [tool.hatch.envs.test]
 dependencies = [

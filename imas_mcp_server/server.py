@@ -493,10 +493,78 @@ class Server:
             match transport:
                 case "stdio":
                     self.mcp.run(transport="stdio")
-                case "sse" | "streamable-http":
+                case "sse":
                     self.mcp.run(transport=transport, host=host, port=port)
+                case "streamable-http":
+                    self._run_http_with_health(host=host, port=port)
         except KeyboardInterrupt:
             logger.info("Stopping MCP server...")
+
+    def _run_http_with_health(self, host: str = "127.0.0.1", port: int = 8000) -> None:
+        """Run the MCP server with streamable-http transport and add health endpoint.
+
+        Args:
+            host: Host to bind to
+            port: Port to bind to
+        """
+        # Get the FastMCP ASGI app
+        app = self.mcp.http_app()
+
+        # Add health endpoint using Starlette routing
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
+
+        async def health_endpoint(request):
+            """Health check endpoint that verifies the search index is accessible."""
+            try:
+                # Verify the search index is working
+                index_stats = self.get_index_stats()
+
+                return JSONResponse(
+                    {
+                        "status": "healthy",
+                        "service": "imas-mcp-server",
+                        "version": self._get_version(),
+                        "index_stats": {
+                            "total_paths": index_stats.get("total_paths", 0),
+                            "index_name": index_stats.get("index_name", "unknown"),
+                        },
+                        "transport": "streamable-http",
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                return JSONResponse(
+                    {
+                        "status": "unhealthy",
+                        "service": "imas-mcp-server",
+                        "error": str(e),
+                        "transport": "streamable-http",
+                    },
+                    status_code=503,
+                )
+
+        # Add the health route to the existing app
+        health_route = Route("/health", health_endpoint, methods=["GET"])
+        app.routes.append(health_route)
+
+        logger.info(
+            f"Starting MCP server with health endpoint at http://{host}:{port}/health"
+        )
+
+        # Run with uvicorn
+        import uvicorn
+
+        uvicorn.run(app, host=host, port=port, log_level="info")
+
+    def _get_version(self) -> str:
+        """Get the package version."""
+        try:
+            import importlib.metadata
+
+            return importlib.metadata.version("imas-mcp-server")
+        except Exception:
+            return "unknown"
 
 
 if __name__ == "__main__":
