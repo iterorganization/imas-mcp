@@ -90,13 +90,16 @@ source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["imas_mcp"]
-include = ["README.md", "LICENSE", "index/"]
-exclude = ["*.pyc", "__pycache__/*"]
+include = ["README.md", "LICENSE"]
+exclude = ["*.pyc", "__pycache__/*", "imas_mcp/resources/.gitkeep"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"imas_mcp/resources" = "imas_mcp/resources"
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
 verbose = false
-ids-filter = ""
+ids-filter = "pf_active"
 
 [tool.hatch.envs.test]
 dependencies = [
