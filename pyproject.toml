@@ -53,12 +53,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-build = [
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop",
-    "rich>=13.7.0,<14.0.0",
-]
 http = ["starlette>=0.37.0,<1.0.0", "uvicorn>=0.30.0,<1.0.0"]
-all = ["imas-mcp[build,http]"]
 test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
 
 [dependency-groups]
