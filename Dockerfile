@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project
 
 # Copy source code (separate layer for better caching)
-COPY imas_mcp_server/ ./imas_mcp_server/
+COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
 
 # Install project without building
@@ -52,7 +52,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building search index..." && \
     uv run --no-dev build-index \
-        ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"} && \
+    ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"} && \
     echo "✓ Search index ready"
 
 # Expose port (only needed for streamable-http transport)
@@ -61,9 +61,9 @@ EXPOSE 8000
 # Run the application (host and port only needed for streamable-http transport)
 CMD ["sh", "-c", "\
     uv run --no-dev run-server \
-        --transport ${TRANSPORT} \
-        --host 0.0.0.0 \
-        --port 8000 \
-        ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
-        --no-auto-build\
+    --transport ${TRANSPORT} \
+    --host 0.0.0.0 \
+    --port 8000 \
+    ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
+    --no-auto-build\
     "] 

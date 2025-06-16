@@ -5,7 +5,7 @@ This module provides the entry point when running the IMAS MCP server as a Pytho
 The full CLI interface is exposed through this entry point.
 
 Usage:
-    python -m imas_mcp_server [OPTIONS]
+    python -m imas_mcp [OPTIONS]
 
 Options:
     --transport [stdio|sse|streamable-http]  Transport protocol [default: stdio]
@@ -16,16 +16,16 @@ Options:
 
 Examples:
     # Run with default stdio transport
-    python -m imas_mcp_server
+    python -m imas_mcp
 
     # Show all CLI options
-    python -m imas_mcp_server --help
+    python -m imas_mcp --help
 
     # Run with custom options
-    python -m imas_mcp_server --transport sse --port 8080 --log-level DEBUG
+    python -m imas_mcp --transport sse --port 8080 --log-level DEBUG
 
     # Run HTTP server for API access
-    python -m imas_mcp_server --transport streamable-http --host 0.0.0.0 --port 9000
+    python -m imas_mcp --transport streamable-http --host 0.0.0.0 --port 9000
 
 See __main__.py in the root directory for complete documentation and examples.
 """
