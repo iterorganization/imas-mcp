@@ -94,7 +94,7 @@ exclude = ["*.pyc", "__pycache__/*", "imas_mcp/resources/.gitkeep"]
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
 verbose = false
-ids-filter = "pf_active"
+ids-filter = ""
 
 [tool.hatch.envs.test]
 dependencies = [
