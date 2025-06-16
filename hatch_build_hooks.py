@@ -2,21 +2,39 @@
 Custom build hooks for hatchling to initialize lexicographic index during wheel creation.
 """
 
+import importlib.util
 import logging
+from pathlib import Path
 from typing import Any, Dict
 
-# Note: hatchling import may not resolve in development environment
-# but will work correctly when hatchling loads the plugin
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore
-
-from imas_mcp.lexicographic_search import LexicographicSearch
+# hatchling is a build system for Python projects, and this hook will be used to
+# create a lexicographic index of the IMAS MCP data during the wheel build process.
+from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore[import]
 
 
 class CustomBuildHook(BuildHookInterface):
     """Custom build hook to create lexicographic index during wheel building."""
 
     def initialize(self, version: str, build_data: Dict[str, Any]) -> None:
-        """Initialize the build hook and initialize the lexicographic index."""
+        """
+        Initialize the build hook and initialize the lexicographic index.
+
+        Args:
+            version: The version string for the build
+            build_data: Dictionary containing build configuration data
+        """
+        # Load the module using importlib for proper module resolution
+        module_path = Path(__file__).parent / "imas_mcp" / "lexicographic_search.py"
+        spec = importlib.util.spec_from_file_location(
+            "lexicographic_search", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load module from {module_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        lexicographic_search = module.LexicographicSearch
+
         # Configure logging to ensure progress messages are visible during build
         logging.basicConfig(
             level=logging.INFO,
@@ -29,26 +47,26 @@ class CustomBuildHook(BuildHookInterface):
 
         # Get configuration options
         verbose = self.config.get("verbose", False)
-        ids_filter = self.config.get("ids-filter", "")  # Default builds full Dictionary
+        ids_filter = self.config.get("ids-filter", "")
 
         if verbose:
             logging.getLogger().setLevel(logging.DEBUG)
             logger.setLevel(logging.DEBUG)
 
-        logger.info(
-            "Initializing lexicographic index as part of wheel creation"
-        )  # Transform ids_filter from space-separated string to set
+        logger.info("Initializing lexicographic index as part of wheel creation")
+
+        # Transform ids_filter from space-separated string to set
         ids_set = None
         if ids_filter:
             ids_set = set(ids_filter.split())
             logger.info(f"Using IDS filter: {ids_filter}")
         else:
-            logger.info(
-                "Building index for all available IDS (no filter specified)"
-            )  # Initialize the index (this will create the index structure if needed)
+            logger.info("Building index for all available IDS (no filter specified)")
+
+        # Initialize the index (this will create the index structure if needed)
         logger.info("Starting lexicographic index creation...")
 
-        index = LexicographicSearch(ids_set=ids_set)
+        index = lexicographic_search(ids_set=ids_set)
         logger.info(
             f"Lexicographic index created successfully with {len(index)} documents"
         )
