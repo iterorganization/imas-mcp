@@ -8,7 +8,7 @@ requires = [
     "rich>=13.7.0,<14.0.0",
     "packaging>=25.0,<26.0",
     "click>=8.0.0,<9.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
 ]
 build-backend = "hatchling.build"
 
@@ -53,10 +53,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-build = [
-    # "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop",  # Commented out until wheel is available
-    "rich>=13.7.0,<14.0.0",
-]
 http = ["starlette>=0.37.0,<1.0.0", "uvicorn>=0.30.0,<1.0.0"]
 test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
 
