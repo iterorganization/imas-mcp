@@ -126,7 +126,7 @@ uv add imas-mcp
     "imas-mcp-uv": {
       "type": "stdio",
       "command": "uv",
-      "args": ["tool", "run", "imas-mcp", "--auto-build"]
+      "args": ["tool", "run", "run-server", "--auto-build"]
     }
   }
 }
@@ -139,7 +139,7 @@ uv add imas-mcp
   "mcpServers": {
     "imas-mcp-uv": {
       "command": "uv",
-      "args": ["tool", "run", "imas-mcp", "--auto-build"]
+      "args": ["tool", "run", "run-server", "--auto-build"]
     }
   }
 }
