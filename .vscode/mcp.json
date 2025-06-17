@@ -22,6 +22,9 @@
     "my-mcp-server-f55d8b64": {
       "type": "http",
       "url": "https://localhost:8000/mcp/"
+    },
+    "my-mcp-server-4e50d649": {
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp/"
     }
   }
 }

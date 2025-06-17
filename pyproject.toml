@@ -80,9 +80,7 @@ Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
 "Bug Tracker" = "https://github.com/simon-mcintosh/imas-mcp/issues"
 
 [project.scripts]
-imas-mcp = "scripts.run_server:run_server"
 run-server = "scripts.run_server:run_server"
-index-name = "scripts.index_name:index_name"
 build-index = "scripts.build_index:build_index"
 
 [tool.hatch.version]

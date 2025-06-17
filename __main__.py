@@ -6,12 +6,9 @@ Data Dictionary through the Model Context Protocol (MCP). It enables AI assistan
 and other MCP clients to search, explore, and query IMAS data structures.
 
 Command Line Interface:
-    The server exposes a full CLI with options for transport, host, port, and logging.
-
-    Usage:
+    The server exposes a full CLI with options for transport, host, port, and logging.    Usage:
       python -m imas_mcp [OPTIONS]   # Module execution (recommended)
-      imas-mcp [OPTIONS]             # Console script (after pip install)
-      run-server [OPTIONS]                  # Alternative console script
+      run-server [OPTIONS]           # Console script (after pip install)
 
     Options:
       --transport [stdio|sse|streamable-http]
@@ -28,10 +25,9 @@ Command Line Interface:
 Usage Examples:
     # Module execution (recommended)    python -m imas_mcp                          # Default stdio transport
     python -m imas_mcp --help                   # Show help
-    python -m imas_mcp --log-level DEBUG        # Debug logging
-
-    # After installation with pip, use console scripts    imas-mcp                                     # Default stdio transport
-    imas-mcp --transport sse --port 8080        # Server-Sent Events
+    python -m imas_mcp --log-level DEBUG        # Debug logging    # After installation with pip, use console scripts
+    run-server                                   # Default stdio transport
+    run-server --transport sse --port 8080      # Server-Sent Events
 
     # Different transport protocols    python -m imas_mcp --transport stdio                    # Default: stdio for MCP clients
     python -m imas_mcp --transport sse --port 8080          # Server-Sent Events
@@ -78,10 +74,7 @@ Transport Protocols:
 Installation & CLI:
     # Install from source
     pip install -e .    # Install from Git repository
-    pip install git+https://github.com/your-repo/imas-mcp.git
-
-    # After installation, console scripts are available:
-    imas-mcp --help
+    pip install git+https://github.com/your-repo/imas-mcp.git    # After installation, console scripts are available:
     run-server --help
 
     # Module execution works without installation:

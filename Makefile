@@ -42,10 +42,6 @@ run-sse:
 run-http:
 	uv run run-server --transport streamable-http --host 0.0.0.0 --port 8000
 
-# Get index name (useful for debugging)
-index-name:
-	uv run index-name
-
 # Build the package
 package:
 	uv build
