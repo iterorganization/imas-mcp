@@ -31,7 +31,7 @@
   "chat.mcp.discovery.enabled": true,
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: my-mcp-server-7a681df0": {
+    "imas-mcp/.vscode/mcp.json: imas-mcp-docker": {
       "allowedDuringChat": true
     }
   }

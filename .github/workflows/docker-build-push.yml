@@ -2,8 +2,6 @@ name: Build and Push Container
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   pull_request:
@@ -72,10 +70,7 @@ jobs:
             type=semver,pattern={{version}}-${{ matrix.transport }}
             type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
             type=semver,pattern={{major}}-${{ matrix.transport }}
-            type=raw,value=latest-${{ matrix.transport }},enable={{is_default_branch}}
-            type=sha,prefix=sha-,suffix=-${{ matrix.transport }},format=short
-            type=ref,event=branch,suffix=-${{ matrix.transport }},enable=${{ github.ref != 'refs/heads/main' }}
-            type=ref,event=pr,prefix=pr-,suffix=-${{ matrix.transport }}
+            type=raw,value=latest-${{ matrix.transport }}
           flavor: |
             latest=auto
 

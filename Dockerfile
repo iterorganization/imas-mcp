@@ -24,7 +24,6 @@ ENV PYTHONPATH="/app" \
     TRANSPORT=${TRANSPORT} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONWARNINGS="ignore::SyntaxWarning:whoosh.*,ignore::SyntaxWarning" \
     HATCH_BUILD_NO_HOOKS=true
 
 # Copy dependency files and git metadata 
@@ -52,12 +51,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
 
-# Build search index
+# Build JSON data
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building search index..." && \
-    uv run --no-dev build-index \
-    ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"} && \
-    echo "✓ Search index ready"
+    echo "Building JSON data..." && \
+    uv run --no-dev build-json-data && \
+    echo "✓ JSON data ready"
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
@@ -68,6 +66,4 @@ CMD ["sh", "-c", "\
     --transport ${TRANSPORT} \
     --host 0.0.0.0 \
     --port 8000 \
-    ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
-    --no-auto-build\
     "] 

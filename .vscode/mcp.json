@@ -1,9 +1,13 @@
 {
   "servers": {
-    "my-mcp-server-7a681df0": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "python", "-m", "imas_mcp.mcp_server_ai"]
+    // "my-mcp-server-7a681df0": {
+    //   "type": "stdio",
+    //   "command": "uv",
+    //   "args": ["run", "python", "-m", "imas_mcp.server"]
+    // },
+    "imas-mcp-docker": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp/"
     },
     "github": {
       "type": "http",
