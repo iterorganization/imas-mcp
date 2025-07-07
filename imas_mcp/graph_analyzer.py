@@ -195,9 +195,12 @@ class IMASGraphAnalyzer:
         total_nodes = sum(
             stats["basic_metrics"]["total_nodes"] for stats in all_stats.values()
         )
-        avg_depth = statistics.mean(
-            [stats["hierarchy_metrics"]["avg_depth"] for stats in all_stats.values()]
-        )
+
+        # Handle empty stats case
+        depths = [
+            stats["hierarchy_metrics"]["avg_depth"] for stats in all_stats.values()
+        ]
+        avg_depth = statistics.mean(depths) if depths else 0.0
 
         # Categorize by complexity
         sorted_by_complexity = sorted(
