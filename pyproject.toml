@@ -8,6 +8,7 @@ requires = [
     "rich>=13.7.0,<14.0.0",
     "packaging>=25.0,<26.0",
     "click>=8.0.0,<9.0.0",
+    "networkx>=3.0,<4.0",
     "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
 ]
 build-backend = "hatchling.build"
@@ -45,16 +46,23 @@ dependencies = [
     "mcp-cli>=0.1.0",
     "fastmcp>=2.2.8,<3.0.0",
     "pydantic>=2.11.4,<3.0.0",
+    "pydantic-ai>=0.0.14,<1.0.0",
     "whoosh>=2.7.4,<3.0.0",
     "pint>=0.24.4,<0.25.0",
     "nest-asyncio>=1.5.0,<2.0.0",
     "click>=8.0.0,<9.0.0",
     "packaging>=25.0,<26.0",
+    "networkx>=3.0,<4.0",
 ]
 
 [project.optional-dependencies]
 http = ["starlette>=0.37.0,<1.0.0", "uvicorn>=0.30.0,<1.0.0"]
 test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
+# LLM providers - install only what you need
+anthropic = ["anthropic>=0.40.0"]
+openai = ["openai>=1.54.0"]
+google = ["google-generativeai>=0.8.3"]
+ollama = ["ollama>=0.3.3"]
 
 [dependency-groups]
 dev = [
@@ -81,7 +89,9 @@ Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
 
 [project.scripts]
 run-server = "scripts.run_server:run_server"
+run-context = "scripts.run_context:run_context"
 build-index = "scripts.build_index:build_index"
+build-json-data = "scripts.build_json_data:build_json_data"
 
 [tool.hatch.version]
 source = "vcs"

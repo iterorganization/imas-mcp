@@ -21,14 +21,18 @@
   "python.testing.cwd": "${workspaceFolder}",
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
   "python.analysis.typeCheckingMode": "basic",
+  "terminal.integrated.env.windows": {
+    "ANTHROPIC_API_KEY": "your-anthropic-key-here",
+    "OPENAI_API_KEY": "your-openai-key-here",
+    "GEMINI_API_KEY": "your-gemini-key-here"
+  },
+  "python.envFile": "${workspaceFolder}/.env",
+  "chat.mcp.enabled": true,
+  "chat.mcp.discovery.enabled": true,
+  "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: docker_mcp": {
-      "allowedModels": [
-        "github.copilot-chat/gpt-4.1",
-        "github.copilot-chat/claude-3.7-sonnet",
-        "github.copilot-chat/claude-sonnet-4",
-        "github.copilot-chat/gemini-2.5-pro"
-      ]
+    "imas-mcp/.vscode/mcp.json: my-mcp-server-7a681df0": {
+      "allowedDuringChat": true
     }
   }
 }

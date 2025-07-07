@@ -1,5 +1,5 @@
 """
-Custom build hooks for hatchling to initialize lexicographic index during wheel creation.
+Custom build hooks for hatchling to initialize data during wheel creation.
 """
 
 import logging
@@ -13,7 +13,7 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type
 
 
 class CustomBuildHook(BuildHookInterface):
-    """Custom build hook to create lexicographic index during wheel building."""
+    """Custom build hook to create data structures during wheel building."""
 
     def initialize(self, version: str, build_data: Dict[str, Any]) -> None:
         """
@@ -31,6 +31,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.lexicographic_search import LexicographicSearch
+            from imas_mcp.core.xml_parser import DataDictionaryTransformer
         finally:
             # Restore original sys.path
             sys.path[:] = original_path
@@ -43,7 +44,7 @@ class CustomBuildHook(BuildHookInterface):
         )
 
         logger = logging.getLogger(__name__)
-        logger.info("Initializing lexicographic index build hook")
+        logger.info("Initializing build hook for IMAS MCP data structures")
 
         # Get configuration options
         verbose = self.config.get("verbose", False)
@@ -69,4 +70,17 @@ class CustomBuildHook(BuildHookInterface):
         logger.info(
             f"Lexicographic index created successfully with {len(index)} documents"
         )
+
+        # Build JSON data structures as well
+        logger.info("Starting JSON data structure creation...")
+        json_transformer = DataDictionaryTransformer(ids_set=ids_set)
+        json_outputs = json_transformer.transform_complete()
+
+        total_json_files = 2 + len(
+            json_outputs.detailed
+        )  # catalog + relationships + detailed
+        logger.info(
+            f"JSON data structures created successfully: {total_json_files} files"
+        )
+
         logger.info("Build hook initialization completed")

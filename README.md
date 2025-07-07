@@ -220,7 +220,9 @@ uv run python -m imas_mcp --transport stdio --auto-build
 
 1. **Installation**: During package installation, the index builds automatically when the module first imports
 2. **Build Process**: The system parses the IMAS data dictionary and creates a comprehensive path index
-3. **Serialization**: The system stores the Whoosh index in the package resources directory with persistent storage
+3. **Serialization**: The system stores indexes in organized subdirectories:
+   - **Lexicographic index**: `imas_mcp/resources/index_data/` (Whoosh search index)
+   - **JSON data**: `imas_mcp/resources/json_data/` (LLM-optimized structured data)
 4. **Import**: When importing the module, the pre-built index loads in ~1 second
 
 ## Optional Dependencies and Runtime Requirements
