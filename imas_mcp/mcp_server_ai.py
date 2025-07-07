@@ -1,16 +1,29 @@
 """
 Simplified MCP Server with AI-Enhanced IMAS Tools.
 
-This module provides 3 focused tools for the IMAS data dictionary with better LLM usage.
+This module provides 4 focused tools for the IMAS data dictionary with better LLM usage.
 """
 
 import json
+import logging
+from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Dict, Optional, cast
 
+import nest_asyncio
 from fastmcp import Context, FastMCP
 from mcp.types import TextContent
 
 from .json_data_accessor import JsonDataDictionaryAccessor
+
+# apply nest_asyncio to allow nested event loops
+# This is necessary for Jupyter notebooks and some other environments
+# that don't support nested event loops by default.
+nest_asyncio.apply()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Simplified AI prompts focused on specific tasks
 SEARCH_EXPERT = """You are an IMAS search expert. Analyze relevance-ranked search results and provide:
@@ -38,7 +51,232 @@ OVERVIEW_EXPERT = """You are an IMAS analytics expert. Provide insights about:
 
 Focus on quantitative insights with physics context."""
 
-# Initialize data accessor
+
+@dataclass
+class Server:
+    """AI-Enhanced IMAS MCP Server with structured tool management."""
+
+    mcp: FastMCP = field(init=False, repr=False)
+
+    def __post_init__(self):
+        """Initialize the MCP server after dataclass initialization."""
+        self.mcp = FastMCP("AI-Enhanced IMAS Data Dictionary MCP Server")
+        self._register_tools()
+
+    @cached_property
+    def data_accessor(self) -> JsonDataDictionaryAccessor:
+        """Return the JSON data accessor instance."""
+        logger.info("Initializing JSON data accessor")
+        accessor = JsonDataDictionaryAccessor()
+
+        if not accessor.is_available():
+            raise ValueError(
+                "IMAS JSON data is not available. This could be due to:\n"
+                "1. Data dictionary not properly installed\n"
+                "2. JSON files not built during installation\n"
+                "Please reinstall the package or run the build process."
+            )
+
+        return accessor
+
+    def _register_tools(self):
+        """Register all AI-enhanced MCP tools with the server."""
+        # Register the enhanced tools
+        self.mcp.tool(self.search_imas)
+        self.mcp.tool(self.explain_concept)
+        self.mcp.tool(self.get_overview)
+        self.mcp.tool(self.analyze_ids_structure)
+
+    async def search_imas(
+        self,
+        query: str,
+        ids_name: Optional[str] = None,
+        max_results: int = 10,
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Search for IMAS data paths with relevance-ordered results and AI enhancement.
+
+        Advanced search tool that finds IMAS data paths, scores them by relevance,
+        and optionally enhances results with AI insights when MCP sampling is available.
+
+        Args:
+            query: Search term or pattern
+            ids_name: Optional specific IDS to search within
+            max_results: Maximum number of results to return
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with relevance-ordered search results and AI suggestions
+        """
+        return await search_imas(query, ids_name, max_results, ctx)
+
+    async def explain_concept(
+        self,
+        concept: str,
+        detail_level: str = "intermediate",
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Explain IMAS concepts with physics context.
+
+        Provides clear explanations of plasma physics concepts as they relate
+        to the IMAS data dictionary, enhanced with AI insights.
+
+        Args:
+            concept: The concept to explain
+            detail_level: Level of detail (basic, intermediate, advanced)
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with explanation and related information
+        """
+        return await explain_concept(concept, detail_level, ctx)
+
+    async def get_overview(
+        self, question: Optional[str] = None, ctx: Optional[Context] = None
+    ) -> Dict[str, Any]:
+        """
+        Get IMAS overview or answer analytical questions with graph insights.
+
+        Provides comprehensive overview of available IDS in the IMAS data dictionary
+        or answers specific analytical questions about the data structure.
+
+        Args:
+            question: Optional specific question about the data dictionary
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with overview information and analytics
+        """
+        return await get_overview(question, ctx)
+
+    async def analyze_ids_structure(
+        self, ids_name: str, ctx: Optional[Context] = None
+    ) -> Dict[str, Any]:
+        """
+        Get detailed structural analysis of a specific IDS using graph metrics.
+
+        Args:
+            ids_name: Name of the IDS to analyze
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with detailed graph analysis and AI insights
+        """
+        return await analyze_ids_structure(ids_name, ctx)
+
+    def run(
+        self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
+    ) -> None:
+        """Run the AI-enhanced MCP server.
+
+        Args:
+            transport: Transport protocol to use
+            host: Host to bind to (for sse and streamable-http transports)
+            port: Port to bind to (for sse and streamable-http transports)
+        """
+        try:
+            match transport:
+                case "stdio":
+                    self.mcp.run(transport="stdio")
+                case "sse":
+                    self.mcp.run(transport=transport, host=host, port=port)
+                case "streamable-http":
+                    self._run_http_with_health(host=host, port=port)
+        except KeyboardInterrupt:
+            logger.info("Stopping AI-enhanced MCP server...")
+
+    def _run_http_with_health(self, host: str = "127.0.0.1", port: int = 8000) -> None:
+        """Run the MCP server with streamable-http transport and add health endpoint.
+
+        Args:
+            host: Host to bind to
+            port: Port to bind to
+        """
+        try:
+            # Get the FastMCP ASGI app
+            app = self.mcp.http_app()
+
+            # Add health endpoint using Starlette routing
+            from starlette.responses import JSONResponse
+            from starlette.routing import Route
+        except ImportError as e:
+            raise ImportError(
+                "HTTP transport requires additional dependencies. "
+                "Install with: pip install imas-mcp[http]"
+            ) from e
+
+        async def health_endpoint(request):
+            """Health check endpoint that verifies the data accessor is working."""
+            try:
+                # Get overview for essential metrics
+                overview = await self.get_overview(ctx=None)
+                metadata = overview.get("metadata", {})
+                structural_overview = overview.get("structural_overview", {})
+
+                return JSONResponse(
+                    {
+                        "status": "healthy",
+                        "service": "imas-mcp",
+                        "version": self._get_version(),
+                        "creation_date": metadata.get("generation_date", "unknown"),
+                        "dd_version": metadata.get("version", "unknown"),
+                        "total_ids": overview.get("total_ids", 0),
+                        "total_data_nodes": structural_overview.get(
+                            "total_nodes_all_ids", 0
+                        ),
+                        "transport": "streamable-http",
+                        "available_tools": [
+                            "search_imas",
+                            "explain_concept",
+                            "get_overview",
+                            "analyze_ids_structure",
+                        ],
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                return JSONResponse(
+                    {
+                        "status": "unhealthy",
+                        "service": "imas-mcp",
+                        "error": str(e),
+                        "transport": "streamable-http",
+                    },
+                    status_code=503,
+                )
+
+        # Add the health route to the existing app
+        health_route = Route("/health", health_endpoint, methods=["GET"])
+        app.routes.append(health_route)
+
+        logger.info(
+            f"Starting AI-enhanced MCP server with health endpoint at http://{host}:{port}/health"
+        )
+
+        # Run with uvicorn
+        try:
+            import uvicorn
+        except ImportError as e:
+            raise ImportError(
+                "HTTP transport requires additional dependencies. "
+                "Install with: pip install imas-mcp[http]"
+            ) from e
+
+        uvicorn.run(app, host=host, port=port, log_level="info")
+
+    def _get_version(self) -> str:
+        """Get the package version."""
+        try:
+            import importlib.metadata
+
+            return importlib.metadata.version("imas-mcp")
+        except Exception:
+            return "unknown"
+
+
+# Initialize data accessor for standalone functions (backward compatibility)
 data_accessor = JsonDataDictionaryAccessor()
 
 
@@ -573,27 +811,35 @@ async def analyze_ids_structure(
 
 def create_server() -> FastMCP:
     """
-    Create and configure the simplified FastMCP server with IMAS tools.
+    Create and configure the AI-enhanced FastMCP server with IMAS tools.
 
     Returns:
         Configured FastMCP server instance with AI-enhanced tools including graph analysis
     """
-    app = FastMCP("AI-Enhanced IMAS Data Dictionary MCP Server")
-
-    # Register the enhanced tools including graph analysis
-    app.tool(search_imas)
-    app.tool(explain_concept)
-    app.tool(get_overview)
-    app.tool(analyze_ids_structure)
-
-    return app
+    # Create server instance and return the FastMCP app
+    server = Server()
+    return server.mcp
 
 
 def main():
     """Main entry point for running the server."""
-    server = create_server()
+    server = Server()
     server.run(transport="stdio")
 
 
 if __name__ == "__main__":
     main()
+
+
+# Additional entry point for backward compatibility and testing
+def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+    """
+    Entry point for running the AI-enhanced server with specified transport.
+
+    Args:
+        transport: Transport protocol to use
+        host: Host to bind to (for sse and streamable-http transports)
+        port: Port to bind to (for sse and streamable-http transports)
+    """
+    server = Server()
+    server.run(transport=transport, host=host, port=port)

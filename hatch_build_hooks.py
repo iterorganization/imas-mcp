@@ -1,5 +1,5 @@
 """
-Custom build hooks for hatchling to initialize data during wheel creation.
+Custom build hooks for hatchling to initialize JSON data during wheel creation.
 """
 
 import logging
@@ -8,16 +8,16 @@ from pathlib import Path
 from typing import Any, Dict
 
 # hatchling is a build system for Python projects, and this hook will be used to
-# create a lexicographic index of the IMAS MCP data during the wheel build process.
+# create JSON data structures for the IMAS MCP server during the wheel build process.
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore[import]
 
 
 class CustomBuildHook(BuildHookInterface):
-    """Custom build hook to create data structures during wheel building."""
+    """Custom build hook to create JSON data structures during wheel building."""
 
     def initialize(self, version: str, build_data: Dict[str, Any]) -> None:
         """
-        Initialize the build hook and initialize the lexicographic index.
+        Initialize the build hook and create JSON data structures.
 
         Args:
             version: The version string for the build
@@ -30,7 +30,6 @@ class CustomBuildHook(BuildHookInterface):
             sys.path.insert(0, str(package_root))
 
         try:
-            from imas_mcp.lexicographic_search import LexicographicSearch
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
         finally:
             # Restore original sys.path
@@ -44,7 +43,7 @@ class CustomBuildHook(BuildHookInterface):
         )
 
         logger = logging.getLogger(__name__)
-        logger.info("Initializing build hook for IMAS MCP data structures")
+        logger.info("Initializing build hook for IMAS MCP JSON data structures")
 
         # Get configuration options
         verbose = self.config.get("verbose", False)
@@ -54,7 +53,7 @@ class CustomBuildHook(BuildHookInterface):
             logging.getLogger().setLevel(logging.DEBUG)
             logger.setLevel(logging.DEBUG)
 
-        logger.info("Initializing lexicographic index as part of wheel creation")
+        logger.info("Initializing JSON data structures as part of wheel creation")
 
         # Transform ids_filter from space-separated string to set
         ids_set = None
@@ -62,16 +61,11 @@ class CustomBuildHook(BuildHookInterface):
             ids_set = set(ids_filter.split())
             logger.info(f"Using IDS filter: {ids_filter}")
         else:
-            logger.info("Building index for all available IDS (no filter specified)")
+            logger.info(
+                "Building JSON data for all available IDS (no filter specified)"
+            )
 
-        # Initialize the index (this will create the index structure if needed)
-        logger.info("Starting lexicographic index creation...")
-        index = LexicographicSearch(ids_set=ids_set)
-        logger.info(
-            f"Lexicographic index created successfully with {len(index)} documents"
-        )
-
-        # Build JSON data structures as well
+        # Build JSON data structures for the AI-enhanced server
         logger.info("Starting JSON data structure creation...")
         json_transformer = DataDictionaryTransformer(ids_set=ids_set)
         json_outputs = json_transformer.transform_complete()
