@@ -5,14 +5,20 @@ This module contains Pydantic models that represent documents that can be indexe
 in the search engine and the search results returned from the search engine.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
+import importlib.util
 
 import pint
 import pydantic
-import whoosh.searching
 from pydantic import ConfigDict
 
 from imas_mcp.units import unit_registry
+
+# Conditional import for whoosh (legacy dependency)
+if TYPE_CHECKING or importlib.util.find_spec("whoosh") is not None:
+    import whoosh.searching
+else:
+    whoosh = None
 
 
 # Base model for document validation
@@ -81,8 +87,13 @@ class SearchResult(pydantic.BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     @classmethod
-    def from_hit(cls, hit: whoosh.searching.Hit) -> "SearchResult":
+    def from_hit(cls, hit: "whoosh.searching.Hit") -> "SearchResult":
         """Create a SearchResult instance from a Whoosh Hit object."""
+        if importlib.util.find_spec("whoosh") is None:
+            raise ImportError(
+                "Whoosh not available - cannot create SearchResult from Hit"
+            )
+
         return cls(
             path=hit["path"],
             score=hit.score if hit.score is not None else 0.0,
