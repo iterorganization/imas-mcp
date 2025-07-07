@@ -30,6 +30,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+from imas_mcp.core.xml_utils import DocumentationBuilder
 from imas_mcp.dd_accessor import create_dd_accessor, DataDictionaryAccessor
 
 IndexPrefixT = Literal["lexicographic", "semantic"]
@@ -48,7 +49,9 @@ class DataDictionaryIndex(abc.ABC):
 
     ids_set: Optional[Set[str]] = None  # Set of IDS names to index
     dirname: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parent / "resources"
+        default_factory=lambda: Path(__file__).resolve().parent
+        / "resources"
+        / "index_data"
     )
     indexname: Optional[str] = field(default=None)
     _dd_accessor: Optional[DataDictionaryAccessor] = field(
@@ -159,95 +162,19 @@ class DataDictionaryIndex(abc.ABC):
     ) -> str:
         """Build hierarchical documentation string from path-based documentation parts.
 
-        Takes a dictionary of path-based documentation and formats it into a single
-        hierarchical string with leaf node documentation prioritized first, followed
-        by hierarchical context. This approach ensures the most specific and pertinent
-        information appears immediately.
+        Delegates to the shared DocumentationBuilder utility for consistent
+        hierarchical documentation formatting across all components.
 
         Args:
             documentation_parts: Dictionary where keys are hierarchical paths
-                (e.g., 'ids_name', 'ids_name/node', 'ids_name/node/subnode') and
-                values are the documentation strings for each specific node.
+                and values are the documentation strings for each node.
 
         Returns:
-            A formatted string with the leaf node documentation first, followed by
-            hierarchical context with markdown headers. Empty string if no
-            documentation parts are provided.
-
-        Example:
-            Input: {
-                'core_profiles': 'Core plasma profiles data',
-                'core_profiles/time': 'Time coordinate array',
-                'core_profiles/profiles_1d': '1D profile data',
-                'core_profiles/profiles_1d/temperature': 'Temperature profile'
-            }
-
-            Output:
-            **core_profiles/profiles_1d/temperature**
-            Temperature profile
-
-            ## Hierarchical Context
-
-            ### core_profiles
-            Core plasma profiles data
-
-            #### core_profiles/profiles_1d
-            1D profile data
-
-            ##### core_profiles/time
-            Time coordinate array
-
-        Note:
-            - Leaf node (deepest path) documentation appears first for immediate relevance
-            - Hierarchical context follows with proper header levels
-            - Header levels are limited to 6 (markdown maximum), deeper levels use indentation
-            - Empty documentation values are skipped
-            - Paths in context section are sorted by depth then alphabetically
+            Formatted markdown string with hierarchical context.
         """
-        if not documentation_parts:
-            return ""
-
-        # Find the deepest (leaf) path efficiently
-        paths_by_depth = sorted(documentation_parts.keys(), key=lambda x: x.count("/"))
-
-        if not paths_by_depth:
-            return ""
-
-        deepest_path = paths_by_depth[-1]
-        leaf_doc = documentation_parts.get(deepest_path, "")
-
-        # Pre-allocate list for better memory usage
-        doc_sections = []
-
-        # Lead with leaf documentation if it exists
-        if leaf_doc:
-            doc_sections.append(f"**{deepest_path}**\n{leaf_doc}")
-
-        # Add hierarchical context (excluding the leaf we already showed)
-        remaining_paths = paths_by_depth[:-1]
-
-        if remaining_paths:
-            doc_sections.append("## Hierarchical Context")
-
-            for path_key in remaining_paths:
-                doc = documentation_parts[path_key]
-                if doc:  # Only add if documentation exists
-                    depth = path_key.count("/") + 1
-
-                    if depth + 2 <= 6:
-                        # Use markdown headers for levels 1-6
-                        header_level = depth + 2
-                        header = "#" * header_level
-                        doc_sections.append(f"{header} {path_key}\n{doc}")
-                    else:
-                        # Use indentation for deeper levels (beyond 6)
-                        indent_level = depth + 2 - 6  # How many levels beyond 6
-                        indent = "  " * indent_level  # 2 spaces per level
-                        doc_sections.append(
-                            f"###### {indent}**{path_key}**\n{indent}{doc}"
-                        )
-
-        return "\n\n".join(doc_sections)
+        return DocumentationBuilder.build_hierarchical_documentation(
+            documentation_parts
+        )
 
     def _build_element_entry(
         self,
@@ -258,19 +185,19 @@ class DataDictionaryIndex(abc.ABC):
     ) -> Optional[Dict[str, Any]]:
         """Build a single element entry efficiently."""
         path_parts = []
-        documentation_parts = {}
         units = elem.get("units", "")
 
-        # Walk up tree once
+        # Collect documentation using shared utility
+        documentation_parts = DocumentationBuilder.collect_documentation_hierarchy(
+            elem, ids_node, ids_name, parent_map
+        )
+
+        # Walk up tree for path building and units inheritance
         walker = elem
         while walker is not None and walker != ids_node:
             walker_name = walker.get("name")
             if walker_name:
                 path_parts.insert(0, walker_name)
-                walker_doc = walker.get("documentation")
-                if walker_doc:
-                    doc_key = "/".join([ids_name] + path_parts)
-                    documentation_parts[doc_key] = walker_doc
 
             # Handle units inheritance
             parent_walker = parent_map.get(walker)
@@ -283,11 +210,6 @@ class DataDictionaryIndex(abc.ABC):
 
         if not path_parts:
             return None
-
-        # Add IDS documentation
-        ids_doc = ids_node.get("documentation")
-        if ids_doc:
-            documentation_parts[ids_name] = ids_doc
 
         full_path = f"{ids_name}/{'/'.join(path_parts)}"
         combined_documentation = self._build_hierarchical_documentation(
