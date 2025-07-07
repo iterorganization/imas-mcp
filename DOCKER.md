@@ -83,7 +83,6 @@ docker ps
 
 # Manual health check using the dedicated endpoint
 curl -f http://localhost:8000/health
-
 # Example health response
 {
   "status": "healthy",
