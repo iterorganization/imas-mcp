@@ -79,9 +79,11 @@ class DataPath(BaseModel):
     related_paths: List[str] = Field(default_factory=list)
     usage_examples: List[UsageExample] = Field(default_factory=list)
     validation_rules: Optional[ValidationRules] = None
+    relationships: Optional["RelationshipCategories"] = (
+        None  # Categorized relationships
+    )
 
     # Additional XML attributes
-    element_type: Optional[str] = None
     coordinate1: Optional[str] = None
     coordinate2: Optional[str] = None
     timebase: Optional[str] = None
@@ -188,3 +190,18 @@ class TransformationOutputs(BaseModel):
     catalog: Path
     detailed: List[Path] = Field(default_factory=list)
     relationships: Path
+
+
+class RelationshipCategories(BaseModel):
+    """Categorized relationships for enhanced semantic understanding."""
+
+    coordinates: List[str] = Field(default_factory=list)  # Coordinate dependencies
+    physics_related: List[str] = Field(default_factory=list)  # Same physics domain
+    cross_ids: List[str] = Field(default_factory=list)  # Cross-IDS references
+    validation: List[str] = Field(default_factory=list)  # Validation/control fields
+    hierarchical: List[str] = Field(default_factory=list)  # Parent/child/sibling
+    units_compatible: List[str] = Field(default_factory=list)  # Same units
+    semantic_similarity: List[str] = Field(default_factory=list)  # Name similarity
+    documentation_refs: List[str] = Field(
+        default_factory=list
+    )  # Documentation references
