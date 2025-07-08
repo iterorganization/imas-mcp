@@ -19,7 +19,6 @@ from .data_model import (
 )
 from .extractors import (
     ExtractorContext,
-    ComposableExtractor,
     MetadataExtractor,
     LifecycleExtractor,
     PhysicsExtractor,
@@ -33,7 +32,7 @@ from .extractors import (
 
 @dataclass
 class DataDictionaryTransformer:
-    """Refactored transformer using composable extractors."""
+    """Refactored transformer using composable extractors with performance optimizations."""
 
     output_dir: Optional[Path] = None
     dd_accessor: Optional[ImasDataDictionaryAccessor] = None
@@ -46,7 +45,7 @@ class DataDictionaryTransformer:
     skip_ggd: bool = True
 
     def __post_init__(self):
-        """Initialize the transformer."""
+        """Initialize the transformer with performance optimizations."""
         if self.dd_accessor is None:
             self.dd_accessor = ImasDataDictionaryAccessor()
 
@@ -63,6 +62,41 @@ class DataDictionaryTransformer:
         # Cache XML tree
         self._tree = self.dd_accessor.get_xml_tree()
         self._root = self._tree.getroot()
+
+        # Performance optimization: Build global parent map once
+        self._global_parent_map = self._build_global_parent_map()
+
+        # Performance optimization: Pre-cache element lookups
+        self._element_cache = {}
+        self._path_cache = {}
+
+    def _build_global_parent_map(self) -> Dict[ET.Element, ET.Element]:
+        """Build parent map for entire XML tree once for performance."""
+        if self._root is None:
+            return {}
+        return {c: p for p in self._root.iter() for c in p}
+
+    def _get_cached_elements_by_name(
+        self, ids_elem: ET.Element, ids_name: str
+    ) -> List[ET.Element]:
+        """Get all named elements for an IDS with caching."""
+        cache_key = f"{ids_name}_named_elements"
+        if cache_key not in self._element_cache:
+            # Use iter() instead of findall() for better performance
+            elements = [elem for elem in ids_elem.iter() if elem.get("name")]
+            self._element_cache[cache_key] = elements
+        return self._element_cache[cache_key]
+
+    def _get_cached_elements_by_attribute(
+        self, ids_elem: ET.Element, ids_name: str, attr: str
+    ) -> List[ET.Element]:
+        """Get all elements with specific attribute for an IDS with caching."""
+        cache_key = f"{ids_name}_{attr}_elements"
+        if cache_key not in self._element_cache:
+            # Use iter() instead of findall() for better performance
+            elements = [elem for elem in ids_elem.iter() if elem.get(attr)]
+            self._element_cache[cache_key] = elements
+        return self._element_cache[cache_key]
 
     @property
     def resolved_output_dir(self) -> Path:
@@ -93,7 +127,7 @@ class DataDictionaryTransformer:
         )
 
     def _extract_ids_data(self, root: ET.Element) -> Dict[str, Dict[str, Any]]:
-        """Extract IDS data using composable extractors."""
+        """Extract IDS data using composable extractors with performance optimizations."""
         ids_data = {}
 
         for ids_elem in root.findall(".//IDS[@name]"):
@@ -107,13 +141,13 @@ class DataDictionaryTransformer:
             print(f"Processing IDS: {ids_name}")
 
             try:
-                # Create context for this IDS
+                # Create context for this IDS with cached parent map
                 context = ExtractorContext(
-                    dd_accessor=self.dd_accessor,
+                    dd_accessor=self.dd_accessor,  # type: ignore
                     root=root,
                     ids_elem=ids_elem,
                     ids_name=ids_name,
-                    parent_map={},  # Will be built in __post_init__
+                    parent_map=self._global_parent_map,  # Use pre-built parent map
                     excluded_patterns=self.excluded_patterns,
                     skip_ggd=self.skip_ggd,
                 )
@@ -140,17 +174,27 @@ class DataDictionaryTransformer:
     def _extract_ids_info(
         self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
     ) -> Dict[str, Any]:
-        """Extract IDS-level information."""
+        """Extract IDS-level information with optimized element access."""
+        # Get cached elements instead of multiple findall() calls
+        named_elements = self._get_cached_elements_by_name(ids_elem, ids_name)
+        documented_elements = [
+            elem for elem in named_elements if elem.get("documentation")
+        ]
+
         return {
             "name": ids_name,
             "description": ids_elem.get("documentation", ""),
-            "version": self.dd_accessor.get_version().public
+            "version": self.dd_accessor.get_version().public  # type: ignore
             if self.dd_accessor
             else "unknown",
             "physics_domain": self._infer_physics_domain(ids_name),
             "max_depth": self._calculate_max_depth(ids_elem),
-            "leaf_count": len(self._get_leaf_nodes(ids_elem)),
-            "documentation_coverage": self._calculate_documentation_coverage(ids_elem),
+            "leaf_count": len(
+                [elem for elem in named_elements if len(list(elem)) == 0]
+            ),
+            "documentation_coverage": len(documented_elements) / len(named_elements)
+            if named_elements
+            else 0.0,
         }
 
     def _extract_coordinate_systems(
@@ -163,10 +207,10 @@ class DataDictionaryTransformer:
     def _extract_paths(
         self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
     ) -> Dict[str, Dict[str, Any]]:
-        """Extract paths using composable extractors."""
+        """Extract paths using composable extractors with performance optimizations."""
         paths = {}
 
-        # Set up extractors
+        # Set up extractors once
         extractors = [
             MetadataExtractor(context),
             LifecycleExtractor(context),
@@ -176,24 +220,28 @@ class DataDictionaryTransformer:
             RelationshipExtractor(context),
         ]
 
-        composer = ComposableExtractor(extractors)
+        # Get cached named elements instead of findall()
+        named_elements = self._get_cached_elements_by_name(ids_elem, ids_name)
 
         # Process all elements with names
-        for elem in ids_elem.findall(".//*[@name]"):
+        for elem in named_elements:
             # Skip if element should be filtered
             if self._should_skip_element(elem, ids_elem, context.parent_map):
                 continue
 
-            # Extract path
+            # Extract path with caching
             path = self._build_element_path(
                 elem, ids_elem, ids_name, context.parent_map
             )
             if not path:
                 continue
 
-            # Use composable extractor to gather all metadata
+            # Use individual extractors
             try:
-                element_metadata = composer.extract_all(elem)
+                element_metadata = {}
+                for extractor in extractors:
+                    metadata = extractor.extract(elem)
+                    element_metadata.update(metadata)
 
                 # Ensure path is set
                 element_metadata["path"] = path
@@ -213,24 +261,22 @@ class DataDictionaryTransformer:
         extractor = SemanticExtractor(context)
         return extractor.extract_semantic_groups(paths)
 
-    # Helper methods that don't need major refactoring
     def _should_skip_element(
         self,
         elem: ET.Element,
         ids_elem: ET.Element,
         parent_map: Dict[ET.Element, ET.Element],
     ) -> bool:
-        """Check if element should be skipped."""
-        # This can use the unified filtering from BaseExtractor if needed
-        path = elem.get("path", "")
+        """Optimized element filtering with minimal string operations."""
         name = elem.get("name", "")
 
-        # Basic filtering logic
+        # Fast check for excluded patterns (avoid .lower() when possible)
         for pattern in self.excluded_patterns:
-            if pattern in path.lower() or pattern in name.lower():
+            if pattern in name:
                 return True
 
-        if self.skip_ggd and ("ggd" in path.lower() or "ggd" in name.lower()):
+        # Only do lowercase conversion if needed
+        if self.skip_ggd and "ggd" in name.lower():
             return True
 
         return False
@@ -242,7 +288,14 @@ class DataDictionaryTransformer:
         ids_name: str,
         parent_map: Dict[ET.Element, ET.Element],
     ) -> Optional[str]:
-        """Build full path for element."""
+        """Build full path for element with caching."""
+        # Use element ID as cache key for path building
+        elem_id = id(elem)
+        cache_key = f"{ids_name}_{elem_id}_path"
+
+        if cache_key in self._path_cache:
+            return self._path_cache[cache_key]
+
         path_parts = []
         current = elem
 
@@ -253,9 +306,12 @@ class DataDictionaryTransformer:
             current = parent_map.get(current)
 
         if not path_parts:
+            self._path_cache[cache_key] = None
             return None
 
-        return f"{ids_name}/{'/'.join(reversed(path_parts))}"
+        path = f"{ids_name}/{'/'.join(reversed(path_parts))}"
+        self._path_cache[cache_key] = path
+        return path
 
     # Keep existing helper methods for IDS-level analysis
     def _infer_physics_domain(self, ids_name: str) -> str:
@@ -270,29 +326,36 @@ class DataDictionaryTransformer:
         return domain_mapping.get(ids_name.lower(), PhysicsDomain.GENERAL.value)
 
     def _calculate_max_depth(self, ids_elem: ET.Element) -> int:
-        """Calculate maximum depth of IDS tree."""
+        """Calculate maximum depth using single traversal."""
+        max_depth = 0
 
-        def get_depth(elem: ET.Element, current_depth: int = 0) -> int:
-            max_child_depth = current_depth
+        def calculate_depth(elem: ET.Element, current_depth: int = 0):
+            nonlocal max_depth
+            max_depth = max(max_depth, current_depth)
             for child in elem:
-                child_depth = get_depth(child, current_depth + 1)
-                max_child_depth = max(max_child_depth, child_depth)
-            return max_child_depth
+                calculate_depth(child, current_depth + 1)
 
-        return get_depth(ids_elem)
+        calculate_depth(ids_elem)
+        return max_depth
 
     def _get_leaf_nodes(self, ids_elem: ET.Element) -> List[ET.Element]:
-        """Get all leaf nodes."""
+        """Get all leaf nodes using optimized traversal."""
         leaves = []
-        for elem in ids_elem.findall(".//*[@name]"):
-            if len(list(elem)) == 0:  # No children
+        for elem in ids_elem.iter():  # Use iter() instead of findall()
+            if elem.get("name") and len(list(elem)) == 0:  # No children
                 leaves.append(elem)
         return leaves
 
     def _calculate_documentation_coverage(self, ids_elem: ET.Element) -> float:
-        """Calculate documentation coverage percentage."""
-        total_elements = len(ids_elem.findall(".//*[@name]"))
-        documented_elements = len(ids_elem.findall(".//*[@name][@documentation]"))
+        """Calculate documentation coverage using optimized traversal."""
+        total_elements = 0
+        documented_elements = 0
+
+        for elem in ids_elem.iter():
+            if elem.get("name"):
+                total_elements += 1
+                if elem.get("documentation"):
+                    documented_elements += 1
 
         if total_elements == 0:
             return 0.0

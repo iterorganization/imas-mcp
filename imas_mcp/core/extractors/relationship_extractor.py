@@ -1,8 +1,9 @@
-"""Relationship extraction with composable analyzers."""
+"""Relationship extraction with composable analyzers and performance optimizations."""
 
 import re
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
+from collections import defaultdict
 
 from .base import BaseExtractor
 
@@ -12,9 +13,46 @@ class RelationshipAnalyzer:
 
     def __init__(self, context):
         self.context = context
+        # Initialize indexes for efficient lookups
+        self._path_index: Dict[str, ET.Element] = {}
+        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._built_indexes = False
+
+    def _build_indexes(self):
+        """Build indexes once for efficient relationship lookups."""
+        if self._built_indexes:
+            return
+
+        self._path_index = {}
+        self._coordinate_index = defaultdict(list)
+        self._units_index = defaultdict(list)
+
+        # Single traversal to build all indexes
+        for elem in self.context.ids_elem.iter():
+            # Path index
+            path = elem.get("path")
+            if path:
+                self._path_index[path] = elem
+
+            # Coordinate indexes
+            coord1 = elem.get("coordinate1")
+            coord2 = elem.get("coordinate2")
+            if coord1:
+                self._coordinate_index[coord1].append(elem)
+            if coord2:
+                self._coordinate_index[coord2].append(elem)
+
+            # Units index
+            units = elem.get("units")
+            if units:
+                self._units_index[units].append(elem)
+
+        self._built_indexes = True
 
     def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
         """Find relationships for an element."""
+        self._build_indexes()
         raise NotImplementedError
 
 
@@ -51,7 +89,8 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
     """Analyze hierarchical (parent-child-sibling) relationships."""
 
     def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract hierarchical relationships."""
+        """Extract hierarchical relationships using indexes."""
+        self._build_indexes()
         relationships = []
 
         if not current_path:
@@ -62,7 +101,8 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
         # Parent relationship
         if len(path_parts) > 1:
             parent_path = "/".join(path_parts[:-1])
-            relationships.append(parent_path)
+            if parent_path in self._path_index:
+                relationships.append(parent_path)
 
             # Sibling relationships
             siblings = self._find_siblings(parent_path, current_path)
@@ -75,35 +115,32 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
         return relationships
 
     def _find_siblings(self, parent_path: str, current_path: str) -> List[str]:
-        """Find sibling paths."""
+        """Find sibling paths using index - O(n) single pass instead of O(n²)."""
         siblings = []
+        parent_depth = len(parent_path.split("/"))
 
-        for elem in self.context.ids_elem.findall(".//*[@path]"):
-            path = elem.get("path", "")
-            if not path or path == current_path:
+        for path in self._path_index.keys():
+            if path == current_path:
                 continue
 
-            if "/" in path:
-                elem_parent = "/".join(path.split("/")[:-1])
-                if elem_parent == parent_path:
+            path_parts = path.split("/")
+            if len(path_parts) == parent_depth + 1:  # Same depth as current
+                path_parent = "/".join(path_parts[:-1])
+                if path_parent == parent_path:
                     siblings.append(path)
 
         return siblings
 
     def _find_children(self, parent_path: str) -> List[str]:
-        """Find direct child paths."""
+        """Find direct child paths using index."""
         children = []
+        parent_depth = len(parent_path.split("/"))
 
-        for elem in self.context.ids_elem.findall(".//*[@path]"):
-            path = elem.get("path", "")
-            if not path:
-                continue
-
-            if (
-                path.startswith(parent_path + "/")
-                and len(path.split("/")) == len(parent_path.split("/")) + 1
-            ):
-                children.append(path)
+        for path in self._path_index.keys():
+            if path.startswith(parent_path + "/"):
+                path_parts = path.split("/")
+                if len(path_parts) == parent_depth + 1:  # Direct child
+                    children.append(path)
 
         return children
 
@@ -112,7 +149,8 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
     """Analyze physics-domain relationships."""
 
     def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract physics-based relationships."""
+        """Extract physics-based relationships using indexes."""
+        self._build_indexes()
         relationships = []
 
         elem_name = elem.get("name", "")
@@ -142,7 +180,7 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
             )
             relationships.extend(domain_paths[:5])
 
-        # Unit-based relationships
+        # Unit-based relationships using index
         if units and units not in ["1", "", "mixed"]:
             unit_paths = self._find_same_unit_paths(units, current_path)
             relationships.extend(unit_paths[:3])
@@ -168,16 +206,14 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
     def _find_physics_domain_paths(
         self, domain: str, keywords: List[str], current_path: str
     ) -> List[str]:
-        """Find paths in same physics domain."""
+        """Find paths in same physics domain using index."""
         domain_paths = []
 
-        for elem in self.context.ids_elem.findall(".//*[@path]"):
-            path = elem.get("path", "")
-            name = elem.get("name", "").lower()
-
-            if not path or path == current_path:
+        for path, elem in self._path_index.items():
+            if path == current_path:
                 continue
 
+            name = elem.get("name", "").lower()
             path_lower = path.lower()
 
             for keyword in keywords:
@@ -188,18 +224,15 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
         return list(set(domain_paths))
 
     def _find_same_unit_paths(self, units: str, current_path: str) -> List[str]:
-        """Find paths with same units."""
+        """Find paths with same units using index."""
         same_unit_paths = []
 
-        for elem in self.context.ids_elem.findall(".//*[@units]"):
-            path = elem.get("path", "")
-            elem_units = elem.get("units", "")
-
-            if not path or path == current_path:
-                continue
-
-            if elem_units == units:
-                same_unit_paths.append(path)
+        if units in self._units_index:
+            related_elements = self._units_index[units]
+            for elem in related_elements:
+                path = elem.get("path", "")
+                if path and path != current_path:
+                    same_unit_paths.append(path)
 
         return same_unit_paths
 
@@ -208,7 +241,8 @@ class CoordinateAnalyzer(RelationshipAnalyzer):
     """Analyze coordinate-based relationships."""
 
     def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract coordinate-based relationships."""
+        """Extract coordinate-based relationships using indexes."""
+        self._build_indexes()
         relationships = []
 
         coord1 = elem.get("coordinate1")
@@ -218,19 +252,13 @@ class CoordinateAnalyzer(RelationshipAnalyzer):
         if self._should_skip_coordinate(coord1) or self._should_skip_coordinate(coord2):
             return relationships
 
-        if coord1 or coord2:
-            for other_elem in self.context.ids_elem.findall(".//*[@coordinate1]"):
-                other_coord1 = other_elem.get("coordinate1")
-                other_coord2 = other_elem.get("coordinate2")
-                other_path = other_elem.get("path")
-
-                if not other_path or other_elem == elem:
-                    continue
-
-                if (coord1 and coord1 == other_coord1) or (
-                    coord2 and coord2 == other_coord2
-                ):
-                    relationships.append(other_path)
+        for coord in [coord1, coord2]:
+            if coord and coord in self._coordinate_index:
+                related_elements = self._coordinate_index[coord]
+                for related_elem in related_elements[:5]:  # Limit results
+                    related_path = related_elem.get("path")
+                    if related_path and related_path != current_path:
+                        relationships.append(related_path)
 
         return relationships
 
@@ -242,10 +270,16 @@ class CoordinateAnalyzer(RelationshipAnalyzer):
 
 
 class RelationshipExtractor(BaseExtractor):
-    """Composable relationship extractor using multiple analyzers."""
+    """Composable relationship extractor using multiple analyzers with performance optimizations."""
 
     def __init__(self, context):
         super().__init__(context)
+
+        # Build indexes once for efficient lookups
+        self._path_index: Dict[str, ET.Element] = {}
+        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._built_indexes = False
 
         # Initialize analyzers
         self.analyzers = [
@@ -255,8 +289,48 @@ class RelationshipExtractor(BaseExtractor):
             CoordinateAnalyzer(context),
         ]
 
+    def _build_indexes(self):
+        """Build indexes once for efficient relationship lookups."""
+        if self._built_indexes:
+            return
+
+        self._path_index = {}
+        self._coordinate_index = defaultdict(list)
+        self._units_index = defaultdict(list)
+
+        # Single traversal to build all indexes
+        for elem in self.context.ids_elem.iter():
+            # Path index
+            path = elem.get("path")
+            if path:
+                self._path_index[path] = elem
+
+            # Coordinate indexes
+            coord1 = elem.get("coordinate1")
+            coord2 = elem.get("coordinate2")
+            if coord1:
+                self._coordinate_index[coord1].append(elem)
+            if coord2:
+                self._coordinate_index[coord2].append(elem)
+
+            # Units index
+            units = elem.get("units")
+            if units:
+                self._units_index[units].append(elem)
+
+        self._built_indexes = True
+
+        # Share indexes with analyzers
+        for analyzer in self.analyzers:
+            analyzer._path_index = self._path_index
+            analyzer._coordinate_index = self._coordinate_index
+            analyzer._units_index = self._units_index
+            analyzer._built_indexes = True
+
     def extract(self, elem: ET.Element) -> Dict[str, Any]:
-        """Extract relationships using all analyzers."""
+        """Extract relationships using all analyzers with performance optimizations."""
+        self._build_indexes()
+
         relationship_data = {}
 
         current_path = elem.get("path", "")
