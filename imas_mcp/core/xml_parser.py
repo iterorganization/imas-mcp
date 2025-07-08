@@ -1,4 +1,4 @@
-"""Enhanced XML parser for IMAS Data Dictionary with relationship extraction."""
+"""Refactored XML parser using composable extractors."""
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -16,22 +16,32 @@ from .data_model import (
     PhysicsDomain,
     Relationships,
     TransformationOutputs,
-    UnitFamily,
 )
-from .xml_utils import DocumentationBuilder
+from .extractors import (
+    ExtractorContext,
+    ComposableExtractor,
+    MetadataExtractor,
+    LifecycleExtractor,
+    PhysicsExtractor,
+    ValidationExtractor,
+    PathExtractor,
+    SemanticExtractor,
+    RelationshipExtractor,
+    CoordinateExtractor,
+)
 
 
 @dataclass
 class DataDictionaryTransformer:
-    """Transform IDSDef.xml into layered JSON structure using existing accessor."""
+    """Refactored transformer using composable extractors."""
 
     output_dir: Optional[Path] = None
     dd_accessor: Optional[ImasDataDictionaryAccessor] = None
-    ids_set: Optional[Set[str]] = None  # Restrict processing to specific IDS
+    ids_set: Optional[Set[str]] = None
 
     # Processing configuration
     excluded_patterns: Set[str] = field(
-        default_factory=lambda: {"ids_properties", "code", "error"}
+        default_factory=lambda: {"ids_properties", "code"}
     )
     skip_ggd: bool = True
 
@@ -40,39 +50,38 @@ class DataDictionaryTransformer:
         if self.dd_accessor is None:
             self.dd_accessor = ImasDataDictionaryAccessor()
 
-        # Default to resources directory if no output_dir specified
         if self.output_dir is None:
             self.output_dir = (
                 Path(__file__).resolve().parent.parent / "resources" / "json_data"
             )
 
-        # Ensure output_dir is a Path object for type safety
         if not isinstance(self.output_dir, Path):
             self.output_dir = Path(self.output_dir)
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        # Cache XML tree for reuse
+
+        # Cache XML tree
         self._tree = self.dd_accessor.get_xml_tree()
         self._root = self._tree.getroot()
 
     @property
     def resolved_output_dir(self) -> Path:
-        """Get the resolved output directory as a Path object."""
-        assert self.output_dir is not None, "output_dir should be set in __post_init__"
+        """Get the resolved output directory."""
+        assert self.output_dir is not None
         return self.output_dir
 
     def transform_complete(self) -> TransformationOutputs:
-        """Transform XML to complete JSON structure."""
+        """Transform XML to complete JSON structure using composable extractors."""
         if self._root is None:
             raise ValueError("XML root is None")
 
-        # Extract all IDS information
+        # Extract all IDS information using new architecture
         ids_data = self._extract_ids_data(self._root)
 
-        # Perform graph analysis on extracted data
+        # Perform graph analysis
         graph_data = self._analyze_graph_structure(ids_data)
 
-        # Generate outputs with graph data
+        # Generate outputs
         catalog_path = self._generate_catalog(ids_data, graph_data)
         detailed_paths = self._generate_detailed_files(ids_data)
         relationships_path = self._generate_relationships(ids_data)
@@ -84,188 +93,147 @@ class DataDictionaryTransformer:
         )
 
     def _extract_ids_data(self, root: ET.Element) -> Dict[str, Dict[str, Any]]:
-        """Extract structured data from XML root."""
+        """Extract IDS data using composable extractors."""
         ids_data = {}
 
-        # Find all IDS elements
         for ids_elem in root.findall(".//IDS[@name]"):
             ids_name = ids_elem.get("name")
             if not ids_name:
                 continue
 
-            # Skip if not in the specified IDS set
             if self.ids_set is not None and ids_name not in self.ids_set:
                 continue
 
-            # Skip GGD nodes if configured
-            if self.skip_ggd and ids_name.lower().startswith("ggd"):
+            print(f"Processing IDS: {ids_name}")
+
+            try:
+                # Create context for this IDS
+                context = ExtractorContext(
+                    dd_accessor=self.dd_accessor,
+                    root=root,
+                    ids_elem=ids_elem,
+                    ids_name=ids_name,
+                    parent_map={},  # Will be built in __post_init__
+                    excluded_patterns=self.excluded_patterns,
+                    skip_ggd=self.skip_ggd,
+                )
+
+                # Extract IDS-level information
+                ids_info = self._extract_ids_info(ids_elem, ids_name, context)
+                coordinate_systems = self._extract_coordinate_systems(ids_elem, context)
+                paths = self._extract_paths(ids_elem, ids_name, context)
+                semantic_groups = self._extract_semantic_groups(paths, context)
+
+                ids_data[ids_name] = {
+                    "ids_info": ids_info,
+                    "coordinate_systems": coordinate_systems,
+                    "paths": paths,
+                    "semantic_groups": semantic_groups,
+                }
+
+            except Exception as e:
+                print(f"Error processing IDS {ids_name}: {e}")
                 continue
-
-            # Extract IDS information
-            ids_info = self._extract_ids_info(ids_elem, ids_name)
-            coordinate_systems = self._extract_coordinate_systems(ids_elem)
-            paths = self._extract_paths(ids_elem, ids_name)
-            semantic_groups = self._extract_semantic_groups(paths)
-
-            ids_data[ids_name] = {
-                "ids_info": ids_info,
-                "coordinate_systems": coordinate_systems,
-                "paths": paths,
-                "semantic_groups": semantic_groups,
-            }
 
         return ids_data
 
-    def _extract_ids_info(self, ids_elem: ET.Element, ids_name: str) -> Dict[str, Any]:
-        """Extract basic IDS information."""
+    def _extract_ids_info(
+        self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
+    ) -> Dict[str, Any]:
+        """Extract IDS-level information."""
         return {
             "name": ids_name,
             "description": ids_elem.get("documentation", ""),
             "version": self.dd_accessor.get_version().public
             if self.dd_accessor
             else "unknown",
+            "physics_domain": self._infer_physics_domain(ids_name),
             "max_depth": self._calculate_max_depth(ids_elem),
             "leaf_count": len(self._get_leaf_nodes(ids_elem)),
-            "physics_domain": self._infer_physics_domain(ids_name),
             "documentation_coverage": self._calculate_documentation_coverage(ids_elem),
-            "related_ids": [],  # To be populated by relationship analysis
-            "common_use_cases": [],  # To be populated by analysis
         }
 
     def _extract_coordinate_systems(
-        self, ids_elem: ET.Element
+        self, ids_elem: ET.Element, context: ExtractorContext
     ) -> Dict[str, Dict[str, Any]]:
-        """Extract coordinate system information."""
-        coordinate_systems = {}
-
-        # Create parent map for filtering
-        parent_map = {c: p for p in ids_elem.iter() for c in p}
-
-        # Look for coordinate-related elements
-        for elem in ids_elem.findall(".//*[@coordinate1]"):
-            # Skip if element should be filtered out
-            if self._should_skip_element(elem, ids_elem, parent_map):
-                continue
-
-            coord1 = elem.get("coordinate1")
-            if coord1 and coord1 not in coordinate_systems:
-                # Additional filtering for GGD coordinates
-                if self.skip_ggd and "ggd" in coord1.lower():
-                    continue
-
-                coordinate_systems[coord1] = {
-                    "description": f"Coordinate system: {coord1}",
-                    "units": elem.get("units", ""),
-                    "range": None,
-                    "usage": "Primary coordinate",
-                }
-
-        for elem in ids_elem.findall(".//*[@coordinate2]"):
-            # Skip if element should be filtered out
-            if self._should_skip_element(elem, ids_elem, parent_map):
-                continue
-
-            coord2 = elem.get("coordinate2")
-            if coord2 and coord2 not in coordinate_systems:
-                # Additional filtering for GGD coordinates
-                if self.skip_ggd and "ggd" in coord2.lower():
-                    continue
-
-                coordinate_systems[coord2] = {
-                    "description": f"Coordinate system: {coord2}",
-                    "units": elem.get("units", ""),
-                    "range": None,
-                    "usage": "Secondary coordinate",
-                }
-
-        return coordinate_systems
+        """Extract coordinate systems using CoordinateExtractor."""
+        extractor = CoordinateExtractor(context)
+        return extractor.extract_coordinate_systems(ids_elem)
 
     def _extract_paths(
-        self, ids_elem: ET.Element, ids_name: str
+        self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
     ) -> Dict[str, Dict[str, Any]]:
-        """Extract all paths with their metadata."""
+        """Extract paths using composable extractors."""
         paths = {}
 
-        # Create parent map once for this IDS for efficient parent lookup
-        parent_map = {c: p for p in ids_elem.iter() for c in p}
+        # Set up extractors
+        extractors = [
+            MetadataExtractor(context),
+            LifecycleExtractor(context),
+            PhysicsExtractor(context),
+            ValidationExtractor(context),
+            PathExtractor(context),
+            RelationshipExtractor(context),
+        ]
 
-        # Get all named elements, excluding excluded patterns
+        composer = ComposableExtractor(extractors)
+
+        # Process all elements with names
         for elem in ids_elem.findall(".//*[@name]"):
-            elem_name = elem.get("name")
-            if not elem_name:
+            # Skip if element should be filtered
+            if self._should_skip_element(elem, ids_elem, context.parent_map):
                 continue
 
-            # Skip excluded patterns
-            if self._should_skip_element(elem, ids_elem, parent_map):
-                continue
-
-            # Build path
-            path = self._build_element_path(elem, ids_elem, ids_name, parent_map)
+            # Extract path
+            path = self._build_element_path(
+                elem, ids_elem, ids_name, context.parent_map
+            )
             if not path:
                 continue
 
-            # Extract element metadata with hierarchical documentation
-            path_data = self._extract_element_metadata(
-                elem, ids_elem, ids_name, parent_map
-            )
-            path_data["path"] = path  # Add the path field
-            paths[path] = path_data
+            # Use composable extractor to gather all metadata
+            try:
+                element_metadata = composer.extract_all(elem)
+
+                # Ensure path is set
+                element_metadata["path"] = path
+
+                paths[path] = element_metadata
+
+            except Exception as e:
+                print(f"Error extracting metadata for {path}: {e}")
+                continue
 
         return paths
 
-    def _extract_element_metadata(
+    def _extract_semantic_groups(
+        self, paths: Dict[str, Dict[str, Any]], context: ExtractorContext
+    ) -> Dict[str, List[str]]:
+        """Extract semantic groups using SemanticExtractor."""
+        extractor = SemanticExtractor(context)
+        return extractor.extract_semantic_groups(paths)
+
+    # Helper methods that don't need major refactoring
+    def _should_skip_element(
         self,
         elem: ET.Element,
         ids_elem: ET.Element,
-        ids_name: str,
         parent_map: Dict[ET.Element, ET.Element],
-    ) -> Dict[str, Any]:
-        """Extract metadata from XML element attributes with hierarchical documentation."""
-        # Handle units properly - convert empty strings to None
-        units = elem.get("units", "")
-        if units and units.strip():
-            units = units.strip()
-        else:
-            units = None
+    ) -> bool:
+        """Check if element should be skipped."""
+        # This can use the unified filtering from BaseExtractor if needed
+        path = elem.get("path", "")
+        name = elem.get("name", "")
 
-        # Collect hierarchical documentation
-        documentation_parts = DocumentationBuilder.collect_documentation_hierarchy(
-            elem, ids_elem, ids_name, parent_map
-        )
-        hierarchical_doc = DocumentationBuilder.build_hierarchical_documentation(
-            documentation_parts
-        )
+        # Basic filtering logic
+        for pattern in self.excluded_patterns:
+            if pattern in path.lower() or pattern in name.lower():
+                return True
 
-        metadata = {
-            "documentation": hierarchical_doc or elem.get("documentation", ""),
-            "units": units,  # Always include units field
-            "coordinates": [],
-            "lifecycle": "active",
-            "data_type": elem.get("type", ""),
-            "introduced_after": elem.get("introduced_after"),
-            "element_type": elem.get("element_type"),
-            "coordinate1": elem.get("coordinate1"),
-            "coordinate2": elem.get("coordinate2"),
-            "timebase": elem.get("timebase"),
-            "type": elem.get("type"),
-        }
+        if self.skip_ggd and ("ggd" in path.lower() or "ggd" in name.lower()):
+            return True
 
-        # Build coordinates list
-        coordinates = []
-        if elem.get("coordinate1"):
-            coordinates.append(elem.get("coordinate1"))
-        if elem.get("coordinate2"):
-            coordinates.append(elem.get("coordinate2"))
-        metadata["coordinates"] = coordinates
-
-        # Clean up None values but keep required fields like 'units'
-        cleaned_metadata = {}
-        required_fields = {"documentation", "units", "coordinates", "lifecycle"}
-        for k, v in metadata.items():
-            if k in required_fields or v is not None:
-                cleaned_metadata[k] = v
-
-        return cleaned_metadata
+        return False
 
     def _build_element_path(
         self,
@@ -278,109 +246,18 @@ class DataDictionaryTransformer:
         path_parts = []
         current = elem
 
-        # Walk up the tree to build path using parent map
         while current is not None and current != ids_elem:
             name = current.get("name")
             if name:
-                path_parts.insert(0, name)
+                path_parts.append(name)
             current = parent_map.get(current)
 
         if not path_parts:
             return None
 
-        return f"{ids_name}/{'/'.join(path_parts)}"
+        return f"{ids_name}/{'/'.join(reversed(path_parts))}"
 
-    def _should_skip_element(
-        self,
-        elem: ET.Element,
-        ids_elem: ET.Element,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> bool:
-        """Check if element should be skipped."""
-        # Build path to check against excluded patterns using parent map
-        path_parts = []
-        current = elem
-
-        while current is not None and current != ids_elem:
-            name = current.get("name")
-            if name:
-                path_parts.insert(0, name)
-            current = parent_map.get(current)
-
-        # Check if any part matches excluded patterns
-        for pattern in self.excluded_patterns:
-            if any(pattern in part for part in path_parts):
-                return True
-
-        # Enhanced GGD filtering
-        if self.skip_ggd:
-            # Check for GGD in path parts
-            if any("ggd" in part.lower() for part in path_parts):
-                return True
-
-            # Check for GGD in element name specifically
-            elem_name = elem.get("name", "").lower()
-            if "ggd" in elem_name:
-                return True
-
-            # Check for grids_ggd patterns
-            if any("grids_ggd" in part.lower() for part in path_parts):
-                return True
-
-        # Enhanced error node filtering - check for error in element name
-        elem_name = elem.get("name", "").lower()
-        if "error" in elem_name:
-            return True
-
-        return False
-
-    def _extract_semantic_groups(
-        self, paths: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, List[str]]:
-        """Group paths by semantic similarity."""
-        semantic_groups = {}
-
-        # Group by common prefixes and physics concepts
-        for path, metadata in paths.items():
-            # Extract common patterns
-            path_parts = path.split("/")
-            if len(path_parts) >= 3:
-                group_key = "/".join(path_parts[:3])  # First 3 levels
-                if group_key not in semantic_groups:
-                    semantic_groups[group_key] = []
-                semantic_groups[group_key].append(path)
-
-        # Filter out single-item groups
-        semantic_groups = {k: v for k, v in semantic_groups.items() if len(v) > 1}
-
-        return semantic_groups
-
-    def _calculate_max_depth(self, ids_elem: ET.Element) -> int:
-        """Calculate maximum depth of IDS tree."""
-        max_depth = 0
-
-        def get_depth(elem: ET.Element, current_depth: int = 0) -> int:
-            """Recursively calculate depth."""
-            depth = current_depth
-            for child in elem:
-                if child.get("name"):
-                    child_depth = get_depth(child, current_depth + 1)
-                    depth = max(depth, child_depth)
-            return depth
-
-        max_depth = get_depth(ids_elem)
-        return max_depth
-
-    def _get_leaf_nodes(self, ids_elem: ET.Element) -> List[ET.Element]:
-        """Get all leaf nodes (elements with no children)."""
-        leaves = []
-
-        for elem in ids_elem.findall(".//*[@name]"):
-            if len(list(elem)) == 0:  # No children
-                leaves.append(elem)
-
-        return leaves
-
+    # Keep existing helper methods for IDS-level analysis
     def _infer_physics_domain(self, ids_name: str) -> str:
         """Infer physics domain from IDS name."""
         domain_mapping = {
@@ -390,8 +267,27 @@ class DataDictionaryTransformer:
             "heating": PhysicsDomain.HEATING.value,
             "wall": PhysicsDomain.WALL.value,
         }
-
         return domain_mapping.get(ids_name.lower(), PhysicsDomain.GENERAL.value)
+
+    def _calculate_max_depth(self, ids_elem: ET.Element) -> int:
+        """Calculate maximum depth of IDS tree."""
+
+        def get_depth(elem: ET.Element, current_depth: int = 0) -> int:
+            max_child_depth = current_depth
+            for child in elem:
+                child_depth = get_depth(child, current_depth + 1)
+                max_child_depth = max(max_child_depth, child_depth)
+            return max_child_depth
+
+        return get_depth(ids_elem)
+
+    def _get_leaf_nodes(self, ids_elem: ET.Element) -> List[ET.Element]:
+        """Get all leaf nodes."""
+        leaves = []
+        for elem in ids_elem.findall(".//*[@name]"):
+            if len(list(elem)) == 0:  # No children
+                leaves.append(elem)
+        return leaves
 
     def _calculate_documentation_coverage(self, ids_elem: ET.Element) -> float:
         """Calculate documentation coverage percentage."""
@@ -403,32 +299,29 @@ class DataDictionaryTransformer:
 
         return documented_elements / total_elements
 
+    # Keep existing graph analysis and output generation methods
     def _analyze_graph_structure(
         self, ids_data: Dict[str, Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Perform graph analysis on the extracted IDS data."""
-        # Create a data structure compatible with analyze_imas_graphs
+        """Perform graph analysis on extracted data."""
         data_dict = {
             "ids_catalog": {
                 ids_name: {"paths": data["paths"]}
                 for ids_name, data in ids_data.items()
             },
             "metadata": {
-                "build_time": "",  # Will be set during catalog generation
+                "build_time": "",
                 "total_ids": len(ids_data),
             },
         }
-
-        # Use the graph analyzer function
         return analyze_imas_graphs(data_dict)
 
     def _generate_catalog(
         self, ids_data: Dict[str, Dict[str, Any]], graph_data: Dict[str, Any]
     ) -> Path:
-        """Generate high-level catalog file with graph statistics."""
+        """Generate catalog file."""
         catalog_path = self.resolved_output_dir / "ids_catalog.json"
 
-        # Create catalog metadata
         metadata = CatalogMetadata(
             version=self.dd_accessor.get_version().public
             if self.dd_accessor
@@ -439,21 +332,21 @@ class DataDictionaryTransformer:
             ),
         )
 
-        # Create IDS catalog entries
         catalog_entries = {}
         for ids_name, data in ids_data.items():
-            catalog_entries[ids_name] = IdsInfo(**data["ids_info"])
+            catalog_entries[ids_name] = {
+                "name": ids_name,
+                "description": data["ids_info"]["description"],
+                "path_count": len(data["paths"]),
+                "physics_domain": data["ids_info"]["physics_domain"],
+            }
 
-        # Create catalog with graph data
         catalog_dict = {
             "metadata": metadata.model_dump(),
-            "ids_catalog": {k: v.model_dump() for k, v in catalog_entries.items()},
+            "ids_catalog": catalog_entries,
         }
-
-        # Merge graph statistics into the catalog
         catalog_dict.update(graph_data)
 
-        # Write to file
         with open(catalog_path, "w", encoding="utf-8") as f:
             import json
 
@@ -472,7 +365,6 @@ class DataDictionaryTransformer:
         for ids_name, data in ids_data.items():
             detailed_path = detailed_dir / f"{ids_name}.json"
 
-            # Create detailed IDS structure
             detailed = IdsDetailed(
                 ids_info=IdsInfo(**data["ids_info"]),
                 coordinate_systems={
@@ -482,7 +374,7 @@ class DataDictionaryTransformer:
                 paths={k: DataPath(**v) for k, v in data["paths"].items()},
                 semantic_groups=data["semantic_groups"],
             )
-            # Write to file
+
             with open(detailed_path, "w", encoding="utf-8") as f:
                 f.write(detailed.model_dump_json(indent=2))
 
@@ -491,24 +383,9 @@ class DataDictionaryTransformer:
         return paths
 
     def _generate_relationships(self, ids_data: Dict[str, Dict[str, Any]]) -> Path:
-        """Generate relationship graph."""
+        """Generate relationships file."""
         rel_path = self.resolved_output_dir / "relationships.json"
 
-        # Add basic unit families using proper UnitFamily objects
-        unit_families = {}
-        for ids_name, data in ids_data.items():
-            for path, path_data in data["paths"].items():
-                units = path_data.get("units")
-                if units and units != "none":
-                    if units not in unit_families:
-                        unit_families[units] = UnitFamily(
-                            base_unit=units,
-                            paths_using=[],
-                            conversion_factors={},
-                        )
-                    unit_families[units].paths_using.append(path)
-
-        # Create metadata for relationships
         metadata = CatalogMetadata(
             version=self.dd_accessor.get_version().public
             if self.dd_accessor
@@ -517,14 +394,11 @@ class DataDictionaryTransformer:
             total_leaf_nodes=sum(
                 data["ids_info"]["leaf_count"] for data in ids_data.values()
             ),
-            total_relationships=len(unit_families),  # Count relationships
+            total_relationships=0,
         )
 
-        # Create basic relationships structure
         relationships = Relationships(metadata=metadata)
-        relationships.unit_families = unit_families
 
-        # Write to file
         with open(rel_path, "w", encoding="utf-8") as f:
             f.write(relationships.model_dump_json(indent=2))
 
