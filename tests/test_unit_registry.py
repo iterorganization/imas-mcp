@@ -4,7 +4,7 @@ Test the Data Dictionary unit registry with the provided unit aliases.
 
 import pytest
 
-from imas_mcp_server.units import unit_registry
+from imas_mcp.units import unit_registry
 
 
 @pytest.mark.parametrize("dd_unit", ["mixed", "UTC", "m__pow__dimension"])

@@ -1,1 +1,1 @@
-# Scripts package for run-server
+"""Scripts package for IMAS MCP development and deployment tools."""

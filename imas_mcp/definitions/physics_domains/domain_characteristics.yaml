@@ -1,0 +1,462 @@
+# Physics Domain Characteristics for IMAS Data Dictionary
+# Generated with AI assistance for comprehensive physics-based categorization
+# This file defines the characteristics and properties of each physics domain
+
+metadata:
+  version: "1.0.0"
+  created: "2025-01-09"
+  description: "Comprehensive physics domain characteristics for IMAS categorization"
+  ai_assisted: true
+  generation_context: "Option 1 diagnostic reorganization - physics-based categorization"
+
+domains:
+  equilibrium:
+    description: "Magnetohydrodynamic equilibrium and magnetic field configuration"
+    primary_phenomena:
+      - "magnetic flux surfaces"
+      - "pressure balance"
+      - "current density"
+      - "safety factor"
+    typical_units:
+      - "Wb"
+      - "T"
+      - "A.m^-2"
+      - "Pa"
+    measurement_methods:
+      - "magnetic diagnostics"
+      - "MSE"
+      - "polarimetry"
+    related_domains:
+      - "transport"
+      - "mhd"
+      - "control"
+    complexity_level: "intermediate"
+
+  transport:
+    description: "Particle, energy, and momentum transport in plasma"
+    primary_phenomena:
+      - "diffusion"
+      - "convection"
+      - "heat transport"
+      - "particle transport"
+    typical_units:
+      - "m^-3"
+      - "eV"
+      - "W.m^-3"
+      - "m^2.s^-1"
+    measurement_methods:
+      - "electromagnetic diagnostics"
+      - "particle diagnostics"
+    related_domains:
+      - "equilibrium"
+      - "heating"
+      - "turbulence"
+    complexity_level: "advanced"
+
+  mhd:
+    description: "Magnetohydrodynamic instabilities and modes"
+    primary_phenomena:
+      - "tearing modes"
+      - "disruptions"
+      - "sawteeth"
+      - "ELMs"
+    typical_units:
+      - "Hz"
+      - "s"
+      - "T"
+      - "A"
+    measurement_methods:
+      - "magnetic diagnostics"
+      - "electromagnetic diagnostics"
+      - "radiation diagnostics"
+    related_domains:
+      - "equilibrium"
+      - "edge_physics"
+    complexity_level: "advanced"
+
+  turbulence:
+    description: "Microscopic turbulence and transport"
+    primary_phenomena:
+      - "micro-instabilities"
+      - "zonal flows"
+      - "ITG"
+      - "TEM"
+    typical_units:
+      - "Hz"
+      - "m.s^-1"
+      - "eV"
+      - "m^-1"
+    measurement_methods:
+      - "electromagnetic diagnostics"
+      - "particle diagnostics"
+    related_domains:
+      - "transport"
+      - "heating"
+    complexity_level: "advanced"
+
+  heating:
+    description: "Auxiliary heating and current drive systems"
+    primary_phenomena:
+      - "neutral beam injection"
+      - "ion cyclotron heating"
+      - "electron cyclotron heating"
+    typical_units:
+      - "W"
+      - "A"
+      - "eV"
+      - "m^-3.s^-1"
+    measurement_methods:
+      - "particle diagnostics"
+      - "electromagnetic diagnostics"
+      - "radiation diagnostics"
+    related_domains:
+      - "transport"
+      - "current_drive"
+    complexity_level: "intermediate"
+
+  current_drive:
+    description: "Non-inductive current drive methods"
+    primary_phenomena:
+      - "ECCD"
+      - "LHCD"
+      - "bootstrap current"
+      - "NBI-driven current"
+    typical_units:
+      - "A.m^-2"
+      - "W"
+      - "m^-3"
+    measurement_methods:
+      - "MSE"
+      - "polarimetry"
+      - "power monitors"
+    related_domains:
+      - "heating"
+      - "equilibrium"
+    complexity_level: "intermediate"
+
+  wall:
+    description: "Plasma-wall interactions and material effects"
+    primary_phenomena:
+      - "sputtering"
+      - "erosion"
+      - "deposition"
+      - "tritium retention"
+    typical_units:
+      - "m.s^-1"
+      - "m^-2.s^-1"
+      - "eV"
+      - "kg.m^-2"
+    measurement_methods:
+      - "spectroscopy"
+      - "surface analysis"
+      - "mass spectrometry"
+    related_domains:
+      - "edge_physics"
+      - "divertor"
+    complexity_level: "intermediate"
+
+  divertor:
+    description: "Divertor physics and heat exhaust"
+    primary_phenomena:
+      - "detachment"
+      - "heat loads"
+      - "particle exhaust"
+      - "impurity screening"
+    typical_units:
+      - "W.m^-2"
+      - "Pa"
+      - "m^-3"
+      - "s^-1"
+    measurement_methods:
+      - "Langmuir probes"
+      - "infrared cameras"
+      - "spectroscopy"
+    related_domains:
+      - "edge_physics"
+      - "wall"
+    complexity_level: "advanced"
+
+  edge_physics:
+    description: "Edge and scrape-off layer physics"
+    primary_phenomena:
+      - "ELMs"
+      - "L-H transition"
+      - "pedestal"
+      - "SOL transport"
+    typical_units:
+      - "eV"
+      - "m^-3"
+      - "W.m^-2"
+      - "m.s^-1"
+    measurement_methods:
+      - "edge Thomson scattering"
+      - "reflectometry"
+      - "Langmuir probes"
+    related_domains:
+      - "transport"
+      - "divertor"
+      - "mhd"
+    complexity_level: "advanced"
+
+  # Diagnostic domains (Option 1 physics-based reorganization)
+  particle_diagnostics:
+    description: "Particle measurement and analysis systems"
+    primary_phenomena:
+      - "particle scattering"
+      - "charge exchange"
+      - "neutron emission"
+      - "particle collection"
+    typical_units:
+      - "m^-3"
+      - "eV"
+      - "counts.s^-1"
+      - "A"
+    measurement_methods:
+      - "Thomson scattering"
+      - "charge exchange spectroscopy"
+      - "neutron detectors"
+      - "Langmuir probes"
+    related_domains:
+      - "transport"
+      - "heating"
+      - "edge_physics"
+    complexity_level: "intermediate"
+
+  electromagnetic_diagnostics:
+    description: "Electromagnetic wave and field diagnostic systems"
+    primary_phenomena:
+      - "wave propagation"
+      - "electromagnetic emission"
+      - "polarization"
+      - "interferometry"
+    typical_units:
+      - "Hz"
+      - "V"
+      - "rad"
+      - "m"
+    measurement_methods:
+      - "ECE"
+      - "interferometry"
+      - "reflectometry"
+      - "polarimetry"
+      - "MSE"
+    related_domains:
+      - "equilibrium"
+      - "transport"
+      - "magnetic_diagnostics"
+    complexity_level: "intermediate"
+
+  radiation_diagnostics:
+    description: "Radiation-based diagnostic systems"
+    primary_phenomena:
+      - "bremsstrahlung"
+      - "line emission"
+      - "continuum radiation"
+      - "x-ray emission"
+    typical_units:
+      - "W.m^-3"
+      - "counts.s^-1"
+      - "eV"
+      - "photons.s^-1"
+    measurement_methods:
+      - "bolometry"
+      - "spectroscopy"
+      - "x-ray imaging"
+    related_domains:
+      - "particle_diagnostics"
+      - "edge_physics"
+    complexity_level: "intermediate"
+
+  magnetic_diagnostics:
+    description: "Magnetic field measurement systems"
+    primary_phenomena:
+      - "magnetic flux"
+      - "field perturbations"
+      - "mode activity"
+    typical_units:
+      - "T"
+      - "Wb"
+      - "V"
+      - "Hz"
+    measurement_methods:
+      - "flux loops"
+      - "magnetic coils"
+      - "Hall probes"
+    related_domains:
+      - "equilibrium"
+      - "mhd"
+      - "coils"
+    complexity_level: "basic"
+
+  mechanical_diagnostics:
+    description: "Mechanical and pressure measurement systems"
+    primary_phenomena:
+      - "pressure measurement"
+      - "heat flux"
+      - "mechanical forces"
+      - "temperature"
+    typical_units:
+      - "Pa"
+      - "W.m^-2"
+      - "N"
+      - "K"
+    measurement_methods:
+      - "pressure gauges"
+      - "calorimetry"
+      - "force sensors"
+      - "thermometry"
+    related_domains:
+      - "operational"
+      - "systems"
+      - "wall"
+    complexity_level: "basic"
+
+  # Engineering and operational domains
+  control:
+    description: "Plasma control and feedback systems"
+    primary_phenomena:
+      - "feedback control"
+      - "actuator response"
+      - "real-time adaptation"
+    typical_units:
+      - "V"
+      - "A"
+      - "Hz"
+      - "s"
+    measurement_methods:
+      - "real-time diagnostics"
+      - "actuator monitors"
+    related_domains:
+      - "operational"
+      - "equilibrium"
+    complexity_level: "intermediate"
+
+  operational:
+    description: "Operational parameters and machine status"
+    primary_phenomena:
+      - "discharge evolution"
+      - "operational limits"
+      - "performance metrics"
+    typical_units:
+      - "s"
+      - "J"
+      - "MW"
+      - "T"
+    measurement_methods:
+      - "engineering diagnostics"
+      - "performance monitors"
+    related_domains:
+      - "control"
+      - "systems"
+    complexity_level: "basic"
+
+  coils:
+    description: "Magnetic coil systems and field generation"
+    primary_phenomena:
+      - "magnetic field generation"
+      - "field shaping"
+      - "electromagnetic forces"
+    typical_units:
+      - "A"
+      - "T"
+      - "H"
+      - "N"
+    measurement_methods:
+      - "current monitors"
+      - "field sensors"
+      - "force measurements"
+    related_domains:
+      - "equilibrium"
+      - "structure"
+    complexity_level: "basic"
+
+  structure:
+    description: "Structural components and mechanical systems"
+    primary_phenomena:
+      - "mechanical stress"
+      - "thermal expansion"
+      - "structural integrity"
+    typical_units:
+      - "Pa"
+      - "N"
+      - "K"
+      - "m"
+    measurement_methods:
+      - "strain gauges"
+      - "displacement sensors"
+      - "temperature monitors"
+    related_domains:
+      - "systems"
+      - "coils"
+    complexity_level: "basic"
+
+  systems:
+    description: "Engineering systems and plant components"
+    primary_phenomena:
+      - "power conversion"
+      - "cooling"
+      - "tritium handling"
+      - "vacuum"
+    typical_units:
+      - "W"
+      - "K"
+      - "Pa"
+      - "kg.s^-1"
+    measurement_methods:
+      - "engineering sensors"
+      - "flow meters"
+      - "pressure gauges"
+    related_domains:
+      - "operational"
+      - "structure"
+    complexity_level: "basic"
+
+  # Data and workflow domains
+  data_management:
+    description: "Data organization, metadata, and information management"
+    primary_phenomena:
+      - "data organization"
+      - "metadata"
+      - "provenance"
+      - "quality"
+    typical_units:
+      - "bytes"
+      - "counts"
+      - "dimensionless"
+    measurement_methods:
+      - "data systems"
+      - "metadata extraction"
+    related_domains:
+      - "workflow"
+    complexity_level: "basic"
+
+  workflow:
+    description: "Computational workflows and process management"
+    primary_phenomena:
+      - "process execution"
+      - "workflow coordination"
+      - "task scheduling"
+    typical_units:
+      - "s"
+      - "counts"
+      - "dimensionless"
+    measurement_methods:
+      - "workflow engines"
+      - "process monitors"
+    related_domains:
+      - "data_management"
+    complexity_level: "basic"
+
+  general:
+    description: "General purpose or uncategorized data structures"
+    primary_phenomena:
+      - "various"
+      - "miscellaneous"
+      - "utility"
+    typical_units:
+      - "various"
+    measurement_methods:
+      - "various"
+    related_domains:
+      - "all"
+    complexity_level: "basic"

@@ -1,11 +1,17 @@
 import pytest
-
-from imas_mcp_server.whoosh_index import WhooshIndex
+import importlib.util
 
 
 @pytest.fixture(scope="session")
 def whoosh_index(tmp_path_factory):
     """Fixture to create a test WhooshIndex with sample paths and documentation."""
+    # Check if whoosh is available
+    if importlib.util.find_spec("whoosh") is None:
+        pytest.skip("Whoosh not available - skipping legacy whoosh_index fixture")
+
+    # Import here to avoid import errors at module level
+    from imas_mcp.whoosh_index import WhooshIndex
+
     # Create a temporary directory for the index
     tmp_dir = tmp_path_factory.mktemp("whoosh_index")
     index = WhooshIndex(dirname=tmp_dir)

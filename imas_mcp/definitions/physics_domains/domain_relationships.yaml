@@ -1,0 +1,98 @@
+# Physics Domain Relationships for IMAS Data Dictionary
+# Generated with AI assistance for comprehensive physics-based categorization
+# This file defines the relationships and connections between physics domains
+
+metadata:
+  version: "1.0.0"
+  created: "2025-01-09"
+  description: "Relationships and connections between physics domains"
+  ai_assisted: true
+  generation_context: "Option 1 diagnostic reorganization - physics-based categorization"
+
+relationships:
+  equilibrium:
+    - transport
+    - mhd
+    - control
+    - magnetic_diagnostics
+    - coils
+
+  transport:
+    - equilibrium
+    - heating
+    - turbulence
+    - edge_physics
+    - particle_diagnostics
+    - electromagnetic_diagnostics
+
+  mhd:
+    - equilibrium
+    - edge_physics
+    - magnetic_diagnostics
+    - control
+
+  heating:
+    - transport
+    - current_drive
+    - particle_diagnostics
+    - electromagnetic_diagnostics
+
+  edge_physics:
+    - transport
+    - mhd
+    - divertor
+    - wall
+    - particle_diagnostics
+    - radiation_diagnostics
+
+  wall:
+    - edge_physics
+    - divertor
+    - radiation_diagnostics
+
+  divertor:
+    - edge_physics
+    - wall
+    - particle_diagnostics
+    - mechanical_diagnostics
+
+  particle_diagnostics:
+    - transport
+    - heating
+    - edge_physics
+    - electromagnetic_diagnostics
+
+  electromagnetic_diagnostics:
+    - equilibrium
+    - transport
+    - heating
+    - magnetic_diagnostics
+
+  radiation_diagnostics:
+    - edge_physics
+    - wall
+    - particle_diagnostics
+
+  magnetic_diagnostics:
+    - equilibrium
+    - mhd
+    - coils
+    - electromagnetic_diagnostics
+
+  mechanical_diagnostics:
+    - operational
+    - systems
+    - wall
+    - divertor
+
+  control:
+    - equilibrium
+    - mhd
+    - operational
+    - coils
+
+  coils:
+    - equilibrium
+    - magnetic_diagnostics
+    - control
+    - structure

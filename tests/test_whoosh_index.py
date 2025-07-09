@@ -1,9 +1,18 @@
-from pydantic import ValidationError
 import pytest
-import whoosh.fields
-import whoosh.index
+import importlib.util
+from pydantic import ValidationError
 
-from imas_mcp_server.whoosh_index import DataDictionaryEntry, SearchResult, WhooshIndex
+# Skip all tests in this file since they require whoosh (legacy dependency)
+pytestmark = pytest.mark.skipif(
+    importlib.util.find_spec("whoosh") is None,
+    reason="Skipping legacy tests that require whoosh",
+)
+
+# Only import whoosh modules if available
+if importlib.util.find_spec("whoosh") is not None:
+    import whoosh.fields
+    import whoosh.index
+    from imas_mcp.whoosh_index import DataDictionaryEntry, SearchResult, WhooshIndex
 
 
 def test_whoosh_index_with_dir(tmp_path):

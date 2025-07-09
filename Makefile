@@ -1,4 +1,4 @@
-# Makefile for imas-mcp-server
+# Makefile for imas-mcp
 
 .PHONY: install install-dev clean test run package docker-build docker-run
 
@@ -12,7 +12,7 @@ install-dev:
 
 # Clean up build artifacts and cache
 clean:
-	@if exist imas_mcp_server\__pycache__ rmdir /s /q imas_mcp_server\__pycache__
+	@if exist imas_mcp\__pycache__ rmdir /s /q imas_mcp\__pycache__
 	@if exist tests\__pycache__ rmdir /s /q tests\__pycache__
 	@if exist scripts\__pycache__ rmdir /s /q scripts\__pycache__
 	@if exist build rmdir /s /q build
@@ -24,7 +24,7 @@ clean:
 
 # Run tests with coverage
 test:
-	uv run pytest --cov=imas_mcp_server --cov-report=html --cov-report=term
+	uv run pytest --cov=imas_mcp --cov-report=html --cov-report=term
 
 # Run tests without coverage
 test-fast:
@@ -42,30 +42,26 @@ run-sse:
 run-http:
 	uv run run-server --transport streamable-http --host 0.0.0.0 --port 8000
 
-# Get index name (useful for debugging)
-index-name:
-	uv run get-index-name
-
 # Build the package
 package:
 	uv build
 
 # Docker build
 docker-build:
-	docker build -t imas-mcp-server .
+	docker build -t imas-mcp .
 
 # Docker run
 docker-run:
-	docker run -p 8000:8000 imas-mcp-server
+	docker run -p 8000:8000 imas-mcp
 
 # Format code with black
 format:
-	uv run black imas_mcp_server tests scripts
+	uv run black imas_mcp tests scripts
 
 # Lint with ruff
 lint:
-	uv run ruff check imas_mcp_server tests scripts
+	uv run ruff check imas_mcp tests scripts
 
 # Fix linting issues
 lint-fix:
-	uv run ruff check --fix imas_mcp_server tests scripts
+	uv run ruff check --fix imas_mcp tests scripts

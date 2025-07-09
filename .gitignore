@@ -4,10 +4,10 @@ __pycache__/
 *$py.class
 *.so
 
-# Whoosh index 
-# Ignore all files in index directory but keep the directory structure
-index/*
-!index/.gitkeep
+# Generated index files
+# Ignore all files in resources directory but keep the directory structure
+imas_mcp/resources/*
+!imas_mcp/resources/.gitkeep
 
 # Distribution / packaging
 dist/

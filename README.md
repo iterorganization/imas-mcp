@@ -1,83 +1,188 @@
 # IMAS MCP Server
 
-A server providing Model Context Protocol (MCP) access to IMAS data structures through a fast, optimized path indexing system.
+A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
-## Features
+## Quick Start - Connect to Hosted Server
 
-- Fast startup with pre-built path index
-- Efficient path searching with regex support
-- Natural language search for finding paths by description
-- Comprehensive metadata access
-- Optimized for production use cases
+The easiest way to get started is connecting to our hosted IMAS MCP server. No installation required!
 
-## Installation
+### VS Code Setup
+
+#### Option 1: Interactive Setup (Recommended)
+
+1. Open VS Code and press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+2. Type "MCP: Add Server" and select it
+3. Choose "HTTP Server"
+4. Enter server name: `imas-mcp-hosted`
+5. Enter server URL: `https://imas-mcp.example.com/mcp/`
+
+#### Option 2: Manual Configuration
+
+Choose one of these file locations:
+
+- **Workspace Settings (Recommended)**: `.vscode/mcp.json` in your workspace (`Ctrl+Shift+P` → "Preferences: Open Workspace Settings (JSON)")
+- **User Settings**: VS Code `settings.json` (`Ctrl+Shift+P` → "Preferences: Open User Settings (JSON)")
+
+Then add this configuration:
+
+```json
+{
+  "servers": {
+    "imas-mcp-hosted": {
+      "type": "http",
+      "url": "https://imas-mcp.example.com/mcp/"
+    }
+  }
+}
+```
+
+_Note: For user settings.json, wrap the above in `"mcp": { ... }`_
+
+### Claude Desktop Setup
+
+Add to your Claude Desktop config file:
+
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`  
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Linux:** `~/.config/claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "imas-mcp-hosted": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://imas-mcp.example.com/mcp/"]
+    }
+  }
+}
+```
+
+## Quick Start - Local Docker Server
+
+If you have Docker available, you can run a local IMAS MCP server:
+
+### Start the Docker Server
 
 ```bash
-# From PyPI (once published)
-pip install imas-mcp-server
+# Pull and run the server
+docker run -d \
+  --name imas-mcp \
+  -p 8000:8000 \
+  ghcr.io/iterorganization/imas-mcp:latest
 
-# Using uv (recommended)
-uv add imas-mcp-server
-
-# From source using uv
-git clone https://github.com/iterorganization/imas-mcp-server.git
-cd imas-mcp-server
-uv sync
+# Verify it's running
+docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
 ```
 
-During installation, the package will automatically build a path index that speeds up imports. This one-time process takes 1-2 minutes but reduces future startup times to seconds.
+### Configure Your Client
 
-## Usage
+**VS Code** - Add to `.vscode/mcp.json`:
 
-### Command Line
+```json
+{
+  "servers": {
+    "imas-mcp-docker": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp/"
+    }
+  }
+}
+```
+
+**Claude Desktop** - Add to your config file:
+
+```json
+{
+  "mcpServers": {
+    "imas-mcp-docker": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8000/mcp/"]
+    }
+  }
+}
+```
+
+## Quick Start - Local UV Installation
+
+If you have [uv](https://docs.astral.sh/uv/) installed, you can run the server directly:
+
+### Install and Configure
 
 ```bash
-# Using the installed command
-run-server
+# Install imas-mcp with uv
+uv tool install imas-mcp
 
-# Or directly with Python
-python -m imas_mcp_server
+# Or add to a project
+uv add imas-mcp
 ```
 
-### Python API
+### UV Client Configuration
 
-```python
-# Start the server
-from imas_mcp_server import run_server
-run_server()
+**VS Code** - Add to `.vscode/mcp.json`:
 
-# Or use the tools directly
-from mcp_imas import find_paths_by_pattern
-
-paths = find_paths_by_pattern("equilibrium/time_slice")
+```json
+{
+  "servers": {
+    "imas-mcp-uv": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["tool", "run", "run-server", "--auto-build"]
+    }
+  }
+}
 ```
 
-### Natural Language Search
+**Claude Desktop** - Add to your config file:
 
-You can now search for IMAS paths using natural language descriptions rather than knowing the exact path structure:
-
-From Python code:
-
-```python
-from imas_mcp_server.lexicographic_search import LexicographicSearch
-
-# Create search instance
-search = LexicographicSearch()
-
-# Search for paths by natural language description
-results = search.search_by_keywords("plasma current measurement")
-
-for result in results:
-    print(f"Path: {result.path}")
-    print(f"Documentation: {result.documentation[:100]}...")
+```json
+{
+  "mcpServers": {
+    "imas-mcp-uv": {
+      "command": "uv",
+      "args": ["tool", "run", "run-server", "--auto-build"]
+    }
+  }
+}
 ```
 
 ## Development
 
-```bash
-# Setup development environment
-uv sync --all-extras
+For local development and customization:
 
+### Setup
+
+```bash
+# Clone repository
+git clone https://github.com/iterorganization/imas-mcp.git
+cd imas-mcp
+
+# Install development dependencies (search index build takes ~8 minutes first time)
+uv sync --all-extras
+```
+
+### Build Dependencies
+
+This project requires additional dependencies during the build process that are not part of the runtime dependencies. These include:
+
+- **`imas-data-dictionary`** - Required for generating the search index during build
+- **`rich`** - Used for enhanced console output during build processes
+
+**For developers:** These build dependencies are included in the `dev` dependency group and can be installed with:
+
+```bash
+uv sync --group dev
+```
+
+**Location in configuration:**
+
+- **Build-time dependencies**: Listed in `[build-system.requires]` in `pyproject.toml`
+- **Development access**: Also available in `[dependency-groups.dev]` for local development
+
+**Note:** Regular users installing the package don't need these dependencies - they're only required when building from source or working with the data dictionary directly.
+
+### Development Commands
+
+```bash
 # Run tests
 uv run pytest
 
@@ -85,39 +190,78 @@ uv run pytest
 uv run ruff check .
 uv run ruff format .
 
-# Build package
-uv build
 
-# Publish to PyPI
-uv publish
+# Run the server locally
+uv run python -m imas_mcp --transport streamable-http --port 8000
+
+# Run with stdio transport for MCP development
+uv run python -m imas_mcp --transport stdio --auto-build
 ```
 
-## Environment Variables
+### Local Development MCP Configuration
 
-- `IMAS_MCP_SILENT_INIT`: Set to "true" to suppress initialization messages
+**VS Code** - The repository includes a `.vscode/mcp.json` file with pre-configured development server options. Use the `imas-local-stdio` configuration for local development.
+
+**Claude Desktop** - Add to your config file:
+
+```json
+{
+  "mcpServers": {
+    "imas-local-dev": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "imas_mcp", "--auto-build"],
+      "cwd": "/path/to/imas-mcp"
+    }
+  }
+}
+```
 
 ## How It Works
 
-1. **Installation**: During package installation, the index builds automatically when the module is first imported
+1. **Installation**: During package installation, the index builds automatically when the module first imports
 2. **Build Process**: The system parses the IMAS data dictionary and creates a comprehensive path index
-3. **Serialization**: The Whoosh index is serialized to the `index/` directory with persistent storage
+3. **Serialization**: The system stores indexes in organized subdirectories:
+   - **Lexicographic index**: `imas_mcp/resources/index_data/` (Whoosh search index)
+   - **JSON data**: `imas_mcp/resources/json_data/` (LLM-optimized structured data)
 4. **Import**: When importing the module, the pre-built index loads in ~1 second
 
-This approach uses modern Python packaging tools (uv) and avoids the expensive index building process each time the module is imported. The automatic index building ensures the index gets created during installation without relying on deprecated setuptools mechanisms.
+## Optional Dependencies and Runtime Requirements
+
+The IMAS MCP server uses a composable pattern that allows it to work with or without the `imas-data-dictionary` package at runtime:
+
+### Package Installation Options
+
+- **Runtime only**: `pip install imas-mcp` - Uses pre-built indexes, stdio transport only
+- **With HTTP support**: `pip install imas-mcp[http]` - Adds support for sse/streamable-http transports
+- **With build support**: `pip install imas-mcp[build]` - Includes `imas-data-dictionary` for index building
+- **Full installation**: `pip install imas-mcp[all]` - Includes all optional dependencies
+
+### Data Dictionary Access
+
+The system uses multiple fallback strategies to access IMAS Data Dictionary version and metadata:
+
+1. **Environment Variable**: `IMAS_DD_VERSION` (highest priority)
+2. **Metadata File**: JSON metadata stored alongside indexes
+3. **Index Name Parsing**: Extracts version from index filename
+4. **IMAS Package**: Direct access to `imas-data-dictionary` (if available)
+
+This design ensures the server can:
+
+- **Build indexes** when the IMAS package is available
+- **Run with pre-built indexes** without requiring the IMAS package
+- **Access version/metadata** through multiple reliable fallback mechanisms
+
+### Index Building vs Runtime
+
+- **Index Building**: Requires `imas-data-dictionary` package to parse XML and create indexes
+- **Runtime Search**: Only requires pre-built indexes and metadata, no IMAS package dependency
+- **Version Access**: Uses composable accessor pattern with multiple fallback strategies
 
 ## Implementation Details
 
-### Path Indexing System
-
-The IMAS MCP Server uses a sophisticated path indexing system to efficiently navigate the IMAS data dictionary:
-
-1. **Indexing**: During initialization, the system builds a comprehensive index of all IMAS paths
-2. **Caching**: The index is serialized to disk for fast loading in subsequent runs
-3. **Efficient Retrieval**: Various indexing strategies enable fast path lookups
-
 ### LexicographicSearch Class
 
-The `LexicographicSearch` class is the core component that provides fast, flexible search capabilities over the IMAS Data Dictionary. It combines Whoosh full-text indexing with IMAS-specific data processing to enable multiple search modes:
+The `LexicographicSearch` class is the core component that provides fast, flexible search capabilities over the IMAS Data Dictionary. It combines Whoosh full-text indexing with IMAS-specific data processing to enable different search modes:
 
 #### Search Methods
 
@@ -151,7 +295,7 @@ The `LexicographicSearch` class is the core component that provides fast, flexib
 #### Key Capabilities
 
 - **Automatic Index Building**: Creates search index on first use
-- **Persistent Caching**: Index stored on disk for fast subsequent loads
+- **Persistent Caching**: Index stored on disk for fast future loads
 - **Advanced Query Parsing**: Supports complex search expressions
 - **Relevance Ranking**: Results sorted by match quality
 - **Pagination Support**: Handle large result sets efficiently
@@ -161,7 +305,7 @@ The `LexicographicSearch` class is the core component that provides fast, flexib
 
 ### Semantic Search Enhancement
 
-We are planning to enhance the current lexicographic search with semantic search capabilities using modern language models. This enhancement will provide:
+We plan to enhance the current lexicographic search with semantic search capabilities using modern language models. This enhancement will provide:
 
 #### Planned Features
 
@@ -195,7 +339,7 @@ The server is available as a pre-built Docker container with the index already b
 
 ```bash
 # Pull and run the latest container
-docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp-server:latest
+docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp:latest
 
 # Or use Docker Compose
 docker-compose up -d
