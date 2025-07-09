@@ -1,24 +1,24 @@
 {
   "servers": {
-    // "my-mcp-server-7a681df0": {
-    //   "type": "stdio",
-    //   "command": "uv",
-    //   "args": ["run", "python", "-m", "imas_mcp.server"]
-    // },
-    "imas-mcp-docker": {
-      "type": "http",
-      "url": "http://localhost:8000/mcp/"
-    },
-    "imas-docker-stdio": {
+    "imas-dd": {
       "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "ghcr.io/simon-mcintosh/imas-mcp:latest-stdio"
-      ]
+      "command": "uv",
+      "args": ["run", "python", "-m", "imas_mcp.server"]
     },
+    // "imas-mcp-docker": {
+    //   "type": "http",
+    //   "url": "http://localhost:8000/mcp/"
+    // },
+    // "imas-docker-stdio": {
+    //   "type": "stdio",
+    //   "command": "docker",
+    //   "args": [
+    //     "run",
+    //     "-i",
+    //     "--rm",
+    //     "ghcr.io/simon-mcintosh/imas-mcp:latest-stdio"
+    //   ]
+    // },
     "github": {
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",
