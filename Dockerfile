@@ -23,62 +23,47 @@ ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     TRANSPORT=${TRANSPORT} \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    HATCH_BUILD_NO_HOOKS=true
 
 # Copy dependency files and git metadata 
 COPY .git/ ./.git/
 COPY pyproject.toml ./
 COPY README.md ./
+COPY hatch_build_hooks.py ./
 
 # Ensure git repository is properly initialized for version detection
 RUN git config --global --add safe.directory /app
 
-# Install dependencies in a virtual environment
+# Install only dependencies without the local project to avoid build hooks
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev
+    uv sync --no-dev --no-install-project --extra http --extra build
 
 # Copy source code (separate layer for better caching)
-COPY imas_mcp_server/ ./imas_mcp_server/
+COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
 
-# Copy index files if present in build context (optional)
-COPY index/ ./index/
+# Install project with HTTP and build support for container deployment
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --no-dev --extra http --extra build
 
-# Build/verify index in single layer
-RUN set -e && \
-    echo "Get index name..." && \
-    INDEX_NAME=$(uv run index-name ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"}) && \
-    echo "Pre-filtering index files to keep: $INDEX_NAME" && \
-    if [ -d "./index/" ]; then \
-    find ./index/ -not -name "${INDEX_NAME}*" -not -name "." -not -name ".." -type f -delete 2>/dev/null || true; \
-    echo "Pre-filtered index files:" && \
-    ls -la ./index/ 2>/dev/null || echo "No index directory"; \
-    fi && \
-    \
-    echo "Building/verifying index..." && \
-    FINAL_INDEX_NAME=$(uv run build-index ${IDS_FILTER:+--ids-filter "${IDS_FILTER}"} | tail -n 1) && \
-    echo "Index built/verified: $FINAL_INDEX_NAME" && \
-    \
-    echo "Asserting index names match..." && \
-    if [ "$INDEX_NAME" != "$FINAL_INDEX_NAME" ]; then \
-    echo "ERROR: Index name mismatch!" && \
-    echo "  Expected: $INDEX_NAME" && \
-    echo "  Actual:   $FINAL_INDEX_NAME" && \
-    exit 1; \
-    fi && \
-    echo "✓ Index names match: $INDEX_NAME" && \
-    echo "Final index files:" && \
-    ls -la ./index/ 2>/dev/null || echo "No index files"
+# Install imas-data-dictionary manually from git (needed for index building)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
+
+# Build JSON data
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building JSON data..." && \
+    uv run --no-dev build-json-data && \
+    echo "✓ JSON data ready"
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
 # Run the application (host and port only needed for streamable-http transport)
 CMD ["sh", "-c", "\
-    exec uv run run-server \
+    uv run --no-dev run-server \
     --transport ${TRANSPORT} \
     --host 0.0.0.0 \
     --port 8000 \
-    ${IDS_FILTER:+--ids-filter \"${IDS_FILTER}\"} \
-    --no-auto-build\
-    "]
+    "] 

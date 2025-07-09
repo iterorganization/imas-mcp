@@ -11,6 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Only run on the main repository, not forks
+    if: github.repository == 'simon-mcintosh/imas-mcp'
 
     steps:
       - name: Checkout
@@ -25,10 +27,18 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --locked --no-dev
 
       - name: Build package
         run: uv build
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          uv tool install twine
+          uv tool run twine upload dist/*
 
       - name: Generate changelog
         id: changelog

@@ -1,6 +1,6 @@
 import pytest
 
-from imas_mcp_server.search_result import DataDictionaryEntry
+from imas_mcp.search_result import DataDictionaryEntry
 
 
 def test_units_validator():

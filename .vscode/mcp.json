@@ -1,19 +1,24 @@
 {
   "servers": {
-    "imas-local-stdio": {
+    "imas-dd": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server", "--auto-build"]
+      "args": ["run", "python", "-m", "imas_mcp.server"],
     },
-    "imas-docker-stdio": {
-      "type": "stdio",
-      "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "ghcr.io/simon-mcintosh/imas-mcp-server:latest-stdio"
-      ]
-    },
-  }
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${input:github_mcp_pat}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "github_mcp_pat",
+      "description": "GitHub Personal Access Token",
+      "password": true
+    }
+  ]
 }

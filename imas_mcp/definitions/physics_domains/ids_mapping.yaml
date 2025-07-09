@@ -1,0 +1,145 @@
+# IDS to Physics Domain Mapping for IMAS Data Dictionary
+# Generated with AI assistance for comprehensive physics-based categorization
+# This file maps each IDS name to its primary physics domain
+
+metadata:
+  version: "1.0.0"
+  created: "2025-01-09"
+  description: "Mapping of IMAS IDS names to physics domains"
+  ai_assisted: true
+  generation_context: "Option 1 diagnostic reorganization - physics-based categorization"
+  total_ids: 84
+  total_domains: 21
+
+# Core plasma physics
+equilibrium:
+  - equilibrium
+  - pf_plasma
+
+transport:
+  - core_profiles
+  - edge_profiles
+  - plasma_profiles
+  - core_transport
+  - edge_transport
+  - plasma_transport
+  - core_instant_changes
+  - transport_solver_numerics
+
+mhd:
+  - mhd
+  - mhd_linear
+  - disruption
+  - sawteeth
+  - ntms
+  - runaway_electrons
+
+turbulence:
+  - turbulence
+  - gyrokinetics_local
+
+heating:
+  - nbi
+  - ic_antennas
+  - ec_launchers
+  - heating
+  - core_sources
+  - edge_sources
+  - plasma_sources
+  - distribution_sources
+  - distributions
+
+current_drive:
+  - lh_antennas
+
+# Plasma-material interactions
+wall:
+  - wall
+
+divertor:
+  - divertors
+
+edge_physics:
+  - pellets
+  - gas_injection
+  - gas_pumping
+  - spi
+
+# Diagnostics (Option 1 physics-based reorganization)
+radiation_diagnostics:
+  - bolometer
+  - bremsstrahlung_visible
+  - camera_ir
+  - camera_visible
+  - camera_x_rays
+  - hard_x_rays
+  - soft_x_rays
+  - radiation
+  - spectrometer_uv
+  - spectrometer_visible
+  - spectrometer_x_ray_crystal
+  - spectrometer_mass
+
+particle_diagnostics:
+  - thomson_scattering
+  - charge_exchange
+  - neutron_diagnostic
+  - langmuir_probes
+
+electromagnetic_diagnostics:
+  - ece
+  - interferometer
+  - reflectometer_fluctuation
+  - reflectometer_profile
+  - refractometer
+  - polarimeter
+  - mse
+  - focs
+
+mechanical_diagnostics:
+  - calorimetry
+  - barometry
+
+magnetic_diagnostics:
+  - magnetics
+  - b_field_non_axisymmetric
+
+# Magnetic systems
+coils:
+  - pf_active
+  - pf_passive
+  - tf
+  - coils_non_axisymmetric
+  - iron_core
+  - em_coupling
+
+structure:
+  - ferritic
+
+# Control and operation
+control:
+  - controllers
+  - pulse_schedule
+  - plasma_initiation
+
+operational:
+  - operational_instrumentation
+  - real_time_data
+
+# System components
+systems:
+  - balance_of_plant
+  - breeding_blanket
+  - cryostat
+  - waves
+
+# Data management and workflow
+data_management:
+  - summary
+  - dataset_description
+  - dataset_fair
+  - temporary
+  - amns_data
+
+workflow:
+  - workflow
