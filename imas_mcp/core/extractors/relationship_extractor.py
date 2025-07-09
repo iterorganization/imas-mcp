@@ -373,11 +373,17 @@ class RelationshipExtractor(BaseExtractor):
         if cleaned_relationships:
             relationship_data["related_paths"] = cleaned_relationships[:15]
 
-        # Add categorized relationships if any category has content
-        if any(categorized_relationships.values()):
-            relationship_data["relationships"] = {
-                k: v for k, v in categorized_relationships.items() if v
-            }
+        # Add categorized relationships if any category has content (with filtering)
+        filtered_categorized = {}
+        for category, paths in categorized_relationships.items():
+            filtered_paths = [
+                p for p in paths if not self._should_filter_relationship(p)
+            ]
+            if filtered_paths:
+                filtered_categorized[category] = filtered_paths
+
+        if any(filtered_categorized.values()):
+            relationship_data["relationships"] = filtered_categorized
 
         # Generate usage examples
         usage_examples = self._generate_usage_examples(elem)
@@ -389,7 +395,7 @@ class RelationshipExtractor(BaseExtractor):
     def _clean_and_prioritize(
         self, relationships: List[str], current_path: str
     ) -> List[str]:
-        """Clean and prioritize relationships."""
+        """Clean and prioritize relationships with filtering."""
         if not relationships:
             return []
 
@@ -399,8 +405,10 @@ class RelationshipExtractor(BaseExtractor):
 
         for rel in relationships:
             if rel not in seen and rel != current_path:
-                seen.add(rel)
-                unique_relationships.append(rel)
+                # Apply filtering to exclude unwanted paths
+                if not self._should_filter_relationship(rel):
+                    seen.add(rel)
+                    unique_relationships.append(rel)
 
         # Sort by priority
         def priority(rel_path: str) -> int:
@@ -417,6 +425,37 @@ class RelationshipExtractor(BaseExtractor):
 
         unique_relationships.sort(key=priority)
         return unique_relationships
+
+    def _should_filter_relationship(self, path: str) -> bool:
+        """Filter out unwanted relationship paths."""
+        # Filter excluded patterns (ids_properties, code)
+        for pattern in ["ids_properties", "code"]:
+            if pattern in path:
+                return True
+
+        # Filter GGD entries
+        if (
+            "ggd" in path.lower()
+            or "/ggd/" in path.lower()
+            or "grids_ggd" in path.lower()
+            or path.lower().startswith("grids_ggd")
+            or "/grids_ggd/" in path.lower()
+        ):
+            return True
+
+        # Filter error fields
+        if (
+            "_error_" in path
+            or path.endswith("_error_upper")
+            or path.endswith("_error_lower")
+            or path.endswith("_error_index")
+            or "error_upper" in path
+            or "error_lower" in path
+            or "error_index" in path
+        ):
+            return True
+
+        return False
 
     def _generate_usage_examples(self, elem: ET.Element) -> List[Dict[str, str]]:
         """Generate basic usage examples."""

@@ -130,6 +130,7 @@ class CatalogMetadata(BaseModel):
     )
     total_ids: int
     total_leaf_nodes: int
+    total_paths: int = 0  # Total number of paths across all IDS
     total_relationships: int = 0  # Added for relationships metadata
 
 

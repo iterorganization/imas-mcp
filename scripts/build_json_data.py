@@ -29,8 +29,18 @@ from imas_mcp.core.xml_parser import DataDictionaryTransformer
     type=click.Path(path_type=Path),
     help="Custom output directory (defaults to imas_mcp/resources/json_data)",
 )
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    help="Disable rich progress display and use plain logging",
+)
 def build_json_data(
-    verbose: bool, quiet: bool, force: bool, ids_filter: str, output_dir: Optional[Path]
+    verbose: bool,
+    quiet: bool,
+    force: bool,
+    ids_filter: str,
+    output_dir: Optional[Path],
+    no_rich: bool,
 ) -> int:
     """Build the JSON data structures for the IMAS Data Dictionary.
 
@@ -43,6 +53,7 @@ def build_json_data(
         build-json-data -f                 # Force rebuild even if exists
         build-json-data --ids-filter "core_profiles equilibrium"  # Build specific IDS only
         build-json-data --output-dir /path/to/custom/dir  # Use custom output directory
+        build-json-data --no-rich          # Disable rich progress and use plain logging
     """
     # Set up logging level
     if quiet:
@@ -69,7 +80,11 @@ def build_json_data(
             logger.info("Building JSON data for all available IDS")
 
         # Initialize the transformer
-        transformer = DataDictionaryTransformer(output_dir=output_dir, ids_set=ids_set)
+        transformer = DataDictionaryTransformer(
+            output_dir=output_dir,
+            ids_set=ids_set,
+            use_rich=not no_rich,  # Invert no_rich flag
+        )
 
         # Check if we need to build
         catalog_file = transformer.resolved_output_dir / "ids_catalog.json"
