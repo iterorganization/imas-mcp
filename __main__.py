@@ -6,12 +6,9 @@ Data Dictionary through the Model Context Protocol (MCP). It enables AI assistan
 and other MCP clients to search, explore, and query IMAS data structures.
 
 Command Line Interface:
-    The server exposes a full CLI with options for transport, host, port, and logging.
-
-    Usage:
-      python -m imas_mcp_server [OPTIONS]   # Module execution (recommended)
-      imas-mcp-server [OPTIONS]             # Console script (after pip install)
-      run-server [OPTIONS]                  # Alternative console script
+    The server exposes a full CLI with options for transport, host, port, and logging.    Usage:
+      python -m imas_mcp [OPTIONS]   # Module execution (recommended)
+      run-server [OPTIONS]           # Console script (after pip install)
 
     Options:
       --transport [stdio|sse|streamable-http]
@@ -26,29 +23,24 @@ Command Line Interface:
       --help                          Show this message and exit.
 
 Usage Examples:
-    # Module execution (recommended)
-    python -m imas_mcp_server                          # Default stdio transport
-    python -m imas_mcp_server --help                   # Show help
-    python -m imas_mcp_server --log-level DEBUG        # Debug logging
+    # Module execution (recommended)    python -m imas_mcp                          # Default stdio transport
+    python -m imas_mcp --help                   # Show help
+    python -m imas_mcp --log-level DEBUG        # Debug logging    # After installation with pip, use console scripts
+    run-server                                   # Default stdio transport
+    run-server --transport sse --port 8080      # Server-Sent Events
 
-    # After installation with pip, use console scripts
-    imas-mcp-server                                     # Default stdio transport
-    imas-mcp-server --transport sse --port 8080        # Server-Sent Events
+    # Different transport protocols    python -m imas_mcp --transport stdio                    # Default: stdio for MCP clients
+    python -m imas_mcp --transport sse --port 8080          # Server-Sent Events
+    python -m imas_mcp --transport streamable-http --port 9000  # HTTP streaming
 
-    # Different transport protocols
-    python -m imas_mcp_server --transport stdio                    # Default: stdio for MCP clients
-    python -m imas_mcp_server --transport sse --port 8080          # Server-Sent Events
-    python -m imas_mcp_server --transport streamable-http --port 9000  # HTTP streaming
-
-    # Different log levels
-    python -m imas_mcp_server --log-level DEBUG        # Verbose debugging output
-    python -m imas_mcp_server --log-level WARNING      # Only warnings and errors
+    # Different log levels    python -m imas_mcp --log-level DEBUG        # Verbose debugging output
+    python -m imas_mcp --log-level WARNING      # Only warnings and errors
 
     # Custom host/port (for sse and streamable-http)
-    python -m imas_mcp_server --transport sse --host 0.0.0.0 --port 8080
+    python -m imas_mcp --transport sse --host 0.0.0.0 --port 8080
 
     # Multiple options
-    python -m imas_mcp_server --transport streamable-http --host 0.0.0.0 --port 8080 --log-level DEBUG
+    python -m imas_mcp --transport streamable-http --host 0.0.0.0 --port 8080 --log-level DEBUG
 
 Available Tools:
     The server provides the following MCP tools for querying IMAS data:
@@ -81,17 +73,12 @@ Transport Protocols:
 
 Installation & CLI:
     # Install from source
-    pip install -e .
-
-    # Install from Git repository
-    pip install git+https://github.com/your-repo/imas-mcp-server.git
-
-    # After installation, console scripts are available:
-    imas-mcp-server --help
+    pip install -e .    # Install from Git repository
+    pip install git+https://github.com/your-repo/imas-mcp.git    # After installation, console scripts are available:
     run-server --help
 
     # Module execution works without installation:
-    python -m imas_mcp_server --help
+    python -m imas_mcp --help
 
     The CLI is built with Click and supports:
     - Full argument validation and type checking
@@ -111,11 +98,11 @@ Environment:
 More Information:
     - IMAS Documentation: https://imas.iter.org/
     - MCP Protocol: https://modelcontextprotocol.io/
-    - GitHub Repository: https://github.com/your-repo/imas-mcp-server
+    - GitHub Repository: https://github.com/your-repo/imas-mcp
 """
 
 if __name__ == "__main__":
-    from imas_mcp_server.server import run_server
+    from scripts.run_server import run_server
 
     # Expose the Click CLI interface directly
     run_server()
