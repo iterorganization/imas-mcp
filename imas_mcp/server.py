@@ -3,8 +3,15 @@ IMAS MCP Server with AI Tools.
 
 This is the principal MCP server for the IMAS data dictionary, providing AI
 tools for physics-based search, analysis, and exploration of plasma physics data.
-tools for searching, exploring, and analyzing IMAS data structures. It offers 4 focused
-tools with intelligent insights and relevance-ranked results for better LLM usage.
+It offers 5 focused tools with intelligent insights and relevance-ranked results
+for better LLM usage.
+
+The 5 core tools provide comprehensive coverage:
+1. search_imas - Enhanced search with physics concepts, symbols, and units
+2. explain_concept - Physics explanations with IMAS mappings and domain context
+3. get_overview - General overview with domain analysis and query validation
+4. analyze_ids_structure - Detailed structural analysis of specific IDS
+5. explore_relationships - Advanced relationship exploration across the data dictionary
 
 This server replaces the legacy lexicographic server (now lexicographic_server.py)
 with capabilities including graph analysis, physics context, and AI-powered
@@ -22,12 +29,6 @@ from fastmcp import Context, FastMCP
 from mcp.types import TextContent
 
 from .json_data_accessor import JsonDataDictionaryAccessor
-from .physics_integration import (
-    get_physics_integration,
-    physics_search,
-    explain_physics_concept,
-    get_concept_imas_mapping,
-)
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -96,18 +97,13 @@ class Server:
         return accessor
 
     def _register_tools(self):
-        """Register all AI MCP tools with the server."""
-        # Register the tools
+        """Register the 5 focused AI MCP tools with the server."""
+        # Register the core tools - consolidated to 5 focused tools
         self.mcp.tool(self.search_imas)
         self.mcp.tool(self.explain_concept)
         self.mcp.tool(self.get_overview)
         self.mcp.tool(self.analyze_ids_structure)
         self.mcp.tool(self.explore_relationships)
-        self.mcp.tool(self.search_physics_concepts)
-        self.mcp.tool(self.explain_physics_concept)
-        self.mcp.tool(self.map_concept_to_imas)
-        self.mcp.tool(self.get_physics_domain_overview)
-        self.mcp.tool(self.validate_physics_query)
 
     async def search_imas(
         self,
@@ -122,15 +118,46 @@ class Server:
         Advanced search tool that finds IMAS data paths, scores them by relevance,
         and optionally enhances results with AI insights when MCP sampling is available.
 
+        Enhanced with physics context - can search by physics concepts, symbols, or units.
+
         Args:
-            query: Search term or pattern
+            query: Search term, physics concept, symbol, or pattern
             ids_name: Optional specific IDS to search within
             max_results: Maximum number of results to return
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with relevance-ordered search results and AI suggestions
+            Dictionary with relevance-ordered search results, physics mappings, and AI suggestions
         """
+        # Try physics search first for enhanced results
+        try:
+            from .physics_integration import physics_search
+
+            physics_result = physics_search(query)
+
+            # If physics search found results, enhance the standard search
+            if physics_result.get("physics_matches"):
+                standard_result = await search_imas(query, ids_name, max_results, ctx)
+
+                # Merge physics context into standard results
+                standard_result["physics_matches"] = physics_result["physics_matches"][
+                    :3
+                ]
+                standard_result["concept_suggestions"] = physics_result.get(
+                    "concept_suggestions", []
+                )[:3]
+                standard_result["unit_suggestions"] = physics_result.get(
+                    "unit_suggestions", []
+                )[:3]
+                standard_result["symbol_suggestions"] = physics_result.get(
+                    "symbol_suggestions", []
+                )[:3]
+
+                return standard_result
+
+        except Exception:
+            pass  # Fall back to standard search
+
         return await search_imas(query, ids_name, max_results, ctx)
 
     async def explain_concept(
@@ -145,14 +172,38 @@ class Server:
         Provides clear explanations of plasma physics concepts as they relate
         to the IMAS data dictionary, enhanced with AI insights.
 
+        Enhanced with comprehensive physics explanations, IMAS mappings, and domain context.
+
         Args:
-            concept: The concept to explain
+            concept: The concept to explain (physics concept, IMAS path, or general term)
             detail_level: Level of detail (basic, intermediate, advanced)
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with explanation and related information
+            Dictionary with explanation, physics context, IMAS mappings, and related information
         """
+        # Try physics-enhanced explanation first
+        try:
+            from .physics_integration import (
+                explain_physics_concept,
+                get_concept_imas_mapping,
+            )
+
+            physics_explanation = explain_physics_concept(concept, detail_level)
+
+            # If physics explanation succeeded, merge with standard explanation
+            if "error" not in physics_explanation:
+                standard_result = await explain_concept(concept, detail_level, ctx)
+
+                # Merge physics context into standard results
+                standard_result["physics_explanation"] = physics_explanation
+                standard_result["imas_mapping"] = get_concept_imas_mapping(concept)
+
+                return standard_result
+
+        except Exception:
+            pass  # Fall back to standard explanation
+
         return await explain_concept(concept, detail_level, ctx)
 
     async def get_overview(
@@ -164,13 +215,53 @@ class Server:
         Provides comprehensive overview of available IDS in the IMAS data dictionary
         or answers specific analytical questions about the data structure.
 
+        Enhanced with physics domain analysis and query validation capabilities.
+
         Args:
-            question: Optional specific question about the data dictionary
+            question: Optional specific question about the data dictionary (can be a physics domain or validation query)
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with overview information and analytics
+            Dictionary with overview information, analytics, and optional domain-specific data
         """
+        # Handle domain-specific questions
+        if question:
+            try:
+                from .core.domain_loader import get_domain_loader
+
+                domain_loader = get_domain_loader()
+                domain_characteristics = domain_loader.load_domain_characteristics()
+
+                # Simple domain matching
+                question_lower = question.lower()
+                for domain_name, domain_info in domain_characteristics.items():
+                    if domain_name.lower() in question_lower:
+                        # Get basic overview and add domain info
+                        basic_result = await get_overview(None, ctx)
+                        basic_result["physics_domain_overview"] = {
+                            "domain": domain_name,
+                            "characteristics": domain_info,
+                        }
+                        basic_result["domain_specific_query"] = True
+                        return basic_result
+
+                # Check if question is asking for query validation
+                if any(
+                    word in question_lower
+                    for word in ["validate", "check", "verify", "suggest"]
+                ):
+                    from .physics_integration import get_physics_integration
+
+                    integration = get_physics_integration()
+                    validation = integration.validate_physics_query(question)
+
+                    standard_result = await get_overview(question, ctx)
+                    standard_result["query_validation"] = validation
+                    return standard_result
+
+            except Exception:
+                pass  # Fall back to standard overview
+
         return await get_overview(question, ctx)
 
     async def analyze_ids_structure(
@@ -363,178 +454,6 @@ class Server:
                 pass
 
         return result
-
-    async def search_physics_concepts(
-        self, query: str, max_results: int = 10
-    ) -> Dict[str, Any]:
-        """
-        Search for physics concepts with IMAS integration.
-
-        Enhanced search that maps physics concepts to IMAS attributes,
-        providing symbols, units, and IMAS paths.
-
-        Args:
-            query: Physics concept to search for (e.g., "poloidal flux", "temperature")
-            max_results: Maximum number of results to return
-
-        Returns:
-            Dictionary with physics concept matches and IMAS integration
-        """
-        try:
-            result = physics_search(query)
-
-            # Limit results
-            if result.get("physics_matches"):
-                result["physics_matches"] = result["physics_matches"][:max_results]
-
-            return {
-                "query": query,
-                "physics_matches": result.get("physics_matches", []),
-                "concept_suggestions": result.get("concept_suggestions", [])[:5],
-                "unit_suggestions": result.get("unit_suggestions", [])[:5],
-                "success": True,
-            }
-
-        except Exception as e:
-            return {"query": query, "error": str(e), "success": False}
-
-    async def explain_physics_concept(
-        self, concept: str, detail_level: str = "intermediate"
-    ) -> Dict[str, Any]:
-        """
-        Explain physics concepts with IMAS context integration.
-
-        Provides comprehensive explanations of physics concepts including:
-        - Physical significance and description
-        - IMAS attribute mappings (paths, units, symbols)
-        - Measurement context and typical ranges
-        - Related quantities and physics domain
-
-        Args:
-            concept: Physics concept to explain (e.g., "electron temperature", "safety factor")
-            detail_level: Level of explanation ("basic", "intermediate", "advanced")
-
-        Returns:
-            Dictionary with comprehensive concept explanation and IMAS integration
-        """
-        try:
-            explanation = explain_physics_concept(concept, detail_level)
-
-            if "error" in explanation:
-                return {
-                    "concept": concept,
-                    "error": explanation["error"],
-                    "suggestions": explanation.get("suggestions", []),
-                    "success": False,
-                }
-
-            return {
-                "concept": concept,
-                "detail_level": detail_level,
-                "explanation": explanation,
-                "success": True,
-            }
-
-        except Exception as e:
-            return {"concept": concept, "error": str(e), "success": False}
-
-    async def map_concept_to_imas(self, concept: str) -> Dict[str, Any]:
-        """
-        Map physics concepts to IMAS attributes and paths.
-
-        Provides direct mapping from physics concepts to:
-        - IMAS paths where the quantity is stored
-        - Physical units and symbols
-        - Alternative names and usage examples
-
-        Args:
-            concept: Physics concept to map (e.g., "poloidal flux" -> "psi", "Wb")
-
-        Returns:
-            Dictionary with complete concept-to-IMAS mapping
-        """
-        try:
-            mapping = get_concept_imas_mapping(concept)
-
-            if "error" in mapping:
-                return {"concept": concept, "error": mapping["error"], "success": False}
-
-            return {"concept": concept, "mapping": mapping, "success": True}
-
-        except Exception as e:
-            return {"concept": concept, "error": str(e), "success": False}
-
-    async def get_physics_domain_overview(self, domain: str) -> Dict[str, Any]:
-        """
-        Get overview of physics domains in IMAS.
-
-        Provides comprehensive overview of physics domains including:
-        - Key quantities and their IMAS coverage
-        - Common units and symbols used
-        - Total IMAS paths and IDS coverage
-
-        Args:
-            domain: Physics domain ("equilibrium", "transport", "heating", "confinement",
-                    "instabilities", "geometry", "profiles", "radiation", "diagnostics", "control")
-
-        Returns:
-            Dictionary with domain overview and statistics
-        """
-        try:
-            from .physics_integration import PhysicsDomain
-
-            # Map string to enum
-            domain_map = {
-                "equilibrium": PhysicsDomain.EQUILIBRIUM,
-                "transport": PhysicsDomain.TRANSPORT,
-                "heating": PhysicsDomain.HEATING,
-                "confinement": PhysicsDomain.CONFINEMENT,
-                "instabilities": PhysicsDomain.INSTABILITIES,
-                "geometry": PhysicsDomain.GEOMETRY,
-                "profiles": PhysicsDomain.PROFILES,
-                "radiation": PhysicsDomain.RADIATION,
-                "diagnostics": PhysicsDomain.DIAGNOSTICS,
-                "control": PhysicsDomain.CONTROL,
-            }
-
-            if domain.lower() not in domain_map:
-                return {
-                    "domain": domain,
-                    "error": f"Unknown domain '{domain}'. Available: {list(domain_map.keys())}",
-                    "success": False,
-                }
-
-            integration = get_physics_integration()
-            overview = integration.get_domain_overview(domain_map[domain.lower()])
-
-            return {"domain": domain, "overview": overview, "success": True}
-
-        except Exception as e:
-            return {"domain": domain, "error": str(e), "success": False}
-
-    async def validate_physics_query(self, query: str) -> Dict[str, Any]:
-        """
-        Validate and improve physics concept queries.
-
-        Helps users formulate better physics concept queries by:
-        - Validating if query matches known concepts
-        - Suggesting corrections and alternatives
-        - Providing confidence scores for matches
-
-        Args:
-            query: Physics query to validate
-
-        Returns:
-            Dictionary with validation results and suggestions
-        """
-        try:
-            integration = get_physics_integration()
-            validation = integration.validate_physics_query(query)
-
-            return {"query": query, "validation": validation, "success": True}
-
-        except Exception as e:
-            return {"query": query, "error": str(e), "success": False}
 
     def run(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
@@ -1142,7 +1061,7 @@ async def get_overview(
                 "branching_factor": 0,
             }
 
-    # Sort by complexity or size
+    # Sort by complexity or size - THIS IS THE KEY RANKING FUNCTIONALITY
     largest_ids = sorted(
         ids_details.items(), key=lambda x: x[1]["path_count"], reverse=True
     )[:5]
