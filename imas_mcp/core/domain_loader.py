@@ -20,7 +20,6 @@ class DomainDefinitionLoader:
     def __init__(self, definitions_dir: Optional[Path] = None):
         """Initialize the loader with the definitions directory."""
         if definitions_dir is None:
-            # Use importlib.resources to locate the definitions package
             try:
                 definitions_package = resources.files(
                     "imas_mcp.definitions.physics_domains"
