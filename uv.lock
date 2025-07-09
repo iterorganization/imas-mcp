@@ -391,6 +391,7 @@ dependencies = [
     { name = "networkx" },
     { name = "pint" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.optional-dependencies]
@@ -434,6 +435,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.4,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5,<9.0.0" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1,<7.0.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0" },
     { name = "starlette", marker = "extra == 'http'", specifier = ">=0.37.0,<1.0.0" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.30.0,<1.0.0" },
     { name = "whoosh", marker = "extra == 'legacy'", specifier = ">=2.7.4,<3.0.0" },
