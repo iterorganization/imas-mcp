@@ -21,6 +21,12 @@ from fastmcp import Context, FastMCP
 from mcp.types import TextContent
 
 from .json_data_accessor import JsonDataDictionaryAccessor
+from .physics_integration import (
+    get_physics_integration,
+    physics_enhanced_search,
+    explain_physics_concept,
+    get_concept_imas_mapping,
+)
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -31,31 +37,34 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Simplified AI prompts focused on specific tasks
-SEARCH_EXPERT = """You are an IMAS search expert. Analyze relevance-ranked search results and provide:
-1. 5 related search terms for plasma physics research
-2. Brief physics insights about the found data paths  
-3. Suggestions for complementary searches based on measurement relationships
+# Enhanced AI prompts focused on specific tasks with relationship awareness
+SEARCH_EXPERT = """You are an IMAS search expert with deep knowledge of data relationships. Analyze relevance-ranked search results and provide:
+1. 5 related search terms for plasma physics research, considering cross-references and physics concepts
+2. Brief physics insights about the found data paths and their measurement context
+3. Suggestions for complementary searches based on measurement relationships and connected IDS
 
 The search results are ordered by relevance considering exact matches, path position, 
-documentation content, and path specificity. Focus on practical physics relationships 
-and measurement considerations that would lead to valuable follow-up searches."""
+documentation content, path specificity, physics concepts, and cross-reference connectivity. 
+Focus on practical physics relationships and measurement considerations that would lead to 
+valuable follow-up searches using the rich relationship network."""
 
-EXPLANATION_EXPERT = """You are a plasma physics expert. Explain IMAS concepts clearly with:
-1. Physics significance and context
-2. How data paths relate to measurements and modeling
-3. Related concepts researchers should explore
-4. Cross-domain connections
+EXPLANATION_EXPERT = """You are a plasma physics expert with access to IMAS relationship data. Explain concepts clearly with:
+1. Physics significance and context from physics concepts database
+2. How data paths relate to measurements, modeling, and cross-referenced paths
+3. Related concepts researchers should explore via the relationship network
+4. Cross-domain connections revealed by the physics concepts and unit families
 
-Focus on clarity and actionable guidance."""
+Focus on clarity, actionable guidance, and leveraging the relationship data to show 
+connections between different measurement systems and modeling approaches."""
 
-OVERVIEW_EXPERT = """You are an IMAS analytics expert. Provide insights about:
-1. Data structure patterns and organization
-2. Which IDS are most important for specific research areas
-3. Statistical insights about data distribution
-4. Recommendations for exploration
+OVERVIEW_EXPERT = """You are an IMAS analytics expert with comprehensive relationship insights. Provide insights about:
+1. Data structure patterns, organization, and relationship connectivity (~90,000 total relationships)
+2. Which IDS are most important for specific research areas based on cross-references
+3. Statistical insights about data distribution, physics domains, and measurement relationships
+4. Recommendations for exploration using the relationship network and connectivity patterns
 
-Focus on quantitative insights with physics context."""
+Focus on quantitative insights with physics context, emphasizing how the relationship 
+data reveals measurement interdependencies and research pathways."""
 
 
 @dataclass
@@ -92,6 +101,12 @@ class Server:
         self.mcp.tool(self.explain_concept)
         self.mcp.tool(self.get_overview)
         self.mcp.tool(self.analyze_ids_structure)
+        self.mcp.tool(self.explore_relationships)
+        self.mcp.tool(self.search_physics_concepts)
+        self.mcp.tool(self.explain_physics_concept)
+        self.mcp.tool(self.map_concept_to_imas)
+        self.mcp.tool(self.get_physics_domain_overview)
+        self.mcp.tool(self.validate_physics_query)
 
     async def search_imas(
         self,
@@ -172,6 +187,354 @@ class Server:
         """
         return await analyze_ids_structure(ids_name, ctx)
 
+    async def explore_relationships(
+        self,
+        path: str,
+        relationship_type: str = "all",
+        max_depth: int = 2,
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Explore relationships between IMAS data paths using the rich relationship data.
+
+        Advanced tool that discovers connections, physics concepts, and measurement
+        relationships between different parts of the IMAS data dictionary.
+
+        Args:
+            path: Starting path (format: "ids_name/path" or just "ids_name")
+            relationship_type: Type of relationships to explore ("cross_references", "physics_concepts", "units", "all")
+            max_depth: Maximum depth of relationship traversal (1-3)
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with relationship network and AI insights
+        """
+        if not data_accessor.is_available():
+            return {
+                "path": path,
+                "relationships": [],
+                "error": "Data not available - run build process",
+            }
+
+        # Get relationship data
+        try:
+            relationships = data_accessor.get_relationships()
+            physics_concepts = relationships.get("physics_concepts", {})
+            cross_refs = relationships.get("cross_references", {})
+            unit_families = relationships.get("unit_families", {})
+        except (FileNotFoundError, Exception):
+            return {
+                "path": path,
+                "relationships": [],
+                "error": "Relationship data not available",
+            }
+
+        def explore_path_relationships(
+            start_path: str, current_depth: int = 0
+        ) -> Dict[str, Any]:
+            """Recursively explore relationships from a given path."""
+            if current_depth >= max_depth:
+                return {}
+
+            path_relationships = {
+                "path": start_path,
+                "depth": current_depth,
+                "physics_concepts": {},
+                "cross_references": {},
+                "unit_families": {},
+                "connected_paths": [],
+            }
+
+            # Get physics concepts
+            if (
+                relationship_type in ["all", "physics_concepts"]
+                and start_path in physics_concepts
+            ):
+                path_relationships["physics_concepts"] = physics_concepts[start_path]
+
+            # Get cross-references
+            if (
+                relationship_type in ["all", "cross_references"]
+                and start_path in cross_refs
+            ):
+                cross_ref_data = cross_refs[start_path]
+                path_relationships["cross_references"] = cross_ref_data
+
+                # Recursively explore connected paths
+                related_paths = cross_ref_data.get("related_paths", [])[
+                    :5
+                ]  # Limit to 5 to avoid explosion
+                for related_path in related_paths:
+                    if current_depth < max_depth - 1:
+                        connected = explore_path_relationships(
+                            related_path, current_depth + 1
+                        )
+                        if connected:
+                            path_relationships["connected_paths"].append(connected)
+
+            # Get unit families
+            if relationship_type in ["all", "units"] and start_path in unit_families:
+                path_relationships["unit_families"] = unit_families[start_path]
+
+            return path_relationships
+
+        # Start exploration
+        exploration_result = explore_path_relationships(path)
+
+        # Calculate network statistics
+        all_paths_found = set()
+
+        def collect_paths(node: Dict[str, Any]):
+            if "path" in node:
+                all_paths_found.add(node["path"])
+            for connected in node.get("connected_paths", []):
+                collect_paths(connected)
+
+        collect_paths(exploration_result)
+
+        # Find physics domains involved
+        domains_involved = set()
+        for path_key in all_paths_found:
+            if path_key in physics_concepts:
+                domain = physics_concepts[path_key].get("domain", "")
+                if domain:
+                    domains_involved.add(domain)
+
+        result = {
+            "starting_path": path,
+            "relationship_type": relationship_type,
+            "max_depth": max_depth,
+            "exploration_tree": exploration_result,
+            "network_statistics": {
+                "total_paths_discovered": len(all_paths_found),
+                "physics_domains_involved": list(domains_involved),
+                "relationship_density": len(
+                    [p for p in all_paths_found if p in cross_refs]
+                ),
+                "physics_coverage": len(
+                    [p for p in all_paths_found if p in physics_concepts]
+                ),
+            },
+            "all_paths_in_network": list(all_paths_found)[:20],  # Limit output size
+        }
+
+        # AI enhancement if context available
+        if ctx:
+            try:
+                ai_prompt = f"""
+                Analyze this relationship network starting from IMAS path "{path}":
+                
+                Network discovered:
+                - Total paths: {len(all_paths_found)}
+                - Physics domains: {list(domains_involved)}
+                - Relationship density: {result["network_statistics"]["relationship_density"]} connected paths
+                - Physics coverage: {result["network_statistics"]["physics_coverage"]} paths with physics concepts
+                
+                Key relationships found:
+                {exploration_result.get("cross_references", {}).get("relationship_type", "N/A")}
+                
+                Provide insights about:
+                1. What this relationship network reveals about plasma physics connections
+                2. Most important paths to explore for understanding this measurement/concept
+                3. How these relationships help with data analysis workflows
+                4. Complementary measurements or modeling approaches
+                
+                Return as JSON: {{
+                    "physics_insights": "explanation of physics connections",
+                    "key_pathways": ["path1", "path2", "path3"],
+                    "workflow_suggestions": ["suggestion1", "suggestion2"],
+                    "measurement_context": "how these relate to actual measurements"
+                }}
+                """
+
+                ai_response = await ctx.sample(
+                    ai_prompt,
+                    system_prompt=SEARCH_EXPERT,
+                    temperature=0.3,
+                    max_tokens=500,
+                )
+
+                if ai_response:
+                    text_content = cast(TextContent, ai_response)
+                    ai_data = json.loads(text_content.text)
+                    result["ai_insights"] = ai_data
+            except Exception:
+                pass
+
+        return result
+
+    async def search_physics_concepts(
+        self, query: str, max_results: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Search for physics concepts with IMAS integration.
+
+        Enhanced search that maps physics concepts to IMAS attributes,
+        providing symbols, units, and IMAS paths.
+
+        Args:
+            query: Physics concept to search for (e.g., "poloidal flux", "temperature")
+            max_results: Maximum number of results to return
+
+        Returns:
+            Dictionary with physics concept matches and IMAS integration
+        """
+        try:
+            result = physics_enhanced_search(query)
+
+            # Limit results
+            if result.get("physics_matches"):
+                result["physics_matches"] = result["physics_matches"][:max_results]
+
+            return {
+                "query": query,
+                "physics_matches": result.get("physics_matches", []),
+                "concept_suggestions": result.get("concept_suggestions", [])[:5],
+                "unit_suggestions": result.get("unit_suggestions", [])[:5],
+                "success": True,
+            }
+
+        except Exception as e:
+            return {"query": query, "error": str(e), "success": False}
+
+    async def explain_physics_concept(
+        self, concept: str, detail_level: str = "intermediate"
+    ) -> Dict[str, Any]:
+        """
+        Explain physics concepts with IMAS context integration.
+
+        Provides comprehensive explanations of physics concepts including:
+        - Physical significance and description
+        - IMAS attribute mappings (paths, units, symbols)
+        - Measurement context and typical ranges
+        - Related quantities and physics domain
+
+        Args:
+            concept: Physics concept to explain (e.g., "electron temperature", "safety factor")
+            detail_level: Level of explanation ("basic", "intermediate", "advanced")
+
+        Returns:
+            Dictionary with comprehensive concept explanation and IMAS integration
+        """
+        try:
+            explanation = explain_physics_concept(concept, detail_level)
+
+            if "error" in explanation:
+                return {
+                    "concept": concept,
+                    "error": explanation["error"],
+                    "suggestions": explanation.get("suggestions", []),
+                    "success": False,
+                }
+
+            return {
+                "concept": concept,
+                "detail_level": detail_level,
+                "explanation": explanation,
+                "success": True,
+            }
+
+        except Exception as e:
+            return {"concept": concept, "error": str(e), "success": False}
+
+    async def map_concept_to_imas(self, concept: str) -> Dict[str, Any]:
+        """
+        Map physics concepts to IMAS attributes and paths.
+
+        Provides direct mapping from physics concepts to:
+        - IMAS paths where the quantity is stored
+        - Physical units and symbols
+        - Alternative names and usage examples
+
+        Args:
+            concept: Physics concept to map (e.g., "poloidal flux" -> "psi", "Wb")
+
+        Returns:
+            Dictionary with complete concept-to-IMAS mapping
+        """
+        try:
+            mapping = get_concept_imas_mapping(concept)
+
+            if "error" in mapping:
+                return {"concept": concept, "error": mapping["error"], "success": False}
+
+            return {"concept": concept, "mapping": mapping, "success": True}
+
+        except Exception as e:
+            return {"concept": concept, "error": str(e), "success": False}
+
+    async def get_physics_domain_overview(self, domain: str) -> Dict[str, Any]:
+        """
+        Get overview of physics domains in IMAS.
+
+        Provides comprehensive overview of physics domains including:
+        - Key quantities and their IMAS coverage
+        - Common units and symbols used
+        - Total IMAS paths and IDS coverage
+
+        Args:
+            domain: Physics domain ("equilibrium", "transport", "heating", "confinement",
+                    "instabilities", "geometry", "profiles", "radiation", "diagnostics", "control")
+
+        Returns:
+            Dictionary with domain overview and statistics
+        """
+        try:
+            from .physics_integration import PhysicsDomain
+
+            # Map string to enum
+            domain_map = {
+                "equilibrium": PhysicsDomain.EQUILIBRIUM,
+                "transport": PhysicsDomain.TRANSPORT,
+                "heating": PhysicsDomain.HEATING,
+                "confinement": PhysicsDomain.CONFINEMENT,
+                "instabilities": PhysicsDomain.INSTABILITIES,
+                "geometry": PhysicsDomain.GEOMETRY,
+                "profiles": PhysicsDomain.PROFILES,
+                "radiation": PhysicsDomain.RADIATION,
+                "diagnostics": PhysicsDomain.DIAGNOSTICS,
+                "control": PhysicsDomain.CONTROL,
+            }
+
+            if domain.lower() not in domain_map:
+                return {
+                    "domain": domain,
+                    "error": f"Unknown domain '{domain}'. Available: {list(domain_map.keys())}",
+                    "success": False,
+                }
+
+            integration = get_physics_integration()
+            overview = integration.get_domain_overview(domain_map[domain.lower()])
+
+            return {"domain": domain, "overview": overview, "success": True}
+
+        except Exception as e:
+            return {"domain": domain, "error": str(e), "success": False}
+
+    async def validate_physics_query(self, query: str) -> Dict[str, Any]:
+        """
+        Validate and improve physics concept queries.
+
+        Helps users formulate better physics concept queries by:
+        - Validating if query matches known concepts
+        - Suggesting corrections and alternatives
+        - Providing confidence scores for matches
+
+        Args:
+            query: Physics query to validate
+
+        Returns:
+            Dictionary with validation results and suggestions
+        """
+        try:
+            integration = get_physics_integration()
+            validation = integration.validate_physics_query(query)
+
+            return {"query": query, "validation": validation, "success": True}
+
+        except Exception as e:
+            return {"query": query, "error": str(e), "success": False}
+
     def run(
         self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
     ) -> None:
@@ -238,6 +601,7 @@ class Server:
                             "explain_concept",
                             "get_overview",
                             "analyze_ids_structure",
+                            "explore_relationships",
                         ],
                     }
                 )
@@ -316,12 +680,18 @@ async def search_imas(
         }
 
     def calculate_relevance_score(
-        path: str, documentation: str, query_terms: list
+        path: str,
+        documentation: str,
+        query_terms: list,
+        physics_concepts: Dict[str, Any],
+        cross_refs: Dict[str, Any],
+        result: Dict[str, Any],
     ) -> float:
-        """Calculate relevance score for a search result."""
+        """Calculate relevance score for a search result with relationship data."""
         score = 0.0
         path_lower = path.lower()
         doc_lower = documentation.lower() if documentation else ""
+        full_path = f"{result.get('ids_name', '')}/{path}"
 
         for term in query_terms:
             term_lower = term.lower()
@@ -346,6 +716,38 @@ async def search_imas(
                 if term_lower in component and term_lower != component:
                     score += 1.0
 
+            # Physics concepts boost - if this path has physics concepts related to query
+            if full_path in physics_concepts:
+                concepts = physics_concepts[full_path]
+                concept_text = " ".join(
+                    [
+                        concepts.get("concept", ""),
+                        concepts.get("domain", ""),
+                        concepts.get("description", ""),
+                    ]
+                ).lower()
+                if term_lower in concept_text:
+                    score += 3.0  # Boost for physics concept relevance
+
+            # Cross-reference boost - if this path references other related paths
+            if full_path in cross_refs:
+                cross_ref_data = cross_refs[full_path]
+                ref_text = " ".join(
+                    [
+                        cross_ref_data.get("target_path", ""),
+                        cross_ref_data.get("relationship_type", ""),
+                        cross_ref_data.get("description", ""),
+                    ]
+                ).lower()
+                if term_lower in ref_text:
+                    score += 2.0  # Boost for cross-reference relevance
+
+        # Connectivity bonus - highly connected paths are often more important
+        if full_path in cross_refs:
+            connection_count = len(cross_refs[full_path].get("related_paths", []))
+            if connection_count > 5:
+                score += 1.0  # Bonus for highly connected paths
+
         # Bonus for shorter paths (more specific)
         path_depth = len(path.split("/"))
         if path_depth <= 3:
@@ -357,6 +759,15 @@ async def search_imas(
 
     # Prepare query terms
     query_terms = [term.strip() for term in query.lower().split() if term.strip()]
+
+    # Get relationship data for enhanced scoring
+    try:
+        relationships = data_accessor.get_relationships()
+        physics_concepts = relationships.get("physics_concepts", {})
+        cross_refs = relationships.get("cross_references", {})
+    except (FileNotFoundError, Exception):
+        physics_concepts = {}
+        cross_refs = {}
 
     # Search logic with relevance scoring
     if ids_name:
@@ -371,7 +782,7 @@ async def search_imas(
         all_results = data_accessor.search_paths_by_pattern(query)
         candidate_results = all_results
 
-    # Build results with relevance scoring
+    # Build results with enhanced relevance scoring
     scored_results = []
     for result in candidate_results:
         documentation = data_accessor.get_path_documentation(
@@ -383,8 +794,34 @@ async def search_imas(
             units = ""
 
         relevance_score = calculate_relevance_score(
-            result["path"], documentation, query_terms
+            result["path"],
+            documentation,
+            query_terms,
+            physics_concepts,
+            cross_refs,
+            result,
         )
+
+        # Add relationship information to results
+        full_path = f"{result['ids_name']}/{result['path']}"
+        related_paths = []
+        physics_info = {}
+
+        # Get cross-references for this path
+        if full_path in cross_refs:
+            cross_ref_data = cross_refs[full_path]
+            related_paths = cross_ref_data.get("related_paths", [])[
+                :3
+            ]  # Top 3 related paths
+
+        # Get physics concept information
+        if full_path in physics_concepts:
+            concepts = physics_concepts[full_path]
+            physics_info = {
+                "concept": concepts.get("concept", ""),
+                "domain": concepts.get("domain", ""),
+                "description": concepts.get("description", ""),
+            }
 
         scored_results.append(
             {
@@ -393,6 +830,8 @@ async def search_imas(
                 "documentation": documentation,
                 "units": units,
                 "relevance_score": relevance_score,
+                "related_paths": related_paths,  # Cross-references
+                "physics_info": physics_info,  # Physics concepts
             }
         )
 
@@ -486,6 +925,60 @@ async def explain_concept(
     search_results = data_accessor.search_paths_by_pattern(concept)
     related_paths = [f"{r['ids_name']}.{r['path']}" for r in search_results[:10]]
 
+    # Get relationship data for enhanced explanations
+    try:
+        relationships = data_accessor.get_relationships()
+        physics_concepts = relationships.get("physics_concepts", {})
+        cross_refs = relationships.get("cross_references", {})
+        unit_families = relationships.get("unit_families", {})
+    except (FileNotFoundError, Exception):
+        physics_concepts = {}
+        cross_refs = {}
+        unit_families = {}
+
+    # Find physics concepts related to this concept
+    concept_matches = []
+    cross_reference_info = []
+
+    for path, concept_data in physics_concepts.items():
+        concept_text = " ".join(
+            [
+                concept_data.get("concept", ""),
+                concept_data.get("domain", ""),
+                concept_data.get("description", ""),
+            ]
+        ).lower()
+
+        if concept.lower() in concept_text:
+            concept_matches.append(
+                {
+                    "path": path,
+                    "concept": concept_data.get("concept", ""),
+                    "domain": concept_data.get("domain", ""),
+                    "description": concept_data.get("description", ""),
+                }
+            )
+
+    # Find cross-references that mention this concept
+    for path, cross_ref_data in cross_refs.items():
+        if concept.lower() in path.lower():
+            cross_reference_info.append(
+                {
+                    "path": path,
+                    "related_paths": cross_ref_data.get("related_paths", [])[:3],
+                    "relationship_type": cross_ref_data.get("relationship_type", ""),
+                }
+            )
+
+    # Find relevant unit families
+    related_units = []
+    for unit_path, unit_data in unit_families.items():
+        if (
+            concept.lower() in unit_path.lower()
+            or concept.lower() in str(unit_data).lower()
+        ):
+            related_units.append({"path": unit_path, "unit_info": unit_data})
+
     # Basic explanation without AI
     basic_explanation = {
         "concept": concept,
@@ -493,6 +986,14 @@ async def explain_concept(
         "related_paths": related_paths,
         "physics_context": "This concept relates to plasma physics modeling and measurements.",
         "suggested_searches": [],
+        "physics_concepts": concept_matches[:5],  # Top 5 physics concept matches
+        "cross_references": cross_reference_info[
+            :5
+        ],  # Top 5 cross-reference connections
+        "measurement_domains": list(
+            set([c.get("domain", "") for c in concept_matches if c.get("domain")])
+        )[:3],
+        "related_units": related_units[:3],  # Related unit families
     }
 
     # AI enhancement if context available
@@ -580,6 +1081,40 @@ async def get_overview(
     graph_stats = data_accessor.get_graph_statistics()
     structural_insights = data_accessor.get_structural_insights()
 
+    # Get relationship data for enhanced overview
+    try:
+        relationships = data_accessor.get_relationships()
+        physics_concepts = relationships.get("physics_concepts", {})
+        cross_refs = relationships.get("cross_references", {})
+        unit_families = relationships.get("unit_families", {})
+        rel_metadata = relationships.get("metadata", {})
+    except (FileNotFoundError, Exception):
+        physics_concepts = {}
+        cross_refs = {}
+        unit_families = {}
+        rel_metadata = {}
+
+    # Calculate relationship statistics
+    total_relationships = rel_metadata.get("total_relationships", 0)
+    total_physics_concepts = len(physics_concepts)
+    total_cross_refs = len(cross_refs)
+    total_unit_families = len(unit_families)
+
+    # Find most connected paths
+    connection_counts = {}
+    for path, ref_data in cross_refs.items():
+        connection_counts[path] = len(ref_data.get("related_paths", []))
+
+    most_connected = sorted(
+        connection_counts.items(), key=lambda x: x[1], reverse=True
+    )[:5]
+
+    # Analyze physics domains
+    domain_counts = {}
+    for concept_data in physics_concepts.values():
+        domain = concept_data.get("domain", "unknown")
+        domain_counts[domain] = domain_counts.get(domain, 0) + 1
+
     # Get basic IDS information enhanced with graph data
     ids_details = {}
     complexity_scores = structural_insights.get("complexity_rankings", {}).get(
@@ -651,6 +1186,19 @@ async def get_overview(
             "most_branched": structural_insights.get("structural_patterns", {}).get(
                 "most_branched", []
             )[:3],
+        },
+        "relationship_overview": {
+            "total_relationships": total_relationships,
+            "physics_concepts_count": total_physics_concepts,
+            "cross_references_count": total_cross_refs,
+            "unit_families_count": total_unit_families,
+            "most_connected_paths": [
+                {"path": path, "connection_count": count}
+                for path, count in most_connected
+            ],
+            "physics_domains": dict(
+                sorted(domain_counts.items(), key=lambda x: x[1], reverse=True)
+            ),
         },
         "metadata": metadata,
         "description": "IMAS provides standardized data structures for fusion plasma modeling.",
@@ -749,12 +1297,75 @@ async def analyze_ids_structure(
         "complexity_scores", {}
     )
 
+    # Get relationship data for this specific IDS
+    try:
+        relationships = data_accessor.get_relationships()
+        physics_concepts = relationships.get("physics_concepts", {})
+        cross_refs = relationships.get("cross_references", {})
+        unit_families = relationships.get("unit_families", {})
+    except (FileNotFoundError, Exception):
+        physics_concepts = {}
+        cross_refs = {}
+        unit_families = {}
+
+    # Analyze relationships for this IDS
+    ids_physics_concepts = {}
+    ids_cross_refs = {}
+    ids_unit_families = {}
+    external_connections = []
+
+    for path_key, concept_data in physics_concepts.items():
+        if path_key.startswith(f"{ids_name}/"):
+            ids_physics_concepts[path_key] = concept_data
+
+    for path_key, ref_data in cross_refs.items():
+        if path_key.startswith(f"{ids_name}/"):
+            ids_cross_refs[path_key] = ref_data
+            # Find external IDS connections
+            related_paths = ref_data.get("related_paths", [])
+            for related_path in related_paths:
+                if not related_path.startswith(f"{ids_name}/"):
+                    external_ids = (
+                        related_path.split("/")[0]
+                        if "/" in related_path
+                        else related_path
+                    )
+                    if external_ids not in external_connections:
+                        external_connections.append(external_ids)
+
+    for path_key, unit_data in unit_families.items():
+        if path_key.startswith(f"{ids_name}/"):
+            ids_unit_families[path_key] = unit_data
+
+    # Calculate relationship statistics for this IDS
+    physics_domains_in_ids = {}
+    for concept_data in ids_physics_concepts.values():
+        domain = concept_data.get("domain", "unknown")
+        physics_domains_in_ids[domain] = physics_domains_in_ids.get(domain, 0) + 1
+
     analysis = {
         "ids_name": ids_name,
         "total_paths": len(paths),
         "graph_metrics": ids_graph_stats,
         "complexity_score": complexity_scores.get(ids_name, 0),
         "navigation_complexity": "unknown",
+        "relationship_analysis": {
+            "physics_concepts_count": len(ids_physics_concepts),
+            "cross_references_count": len(ids_cross_refs),
+            "unit_families_count": len(ids_unit_families),
+            "external_ids_connections": external_connections[
+                :10
+            ],  # Top 10 connected IDS
+            "physics_domains": physics_domains_in_ids,
+            "most_connected_paths": [
+                {"path": path, "connections": len(ref_data.get("related_paths", []))}
+                for path, ref_data in sorted(
+                    ids_cross_refs.items(),
+                    key=lambda x: len(x[1].get("related_paths", [])),
+                    reverse=True,
+                )[:5]
+            ],
+        },
     }
 
     # Determine navigation complexity
