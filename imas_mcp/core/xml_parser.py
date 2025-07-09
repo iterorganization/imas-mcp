@@ -16,13 +16,13 @@ from .data_model import (
     IdsDetailed,
     IdsInfo,
     PhysicsConcept,
-    PhysicsDomain,
     RelationshipCategories,
     Relationships,
     TransformationOutputs,
     UnitFamily,
     UsageExample,
 )
+from .physics_categorization import physics_categorizer
 from .extractors import (
     ExtractorContext,
     MetadataExtractor,
@@ -371,15 +371,9 @@ class DataDictionaryTransformer:
 
     # Keep existing helper methods for IDS-level analysis
     def _infer_physics_domain(self, ids_name: str) -> str:
-        """Infer physics domain from IDS name."""
-        domain_mapping = {
-            "core_profiles": PhysicsDomain.TRANSPORT.value,
-            "equilibrium": PhysicsDomain.EQUILIBRIUM.value,
-            "mhd": PhysicsDomain.MHD.value,
-            "heating": PhysicsDomain.HEATING.value,
-            "wall": PhysicsDomain.WALL.value,
-        }
-        return domain_mapping.get(ids_name.lower(), PhysicsDomain.GENERAL.value)
+        """Infer physics domain from IDS name using enhanced categorization."""
+        domain = physics_categorizer.get_domain_for_ids(ids_name)
+        return domain.value
 
     def _calculate_max_depth(self, ids_elem: ET.Element) -> int:
         """Calculate maximum depth using single traversal."""
