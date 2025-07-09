@@ -248,14 +248,38 @@ def export_database(coordinator: ExtractionCoordinator, output_file: Path):
 
 
 def show_domains(coordinator: ExtractionCoordinator):
-    """Show physics domains breakdown."""
+    """Show physics domains breakdown with categorization."""
     print("=== Physics Domains Summary ===")
 
-    # Get domain summary from batch processor
+    # Import the categorizer
+    from ..core.physics_categorization import physics_categorizer
+
+    # Get domain summary from categorizer
+    domain_summary = physics_categorizer.get_domain_summary()
+
+    # Display domain information
+    for domain_name, info in domain_summary.items():
+        if info["ids_count"] > 0:  # Only show domains with IDS
+            print(f"\n{domain_name.upper()}:")
+            print(f"  Description: {info['description']}")
+            print(f"  IDS count: {info['ids_count']}")
+            print(f"  Complexity: {info['complexity_level']}")
+            print(f"  Primary phenomena: {', '.join(info['primary_phenomena'][:3])}")
+            if len(info["primary_phenomena"]) > 3:
+                print(f"    ... and {len(info['primary_phenomena']) - 3} more")
+            print(f"  Typical units: {', '.join(info['typical_units'][:5])}")
+            print(f"  Sample IDS: {', '.join(info['ids_list'][:3])}")
+            if len(info["ids_list"]) > 3:
+                print(f"    ... and {len(info['ids_list']) - 3} more")
+            if info["related_domains"]:
+                print(f"  Related domains: {', '.join(info['related_domains'][:3])}")
+
+    # Get legacy domain summary from batch processor if available
     if (
         hasattr(coordinator, "catalog_batch_processor")
         and coordinator.catalog_batch_processor
     ):
+        print("\n=== Legacy Domain Distribution ===")
         physics_summary = (
             coordinator.catalog_batch_processor.get_physics_domain_summary()
         )
@@ -264,9 +288,6 @@ def show_domains(coordinator: ExtractionCoordinator):
             print(f"\n{domain.upper()}:")
             print(f"  IDS count: {info['ids_count']}")
             print(f"  Total paths: {info['total_paths']}")
-            print(f"  Sample IDS: {', '.join(info['ids_list'][:3])}")
-            if len(info["ids_list"]) > 3:
-                print(f"  ... and {len(info['ids_list']) - 3} more")
 
     # Get processing progress by domain if available
     if hasattr(coordinator, "get_domain_progress"):

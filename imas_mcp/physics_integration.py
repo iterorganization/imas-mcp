@@ -2,7 +2,7 @@
 Physics Context Integration for IMAS MCP Tools
 
 This module integrates the physics context engine with existing IMAS MCP tools
-to provide enhanced physics-aware search and explanation capabilities.
+to provide physics-aware search and explanation capabilities.
 """
 
 from typing import Dict, List, Any
@@ -16,8 +16,8 @@ from .physics_context import (
 )
 
 
-class PhysicsEnhancedSearch:
-    """Enhanced search that combines IMAS paths with physics concepts."""
+class PhysicsSearch:
+    """Search that combines IMAS paths with physics concepts."""
 
     def __init__(self, engine: PhysicsContextEngine):
         self.engine = engine
@@ -384,12 +384,12 @@ class IMASPhysicsIntegration:
 
     def __init__(self):
         self.engine = get_physics_engine()
-        self.search = PhysicsEnhancedSearch(self.engine)
+        self.searcher = PhysicsSearch(self.engine)
         self.explainer = PhysicsConceptExplainer(self.engine)
 
-    def enhanced_search(self, query: str) -> Dict[str, Any]:
-        """Perform physics-enhanced search."""
-        return self.search.search_with_physics_context(query)
+    def search(self, query: str) -> Dict[str, Any]:
+        """Perform physics search."""
+        return self.searcher.search_with_physics_context(query)
 
     def explain_physics_concept(
         self, concept: str, detail_level: str = "intermediate"
@@ -502,7 +502,9 @@ class IMASPhysicsIntegration:
 
         # Generate suggestions
         if not concept_matches:
-            validation["suggestions"] = self.search._generate_concept_suggestions(query)
+            validation["suggestions"] = self.searcher._generate_concept_suggestions(
+                query
+            )
             validation["alternative_queries"] = self._suggest_alternative_queries(query)
 
         return validation
@@ -544,10 +546,10 @@ def get_physics_integration() -> IMASPhysicsIntegration:
 
 
 # Convenience functions for easy access
-def physics_enhanced_search(query: str) -> Dict[str, Any]:
-    """Perform physics-enhanced search."""
+def physics_search(query: str) -> Dict[str, Any]:
+    """Perform physics search."""
     integration = get_physics_integration()
-    return integration.enhanced_search(query)
+    return integration.search(query)
 
 
 def explain_physics_concept(
@@ -570,9 +572,9 @@ if __name__ == "__main__":
 
     print("=== Physics Integration Testing ===")
 
-    # Test enhanced search
-    print("\n1. Enhanced search for 'poloidal flux':")
-    search_result = physics_enhanced_search("poloidal flux")
+    # Test search
+    print("\n1. Search for 'poloidal flux':")
+    search_result = physics_search("poloidal flux")
     print(f"   Found {len(search_result['physics_matches'])} physics matches")
     if search_result["physics_matches"]:
         match = search_result["physics_matches"][0]

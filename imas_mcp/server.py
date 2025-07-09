@@ -1,12 +1,13 @@
 """
-IMAS MCP Server with AI-Enhanced Tools.
+IMAS MCP Server with AI Tools.
 
-This is the principal MCP server for the IMAS data dictionary, providing AI-enhanced
+This is the principal MCP server for the IMAS data dictionary, providing AI
+tools for physics-based search, analysis, and exploration of plasma physics data.
 tools for searching, exploring, and analyzing IMAS data structures. It offers 4 focused
 tools with intelligent insights and relevance-ranked results for better LLM usage.
 
 This server replaces the legacy lexicographic server (now lexicographic_server.py)
-with enhanced capabilities including graph analysis, physics context, and AI-powered
+with capabilities including graph analysis, physics context, and AI-powered
 explanations.
 """
 
@@ -23,7 +24,7 @@ from mcp.types import TextContent
 from .json_data_accessor import JsonDataDictionaryAccessor
 from .physics_integration import (
     get_physics_integration,
-    physics_enhanced_search,
+    physics_search,
     explain_physics_concept,
     get_concept_imas_mapping,
 )
@@ -37,7 +38,7 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Enhanced AI prompts focused on specific tasks with relationship awareness
+# AI prompts focused on specific tasks with relationship awareness
 SEARCH_EXPERT = """You are an IMAS search expert with deep knowledge of data relationships. Analyze relevance-ranked search results and provide:
 1. 5 related search terms for plasma physics research, considering cross-references and physics concepts
 2. Brief physics insights about the found data paths and their measurement context
@@ -69,13 +70,13 @@ data reveals measurement interdependencies and research pathways."""
 
 @dataclass
 class Server:
-    """AI-Enhanced IMAS MCP Server with structured tool management."""
+    """AI IMAS MCP Server with structured tool management."""
 
     mcp: FastMCP = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
-        self.mcp = FastMCP("AI-Enhanced IMAS Data Dictionary MCP Server")
+        self.mcp = FastMCP(name="imas-dd")
         self._register_tools()
 
     @cached_property
@@ -95,8 +96,8 @@ class Server:
         return accessor
 
     def _register_tools(self):
-        """Register all AI-enhanced MCP tools with the server."""
-        # Register the enhanced tools
+        """Register all AI MCP tools with the server."""
+        # Register the tools
         self.mcp.tool(self.search_imas)
         self.mcp.tool(self.explain_concept)
         self.mcp.tool(self.get_overview)
@@ -380,7 +381,7 @@ class Server:
             Dictionary with physics concept matches and IMAS integration
         """
         try:
-            result = physics_enhanced_search(query)
+            result = physics_search(query)
 
             # Limit results
             if result.get("physics_matches"):
