@@ -5,19 +5,18 @@ This module contains Pydantic models that represent documents that can be indexe
 in the search engine and the search results returned from the search engine.
 """
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import pint
 import pydantic
 from pydantic import ConfigDict
-import whoosh.searching
 
 from imas_mcp.units import unit_registry
 
 
 # Base model for document validation
 class IndexableDocument(pydantic.BaseModel):
-    """Base model for documents that can be indexed in WhooshIndex."""
+    """Base model for documents that can be indexed in search engines."""
 
     model_config = ConfigDict(
         extra="forbid",  # Prevent additional fields not in schema
@@ -110,58 +109,6 @@ class SearchResult(pydantic.BaseModel):
     type: str = ""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    @classmethod
-    def from_hit(cls, hit: "whoosh.searching.Hit") -> "SearchResult":
-        """Create a SearchResult instance from a Whoosh Hit object."""
-        return cls(
-            path=hit["path"],
-            score=hit.score if hit.score is not None else 0.0,
-            documentation=hit.get("documentation", ""),
-            units=hit.get("units", ""),
-            ids_name=hit.get("ids_name", ""),
-            highlights=hit.highlights("documentation", ""),
-            # Extended fields
-            coordinates=hit.get("coordinates", ""),
-            lifecycle=hit.get("lifecycle", ""),
-            data_type=hit.get("data_type", ""),
-            physics_context=hit.get("physics_context", ""),
-            related_paths=hit.get("related_paths", ""),
-            usage_examples=hit.get("usage_examples", ""),
-            validation_rules=hit.get("validation_rules", ""),
-            relationships=hit.get("relationships", ""),
-            introduced_after=hit.get("introduced_after", ""),
-            coordinate1=hit.get("coordinate1", ""),
-            coordinate2=hit.get("coordinate2", ""),
-            timebase=hit.get("timebase", ""),
-            type=hit.get("type", ""),
-        )
-
-    @classmethod
-    def from_document(cls, document: Dict[str, Any]) -> "SearchResult":
-        """Create a SearchResult instance from a Whoosh document dictionary."""
-        return cls(
-            path=document["path"],
-            score=1.0,  # Exact match, so score is 1.0
-            documentation=document.get("documentation", ""),
-            units=document.get("units", ""),
-            ids_name=document.get("ids_name", ""),
-            highlights="",  # No highlights for direct document retrieval
-            # Extended fields
-            coordinates=document.get("coordinates", ""),
-            lifecycle=document.get("lifecycle", ""),
-            data_type=document.get("data_type", ""),
-            physics_context=document.get("physics_context", ""),
-            related_paths=document.get("related_paths", ""),
-            usage_examples=document.get("usage_examples", ""),
-            validation_rules=document.get("validation_rules", ""),
-            relationships=document.get("relationships", ""),
-            introduced_after=document.get("introduced_after", ""),
-            coordinate1=document.get("coordinate1", ""),
-            coordinate2=document.get("coordinate2", ""),
-            timebase=document.get("timebase", ""),
-            type=document.get("type", ""),
-        )
 
     def __str__(self) -> str:
         """Return a string representation of the SearchResult."""
