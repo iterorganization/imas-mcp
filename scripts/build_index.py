@@ -23,7 +23,14 @@ from imas_mcp.lexicographic_search import LexicographicSearch
     type=str,
     help="Specific IDS names to include in the index as a space-separated string (e.g., 'core_profiles equilibrium')",
 )
-def build_index(verbose: bool, quiet: bool, force: bool, ids_filter: str) -> int:
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    help="Disable rich progress display and use plain logging",
+)
+def build_index(
+    verbose: bool, quiet: bool, force: bool, ids_filter: str, no_rich: bool
+) -> int:
     """Build the lexicographic search index for the IMAS Data Dictionary.
 
     This command initializes a LexicographicSearch instance and builds the index
@@ -57,7 +64,9 @@ def build_index(verbose: bool, quiet: bool, force: bool, ids_filter: str) -> int
             logger.info(f"Building index for specific IDS: {sorted(ids_set)}")
 
         # Initialize the search class
-        search = LexicographicSearch(ids_set=ids_set, auto_build=False)
+        search = LexicographicSearch(
+            ids_set=ids_set, auto_build=False, use_rich=not no_rich
+        )
 
         # Check if we need to build
         should_build = force or len(search) == 0

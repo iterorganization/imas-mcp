@@ -1,5 +1,5 @@
 """
-IMAS MCP Server with AI Tools.
+IMAS MCP Server with AI Tools - Refactored with Composition Pattern.
 
 This is the principal MCP server for the IMAS data dictionary, providing AI
 tools for physics-based search, analysis, and exploration of plasma physics data.
@@ -13,22 +13,32 @@ The 5 core tools provide comprehensive coverage:
 4. analyze_ids_structure - Detailed structural analysis of specific IDS
 5. explore_relationships - Advanced relationship exploration across the data dictionary
 
-This server replaces the legacy lexicographic server (now lexicographic_server.py)
-with capabilities including graph analysis, physics context, and AI-powered
-explanations.
+This server uses a composition pattern with dedicated search handlers to separate
+concerns and make the intent of each search strategy clear.
 """
 
-import json
+import importlib.metadata
 import logging
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, Union
 
 import nest_asyncio
 from fastmcp import Context, FastMCP
-from mcp.types import TextContent
 
 from .json_data_accessor import JsonDataDictionaryAccessor
+from .lexicographic_search import LexicographicSearch
+from .search import (
+    SearchHandler,
+    SearchRequest,
+    SearchRouter,
+    ai_enhancer,
+    SEARCH_EXPERT,
+    EXPLANATION_EXPERT,
+    OVERVIEW_EXPERT,
+    STRUCTURE_EXPERT,
+    RELATIONSHIP_EXPERT,
+)
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -39,39 +49,10 @@ nest_asyncio.apply()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# AI prompts focused on specific tasks with relationship awareness
-SEARCH_EXPERT = """You are an IMAS search expert with deep knowledge of data relationships. Analyze relevance-ranked search results and provide:
-1. 5 related search terms for plasma physics research, considering cross-references and physics concepts
-2. Brief physics insights about the found data paths and their measurement context
-3. Suggestions for complementary searches based on measurement relationships and connected IDS
-
-The search results are ordered by relevance considering exact matches, path position, 
-documentation content, path specificity, physics concepts, and cross-reference connectivity. 
-Focus on practical physics relationships and measurement considerations that would lead to 
-valuable follow-up searches using the rich relationship network."""
-
-EXPLANATION_EXPERT = """You are a plasma physics expert with access to IMAS relationship data. Explain concepts clearly with:
-1. Physics significance and context from physics concepts database
-2. How data paths relate to measurements, modeling, and cross-referenced paths
-3. Related concepts researchers should explore via the relationship network
-4. Cross-domain connections revealed by the physics concepts and unit families
-
-Focus on clarity, actionable guidance, and leveraging the relationship data to show 
-connections between different measurement systems and modeling approaches."""
-
-OVERVIEW_EXPERT = """You are an IMAS analytics expert with comprehensive relationship insights. Provide insights about:
-1. Data structure patterns, organization, and relationship connectivity (~90,000 total relationships)
-2. Which IDS are most important for specific research areas based on cross-references
-3. Statistical insights about data distribution, physics domains, and measurement relationships
-4. Recommendations for exploration using the relationship network and connectivity patterns
-
-Focus on quantitative insights with physics context, emphasizing how the relationship 
-data reveals measurement interdependencies and research pathways."""
-
 
 @dataclass
 class Server:
-    """AI IMAS MCP Server with structured tool management."""
+    """AI IMAS MCP Server with structured tool management using composition pattern."""
 
     mcp: FastMCP = field(init=False, repr=False)
 
@@ -88,13 +69,34 @@ class Server:
 
         if not accessor.is_available():
             raise ValueError(
-                "IMAS JSON data is not available. This could be due to:\n"
-                "1. Data dictionary not properly installed\n"
-                "2. JSON files not built during installation\n"
+                "IMAS JSON data is not available. This could be due to:\\n"
+                "1. Data dictionary not properly installed\\n"
+                "2. JSON files not built during installation\\n"
                 "Please reinstall the package or run the build process."
             )
 
         return accessor
+
+    @cached_property
+    def lex_search(self):
+        """Return the lexicographic search instance."""
+        logger.info("Initializing lexicographic search")
+        return LexicographicSearch()
+
+    @cached_property
+    def search_handler(self) -> SearchHandler:
+        """Return the search handler instance."""
+        logger.info("Initializing search handler with composition pattern")
+        return SearchHandler(
+            json_accessor=self.data_accessor, lex_search=self.lex_search
+        )
+
+    @cached_property
+    def search_router(self) -> SearchRouter:
+        """Return the search router instance."""
+        return SearchRouter(
+            data_accessor=self.data_accessor, lexicographic_search=self.lex_search
+        )
 
     def _register_tools(self):
         """Register the 5 focused AI MCP tools with the server."""
@@ -105,9 +107,10 @@ class Server:
         self.mcp.tool(self.analyze_ids_structure)
         self.mcp.tool(self.explore_relationships)
 
+    @ai_enhancer(SEARCH_EXPERT, "Search analysis", temperature=0.3, max_tokens=500)
     async def search_imas(
         self,
-        query: str,
+        query: Union[str, List[str]],
         ids_name: Optional[str] = None,
         max_results: int = 10,
         ctx: Optional[Context] = None,
@@ -119,47 +122,125 @@ class Server:
         and optionally enhances results with AI insights when MCP sampling is available.
 
         Enhanced with physics context - can search by physics concepts, symbols, or units.
+        Supports bulk search, boolean operators, wildcards, and field-specific searches.
 
         Args:
-            query: Search term, physics concept, symbol, or pattern
+            query: Search term(s), physics concept, symbol, or pattern. Can be:
+                   - Single string: "plasma temperature"
+                   - List of strings: ["plasma", "temperature", "density"]
+                   - Boolean operators: "plasma AND temperature"
+                   - Wildcards: "temp*", "ion*" (asterisk supported)
+                   - Field-specific: "documentation:temperature", "units:eV", "name:core_profiles"
+                   - Fuzzy search: "temperatur~" (with tilde for fuzzy matching)
             ids_name: Optional specific IDS to search within
             max_results: Maximum number of results to return
             ctx: MCP context for AI enhancement
 
         Returns:
             Dictionary with relevance-ordered search results, physics mappings, and AI suggestions
+
+        Examples:
+            Basic search: search_imas("plasma temperature")
+            Bulk search: search_imas(["plasma", "temperature", "density"])
+            Boolean: search_imas("plasma AND (temperature OR density)")
+            Wildcards: search_imas("temp* OR ion*")
+            Field search: search_imas("documentation:electron units:eV")
+            Fuzzy search: search_imas("temperatur~ densty~")
         """
-        # Try physics search first for enhanced results
         try:
-            from .physics_integration import physics_search
+            # Create search request
+            request = SearchRequest(
+                query=query, ids_name=ids_name, max_results=max_results
+            )
 
-            physics_result = physics_search(query)
+            # Auto-detect query features and route to appropriate handler
+            if isinstance(query, list):
+                # Handle bulk search
+                response = self.search_handler.handle_bulk_search(request)
+            else:
+                # Analyze query features for single query
+                features = self.search_router.detect_query_features(query)
 
-            # If physics search found results, enhance the standard search
-            if physics_result.get("physics_matches"):
-                standard_result = await search_imas(query, ids_name, max_results, ctx)
+                # Route to appropriate search strategy
+                if features.is_exact_path:
+                    response = self.search_handler.handle_exact_path_search(request)
+                elif features.has_boolean:
+                    response = self.search_handler.handle_boolean_search(request)
+                elif features.has_wildcards:
+                    response = self.search_handler.handle_wildcard_search(request)
+                elif features.has_field_prefix:
+                    response = self.search_handler.handle_field_search(request)
+                else:
+                    response = self.search_handler.handle_search(request)
 
-                # Merge physics context into standard results
-                standard_result["physics_matches"] = physics_result["physics_matches"][
-                    :3
-                ]
-                standard_result["concept_suggestions"] = physics_result.get(
-                    "concept_suggestions", []
-                )[:3]
-                standard_result["unit_suggestions"] = physics_result.get(
-                    "unit_suggestions", []
-                )[:3]
-                standard_result["symbol_suggestions"] = physics_result.get(
-                    "symbol_suggestions", []
-                )[:3]
+            # Convert SearchResult objects to dictionaries for JSON serialization
+            results_dict = [
+                {
+                    "path": result.path,
+                    "score": result.score,
+                    "documentation": result.documentation,
+                    "units": result.units,
+                    "ids_name": result.ids_name,
+                    "highlights": getattr(result, "highlights", ""),
+                }
+                for result in response.results
+            ]
 
-                return standard_result
+            # Build response with AI enhancement
+            result = {
+                "results": results_dict,
+                "total_results": response.total_results,
+                "search_strategy": response.search_strategy,
+                "suggestions": response.suggestions or [],
+            }
 
-        except Exception:
-            pass  # Fall back to standard search
+            # Try physics search enhancement
+            try:
+                from .physics_integration import physics_search
 
-        return await search_imas(query, ids_name, max_results, ctx)
+                physics_result = physics_search(
+                    str(query) if isinstance(query, list) else query
+                )
 
+                if physics_result.get("physics_matches"):
+                    result["physics_matches"] = physics_result["physics_matches"][:3]
+                    result["concept_suggestions"] = physics_result.get(
+                        "concept_suggestions", []
+                    )[:3]
+                    result["unit_suggestions"] = physics_result.get(
+                        "unit_suggestions", []
+                    )[:3]
+                    result["symbol_suggestions"] = physics_result.get(
+                        "symbol_suggestions", []
+                    )[:3]
+            except Exception:
+                pass  # Physics enhancement is optional
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx and result["results"]:
+                result["ai_prompt"] = (
+                    f"Query: {query}\nResults: {result['results'][:3]}\n\nProvide analysis as JSON with 'insights', 'related_terms', and 'suggestions' fields."
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return {
+                "results": [],
+                "total_results": 0,
+                "search_strategy": "error",
+                "error": str(e),
+                "suggestions": [
+                    "Check spelling and try alternative terms",
+                    "Use simpler search terms",
+                    "Try wildcard patterns like 'term*'",
+                ],
+            }
+
+    @ai_enhancer(
+        EXPLANATION_EXPERT, "Concept explanation", temperature=0.2, max_tokens=800
+    )
     async def explain_concept(
         self,
         concept: str,
@@ -182,32 +263,73 @@ class Server:
         Returns:
             Dictionary with explanation, physics context, IMAS mappings, and related information
         """
-        # Try physics-enhanced explanation first
         try:
-            from .physics_integration import (
-                explain_physics_concept,
-                get_concept_imas_mapping,
-            )
+            # Search for concept in IMAS data
+            search_results = await self.search_imas(concept, max_results=5)
 
-            physics_explanation = explain_physics_concept(concept, detail_level)
+            # Try physics search enhancement
+            physics_context = {}
+            try:
+                from .physics_integration import physics_search
 
-            # If physics explanation succeeded, merge with standard explanation
-            if "error" not in physics_explanation:
-                standard_result = await explain_concept(concept, detail_level, ctx)
+                physics_result = physics_search(concept)
+                physics_context = {
+                    "physics_matches": physics_result.get("physics_matches", [])[:3],
+                    "concept_suggestions": physics_result.get(
+                        "concept_suggestions", []
+                    )[:3],
+                    "symbols": physics_result.get("symbol_suggestions", [])[:3],
+                    "units": physics_result.get("unit_suggestions", [])[:3],
+                }
+            except Exception:
+                pass  # Physics enhancement is optional
 
-                # Merge physics context into standard results
-                standard_result["physics_explanation"] = physics_explanation
-                standard_result["imas_mapping"] = get_concept_imas_mapping(concept)
+            # Build base response
+            result = {
+                "concept": concept,
+                "detail_level": detail_level,
+                "related_paths": [r["path"] for r in search_results["results"][:5]],
+                "physics_context": physics_context,
+                "search_results_count": len(search_results["results"]),
+            }
 
-                return standard_result
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                result["ai_prompt"] = f"""Concept: {concept}
+Detail Level: {detail_level}
+Related IMAS paths: {[r["path"] for r in search_results["results"][:3]]}
+Physics context: {physics_context}
 
-        except Exception:
-            pass  # Fall back to standard explanation
+Provide a comprehensive explanation including:
+1. Physics definition and significance
+2. How it relates to plasma physics measurements
+3. IMAS data structure implications
+4. Practical measurement considerations
+5. Related concepts to explore
 
-        return await explain_concept(concept, detail_level, ctx)
+Format as JSON with 'explanation', 'physics_significance', 'imas_applications', 'related_concepts' fields."""
 
+            return result
+
+        except Exception as e:
+            logger.error(f"Concept explanation failed: {e}")
+            return {
+                "concept": concept,
+                "detail_level": detail_level,
+                "error": str(e),
+                "explanation": "Failed to generate explanation",
+                "suggestions": [
+                    "Try a more specific concept name",
+                    "Check spelling",
+                    "Use physics terminology",
+                ],
+            }
+
+    @ai_enhancer(OVERVIEW_EXPERT, "Overview analysis", temperature=0.3, max_tokens=1000)
     async def get_overview(
-        self, question: Optional[str] = None, ctx: Optional[Context] = None
+        self,
+        question: Optional[str] = None,
+        ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
         Get IMAS overview or answer analytical questions with graph insights.
@@ -218,54 +340,87 @@ class Server:
         Enhanced with physics domain analysis and query validation capabilities.
 
         Args:
-            question: Optional specific question about the data dictionary (can be a physics domain or validation query)
+            question: Optional specific question about the data dictionary
             ctx: MCP context for AI enhancement
 
         Returns:
             Dictionary with overview information, analytics, and optional domain-specific data
         """
-        # Handle domain-specific questions
-        if question:
-            try:
-                from .core.domain_loader import get_domain_loader
+        try:
+            # Get basic statistics from data accessor
+            overview_data = {
+                "total_documents": len(self.lex_search),
+                "available_ids": list(self.data_accessor.get_available_ids()),
+                "index_name": self.lex_search.indexname,
+            }
 
-                domain_loader = get_domain_loader()
-                domain_characteristics = domain_loader.load_domain_characteristics()
-
-                # Simple domain matching
-                question_lower = question.lower()
-                for domain_name, domain_info in domain_characteristics.items():
-                    if domain_name.lower() in question_lower:
-                        # Get basic overview and add domain info
-                        basic_result = await get_overview(None, ctx)
-                        basic_result["physics_domain_overview"] = {
-                            "domain": domain_name,
-                            "characteristics": domain_info,
+            # Add IDS statistics
+            ids_stats = {}
+            for ids_name in overview_data["available_ids"]:
+                try:
+                    ids_data = self.data_accessor.get_ids_detailed_data(ids_name)
+                    if ids_data:
+                        ids_stats[ids_name] = {
+                            "path_count": len(ids_data.get("paths", {})),
+                            "description": ids_data.get("description", "")[:100]
+                            + "...",
                         }
-                        basic_result["domain_specific_query"] = True
-                        return basic_result
+                except Exception:
+                    ids_stats[ids_name] = {
+                        "path_count": 0,
+                        "description": "Error loading",
+                    }
 
-                # Check if question is asking for query validation
-                if any(
-                    word in question_lower
-                    for word in ["validate", "check", "verify", "suggest"]
-                ):
-                    from .physics_integration import get_physics_integration
+            overview_data["ids_statistics"] = ids_stats
 
-                    integration = get_physics_integration()
-                    validation = integration.validate_physics_query(question)
+            # If specific question provided, search for relevant information
+            if question:
+                search_results = await self.search_imas(question, max_results=5)
+                overview_data["question"] = question
+                overview_data["question_results"] = search_results["results"]
+                overview_data["search_strategy"] = search_results["search_strategy"]
 
-                    standard_result = await get_overview(question, ctx)
-                    standard_result["query_validation"] = validation
-                    return standard_result
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                overview_data["ai_prompt"] = f"""IMAS Data Dictionary Overview:
+Total documents: {overview_data["total_documents"]}
+Available IDS: {overview_data["available_ids"]}
+Question: {question or "General overview"}
 
-            except Exception:
-                pass  # Fall back to standard overview
+{f"Relevant search results: {overview_data.get('question_results', [])[:3]}" if overview_data.get("question_results") else ""}
 
-        return await get_overview(question, ctx)
+Provide analysis including:
+1. Overview of IMAS structure and purpose
+2. Key IDS and their physics domains  
+3. Data organization principles
+4. Usage recommendations for researchers
+{f"5. Specific answer to: {question}" if question else "5. Getting started guidance"}
 
+Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_tips' fields."""
+
+            return overview_data
+
+        except Exception as e:
+            logger.error(f"Overview generation failed: {e}")
+            return {
+                "question": question,
+                "error": str(e),
+                "overview": "Failed to generate overview",
+                "basic_info": {
+                    "total_documents": len(self.lex_search)
+                    if hasattr(self, "lex_search")
+                    else 0,
+                    "status": "error",
+                },
+            }
+
+    @ai_enhancer(
+        STRUCTURE_EXPERT, "Structure analysis", temperature=0.2, max_tokens=800
+    )
     async def analyze_ids_structure(
-        self, ids_name: str, ctx: Optional[Context] = None
+        self,
+        ids_name: str,
+        ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
         Get detailed structural analysis of a specific IDS using graph metrics.
@@ -277,8 +432,94 @@ class Server:
         Returns:
             Dictionary with detailed graph analysis and AI insights
         """
-        return await analyze_ids_structure(ids_name, ctx)
+        try:
+            # Validate IDS exists
+            available_ids = self.data_accessor.get_available_ids()
+            if ids_name not in available_ids:
+                return {
+                    "ids_name": ids_name,
+                    "error": f"IDS '{ids_name}' not found",
+                    "available_ids": available_ids[:10],  # Show first 10
+                    "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
+                }
 
+            # Get detailed IDS data
+            ids_data = self.data_accessor.get_ids_detailed_data(ids_name)
+            ids_paths = self.data_accessor.get_ids_paths(ids_name)
+
+            # Get graph statistics if available
+            try:
+                graph_stats = self.data_accessor.get_ids_graph_stats(ids_name)
+            except Exception:
+                graph_stats = {"error": "Graph statistics not available"}
+
+            # Build structural analysis
+            result = {
+                "ids_name": ids_name,
+                "total_paths": len(ids_paths),
+                "description": ids_data.get("description", ""),
+                "structure": {
+                    "root_level_paths": len(
+                        [p for p in ids_paths.keys() if "/" not in p.strip("/")]
+                    ),
+                    "max_depth": max(len(p.split("/")) for p in ids_paths.keys())
+                    if ids_paths
+                    else 0,
+                    "graph_statistics": graph_stats,
+                },
+                "sample_paths": list(ids_paths.keys())[
+                    :10
+                ],  # First 10 paths as examples
+            }
+
+            # Analyze path patterns
+            path_patterns = {}
+            for path in ids_paths.keys():
+                segments = path.split("/")
+                if len(segments) > 1:
+                    root = segments[0]
+                    path_patterns[root] = path_patterns.get(root, 0) + 1
+
+            result["path_patterns"] = dict(
+                sorted(path_patterns.items(), key=lambda x: x[1], reverse=True)[:10]
+            )
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                result["ai_prompt"] = f"""IDS Structure Analysis: {ids_name}
+Total paths: {result["total_paths"]}
+Max depth: {result["structure"]["max_depth"]}
+Top path patterns: {list(result["path_patterns"].keys())[:5]}
+Sample paths: {result["sample_paths"][:5]}
+Description: {result["description"][:200]}
+
+Provide structural analysis including:
+1. Physics domain and measurement purpose
+2. Data organization principles used
+3. Key measurement paths and their significance  
+4. Typical usage patterns for researchers
+5. Related IDS for comprehensive analysis
+
+Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usage_patterns', 'related_ids' fields."""
+
+            return result
+
+        except Exception as e:
+            logger.error(f"IDS structure analysis failed: {e}")
+            return {
+                "ids_name": ids_name,
+                "error": str(e),
+                "analysis": "Failed to analyze IDS structure",
+                "suggestions": [
+                    "Check IDS name spelling",
+                    "Verify IDS exists in data dictionary",
+                    "Try get_overview() to see available IDS",
+                ],
+            }
+
+    @ai_enhancer(
+        RELATIONSHIP_EXPERT, "Relationship analysis", temperature=0.3, max_tokens=800
+    )
     async def explore_relationships(
         self,
         path: str,
@@ -294,171 +535,149 @@ class Server:
 
         Args:
             path: Starting path (format: "ids_name/path" or just "ids_name")
-            relationship_type: Type of relationships to explore ("cross_references", "physics_concepts", "units", "all")
+            relationship_type: Type of relationships to explore
             max_depth: Maximum depth of relationship traversal (1-3)
             ctx: MCP context for AI enhancement
 
         Returns:
             Dictionary with relationship network and AI insights
         """
-        if not data_accessor.is_available():
-            return {
-                "path": path,
-                "relationships": [],
-                "error": "Data not available - run build process",
-            }
-
-        # Get relationship data
         try:
-            relationships = data_accessor.get_relationships()
-            physics_concepts = relationships.get("physics_concepts", {})
-            cross_refs = relationships.get("cross_references", {})
-            unit_families = relationships.get("unit_families", {})
-        except (FileNotFoundError, Exception):
+            # Parse the path to extract IDS name
+            if "/" in path:
+                ids_name = path.split("/")[0]
+                specific_path = path
+            else:
+                ids_name = path
+                specific_path = None
+
+            # Validate IDS exists
+            available_ids = self.data_accessor.get_available_ids()
+            if ids_name not in available_ids:
+                return {
+                    "path": path,
+                    "error": f"IDS '{ids_name}' not found",
+                    "available_ids": available_ids[:10],
+                    "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
+                }
+
+            # Get relationship data
+            try:
+                structural_insights = self.data_accessor.get_structural_insights()
+            except Exception as e:
+                return {
+                    "path": path,
+                    "error": f"Failed to load relationship data: {e}",
+                    "relationship_type": relationship_type,
+                    "max_depth": max_depth,
+                }
+
+            # Find related paths through search
+            search_results = []
+            if specific_path:
+                # Search for paths related to the specific path
+                path_parts = specific_path.split("/")
+                search_terms = (
+                    path_parts[-2:] if len(path_parts) > 1 else path_parts
+                )  # Last 2 segments
+                for term in search_terms:
+                    if len(term) > 2:  # Skip very short terms
+                        results = await self.search_imas(term, max_results=5)
+                        search_results.extend(results["results"])
+            else:
+                # Search for paths in the same IDS
+                results = await self.search_imas(f"ids_name:{ids_name}", max_results=10)
+                search_results = results["results"]
+
+            # Remove duplicates and filter
+            seen_paths = set()
+            unique_results = []
+            for result in search_results:
+                if result["path"] not in seen_paths and result["path"] != path:
+                    seen_paths.add(result["path"])
+                    unique_results.append(result)
+                if len(unique_results) >= 20:  # Limit to reasonable number
+                    break
+
+            # Build relationship analysis
+            result = {
+                "path": path,
+                "relationship_type": relationship_type,
+                "max_depth": max_depth,
+                "ids_name": ids_name,
+                "related_paths": unique_results[:10],
+                "relationship_count": len(unique_results),
+                "analysis": {
+                    "same_ids_paths": len(
+                        [r for r in unique_results if r["path"].startswith(ids_name)]
+                    ),
+                    "cross_ids_paths": len(
+                        [
+                            r
+                            for r in unique_results
+                            if not r["path"].startswith(ids_name)
+                        ]
+                    ),
+                    "structural_insights": structural_insights.get(ids_name, {}),
+                },
+            }
+
+            # Add physics-based relationships if available
+            try:
+                from .physics_integration import physics_search
+
+                physics_result = physics_search(
+                    path.split("/")[-1]
+                )  # Search on last path segment
+                if physics_result.get("physics_matches"):
+                    result["physics_relationships"] = {
+                        "concepts": physics_result.get("physics_matches", [])[:3],
+                        "related_symbols": physics_result.get("symbol_suggestions", [])[
+                            :3
+                        ],
+                        "related_units": physics_result.get("unit_suggestions", [])[:3],
+                    }
+            except Exception:
+                pass  # Physics enhancement is optional
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                result["ai_prompt"] = f"""Relationship Analysis for: {path}
+IDS: {ids_name}
+Related paths found: {len(unique_results)}
+Same IDS: {result["analysis"]["same_ids_paths"]}
+Cross IDS: {result["analysis"]["cross_ids_paths"]}
+Top related paths: {[r["path"] for r in unique_results[:5]]}
+
+Provide relationship analysis including:
+1. Physics-based connections and measurement dependencies
+2. Data flow patterns and coupling mechanisms  
+3. Experimental workflow relationships
+4. Recommended exploration paths for comprehensive analysis
+5. Critical measurement combinations
+
+Format as JSON with 'physics_connections', 'data_dependencies', 'workflow_patterns', 'exploration_recommendations', 'measurement_combinations' fields."""
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Relationship exploration failed: {e}")
             return {
                 "path": path,
-                "relationships": [],
-                "error": "Relationship data not available",
+                "relationship_type": relationship_type,
+                "max_depth": max_depth,
+                "error": str(e),
+                "relationships": "Failed to explore relationships",
+                "suggestions": [
+                    "Check path format (ids_name/path or just ids_name)",
+                    "Verify IDS exists in data dictionary",
+                    "Try search_imas() first to find valid paths",
+                ],
             }
 
-        def explore_path_relationships(
-            start_path: str, current_depth: int = 0
-        ) -> Dict[str, Any]:
-            """Recursively explore relationships from a given path."""
-            if current_depth >= max_depth:
-                return {}
-
-            path_relationships = {
-                "path": start_path,
-                "depth": current_depth,
-                "physics_concepts": {},
-                "cross_references": {},
-                "unit_families": {},
-                "connected_paths": [],
-            }
-
-            # Get physics concepts
-            if (
-                relationship_type in ["all", "physics_concepts"]
-                and start_path in physics_concepts
-            ):
-                path_relationships["physics_concepts"] = physics_concepts[start_path]
-
-            # Get cross-references
-            if (
-                relationship_type in ["all", "cross_references"]
-                and start_path in cross_refs
-            ):
-                cross_ref_data = cross_refs[start_path]
-                path_relationships["cross_references"] = cross_ref_data
-
-                # Recursively explore connected paths
-                related_paths = cross_ref_data.get("related_paths", [])[
-                    :5
-                ]  # Limit to 5 to avoid explosion
-                for related_path in related_paths:
-                    if current_depth < max_depth - 1:
-                        connected = explore_path_relationships(
-                            related_path, current_depth + 1
-                        )
-                        if connected:
-                            path_relationships["connected_paths"].append(connected)
-
-            # Get unit families
-            if relationship_type in ["all", "units"] and start_path in unit_families:
-                path_relationships["unit_families"] = unit_families[start_path]
-
-            return path_relationships
-
-        # Start exploration
-        exploration_result = explore_path_relationships(path)
-
-        # Calculate network statistics
-        all_paths_found = set()
-
-        def collect_paths(node: Dict[str, Any]):
-            if "path" in node:
-                all_paths_found.add(node["path"])
-            for connected in node.get("connected_paths", []):
-                collect_paths(connected)
-
-        collect_paths(exploration_result)
-
-        # Find physics domains involved
-        domains_involved = set()
-        for path_key in all_paths_found:
-            if path_key in physics_concepts:
-                domain = physics_concepts[path_key].get("domain", "")
-                if domain:
-                    domains_involved.add(domain)
-
-        result = {
-            "starting_path": path,
-            "relationship_type": relationship_type,
-            "max_depth": max_depth,
-            "exploration_tree": exploration_result,
-            "network_statistics": {
-                "total_paths_discovered": len(all_paths_found),
-                "physics_domains_involved": list(domains_involved),
-                "relationship_density": len(
-                    [p for p in all_paths_found if p in cross_refs]
-                ),
-                "physics_coverage": len(
-                    [p for p in all_paths_found if p in physics_concepts]
-                ),
-            },
-            "all_paths_in_network": list(all_paths_found)[:20],  # Limit output size
-        }
-
-        # AI enhancement if context available
-        if ctx:
-            try:
-                ai_prompt = f"""
-                Analyze this relationship network starting from IMAS path "{path}":
-                
-                Network discovered:
-                - Total paths: {len(all_paths_found)}
-                - Physics domains: {list(domains_involved)}
-                - Relationship density: {result["network_statistics"]["relationship_density"]} connected paths
-                - Physics coverage: {result["network_statistics"]["physics_coverage"]} paths with physics concepts
-                
-                Key relationships found:
-                {exploration_result.get("cross_references", {}).get("relationship_type", "N/A")}
-                
-                Provide insights about:
-                1. What this relationship network reveals about plasma physics connections
-                2. Most important paths to explore for understanding this measurement/concept
-                3. How these relationships help with data analysis workflows
-                4. Complementary measurements or modeling approaches
-                
-                Return as JSON: {{
-                    "physics_insights": "explanation of physics connections",
-                    "key_pathways": ["path1", "path2", "path3"],
-                    "workflow_suggestions": ["suggestion1", "suggestion2"],
-                    "measurement_context": "how these relate to actual measurements"
-                }}
-                """
-
-                ai_response = await ctx.sample(
-                    ai_prompt,
-                    system_prompt=SEARCH_EXPERT,
-                    temperature=0.3,
-                    max_tokens=500,
-                )
-
-                if ai_response:
-                    text_content = cast(TextContent, ai_response)
-                    ai_data = json.loads(text_content.text)
-                    result["ai_insights"] = ai_data
-            except Exception:
-                pass
-
-        return result
-
-    def run(
-        self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000
-    ) -> None:
-        """Run the AI-enhanced MCP server.
+    def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+        """
+        Run the AI-enhanced MCP server.
 
         Args:
             transport: Transport protocol to use
@@ -477,77 +696,34 @@ class Server:
             logger.info("Stopping AI-enhanced MCP server...")
 
     def _run_http_with_health(self, host: str = "127.0.0.1", port: int = 8000) -> None:
-        """Run the MCP server with streamable-http transport and add health endpoint.
-
-        Args:
-            host: Host to bind to
-            port: Port to bind to
-        """
-        try:
-            # Get the FastMCP ASGI app
-            app = self.mcp.http_app()
-
-            # Add health endpoint using Starlette routing
-            from starlette.responses import JSONResponse
-            from starlette.routing import Route
-        except ImportError as e:
-            raise ImportError(
-                "HTTP transport requires additional dependencies. "
-                "Install with: pip install imas-mcp[http]"
-            ) from e
-
-        async def health_endpoint(request):
-            """Health check endpoint that verifies the data accessor is working."""
-            try:
-                # Get overview for essential metrics
-                overview = await self.get_overview(ctx=None)
-                metadata = overview.get("metadata", {})
-                structural_overview = overview.get("structural_overview", {})
-
-                return JSONResponse(
-                    {
-                        "status": "healthy",
-                        "service": "imas-mcp",
-                        "version": self._get_version(),
-                        "creation_date": metadata.get("generation_date", "unknown"),
-                        "dd_version": metadata.get("version", "unknown"),
-                        "total_ids": overview.get("total_ids", 0),
-                        "total_data_nodes": structural_overview.get(
-                            "total_nodes_all_ids", 0
-                        ),
-                        "transport": "streamable-http",
-                        "available_tools": [
-                            "search_imas",
-                            "explain_concept",
-                            "get_overview",
-                            "analyze_ids_structure",
-                            "explore_relationships",
-                        ],
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Health check failed: {e}")
-                return JSONResponse(
-                    {
-                        "status": "unhealthy",
-                        "service": "imas-mcp",
-                        "error": str(e),
-                        "transport": "streamable-http",
-                    },
-                    status_code=503,
-                )
-
-        # Add the health route to the existing app
-        health_route = Route("/health", health_endpoint, methods=["GET"])
-        app.routes.append(health_route)
-
-        logger.info(
-            f"Starting AI-enhanced MCP server with health endpoint at http://{host}:{port}/health"
-        )
-
-        # Run with uvicorn
+        """Run the MCP server with streamable-http transport and add health endpoint."""
         try:
             import uvicorn
+            from fastapi import FastAPI
+            from starlette.middleware.cors import CORSMiddleware
+            from starlette.responses import JSONResponse
+
+            app = FastAPI(title="IMAS MCP Server", version=self._get_version())
+
+            # Add CORS middleware
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+
+            # Add health endpoint
+            @app.get("/health")
+            async def health():
+                return JSONResponse(
+                    {"status": "healthy", "version": self._get_version()}
+                )
+
+            # Mount MCP app
+            app.mount("/", self.mcp.create_app())
+
         except ImportError as e:
             raise ImportError(
                 "HTTP transport requires additional dependencies. "
@@ -559,807 +735,13 @@ class Server:
     def _get_version(self) -> str:
         """Get the package version."""
         try:
-            import importlib.metadata
-
             return importlib.metadata.version("imas-mcp")
         except Exception:
             return "unknown"
 
 
-# Initialize data accessor for standalone functions (backward compatibility)
-data_accessor = JsonDataDictionaryAccessor()
-
-
-async def search_imas(
-    query: str,
-    ids_name: Optional[str] = None,
-    max_results: int = 10,
-    ctx: Optional[Context] = None,
-) -> Dict[str, Any]:
-    """
-    Search for IMAS data paths with relevance-ordered results and AI enhancement.
-
-    Advanced search tool that finds IMAS data paths, scores them by relevance,
-    and optionally enhances results with AI insights when MCP sampling is available.
-
-    Args:
-        query: Search term or pattern
-        ids_name: Optional specific IDS to search within
-        max_results: Maximum number of results to return
-        ctx: MCP context for AI enhancement
-
-    Returns:
-        Dictionary with relevance-ordered search results and AI suggestions
-    """
-    if not data_accessor.is_available():
-        return {
-            "query": query,
-            "results": [],
-            "total_found": 0,
-            "error": "Data not available - run build process",
-        }
-
-    def calculate_relevance_score(
-        path: str,
-        documentation: str,
-        query_terms: list,
-        physics_concepts: Dict[str, Any],
-        cross_refs: Dict[str, Any],
-        result: Dict[str, Any],
-    ) -> float:
-        """Calculate relevance score for a search result with relationship data."""
-        score = 0.0
-        path_lower = path.lower()
-        doc_lower = documentation.lower() if documentation else ""
-        full_path = f"{result.get('ids_name', '')}/{path}"
-
-        for term in query_terms:
-            term_lower = term.lower()
-
-            # Exact matches in path get highest score
-            if term_lower == path_lower.split("/")[-1]:  # exact field name match
-                score += 10.0
-            elif term_lower in path_lower:
-                # Weighted by position - earlier matches score higher
-                position_weight = 1.0 / (path_lower.find(term_lower) + 1)
-                score += 5.0 * position_weight
-
-            # Documentation matches
-            if term_lower in doc_lower:
-                # Count occurrences in documentation
-                occurrences = doc_lower.count(term_lower)
-                score += 2.0 * occurrences
-
-            # Partial matches in path components
-            path_components = path_lower.split("/")
-            for component in path_components:
-                if term_lower in component and term_lower != component:
-                    score += 1.0
-
-            # Physics concepts boost - if this path has physics concepts related to query
-            if full_path in physics_concepts:
-                concepts = physics_concepts[full_path]
-                concept_text = " ".join(
-                    [
-                        concepts.get("concept", ""),
-                        concepts.get("domain", ""),
-                        concepts.get("description", ""),
-                    ]
-                ).lower()
-                if term_lower in concept_text:
-                    score += 3.0  # Boost for physics concept relevance
-
-            # Cross-reference boost - if this path references other related paths
-            if full_path in cross_refs:
-                cross_ref_data = cross_refs[full_path]
-                ref_text = " ".join(
-                    [
-                        cross_ref_data.get("target_path", ""),
-                        cross_ref_data.get("relationship_type", ""),
-                        cross_ref_data.get("description", ""),
-                    ]
-                ).lower()
-                if term_lower in ref_text:
-                    score += 2.0  # Boost for cross-reference relevance
-
-        # Connectivity bonus - highly connected paths are often more important
-        if full_path in cross_refs:
-            connection_count = len(cross_refs[full_path].get("related_paths", []))
-            if connection_count > 5:
-                score += 1.0  # Bonus for highly connected paths
-
-        # Bonus for shorter paths (more specific)
-        path_depth = len(path.split("/"))
-        if path_depth <= 3:
-            score += 1.0
-        elif path_depth >= 6:
-            score -= 0.5
-
-        return score
-
-    # Prepare query terms
-    query_terms = [term.strip() for term in query.lower().split() if term.strip()]
-
-    # Get relationship data for enhanced scoring
-    try:
-        relationships = data_accessor.get_relationships()
-        physics_concepts = relationships.get("physics_concepts", {})
-        cross_refs = relationships.get("cross_references", {})
-    except (FileNotFoundError, Exception):
-        physics_concepts = {}
-        cross_refs = {}
-
-    # Search logic with relevance scoring
-    if ids_name:
-        paths = data_accessor.get_ids_paths(ids_name)
-        candidate_results = [
-            {"ids_name": ids_name, "path": path}
-            for path in paths.keys()
-            if any(term in path.lower() for term in query_terms)
-        ]
-    else:
-        # Use broader search then filter
-        all_results = data_accessor.search_paths_by_pattern(query)
-        candidate_results = all_results
-
-    # Build results with enhanced relevance scoring
-    scored_results = []
-    for result in candidate_results:
-        documentation = data_accessor.get_path_documentation(
-            result["ids_name"], result["path"]
-        )
-        try:
-            units = data_accessor.get_path_units(result["ids_name"], result["path"])
-        except KeyError:
-            units = ""
-
-        relevance_score = calculate_relevance_score(
-            result["path"],
-            documentation,
-            query_terms,
-            physics_concepts,
-            cross_refs,
-            result,
-        )
-
-        # Add relationship information to results
-        full_path = f"{result['ids_name']}/{result['path']}"
-        related_paths = []
-        physics_info = {}
-
-        # Get cross-references for this path
-        if full_path in cross_refs:
-            cross_ref_data = cross_refs[full_path]
-            related_paths = cross_ref_data.get("related_paths", [])[
-                :3
-            ]  # Top 3 related paths
-
-        # Get physics concept information
-        if full_path in physics_concepts:
-            concepts = physics_concepts[full_path]
-            physics_info = {
-                "concept": concepts.get("concept", ""),
-                "domain": concepts.get("domain", ""),
-                "description": concepts.get("description", ""),
-            }
-
-        scored_results.append(
-            {
-                "ids_name": result["ids_name"],
-                "path": result["path"],
-                "documentation": documentation,
-                "units": units,
-                "relevance_score": relevance_score,
-                "related_paths": related_paths,  # Cross-references
-                "physics_info": physics_info,  # Physics concepts
-            }
-        )
-
-    # Sort by relevance score (descending) and take top results
-    scored_results.sort(key=lambda x: x["relevance_score"], reverse=True)
-    results = scored_results[:max_results]
-
-    # Remove relevance_score from final output (internal use only)
-    for result in results:
-        result.pop("relevance_score", None)
-
-    # AI enhancement if context available
-    ai_suggestions = []
-    if ctx:
-        try:
-            # Enhanced AI prompt with relevance context
-            top_paths = [f"{r['ids_name']}.{r['path']}" for r in results[:3]]
-            total_candidates = len(scored_results)
-
-            ai_prompt = f"""
-            Analyze this relevance-ranked IMAS search for "{query}":
-            - Found {total_candidates} total matches, showing top {len(results)}
-            - Top ranked paths: {top_paths}
-            - Query terms: {query_terms}
-            
-            The results are ordered by relevance based on:
-            1. Exact field name matches (highest score)
-            2. Position of matches in path (earlier = better)
-            3. Documentation content matches
-            4. Path specificity (shorter paths preferred)
-            
-            Provide 5 related search terms that would find complementary IMAS data paths.
-            Focus on physics relationships and measurement techniques.
-            Return as JSON: {{"suggested_related": ["term1", "term2", "term3", "term4", "term5"]}}
-            """
-
-            ai_response = await ctx.sample(
-                ai_prompt,
-                system_prompt=SEARCH_EXPERT,
-                temperature=0.3,
-                max_tokens=300,
-            )
-
-            if ai_response:
-                text_content = cast(TextContent, ai_response)
-                ai_data = json.loads(text_content.text)
-                ai_suggestions = ai_data.get("suggested_related", [])
-        except Exception:
-            pass
-
-    return {
-        "query": query,
-        "results": results,
-        "total_found": len(scored_results),  # Total matches before limiting
-        "returned_count": len(results),  # Actual results returned
-        "suggested_related": ai_suggestions,
-        "search_info": {
-            "query_terms": query_terms,
-            "relevance_ranked": True,
-            "max_results": max_results,
-        },
-    }
-
-
-async def explain_concept(
-    concept: str, detail_level: str = "intermediate", ctx: Optional[Context] = None
-) -> Dict[str, Any]:
-    """
-    Explain IMAS concepts with physics context.
-
-    Provides clear explanations of plasma physics concepts as they relate
-    to the IMAS data dictionary, enhanced with AI insights.
-
-    Args:
-        concept: The concept to explain
-        detail_level: Level of detail (basic, intermediate, advanced)
-        ctx: MCP context for AI enhancement
-
-    Returns:
-        Dictionary with explanation and related information
-    """
-    if not data_accessor.is_available():
-        return {
-            "concept": concept,
-            "explanation": "IMAS data not available - run build process first",
-            "related_paths": [],
-            "physics_context": "",
-        }
-
-    # Find related paths
-    search_results = data_accessor.search_paths_by_pattern(concept)
-    related_paths = [f"{r['ids_name']}.{r['path']}" for r in search_results[:10]]
-
-    # Get relationship data for enhanced explanations
-    try:
-        relationships = data_accessor.get_relationships()
-        physics_concepts = relationships.get("physics_concepts", {})
-        cross_refs = relationships.get("cross_references", {})
-        unit_families = relationships.get("unit_families", {})
-    except (FileNotFoundError, Exception):
-        physics_concepts = {}
-        cross_refs = {}
-        unit_families = {}
-
-    # Find physics concepts related to this concept
-    concept_matches = []
-    cross_reference_info = []
-
-    for path, concept_data in physics_concepts.items():
-        concept_text = " ".join(
-            [
-                concept_data.get("concept", ""),
-                concept_data.get("domain", ""),
-                concept_data.get("description", ""),
-            ]
-        ).lower()
-
-        if concept.lower() in concept_text:
-            concept_matches.append(
-                {
-                    "path": path,
-                    "concept": concept_data.get("concept", ""),
-                    "domain": concept_data.get("domain", ""),
-                    "description": concept_data.get("description", ""),
-                }
-            )
-
-    # Find cross-references that mention this concept
-    for path, cross_ref_data in cross_refs.items():
-        if concept.lower() in path.lower():
-            cross_reference_info.append(
-                {
-                    "path": path,
-                    "related_paths": cross_ref_data.get("related_paths", [])[:3],
-                    "relationship_type": cross_ref_data.get("relationship_type", ""),
-                }
-            )
-
-    # Find relevant unit families
-    related_units = []
-    for unit_path, unit_data in unit_families.items():
-        if (
-            concept.lower() in unit_path.lower()
-            or concept.lower() in str(unit_data).lower()
-        ):
-            related_units.append({"path": unit_path, "unit_info": unit_data})
-
-    # Basic explanation without AI
-    basic_explanation = {
-        "concept": concept,
-        "explanation": f"'{concept}' is a concept in plasma physics with {len(related_paths)} related data paths in IMAS.",
-        "related_paths": related_paths,
-        "physics_context": "This concept relates to plasma physics modeling and measurements.",
-        "suggested_searches": [],
-        "physics_concepts": concept_matches[:5],  # Top 5 physics concept matches
-        "cross_references": cross_reference_info[
-            :5
-        ],  # Top 5 cross-reference connections
-        "measurement_domains": list(
-            set([c.get("domain", "") for c in concept_matches if c.get("domain")])
-        )[:3],
-        "related_units": related_units[:3],  # Related unit families
-    }
-
-    # AI enhancement if context available
-    if ctx:
-        try:
-            ai_prompt = f"""
-            Explain the plasma physics concept "{concept}" in the context of IMAS data structures.
-            
-            Detail level: {detail_level}
-            Found {len(related_paths)} related data paths
-            Sample paths: {related_paths[:3]}
-            
-            Provide:
-            1. Clear explanation appropriate for {detail_level} level
-            2. Physics context and significance
-            3. How this relates to IMAS data organization
-            4. 3 related concepts to explore
-            5. 3 suggested follow-up searches
-            
-            Return as JSON:
-            {{
-                "explanation": "detailed explanation here",
-                "physics_context": "physics significance and context",
-                "related_concepts": ["concept1", "concept2", "concept3"],
-                "suggested_searches": ["search1", "search2", "search3"]
-            }}
-            """
-
-            ai_response = await ctx.sample(
-                ai_prompt,
-                system_prompt=EXPLANATION_EXPERT,
-                temperature=0.2,
-                max_tokens=800,
-            )
-
-            if ai_response:
-                text_content = cast(TextContent, ai_response)
-                ai_data = json.loads(text_content.text)
-
-                basic_explanation.update(
-                    {
-                        "explanation": ai_data.get(
-                            "explanation", basic_explanation["explanation"]
-                        ),
-                        "physics_context": ai_data.get(
-                            "physics_context", basic_explanation["physics_context"]
-                        ),
-                        "related_concepts": ai_data.get("related_concepts", []),
-                        "suggested_searches": ai_data.get("suggested_searches", []),
-                    }
-                )
-        except Exception:
-            pass
-
-    return basic_explanation
-
-
-async def get_overview(
-    question: Optional[str] = None, ctx: Optional[Context] = None
-) -> Dict[str, Any]:
-    """
-    Get IMAS overview or answer analytical questions with graph insights.
-
-    Provides comprehensive overview of available IDS in the IMAS data dictionary
-    or answers specific analytical questions about the data structure.
-
-    Args:
-        question: Optional specific question about the data dictionary
-        ctx: MCP context for AI enhancement
-
-    Returns:
-        Dictionary with overview information and analytics
-    """
-    if not data_accessor.is_available():
-        return {
-            "status": "error",
-            "message": "IMAS data not available - run build process first",
-        }
-
-    available_ids = data_accessor.get_available_ids()
-    catalog = data_accessor.get_catalog()
-    metadata = catalog.get("metadata", {})
-
-    # Get graph statistics
-    graph_stats = data_accessor.get_graph_statistics()
-    structural_insights = data_accessor.get_structural_insights()
-
-    # Get relationship data for enhanced overview
-    try:
-        relationships = data_accessor.get_relationships()
-        physics_concepts = relationships.get("physics_concepts", {})
-        cross_refs = relationships.get("cross_references", {})
-        unit_families = relationships.get("unit_families", {})
-        rel_metadata = relationships.get("metadata", {})
-    except (FileNotFoundError, Exception):
-        physics_concepts = {}
-        cross_refs = {}
-        unit_families = {}
-        rel_metadata = {}
-
-    # Calculate relationship statistics
-    total_relationships = rel_metadata.get("total_relationships", 0)
-    total_physics_concepts = len(physics_concepts)
-    total_cross_refs = len(cross_refs)
-    total_unit_families = len(unit_families)
-
-    # Find most connected paths
-    connection_counts = {}
-    for path, ref_data in cross_refs.items():
-        connection_counts[path] = len(ref_data.get("related_paths", []))
-
-    most_connected = sorted(
-        connection_counts.items(), key=lambda x: x[1], reverse=True
-    )[:5]
-
-    # Analyze physics domains
-    domain_counts = {}
-    for concept_data in physics_concepts.values():
-        domain = concept_data.get("domain", "unknown")
-        domain_counts[domain] = domain_counts.get(domain, 0) + 1
-
-    # Get basic IDS information enhanced with graph data
-    ids_details = {}
-    complexity_scores = structural_insights.get("complexity_rankings", {}).get(
-        "complexity_scores", {}
-    )
-
-    for ids_name in available_ids:
-        try:
-            paths = data_accessor.get_ids_paths(ids_name)
-            ids_stats = graph_stats.get(ids_name, {})
-            ids_details[ids_name] = {
-                "path_count": len(paths),
-                "complexity_score": complexity_scores.get(ids_name, 0),
-                "max_depth": ids_stats.get("hierarchy_metrics", {}).get("max_depth", 0),
-                "branching_factor": ids_stats.get("branching_metrics", {}).get(
-                    "avg_branching_factor_non_leaf", 0
-                ),
-            }
-        except Exception:
-            ids_details[ids_name] = {
-                "path_count": 0,
-                "complexity_score": 0,
-                "max_depth": 0,
-                "branching_factor": 0,
-            }
-
-    # Sort by complexity or size - THIS IS THE KEY RANKING FUNCTIONALITY
-    largest_ids = sorted(
-        ids_details.items(), key=lambda x: x[1]["path_count"], reverse=True
-    )[:5]
-    most_complex = sorted(
-        ids_details.items(), key=lambda x: x[1]["complexity_score"], reverse=True
-    )[:5]
-
-    basic_overview = {
-        "total_ids": len(available_ids),
-        "ids_names": sorted(available_ids),
-        "largest_ids": [
-            {
-                "name": name,
-                "path_count": details["path_count"],
-                "complexity_score": details["complexity_score"],
-                "max_depth": details["max_depth"],
-            }
-            for name, details in largest_ids
-        ],
-        "most_complex_ids": [
-            {
-                "name": name,
-                "complexity_score": details["complexity_score"],
-                "path_count": details["path_count"],
-                "branching_factor": details["branching_factor"],
-            }
-            for name, details in most_complex
-        ],
-        "structural_overview": {
-            "total_nodes_all_ids": structural_insights.get("overview", {}).get(
-                "total_nodes_all_ids", 0
-            ),
-            "avg_depth_across_ids": structural_insights.get("overview", {}).get(
-                "avg_depth_across_ids", 0
-            ),
-            "complexity_range": structural_insights.get("overview", {}).get(
-                "complexity_range", {}
-            ),
-            "deepest_ids": structural_insights.get("structural_patterns", {}).get(
-                "deepest_ids", []
-            )[:3],
-            "most_branched": structural_insights.get("structural_patterns", {}).get(
-                "most_branched", []
-            )[:3],
-        },
-        "relationship_overview": {
-            "total_relationships": total_relationships,
-            "physics_concepts_count": total_physics_concepts,
-            "cross_references_count": total_cross_refs,
-            "unit_families_count": total_unit_families,
-            "most_connected_paths": [
-                {"path": path, "connection_count": count}
-                for path, count in most_connected
-            ],
-            "physics_domains": dict(
-                sorted(domain_counts.items(), key=lambda x: x[1], reverse=True)
-            ),
-        },
-        "metadata": metadata,
-        "description": "IMAS provides standardized data structures for fusion plasma modeling.",
-    }
-
-    # Enhanced AI prompts with graph data
-    if ctx:
-        try:
-            if question:
-                ai_prompt = f"""
-                Answer this question about the IMAS data dictionary: "{question}"
-                
-                Available context with graph analysis:
-                - Total IDS: {len(available_ids)}
-                - Total nodes across all IDS: {structural_insights.get("overview", {}).get("total_nodes_all_ids", 0)}
-                - Most complex IDS: {[f"{name} (score: {details['complexity_score']})" for name, details in most_complex[:3]]}
-                - Deepest hierarchies: {structural_insights.get("structural_patterns", {}).get("deepest_ids", [])[:3]}
-                - Structural patterns: {structural_insights.get("structural_patterns", {})}
-                
-                Use graph metrics to provide insights about data relationships and navigation complexity.
-                Return as JSON: {{"answer": "detailed answer", "insights": ["insight1", "insight2"], "navigation_tips": ["tip1", "tip2"]}}
-                """
-            else:
-                ai_prompt = f"""
-                Provide insights about this IMAS data dictionary using graph analysis:
-                
-                - Total IDS: {len(available_ids)} 
-                - Average hierarchy depth: {structural_insights.get("overview", {}).get("avg_depth_across_ids", 0)}
-                - Complexity range: {structural_insights.get("overview", {}).get("complexity_range", {})}
-                - Most complex structures: {[name for name, _ in most_complex[:3]]}
-                - Deepest hierarchies: {[name for name, _ in structural_insights.get("structural_patterns", {}).get("deepest_ids", [])[:3]]}
-                
-                Provide:
-                1. Explanation of structural complexity patterns
-                2. Most important IDS for different complexity preferences
-                3. Navigation strategies based on graph metrics
-                4. Insights about data organization principles
-                
-                Return as JSON:
-                {{
-                    "structural_explanation": "how IMAS is organized hierarchically",
-                    "for_beginners": ["simple IDS to start with"],
-                    "for_advanced": ["complex IDS for detailed analysis"], 
-                    "navigation_strategies": ["strategy1", "strategy2"],
-                    "organization_insights": ["insight1", "insight2"]
-                }}
-                """
-
-            ai_response = await ctx.sample(
-                ai_prompt,
-                system_prompt=OVERVIEW_EXPERT,
-                temperature=0.2,
-                max_tokens=800,
-            )
-
-            if ai_response:
-                text_content = cast(TextContent, ai_response)
-                ai_data = json.loads(text_content.text)
-                basic_overview["ai_insights"] = ai_data
-
-                if question:
-                    basic_overview["question"] = question
-                    basic_overview["answer"] = ai_data.get(
-                        "answer", "AI analysis not available"
-                    )
-        except Exception:
-            pass
-
-    return basic_overview
-
-
-async def analyze_ids_structure(
-    ids_name: str, ctx: Optional[Context] = None
-) -> Dict[str, Any]:
-    """
-    Get detailed structural analysis of a specific IDS using graph metrics.
-
-    Args:
-        ids_name: Name of the IDS to analyze
-        ctx: MCP context for AI enhancement
-
-    Returns:
-        Dictionary with detailed graph analysis and AI insights
-    """
-    if not data_accessor.is_available():
-        return {"error": "Data not available"}
-
-    if ids_name not in data_accessor.get_available_ids():
-        return {"error": f"IDS '{ids_name}' not found"}
-
-    # Get graph statistics for this IDS
-    ids_graph_stats = data_accessor.get_ids_graph_stats(ids_name)
-    paths = data_accessor.get_ids_paths(ids_name)
-    structural_insights = data_accessor.get_structural_insights()
-    complexity_scores = structural_insights.get("complexity_rankings", {}).get(
-        "complexity_scores", {}
-    )
-
-    # Get relationship data for this specific IDS
-    try:
-        relationships = data_accessor.get_relationships()
-        physics_concepts = relationships.get("physics_concepts", {})
-        cross_refs = relationships.get("cross_references", {})
-        unit_families = relationships.get("unit_families", {})
-    except (FileNotFoundError, Exception):
-        physics_concepts = {}
-        cross_refs = {}
-        unit_families = {}
-
-    # Analyze relationships for this IDS
-    ids_physics_concepts = {}
-    ids_cross_refs = {}
-    ids_unit_families = {}
-    external_connections = []
-
-    for path_key, concept_data in physics_concepts.items():
-        if path_key.startswith(f"{ids_name}/"):
-            ids_physics_concepts[path_key] = concept_data
-
-    for path_key, ref_data in cross_refs.items():
-        if path_key.startswith(f"{ids_name}/"):
-            ids_cross_refs[path_key] = ref_data
-            # Find external IDS connections
-            related_paths = ref_data.get("related_paths", [])
-            for related_path in related_paths:
-                if not related_path.startswith(f"{ids_name}/"):
-                    external_ids = (
-                        related_path.split("/")[0]
-                        if "/" in related_path
-                        else related_path
-                    )
-                    if external_ids not in external_connections:
-                        external_connections.append(external_ids)
-
-    for path_key, unit_data in unit_families.items():
-        if path_key.startswith(f"{ids_name}/"):
-            ids_unit_families[path_key] = unit_data
-
-    # Calculate relationship statistics for this IDS
-    physics_domains_in_ids = {}
-    for concept_data in ids_physics_concepts.values():
-        domain = concept_data.get("domain", "unknown")
-        physics_domains_in_ids[domain] = physics_domains_in_ids.get(domain, 0) + 1
-
-    analysis = {
-        "ids_name": ids_name,
-        "total_paths": len(paths),
-        "graph_metrics": ids_graph_stats,
-        "complexity_score": complexity_scores.get(ids_name, 0),
-        "navigation_complexity": "unknown",
-        "relationship_analysis": {
-            "physics_concepts_count": len(ids_physics_concepts),
-            "cross_references_count": len(ids_cross_refs),
-            "unit_families_count": len(ids_unit_families),
-            "external_ids_connections": external_connections[
-                :10
-            ],  # Top 10 connected IDS
-            "physics_domains": physics_domains_in_ids,
-            "most_connected_paths": [
-                {"path": path, "connections": len(ref_data.get("related_paths", []))}
-                for path, ref_data in sorted(
-                    ids_cross_refs.items(),
-                    key=lambda x: len(x[1].get("related_paths", [])),
-                    reverse=True,
-                )[:5]
-            ],
-        },
-    }
-
-    # Determine navigation complexity
-    if ids_graph_stats:
-        max_depth = ids_graph_stats.get("hierarchy_metrics", {}).get("max_depth", 0)
-        branching = ids_graph_stats.get("branching_metrics", {}).get(
-            "avg_branching_factor_non_leaf", 0
-        )
-
-        if max_depth <= 3 and branching <= 2:
-            analysis["navigation_complexity"] = "simple"
-        elif max_depth <= 5 and branching <= 4:
-            analysis["navigation_complexity"] = "moderate"
-        else:
-            analysis["navigation_complexity"] = "complex"
-
-    # AI enhancement
-    if ctx and ids_graph_stats:
-        try:
-            ai_prompt = f"""
-            Analyze the structure of IMAS IDS "{ids_name}" using these graph metrics:
-            
-            Hierarchy: {ids_graph_stats.get("hierarchy_metrics", {})}
-            Branching: {ids_graph_stats.get("branching_metrics", {})} 
-            Complexity: {ids_graph_stats.get("complexity_indicators", {})}
-            Key nodes: {ids_graph_stats.get("key_nodes", {})}
-            
-            Provide practical guidance for researchers:
-            1. How to navigate this IDS effectively
-            2. Which paths are most important to start with
-            3. Complexity insights and potential challenges
-            4. Related IDS that complement this one
-            
-            Return as JSON:
-            {{
-                "navigation_guide": "step-by-step navigation approach",
-                "important_starting_paths": ["path1", "path2", "path3"],
-                "complexity_insights": "what makes this IDS complex/simple",
-                "complementary_ids": ["ids1", "ids2"]
-            }}
-            """
-
-            ai_response = await ctx.sample(
-                ai_prompt,
-                system_prompt=EXPLANATION_EXPERT,
-                temperature=0.2,
-                max_tokens=600,
-            )
-
-            if ai_response:
-                text_content = cast(TextContent, ai_response)
-                ai_data = json.loads(text_content.text)
-                analysis["ai_guidance"] = ai_data
-
-        except Exception:
-            pass
-
-    return analysis
-
-
-def create_server() -> FastMCP:
-    """
-    Create and configure the AI-enhanced FastMCP server with IMAS tools.
-
-    Returns:
-        Configured FastMCP server instance with AI-enhanced tools including graph analysis
-    """
-    # Create server instance and return the FastMCP app
-    server = Server()
-    return server.mcp
-
-
 def main():
-    """Main entry point for running the server."""
+    """Run the server with stdio transport."""
     server = Server()
     server.run(transport="stdio")
 
@@ -1368,7 +750,6 @@ if __name__ == "__main__":
     main()
 
 
-# Additional entry point for backward compatibility and testing
 def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
     """
     Entry point for running the AI-enhanced server with specified transport.
