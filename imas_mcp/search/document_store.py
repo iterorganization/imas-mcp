@@ -295,17 +295,19 @@ class DocumentStore:
         if self.auto_load:
             self.load_all_documents()
 
-    def initialize_with_ids_filter(self, ids_filter: List[str]) -> None:
+    def load_ids_set(self, ids_set: set[str]) -> None:
         """Initialize DocumentStore with specific IDS for faster loading."""
         if not self._loaded:
-            self.load_all_documents(ids_filter=ids_filter)
+            # Convert set to list for the load method
+            self.load_all_documents(ids_filter=list(ids_set))
 
     def _get_resources_path(self) -> Path:
         """Get the path to the resources directory using importlib.resources."""
         try:
-            # Try to get the resources path
-            with resources.path("imas_mcp.resources", "json_data") as resource_path:
-                return Path(resource_path)
+            # Use the new files() API instead of deprecated path()
+            resources_dir = resources.files("imas_mcp.resources") / "json_data"
+            # Convert Traversable to Path using str conversion
+            return Path(str(resources_dir))
         except (ImportError, FileNotFoundError):
             # Fallback to package relative path
             import imas_mcp

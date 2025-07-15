@@ -84,7 +84,7 @@ class SemanticSearchConfig:
 
     # Cache configuration
     enable_cache: bool = True
-    cache_file: str = ".semantic_embeddings.pkl"
+    cache_file: Optional[str] = None  # Auto-generated based on config if None
 
     # Performance optimization
     normalize_embeddings: bool = True  # Faster cosine similarity
@@ -109,7 +109,7 @@ class SemanticSearch:
     """
 
     config: SemanticSearchConfig = field(default_factory=SemanticSearchConfig)
-    document_store: Optional[DocumentStore] = None
+    document_store: Optional[DocumentStore] = field(default=None)
 
     # Internal state
     _model: Optional[SentenceTransformer] = field(default=None, init=False)
@@ -119,15 +119,56 @@ class SemanticSearch:
     _initialized: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
-        """Initialize the semantic search system."""
+        """Initialize the semantic search system metadata only."""
         if self.document_store is None:
             self.document_store = DocumentStore()
 
         # Set cache path in same directory as document store
         if self.config.enable_cache:
-            self._cache_path = self.document_store._data_dir / self.config.cache_file
+            cache_filename = self._generate_cache_filename()
+            self._cache_path = self.document_store._data_dir / cache_filename
 
-        self._initialize()
+        # NOTE: Removed automatic _initialize() call for lazy initialization
+        # Model and embeddings are now loaded only when needed
+
+    def _generate_cache_filename(self) -> str:
+        """Generate a unique cache filename based on configuration."""
+        import hashlib
+
+        if self.config.cache_file:
+            # Use provided cache file name
+            return self.config.cache_file
+
+        # Extract clean model name (remove path and normalize)
+        model_name = self.config.model_name.split("/")[-1].replace("-", "_")
+
+        # Build configuration parts for hashing (excluding model name)
+        config_parts = [
+            f"batch_{self.config.batch_size}",
+            f"norm_{self.config.normalize_embeddings}",
+            f"half_{self.config.use_half_precision}",
+            f"threshold_{self.config.similarity_threshold}",
+        ]
+
+        # Add IDS set to hash computation
+        if self.config.ids_set:
+            # Sort IDS names for consistent hashing
+            ids_list = sorted(list(self.config.ids_set))
+            config_parts.append(f"ids_{'_'.join(ids_list)}")
+        else:
+            config_parts.append("ids_all")
+
+        # Compute short hash from config parts
+        config_str = "_".join(config_parts)
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+
+        # Generate clean filename: .{model_name}_{hash}.pkl
+        filename = f".{model_name}_{config_hash}.pkl"
+
+        logger.debug(
+            f"Generated cache filename: {filename} (from config: {config_str})"
+        )
+        return filename
 
     def _initialize(self) -> None:
         """Initialize the sentence transformer model and embeddings."""
@@ -180,6 +221,9 @@ class SemanticSearch:
 
     def _get_filtered_document_count(self) -> int:
         """Get the count of documents after applying IDS filtering."""
+        if self.document_store is None:
+            return 0
+
         if not self.config.ids_set:
             return len(self.document_store._index.by_path_id)
 
@@ -303,6 +347,7 @@ class SemanticSearch:
         Returns:
             List of search results ordered by similarity
         """
+        # Ensure initialization before search
         if not self._initialized:
             self._initialize()
 
