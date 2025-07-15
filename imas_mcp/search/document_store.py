@@ -10,12 +10,90 @@ import json
 import logging
 import sqlite3
 import threading
+import importlib.resources as resources
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from ..core.unit_loader import (
+    load_unit_contexts,
+    get_unit_category,
+    get_unit_physics_domains,
+    load_unit_categories,
+    load_physics_domain_hints,
+    get_unit_dimensionality,
+    get_unit_name,
+)
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Units:
+    """Manages unit-related information and context."""
+
+    unit_str: str
+    name: str = ""
+    context: str = ""
+    category: Optional[str] = None
+    physics_domains: List[str] = field(default_factory=list)
+    dimensionality: str = ""
+
+    @classmethod
+    def from_unit_string(
+        cls,
+        unit_str: str,
+        unit_contexts: Dict[str, str],
+        unit_categories: Dict[str, List[str]],
+        physics_domain_hints: Dict[str, List[str]],
+    ) -> "Units":
+        """Create Units instance from unit string and loaded contexts."""
+        name = get_unit_name(unit_str)
+        context = unit_contexts.get(unit_str, "")
+        category = get_unit_category(unit_str, unit_categories)
+        physics_domains = get_unit_physics_domains(
+            unit_str, unit_categories, physics_domain_hints
+        )
+        dimensionality = get_unit_dimensionality(unit_str)
+
+        return cls(
+            unit_str=unit_str,
+            name=name,
+            context=context,
+            category=category,
+            physics_domains=physics_domains,
+            dimensionality=dimensionality,
+        )
+
+    def has_meaningful_units(self) -> bool:
+        """Check if this represents meaningful physical units."""
+        return bool(self.unit_str and self.unit_str not in ("", "none", "1"))
+
+    def get_embedding_components(self) -> List[str]:
+        """Get components for embedding text generation."""
+        components = []
+
+        if self.has_meaningful_units():
+            # Combine short and long form units
+            if self.name:
+                components.append(f"Units: {self.unit_str} ({self.name})")
+            else:
+                components.append(f"Units: {self.unit_str}")
+
+            if self.context:
+                components.append(f"Physical quantity: {self.context}")
+
+            if self.category:
+                components.append(f"Unit category: {self.category}")
+
+            if self.physics_domains:
+                components.append(f"Physics domains: {' '.join(self.physics_domains)}")
+
+            if self.dimensionality:
+                components.append(f"Dimensionality: {self.dimensionality}")
+
+        return components
 
 
 @dataclass(frozen=True)
@@ -41,6 +119,22 @@ class Document:
     physics_context: Dict[str, Any] = field(default_factory=dict)
     relationships: Dict[str, List[str]] = field(default_factory=dict)
     raw_data: Dict[str, Any] = field(default_factory=dict)
+    units: Optional[Units] = None
+
+    def set_units(
+        self,
+        unit_contexts: Dict[str, str],
+        unit_categories: Dict[str, List[str]],
+        physics_domain_hints: Dict[str, List[str]],
+    ) -> None:
+        """Set units information from loaded contexts."""
+        if self.metadata.units:
+            self.units = Units.from_unit_string(
+                self.metadata.units,
+                unit_contexts,
+                unit_categories,
+                physics_domain_hints,
+            )
 
     @property
     def embedding_text(self) -> str:
@@ -50,6 +144,18 @@ class Document:
             f"Path: {self.metadata.path_name}",
         ]
 
+        # Prioritize primary documentation and units for better semantic distinction
+        if self.documentation:
+            # Extract the primary description (first sentence before hierarchical context)
+            primary_doc = self.documentation.split(".")[0].strip()
+            if primary_doc:
+                components.append(f"Description: {primary_doc}")
+
+        # Add unit-related components
+        if self.units:
+            components.extend(self.units.get_embedding_components())
+
+        # Add full documentation after primary description and units
         if self.documentation:
             components.append(f"Documentation: {self.documentation}")
 
@@ -60,9 +166,6 @@ class Document:
             components.append(
                 f"Physics phenomena: {' '.join(self.metadata.physics_phenomena)}"
             )
-
-        if self.metadata.units and self.metadata.units not in ("", "none", "1"):
-            components.append(f"Units: {self.metadata.units}")
 
         if self.metadata.coordinates:
             components.append(f"Coordinates: {' '.join(self.metadata.coordinates)}")
@@ -145,7 +248,7 @@ class SearchIndex:
 
 
 @dataclass
-class ImasDocumentStore:
+class DocumentStore:
     """
     In-memory document store for IMAS data with intelligent SQLite3 caching.
 
@@ -158,33 +261,87 @@ class ImasDocumentStore:
     - Provides cache inspection and management methods
     """
 
-    data_dir: Path
+    # Configuration
+    auto_load: bool = True  # Whether to automatically load all documents on init
 
     # Internal state
     _index: SearchIndex = field(default_factory=SearchIndex, init=False)
+    _data_dir: Path = field(init=False)
     _sqlite_path: Path = field(init=False)
     _loaded: bool = field(default=False, init=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
+    _unit_contexts: Dict[str, str] = field(default_factory=dict, init=False)
+    _unit_categories: Dict[str, List[str]] = field(default_factory=dict, init=False)
+    _physics_domain_hints: Dict[str, List[str]] = field(
+        default_factory=dict, init=False
+    )
 
     def __post_init__(self) -> None:
         """Initialize the document store."""
-        self._sqlite_path = self.data_dir / ".imas_fts.db"
-        self.load_all_documents()
+        # Use importlib.resources to locate JSON data
+        self._data_dir = self._get_resources_path()
+
+        # Build cache in resources directory
+        self._sqlite_path = self._data_dir / ".imas_fts.db"
+
+        # Load unit contexts from YAML file
+        self._unit_contexts = load_unit_contexts()
+        self._unit_categories = load_unit_categories()
+        self._physics_domain_hints = load_physics_domain_hints()
+        logger.info(
+            f"Loaded {len(self._unit_contexts)} unit context definitions with categories and domain hints"
+        )
+
+        if self.auto_load:
+            self.load_all_documents()
+
+    def initialize_with_ids_filter(self, ids_filter: List[str]) -> None:
+        """Initialize DocumentStore with specific IDS for faster loading."""
+        if not self._loaded:
+            self.load_all_documents(ids_filter=ids_filter)
+
+    def _get_resources_path(self) -> Path:
+        """Get the path to the resources directory using importlib.resources."""
+        try:
+            # Try to get the resources path
+            with resources.path("imas_mcp.resources", "json_data") as resource_path:
+                return Path(resource_path)
+        except (ImportError, FileNotFoundError):
+            # Fallback to package relative path
+            import imas_mcp
+
+            package_path = Path(imas_mcp.__file__).parent
+            return package_path / "resources" / "json_data"
 
     def is_available(self) -> bool:
         """Check if IMAS data is available."""
-        return (self.data_dir / "ids_catalog.json").exists()
+        return (self._data_dir / "ids_catalog.json").exists()
 
-    def load_all_documents(self, force_rebuild_index: bool = False) -> None:
-        """Load all JSON documents into memory with indexing."""
+    def load_all_documents(
+        self, force_rebuild_index: bool = False, ids_filter: Optional[List[str]] = None
+    ) -> None:
+        """Load JSON documents into memory with indexing.
+
+        Args:
+            force_rebuild_index: Force rebuild of SQLite FTS index
+            ids_filter: Optional list of IDS names to load (for faster testing)
+        """
         with self._lock:
             if self._loaded:
                 return
 
-            logger.info("Loading all IMAS documents into memory...")
+            logger.info("Loading IMAS documents into memory...")
 
             # Load catalog to get available IDS
             available_ids = self._get_available_ids()
+
+            # Filter IDS if specified
+            if ids_filter:
+                available_ids = [ids for ids in available_ids if ids in ids_filter]
+                logger.info(f"Filtering to {len(available_ids)} IDS: {available_ids}")
+                # Force rebuild when using IDS filter since cache won't match
+                force_rebuild_index = True
+
             self._index.total_ids = len(available_ids)
 
             # Load each IDS detailed file
@@ -205,7 +362,7 @@ class ImasDocumentStore:
 
     def _get_available_ids(self) -> List[str]:
         """Get list of available IDS names."""
-        catalog_path = self.data_dir / "ids_catalog.json"
+        catalog_path = self._data_dir / "ids_catalog.json"
         if not catalog_path.exists():
             raise FileNotFoundError(f"Catalog not found: {catalog_path}")
 
@@ -216,7 +373,7 @@ class ImasDocumentStore:
 
     def _load_ids_documents(self, ids_name: str) -> None:
         """Load all documents for a specific IDS."""
-        detailed_file = self.data_dir / "detailed" / f"{ids_name}.json"
+        detailed_file = self._data_dir / "detailed" / f"{ids_name}.json"
         if not detailed_file.exists():
             logger.warning(f"Missing detailed file for {ids_name}")
             return
@@ -275,13 +432,20 @@ class ImasDocumentStore:
         )
 
         # Create document
-        return Document(
+        document = Document(
             metadata=metadata,
             documentation=path_data.get("documentation", ""),
             physics_context=physics_context,
             relationships=path_data.get("relationships", {}),
             raw_data=path_data,
         )
+
+        # Set unit contexts for this document
+        document.set_units(
+            self._unit_contexts, self._unit_categories, self._physics_domain_hints
+        )
+
+        return document
 
     # Fast access methods for LLM tools
     def get_document(self, path_id: str) -> Optional[Document]:
@@ -344,21 +508,21 @@ class ImasDocumentStore:
         logger.info("Building SQLite FTS5 index...")
 
         with sqlite3.connect(str(self._sqlite_path)) as conn:
-            # Create metadata table for cache validation
+            # Always ensure clean tables for consistent schema
+            conn.execute("DROP TABLE IF EXISTS documents")
+            conn.execute("DROP TABLE IF EXISTS index_metadata")
+
+            # Create metadata table (key-value pairs)
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS index_metadata (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at REAL NOT NULL,
-                    document_count INTEGER NOT NULL,
-                    ids_count INTEGER NOT NULL,
-                    data_dir_hash TEXT NOT NULL,
-                    version TEXT DEFAULT '1.0'
+                CREATE TABLE index_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
                 )
             """)
 
-            # Create FTS5 virtual table
+            # Create FTS5 virtual table (content table, not contentless)
             conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(
+                CREATE VIRTUAL TABLE documents USING fts5(
                     path_id UNINDEXED,
                     ids_name,
                     path_name,
@@ -367,14 +531,9 @@ class ImasDocumentStore:
                     units,
                     coordinates,
                     data_type,
-                    embedding_text,
-                    content=''
+                    embedding_text
                 )
             """)
-
-            # Clear existing data
-            conn.execute("DELETE FROM documents")
-            conn.execute("DELETE FROM index_metadata")
 
             # Insert all documents
             for document in self._index.by_path_id.values():
@@ -401,16 +560,20 @@ class ImasDocumentStore:
             import time
 
             conn.execute(
-                """
-                INSERT INTO index_metadata (created_at, document_count, ids_count, data_dir_hash)
-                VALUES (?, ?, ?, ?)
-            """,
-                (
-                    time.time(),
-                    self._index.total_documents,
-                    self._index.total_ids,
-                    self._compute_data_dir_hash(),
-                ),
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("created_at", str(time.time())),
+            )
+            conn.execute(
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("document_count", str(self._index.total_documents)),
+            )
+            conn.execute(
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("ids_count", str(self._index.total_ids)),
+            )
+            conn.execute(
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("data_dir_hash", self._compute_data_dir_hash()),
             )
 
             conn.commit()
@@ -495,6 +658,7 @@ class ImasDocumentStore:
             "documentation_terms": len(self._index.documentation_words),
             "path_segments": len(self._index.path_segments),
             "cache": cache_info,
+            "data_directory": str(self._data_dir),
         }
 
     def get_physics_domains(self) -> List[str]:
@@ -521,6 +685,7 @@ class ImasDocumentStore:
 
         try:
             with sqlite3.connect(str(self._sqlite_path)) as conn:
+                conn.row_factory = sqlite3.Row  # Enable dict-like access
                 # Check if required tables exist
                 cursor = conn.execute("""
                     SELECT name FROM sqlite_master 
@@ -532,24 +697,18 @@ class ImasDocumentStore:
                     logger.debug("Required tables missing, needs rebuild")
                     return True
 
-                # Check index metadata
-                cursor = conn.execute("""
-                    SELECT document_count, ids_count, data_dir_hash, created_at 
-                    FROM index_metadata 
-                    ORDER BY created_at DESC LIMIT 1
-                """)
-                metadata_row = cursor.fetchone()
+                # Check index metadata using key-value pairs
+                cursor = conn.execute("SELECT key, value FROM index_metadata")
+                metadata = {row["key"]: row["value"] for row in cursor}
 
-                if not metadata_row:
+                if not metadata:
                     logger.debug("No index metadata found, needs rebuild")
                     return True
 
-                (
-                    stored_doc_count,
-                    stored_ids_count,
-                    stored_data_hash,
-                    index_timestamp,
-                ) = metadata_row
+                stored_doc_count = int(metadata.get("document_count", 0))
+                stored_ids_count = int(metadata.get("ids_count", 0))
+                stored_data_hash = metadata.get("data_dir_hash", "")
+                index_timestamp = float(metadata.get("created_at", 0))
 
                 # Check if document counts match
                 if (
@@ -582,17 +741,17 @@ class ImasDocumentStore:
         """Compute hash of data directory path for cache validation."""
         import hashlib
 
-        return hashlib.md5(str(self.data_dir.resolve()).encode()).hexdigest()
+        return hashlib.md5(str(self._data_dir.resolve()).encode()).hexdigest()
 
     def _has_newer_source_files(self, index_timestamp: float) -> bool:
         """Check if any source JSON files are newer than the index timestamp."""
         # Check catalog file
-        catalog_path = self.data_dir / "ids_catalog.json"
+        catalog_path = self._data_dir / "ids_catalog.json"
         if catalog_path.exists() and catalog_path.stat().st_mtime > index_timestamp:
             return True
 
         # Check detailed files
-        detailed_dir = self.data_dir / "detailed"
+        detailed_dir = self._data_dir / "detailed"
         if detailed_dir.exists():
             for json_file in detailed_dir.glob("*.json"):
                 if json_file.stat().st_mtime > index_timestamp:
@@ -602,15 +761,31 @@ class ImasDocumentStore:
 
     def clear_cache(self) -> None:
         """Clear the SQLite FTS cache and force rebuild on next access."""
-        if self._sqlite_path.exists():
-            self._sqlite_path.unlink()
-            logger.info("SQLite FTS cache cleared")
-        else:
-            logger.info("No SQLite cache to clear")
+        try:
+            # Remove cache file if it exists
+            if self._sqlite_path.exists():
+                self._sqlite_path.unlink()
+                logger.info("SQLite FTS cache cleared")
+            else:
+                logger.info("No SQLite cache to clear")
+
+        except PermissionError as e:
+            # On Windows, file might be locked - try to handle gracefully
+            logger.warning(f"Could not remove cache file (file locked): {e}")
+            logger.info("Cache will be rebuilt on next access")
 
     def rebuild_index(self) -> None:
         """Force rebuild of the SQLite FTS index."""
         logger.info("Force rebuilding SQLite FTS index...")
+
+        # Remove the cache file and rebuild
+        try:
+            if self._sqlite_path.exists():
+                self._sqlite_path.unlink()
+        except PermissionError:
+            logger.warning("Could not remove cache file - will recreate")
+
+        # Force rebuild
         self._build_sqlite_fts_index()
 
     def get_cache_info(self) -> Dict[str, Any]:
@@ -624,19 +799,16 @@ class ImasDocumentStore:
 
         try:
             with sqlite3.connect(str(self._sqlite_path)) as conn:
+                conn.row_factory = sqlite3.Row  # Enable dict-like access
                 # Get basic file info
                 file_size_bytes = self._sqlite_path.stat().st_size
                 file_size_mb = file_size_bytes / (1024 * 1024)
 
-                # Get index metadata
-                cursor = conn.execute("""
-                    SELECT created_at, document_count, ids_count, data_dir_hash, version
-                    FROM index_metadata 
-                    ORDER BY created_at DESC LIMIT 1
-                """)
-                metadata_row = cursor.fetchone()
+                # Get index metadata using key-value pairs
+                cursor = conn.execute("SELECT key, value FROM index_metadata")
+                metadata = {row["key"]: row["value"] for row in cursor}
 
-                if not metadata_row:
+                if not metadata:
                     return {
                         "cached": True,
                         "file_path": str(self._sqlite_path),
@@ -645,7 +817,11 @@ class ImasDocumentStore:
                         "message": "Cache file exists but missing metadata",
                     }
 
-                created_at, doc_count, ids_count, data_hash, version = metadata_row
+                created_at = float(metadata.get("created_at", 0))
+                doc_count = int(metadata.get("document_count", 0))
+                ids_count = int(metadata.get("ids_count", 0))
+                data_hash = metadata.get("data_dir_hash", "")
+                version = metadata.get("version", "unknown")
 
                 # Get document count from FTS table
                 cursor = conn.execute("SELECT COUNT(*) FROM documents")
@@ -694,19 +870,17 @@ class ImasDocumentStore:
                 "message": "Error reading cache file",
             }
 
+    def close(self) -> None:
+        """Close any open database connections."""
+        # Note: We use context managers for all connections, so nothing to close
+        logger.debug(
+            "DocumentStore close() called - using context managers, no persistent connections"
+        )
 
-# Convenience factory function to maintain interface compatibility
-def JsonDataDictionaryAccessor(data_dir: Optional[Path] = None) -> ImasDocumentStore:
-    """
-    Factory function for creating ImasDocumentStore with backward compatibility.
+    def __enter__(self):
+        """Context manager entry."""
+        return self
 
-    Args:
-        data_dir: Optional custom data directory. If None, uses package resources.
-
-    Returns:
-        ImasDocumentStore instance
-    """
-    if data_dir is None:
-        data_dir = Path(__file__).resolve().parent / "resources" / "json_data"
-
-    return ImasDocumentStore(data_dir=data_dir)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure connections are closed."""
+        self.close()

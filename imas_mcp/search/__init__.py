@@ -13,6 +13,7 @@ from .ai_enhancer import (
     STRUCTURE_EXPERT,
     RELATIONSHIP_EXPERT,
 )
+from .document_store import DocumentStore, Document, DocumentMetadata
 from .search_handler import SearchHandler, SearchRequest, SearchResponse
 from .search_router import QueryFeatures, SearchRouter
 
@@ -23,6 +24,9 @@ __all__ = [
     "OVERVIEW_EXPERT",
     "STRUCTURE_EXPERT",
     "RELATIONSHIP_EXPERT",
+    "DocumentStore",
+    "Document",
+    "DocumentMetadata",
     "SearchHandler",
     "SearchRequest",
     "SearchResponse",

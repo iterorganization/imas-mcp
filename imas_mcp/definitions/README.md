@@ -15,6 +15,17 @@ Contains physics domain categorization definitions:
 - **`ids_mapping.yaml`** - Mapping of IMAS IDS names to their primary physics domains
 - **`domain_relationships.yaml`** - Relationships and connections between different physics domains
 
+### `unit_contexts.yaml`
+
+Contains semantic context definitions for physical units used in the IMAS data dictionary:
+
+- **Unit Contexts** - Mapping of unit strings to semantic descriptions for enhanced sentence transformer embeddings
+- **Unit Categories** - Grouping of related units by physical domain (electromagnetic, spatial, temporal, etc.)
+- **Physics Domain Hints** - Mapping of unit categories to likely physics domains for enhanced context
+- **Metadata** - Version information and usage documentation
+
+This file supports semantic search optimization by providing meaningful context for physical quantities, helping distinguish between similar measurements (e.g., time coordinates vs magnetic field strength).
+
 ## Design Principles
 
 1. **Physics-Based Categorization**: Domains are organized by physics phenomena rather than generic categories
@@ -64,7 +75,9 @@ Contains physics domain categorization definitions:
 
 ## Usage
 
-The definitions are loaded automatically by the `domain_loader.py` module in `imas_mcp/core/`. To use:
+The definitions are loaded automatically by the respective loader modules in `imas_mcp/core/`.
+
+### Physics Domains
 
 ```python
 from imas_mcp.core.domain_loader import load_physics_domains_from_yaml
@@ -77,6 +90,20 @@ characteristics = definitions["characteristics"]
 ids_mapping = definitions["ids_mapping"]
 relationships = definitions["relationships"]
 validation = definitions["validation"]
+```
+
+### Unit Contexts
+
+```python
+from imas_mcp.core.unit_loader import load_unit_contexts, get_enhanced_unit_context
+
+# Load unit contexts
+unit_contexts = load_unit_contexts()
+
+# Get enhanced context for a specific unit
+enhanced_context = get_enhanced_unit_context("T")  # Returns: "magnetic_field_strength magnetic_flux_density electromagnetic magnetics current_drive heating"
+
+# Unit contexts are automatically loaded by DocumentStore for semantic search
 ```
 
 ## Validation
