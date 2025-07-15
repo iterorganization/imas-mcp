@@ -8,7 +8,6 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "whoosh>=2.7.4,<3.0.0",
     "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
 ]
 build-backend = "hatchling.build"
@@ -50,7 +49,6 @@ dependencies = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "whoosh>=2.7.4,<3.0.0",
     "numpy>=2.3.1",
     "sentence-transformers>=5.0.0",
     "huggingface-hub>=0.33.4",
@@ -63,8 +61,6 @@ http = [
     "uvicorn>=0.30.0,<1.0.0",
 ]
 test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
-# Legacy lexicographic modules (deprecated)
-legacy = ["packaging>=25.0,<26.0"]
 
 [dependency-groups]
 dev = [
@@ -136,7 +132,7 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 
 [[tool.mypy.overrides]]
-module = ["imas.*", "pint.*", "whoosh.*"]
+module = ["imas.*", "pint.*"]
 ignore_missing_imports = true
 warn_return_any = true
 warn_unused_configs = true

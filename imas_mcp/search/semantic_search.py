@@ -109,7 +109,7 @@ class SemanticSearch:
     """
 
     config: SemanticSearchConfig = field(default_factory=SemanticSearchConfig)
-    document_store: Optional[DocumentStore] = field(default=None)
+    document_store: DocumentStore = field(default_factory=DocumentStore)
 
     # Internal state
     _model: Optional[SentenceTransformer] = field(default=None, init=False)
@@ -128,8 +128,8 @@ class SemanticSearch:
             cache_filename = self._generate_cache_filename()
             self._cache_path = self.document_store._data_dir / cache_filename
 
-        # NOTE: Removed automatic _initialize() call for lazy initialization
-        # Model and embeddings are now loaded only when needed
+        # Initialize the embeddings. Build or load from cache.
+        self._initialize()
 
     def _generate_cache_filename(self) -> str:
         """Generate a unique cache filename based on configuration."""

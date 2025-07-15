@@ -1,8 +1,8 @@
 """
 Search module for IMAS MCP server.
 
-This module provides search handlers using the composition pattern to separate
-concerns and make the intent of each search strategy clear.
+This module provides semantic search capabilities using sentence transformers
+and document storage for efficient IMAS data dictionary querying.
 """
 
 from .ai_enhancer import (
@@ -14,8 +14,7 @@ from .ai_enhancer import (
     RELATIONSHIP_EXPERT,
 )
 from .document_store import DocumentStore, Document, DocumentMetadata
-from .search_handler import SearchHandler, SearchRequest, SearchResponse
-from .search_router import QueryFeatures, SearchRouter
+from .semantic_search import SemanticSearch, SemanticSearchConfig, SemanticSearchResult
 
 __all__ = [
     "ai_enhancer",
@@ -27,9 +26,7 @@ __all__ = [
     "DocumentStore",
     "Document",
     "DocumentMetadata",
-    "SearchHandler",
-    "SearchRequest",
-    "SearchResponse",
-    "QueryFeatures",
-    "SearchRouter",
+    "SemanticSearch",
+    "SemanticSearchConfig",
+    "SemanticSearchResult",
 ]
