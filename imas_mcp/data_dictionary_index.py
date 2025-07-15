@@ -17,7 +17,6 @@ from typing import (
     Optional,
     Set,
 )
-import xml.etree.ElementTree as ET
 
 from packaging.version import Version
 from rich.progress import (
@@ -30,13 +29,16 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from imas_mcp.core.xml_utils import DocumentationBuilder
+from imas_mcp.json_data_accessor import JsonDataDictionaryAccessor
 from imas_mcp.dd_accessor import create_dd_accessor, DataDictionaryAccessor
+from imas_mcp.core.progress_monitor import create_progress_monitor
 
 IndexPrefixT = Literal["lexicographic", "semantic"]
 
 # Performance tuning constants
-DEFAULT_BATCH_SIZE = 500
+DEFAULT_BATCH_SIZE = (
+    1000  # Balanced batch size for good performance with smooth progress
+)
 PROGRESS_LOG_INTERVAL = 50
 
 # Configure module logger
@@ -47,16 +49,13 @@ logger = logging.getLogger(__name__)
 class DataDictionaryIndex(abc.ABC):
     """Abstract base class for IMAS Data Dictionary methods and attributes."""
 
-    ids_set: Optional[Set[str]] = None  # Set of IDS names to index
     dirname: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parent
-        / "resources"
-        / "index_data"
+        default_factory=lambda: Path(__file__).parent / "resources" / "index_data"
     )
-    indexname: Optional[str] = field(default=None)
-    _dd_accessor: Optional[DataDictionaryAccessor] = field(
-        default=None, init=False, repr=False
-    )
+    ids_set: Optional[Set[str]] = None
+    use_rich: Optional[bool] = None  # Auto-detect if None
+    _dd_accessor: Optional[DataDictionaryAccessor] = field(default=None, init=False)
+    indexname: str = field(default="", init=False)
 
     def __post_init__(self) -> None:
         """Common initialization for all handlers."""
@@ -71,6 +70,9 @@ class DataDictionaryIndex(abc.ABC):
             index_name=None,  # We'll set this after we can determine the name
             index_prefix=self.index_prefix,
         )
+
+        # Create JSON data accessor for new JSON-based processing
+        self._json_accessor = JsonDataDictionaryAccessor()
 
         # Now we can get the index name
         self.indexname = self._get_index_name()
@@ -97,27 +99,9 @@ class DataDictionaryIndex(abc.ABC):
             logger.info(f"Completed {operation_name} in {elapsed:.2f}s")
 
     @functools.cached_property
-    def _xml_root(self) -> ET.Element:
-        """Cache XML root element for repeated access."""
-        root = self._dd_etree.getroot()
-        if root is None:
-            raise ValueError("Root element not found in XML tree after parsing.")
-        return root
-
-    @functools.cached_property
-    def _ids_elements(self) -> List[ET.Element]:
-        """Cache IDS elements to avoid repeated XPath queries."""
-        return self._xml_root.findall(".//IDS[@name]")
-
-    @functools.cached_property
     def dd_version(self) -> Version:
         """Return the IMAS DD version."""
         return self.dd_accessor.get_version()
-
-    @functools.cached_property
-    def _dd_etree(self) -> ET.ElementTree:
-        """Return the IMAS DD XML element tree."""
-        return self.dd_accessor.get_xml_tree()
 
     def _get_index_name(self) -> str:
         """Return the full index name based on prefix, IMAS DD version, and ids_set."""
@@ -136,105 +120,22 @@ class DataDictionaryIndex(abc.ABC):
         return indexname
 
     def _get_ids_set(self) -> Set[str]:
-        """Return a set of IDS names to process.
-        If self.ids_set is provided, it's used. Otherwise, all IDS names from the DD are used.
-        """
+        """Return a set of IDS names to process."""
         if self.ids_set is not None:
             return self.ids_set
 
-        logger.info(
-            "No specific ids_set provided, using all IDS names from Data Dictionary."
-        )
-        all_ids_names: Set[str] = set()  # Explicit type
-        # Ensure dd_etree is accessed correctly
-        for elem in self._dd_etree.findall(
-            ".//IDS[@name]"
-        ):  # all IDS elements with a 'name' attribute
-            name = elem.get("name")
-            if name:  # Ensure name is not None or empty
-                all_ids_names.add(name)
+        # Get available IDS from JSON data instead of XML
+        available_ids = self._json_accessor.get_available_ids()
+        all_ids_names = set(available_ids)
+
         if not all_ids_names:
-            logger.warning("No IDS names found in the Data Dictionary XML.")
+            logger.warning("No IDS names found in the JSON data.")
         return all_ids_names
-
-    def _build_hierarchical_documentation(
-        self, documentation_parts: Dict[str, str]
-    ) -> str:
-        """Build hierarchical documentation string from path-based documentation parts.
-
-        Delegates to the shared DocumentationBuilder utility for consistent
-        hierarchical documentation formatting across all components.
-
-        Args:
-            documentation_parts: Dictionary where keys are hierarchical paths
-                and values are the documentation strings for each node.
-
-        Returns:
-            Formatted markdown string with hierarchical context.
-        """
-        return DocumentationBuilder.build_hierarchical_documentation(
-            documentation_parts
-        )
-
-    def _build_element_entry(
-        self,
-        elem: ET.Element,
-        ids_node: ET.Element,
-        ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Optional[Dict[str, Any]]:
-        """Build a single element entry efficiently."""
-        path_parts = []
-        units = elem.get("units", "")
-
-        # Collect documentation using shared utility
-        documentation_parts = DocumentationBuilder.collect_documentation_hierarchy(
-            elem, ids_node, ids_name, parent_map
-        )
-
-        # Walk up tree for path building and units inheritance
-        walker = elem
-        while walker is not None and walker != ids_node:
-            walker_name = walker.get("name")
-            if walker_name:
-                path_parts.insert(0, walker_name)
-
-            # Handle units inheritance
-            parent_walker = parent_map.get(walker)
-            if units == "as_parent" and parent_walker is not None:
-                parent_units = parent_walker.get("units")
-                if parent_units:
-                    units = parent_units
-
-            walker = parent_walker
-
-        if not path_parts:
-            return None
-
-        full_path = f"{ids_name}/{'/'.join(path_parts)}"
-        combined_documentation = self._build_hierarchical_documentation(
-            documentation_parts
-        )
-
-        return {
-            "path": full_path,
-            "documentation": combined_documentation or elem.get("documentation", ""),
-            "units": units or "none",
-            "ids_name": ids_name,
-        }
 
     @functools.cached_property
     def ids_names(self) -> List[str]:
-        """Return a list of IDS names relevant to this index.
-        Extracts from DD based on current configuration.
-        """
-        logger.info(
-            "Extracting IDS names from DD for current configuration."
-        )  # Use _get_ids_set() which respects self.ids_set if provided, or gets all from DD
-        ids_set = self._get_ids_set()
-        relevant_names = sorted(list(ids_set))  # Sort for consistency
-
-        return relevant_names
+        """Return a list of IDS names relevant to this index."""
+        return sorted(list(self._get_ids_set()))
 
     @contextmanager
     def _progress_tracker(self, description: str, total: Optional[int] = None):
@@ -270,13 +171,13 @@ class DataDictionaryIndex(abc.ABC):
                     self.completed += 1
                     current_time = time.time()
 
-                    # Log progress every 5% or every 15 seconds for better visibility
+                    # Log progress every 10% or every 30 seconds for cleaner output
                     if total:
                         percentage = (self.completed / total) * 100
                         time_since_log = current_time - self.last_log_time
 
-                        if (percentage - self.last_percentage >= 5) or (
-                            time_since_log >= 15
+                        if (percentage - self.last_percentage >= 10) or (
+                            time_since_log >= 30
                         ):
                             elapsed = current_time - start_time
                             remaining = 0
@@ -290,8 +191,8 @@ class DataDictionaryIndex(abc.ABC):
                             self.last_log_time = current_time
                             self.last_percentage = percentage
                     else:
-                        # Log every 50 items if total is unknown
-                        if self.completed % 50 == 0:
+                        # Log every 100 items if total is unknown
+                        if self.completed % 100 == 0:
                             elapsed = current_time - start_time
                             logger.info(
                                 f"Progress: {self.completed} items - {elapsed:.1f}s elapsed"
@@ -315,65 +216,37 @@ class DataDictionaryIndex(abc.ABC):
 
     @functools.cached_property
     def _total_elements(self) -> int:
-        """
-        Calculate and cache the total number of elements to process.        Returns:
-            int: Total count of IDS root elements plus all their named descendants
-        """
+        """Calculate and cache the total number of elements to process."""
         ids_to_process = self._get_ids_set()
-        root_node = self._xml_root
+        total_paths = 0
 
-        # Pre-filter IDS nodes efficiently
-        ids_nodes = [
-            node
-            for node in root_node.findall(".//IDS[@name]")
-            if node.get("name") in ids_to_process
-        ]
+        for ids_name in ids_to_process:
+            try:
+                ids_data = self._json_accessor.get_ids_detailed_data(ids_name)
+                paths = ids_data.get("paths", {})
+                total_paths += len(paths)
+            except (FileNotFoundError, ValueError) as e:
+                logger.warning(f"Could not get data for IDS '{ids_name}': {e}")
+                continue
 
-        total_elements = 0
-        for ids_node in ids_nodes:
-            total_elements += 1  # Count IDS root
-            total_elements += len(ids_node.findall(".//*[@name]"))  # Count descendants
-
-        logger.info(f"Total elements to process: {total_elements}")
-        return total_elements
+        logger.debug(f"Total elements to process: {total_paths}")
+        return total_paths
 
     def _get_document(self, progress_tracker=None) -> Iterable[Dict[str, Any]]:
-        """
-        Get document entries from IMAS Data Dictionary XML.
-
-        Args:
-            progress_tracker: Optional tuple of (progress, task) for external tracking        Yields:
-            Dict[str, Any]: Document entries
-        """
-        logger.info(
-            f"Starting optimized extraction for DD version {self.dd_version.public}"
+        """Get document entries from JSON data instead of XML."""
+        logger.debug(
+            f"Starting JSON-based extraction for DD version {self.dd_version.public}"
         )
 
         ids_to_process = self._get_ids_set()
-        logger.info(f"Processing {len(ids_to_process)} IDS: {sorted(ids_to_process)}")
+        logger.debug(f"Processing {len(ids_to_process)} IDS: {sorted(ids_to_process)}")
 
-        root_node = self._xml_root
+        # Count total elements for progress tracking
+        total_elements = self._total_elements
 
-        # Cache parent map - major performance improvement
-        parent_map = {
-            c: p for p in root_node.iter() for c in p
-        }  # Pre-filter IDS nodes efficiently
-        ids_nodes = [
-            node
-            for node in root_node.findall(".//IDS[@name]")
-            if node.get("name") in ids_to_process
-        ]
-
-        if not ids_nodes:
-            logger.warning(f"No IDS found for ids_set: {ids_to_process}")
-            return  # Count total elements for progress tracking
-        total_elements = (
-            self._total_elements
-        )  # Use provided progress tracker or create new one
-
+        # Use provided progress tracker or create new one
         if progress_tracker:
             progress, task = progress_tracker
-            # Don't update total when using shared progress tracker
             context_manager = None
         else:
             context_manager = self._progress_tracker(
@@ -383,155 +256,272 @@ class DataDictionaryIndex(abc.ABC):
 
         try:
             document_count = 0
-            ids_count = len(ids_nodes)
+            ids_count = len(ids_to_process)
             current_ids_index = 0
 
-            for ids_node in ids_nodes:
-                ids_name = ids_node.get("name")
-                if not ids_name:
-                    continue
-
+            for ids_name in ids_to_process:
                 current_ids_index += 1
 
-                # Log per-IDS progress for non-interactive environments
+                # Log per-IDS progress only for non-interactive environments
                 if not self._is_interactive_environment():
                     logger.info(
                         f"Processing IDS {current_ids_index}/{ids_count}: {ids_name}"
-                    )  # Yield IDS root entry
-                yield {
-                    "path": ids_name,
-                    "documentation": ids_node.get("documentation", ""),
-                    "units": ids_node.get("units", "none"),
-                    "ids_name": ids_name,
-                }
-                document_count += 1
-                if progress:
-                    progress.advance(task)  # type: ignore[arg-type]                # Count descendants for per-IDS logging
-                descendants = ids_node.findall(".//*[@name]")
-                if not self._is_interactive_environment() and descendants:
-                    logger.info(
-                        f"  Processing {len(descendants)} elements in {ids_name}"
                     )
 
-                # Process all named descendants
-                for elem in descendants:
-                    entry = self._build_element_entry(
-                        elem, ids_node, ids_name, parent_map
-                    )
-                    if entry:
-                        yield entry
-                        document_count += 1
-                        if progress:
-                            progress.advance(task)  # type: ignore[arg-type]                        # Update description periodically for better time estimates (Rich only)
+                try:
+                    # Get detailed data from JSON instead of XML
+                    ids_data = self._json_accessor.get_ids_detailed_data(ids_name)
+                    paths = ids_data.get("paths", {})
+
+                    # Process all paths in the IDS
+                    for path_name, path_data in paths.items():
+                        entry = self._build_json_entry(path_data, ids_name)
+                        if entry:
+                            yield entry
+                            document_count += 1
+                            if progress and hasattr(progress, "advance") and task:
+                                progress.advance(task)  # type: ignore
+
+                        # Update description periodically for better time estimates (Rich only)
                         if document_count % PROGRESS_LOG_INTERVAL == 0:
-                            if progress and hasattr(progress, "update"):
-                                progress.update(
-                                    task, description=f"Processing {ids_name}"
-                                )  # type: ignore[arg-type]
+                            if progress and hasattr(progress, "update") and task:
+                                try:
+                                    progress.update(  # type: ignore
+                                        task,
+                                        description=f"Processing {ids_name}",  # type: ignore
+                                    )
+                                except TypeError:
+                                    # Fallback for incompatible progress tracker
+                                    pass
 
-                # Log completion for each IDS in non-interactive environments
-                if not self._is_interactive_environment():
-                    logger.info(
-                        f"  Completed {ids_name}: {len(descendants) + 1} elements processed"
-                    )
+                    # Log completion for each IDS only in non-interactive environments
+                    if not self._is_interactive_environment():
+                        logger.info(
+                            f"  Completed {ids_name}: {len(paths)} elements processed"
+                        )
+
+                except (FileNotFoundError, ValueError) as e:
+                    logger.warning(f"Could not process IDS '{ids_name}': {e}")
+                    continue
 
         finally:
             # Only exit context manager if we created it
             if context_manager:
                 context_manager.__exit__(None, None, None)
 
-        logger.info(f"Finished extracting {document_count} document entries from DD.")
+        logger.debug(
+            f"Finished extracting {document_count} document entries from JSON data."
+        )
+
+    def _build_json_entry(
+        self, path_data: Dict[str, Any], ids_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Build a document entry from JSON path data."""
+        path = path_data.get("path")
+        if not path:
+            return None
+
+        # Extract basic fields
+        documentation = path_data.get("documentation", "")
+        units = path_data.get("units", "none")
+
+        # Process coordinates as text for searching
+        coordinates = path_data.get("coordinates", [])
+        coordinates_text = " ".join(coordinates) if coordinates else ""
+
+        # Process lifecycle
+        lifecycle = path_data.get("lifecycle", "active")
+
+        # Process data type
+        data_type = path_data.get("data_type", "")
+
+        # Process physics context
+        physics_context = path_data.get("physics_context")
+        physics_context_text = ""
+        if physics_context:
+            domain = physics_context.get("domain", "")
+            phenomena = physics_context.get("phenomena", [])
+            physics_context_text = f"{domain} {' '.join(phenomena)}"
+
+        # Process related paths as searchable text
+        related_paths = path_data.get("related_paths", [])
+        related_paths_text = " ".join(related_paths) if related_paths else ""
+
+        # Process usage examples as searchable text
+        usage_examples = path_data.get("usage_examples", [])
+        usage_examples_text = ""
+        if usage_examples:
+            example_texts = []
+            for example in usage_examples:
+                scenario = example.get("scenario", "")
+                code = example.get("code", "")
+                notes = example.get("notes", "")
+                example_texts.append(f"{scenario} {code} {notes}")
+            usage_examples_text = " ".join(example_texts)
+
+        # Process validation rules as text
+        validation_rules = path_data.get("validation_rules", {})
+        validation_text = ""
+        if validation_rules:
+            parts = []
+            if validation_rules.get("units_required"):
+                parts.append("units_required")
+            if validation_rules.get("min_value"):
+                parts.append(f"min_value_{validation_rules['min_value']}")
+            if validation_rules.get("max_value"):
+                parts.append(f"max_value_{validation_rules['max_value']}")
+            validation_text = " ".join(parts)
+
+        # Process relationships as searchable text
+        relationships = path_data.get("relationships", {})
+        relationships_text = ""
+        if relationships:
+            all_relations = []
+            for rel_type, rel_list in relationships.items():
+                if isinstance(rel_list, list):
+                    all_relations.extend(rel_list)
+            relationships_text = " ".join(all_relations)
+
+        # Additional XML attributes
+        introduced_after = path_data.get("introduced_after", "")
+        coordinate1 = path_data.get("coordinate1", "")
+        coordinate2 = path_data.get("coordinate2", "")
+        timebase = path_data.get("timebase", "")
+        type_field = path_data.get("type", "")
+
+        return {
+            "path": path,
+            "documentation": documentation,
+            "units": units,
+            "ids_name": ids_name,
+            # Extended fields from JSON
+            "coordinates": coordinates_text,
+            "lifecycle": lifecycle,
+            "data_type": data_type,
+            "physics_context": physics_context_text,
+            "related_paths": related_paths_text,
+            "usage_examples": usage_examples_text,
+            "validation_rules": validation_text,
+            "relationships": relationships_text,
+            "introduced_after": introduced_after,
+            "coordinate1": coordinate1,
+            "coordinate2": coordinate2,
+            "timebase": timebase,
+            "type": type_field,
+        }
 
     def _get_document_batch(
-        self, batch_size: int = DEFAULT_BATCH_SIZE
+        self, batch_size: int = DEFAULT_BATCH_SIZE, use_rich: bool = True
     ) -> Iterable[List[Dict[str, Any]]]:
-        """
-        Get document entries from Data Dictionary XML in batches.
+        """Get document entries from JSON data in batches."""
+        # Get the list of IDS to process for proper progress monitoring
+        ids_to_process = list(self._get_ids_set())
 
-        Args:
-            batch_size: Number of documents per batch
-
-        Yields:
-            List[Dict[str, Any]]: Batches of document entries
-        """
-        logger.info(f"Generating document batches from index: {self.indexname}")
-
-        # Use cached total elements calculation for accurate progress tracking
+        # Pre-calculate total expected batches for smooth progress
         total_elements = self._total_elements
+        estimated_batches = max(1, (total_elements + batch_size - 1) // batch_size)
 
         documents_batch = []
         processed_paths = set()
         total_documents = 0
         batch_count = 0
 
-        # Single progress tracker shared with _get_document, with pre-calculated total
-        with self._progress_tracker(
-            "Processing IDS attributes", total=total_elements
-        ) as (
-            progress,
-            task,
-        ):
-            try:  # Use shared progress tracker for consistent updates
-                for entry_dict in self._get_document(progress_tracker=(progress, task)):
-                    path = entry_dict.get("path")
-                    if not path or path in processed_paths:
-                        continue
+        # Use create_progress_monitor with estimated batch count for smooth progress
+        batch_names = [f"Batch {i + 1}" for i in range(estimated_batches)]
+        progress = create_progress_monitor(
+            use_rich=use_rich, logger=logger, item_names=batch_names
+        )
 
-                    if all(
-                        key in entry_dict
-                        for key in ["path", "documentation", "ids_name"]
-                    ):
-                        documents_batch.append(entry_dict)
-                        processed_paths.add(path)
-                        total_documents += 1
+        try:
+            progress.start_processing(batch_names, "Processing document batches")
 
-                        if len(documents_batch) >= batch_size:
-                            batch_count += 1
-                            yield list(documents_batch)
-                            documents_batch.clear()
+            current_ids_index = 0
 
-                if documents_batch:
-                    batch_count += 1
-                    yield list(documents_batch)
+            # Process each IDS individually but track progress by batches
+            for ids_name in ids_to_process:
+                current_ids_index += 1
 
-            except Exception as e:
-                logger.error(f"Error during document batch generation: {e}")
-                raise
+                try:
+                    # Get detailed data from JSON for this specific IDS
+                    ids_data = self._json_accessor.get_ids_detailed_data(ids_name)
+                    paths = ids_data.get("paths", {})
 
-        logger.info(
+                    # Process all paths in this IDS
+                    for path_name, path_data in paths.items():
+                        entry = self._build_json_entry(path_data, ids_name)
+                        if not entry:
+                            continue
+
+                        path = entry.get("path")
+                        if not path or path in processed_paths:
+                            continue
+
+                        if all(
+                            key in entry
+                            for key in ["path", "documentation", "ids_name"]
+                        ):
+                            documents_batch.append(entry)
+                            processed_paths.add(path)
+                            total_documents += 1
+
+                            if len(documents_batch) >= batch_size:
+                                batch_count += 1
+                                # Update progress description to show current IDS
+                                progress.set_current_item(
+                                    f"Processing {ids_name} (Batch {batch_count})"
+                                )
+                                # Advance progress by one batch
+                                progress.update_progress(f"Batch {batch_count}")
+
+                                yield list(documents_batch)
+                                documents_batch.clear()
+
+                    # No individual IDS progress updates - we track by batches now
+
+                except (FileNotFoundError, ValueError) as e:
+                    logger.warning(f"Could not process IDS '{ids_name}': {e}")
+                    continue
+
+            # Handle final partial batch
+            if documents_batch:
+                batch_count += 1
+                current_ids_name = ids_to_process[-1] if ids_to_process else "Final"
+                progress.set_current_item(
+                    f"Processing {current_ids_name} (Final batch)"
+                )
+                progress.update_progress(f"Batch {batch_count}")
+                yield list(documents_batch)
+
+        except Exception as e:
+            logger.error(f"Error during document batch generation: {e}")
+            raise
+        finally:
+            progress.finish_processing()
+
+        logger.debug(
             f"Completed document batch generation: {batch_count} batches, {total_documents} total documents"
         )
 
     @abc.abstractmethod
     def build_index(self) -> None:
-        """Builds the index from the Data Dictionary IDSDef XML file."""
+        """Builds the index from the Data Dictionary JSON data."""
         raise NotImplementedError
 
     def _is_interactive_environment(self) -> bool:
-        """
-        Detect if we're running in an interactive environment where rich progress is viewable.
+        """Check if we're running in an interactive environment where rich progress should be displayed."""
+        # Check for non-interactive environments first
+        if os.getenv("CI") or os.getenv("GITHUB_ACTIONS") or os.getenv("GITLAB_CI"):
+            return False
 
-        Returns:
-            bool: True if rich progress should be displayed, False for fallback logging
-        """
         # Check if we're in a Docker container
         if os.path.exists("/.dockerenv"):
             return False
 
-        # Check if stdout is a TTY (terminal)
+        # Check if stdout is a TTY (can display rich progress)
         if not sys.stdout.isatty():
             return False
 
-        # Check for CI/CD environment variables
-        ci_vars = ["CI", "CONTINUOUS_INTEGRATION", "GITHUB_ACTIONS", "GITLAB_CI"]
-        if any(os.getenv(var) for var in ci_vars):
-            return False
-
-        # Check if TERM is set to a non-interactive value
-        term = os.getenv("TERM", "")
-        if term in ["dumb", ""]:
-            return False
-
+        # If we have a TTY and we're not in CI/Docker, assume interactive
         return True
 
     @property

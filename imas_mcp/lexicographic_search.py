@@ -40,24 +40,16 @@ class LexicographicSearch(WhooshIndex, DataDictionaryIndex):
 
     def build_index(self):
         """Build the lexicographic search index."""
-        logger.info("Starting lexicographic index build process")
-        logger.info(
-            f"Target IDS set: {sorted(list(self.ids_set)) if self.ids_set else 'All available IDS'}"
-        )
-
         batch_count = 0
         total_documents = 0
 
-        for document_batch in self._get_document_batch():
+        # Pass use_rich parameter to get clean progress display
+        use_rich_flag = self.use_rich if self.use_rich is not None else True
+        for document_batch in self._get_document_batch(use_rich=use_rich_flag):
             batch_count += 1
             batch_size = len(document_batch)
             total_documents += batch_size
-            logger.info(f"Processing batch {batch_count}: {batch_size} documents")
             self.add_document_batch(document_batch)
-
-        logger.info(
-            f"Index building completed: {total_documents} documents processed in {batch_count} batches"
-        )
 
 
 if __name__ == "__main__":

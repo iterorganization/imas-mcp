@@ -73,7 +73,7 @@ class WhooshIndex:
         return self.schema
 
     def _get_schema(self) -> whoosh.fields.Schema:
-        """Return the Whoosh schema."""
+        """Return the Whoosh schema with extended JSON fields."""
         if self.schema is not None:
             return self.schema
         return whoosh.fields.Schema(
@@ -83,11 +83,34 @@ class WhooshIndex:
             documentation=whoosh.fields.TEXT(
                 stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
             ),  # Documentation content
-            units=whoosh.fields.KEYWORD(stored=True),  # Units of the documentation
+            units=whoosh.fields.KEYWORD(stored=True),  # Units of the field
             ids_name=whoosh.fields.ID(stored=True),  # The root IDS
-            path_segments=whoosh.fields.TEXT(  # Renamed from segments
-                analyzer=whoosh.analysis.StemmingAnalyzer()
-            ),  # Individual IDS path segments
+            # Extended fields from JSON data
+            coordinates=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Coordinate information
+            lifecycle=whoosh.fields.KEYWORD(stored=True),  # Lifecycle status
+            data_type=whoosh.fields.KEYWORD(stored=True),  # Data type
+            physics_context=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Physics context
+            related_paths=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Related paths as searchable text
+            usage_examples=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Usage examples as searchable text
+            validation_rules=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Validation rules as text
+            relationships=whoosh.fields.TEXT(
+                stored=True, analyzer=whoosh.analysis.StemmingAnalyzer()
+            ),  # Relationships as searchable text
+            introduced_after=whoosh.fields.KEYWORD(stored=True),  # Version introduced
+            coordinate1=whoosh.fields.KEYWORD(stored=True),  # Primary coordinate
+            coordinate2=whoosh.fields.KEYWORD(stored=True),  # Secondary coordinate
+            timebase=whoosh.fields.KEYWORD(stored=True),  # Timebase information
+            type=whoosh.fields.KEYWORD(stored=True),  # Type field
         )
 
     @cached_property
@@ -247,62 +270,62 @@ class WhooshIndex:
 
     def search_by_keywords(
         self,
-        query_str: str,
+        query_str: str = None,
+        keywords: list[str] = None,
         page_size: int = 10,
         page: int = 1,
         fuzzy: bool = False,
         search_fields: Optional[list[str]] = None,
         sort_by: Optional[Union[str, list[str]]] = None,
         sort_reverse: bool = False,
+        exploratory_mode: bool = True,
     ) -> list[SearchResult]:
         """
         Search the index for paths matching the given keywords.
 
-        Wildcards (e.g., 'term*', 't?rm') are generally supported by default
-        in the query string as long as the field's analysis chain is compatible.
+        Enhanced to support both string queries and list-based multi-keyword searches
+        with semantic relevance ranking and intelligent filtering.
 
         Args:
-            query_str: Natural language query.
-                Can include:
-                - Field prefixes (e.g., "documentation:plasma ids:core_profiles")
-                - Field-specific boosts (e.g., "documentation^2.0 plasma ^0.5")
-                - Wildcards (e.g., "doc* current?")
-                - Boolean operators (e.g., "density AND NOT temperature")
-                - Phrases (e.g., "\"ion temperature\"")
+            query_str: Natural language query string (use this OR keywords, not both)
+            keywords: List of keywords for enhanced multi-keyword search
             page_size: Maximum number of results per page.
             page: Page number to retrieve (1-based).
             fuzzy: Enable fuzzy term matching (e.g., "temperture~" for "temperature").
-                  If query_str contains ~ character, fuzzy is automatically enabled.
-                  If fuzzy is True and query_str doesn't contain ~, ~ is appended.
-            search_fields: List of fields to search in. Defaults to ["documentation", "path_segments"].
+            search_fields: List of fields to search in.
             sort_by: Field name or list of field names to sort by.
             sort_reverse: Whether to reverse the sort order.
+            exploratory_mode: If True, uses OR logic between keywords for broader exploration.
 
         Returns:
             List of SearchResult objects.
-
-        Examples:
-            >>> # Basic keyword search
-            >>> index.search_by_keywords("plasma current")
-
-            >>> # Search with field prefix and pagination
-            >>> index.search_by_keywords("documentation:ion", page_size=5, page=2)            >>> # Search with wildcard
-            >>> index.search_by_keywords("core_profiles/prof*")
-
-            >>> # Search with fuzzy matching enabled
-            >>> index.search_by_keywords("electrn densty", fuzzy=True)
-
-            >>> # Search with field boosting in the query string
-            >>> index.search_by_keywords("documentation^3.0 equilibrium ^0.5 reconstruction")            >>> # Complex query with boolean operators, phrases, and boosts
-            >>> index.search_by_keywords('ids:summary AND (documentation:"ion temperature"^2.0 OR :elect*)')
-
-            >>> # Search specific fields and sort results
-            >>> index.search_by_keywords("data", search_fields=["documentation"], sort_by="path", sort_reverse=True)
         """
+        # Handle both string and list inputs
+        if keywords is not None and query_str is not None:
+            raise ValueError("Provide either query_str or keywords, not both")
+
+        if keywords is not None:
+            # Enhanced multi-keyword search with semantic ranking
+            return self._search_multi_keywords(
+                keywords, page_size, page, fuzzy, search_fields
+            )
+
+        if query_str is None:
+            return []
+
+        # Original string-based search logic
         results = []
 
         if search_fields is None:
-            search_fields = ["documentation", "path_segments"]
+            search_fields = [
+                "documentation",
+                "coordinates",
+                "physics_context",
+                "related_paths",
+                "usage_examples",
+                "validation_rules",
+                "relationships",
+            ]
 
         # If fuzzy is True and query_str does not contain ~, append ~ to each keyword
         if fuzzy and "~" not in query_str:
@@ -311,6 +334,15 @@ class WhooshIndex:
         # Enable fuzzy if query_str contains ~ character
         if "~" in query_str:
             fuzzy = True
+
+        # Handle exploratory mode for multi-keyword queries
+        if exploratory_mode and not any(
+            op in query_str.upper() for op in ["AND", "OR", "NOT", ":"]
+        ):
+            # Convert space-separated keywords to OR query for exploration
+            keywords_from_str = query_str.split()
+            if len(keywords_from_str) > 1:
+                query_str = " OR ".join(keywords_from_str)
 
         with self.searcher() as searcher:
             parser = whoosh.qparser.MultifieldParser(
@@ -333,6 +365,195 @@ class WhooshIndex:
             for hit in search_results:
                 results.append(SearchResult.from_hit(hit))
         return results
+
+    def _search_multi_keywords(
+        self,
+        keywords: list[str],
+        page_size: int = 10,
+        page: int = 1,
+        fuzzy: bool = False,
+        search_fields: Optional[list[str]] = None,
+    ) -> list[SearchResult]:
+        """
+        Internal method for enhanced multi-keyword search with semantic relevance.
+
+        Prioritizes semantic relevance over exact multi-keyword matching.
+        """
+        if not keywords:
+            return []
+
+        if search_fields is None:
+            search_fields = [
+                "documentation",
+                "coordinates",
+                "physics_context",
+                "related_paths",
+                "usage_examples",
+                "validation_rules",
+                "relationships",
+            ]
+
+        # Strategy: Get top results for each keyword, then apply semantic filtering
+        all_results = []
+        keyword_weights = {}
+
+        # Calculate keyword weights based on specificity (inverse frequency)
+        for keyword in keywords:
+            # Get total count for this keyword to estimate specificity
+            temp_results = self.search_by_keywords(
+                query_str=keyword,
+                page_size=1,
+                fuzzy=fuzzy,
+                search_fields=search_fields,
+                exploratory_mode=True,
+            )
+            # More specific keywords (fewer results) get higher weight
+            keyword_weights[keyword] = (
+                1.0 / (len(temp_results) + 1) if temp_results else 1.0
+            )
+
+        # Get the best results for each keyword
+        for keyword in keywords:
+            results = self.search_by_keywords(
+                query_str=keyword,
+                page_size=max(
+                    5, page_size // len(keywords) + 2
+                ),  # Distribute results per keyword
+                page=1,
+                fuzzy=fuzzy,
+                search_fields=search_fields,
+                exploratory_mode=True,
+            )
+
+            # Apply keyword-specific weight and semantic filtering
+            weight = keyword_weights[keyword]
+            for result in results:
+                # Advanced semantic filtering for physics searches
+                path_lower = result.path.lower()
+                doc_lower = result.documentation.lower()
+
+                # Define different types of terms
+                structural_terms = [
+                    "grid",
+                    "coordinate",
+                    "volume_element",
+                    "mesh",
+                    "node",
+                    "index",
+                    "geometry",
+                ]
+                measurement_terms = [
+                    "profile",
+                    "data",
+                    "measurement",
+                    "sensor",
+                    "diagnostic",
+                    "detector",
+                ]
+
+                # Check if this is a structural path
+                is_structural = any(
+                    struct_term in path_lower for struct_term in structural_terms
+                )
+
+                if is_structural:
+                    # For structural paths, be very strict about relevance
+                    # Only keep if the documentation explicitly discusses measurements/profiles of our keywords
+                    has_measurement_context = any(
+                        meas_term in doc_lower for meas_term in measurement_terms
+                    )
+
+                    # Or if the documentation specifically mentions temperature/density measurements (not just "plasma volume")
+                    specific_physics_context = any(
+                        kw in doc_lower
+                        for kw in ["temperature", "density", "current"]
+                        if kw in keywords
+                    )
+
+                    if not (has_measurement_context and specific_physics_context):
+                        continue
+
+                # Apply semantic scoring
+                semantic_score = result.score * weight
+
+                # Higher weights for matches in leaf nodes or immediate parent
+                path_parts = result.path.split("/")
+
+                # Check if keywords match in the leaf node (last part)
+                leaf_matches = any(
+                    kw.lower() in path_parts[-1].lower() for kw in keywords
+                )
+                if leaf_matches:
+                    semantic_score *= 2.0  # Strong boost for leaf node matches
+
+                # Check if keywords match in the second-to-last part (immediate parent)
+                elif len(path_parts) > 1:
+                    parent_matches = any(
+                        kw.lower() in path_parts[-2].lower() for kw in keywords
+                    )
+                    if parent_matches:
+                        semantic_score *= 1.5  # Good boost for parent node matches
+
+                # Boost if the path contains physics-relevant terms
+                physics_terms = [
+                    "profile",
+                    "temperature",
+                    "density",
+                    "current",
+                    "field",
+                    "electron",
+                    "ion",
+                ]
+                if any(term in path_lower for term in physics_terms):
+                    semantic_score *= 1.3
+
+                # Boost if documentation is rich and relevant
+                if len(result.documentation) > 50 and any(
+                    kw in doc_lower for kw in keywords
+                ):
+                    semantic_score *= 1.2
+
+                # Create enhanced result
+                enhanced_result = SearchResult(
+                    path=result.path,
+                    score=semantic_score,
+                    documentation=result.documentation,
+                    units=result.units,
+                    ids_name=result.ids_name,
+                    highlights=result.highlights,
+                    coordinates=result.coordinates,
+                    lifecycle=result.lifecycle,
+                    data_type=result.data_type,
+                    physics_context=result.physics_context,
+                    related_paths=result.related_paths,
+                    usage_examples=result.usage_examples,
+                    validation_rules=result.validation_rules,
+                    relationships=result.relationships,
+                    introduced_after=result.introduced_after,
+                    coordinate1=result.coordinate1,
+                    coordinate2=result.coordinate2,
+                    timebase=result.timebase,
+                    type=result.type,
+                )
+                all_results.append(enhanced_result)
+
+        # Remove duplicates while preserving the best score for each path
+        path_best_results = {}
+        for result in all_results:
+            if (
+                result.path not in path_best_results
+                or result.score > path_best_results[result.path].score
+            ):
+                path_best_results[result.path] = result
+
+        # Sort by semantic score and apply pagination
+        final_results = list(path_best_results.values())
+        final_results.sort(key=lambda x: x.score, reverse=True)
+
+        # Apply pagination
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        return final_results[start_idx:end_idx]
 
     def search_by_exact_path(self, path_value: str) -> Optional[SearchResult]:
         """Return documentation and associated metadata via an exact IDS path lookup.
