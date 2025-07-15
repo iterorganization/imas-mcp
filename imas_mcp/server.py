@@ -1,5 +1,5 @@
 """
-IMAS MCP Server with AI Tools - Refactored with Composition Pattern.
+IMAS MCP Server with AI Tools.
 
 This is the principal MCP server for the IMAS data dictionary, providing AI
 tools for physics-based search, analysis, and exploration of plasma physics data.
@@ -13,8 +13,8 @@ The 5 core tools provide comprehensive coverage:
 4. analyze_ids_structure - Detailed structural analysis of specific IDS
 5. explore_relationships - Advanced relationship exploration across the data dictionary
 
-This server uses a composition pattern with dedicated search handlers to separate
-concerns and make the intent of each search strategy clear.
+This server uses cached properties for lazy initialization of DocumentStore and
+SemanticSearch components for efficient and maintainable data access.
 """
 
 import importlib.metadata
@@ -26,12 +26,9 @@ from typing import Any, Dict, List, Optional, Union
 import nest_asyncio
 from fastmcp import Context, FastMCP
 
-from .json_data_accessor import JsonDataDictionaryAccessor
-from .lexicographic_search import LexicographicSearch
+from .search.document_store import DocumentStore
+from .search.semantic_search import SemanticSearch, SemanticSearchConfig
 from .search import (
-    SearchHandler,
-    SearchRequest,
-    SearchRouter,
     ai_enhancer,
     SEARCH_EXPERT,
     EXPLANATION_EXPERT,
@@ -52,55 +49,43 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Server:
-    """AI IMAS MCP Server with structured tool management using composition pattern."""
+    """IMAS MCP Server with cached properties for lazy initialization."""
 
+    # Configuration parameters
+    ids_set: Optional[set[str]] = None
+    search_config: Optional[SemanticSearchConfig] = None
+
+    # Internal fields
     mcp: FastMCP = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
+        if self.search_config is None:
+            self.search_config = SemanticSearchConfig()
         self.mcp = FastMCP(name="imas-dd")
         self._register_tools()
 
     @cached_property
-    def data_accessor(self) -> JsonDataDictionaryAccessor:
-        """Return the JSON data accessor instance."""
-        logger.info("Initializing JSON data accessor")
-        accessor = JsonDataDictionaryAccessor()
-
-        if not accessor.is_available():
-            raise ValueError(
-                "IMAS JSON data is not available. This could be due to:\\n"
-                "1. Data dictionary not properly installed\\n"
-                "2. JSON files not built during installation\\n"
-                "Please reinstall the package or run the build process."
-            )
-
-        return accessor
+    def document_store(self) -> DocumentStore:
+        """Lazily initialize and cache the document store."""
+        store = DocumentStore(auto_load=False)  # Always start with auto_load=False
+        if self.ids_set:
+            # When ids_set is provided, use filtered initialization
+            store.load_ids_set(self.ids_set)
+        else:
+            # When no ids_set, load all documents
+            store.load_all_documents()
+        return store
 
     @cached_property
-    def lex_search(self):
-        """Return the lexicographic search instance."""
-        logger.info("Initializing lexicographic search")
-        return LexicographicSearch()
-
-    @cached_property
-    def search_handler(self) -> SearchHandler:
-        """Return the search handler instance."""
-        logger.info("Initializing search handler with composition pattern")
-        return SearchHandler(
-            json_accessor=self.data_accessor, lex_search=self.lex_search
-        )
-
-    @cached_property
-    def search_router(self) -> SearchRouter:
-        """Return the search router instance."""
-        return SearchRouter(
-            data_accessor=self.data_accessor, lexicographic_search=self.lex_search
-        )
+    def semantic_search(self) -> SemanticSearch:
+        """Lazily initialize and cache the semantic search with document store."""
+        # Ensure we have a valid config (should be set in __post_init__)
+        config = self.search_config or SemanticSearchConfig()
+        return SemanticSearch(config=config, document_store=self.document_store)
 
     def _register_tools(self):
         """Register the 5 focused AI MCP tools with the server."""
-        # Register the core tools - consolidated to 5 focused tools
         self.mcp.tool(self.search_imas)
         self.mcp.tool(self.explain_concept)
         self.mcp.tool(self.get_overview)
@@ -148,50 +133,35 @@ class Server:
             Fuzzy search: search_imas("temperatur~ densty~")
         """
         try:
-            # Create search request
-            request = SearchRequest(
-                query=query, ids_name=ids_name, max_results=max_results
+            # Use semantic search for enhanced physics-aware searching
+            search_results = self.semantic_search.search(
+                query=query if isinstance(query, str) else " ".join(query),
+                top_k=max_results,
+                filter_ids=[ids_name] if ids_name else None,
             )
 
-            # Auto-detect query features and route to appropriate handler
-            if isinstance(query, list):
-                # Handle bulk search
-                response = self.search_handler.handle_bulk_search(request)
-            else:
-                # Analyze query features for single query
-                features = self.search_router.detect_query_features(query)
+            # Convert semantic search results to standard format
+            results_dict = []
+            for result in search_results:
+                results_dict.append(
+                    {
+                        "path": result.document.metadata.path_name,
+                        "score": result.similarity_score,
+                        "documentation": result.document.documentation,
+                        "units": result.document.units.unit_str
+                        if result.document.units
+                        else "",
+                        "ids_name": result.document.metadata.ids_name,
+                        "highlights": "",  # Can be enhanced later if needed
+                    }
+                )
 
-                # Route to appropriate search strategy
-                if features.is_exact_path:
-                    response = self.search_handler.handle_exact_path_search(request)
-                elif features.has_boolean:
-                    response = self.search_handler.handle_boolean_search(request)
-                elif features.has_wildcards:
-                    response = self.search_handler.handle_wildcard_search(request)
-                elif features.has_field_prefix:
-                    response = self.search_handler.handle_field_search(request)
-                else:
-                    response = self.search_handler.handle_search(request)
-
-            # Convert SearchResult objects to dictionaries for JSON serialization
-            results_dict = [
-                {
-                    "path": result.path,
-                    "score": result.score,
-                    "documentation": result.documentation,
-                    "units": result.units,
-                    "ids_name": result.ids_name,
-                    "highlights": getattr(result, "highlights", ""),
-                }
-                for result in response.results
-            ]
-
-            # Build response with AI enhancement
+            # Build response with enhanced semantic context
             result = {
                 "results": results_dict,
-                "total_results": response.total_results,
-                "search_strategy": response.search_strategy,
-                "suggestions": response.suggestions or [],
+                "total_results": len(results_dict),
+                "search_strategy": "semantic_search",
+                "suggestions": [],
             }
 
             # Try physics search enhancement
@@ -347,23 +317,26 @@ Format as JSON with 'explanation', 'physics_significance', 'imas_applications', 
             Dictionary with overview information, analytics, and optional domain-specific data
         """
         try:
-            # Get basic statistics from data accessor
+            # Get basic statistics from document store
+            available_ids = self.document_store.get_available_ids()
+            all_documents = self.document_store.get_all_documents()
+            total_documents = len(all_documents)
+
             overview_data = {
-                "total_documents": len(self.lex_search),
-                "available_ids": list(self.data_accessor.get_available_ids()),
-                "index_name": self.lex_search.indexname,
+                "total_documents": total_documents,
+                "available_ids": available_ids,
+                "index_name": "semantic_search_index",
             }
 
             # Add IDS statistics
             ids_stats = {}
             for ids_name in overview_data["available_ids"]:
                 try:
-                    ids_data = self.data_accessor.get_ids_detailed_data(ids_name)
-                    if ids_data:
+                    ids_documents = self.document_store.get_documents_by_ids(ids_name)
+                    if ids_documents:
                         ids_stats[ids_name] = {
-                            "path_count": len(ids_data.get("paths", {})),
-                            "description": ids_data.get("description", "")[:100]
-                            + "...",
+                            "path_count": len(ids_documents),
+                            "description": f"IDS containing {len(ids_documents)} data paths",
                         }
                 except Exception:
                     ids_stats[ids_name] = {
@@ -434,7 +407,7 @@ Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_t
         """
         try:
             # Validate IDS exists
-            available_ids = self.data_accessor.get_available_ids()
+            available_ids = self.document_store.get_available_ids()
             if ids_name not in available_ids:
                 return {
                     "ids_name": ids_name,
@@ -443,38 +416,29 @@ Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_t
                     "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
                 }
 
-            # Get detailed IDS data
-            ids_data = self.data_accessor.get_ids_detailed_data(ids_name)
-            ids_paths = self.data_accessor.get_ids_paths(ids_name)
+            # Get detailed IDS data from document store
+            ids_documents = self.document_store.get_documents_by_ids(ids_name)
 
-            # Get graph statistics if available
-            try:
-                graph_stats = self.data_accessor.get_ids_graph_stats(ids_name)
-            except Exception:
-                graph_stats = {"error": "Graph statistics not available"}
+            # Build structural analysis from documents
+            paths = [doc.metadata.path_name for doc in ids_documents]
 
-            # Build structural analysis
             result = {
                 "ids_name": ids_name,
-                "total_paths": len(ids_paths),
-                "description": ids_data.get("description", ""),
+                "total_paths": len(paths),
+                "description": f"IDS '{ids_name}' containing {len(paths)} data paths",
                 "structure": {
                     "root_level_paths": len(
-                        [p for p in ids_paths.keys() if "/" not in p.strip("/")]
+                        [p for p in paths if "/" not in p.strip("/")]
                     ),
-                    "max_depth": max(len(p.split("/")) for p in ids_paths.keys())
-                    if ids_paths
-                    else 0,
-                    "graph_statistics": graph_stats,
+                    "max_depth": max(len(p.split("/")) for p in paths) if paths else 0,
+                    "document_count": len(ids_documents),
                 },
-                "sample_paths": list(ids_paths.keys())[
-                    :10
-                ],  # First 10 paths as examples
+                "sample_paths": paths[:10],  # First 10 paths as examples
             }
 
             # Analyze path patterns
             path_patterns = {}
-            for path in ids_paths.keys():
+            for path in paths:
                 segments = path.split("/")
                 if len(segments) > 1:
                     root = segments[0]
@@ -491,7 +455,7 @@ Total paths: {result["total_paths"]}
 Max depth: {result["structure"]["max_depth"]}
 Top path patterns: {list(result["path_patterns"].keys())[:5]}
 Sample paths: {result["sample_paths"][:5]}
-Description: {result["description"][:200]}
+Description: {result["description"]}
 
 Provide structural analysis including:
 1. Physics domain and measurement purpose
@@ -552,7 +516,7 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                 specific_path = None
 
             # Validate IDS exists
-            available_ids = self.data_accessor.get_available_ids()
+            available_ids = self.document_store.get_available_ids()
             if ids_name not in available_ids:
                 return {
                     "path": path,
@@ -561,43 +525,48 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                     "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
                 }
 
-            # Get relationship data
+            # Get relationship data through semantic search
             try:
-                structural_insights = self.data_accessor.get_structural_insights()
+                # Use semantic search to find related concepts
+                if specific_path:
+                    search_query = f"{ids_name} {specific_path} relationships"
+                else:
+                    search_query = f"{ids_name} relationships physics concepts"
+
+                search_results = self.semantic_search.search(
+                    query=search_query,
+                    top_k=20,  # Get more results for relationship analysis
+                )
             except Exception as e:
                 return {
                     "path": path,
-                    "error": f"Failed to load relationship data: {e}",
+                    "error": f"Failed to search relationships: {e}",
                     "relationship_type": relationship_type,
                     "max_depth": max_depth,
                 }
 
-            # Find related paths through search
-            search_results = []
-            if specific_path:
-                # Search for paths related to the specific path
-                path_parts = specific_path.split("/")
-                search_terms = (
-                    path_parts[-2:] if len(path_parts) > 1 else path_parts
-                )  # Last 2 segments
-                for term in search_terms:
-                    if len(term) > 2:  # Skip very short terms
-                        results = await self.search_imas(term, max_results=5)
-                        search_results.extend(results["results"])
-            else:
-                # Search for paths in the same IDS
-                results = await self.search_imas(f"ids_name:{ids_name}", max_results=10)
-                search_results = results["results"]
-
-            # Remove duplicates and filter
+            # Process search results for relationships
+            relationships = []
             seen_paths = set()
-            unique_results = []
+
             for result in search_results:
-                if result["path"] not in seen_paths and result["path"] != path:
-                    seen_paths.add(result["path"])
-                    unique_results.append(result)
-                if len(unique_results) >= 20:  # Limit to reasonable number
-                    break
+                result_path = result.document.metadata.path_name
+                if result_path not in seen_paths and result_path != path:
+                    seen_paths.add(result_path)
+                    relationships.append(
+                        {
+                            "path": result_path,
+                            "score": result.similarity_score,
+                            "relationship_type": "semantic_similarity",
+                            "ids_name": result.document.metadata.ids_name,
+                            "documentation": result.document.documentation[:200] + "..."
+                            if len(result.document.documentation) > 200
+                            else result.document.documentation,
+                        }
+                    )
+
+                    if len(relationships) >= max_depth * 5:  # Limit results
+                        break
 
             # Build relationship analysis
             result = {
@@ -605,20 +574,16 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                 "relationship_type": relationship_type,
                 "max_depth": max_depth,
                 "ids_name": ids_name,
-                "related_paths": unique_results[:10],
-                "relationship_count": len(unique_results),
+                "related_paths": relationships[:10],
+                "relationship_count": len(relationships),
                 "analysis": {
                     "same_ids_paths": len(
-                        [r for r in unique_results if r["path"].startswith(ids_name)]
+                        [r for r in relationships if r["path"].startswith(ids_name)]
                     ),
                     "cross_ids_paths": len(
-                        [
-                            r
-                            for r in unique_results
-                            if not r["path"].startswith(ids_name)
-                        ]
+                        [r for r in relationships if not r["path"].startswith(ids_name)]
                     ),
-                    "structural_insights": structural_insights.get(ids_name, {}),
+                    "semantic_search_relationships": len(relationships),
                 },
             }
 
@@ -644,10 +609,10 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
             if ctx:
                 result["ai_prompt"] = f"""Relationship Analysis for: {path}
 IDS: {ids_name}
-Related paths found: {len(unique_results)}
+Related paths found: {len(relationships)}
 Same IDS: {result["analysis"]["same_ids_paths"]}
 Cross IDS: {result["analysis"]["cross_ids_paths"]}
-Top related paths: {[r["path"] for r in unique_results[:5]]}
+Top related paths: {[r["path"] for r in relationships[:5]]}
 
 Provide relationship analysis including:
 1. Physics-based connections and measurement dependencies

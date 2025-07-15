@@ -29,10 +29,9 @@ def load_unit_contexts() -> Dict[str, str]:
         yaml.YAMLError: If YAML parsing fails
     """
     try:
-        # Use importlib.resources to locate the definitions
-        with resources.path("imas_mcp.definitions", "unit_contexts.yaml") as yaml_path:
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+        # Use importlib.resources with the new files() API
+        yaml_file = resources.files("imas_mcp.definitions") / "unit_contexts.yaml"
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
 
         unit_contexts = data.get("unit_contexts", {})
 
@@ -55,9 +54,8 @@ def load_unit_categories() -> Dict[str, List[str]]:
         Dictionary mapping category names to lists of units
     """
     try:
-        with resources.path("imas_mcp.definitions", "unit_contexts.yaml") as yaml_path:
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+        yaml_file = resources.files("imas_mcp.definitions") / "unit_contexts.yaml"
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
 
         return data.get("unit_categories", {})
 
@@ -74,9 +72,8 @@ def load_physics_domain_hints() -> Dict[str, List[str]]:
         Dictionary mapping unit categories to likely physics domains
     """
     try:
-        with resources.path("imas_mcp.definitions", "unit_contexts.yaml") as yaml_path:
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+        yaml_file = resources.files("imas_mcp.definitions") / "unit_contexts.yaml"
+        data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
 
         return data.get("physics_domain_hints", {})
 
