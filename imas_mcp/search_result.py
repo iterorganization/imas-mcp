@@ -5,20 +5,14 @@ This module contains Pydantic models that represent documents that can be indexe
 in the search engine and the search results returned from the search engine.
 """
 
-from typing import Any, Dict, Optional, TYPE_CHECKING
-import importlib.util
+from typing import Any, Dict, Optional
 
 import pint
 import pydantic
 from pydantic import ConfigDict
+import whoosh.searching
 
 from imas_mcp.units import unit_registry
-
-# Conditional import for whoosh (legacy dependency)
-if TYPE_CHECKING or importlib.util.find_spec("whoosh") is not None:
-    import whoosh.searching
-else:
-    whoosh = None
 
 
 # Base model for document validation
@@ -37,9 +31,22 @@ class DataDictionaryEntry(IndexableDocument):
     path: str
     documentation: str
     units: str = ""
-
     ids_name: Optional[str] = None
-    path_segments: Optional[str] = None
+
+    # Extended fields from JSON data
+    coordinates: Optional[str] = None
+    lifecycle: Optional[str] = None
+    data_type: Optional[str] = None
+    physics_context: Optional[str] = None
+    related_paths: Optional[str] = None
+    usage_examples: Optional[str] = None
+    validation_rules: Optional[str] = None
+    relationships: Optional[str] = None
+    introduced_after: Optional[str] = None
+    coordinate1: Optional[str] = None
+    coordinate2: Optional[str] = None
+    timebase: Optional[str] = None
+    type: Optional[str] = None
 
     @pydantic.field_validator("units", mode="after")
     @classmethod
@@ -69,8 +76,6 @@ class DataDictionaryEntry(IndexableDocument):
         """Update unset fields."""
         if self.ids_name is None:
             self.ids_name = self.path.split("/")[0]
-        if self.path_segments is None:
-            self.path_segments = " ".join(self.path.split("/"))
         return self
 
 
@@ -84,16 +89,31 @@ class SearchResult(pydantic.BaseModel):
     ids_name: str
     highlights: str = ""
 
+    @property
+    def relevance(self) -> float:
+        """Alias for score to maintain compatibility."""
+        return self.score
+
+    # Extended fields from JSON data
+    coordinates: str = ""
+    lifecycle: str = ""
+    data_type: str = ""
+    physics_context: str = ""
+    related_paths: str = ""
+    usage_examples: str = ""
+    validation_rules: str = ""
+    relationships: str = ""
+    introduced_after: str = ""
+    coordinate1: str = ""
+    coordinate2: str = ""
+    timebase: str = ""
+    type: str = ""
+
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     @classmethod
     def from_hit(cls, hit: "whoosh.searching.Hit") -> "SearchResult":
         """Create a SearchResult instance from a Whoosh Hit object."""
-        if importlib.util.find_spec("whoosh") is None:
-            raise ImportError(
-                "Whoosh not available - cannot create SearchResult from Hit"
-            )
-
         return cls(
             path=hit["path"],
             score=hit.score if hit.score is not None else 0.0,
@@ -101,6 +121,20 @@ class SearchResult(pydantic.BaseModel):
             units=hit.get("units", ""),
             ids_name=hit.get("ids_name", ""),
             highlights=hit.highlights("documentation", ""),
+            # Extended fields
+            coordinates=hit.get("coordinates", ""),
+            lifecycle=hit.get("lifecycle", ""),
+            data_type=hit.get("data_type", ""),
+            physics_context=hit.get("physics_context", ""),
+            related_paths=hit.get("related_paths", ""),
+            usage_examples=hit.get("usage_examples", ""),
+            validation_rules=hit.get("validation_rules", ""),
+            relationships=hit.get("relationships", ""),
+            introduced_after=hit.get("introduced_after", ""),
+            coordinate1=hit.get("coordinate1", ""),
+            coordinate2=hit.get("coordinate2", ""),
+            timebase=hit.get("timebase", ""),
+            type=hit.get("type", ""),
         )
 
     @classmethod
@@ -113,6 +147,20 @@ class SearchResult(pydantic.BaseModel):
             units=document.get("units", ""),
             ids_name=document.get("ids_name", ""),
             highlights="",  # No highlights for direct document retrieval
+            # Extended fields
+            coordinates=document.get("coordinates", ""),
+            lifecycle=document.get("lifecycle", ""),
+            data_type=document.get("data_type", ""),
+            physics_context=document.get("physics_context", ""),
+            related_paths=document.get("related_paths", ""),
+            usage_examples=document.get("usage_examples", ""),
+            validation_rules=document.get("validation_rules", ""),
+            relationships=document.get("relationships", ""),
+            introduced_after=document.get("introduced_after", ""),
+            coordinate1=document.get("coordinate1", ""),
+            coordinate2=document.get("coordinate2", ""),
+            timebase=document.get("timebase", ""),
+            type=document.get("type", ""),
         )
 
     def __str__(self) -> str:
@@ -129,6 +177,34 @@ class SearchResult(pydantic.BaseModel):
             f"  Units: {self.units if self.units else 'N/A'}",
             f"  Documentation: {doc_preview}",
         ]
+
+        # Add extended fields if they contain data
+        if self.lifecycle:
+            lines.append(f"  Lifecycle: {self.lifecycle}")
+        if self.data_type:
+            lines.append(f"  Data Type: {self.data_type}")
+        if self.coordinates:
+            lines.append(f"  Coordinates: {self.coordinates}")
+        if self.physics_context:
+            lines.append(f"  Physics Context: {self.physics_context}")
+        if self.related_paths:
+            related_preview = (
+                self.related_paths[:50] + "..."
+                if len(self.related_paths) > 50
+                else self.related_paths
+            )
+            lines.append(f"  Related Paths: {related_preview}")
+        if self.coordinate1:
+            lines.append(f"  Coordinate1: {self.coordinate1}")
+        if self.coordinate2:
+            lines.append(f"  Coordinate2: {self.coordinate2}")
+        if self.timebase:
+            lines.append(f"  Timebase: {self.timebase}")
+        if self.type:
+            lines.append(f"  Type: {self.type}")
+        if self.introduced_after:
+            lines.append(f"  Introduced After: {self.introduced_after}")
+
         if self.highlights:  # Check if highlights string is not empty
             lines.append(f"  Highlights: {self.highlights}")
-        return "\\n".join(lines)  # Corrected newline character
+        return "\n".join(lines)
