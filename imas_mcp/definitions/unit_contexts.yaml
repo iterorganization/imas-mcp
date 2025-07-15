@@ -1,0 +1,199 @@
+# Unit Context Definitions for IMAS Data Dictionary
+#
+# This file provides semantic context mappings for physical units used in the IMAS
+# data dictionary. These contexts help sentence transformers better understand the
+# physical meaning of measurements for improved semantic search results.
+#
+# Structure:
+#   unit_string: "semantic_description physical_quantity_type"
+#
+# Design principles:
+# - Provide clear, concise semantic descriptions
+# - Include primary physical quantity types
+# - Use terms that help distinguish between similar measurements
+# - Focus on the most common and important units first
+
+# Basic SI Units and Common Derived Units
+unit_contexts:
+  # Length and Position
+  "m": "length position distance spatial_coordinate"
+  "m^2": "area surface cross_section"
+  "m^3": "volume enclosed_space"
+  "m^-1": "inverse_length wavenumber spatial_frequency"
+  "m^-2": "inverse_area density_per_area"
+  "m^-3": "number_density particle_concentration inverse_volume"
+
+  # Time and Frequency
+  "s": "time duration temporal_coordinate"
+  "s^-1": "frequency rate inverse_time"
+  "s^-2": "acceleration time_derivative"
+  "Hz": "frequency oscillation wave_frequency"
+
+  # Velocity and Transport
+  "m.s^-1": "velocity speed flow_rate"
+  "m^2.s^-1": "diffusivity transport_coefficient"
+  "m^-2.s^-1": "flux particle_flux surface_flux"
+  "m^-3.s^-1": "source_rate volumetric_rate production_rate"
+
+  # Energy and Power
+  "eV": "energy particle_energy electron_volt"
+  "J": "energy thermal_energy mechanical_energy"
+  "W": "power energy_rate heating_power"
+  "W.m^-3": "power_density volumetric_heating energy_deposition"
+  "W.m^-2": "power_flux energy_flux heat_flux"
+  "J.m^-3": "energy_density volumetric_energy"
+
+  # Electromagnetic Fields
+  "T": "magnetic_field_strength magnetic_flux_density"
+  "Wb": "magnetic_flux total_magnetic_flux"
+  "T.m": "magnetic_dipole_moment poloidal_flux"
+  "T^2": "magnetic_field_squared field_magnitude"
+  "T^-2": "inverse_magnetic_field_squared"
+  "T^2.m^2.Wb^-1": "magnetic_field_geometry flux_geometry"
+  "Wb.m^-1": "magnetic_flux_per_length"
+  "m^2.Wb^-1": "inverse_flux_area"
+  "m^3.Wb^-1": "inverse_flux_volume"
+
+  # Electric Fields and Current
+  "A": "electric_current plasma_current"
+  "V": "electric_potential voltage"
+  "V.m^-1": "electric_field_strength"
+  "A.m^-2": "current_density"
+  "F": "capacitance"
+  "H": "inductance"
+  "H.m^-1": "inductance_per_length"
+  "ohm": "electrical_resistance"
+  "ohm.m": "resistivity"
+  "ohm^-1.m^-1": "electrical_conductivity"
+  "eV.V^-1": "energy_per_voltage"
+  "V.W^-1": "voltage_per_power"
+
+  # Pressure and Force
+  "Pa": "pressure plasma_pressure"
+  "N": "force mechanical_force"
+  "N.m": "torque moment"
+  "N.m^-2": "pressure stress"
+  "Pa.m^3.s^-1": "pressure_flow pumping_speed"
+  "Pa.Wb^-1": "pressure_per_flux"
+
+  # Mass and Density
+  "u": "atomic_mass_unit particle_mass"
+  "kg": "mass"
+  "kg.m^-3": "mass_density material_density"
+  "kg.m^-1.s^-1": "dynamic_viscosity"
+  "kg.m^-1.s^-2": "pressure stress_tensor"
+  "kg.m.s^-1": "momentum"
+  "kg.m^2.s^-2": "energy kinetic_energy"
+  "kg.s^-1": "mass_flow_rate"
+
+  # Temperature
+  "K": "temperature thermal_temperature"
+
+  # Angular Measurements
+  "rad": "angle toroidal_angle poloidal_angle"
+  "rad.s^-1": "angular_velocity rotation_frequency"
+  "rad.T^-1.m^-1": "gyroradius_parameter"
+  "m^-2.rad^-1": "density_per_angle"
+  "sr": "solid_angle"
+  "sr.m": "solid_angle_distance"
+  "m^2.sr": "area_solid_angle"
+  "m^-2.s^-1.sr^-1": "flux_per_solid_angle"
+  "m^-2.s^-1.sr^-1.m^-1": "spectral_flux_density"
+  "m^-3.sr^-1": "density_per_solid_angle"
+  "m^-3.sr^-1.s^-1": "source_rate_per_solid_angle"
+  "s^-1.m^-2.sr^-1": "rate_per_area_solid_angle"
+  "s^-1.m^-3": "volumetric_rate"
+  "W.m^-2.sr^-1": "radiance power_per_solid_angle"
+
+  # Dimensionless and Special Units
+  "e": "elementary_charge charge_state"
+  "1": "dimensionless ratio fraction"
+  "-": "dimensionless normalized unitless"
+  "mixed": "mixed_units composite_quantity"
+  "m^dimension": "dimensional_scaling spatial_scaling"
+  "dB": "decibel logarithmic_scale"
+  "UTC": "coordinated_universal_time timestamp"
+  "as_parent": "inherits_parent_units same_as_parent"
+
+  # Dynamic Units (Process-Dependent)
+  "units given by process(i1)/results_units": "process_dependent_units variable_units"
+  "units given by process(:)/results_units": "process_dependent_units variable_units"
+  "units given by coordinate_system(:)/coordinate(:)/units": "coordinate_dependent_units spatial_units"
+
+# Unit Categories for Grouped Analysis
+unit_categories:
+  electromagnetic:
+    - "T"
+    - "Wb"
+    - "A"
+    - "V"
+    - "V.m^-1"
+    - "A.m^-2"
+    - "F"
+    - "H"
+    - "ohm"
+    - "ohm.m"
+    - "ohm^-1.m^-1"
+
+  spatial:
+    - "m"
+    - "m^2"
+    - "m^3"
+    - "m^-1"
+    - "m^-2"
+    - "m^-3"
+    - "rad"
+    - "sr"
+
+  temporal:
+    - "s"
+    - "s^-1"
+    - "s^-2"
+    - "Hz"
+    - "rad.s^-1"
+
+  energy_power:
+    - "eV"
+    - "J"
+    - "W"
+    - "W.m^-3"
+    - "W.m^-2"
+    - "J.m^-3"
+
+  transport:
+    - "m.s^-1"
+    - "m^2.s^-1"
+    - "m^-2.s^-1"
+    - "m^-3.s^-1"
+
+  pressure_force:
+    - "Pa"
+    - "N"
+    - "N.m"
+    - "N.m^-2"
+
+  mass_density:
+    - "kg"
+    - "kg.m^-3"
+    - "u"
+    - "m^-3"
+
+# Physics Domain Hints
+# Maps unit categories to likely physics domains for enhanced context
+physics_domain_hints:
+  electromagnetic: ["magnetics", "current_drive", "heating"]
+  spatial: ["equilibrium", "structure", "transport"]
+  temporal: ["operational", "control", "data_management"]
+  energy_power: ["heating", "transport", "particle_diagnostics"]
+  transport: ["transport", "edge_physics", "turbulence"]
+  pressure_force: ["mhd", "mechanical_diagnostics", "wall"]
+  mass_density: ["particle_diagnostics", "transport", "wall"]
+
+# Metadata
+metadata:
+  version: "1.0"
+  description: "Unit context definitions for IMAS Data Dictionary semantic search"
+  created_date: "2025-07-15"
+  total_units_covered: 80
+  source: "Generated from IMAS DD analysis with AI assistance"
+  usage: "Loaded by DocumentStore for enhanced semantic search embedding text"

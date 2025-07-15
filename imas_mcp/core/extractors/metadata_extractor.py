@@ -4,6 +4,7 @@ import xml.etree.ElementTree as ET
 from typing import Any, Dict
 
 from .base import BaseExtractor
+from ..xml_utils import DocumentationBuilder
 
 
 class MetadataExtractor(BaseExtractor):
@@ -13,10 +14,22 @@ class MetadataExtractor(BaseExtractor):
         """Extract basic metadata from element."""
         metadata = {}
 
-        # Extract documentation
-        doc_text = elem.get("documentation") or elem.text or ""
-        if doc_text:
-            metadata["documentation"] = doc_text.strip()
+        # Extract hierarchical documentation with parent context
+        documentation_parts = DocumentationBuilder.collect_documentation_hierarchy(
+            elem, self.context.ids_elem, self.context.ids_name, self.context.parent_map
+        )
+
+        if documentation_parts:
+            # Build LLM-optimized hierarchical documentation
+            hierarchical_doc = DocumentationBuilder.build_hierarchical_documentation(
+                documentation_parts
+            )
+            metadata["documentation"] = hierarchical_doc
+        else:
+            # Fallback to direct documentation
+            doc_text = elem.get("documentation") or elem.text or ""
+            if doc_text:
+                metadata["documentation"] = doc_text.strip()
 
         # Extract units
         units = elem.get("units", "")
