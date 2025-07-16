@@ -39,14 +39,14 @@ def setup_extraction_environment(
     """
     # Default to standard project structure
     if json_data_dir is None:
-        # Look for imas_mcp/resources/json_data/detailed relative to current working directory
-        json_data_dir = Path("imas_mcp/resources/json_data/detailed")
+        # Look for imas_mcp/resources/schemas/detailed relative to current working directory
+        json_data_dir = Path("imas_mcp/resources/schemas/detailed")
         if not json_data_dir.exists():
             # Try relative to this file
             current_file = Path(__file__).parent
             project_root = current_file.parent.parent  # Go up to project root
             json_data_dir = (
-                project_root / "imas_mcp" / "resources" / "json_data" / "detailed"
+                project_root / "imas_mcp" / "resources" / "schemas" / "detailed"
             )
 
     if storage_dir is None:
@@ -74,11 +74,7 @@ def setup_extraction_environment(
             current_file = Path(__file__).parent
             project_root = current_file.parent.parent
             catalog_file = (
-                project_root
-                / "imas_mcp"
-                / "resources"
-                / "json_data"
-                / "ids_catalog.json"
+                project_root / "imas_mcp" / "resources" / "schemas" / "ids_catalog.json"
             )
 
     catalog_file = Path(catalog_file)

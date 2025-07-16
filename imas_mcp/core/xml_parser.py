@@ -21,6 +21,9 @@ from .data_model import (
     TransformationOutputs,
     UnitFamily,
     UsageExample,
+    IdentifierCatalog,
+    IdentifierCatalogSchema,
+    IdentifierPath,
 )
 from .physics_categorization import physics_categorizer
 from .extractors import (
@@ -33,6 +36,7 @@ from .extractors import (
     SemanticExtractor,
     RelationshipExtractor,
     CoordinateExtractor,
+    IdentifierExtractor,
 )
 from .progress_monitor import create_progress_monitor
 
@@ -129,10 +133,14 @@ class DataDictionaryTransformer:
         detailed_paths = self._generate_detailed_files(ids_data)
         relationships_path = self._generate_relationships(ids_data)
 
+        # Generate identifier catalog
+        identifier_catalog_path = self._generate_identifier_catalog(ids_data)
+
         return TransformationOutputs(
             catalog=catalog_path,
             detailed=detailed_paths,
             relationships=relationships_path,
+            identifier_catalog=identifier_catalog_path,
         )
 
     def _extract_ids_data(self, root: ET.Element) -> Dict[str, Dict[str, Any]]:
@@ -248,6 +256,7 @@ class DataDictionaryTransformer:
             ValidationExtractor(context),
             PathExtractor(context),
             RelationshipExtractor(context),
+            IdentifierExtractor(context),
         ]
 
         # Get cached named elements instead of findall()
@@ -628,3 +637,208 @@ class DataDictionaryTransformer:
             f.write(relationships.model_dump_json(indent=2))
 
         return rel_path
+
+    def _generate_identifier_catalog(self, ids_data: Dict[str, Dict[str, Any]]) -> Path:
+        """Generate identifier catalog from extracted IDS data."""
+        import math
+
+        identifier_paths = []
+        schema_groups = {}
+
+        # Extract all paths with identifier schemas
+        for ids_name, data in ids_data.items():
+            paths = data.get("paths", {})
+            for path, path_data in paths.items():
+                identifier_schema = path_data.get("identifier_schema")
+                if identifier_schema and identifier_schema.get("options"):
+                    # Extract physics domain if available
+                    physics_domain = None
+                    if "physics_context" in path_data and path_data["physics_context"]:
+                        physics_domain = path_data["physics_context"].get("domain")
+
+                    identifier_path = IdentifierPath(
+                        path=path,
+                        ids_name=ids_name,
+                        schema_name=self._extract_schema_name(
+                            identifier_schema.get("schema_path", "")
+                        ),
+                        description=(path_data.get("documentation", "") or "")[
+                            :200
+                        ],  # First 200 chars
+                        option_count=len(identifier_schema.get("options", [])),
+                        physics_domain=physics_domain,
+                    )
+                    identifier_paths.append(identifier_path)
+
+                    # Group by schema path
+                    schema_path = identifier_schema.get("schema_path", "unknown")
+                    if schema_path not in schema_groups:
+                        schema_groups[schema_path] = []
+                    schema_groups[schema_path].append(
+                        (identifier_path, identifier_schema)
+                    )
+
+        # Build schemas
+        schemas = {}
+        for schema_path, path_schema_list in schema_groups.items():
+            if not path_schema_list:
+                continue
+
+            first_path, first_schema = path_schema_list[0]
+            schema_name = self._extract_schema_name(schema_path)
+
+            # Collect physics domains
+            physics_domains = list(
+                set(
+                    path.physics_domain
+                    for path, _ in path_schema_list
+                    if path.physics_domain
+                )
+            )
+
+            # Calculate branching complexity (entropy)
+            option_count = len(first_schema.get("options", []))
+            branching_complexity = math.log2(option_count) if option_count > 1 else 0.0
+
+            schema = IdentifierCatalogSchema(
+                schema_name=schema_name,
+                schema_path=schema_path,
+                description=first_schema.get("documentation", ""),
+                total_options=option_count,
+                options=first_schema.get("options", []),
+                usage_count=len(path_schema_list),
+                usage_paths=[path.path for path, _ in path_schema_list],
+                physics_domains=physics_domains,
+                branching_complexity=branching_complexity,
+            )
+            schemas[schema_name] = schema
+
+        # Build cross-references
+        cross_references = {}
+        for schema_name, schema in schemas.items():
+            related = []
+            for other_name, other_schema in schemas.items():
+                if other_name == schema_name:
+                    continue
+                # Check for physics domain overlap
+                if any(
+                    domain in other_schema.physics_domains
+                    for domain in schema.physics_domains
+                ):
+                    related.append(other_name)
+                # Check for name similarity
+                if any(
+                    word in other_name.lower() for word in schema_name.lower().split()
+                ):
+                    if other_name not in related:
+                        related.append(other_name)
+            cross_references[schema_name] = related
+
+        # Build physics mapping
+        physics_mapping = {}
+        for schema_name, schema in schemas.items():
+            for domain in schema.physics_domains:
+                if domain not in physics_mapping:
+                    physics_mapping[domain] = []
+                physics_mapping[domain].append(schema_name)
+
+        # Build branching analytics
+        total_enumeration_space = sum(s.total_options for s in schemas.values())
+        complexity_buckets = {
+            "simple": 0,
+            "moderate": 0,
+            "complex": 0,
+            "very_complex": 0,
+        }
+
+        for schema in schemas.values():
+            if schema.branching_complexity < 2:
+                complexity_buckets["simple"] += 1
+            elif schema.branching_complexity < 4:
+                complexity_buckets["moderate"] += 1
+            elif schema.branching_complexity < 6:
+                complexity_buckets["complex"] += 1
+            else:
+                complexity_buckets["very_complex"] += 1
+
+        branching_analytics = {
+            "total_schemas": len(schemas),
+            "total_paths": len(identifier_paths),
+            "complexity_distribution": complexity_buckets,
+            "most_complex_schemas": [
+                {
+                    "name": s.schema_name,
+                    "complexity": s.branching_complexity,
+                    "options": s.total_options,
+                }
+                for s in sorted(
+                    schemas.values(), key=lambda x: x.branching_complexity, reverse=True
+                )[:10]
+            ],
+            "most_used_schemas": [
+                {
+                    "name": s.schema_name,
+                    "usage_count": s.usage_count,
+                    "paths": len(s.usage_paths),
+                }
+                for s in sorted(
+                    schemas.values(), key=lambda x: x.usage_count, reverse=True
+                )[:10]
+            ],
+            "option_statistics": {
+                "min_options": min(s.total_options for s in schemas.values())
+                if schemas
+                else 0,
+                "max_options": max(s.total_options for s in schemas.values())
+                if schemas
+                else 0,
+                "avg_options": sum(s.total_options for s in schemas.values())
+                / len(schemas)
+                if schemas
+                else 0,
+                "total_enumeration_space": total_enumeration_space,
+            },
+        }
+
+        # Group paths by IDS
+        paths_by_ids = {}
+        for path in identifier_paths:
+            if path.ids_name not in paths_by_ids:
+                paths_by_ids[path.ids_name] = []
+            paths_by_ids[path.ids_name].append(path)
+
+        # Create catalog
+        metadata = CatalogMetadata(
+            version=self.dd_accessor.get_version().public
+            if self.dd_accessor
+            else "unknown",
+            total_ids=len(paths_by_ids),
+            total_leaf_nodes=len(identifier_paths),
+            total_relationships=sum(len(refs) for refs in cross_references.values()),
+        )
+
+        catalog = IdentifierCatalog(
+            metadata=metadata,
+            schemas=schemas,
+            paths_by_ids=paths_by_ids,
+            cross_references=cross_references,
+            physics_mapping=physics_mapping,
+            branching_analytics=branching_analytics,
+        )
+
+        # Save catalog
+        catalog_path = self.resolved_output_dir / "identifier_catalog.json"
+        with open(catalog_path, "w", encoding="utf-8") as f:
+            f.write(catalog.model_dump_json(indent=2))
+
+        return catalog_path
+
+    def _extract_schema_name(self, schema_path: str) -> str:
+        """Extract clean schema name from path."""
+        if not schema_path:
+            return "unknown"
+        from pathlib import Path
+
+        return (
+            Path(schema_path).stem.replace("_identifier", "").replace("_", " ").title()
+        )

@@ -68,13 +68,12 @@ class Server:
     @cached_property
     def document_store(self) -> DocumentStore:
         """Lazily initialize and cache the document store."""
-        store = DocumentStore(auto_load=False)  # Always start with auto_load=False
         if self.ids_set:
             # When ids_set is provided, use filtered initialization
-            store.load_ids_set(self.ids_set)
+            store = DocumentStore(ids_set=self.ids_set)
         else:
             # When no ids_set, load all documents
-            store.load_all_documents()
+            store = DocumentStore()
         return store
 
     @cached_property
@@ -85,12 +84,37 @@ class Server:
         return SemanticSearch(config=config, document_store=self.document_store)
 
     def _register_tools(self):
-        """Register the 5 focused AI MCP tools with the server."""
+        """Register the MCP tools with the server."""
         self.mcp.tool(self.search_imas)
         self.mcp.tool(self.explain_concept)
         self.mcp.tool(self.get_overview)
         self.mcp.tool(self.analyze_ids_structure)
         self.mcp.tool(self.explore_relationships)
+        self.mcp.tool(self.explore_identifiers)
+
+    def _extract_identifier_info(self, document) -> Dict[str, Any]:
+        """Extract identifier schema information from a document."""
+        identifier_schema = document.raw_data.get("identifier_schema")
+        if identifier_schema and isinstance(identifier_schema, dict):
+            options = identifier_schema.get("options", [])
+            return {
+                "has_identifier": True,
+                "schema_path": identifier_schema.get("schema_path", "unknown"),
+                "option_count": len(options),
+                "branching_logic": len(options) > 1,
+                "critical_node": len(options) > 5,
+                "sample_options": [
+                    {
+                        "name": opt.get("name", ""),
+                        "index": opt.get("index", 0),
+                        "description": opt.get("description", ""),
+                    }
+                    for opt in options[:3]
+                ]
+                if options
+                else [],
+            }
+        return {"has_identifier": False}
 
     @ai_enhancer(SEARCH_EXPERT, "Search analysis", temperature=0.3, max_tokens=500)
     async def search_imas(
@@ -143,18 +167,22 @@ class Server:
             # Convert semantic search results to standard format
             results_dict = []
             for result in search_results:
-                results_dict.append(
-                    {
-                        "path": result.document.metadata.path_name,
-                        "score": result.similarity_score,
-                        "documentation": result.document.documentation,
-                        "units": result.document.units.unit_str
-                        if result.document.units
-                        else "",
-                        "ids_name": result.document.metadata.ids_name,
-                        "highlights": "",  # Can be enhanced later if needed
-                    }
+                result_item = {
+                    "path": result.document.metadata.path_name,
+                    "score": result.similarity_score,
+                    "documentation": result.document.documentation,
+                    "units": result.document.units.unit_str
+                    if result.document.units
+                    else "",
+                    "ids_name": result.document.metadata.ids_name,
+                    "highlights": "",  # Can be enhanced later if needed
+                }
+
+                # Add identifier information if present - critical for branching logic
+                result_item["identifier"] = self._extract_identifier_info(
+                    result.document
                 )
+                results_dict.append(result_item)
 
             # Build response with enhanced semantic context
             result = {
@@ -254,13 +282,44 @@ class Server:
             except Exception:
                 pass  # Physics enhancement is optional
 
-            # Build base response
+            # Build base response with identifier awareness
+            identifier_info = []
+            for r in search_results["results"][:5]:
+                path_name = r["path"]
+                # Get the document to check for identifier schema
+                all_docs = self.document_store.get_all_documents()
+                matching_doc = next(
+                    (doc for doc in all_docs if doc.metadata.path_name == path_name),
+                    None,
+                )
+
+                if matching_doc:
+                    identifier_schema = matching_doc.raw_data.get("identifier_schema")
+                    if identifier_schema and isinstance(identifier_schema, dict):
+                        options = identifier_schema.get("options", [])
+                        identifier_info.append(
+                            {
+                                "path": path_name,
+                                "schema_type": identifier_schema.get(
+                                    "schema_path", "unknown"
+                                ),
+                                "branching_options": len(options),
+                                "is_critical_node": len(options) > 5,
+                            }
+                        )
+
             result = {
                 "concept": concept,
                 "detail_level": detail_level,
                 "related_paths": [r["path"] for r in search_results["results"][:5]],
                 "physics_context": physics_context,
                 "search_results_count": len(search_results["results"]),
+                "identifier_context": {
+                    "related_identifier_nodes": identifier_info,
+                    "branching_significance": "Some related paths have enumerated options that define data structure logic"
+                    if identifier_info
+                    else "No related identifier schemas found",
+                },
             }
 
             # AI enhancement if MCP context available - handled by decorator
@@ -328,23 +387,44 @@ Format as JSON with 'explanation', 'physics_significance', 'imas_applications', 
                 "index_name": "semantic_search_index",
             }
 
-            # Add IDS statistics
+            # Get identifier information directly from the document store
+            identifier_summary = self.document_store.get_identifier_branching_summary()
+
+            # Add IDS statistics using document store data
             ids_stats = {}
             for ids_name in overview_data["available_ids"]:
                 try:
                     ids_documents = self.document_store.get_documents_by_ids(ids_name)
                     if ids_documents:
+                        # Get identifier count for this IDS from the identifier summary
+                        ids_identifier_count = len(
+                            identifier_summary["by_ids"].get(ids_name, [])
+                        )
+
                         ids_stats[ids_name] = {
                             "path_count": len(ids_documents),
-                            "description": f"IDS containing {len(ids_documents)} data paths",
+                            "identifier_count": ids_identifier_count,
+                            "description": f"IDS containing {len(ids_documents)} data paths, {ids_identifier_count} with branching logic",
                         }
                 except Exception:
                     ids_stats[ids_name] = {
                         "path_count": 0,
+                        "identifier_count": 0,
                         "description": "Error loading",
                     }
 
             overview_data["ids_statistics"] = ids_stats
+            overview_data["identifier_summary"] = {
+                "total_identifiers": identifier_summary["total_identifier_paths"],
+                "total_schemas": identifier_summary["total_schemas"],
+                "enumeration_space": identifier_summary["total_enumeration_options"],
+                "identifier_coverage": f"{identifier_summary['total_identifier_paths'] / total_documents * 100:.1f}%"
+                if total_documents > 0
+                else "0%",
+                "significance": "These paths define critical branching logic in the data structure",
+                "complexity_metrics": identifier_summary["complexity_metrics"],
+                "by_physics_domain": identifier_summary["by_physics_domain"],
+            }
 
             # If specific question provided, search for relevant information
             if question:
@@ -380,9 +460,7 @@ Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_t
                 "error": str(e),
                 "overview": "Failed to generate overview",
                 "basic_info": {
-                    "total_documents": len(self.lex_search)
-                    if hasattr(self, "lex_search")
-                    else 0,
+                    "total_documents": len(self.document_store.get_all_documents()),
                     "status": "error",
                 },
             }
@@ -419,8 +497,38 @@ Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_t
             # Get detailed IDS data from document store
             ids_documents = self.document_store.get_documents_by_ids(ids_name)
 
-            # Build structural analysis from documents
+            # Build structural analysis from documents with identifier awareness
             paths = [doc.metadata.path_name for doc in ids_documents]
+
+            # Analyze identifier schemas in this IDS
+            identifier_nodes = []
+            for doc in ids_documents:
+                identifier_schema = doc.raw_data.get("identifier_schema")
+                if identifier_schema and isinstance(identifier_schema, dict):
+                    options = identifier_schema.get("options", [])
+                    identifier_nodes.append(
+                        {
+                            "path": doc.metadata.path_name,
+                            "schema_path": identifier_schema.get(
+                                "schema_path", "unknown"
+                            ),
+                            "option_count": len(options),
+                            "branching_significance": "CRITICAL"
+                            if len(options) > 5
+                            else "MODERATE"
+                            if len(options) > 1
+                            else "MINIMAL",
+                            "sample_options": [
+                                {
+                                    "name": opt.get("name", ""),
+                                    "index": opt.get("index", 0),
+                                }
+                                for opt in options[:3]
+                            ]
+                            if options
+                            else [],
+                        }
+                    )
 
             result = {
                 "ids_name": ids_name,
@@ -432,6 +540,14 @@ Format as JSON with 'overview', 'key_concepts', 'recommendations', 'navigation_t
                     ),
                     "max_depth": max(len(p.split("/")) for p in paths) if paths else 0,
                     "document_count": len(ids_documents),
+                },
+                "identifier_analysis": {
+                    "total_identifier_nodes": len(identifier_nodes),
+                    "branching_paths": identifier_nodes,
+                    "coverage": f"{len(identifier_nodes) / len(paths) * 100:.1f}%"
+                    if paths
+                    else "0%",
+                    "significance": "These nodes define critical data structure branches and enumeration logic",
                 },
                 "sample_paths": paths[:10],  # First 10 paths as examples
             }
@@ -545,30 +661,39 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                     "max_depth": max_depth,
                 }
 
-            # Process search results for relationships
+            # Process search results for relationships with identifier awareness
             relationships = []
             seen_paths = set()
+            identifier_relationships = []
 
             for result in search_results:
                 result_path = result.document.metadata.path_name
                 if result_path not in seen_paths and result_path != path:
                     seen_paths.add(result_path)
-                    relationships.append(
-                        {
-                            "path": result_path,
-                            "score": result.similarity_score,
-                            "relationship_type": "semantic_similarity",
-                            "ids_name": result.document.metadata.ids_name,
-                            "documentation": result.document.documentation[:200] + "..."
-                            if len(result.document.documentation) > 200
-                            else result.document.documentation,
-                        }
-                    )
+
+                    relationship_item = {
+                        "path": result_path,
+                        "score": result.similarity_score,
+                        "relationship_type": "semantic_similarity",
+                        "ids_name": result.document.metadata.ids_name,
+                        "documentation": result.document.documentation[:200] + "..."
+                        if len(result.document.documentation) > 200
+                        else result.document.documentation,
+                    }
+
+                    # Check for identifier information in related paths
+                    identifier_info = self._extract_identifier_info(result.document)
+                    relationship_item["identifier"] = identifier_info
+
+                    if identifier_info["has_identifier"]:
+                        identifier_relationships.append(relationship_item)
+
+                    relationships.append(relationship_item)
 
                     if len(relationships) >= max_depth * 5:  # Limit results
                         break
 
-            # Build relationship analysis
+            # Build relationship analysis with identifier awareness
             result = {
                 "path": path,
                 "relationship_type": relationship_type,
@@ -584,6 +709,16 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                         [r for r in relationships if not r["path"].startswith(ids_name)]
                     ),
                     "semantic_search_relationships": len(relationships),
+                    "identifier_related_paths": len(identifier_relationships),
+                },
+                "identifier_context": {
+                    "related_identifier_nodes": identifier_relationships[:5],
+                    "significance": f"Found {len(identifier_relationships)} related paths with branching logic"
+                    if identifier_relationships
+                    else "No related identifier schemas in nearby paths",
+                    "branching_implications": "These identifier nodes define critical data structure options"
+                    if identifier_relationships
+                    else None,
                 },
             }
 
@@ -637,6 +772,142 @@ Format as JSON with 'physics_connections', 'data_dependencies', 'workflow_patter
                     "Check path format (ids_name/path or just ids_name)",
                     "Verify IDS exists in data dictionary",
                     "Try search_imas() first to find valid paths",
+                ],
+            }
+
+    @ai_enhancer(
+        SEARCH_EXPERT, "Identifier exploration", temperature=0.3, max_tokens=800
+    )
+    async def explore_identifiers(
+        self,
+        query: Optional[str] = None,
+        scope: str = "all",
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Explore IMAS identifier schemas and branching logic.
+
+        Provides access to enumerated options and branching logic that define
+        critical decision points in the IMAS data structure.
+
+        Args:
+            query: Optional search query for specific identifier schemas or options
+            scope: Scope of exploration ("all", "schemas", "paths", "summary")
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with identifier schemas, paths, and branching analytics
+        """
+        try:
+            result = {}
+
+            if scope in ["all", "summary"]:
+                # Get overall identifier branching summary
+                summary = self.document_store.get_identifier_branching_summary()
+                result["summary"] = summary
+                result["overview"] = {
+                    "total_schemas": summary["total_schemas"],
+                    "total_paths": summary["total_identifier_paths"],
+                    "enumeration_space": summary["total_enumeration_options"],
+                    "significance": "Identifier schemas define critical branching logic and enumeration options in IMAS data structures",
+                }
+
+            if scope in ["all", "schemas"]:
+                # Get identifier schemas
+                if query:
+                    schemas = self.document_store.search_identifier_schemas(query)
+                else:
+                    schemas = self.document_store.get_identifier_schemas()
+
+                result["schemas"] = []
+                for schema_doc in schemas[:10]:  # Limit to 10 schemas
+                    schema_data = schema_doc.raw_data
+                    result["schemas"].append(
+                        {
+                            "name": schema_doc.metadata.path_name,
+                            "description": schema_data.get("description", "")[:200],
+                            "total_options": schema_data.get("total_options", 0),
+                            "complexity": schema_data.get("branching_complexity", 0),
+                            "usage_count": schema_data.get("usage_count", 0),
+                            "physics_domains": schema_data.get("physics_domains", []),
+                            "sample_options": schema_data.get("options", [])[
+                                :5
+                            ],  # First 5 options
+                            "usage_paths": schema_data.get("usage_paths", [])[
+                                :5
+                            ],  # First 5 usage paths
+                        }
+                    )
+
+            if scope in ["all", "paths"]:
+                # Get identifier paths
+                if query:
+                    # Search within identifier path documents
+                    search_results = await self.search_imas(
+                        f"identifier {query}", max_results=20
+                    )
+                    identifier_paths = [
+                        r
+                        for r in search_results["results"]
+                        if r.get("identifier", {}).get("has_identifier", False)
+                    ]
+                else:
+                    # Get all identifier paths using document store
+                    path_docs = self.document_store.get_identifier_paths()
+                    identifier_paths = []
+                    for doc in path_docs[:20]:  # Limit to 20 paths
+                        if doc.metadata.data_type == "identifier_path":
+                            identifier_paths.append(
+                                {
+                                    "path": doc.metadata.path_name,
+                                    "ids_name": doc.metadata.ids_name,
+                                    "description": doc.documentation[:200],
+                                    "schema_name": doc.raw_data.get("schema_name", ""),
+                                    "option_count": doc.raw_data.get("option_count", 0),
+                                    "physics_domain": doc.metadata.physics_domain,
+                                }
+                            )
+
+                result["identifier_paths"] = identifier_paths
+
+            # Add query-specific results if query provided
+            if query:
+                result["query"] = query
+                result["query_note"] = f"Results filtered for: {query}"
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                result["ai_prompt"] = f"""Identifier Exploration Request:
+Query: {query or "General exploration"}
+Scope: {scope}
+
+Summary: {result.get("summary", {})}
+Found schemas: {len(result.get("schemas", []))}
+Found paths: {len(result.get("identifier_paths", []))}
+
+Provide identifier analysis including:
+1. Significance of identifier branching logic in IMAS
+2. Key schemas and their enumeration options
+3. Physics domain implications of identifier choices
+4. Practical guidance for using identifier information
+5. Critical branching points for data structure navigation
+
+Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usage_guidance', 'critical_decisions' fields."""
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Identifier exploration failed: {e}")
+            return {
+                "query": query,
+                "scope": scope,
+                "error": str(e),
+                "explanation": "Failed to explore identifiers",
+                "suggestions": [
+                    "Try scope='summary' for overview",
+                    "Use scope='schemas' for schema details",
+                    "Use scope='paths' for identifier paths",
+                    "Add query to filter results",
                 ],
             }
 

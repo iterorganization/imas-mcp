@@ -190,6 +190,11 @@ uv run pytest
 uv run ruff check .
 uv run ruff format .
 
+# Build schema data structures from IMAS data dictionary
+uv run build-schemas
+
+# Build document store and semantic search embeddings
+uv run build-embeddings
 
 # Run the server locally
 uv run python -m imas_mcp --transport streamable-http --port 8000
@@ -197,6 +202,30 @@ uv run python -m imas_mcp --transport streamable-http --port 8000
 # Run with stdio transport for MCP development
 uv run python -m imas_mcp --transport stdio --auto-build
 ```
+
+### Build Scripts
+
+The project includes two separate build scripts for creating the required data structures:
+
+**`build-schemas`** - Creates schema data structures from IMAS XML data dictionary:
+
+- Transforms XML data into optimized JSON format
+- Creates catalog and relationship files
+- Use `--ids-filter "core_profiles equilibrium"` to build specific IDS
+- Use `--force` to rebuild even if files exist
+
+**`build-embeddings`** - Creates document store and semantic search embeddings:
+
+- Builds in-memory document store from JSON data
+- Generates sentence transformer embeddings for semantic search
+- Caches embeddings for fast loading
+- Use `--model-name "all-mpnet-base-v2"` for different models
+- Use `--force` to rebuild embeddings cache
+- Use `--no-normalize` to disable embedding normalization
+- Use `--half-precision` to reduce memory usage
+- Use `--similarity-threshold 0.1` to set similarity score thresholds
+
+**Note:** The build hook creates JSON data. Build embeddings separately using `build-embeddings` for better control and performance.
 
 ### Local Development MCP Configuration
 
@@ -222,7 +251,7 @@ uv run python -m imas_mcp --transport stdio --auto-build
 2. **Build Process**: The system parses the IMAS data dictionary and creates a comprehensive path index
 3. **Serialization**: The system stores indexes in organized subdirectories:
    - **Lexicographic index**: `imas_mcp/resources/index_data/` (Whoosh search index)
-   - **JSON data**: `imas_mcp/resources/json_data/` (LLM-optimized structured data)
+   - **JSON data**: `imas_mcp/resources/schemas/` (LLM-optimized structured data)
 4. **Import**: When importing the module, the pre-built index loads in ~1 second
 
 ## Optional Dependencies and Runtime Requirements

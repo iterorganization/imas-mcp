@@ -31,6 +31,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
+
         finally:
             # Restore original sys.path
             sys.path[:] = original_path
@@ -66,6 +67,8 @@ class CustomBuildHook(BuildHookInterface):
             )
 
         # Build JSON data structures for the AI-enhanced server
+        # Note: Document store and embeddings are now built separately using:
+        # `build-embeddings` command for better control and performance
         logger.info("Starting JSON data structure creation...")
         json_transformer = DataDictionaryTransformer(ids_set=ids_set)
         json_outputs = json_transformer.transform_complete()
