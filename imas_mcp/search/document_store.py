@@ -6,6 +6,7 @@ and sentence transformer search. Uses in-memory storage with SQLite3 for
 complex queries and full-text search.
 """
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -16,14 +17,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from ..core.unit_loader import (
-    load_unit_contexts,
+from imas_mcp.core.unit_loader import (
     get_unit_category,
-    get_unit_physics_domains,
-    load_unit_categories,
-    load_physics_domain_hints,
     get_unit_dimensionality,
     get_unit_name,
+    get_unit_physics_domains,
+    load_physics_domain_hints,
+    load_unit_categories,
+    load_unit_contexts,
 )
 
 logger = logging.getLogger(__name__)
@@ -262,7 +263,7 @@ class DocumentStore:
     """
 
     # Configuration
-    auto_load: bool = True  # Whether to automatically load all documents on init
+    ids_set: Optional[Set[str]] = None  # Specific IDS to load (for testing/performance)
 
     # Internal state
     _index: SearchIndex = field(default_factory=SearchIndex, init=False)
@@ -277,14 +278,16 @@ class DocumentStore:
     )
 
     def __post_init__(self) -> None:
-        """Initialize the document store."""
+        """Initialize the document store with on-demand loading."""
         # Use importlib.resources to locate JSON data
         self._data_dir = self._get_resources_path()
 
-        # Build cache in resources directory
-        self._sqlite_path = self._data_dir / ".imas_fts.db"
+        # Build cache in dedicated database directory with consistent naming
+        sqlite_dir = self._get_sqlite_dir()
+        sqlite_dir.mkdir(exist_ok=True)
+        self._sqlite_path = sqlite_dir / self._generate_db_filename()
 
-        # Load unit contexts from YAML file
+        # Load unit contexts from YAML file (these are small and always needed)
         self._unit_contexts = load_unit_contexts()
         self._unit_categories = load_unit_categories()
         self._physics_domain_hints = load_physics_domain_hints()
@@ -292,20 +295,51 @@ class DocumentStore:
             f"Loaded {len(self._unit_contexts)} unit context definitions with categories and domain hints"
         )
 
-        if self.auto_load:
-            self.load_all_documents()
+        # Initialize lazy loading state
+        self._loaded_ids: Set[str] = set()  # Track which IDS are loaded
+        self._available_ids: Optional[List[str]] = None  # Cache of available IDS
+        self._identifier_catalog_loaded = False  # Track identifier catalog loading
 
-    def load_ids_set(self, ids_set: set[str]) -> None:
-        """Initialize DocumentStore with specific IDS for faster loading."""
+        # Don't auto-load documents - use on-demand loading per IDS
+
+    def _ensure_ids_loaded(self, ids_names: List[str]) -> None:
+        """Ensure specific IDS are loaded on-demand."""
+        # Check which IDS need to be loaded
+        to_load = [
+            ids_name for ids_name in ids_names if ids_name not in self._loaded_ids
+        ]
+
+        if not to_load:
+            return  # All requested IDS already loaded
+
+        logger.info(f"Loading {len(to_load)} IDS on-demand: {to_load}")
+
+        # Load each missing IDS
+        for ids_name in to_load:
+            self._load_ids_documents(ids_name)
+            self._loaded_ids.add(ids_name)
+
+        # Load identifier catalog if not already loaded
+        if not self._identifier_catalog_loaded:
+            self._load_identifier_catalog_documents()
+            self._identifier_catalog_loaded = True
+
+        # Update the loaded flag if we have any documents
+        if self._index.total_documents > 0:
+            self._loaded = True
+
+    def _ensure_loaded(self) -> None:
+        """Ensure all available documents are loaded (fallback for full loading)."""
         if not self._loaded:
-            # Convert set to list for the load method
-            self.load_all_documents(ids_filter=list(ids_set))
+            logger.info("Loading all available IDS...")
+            available_ids = self._get_available_ids()
+            self._ensure_ids_loaded(available_ids)
 
     def _get_resources_path(self) -> Path:
         """Get the path to the resources directory using importlib.resources."""
         try:
             # Use the new files() API instead of deprecated path()
-            resources_dir = resources.files("imas_mcp.resources") / "json_data"
+            resources_dir = resources.files("imas_mcp.resources") / "schemas"
             # Convert Traversable to Path using str conversion
             return Path(str(resources_dir))
         except (ImportError, FileNotFoundError):
@@ -313,7 +347,30 @@ class DocumentStore:
             import imas_mcp
 
             package_path = Path(imas_mcp.__file__).parent
-            return package_path / "resources" / "json_data"
+            return package_path / "resources" / "schemas"
+
+    def _get_sqlite_dir(self) -> Path:
+        """Get the database directory for database files."""
+        try:
+            # Use resources directory for database files
+            database_dir = resources.files("imas_mcp.resources") / "database"
+            return Path(str(database_dir))
+        except (ImportError, FileNotFoundError):
+            # Fallback to package relative path
+            import imas_mcp
+
+            package_path = Path(imas_mcp.__file__).parent
+            return package_path / "resources" / "database"
+
+    def _generate_db_filename(self) -> str:
+        """Generate consistent database filename based on configuration."""
+        # Create hash from ids_set for consistent naming
+        if self.ids_set:
+            ids_str = "_".join(sorted(self.ids_set))
+            ids_hash = hashlib.md5(ids_str.encode()).hexdigest()[:8]
+            return f"document_store_{ids_hash}.db"
+        else:
+            return "document_store_all.db"
 
     def is_available(self) -> bool:
         """Check if IMAS data is available."""
@@ -327,6 +384,7 @@ class DocumentStore:
         Args:
             force_rebuild_index: Force rebuild of SQLite FTS index
             ids_filter: Optional list of IDS names to load (for faster testing)
+                       If not provided, uses self.ids_set if available
         """
         with self._lock:
             if self._loaded:
@@ -337,9 +395,14 @@ class DocumentStore:
             # Load catalog to get available IDS
             available_ids = self._get_available_ids()
 
+            # Determine which IDS to load
+            target_ids = ids_filter
+            if target_ids is None and self.ids_set is not None:
+                target_ids = list(self.ids_set)
+
             # Filter IDS if specified
-            if ids_filter:
-                available_ids = [ids for ids in available_ids if ids in ids_filter]
+            if target_ids:
+                available_ids = [ids for ids in available_ids if ids in target_ids]
                 logger.info(f"Filtering to {len(available_ids)} IDS: {available_ids}")
                 # Force rebuild when using IDS filter since cache won't match
                 force_rebuild_index = True
@@ -349,6 +412,9 @@ class DocumentStore:
             # Load each IDS detailed file
             for ids_name in available_ids:
                 self._load_ids_documents(ids_name)
+
+            # Load identifier catalog documents
+            self._load_identifier_catalog_documents()
 
             # Build or validate SQLite FTS index
             if force_rebuild_index or self._should_rebuild_fts_index():
@@ -363,15 +429,29 @@ class DocumentStore:
             )
 
     def _get_available_ids(self) -> List[str]:
-        """Get list of available IDS names."""
+        """Get list of available IDS names without loading documents."""
+        if self._available_ids is not None:
+            return self._available_ids
+
         catalog_path = self._data_dir / "ids_catalog.json"
         if not catalog_path.exists():
-            raise FileNotFoundError(f"Catalog not found: {catalog_path}")
+            logger.warning(f"Catalog not found: {catalog_path}")
+            self._available_ids = []
+            return self._available_ids
 
-        with open(catalog_path, encoding="utf-8") as f:
-            catalog = json.load(f)
+        try:
+            with open(catalog_path, encoding="utf-8") as f:
+                catalog = json.load(f)
+            self._available_ids = list(catalog.get("ids_catalog", {}).keys())
+            return self._available_ids
+        except Exception as e:
+            logger.error(f"Failed to load catalog: {e}")
+            self._available_ids = []
+            return self._available_ids
 
-        return list(catalog.get("ids_catalog", {}).keys())
+    def get_available_ids(self) -> List[str]:
+        """Get list of available IDS names (public method)."""
+        return self._get_available_ids()
 
     def _load_ids_documents(self, ids_name: str) -> None:
         """Load all documents for a specific IDS."""
@@ -391,6 +471,168 @@ class DocumentStore:
 
         except Exception as e:
             logger.error(f"Failed to load {ids_name}: {e}")
+
+    def _load_identifier_catalog_documents(self) -> None:
+        """Load identifier catalog as special documents for search and access."""
+        identifier_catalog_file = self._data_dir / "identifier_catalog.json"
+        if not identifier_catalog_file.exists():
+            logger.debug("No identifier catalog found, skipping identifier documents")
+            return
+
+        try:
+            with open(identifier_catalog_file, encoding="utf-8") as f:
+                catalog_data = json.load(f)
+
+            # Load schema documents
+            schemas = catalog_data.get("schemas", {})
+            for schema_name, schema_data in schemas.items():
+                document = self._create_identifier_schema_document(
+                    schema_name, schema_data
+                )
+                self._index.add_document(document)
+
+            # Load path documents that reference identifier schemas
+            paths_by_ids = catalog_data.get("paths_by_ids", {})
+            for ids_name, identifier_paths in paths_by_ids.items():
+                for path_data in identifier_paths:
+                    document = self._create_identifier_path_document(
+                        ids_name, path_data
+                    )
+                    self._index.add_document(document)
+
+            logger.info(
+                f"Loaded {len(schemas)} identifier schemas and {sum(len(paths) for paths in paths_by_ids.values())} identifier paths"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to load identifier catalog: {e}")
+
+    def _create_identifier_schema_document(
+        self, schema_name: str, schema_data: Dict[str, Any]
+    ) -> Document:
+        """Create a Document for an identifier schema."""
+        path_id = f"identifier_schema/{schema_name.lower().replace(' ', '_')}"
+
+        # Create documentation text with all options
+        options_text = []
+        for option in schema_data.get("options", []):
+            options_text.append(
+                f"{option['index']}: {option['name']} - {option['description']}"
+            )
+
+        documentation = f"""Identifier Schema: {schema_name}
+
+{schema_data.get("description", "")}
+
+Available Options ({schema_data.get("total_options", 0)} total):
+{chr(10).join(options_text)}
+
+Usage: Used in {schema_data.get("usage_count", 0)} paths across IMAS
+Branching Complexity: {schema_data.get("branching_complexity", 0):.2f}
+Physics Domains: {", ".join(schema_data.get("physics_domains", []))}
+
+Paths using this schema:
+{chr(10).join(f"- {path}" for path in schema_data.get("usage_paths", [])[:10])}
+"""
+
+        # Create metadata
+        metadata = DocumentMetadata(
+            path_id=path_id,
+            ids_name="identifier_schema",
+            path_name=schema_name,
+            units="",
+            data_type="identifier_schema",
+            coordinates=(),
+            physics_domain=schema_data.get("physics_domains", [""])[0]
+            if schema_data.get("physics_domains")
+            else "",
+            physics_phenomena=tuple(schema_data.get("physics_domains", [])),
+        )
+
+        # Create document with enhanced raw_data for MCP tools
+        raw_data = {
+            **schema_data,
+            "document_type": "identifier_schema",
+            "schema_name": schema_name,
+            "is_identifier": True,
+            "branching_logic": {
+                "total_options": schema_data.get("total_options", 0),
+                "complexity": schema_data.get("branching_complexity", 0),
+                "enumeration_space": schema_data.get("total_options", 0),
+            },
+        }
+
+        document = Document(
+            metadata=metadata,
+            documentation=documentation,
+            physics_context={
+                "domain": metadata.physics_domain,
+                "phenomena": list(metadata.physics_phenomena),
+            },
+            relationships={"identifier_paths": schema_data.get("usage_paths", [])},
+            raw_data=raw_data,
+        )
+
+        # Set empty units since this is a schema document
+        document.set_units({}, {}, {})
+        return document
+
+    def _create_identifier_path_document(
+        self, ids_name: str, path_data: Dict[str, Any]
+    ) -> Document:
+        """Create a Document for an identifier path reference."""
+        path = path_data.get("path", "")
+        path_id = f"identifier_path/{path}"
+
+        documentation = f"""Identifier Path: {path}
+
+{path_data.get("description", "")}
+
+Schema: {path_data.get("schema_name", "")} ({path_data.get("option_count", 0)} options)
+Physics Domain: {path_data.get("physics_domain", "unspecified")}
+
+This path uses identifier enumeration logic that defines branching behavior in the {ids_name} IDS.
+See the '{path_data.get("schema_name", "")}' identifier schema for available options.
+"""
+
+        # Create metadata
+        metadata = DocumentMetadata(
+            path_id=path_id,
+            ids_name=ids_name,
+            path_name=path,
+            units="",
+            data_type="identifier_path",
+            coordinates=(),
+            physics_domain=path_data.get("physics_domain", ""),
+            physics_phenomena=tuple(
+                [path_data.get("physics_domain")]
+                if path_data.get("physics_domain")
+                else []
+            ),
+        )
+
+        # Create document with enhanced raw_data
+        raw_data = {
+            **path_data,
+            "document_type": "identifier_path",
+            "is_identifier": True,
+            "has_branching_logic": True,
+            "enumeration_options": path_data.get("option_count", 0),
+        }
+
+        document = Document(
+            metadata=metadata,
+            documentation=documentation,
+            physics_context={
+                "domain": metadata.physics_domain,
+                "phenomena": list(metadata.physics_phenomena),
+            },
+            relationships={"schema_reference": path_data.get("schema_name", "")},
+            raw_data=raw_data,
+        )
+
+        document.set_units({}, {}, {})
+        return document
 
     def _create_document(
         self, ids_name: str, path_name: str, path_data: Dict[str, Any]
@@ -451,22 +693,39 @@ class DocumentStore:
 
     # Fast access methods for LLM tools
     def get_document(self, path_id: str) -> Optional[Document]:
-        """Get document by path ID with O(1) lookup."""
-        return self._index.by_path_id.get(path_id)
+        """Get document by path ID, loading on-demand if needed."""
+        # Try to get from cache first
+        document = self._index.by_path_id.get(path_id)
+        if document:
+            return document
+
+        # If not found, try to determine which IDS this path belongs to and load it
+        if "/" in path_id:
+            ids_name = path_id.split("/")[0]
+            self._ensure_ids_loaded([ids_name])
+            return self._index.by_path_id.get(path_id)
+
+        return None
 
     def get_documents_by_ids(self, ids_name: str) -> List[Document]:
-        """Get all documents for an IDS."""
+        """Get all documents for an IDS, loading on-demand if needed."""
+        # Load this specific IDS if not already loaded
+        self._ensure_ids_loaded([ids_name])
+
         path_ids = self._index.by_ids_name.get(ids_name, [])
         return [self._index.by_path_id[pid] for pid in path_ids]
 
     def get_all_documents(self) -> List[Document]:
         """Get all documents for embedding generation."""
+        self._ensure_loaded()
         return list(self._index.by_path_id.values())
 
     def search_by_keywords(
         self, keywords: List[str], max_results: int = 50
     ) -> List[Document]:
         """Fast keyword search using in-memory indices."""
+        # For keyword search, we need to load all documents since we don't know which IDS contain the keywords
+        self._ensure_loaded()
         matching_path_ids = set()
 
         for keyword in keywords:
@@ -491,13 +750,136 @@ class DocumentStore:
 
     def search_by_physics_domain(self, domain: str) -> List[Document]:
         """Search by physics domain using index."""
+        # For physics domain search, we need all documents loaded
+        self._ensure_loaded()
         path_ids = self._index.by_physics_domain.get(domain, set())
         return [self._index.by_path_id[pid] for pid in path_ids]
 
     def search_by_units(self, units: str) -> List[Document]:
         """Search by units using index."""
+        # For units search, we need all documents loaded
+        self._ensure_loaded()
         path_ids = self._index.by_units.get(units, set())
         return [self._index.by_path_id[pid] for pid in path_ids]
+
+    # Identifier-specific access methods
+    def get_identifier_schemas(self) -> List[Document]:
+        """Get all identifier schema documents."""
+        return [
+            doc
+            for doc in self._index.by_path_id.values()
+            if doc.metadata.data_type == "identifier_schema"
+        ]
+
+    def get_identifier_paths(self) -> List[Document]:
+        """Get all documents that have identifier schemas (branching logic)."""
+        return [
+            doc
+            for doc in self._index.by_path_id.values()
+            if doc.raw_data.get("identifier_schema")
+            or doc.metadata.data_type == "identifier_path"
+        ]
+
+    def get_identifier_schema_by_name(self, schema_name: str) -> Optional[Document]:
+        """Get a specific identifier schema by name."""
+        schema_path_id = f"identifier_schema/{schema_name.lower().replace(' ', '_')}"
+        return self.get_document(schema_path_id)
+
+    def search_identifier_schemas(self, query: str) -> List[Document]:
+        """Search specifically in identifier schemas."""
+        all_schemas = self.get_identifier_schemas()
+        query_lower = query.lower()
+
+        matching_schemas = []
+        for schema in all_schemas:
+            # Search in schema name, description, and option names/descriptions
+            if (
+                query_lower in schema.metadata.path_name.lower()
+                or query_lower in schema.documentation.lower()
+            ):
+                matching_schemas.append(schema)
+            else:
+                # Search in individual options
+                options = schema.raw_data.get("options", [])
+                for option in options:
+                    if (
+                        query_lower in option.get("name", "").lower()
+                        or query_lower in option.get("description", "").lower()
+                    ):
+                        matching_schemas.append(schema)
+                        break
+
+        return matching_schemas
+
+    def get_paths_with_identifiers_by_ids(self, ids_name: str) -> List[Document]:
+        """Get all paths in an IDS that have identifier schemas."""
+        all_docs = self.get_documents_by_ids(ids_name)
+        return [
+            doc
+            for doc in all_docs
+            if doc.raw_data.get("identifier_schema")
+            or doc.raw_data.get("is_identifier")
+        ]
+
+    def get_identifier_branching_summary(self) -> Dict[str, Any]:
+        """Get a summary of identifier branching logic across all IDS."""
+        schemas = self.get_identifier_schemas()
+
+        # Group by physics domain
+        by_physics_domain = {}
+        total_options = 0
+
+        for schema in schemas:
+            schema_data = schema.raw_data
+            options = schema_data.get("total_options", 0)
+            total_options += options
+
+            domains = schema_data.get("physics_domains", ["unspecified"])
+            for domain in domains:
+                if domain not in by_physics_domain:
+                    by_physics_domain[domain] = {
+                        "schemas": [],
+                        "total_options": 0,
+                        "paths": [],
+                    }
+                by_physics_domain[domain]["schemas"].append(schema.metadata.path_name)
+                by_physics_domain[domain]["total_options"] += options
+
+        # Group paths by IDS - include both identifier_path documents and regular docs with identifier_schema
+        by_ids = {}
+        for doc in self._index.by_path_id.values():
+            # Check if this document has identifier schema (regular IDS documents)
+            has_identifier = (
+                doc.raw_data.get("identifier_schema")
+                or doc.metadata.data_type == "identifier_path"
+                or doc.raw_data.get("is_identifier", False)
+            )
+
+            if has_identifier:
+                ids_name = doc.metadata.ids_name
+                if ids_name not in by_ids:
+                    by_ids[ids_name] = []
+                by_ids[ids_name].append(doc.metadata.path_name)
+
+        # Count total identifier paths correctly
+        total_identifier_paths = sum(len(paths) for paths in by_ids.values())
+
+        return {
+            "total_schemas": len(schemas),
+            "total_identifier_paths": total_identifier_paths,
+            "total_enumeration_options": total_options,
+            "by_physics_domain": by_physics_domain,
+            "by_ids": by_ids,
+            "complexity_metrics": {
+                "avg_options_per_schema": total_options / len(schemas)
+                if schemas
+                else 0,
+                "max_complexity": max(
+                    (s.raw_data.get("branching_complexity", 0) for s in schemas),
+                    default=0,
+                ),
+            },
+        }
 
     def search_by_coordinates(self, coordinate: str) -> List[Document]:
         """Search by coordinate system using index."""
@@ -576,6 +958,12 @@ class DocumentStore:
             conn.execute(
                 "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
                 ("data_dir_hash", self._compute_data_dir_hash()),
+            )
+            # Store ids_set for cache validation
+            ids_set_str = "_".join(sorted(self.ids_set)) if self.ids_set else "all"
+            conn.execute(
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("ids_set", ids_set_str),
             )
 
             conn.commit()
@@ -675,10 +1063,6 @@ class DocumentStore:
         """Get all available coordinate systems."""
         return list(self._index.by_coordinates.keys())
 
-    def get_available_ids(self) -> List[str]:
-        """Get list of available IDS names."""
-        return list(self._index.by_ids_name.keys())
-
     def _should_rebuild_fts_index(self) -> bool:
         """Check if FTS index needs rebuilding based on cache validation."""
         if not self._sqlite_path.exists():
@@ -710,6 +1094,7 @@ class DocumentStore:
                 stored_doc_count = int(metadata.get("document_count", 0))
                 stored_ids_count = int(metadata.get("ids_count", 0))
                 stored_data_hash = metadata.get("data_dir_hash", "")
+                stored_ids_set = metadata.get("ids_set", "all")
                 index_timestamp = float(metadata.get("created_at", 0))
 
                 # Check if document counts match
@@ -719,6 +1104,16 @@ class DocumentStore:
                 ):
                     logger.debug(
                         f"Document count mismatch: stored={stored_doc_count}, current={self._index.total_documents}"
+                    )
+                    return True
+
+                # Check if ids_set matches
+                current_ids_set = (
+                    "_".join(sorted(self.ids_set)) if self.ids_set else "all"
+                )
+                if stored_ids_set != current_ids_set:
+                    logger.debug(
+                        f"IDS set mismatch: stored={stored_ids_set}, current={current_ids_set}"
                     )
                     return True
 
@@ -740,10 +1135,15 @@ class DocumentStore:
             return True
 
     def _compute_data_dir_hash(self) -> str:
-        """Compute hash of data directory path for cache validation."""
-        import hashlib
+        """Compute hash of data directory path and ids_set for cache validation."""
+        hash_data = str(self._data_dir.resolve())
 
-        return hashlib.md5(str(self._data_dir.resolve()).encode()).hexdigest()
+        # Include ids_set in hash for proper cache isolation
+        if self.ids_set:
+            ids_str = "_".join(sorted(self.ids_set))
+            hash_data += f"_ids_{ids_str}"
+
+        return hashlib.md5(hash_data.encode()).hexdigest()
 
     def _has_newer_source_files(self, index_timestamp: float) -> bool:
         """Check if any source JSON files are newer than the index timestamp."""

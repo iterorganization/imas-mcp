@@ -33,13 +33,13 @@ class IMASGraphAnalyzer:
         return related
 ```
 
-### 1.2 Relationship-Aware JSON Accessor
+### 1.2 Relationship-Aware Document Store
 
-Enhance `JsonDataDictionaryAccessor` with relationship context.
+Enhance `DocumentStore` with relationship context.
 
 ```python
-# File: imas_mcp/json_data_accessor.py
-class JsonDataDictionaryAccessor:
+# File: imas_mcp/search/document_store.py
+class DocumentStore:
     # ...existing code...
 
     def get_with_relationships(self, path: str) -> Dict[str, Any]:
@@ -282,7 +282,7 @@ class RelationshipCache:
 
 ## Integration Points
 
-- **Extends existing**: `IMASGraphAnalyzer`, `JsonDataDictionaryAccessor`
+- **Extends existing**: `IMASGraphAnalyzer`, `DocumentStore`
 - **Enhances current**: MCP tools gain relationship context
 - **Maintains compatibility**: All existing tools continue working
 - **Adds capabilities**: New bulk export and domain tools

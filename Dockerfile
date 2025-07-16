@@ -51,11 +51,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
 
-# Build JSON data
+# Build schema data
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building JSON data..." && \
-    uv run --no-dev build-json-data && \
-    echo "✓ JSON data ready"
+    echo "Building schema data..." && \
+    uv run --no-dev build-schemas && \
+    echo "✓ Schema data ready"
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000

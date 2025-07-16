@@ -8,7 +8,7 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@764ff1e6ac0ac1fd01b7372f0e7de9e48974dc86",
 ]
 build-backend = "hatchling.build"
 
@@ -76,7 +76,7 @@ dev = [
     "ipywidgets>=8.1.7",
     # Build dependencies
     "rich>=13.7.0,<14.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@764ff1e6ac0ac1fd01b7372f0e7de9e48974dc86",
 ]
 
 [project.urls]
@@ -88,7 +88,8 @@ Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
 [project.scripts]
 run-server = "scripts.run_server:run_server"
 run-context = "scripts.run_context:run_context"
-build-json-data = "scripts.build_json_data:build_json_data"
+build-schemas = "scripts.build_schemas:build_schemas"
+build-embeddings = "scripts.build_embeddings:build_embeddings"
 
 [tool.hatch.version]
 source = "vcs"
@@ -104,7 +105,7 @@ exclude = ["*.pyc", "__pycache__/*", "imas_mcp/resources/.gitkeep"]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
-verbose = false
+verbose = true
 ids-filter = ""
 
 [tool.hatch.envs.test]

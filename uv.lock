@@ -452,8 +452,8 @@ wheels = [
 
 [[package]]
 name = "imas-data-dictionary"
-version = "4.0.1.dev164"
-source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=35f54e8b6ff041f37fe7257abcede06d19704d89#35f54e8b6ff041f37fe7257abcede06d19704d89" }
+version = "4.0.1.dev179"
+source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=764ff1e6ac0ac1fd01b7372f0e7de9e48974dc86#764ff1e6ac0ac1fd01b7372f0e7de9e48974dc86" }
 dependencies = [
     { name = "packaging" },
     { name = "saxonche" },
@@ -474,7 +474,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "sentence-transformers" },
-    { name = "whoosh" },
 ]
 
 [package.optional-dependencies]
@@ -482,9 +481,6 @@ http = [
     { name = "fastapi" },
     { name = "starlette" },
     { name = "uvicorn" },
-]
-legacy = [
-    { name = "packaging" },
 ]
 test = [
     { name = "coverage" },
@@ -516,7 +512,6 @@ requires-dist = [
     { name = "nest-asyncio", specifier = ">=1.5.0,<2.0.0" },
     { name = "networkx", specifier = ">=3.0,<4.0" },
     { name = "numpy", specifier = ">=2.3.1" },
-    { name = "packaging", marker = "extra == 'legacy'", specifier = ">=25.0,<26.0" },
     { name = "pint", specifier = ">=0.24.4,<0.25.0" },
     { name = "pydantic", specifier = ">=2.11.4,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5,<9.0.0" },
@@ -525,14 +520,13 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=5.0.0" },
     { name = "starlette", marker = "extra == 'http'", specifier = ">=0.37.0,<1.0.0" },
     { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.30.0,<1.0.0" },
-    { name = "whoosh", specifier = ">=2.7.4,<3.0.0" },
 ]
-provides-extras = ["http", "legacy", "test"]
+provides-extras = ["http", "test"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=23.0.0" },
-    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=35f54e8b6ff041f37fe7257abcede06d19704d89" },
+    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=764ff1e6ac0ac1fd01b7372f0e7de9e48974dc86" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },
@@ -1825,15 +1819,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6c/63/53559446a878410fc5a5974feb13d31d78d752eb18aeba59c7fef1af7598/wcwidth-0.2.13.tar.gz", hash = "sha256:72ea0c06399eb286d978fdedb6923a9eb47e1c486ce63e9b4e64fc18303972b5", size = 101301, upload-time = "2024-01-06T02:10:57.829Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/84/fd2ba7aafacbad3c4201d395674fc6348826569da3c0937e75505ead3528/wcwidth-0.2.13-py2.py3-none-any.whl", hash = "sha256:3da69048e4540d84af32131829ff948f1e022c1c6bdb8d6102117aac784f6859", size = 34166, upload-time = "2024-01-06T02:10:55.763Z" },
-]
-
-[[package]]
-name = "whoosh"
-version = "2.7.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/25/2b/6beed2107b148edc1321da0d489afc4617b9ed317ef7b72d4993cad9b684/Whoosh-2.7.4.tar.gz", hash = "sha256:7ca5633dbfa9e0e0fa400d3151a8a0c4bec53bd2ecedc0a67705b17565c31a83", size = 968741, upload-time = "2016-04-04T01:19:32.327Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/19/24d0f1f454a2c1eb689ca28d2f178db81e5024f42d82729a4ff6771155cf/Whoosh-2.7.4-py2.py3-none-any.whl", hash = "sha256:aa39c3c3426e3fd107dcb4bde64ca1e276a65a889d9085a6e4b54ba82420a852", size = 468790, upload-time = "2016-04-04T01:19:40.379Z" },
 ]
 
 [[package]]

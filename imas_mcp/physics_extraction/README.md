@@ -79,7 +79,7 @@ from imas_mcp.physics_extraction import setup_extraction_environment, run_extrac
 
 # Set up extraction environment
 coordinator = setup_extraction_environment(
-    json_data_dir=Path("imas_mcp/resources/json_data/detailed"),
+    json_data_dir=Path("imas_mcp/resources/schemas/detailed"),
     storage_dir=Path("storage/physics_extraction")
 )
 
@@ -97,7 +97,7 @@ print(f"Found {status['database_stats']['total_quantities']} physics quantities"
 
 ## Data Flow
 
-1. **Input**: IMAS Data Dictionary JSON files from `resources/json_data/detailed/`
+1. **Input**: IMAS Data Dictionary JSON files from `resources/schemas/detailed/`
 2. **Processing**:
    - Load IDS JSON data
    - Extract path information

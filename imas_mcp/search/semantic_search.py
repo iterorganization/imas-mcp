@@ -6,18 +6,21 @@ LLM usage, using state-of-the-art sentence transformer models with efficient
 vector storage and retrieval.
 """
 
+import hashlib
 import logging
 import pickle
 import threading
 import time
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from .document_store import Document, DocumentStore
+from imas_mcp.core.progress_monitor import create_progress_monitor
+from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +82,11 @@ class SemanticSearchConfig:
     # Search configuration
     default_top_k: int = 10
     similarity_threshold: float = 0.0  # Minimum similarity to return
-    batch_size: int = 32  # For embedding generation
+    batch_size: int = 500  # For embedding generation
     ids_set: Optional[set] = None  # Limit to specific IDS for testing/performance
 
     # Cache configuration
     enable_cache: bool = True
-    cache_file: Optional[str] = None  # Auto-generated based on config if None
 
     # Performance optimization
     normalize_embeddings: bool = True  # Faster cosine similarity
@@ -123,22 +125,27 @@ class SemanticSearch:
         if self.document_store is None:
             self.document_store = DocumentStore()
 
-        # Set cache path in same directory as document store
+        # Set cache path in embeddings directory within resources
         if self.config.enable_cache:
             cache_filename = self._generate_cache_filename()
-            self._cache_path = self.document_store._data_dir / cache_filename
+            self._cache_path = self._get_embeddings_dir() / cache_filename
 
         # Initialize the embeddings. Build or load from cache.
         self._initialize()
 
+    def _get_embeddings_dir(self) -> Path:
+        """Get the embeddings directory within resources using modern importlib."""
+        # Get the resources directory for the imas_mcp package
+        resources_dir = Path(str(files("imas_mcp") / "resources"))
+
+        # Create embeddings subdirectory
+        embeddings_dir = resources_dir / "embeddings"
+        embeddings_dir.mkdir(parents=True, exist_ok=True)
+
+        return embeddings_dir
+
     def _generate_cache_filename(self) -> str:
         """Generate a unique cache filename based on configuration."""
-        import hashlib
-
-        if self.config.cache_file:
-            # Use provided cache file name
-            return self.config.cache_file
-
         # Extract clean model name (remove path and normalize)
         model_name = self.config.model_name.split("/")[-1].replace("-", "_")
 
@@ -180,6 +187,10 @@ class SemanticSearch:
                 f"Initializing semantic search with model: {self.config.model_name}"
             )
 
+            # Ensure DocumentStore is loaded
+            # DocumentStore automatically loads documents based on its ids_set configuration
+            # No manual loading needed since we removed auto_load=False functionality
+
             # Load sentence transformer model
             self._load_model()
 
@@ -192,8 +203,12 @@ class SemanticSearch:
     def _load_model(self) -> None:
         """Load the sentence transformer model."""
         try:
+            # Set cache folder to embeddings directory
+            cache_folder = str(self._get_embeddings_dir() / "models")
             self._model = SentenceTransformer(
-                self.config.model_name, device=self.config.device
+                self.config.model_name,
+                device=self.config.device,
+                cache_folder=cache_folder,
             )
             logger.info(
                 f"Loaded model {self.config.model_name} on device: {self._model.device}"
@@ -263,6 +278,9 @@ class SemanticSearch:
 
     def _generate_embeddings(self) -> None:
         """Generate embeddings for all documents."""
+        if not self._model:
+            raise RuntimeError("Model not loaded")
+
         documents = self.document_store.get_all_documents()
 
         # Filter documents by IDS set if specified
@@ -285,14 +303,55 @@ class SemanticSearch:
         texts = [doc.embedding_text for doc in documents]
         path_ids = [doc.metadata.path_id for doc in documents]
 
-        # Generate embeddings in batches
-        embeddings = self._model.encode(
-            texts,
-            batch_size=self.config.batch_size,
-            show_progress_bar=True,
-            convert_to_numpy=True,
-            normalize_embeddings=self.config.normalize_embeddings,
+        # Calculate batch information for progress monitoring
+        total_batches = (
+            len(texts) + self.config.batch_size - 1
+        ) // self.config.batch_size
+        batch_names = [f"Batch {i + 1}/{total_batches}" for i in range(total_batches)]
+
+        # Create progress monitor for batch processing
+        progress = create_progress_monitor(
+            use_rich=None,  # Auto-detect
+            logger=logger,
+            item_names=batch_names,
         )
+
+        # Start progress monitoring
+        progress.start_processing(batch_names, "Generating embeddings")
+
+        try:
+            embeddings_list = []
+
+            # Process in batches with progress monitoring
+            for i in range(0, len(texts), self.config.batch_size):
+                batch_name = (
+                    f"Batch {(i // self.config.batch_size) + 1}/{total_batches}"
+                )
+                progress.set_current_item(batch_name)
+
+                # Extract batch
+                batch_texts = texts[i : i + self.config.batch_size]
+
+                # Generate embeddings for this batch
+                batch_embeddings = self._model.encode(
+                    batch_texts,
+                    convert_to_numpy=True,
+                    normalize_embeddings=self.config.normalize_embeddings,
+                    show_progress_bar=False,  # Disable individual progress, use our own
+                )
+
+                embeddings_list.append(batch_embeddings)
+                progress.update_progress(batch_name)
+
+            # Combine all batch embeddings
+            embeddings = np.vstack(embeddings_list)
+
+        except Exception as e:
+            progress.finish_processing()
+            logger.error(f"Error during embedding generation: {e}")
+            raise
+        finally:
+            progress.finish_processing()
 
         # Convert to half precision if requested
         if self.config.use_half_precision:
@@ -351,6 +410,9 @@ class SemanticSearch:
         if not self._initialized:
             self._initialize()
 
+        if not self._model or not self._embeddings_cache:
+            raise RuntimeError("Search not properly initialized")
+
         top_k = top_k or self.config.default_top_k
         similarity_threshold = similarity_threshold or self.config.similarity_threshold
 
@@ -395,6 +457,9 @@ class SemanticSearch:
 
     def _compute_similarities(self, query_embedding: np.ndarray) -> np.ndarray:
         """Compute cosine similarities between query and all document embeddings."""
+        if not self._embeddings_cache:
+            raise RuntimeError("Embeddings cache not initialized")
+
         if self.config.normalize_embeddings:
             # Fast cosine similarity for normalized embeddings
             similarities = np.dot(self._embeddings_cache.embeddings, query_embedding)
@@ -416,18 +481,22 @@ class SemanticSearch:
         filter_ids: Optional[List[str]],
     ) -> List[int]:
         """Get candidate document indices based on similarity and filters."""
+        if not self._embeddings_cache:
+            raise RuntimeError("Embeddings cache not initialized")
+
         # Apply similarity threshold
         valid_mask = similarities >= similarity_threshold
 
         # Apply IDS filter if specified
         if filter_ids:
-            ids_mask = np.array(
-                [
-                    self.document_store.get_document(path_id).metadata.ids_name
-                    in filter_ids
-                    for path_id in self._embeddings_cache.path_ids
-                ]
-            )
+            ids_mask = []
+            for path_id in self._embeddings_cache.path_ids:
+                doc = self.document_store.get_document(path_id)
+                if doc and doc.metadata.ids_name in filter_ids:
+                    ids_mask.append(True)
+                else:
+                    ids_mask.append(False)
+            ids_mask = np.array(ids_mask)
             valid_mask = valid_mask & ids_mask
 
         # Get top candidates
@@ -532,6 +601,9 @@ class SemanticSearch:
         if not self._initialized:
             self._initialize()
 
+        if not self._model or not self._embeddings_cache:
+            raise RuntimeError("Search not properly initialized")
+
         # Generate query embeddings in batch
         query_embeddings = self._model.encode(
             queries,
@@ -564,3 +636,78 @@ class SemanticSearch:
             results.append(query_results[:top_k])
 
         return results
+
+    @staticmethod
+    def build_embeddings_on_install(
+        ids_set: Optional[set] = None,
+        config: Optional[SemanticSearchConfig] = None,
+        force_rebuild: bool = False,
+    ) -> bool:
+        """
+        Build embeddings during installation using default parameters.
+
+        This method is designed to be called from build hooks to pre-generate
+        embeddings during package installation, improving first-run performance.
+
+        Args:
+            ids_set: Optional set of IDS names to limit embedding generation
+            config: Optional custom configuration (uses defaults if not provided)
+            force_rebuild: Force rebuild even if cache exists
+
+        Returns:
+            True if embeddings were built successfully, False otherwise
+        """
+        try:
+            # Use default configuration if not provided
+            if config is None:
+                config = SemanticSearchConfig()
+
+            # Apply IDS set filter if provided
+            if ids_set is not None:
+                config.ids_set = ids_set
+
+            logger.info(
+                f"Building embeddings during installation with model: {config.model_name}"
+            )
+            if ids_set:
+                logger.info(f"Limited to IDS set: {sorted(ids_set)}")
+
+            # Create document store with appropriate IDS set
+            document_store = DocumentStore(ids_set=ids_set)
+
+            # Create semantic search instance (this will trigger embedding generation)
+            semantic_search = SemanticSearch(
+                config=config, document_store=document_store
+            )
+
+            # Check if cache already exists and skip if not forcing rebuild
+            if not force_rebuild and config.enable_cache:
+                cache_filename = semantic_search._generate_cache_filename()
+                cache_path = semantic_search._get_embeddings_dir() / cache_filename
+
+                if cache_path.exists():
+                    logger.info(f"Embeddings cache already exists: {cache_path}")
+                    # Verify cache is valid
+                    try:
+                        if semantic_search._try_load_cache():
+                            logger.info("Existing cache is valid, skipping rebuild")
+                            return True
+                    except Exception as e:
+                        logger.warning(f"Cache validation failed: {e}, rebuilding...")
+
+            # Force initialization which will generate embeddings
+            semantic_search._initialize()
+
+            # Get info about generated embeddings
+            info = semantic_search.get_embeddings_info()
+            logger.info(
+                f"Successfully built embeddings: {info['document_count']} documents, "
+                f"{info.get('memory_usage_mb', 0):.1f} MB"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to build embeddings during installation: {e}")
+            return False
+            return False

@@ -29,7 +29,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from imas_mcp.json_data_accessor import JsonDataDictionaryAccessor
+from imas_mcp.schema_accessor import SchemaAccessor
 from imas_mcp.dd_accessor import create_dd_accessor, DataDictionaryAccessor
 from imas_mcp.core.progress_monitor import create_progress_monitor
 
@@ -72,7 +72,7 @@ class DataDictionaryIndex(abc.ABC):
         )
 
         # Create JSON data accessor for new JSON-based processing
-        self._json_accessor = JsonDataDictionaryAccessor()
+        self._json_accessor = SchemaAccessor()
 
         # Now we can get the index name
         self.indexname = self._get_index_name()

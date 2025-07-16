@@ -37,11 +37,18 @@ class MetadataExtractor(BaseExtractor):
 
         # Build coordinates list
         coordinates = []
-        if elem.get("coordinate1"):
-            coordinates.append(elem.get("coordinate1"))
-        if elem.get("coordinate2"):
-            coordinates.append(elem.get("coordinate2"))
+        coordinate1 = elem.get("coordinate1")
+        coordinate2 = elem.get("coordinate2")
+
+        if coordinate1:
+            coordinates.append(coordinate1)
+        if coordinate2:
+            coordinates.append(coordinate2)
         metadata["coordinates"] = coordinates
+
+        # Extract individual coordinate fields (these were missing!)
+        metadata["coordinate1"] = coordinate1
+        metadata["coordinate2"] = coordinate2
 
         # Extract data type
         data_type = elem.get("data_type")
@@ -53,12 +60,50 @@ class MetadataExtractor(BaseExtractor):
         if structure_ref:
             metadata["structure_reference"] = structure_ref
 
+        # Extract timebase (this was missing!)
+        timebase = elem.get("timebase")
+        metadata["timebase"] = timebase
+
+        # Extract type (this was missing!)
+        type_attr = elem.get("type")
+        metadata["type"] = type_attr
+
+        # Extract introduced_after and introduced_after_version
+        introduced_after = elem.get("introduced_after")
+        introduced_after_version = elem.get("introduced_after_version")
+
+        # Use introduced_after_version as the primary field, fallback to introduced_after
+        if introduced_after_version:
+            metadata["introduced_after_version"] = introduced_after_version
+        elif introduced_after:
+            metadata["introduced_after_version"] = introduced_after
+
+        # Extract lifecycle fields
+        lifecycle_status = elem.get("lifecycle_status")
+        metadata["lifecycle_status"] = lifecycle_status
+
+        lifecycle_version = elem.get("lifecycle_version")
+        metadata["lifecycle_version"] = lifecycle_version
+
         return self._clean_metadata(metadata)
 
     def _clean_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Clean up None values but keep required fields."""
         cleaned = {}
-        required_fields = {"documentation", "units", "coordinates", "data_type"}
+        required_fields = {
+            "documentation",
+            "units",
+            "coordinates",
+            "data_type",
+            "coordinate1",
+            "coordinate2",
+            "timebase",
+            "type",
+            "introduced_after_version",
+            "lifecycle_status",
+            "lifecycle_version",
+            "structure_reference",
+        }
 
         for k, v in metadata.items():
             if k in required_fields or (v is not None and v != ""):
