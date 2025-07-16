@@ -63,7 +63,7 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
         if not self._imas_dd:
             raise RuntimeError("imas-data-dictionary not available")
 
-        xml_path = self._imas_dd.get_xml_resource("IDSDef.xml")
+        xml_path = self._imas_dd.get_schema("data_dictionary.xml")
         with xml_path.open("rb") as f:
             return ET.parse(f)
 
@@ -79,6 +79,34 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
             )
 
         return Version(version_elem.text)
+
+    def get_schema(self, schema_path: str):
+        """Get a schema XML file using the new get_schema method.
+
+        Args:
+            schema_path: The schema path (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+
+        Returns:
+            ElementTree of the schema file, or None if not available
+        """
+        if not self._imas_dd:
+            raise RuntimeError("imas-data-dictionary not available")
+
+        try:
+            # Use the new get_schema method if available
+            if hasattr(self._imas_dd, "get_schema"):
+                schema_file_path = self._imas_dd.get_schema(schema_path)
+                with schema_file_path.open("rb") as f:
+                    tree = ET.parse(f)
+                    return tree
+            else:
+                logger.debug(
+                    f"get_schema method not available, cannot access {schema_path}"
+                )
+                return None
+        except Exception as e:
+            logger.debug(f"Could not load schema {schema_path}: {e}")
+            return None
 
     def is_available(self) -> bool:
         """Check if the data dictionary is available."""

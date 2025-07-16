@@ -14,7 +14,9 @@ from .ai_enhancer import (
     RELATIONSHIP_EXPERT,
 )
 from .document_store import DocumentStore, Document, DocumentMetadata
-from .semantic_search import SemanticSearch, SemanticSearchConfig, SemanticSearchResult
+
+# Don't import SemanticSearch here - make it lazy to avoid startup penalty
+# from .semantic_search import SemanticSearch, SemanticSearchConfig, SemanticSearchResult
 
 __all__ = [
     "ai_enhancer",
@@ -26,7 +28,4 @@ __all__ = [
     "DocumentStore",
     "Document",
     "DocumentMetadata",
-    "SemanticSearch",
-    "SemanticSearchConfig",
-    "SemanticSearchResult",
 ]

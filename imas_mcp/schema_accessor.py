@@ -1,7 +1,7 @@
 """
-In-memory document store for IMAS data with SQLite3 full-text search.
+In-memory document store for IMAS schema data with SQLite3 full-text search.
 
-This module provides fast access to IMAS JSON documents optimized for LLM tools
+This module provides fast access to IMAS schema documents optimized for LLM tools
 and sentence transformer search. Uses in-memory storage with SQLite3 for
 complex queries and full-text search.
 """
@@ -696,7 +696,7 @@ class ImasDocumentStore:
 
 
 # Convenience factory function to maintain interface compatibility
-def JsonDataDictionaryAccessor(data_dir: Optional[Path] = None) -> ImasDocumentStore:
+def SchemaAccessor(data_dir: Optional[Path] = None) -> ImasDocumentStore:
     """
     Factory function for creating ImasDocumentStore with backward compatibility.
 
@@ -707,6 +707,6 @@ def JsonDataDictionaryAccessor(data_dir: Optional[Path] = None) -> ImasDocumentS
         ImasDocumentStore instance
     """
     if data_dir is None:
-        data_dir = Path(__file__).resolve().parent / "resources" / "json_data"
+        data_dir = Path(__file__).resolve().parent / "resources" / "schemas"
 
     return ImasDocumentStore(data_dir=data_dir)

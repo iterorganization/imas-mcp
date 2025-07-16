@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the JSON data structures for the IMAS Data Dictionary.
+Build the schema data structures for the IMAS Data Dictionary.
 This script transforms the XML data dictionary into JSON format and saves it to resources.
 """
 
@@ -27,14 +27,14 @@ from imas_mcp.core.xml_parser import DataDictionaryTransformer
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    help="Custom output directory (defaults to imas_mcp/resources/json_data)",
+    help="Custom output directory (defaults to imas_mcp/resources/schemas)",
 )
 @click.option(
     "--no-rich",
     is_flag=True,
     help="Disable rich progress display and use plain logging",
 )
-def build_json_data(
+def build_schemas(
     verbose: bool,
     quiet: bool,
     force: bool,
@@ -42,18 +42,18 @@ def build_json_data(
     output_dir: Optional[Path],
     no_rich: bool,
 ) -> int:
-    """Build the JSON data structures for the IMAS Data Dictionary.
+    """Build the schema data structures for the IMAS Data Dictionary.
 
-    This command initializes a DataDictionaryTransformer and generates JSON files
+    This command initializes a DataDictionaryTransformer and generates schema files
     containing structured data dictionary information optimized for LLM processing.
 
     Examples:
-        build-json-data                    # Build JSON data with default settings
-        build-json-data -v                 # Build with verbose logging
-        build-json-data -f                 # Force rebuild even if exists
-        build-json-data --ids-filter "core_profiles equilibrium"  # Build specific IDS only
-        build-json-data --output-dir /path/to/custom/dir  # Use custom output directory
-        build-json-data --no-rich          # Disable rich progress and use plain logging
+        build-schemas                    # Build schema data with default settings
+        build-schemas -v                 # Build with verbose logging
+        build-schemas -f                 # Force rebuild even if exists
+        build-schemas --ids-filter "core_profiles equilibrium"  # Build specific IDS only
+        build-schemas --output-dir /path/to/custom/dir  # Use custom output directory
+        build-schemas --no-rich          # Disable rich progress and use plain logging
     """
     # Set up logging level
     if quiet:
@@ -70,14 +70,14 @@ def build_json_data(
     logger = logging.getLogger(__name__)
 
     try:
-        logger.info("Starting JSON data build process...")
+        logger.info("Starting schema data build process...")
 
         # Parse ids_filter string into a set if provided
         ids_set: Optional[set] = set(ids_filter.split()) if ids_filter else None
         if ids_set:
-            logger.info(f"Building JSON data for specific IDS: {sorted(ids_set)}")
+            logger.info(f"Building schema data for specific IDS: {sorted(ids_set)}")
         else:
-            logger.info("Building JSON data for all available IDS")
+            logger.info("Building schema data for all available IDS")
 
         # Initialize the transformer
         transformer = DataDictionaryTransformer(
@@ -92,37 +92,40 @@ def build_json_data(
 
         if should_build:
             if force and catalog_file.exists():
-                logger.info("Force rebuilding existing JSON data files")
+                logger.info("Force rebuilding existing schema data files")
             else:
-                logger.info("JSON data files do not exist, building new files...")
+                logger.info("Schema data files do not exist, building new files...")
 
             # Transform the data
             logger.info("Starting XML to JSON transformation...")
             outputs = transformer.transform_complete()
 
             # Log the results
-            logger.info("JSON data built successfully:")
+            logger.info("Schema data built successfully:")
             logger.info(f"  - Catalog: {outputs.catalog}")
             logger.info(f"  - Relationships: {outputs.relationships}")
+            logger.info(f"  - Identifier Catalog: {outputs.identifier_catalog}")
             logger.info(f"  - Detailed files: {len(outputs.detailed)} files")
 
             # Print summary for scripts/CI
-            total_files = 2 + len(
+            total_files = 3 + len(
                 outputs.detailed
-            )  # catalog + relationships + detailed files
+            )  # catalog + relationships + identifier_catalog + detailed files
             click.echo(
-                f"Built {total_files} JSON files in {transformer.resolved_output_dir}"
+                f"Built {total_files} schema files in {transformer.resolved_output_dir}"
             )
         else:
             logger.info(
-                f"JSON data files already exist in {transformer.resolved_output_dir}"
+                f"Schema data files already exist in {transformer.resolved_output_dir}"
             )
-            click.echo(f"JSON data already exists in {transformer.resolved_output_dir}")
+            click.echo(
+                f"Schema data already exists in {transformer.resolved_output_dir}"
+            )
 
         return 0
 
     except Exception as e:
-        logger.error(f"Error building JSON data: {e}")
+        logger.error(f"Error building schema data: {e}")
         if verbose:
             logger.exception("Full traceback:")
         click.echo(f"Error: {e}", err=True)
@@ -130,4 +133,4 @@ def build_json_data(
 
 
 if __name__ == "__main__":
-    sys.exit(build_json_data())
+    sys.exit(build_schemas())
