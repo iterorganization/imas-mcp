@@ -4,8 +4,8 @@ import logging
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
-from .base import BaseExtractor
-from ..data_model import IdentifierSchema, IdentifierOption
+from imas_mcp.core.data_model import IdentifierOption, IdentifierSchema
+from imas_mcp.core.extractors.base import BaseExtractor
 
 logger = logging.getLogger(__name__)
 

@@ -3,10 +3,11 @@ Graph analysis module for IMAS data dictionary structure.
 Uses NetworkX to analyze hierarchical relationships and extract insights.
 """
 
-import networkx as nx
-from typing import Dict, List, Any
-from collections import defaultdict
 import statistics
+from collections import defaultdict
+from typing import Any, Dict, List
+
+import networkx as nx
 
 
 class IMASGraphAnalyzer:

@@ -60,7 +60,14 @@ http = [
     "starlette>=0.37.0,<1.0.0",
     "uvicorn>=0.30.0,<1.0.0",
 ]
-test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
+test = [
+    "pytest>=8.3.5,<9.0.0",
+    "pytest-cov>=6.1.1,<7.0.0",
+    "pytest-asyncio>=0.21.0,<1.0.0",
+    "pytest-xdist>=3.0.0,<4.0.0",
+    "pytest-benchmark>=4.0.0,<5.0.0",
+    "coverage>=7.0.0",
+]
 
 [dependency-groups]
 dev = [
@@ -150,7 +157,40 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "--verbose"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--tb=short",
+    "--maxfail=5",
+    "--disable-warnings",
+    "--no-header",
+    "--no-summary",
+    "-q",
+    "--durations=10",
+    "--cache-clear",
+    "-x"
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+markers = [
+    "asyncio: marks tests as async",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "fast: marks tests as fast-running unit tests",
+    "performance: marks tests that focus on performance",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+# Performance optimizations
+cache_dir = ".pytest_cache"
+collect_ignore = ["build", "dist"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 [tool.coverage.run]
 source = ["imas_mcp"]

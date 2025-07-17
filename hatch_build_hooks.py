@@ -9,7 +9,9 @@ from typing import Any, Dict
 
 # hatchling is a build system for Python projects, and this hook will be used to
 # create JSON data structures for the IMAS MCP server during the wheel build process.
-from hatchling.builders.hooks.plugin.interface import BuildHookInterface  # type: ignore[import]
+from hatchling.builders.hooks.plugin.interface import (
+    BuildHookInterface,  # type: ignore[import]
+)
 
 
 class CustomBuildHook(BuildHookInterface):

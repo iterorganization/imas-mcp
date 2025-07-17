@@ -11,6 +11,7 @@ import sys
 from typing import Optional
 
 import click
+
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 

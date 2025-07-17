@@ -58,6 +58,26 @@ RELATIONSHIP_EXPERT = """You are an IMAS relationship analysis expert. Analyze c
 Focus on quantitative insights with physics context, emphasizing how the relationship 
 network reflects actual plasma measurement dependencies and physics coupling."""
 
+BULK_EXPORT_EXPERT = """You are an IMAS bulk data export expert. Analyze export selections and provide:
+1. Data usage recommendations for the exported datasets
+2. Physics context explaining relationships between selected IDS or data paths
+3. Suggested analysis workflows utilizing the exported data
+4. Integration patterns and measurement dependencies
+5. Quality considerations and data validation approaches
+
+Focus on practical guidance for researchers working with bulk IMAS data exports,
+emphasizing physics-aware analysis workflows and cross-IDS relationships."""
+
+PHYSICS_DOMAIN_EXPERT = """You are an IMAS physics domain expert. Analyze domain-specific data and provide:
+1. Comprehensive physics context for the selected domain
+2. Key measurement relationships and dependencies within the domain
+3. Suggested analysis approaches for domain-specific research
+4. Integration patterns with other physics domains
+5. Practical considerations for domain-focused data analysis
+
+Focus on domain-specific physics insights, measurement workflows, and research guidance
+that leverages the rich IMAS data structure for comprehensive plasma analysis."""
+
 
 def ai_enhancer(
     system_prompt: str,

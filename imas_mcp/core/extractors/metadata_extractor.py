@@ -3,8 +3,8 @@
 import xml.etree.ElementTree as ET
 from typing import Any, Dict
 
-from .base import BaseExtractor
-from ..xml_utils import DocumentationBuilder
+from imas_mcp.core.extractors.base import BaseExtractor
+from imas_mcp.core.xml_utils import DocumentationBuilder
 
 
 class MetadataExtractor(BaseExtractor):

@@ -6,13 +6,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from ..dd_accessor import ImasDataDictionaryAccessor
-from ..graph_analyzer import analyze_imas_graphs
-from .data_model import (
+from imas_mcp.core.data_model import (
     CatalogMetadata,
     CoordinateSystem,
     CrossIdsRelationship,
     DataPath,
+    IdentifierCatalog,
+    IdentifierCatalogSchema,
+    IdentifierPath,
     IdsDetailed,
     IdsInfo,
     PhysicsConcept,
@@ -21,24 +22,23 @@ from .data_model import (
     TransformationOutputs,
     UnitFamily,
     UsageExample,
-    IdentifierCatalog,
-    IdentifierCatalogSchema,
-    IdentifierPath,
 )
-from .physics_categorization import physics_categorizer
-from .extractors import (
-    ExtractorContext,
-    MetadataExtractor,
-    LifecycleExtractor,
-    PhysicsExtractor,
-    ValidationExtractor,
-    PathExtractor,
-    SemanticExtractor,
-    RelationshipExtractor,
+from imas_mcp.core.extractors import (
     CoordinateExtractor,
+    ExtractorContext,
     IdentifierExtractor,
+    LifecycleExtractor,
+    MetadataExtractor,
+    PathExtractor,
+    PhysicsExtractor,
+    RelationshipExtractor,
+    SemanticExtractor,
+    ValidationExtractor,
 )
-from .progress_monitor import create_progress_monitor
+from imas_mcp.core.physics_categorization import physics_categorizer
+from imas_mcp.core.progress_monitor import create_progress_monitor
+from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+from imas_mcp.graph_analyzer import analyze_imas_graphs
 
 
 @dataclass
@@ -64,7 +64,7 @@ class DataDictionaryTransformer:
 
         if self.output_dir is None:
             self.output_dir = (
-                Path(__file__).resolve().parent.parent / "resources" / "json_data"
+                Path(__file__).resolve().parent.parent / "resources" / "schemas"
             )
 
         if not isinstance(self.output_dir, Path):

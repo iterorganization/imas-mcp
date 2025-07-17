@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from ...dd_accessor import ImasDataDictionaryAccessor
+from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 
 
 @dataclass

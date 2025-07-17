@@ -3,7 +3,7 @@
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, Optional
 
-from .base import BaseExtractor
+from imas_mcp.core.extractors.base import BaseExtractor
 
 
 class LifecycleExtractor(BaseExtractor):

@@ -7,19 +7,19 @@ and conflict management.
 
 import json
 import logging
-from typing import Dict, List, Optional, Any, Tuple
-from pathlib import Path
-from datetime import datetime
 import shutil
 from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from .models import (
-    PhysicsQuantity,
-    PhysicsDatabase,
-    ExtractionProgress,
+from imas_mcp.physics_extraction.models import (
     ConflictResolution,
     ConflictResolutionStrategy,
+    ExtractionProgress,
     ExtractionStatus,
+    PhysicsDatabase,
+    PhysicsQuantity,
 )
 
 logger = logging.getLogger(__name__)

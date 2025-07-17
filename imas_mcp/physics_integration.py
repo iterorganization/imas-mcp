@@ -5,13 +5,14 @@ This module integrates the physics context engine with existing IMAS MCP tools
 to provide physics-aware search and explanation capabilities.
 """
 
-from typing import Dict, List, Any
-from .physics_context import (
-    get_physics_engine,
+from typing import Any, Dict, List
+
+from imas_mcp.physics_context import (
     PhysicsContextEngine,
-    PhysicsQuantity,
     PhysicsDomain,
+    PhysicsQuantity,
     concept_to_imas_paths,
+    get_physics_engine,
     search_physics_concepts,
 )
 

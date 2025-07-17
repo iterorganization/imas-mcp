@@ -62,13 +62,13 @@ class EmbeddingCache:
         current_ids_set: Optional[set] = None,
     ) -> bool:
         """Check if cache is valid for current state."""
-        return (
-            self.document_count == current_doc_count
-            and self.model_name == current_model
-            and len(self.path_ids) == current_doc_count
-            and self.embeddings.shape[0] == current_doc_count
-            and self.ids_set == current_ids_set
-        )
+        # More lenient validation - allow small document count differences
+        doc_count_valid = abs(self.document_count - current_doc_count) <= 5
+        model_valid = self.model_name == current_model
+        embeddings_valid = len(self.embeddings) > 0 and len(self.path_ids) > 0
+        ids_set_valid = self.ids_set == current_ids_set
+
+        return doc_count_valid and model_valid and embeddings_valid and ids_set_valid
 
 
 @dataclass
@@ -122,8 +122,16 @@ class SemanticSearch:
 
     def __post_init__(self) -> None:
         """Initialize the semantic search system metadata only."""
+        # Create DocumentStore with ids_set if none provided
         if self.document_store is None:
-            self.document_store = DocumentStore()
+            self.document_store = DocumentStore(ids_set=self.config.ids_set)
+        else:
+            # Validate that provided DocumentStore has matching ids_set
+            if self.document_store.ids_set != self.config.ids_set:
+                raise ValueError(
+                    f"DocumentStore ids_set {self.document_store.ids_set} "
+                    f"does not match SemanticSearchConfig ids_set {self.config.ids_set}"
+                )
 
         # Set cache path in embeddings directory within resources
         if self.config.enable_cache:
@@ -209,6 +217,7 @@ class SemanticSearch:
                 self.config.model_name,
                 device=self.config.device,
                 cache_folder=cache_folder,
+                local_files_only=True,  # Prevent internet downloads
             )
             logger.info(
                 f"Loaded model {self.config.model_name} on device: {self._model.device}"
@@ -234,20 +243,9 @@ class SemanticSearch:
         if self.config.enable_cache:
             self._save_cache()
 
-    def _get_filtered_document_count(self) -> int:
-        """Get the count of documents after applying IDS filtering."""
-        if self.document_store is None:
-            return 0
-
-        if not self.config.ids_set:
-            return len(self.document_store._index.by_path_id)
-
-        # Count documents that match the IDS set
-        documents = self.document_store.get_all_documents()
-        filtered_count = sum(
-            1 for doc in documents if doc.metadata.ids_name in self.config.ids_set
-        )
-        return filtered_count
+    def get_document_count(self) -> int:
+        """Get the count of documents in the document store."""
+        return self.document_store.get_document_count()
 
     def _try_load_cache(self) -> bool:
         """Try to load embeddings from cache."""
@@ -262,11 +260,15 @@ class SemanticSearch:
                 logger.warning("Invalid cache format")
                 return False
 
-            current_doc_count = self._get_filtered_document_count()
+            current_doc_count = self.get_document_count()
             if not cache.is_valid(
                 current_doc_count, self.config.model_name, self.config.ids_set
             ):
-                logger.info("Cache invalid - document count or model changed")
+                logger.info(
+                    f"Cache invalid - cached: {cache.document_count} docs, current: {current_doc_count} docs, "
+                    f"cached model: {cache.model_name}, current model: {self.config.model_name}, "
+                    f"cached IDS set: {cache.ids_set}, current IDS set: {self.config.ids_set}"
+                )
                 return False
 
             self._embeddings_cache = cache
@@ -281,16 +283,9 @@ class SemanticSearch:
         if not self._model:
             raise RuntimeError("Model not loaded")
 
+        # Always get ALL documents for embedding generation
+        # Filtering by IDS is applied during search, not during embedding
         documents = self.document_store.get_all_documents()
-
-        # Filter documents by IDS set if specified
-        if self.config.ids_set:
-            documents = [
-                doc for doc in documents if doc.metadata.ids_name in self.config.ids_set
-            ]
-            logger.info(
-                f"Filtered to {len(documents)} documents from IDS set: {self.config.ids_set}"
-            )
 
         if not documents:
             logger.warning("No documents found for embedding generation")

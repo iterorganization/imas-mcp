@@ -6,9 +6,9 @@ It enables semantic understanding of physics quantities and their relationships 
 the IMAS data dictionary.
 """
 
-from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class PhysicsDomain(Enum):

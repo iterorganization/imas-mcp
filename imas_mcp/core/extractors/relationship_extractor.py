@@ -2,10 +2,10 @@
 
 import re
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
 from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
-from .base import BaseExtractor
+from imas_mcp.core.extractors.base import BaseExtractor
 
 
 class RelationshipAnalyzer:
