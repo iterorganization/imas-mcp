@@ -5,10 +5,9 @@ import logging
 
 import pytest
 
-from imas_mcp.core.xml_parser import DataDictionaryTransformer
 from imas_mcp.core.data_model import TransformationOutputs
+from imas_mcp.core.xml_parser import DataDictionaryTransformer
 from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
-
 
 logger = logging.getLogger(__name__)
 
@@ -312,8 +311,8 @@ class TestDataDictionaryTransformerEdgeCases:
     def test_invalid_output_directory(self, xml_accessor):
         """Test behavior with invalid output directory path."""
         # Test with a path that would cause issues on Windows
-        import tempfile
         import os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create a file where we want to put a directory
@@ -377,8 +376,9 @@ class TestDataDictionaryTransformerPerformance:
 
     def test_memory_usage_reasonable(self, transformer_large):
         """Test that memory usage stays reasonable during processing."""
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB

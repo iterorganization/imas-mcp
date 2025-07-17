@@ -7,10 +7,10 @@ Data is loaded from YAML definition files for better maintainability.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Set, Any
+from typing import Any, Dict, List, Set
 
-from .data_model import PhysicsDomain
-from .domain_loader import get_domain_loader
+from imas_mcp.core.data_model import PhysicsDomain
+from imas_mcp.core.domain_loader import get_domain_loader
 
 
 @dataclass

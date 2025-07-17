@@ -5,23 +5,30 @@ Handles high-level coordination of extraction processes, resource management,
 and user interaction workflows.
 """
 
-import logging
-from typing import List, Dict, Optional, Any
-from pathlib import Path
-from datetime import datetime
 import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from .models import (
-    PhysicsDatabase,
+from imas_mcp.physics_extraction.catalog_progress import CatalogBasedProgressTracker
+from imas_mcp.physics_extraction.extractors import (
+    AIPhysicsExtractor,
+    BatchProcessor,
+    CatalogBatchProcessor,
+)
+from imas_mcp.physics_extraction.models import (
+    ConflictResolutionStrategy,
     ExtractionProgress,
     ExtractionResult,
     ExtractionStatus,
-    ConflictResolutionStrategy,
+    PhysicsDatabase,
 )
-
-from .catalog_progress import CatalogBasedProgressTracker
-from .extractors import AIPhysicsExtractor, BatchProcessor, CatalogBatchProcessor
-from .storage import PhysicsStorage, ProgressTracker, ConflictManager
+from imas_mcp.physics_extraction.storage import (
+    ConflictManager,
+    PhysicsStorage,
+    ProgressTracker,
+)
 
 logger = logging.getLogger(__name__)
 

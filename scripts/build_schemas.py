@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import click
+
 from imas_mcp.core.xml_parser import DataDictionaryTransformer
 
 

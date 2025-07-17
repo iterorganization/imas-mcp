@@ -10,10 +10,10 @@ import json
 import logging
 import os
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import xml.etree.ElementTree as ET
 
 from packaging.version import Version
 
