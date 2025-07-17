@@ -7,11 +7,11 @@ complex queries and full-text search.
 """
 
 import hashlib
+import importlib.resources as resources
 import json
 import logging
 import sqlite3
 import threading
-import importlib.resources as resources
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -711,7 +711,6 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         """Get all documents for an IDS, loading on-demand if needed."""
         # Load this specific IDS if not already loaded
         self._ensure_ids_loaded([ids_name])
-
         path_ids = self._index.by_ids_name.get(ids_name, [])
         return [self._index.by_path_id[pid] for pid in path_ids]
 
@@ -719,6 +718,15 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         """Get all documents for embedding generation."""
         self._ensure_loaded()
         return list(self._index.by_path_id.values())
+
+    def __len__(self) -> int:
+        """Get the number of documents in the store."""
+        self._ensure_loaded()
+        return len(self._index.by_path_id)
+
+    def get_document_count(self) -> int:
+        """Get the count of documents in the store."""
+        return len(self)
 
     def search_by_keywords(
         self, keywords: List[str], max_results: int = 50

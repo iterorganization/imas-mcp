@@ -5,14 +5,14 @@ This module handles the AI-assisted extraction of physics quantities
 from IMAS data dictionary JSON files.
 """
 
-import json
 import asyncio
+import json
 import logging
-from typing import List, Dict, Optional, Any
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from .models import PhysicsQuantity, ExtractionResult
+from imas_mcp.physics_extraction.models import ExtractionResult, PhysicsQuantity
 
 logger = logging.getLogger(__name__)
 

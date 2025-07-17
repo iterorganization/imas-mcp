@@ -3,18 +3,21 @@ IMAS MCP Server with AI Tools.
 
 This is the principal MCP server for the IMAS data dictionary, providing AI
 tools for physics-based search, analysis, and exploration of plasma physics data.
-It offers 5 focused tools with intelligent insights and relevance-ranked results
+It offers 8 focused tools with intelligent insights and relevance-ranked results
 for better LLM usage.
 
-The 5 core tools provide comprehensive coverage:
+The 8 core tools provide comprehensive coverage:
 1. search_imas - Enhanced search with physics concepts, symbols, and units
 2. explain_concept - Physics explanations with IMAS mappings and domain context
 3. get_overview - General overview with domain analysis and query validation
 4. analyze_ids_structure - Detailed structural analysis of specific IDS
 5. explore_relationships - Advanced relationship exploration across the data dictionary
+6. explore_identifiers - Identifier schema exploration and branching logic analysis
+7. export_ids_bulk - Bulk export of multiple IDS with cross-relationships analysis
+8. export_physics_domain - Physics domain-specific export with measurement dependencies
 
-This server uses cached properties for lazy initialization of DocumentStore and
-SemanticSearch components for efficient and maintainable data access.
+This server uses cached properties for lazy initialization of DocumentStore,
+SemanticSearch, and IMASGraphAnalyzer components for efficient and maintainable data access.
 """
 
 import importlib.metadata
@@ -26,16 +29,19 @@ from typing import Any, Dict, List, Optional, Union
 import nest_asyncio
 from fastmcp import Context, FastMCP
 
-from .search.document_store import DocumentStore
-from .search.semantic_search import SemanticSearch, SemanticSearchConfig
-from .search import (
-    ai_enhancer,
-    SEARCH_EXPERT,
+from imas_mcp.graph_analyzer import IMASGraphAnalyzer
+from imas_mcp.search import (
+    BULK_EXPORT_EXPERT,
     EXPLANATION_EXPERT,
     OVERVIEW_EXPERT,
-    STRUCTURE_EXPERT,
+    PHYSICS_DOMAIN_EXPERT,
     RELATIONSHIP_EXPERT,
+    SEARCH_EXPERT,
+    STRUCTURE_EXPERT,
+    ai_enhancer,
 )
+from imas_mcp.search.document_store import DocumentStore
+from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -83,6 +89,11 @@ class Server:
         config = self.search_config or SemanticSearchConfig()
         return SemanticSearch(config=config, document_store=self.document_store)
 
+    @cached_property
+    def graph_analyzer(self) -> IMASGraphAnalyzer:
+        """Lazily initialize and cache the graph analyzer."""
+        return IMASGraphAnalyzer()
+
     def _register_tools(self):
         """Register the MCP tools with the server."""
         self.mcp.tool(self.search_imas)
@@ -91,6 +102,8 @@ class Server:
         self.mcp.tool(self.analyze_ids_structure)
         self.mcp.tool(self.explore_relationships)
         self.mcp.tool(self.explore_identifiers)
+        self.mcp.tool(self.export_ids_bulk)
+        self.mcp.tool(self.export_physics_domain)
 
     def _extract_identifier_info(self, document) -> Dict[str, Any]:
         """Extract identifier schema information from a document."""
@@ -908,6 +921,659 @@ Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usag
                     "Use scope='schemas' for schema details",
                     "Use scope='paths' for identifier paths",
                     "Add query to filter results",
+                ],
+            }
+
+    @ai_enhancer(
+        BULK_EXPORT_EXPERT, "Bulk export analysis", temperature=0.3, max_tokens=1000
+    )
+    async def export_ids_bulk(
+        self,
+        ids_list: List[str],
+        include_relationships: bool = True,
+        include_physics_context: bool = True,
+        output_format: str = "comprehensive",
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Export bulk IMAS data for multiple IDS with sophisticated relationship analysis.
+
+        Advanced bulk export tool that extracts comprehensive data for multiple IDS,
+        including cross-IDS relationships, physics context, and structural analysis
+        using IMASGraphAnalyzer for sophisticated relationship embedding.
+
+        Args:
+            ids_list: List of IDS names to export
+            include_relationships: Whether to include cross-IDS relationship analysis
+            include_physics_context: Whether to include physics domain context
+            output_format: Export format (comprehensive, structured, minimal)
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with bulk export data, relationships, and AI insights
+        """
+        try:
+            if not ids_list:
+                return {
+                    "error": "No IDS specified for bulk export",
+                    "suggestions": [
+                        "Provide at least one IDS name",
+                        "Use get_overview to see available IDS",
+                    ],
+                }
+
+            # Validate IDS names
+            available_ids = self.document_store.get_available_ids()
+            invalid_ids = [ids for ids in ids_list if ids not in available_ids]
+            valid_ids = [ids for ids in ids_list if ids in available_ids]
+
+            if not valid_ids:
+                return {
+                    "error": "No valid IDS names provided",
+                    "invalid_ids": invalid_ids,
+                    "available_ids": available_ids[:10],
+                    "suggestions": [
+                        "Check IDS name spelling",
+                        "Use get_overview to see all available IDS",
+                    ],
+                }
+
+            export_data = {
+                "requested_ids": ids_list,
+                "valid_ids": valid_ids,
+                "invalid_ids": invalid_ids,
+                "export_format": output_format,
+                "timestamp": "bulk_export",
+                "ids_data": {},
+                "cross_relationships": {},
+                "physics_domains": {},
+                "export_summary": {},
+            }
+
+            # Export data for each valid IDS
+            for ids_name in valid_ids:
+                try:
+                    # Get all documents for this IDS
+                    ids_documents = self.document_store.get_documents_by_ids(ids_name)
+
+                    ids_info = {
+                        "ids_name": ids_name,
+                        "total_paths": len(ids_documents),
+                        "paths": [],
+                        "physics_domains": set(),
+                        "identifier_paths": [],
+                        "measurement_types": set(),
+                    }
+
+                    # Process documents based on output format
+                    for doc in ids_documents:
+                        path_data: Dict[str, Any] = {
+                            "path": doc.metadata.path_name,
+                            "documentation": doc.documentation
+                            if output_format == "comprehensive"
+                            else doc.documentation[:200],
+                            "data_type": doc.metadata.data_type,
+                            "physics_domain": doc.metadata.physics_domain,
+                            "units": doc.metadata.units,
+                        }
+
+                        # Add detailed information for comprehensive format
+                        if output_format == "comprehensive":
+                            path_data["raw_data"] = doc.raw_data
+                            path_data["identifier_info"] = (
+                                self._extract_identifier_info(doc)
+                            )
+
+                        ids_info["paths"].append(path_data)
+
+                        if doc.metadata.physics_domain:
+                            ids_info["physics_domains"].add(doc.metadata.physics_domain)
+
+                        if doc.metadata.data_type == "identifier_path":
+                            ids_info["identifier_paths"].append(path_data)
+
+                        # Extract measurement types from documentation
+                        if any(
+                            term in doc.documentation.lower()
+                            for term in [
+                                "temperature",
+                                "density",
+                                "pressure",
+                                "magnetic",
+                                "electric",
+                            ]
+                        ):
+                            if "temperature" in doc.documentation.lower():
+                                ids_info["measurement_types"].add("temperature")
+                            if "density" in doc.documentation.lower():
+                                ids_info["measurement_types"].add("density")
+                            if "pressure" in doc.documentation.lower():
+                                ids_info["measurement_types"].add("pressure")
+                            if "magnetic" in doc.documentation.lower():
+                                ids_info["measurement_types"].add("magnetic_field")
+                            if "electric" in doc.documentation.lower():
+                                ids_info["measurement_types"].add("electric_field")
+
+                    # Convert sets to lists for JSON serialization
+                    ids_info["physics_domains"] = list(ids_info["physics_domains"])
+                    ids_info["measurement_types"] = list(ids_info["measurement_types"])
+
+                    export_data["ids_data"][ids_name] = ids_info
+
+                except Exception as e:
+                    logger.warning(f"Failed to export IDS {ids_name}: {e}")
+                    export_data["ids_data"][ids_name] = {"error": str(e)}
+
+            # Add cross-IDS relationship analysis if requested
+            if include_relationships and len(valid_ids) > 1:
+                try:
+                    # Use graph analyzer for sophisticated relationship analysis
+                    relationship_analysis = {}
+
+                    for i, ids1 in enumerate(valid_ids):
+                        for ids2 in valid_ids[i + 1 :]:
+                            try:
+                                # Analyze structural patterns between IDS
+                                # Build the data structure expected by analyze_cross_ids_patterns
+                                ids_data_for_analysis = {}
+                                for ids in [ids1, ids2]:
+                                    if ids in export_data["ids_data"] and isinstance(
+                                        export_data["ids_data"][ids], dict
+                                    ):
+                                        ids_data_for_analysis[ids] = {
+                                            path["path"]: path
+                                            for path in export_data["ids_data"][
+                                                ids
+                                            ].get("paths", [])
+                                        }
+
+                                if len(ids_data_for_analysis) == 2:
+                                    patterns = (
+                                        self.graph_analyzer.analyze_cross_ids_patterns(
+                                            ids_data_for_analysis
+                                        )
+                                    )
+                                else:
+                                    patterns = {
+                                        "note": "Insufficient data for cross-IDS analysis"
+                                    }
+
+                                relationship_key = f"{ids1}_{ids2}"
+                                relationship_analysis[relationship_key] = {
+                                    "ids_pair": [ids1, ids2],
+                                    "patterns": patterns,
+                                    "common_physics_domains": list(
+                                        set(
+                                            export_data["ids_data"][ids1].get(
+                                                "physics_domains", []
+                                            )
+                                        )
+                                        & set(
+                                            export_data["ids_data"][ids2].get(
+                                                "physics_domains", []
+                                            )
+                                        )
+                                    ),
+                                    "complementary_measurements": list(
+                                        set(
+                                            export_data["ids_data"][ids1].get(
+                                                "measurement_types", []
+                                            )
+                                        )
+                                        | set(
+                                            export_data["ids_data"][ids2].get(
+                                                "measurement_types", []
+                                            )
+                                        )
+                                    ),
+                                }
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to analyze relationship {ids1}-{ids2}: {e}"
+                                )
+                                relationship_analysis[f"{ids1}_{ids2}"] = {
+                                    "error": str(e)
+                                }
+
+                    export_data["cross_relationships"] = relationship_analysis
+
+                except Exception as e:
+                    logger.warning(f"Cross-relationship analysis failed: {e}")
+                    export_data["cross_relationships"] = {"error": str(e)}
+
+            # Add physics domain context if requested
+            if include_physics_context:
+                try:
+                    all_domains = set()
+                    for ids_data in export_data["ids_data"].values():
+                        if isinstance(ids_data, dict) and "physics_domains" in ids_data:
+                            all_domains.update(ids_data["physics_domains"])
+
+                    domain_context = {}
+                    for domain in all_domains:
+                        if domain:  # Skip empty domains
+                            domain_search_results = self.semantic_search.search(
+                                domain, top_k=5
+                            )
+                            domain_context[domain] = {
+                                "related_paths": [
+                                    r.document.metadata.path_name
+                                    for r in domain_search_results[:3]
+                                ],
+                                "measurement_scope": f"Physics domain: {domain}",
+                                "associated_ids": [
+                                    ids_name
+                                    for ids_name, ids_data in export_data[
+                                        "ids_data"
+                                    ].items()
+                                    if isinstance(ids_data, dict)
+                                    and domain in ids_data.get("physics_domains", [])
+                                ],
+                            }
+
+                    export_data["physics_domains"] = domain_context
+
+                except Exception as e:
+                    logger.warning(f"Physics context analysis failed: {e}")
+                    export_data["physics_domains"] = {"error": str(e)}
+
+            # Generate export summary
+            export_data["export_summary"] = {
+                "total_requested": len(ids_list),
+                "successfully_exported": len(valid_ids),
+                "failed_exports": len(invalid_ids),
+                "total_paths_exported": sum(
+                    len(ids_data.get("paths", []))
+                    for ids_data in export_data["ids_data"].values()
+                    if isinstance(ids_data, dict)
+                ),
+                "unique_physics_domains": len(
+                    set().union(
+                        *[
+                            ids_data.get("physics_domains", [])
+                            for ids_data in export_data["ids_data"].values()
+                            if isinstance(ids_data, dict)
+                        ]
+                    )
+                ),
+                "relationship_pairs_analyzed": len(
+                    export_data.get("cross_relationships", {})
+                ),
+                "export_completeness": "complete" if not invalid_ids else "partial",
+            }
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                export_data["ai_prompt"] = f"""Bulk Export Analysis:
+IDS Requested: {ids_list}
+Valid IDS: {valid_ids}
+Export Format: {output_format}
+Include Relationships: {include_relationships}
+Include Physics Context: {include_physics_context}
+
+Export Summary: {export_data["export_summary"]}
+Physics Domains: {list(export_data.get("physics_domains", {}).keys())}
+
+Provide bulk export guidance including:
+1. Data usage recommendations for this specific IDS combination
+2. Physics insights about relationships between exported IDS
+3. Suggested analysis workflows utilizing the exported data
+4. Integration patterns and measurement dependencies
+5. Quality considerations and data validation approaches
+
+Format as JSON with 'usage_recommendations', 'physics_insights', 'analysis_workflows', 'integration_patterns', 'quality_considerations' fields."""
+
+            return export_data
+
+        except Exception as e:
+            logger.error(f"Bulk export failed: {e}")
+            return {
+                "ids_list": ids_list,
+                "error": str(e),
+                "explanation": "Failed to perform bulk export",
+                "suggestions": [
+                    "Check IDS names are valid",
+                    "Try with fewer IDS names",
+                    "Use get_overview to see available IDS",
+                    "Try with output_format='minimal' for faster processing",
+                ],
+            }
+
+    @ai_enhancer(
+        PHYSICS_DOMAIN_EXPERT,
+        "Physics domain analysis",
+        temperature=0.3,
+        max_tokens=1000,
+    )
+    async def export_physics_domain(
+        self,
+        domain: str,
+        include_cross_domain: bool = False,  # Default to False to avoid performance issues
+        analysis_depth: str = "focused",  # Default to focused instead of comprehensive
+        max_paths: int = 20,  # Reduced from 50 to prevent excessive processing
+        ctx: Optional[Context] = None,
+    ) -> Dict[str, Any]:
+        """
+        Export physics domain-specific data with sophisticated relationship analysis.
+
+        Advanced domain export tool that extracts comprehensive data for a specific
+        physics domain, including cross-domain relationships, measurement dependencies,
+        and structural analysis using IMASGraphAnalyzer for domain-aware insights.
+
+        Args:
+            domain: Physics domain name to export (e.g., 'core_profiles', 'equilibrium', 'transport')
+            include_cross_domain: Whether to include cross-domain relationship analysis
+            analysis_depth: Analysis depth (comprehensive, focused, overview)
+            max_paths: Maximum number of paths to include in export
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Dictionary with domain export data, relationships, and AI insights
+        """
+        try:
+            if not domain:
+                return {
+                    "error": "No physics domain specified",
+                    "suggestions": [
+                        "Provide a physics domain name",
+                        "Use get_overview to see available domains",
+                    ],
+                }
+
+            # Search for domain-related paths
+            domain_search_results = self.semantic_search.search(domain, top_k=max_paths)
+
+            if not domain_search_results:
+                return {
+                    "domain": domain,
+                    "error": "No data found for specified domain",
+                    "suggestions": [
+                        "Try alternative domain names",
+                        "Use search_imas to explore available domains",
+                        "Check domain spelling",
+                    ],
+                }
+
+            export_data = {
+                "domain": domain,
+                "analysis_depth": analysis_depth,
+                "include_cross_domain": include_cross_domain,
+                "max_paths": max_paths,
+                "timestamp": "domain_export",
+                "domain_data": {
+                    "total_paths": len(domain_search_results),
+                    "paths": [],
+                    "associated_ids": set(),
+                    "measurement_types": set(),
+                    "units_distribution": {},
+                    "lifecycle_stages": set(),
+                },
+                "domain_structure": {},
+                "cross_domain_analysis": {},
+                "measurement_dependencies": {},
+                "export_summary": {},
+            }
+
+            # Process domain-specific paths
+            units_count = {}
+            for result in domain_search_results:
+                path_info = {
+                    "path": result.document.metadata.path_name,
+                    "ids_name": result.ids_name,
+                    "documentation": result.document.documentation
+                    if analysis_depth == "comprehensive"
+                    else result.document.documentation[:200],
+                    "physics_domain": result.document.metadata.physics_domain,
+                    "units": result.document.metadata.units,
+                    "data_type": result.document.metadata.data_type,
+                    "relevance_score": result.similarity_score,
+                }
+
+                # Add detailed analysis for comprehensive depth
+                if analysis_depth == "comprehensive":
+                    path_info["raw_data"] = result.document.raw_data
+                    path_info["identifier_info"] = self._extract_identifier_info(
+                        result.document
+                    )
+
+                export_data["domain_data"]["paths"].append(path_info)
+                export_data["domain_data"]["associated_ids"].add(result.ids_name)
+
+                if result.document.metadata.units:
+                    units_count[result.document.metadata.units] = (
+                        units_count.get(result.document.metadata.units, 0) + 1
+                    )
+
+                # Extract measurement types from documentation
+                doc_lower = result.document.documentation.lower()
+                if "temperature" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add("temperature")
+                if "density" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add("density")
+                if "pressure" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add("pressure")
+                if "magnetic" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add(
+                        "magnetic_field"
+                    )
+                if "electric" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add(
+                        "electric_field"
+                    )
+                if "flux" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add("flux")
+                if "current" in doc_lower:
+                    export_data["domain_data"]["measurement_types"].add("current")
+
+            # Convert sets to lists and finalize data
+            export_data["domain_data"]["associated_ids"] = list(
+                export_data["domain_data"]["associated_ids"]
+            )
+            export_data["domain_data"]["measurement_types"] = list(
+                export_data["domain_data"]["measurement_types"]
+            )
+            export_data["domain_data"]["lifecycle_stages"] = list(
+                export_data["domain_data"]["lifecycle_stages"]
+            )
+            export_data["domain_data"]["units_distribution"] = dict(
+                sorted(units_count.items(), key=lambda x: x[1], reverse=True)
+            )
+
+            # Perform domain structure analysis using graph analyzer
+            try:
+                associated_ids = export_data["domain_data"]["associated_ids"]
+                if len(associated_ids) > 1:
+                    # Build the data structure expected by analyze_cross_ids_patterns
+                    ids_data_for_analysis = {}
+                    for ids_name in associated_ids[:5]:  # Limit to 5 IDS
+                        ids_documents = self.document_store.get_documents_by_ids(
+                            ids_name
+                        )
+                        if ids_documents:
+                            ids_data_for_analysis[ids_name] = {
+                                doc.metadata.path_name: {
+                                    "path": doc.metadata.path_name,
+                                    "documentation": doc.documentation,
+                                    "data_type": doc.metadata.data_type,
+                                    "physics_domain": doc.metadata.physics_domain,
+                                    "units": doc.metadata.units,
+                                }
+                                for doc in ids_documents[:20]  # Limit paths per IDS
+                            }
+
+                    if len(ids_data_for_analysis) > 1:
+                        structure_patterns = (
+                            self.graph_analyzer.analyze_cross_ids_patterns(
+                                ids_data_for_analysis
+                            )
+                        )
+                        export_data["domain_structure"] = {
+                            "structural_patterns": structure_patterns,
+                            "domain_coherence": f"Domain spans {len(associated_ids)} IDS with structured relationships",
+                            "key_ids_for_domain": associated_ids[:5],
+                        }
+                    else:
+                        export_data["domain_structure"] = {
+                            "note": "Insufficient IDS data for structural analysis",
+                            "single_ids_analysis": f"Domain primarily contained in: {list(ids_data_for_analysis.keys())}",
+                        }
+                else:
+                    export_data["domain_structure"] = {
+                        "note": f"Domain primarily contained in single IDS: {associated_ids[0] if associated_ids else 'unknown'}",
+                        "structural_analysis": "Limited cross-IDS structure analysis available",
+                    }
+
+            except Exception as e:
+                logger.warning(f"Domain structure analysis failed: {e}")
+                export_data["domain_structure"] = {"error": str(e)}
+
+            # Cross-domain analysis if requested
+            if include_cross_domain:
+                try:
+                    # Find related domains through measurement types and units
+                    related_domains = set()
+                    # Limit measurement types to prevent exponential search
+                    measurement_types = export_data["domain_data"]["measurement_types"][
+                        :3
+                    ]
+
+                    for measurement in measurement_types:
+                        related_search = self.semantic_search.search(
+                            measurement,
+                            top_k=5,  # Reduced from 10 to 5
+                        )
+                        for result in related_search[:3]:  # Reduced from 5 to 3
+                            if (
+                                result.document.metadata.physics_domain
+                                and result.document.metadata.physics_domain != domain
+                            ):
+                                related_domains.add(
+                                    result.document.metadata.physics_domain
+                                )
+
+                    cross_domain_data = {}
+                    for related_domain in list(
+                        related_domains
+                    )[
+                        :2  # Reduced from 3 to 2 related domains
+                    ]:  # Limit to 3 related domains
+                        related_search = self.semantic_search.search(
+                            related_domain, top_k=10
+                        )
+                        cross_domain_data[related_domain] = {
+                            "connection_strength": len(
+                                [
+                                    r
+                                    for r in related_search
+                                    if any(
+                                        mt in r.document.documentation.lower()
+                                        for mt in export_data["domain_data"][
+                                            "measurement_types"
+                                        ]
+                                    )
+                                ]
+                            ),
+                            "shared_measurements": [
+                                mt
+                                for mt in export_data["domain_data"][
+                                    "measurement_types"
+                                ]
+                                if any(
+                                    mt in r.document.documentation.lower()
+                                    for r in related_search[:5]
+                                )
+                            ],
+                            "sample_connections": [
+                                r.document.metadata.path_name
+                                for r in related_search[:2]
+                            ],
+                        }
+
+                    export_data["cross_domain_analysis"] = cross_domain_data
+
+                except Exception as e:
+                    logger.warning(f"Cross-domain analysis failed: {e}")
+                    export_data["cross_domain_analysis"] = {"error": str(e)}
+
+            # Analyze measurement dependencies
+            try:
+                dependencies = {}
+                measurement_types = export_data["domain_data"]["measurement_types"]
+
+                for measurement in measurement_types:
+                    # Find paths that might depend on this measurement
+                    dep_search = self.semantic_search.search(
+                        f"{measurement} dependency", top_k=5
+                    )
+                    dependencies[measurement] = {
+                        "dependent_paths": [
+                            r.document.metadata.path_name for r in dep_search[:3]
+                        ],
+                        "measurement_context": f"Analysis of {measurement} dependencies within {domain} domain",
+                    }
+
+                export_data["measurement_dependencies"] = dependencies
+
+            except Exception as e:
+                logger.warning(f"Measurement dependency analysis failed: {e}")
+                export_data["measurement_dependencies"] = {"error": str(e)}
+
+            # Generate export summary
+            export_data["export_summary"] = {
+                "domain": domain,
+                "total_paths_found": len(export_data["domain_data"]["paths"]),
+                "associated_ids_count": len(
+                    export_data["domain_data"]["associated_ids"]
+                ),
+                "unique_measurement_types": len(
+                    export_data["domain_data"]["measurement_types"]
+                ),
+                "unique_units": len(export_data["domain_data"]["units_distribution"]),
+                "cross_domain_connections": len(
+                    export_data.get("cross_domain_analysis", {})
+                ),
+                "analysis_completeness": "complete"
+                if analysis_depth == "comprehensive"
+                else analysis_depth,
+                "domain_coverage": "extensive"
+                if len(export_data["domain_data"]["paths"]) > 20
+                else "focused",
+            }
+
+            # AI enhancement if MCP context available - handled by decorator
+            if ctx:
+                export_data["ai_prompt"] = f"""Physics Domain Export Analysis:
+Domain: {domain}
+Analysis Depth: {analysis_depth}
+Include Cross-Domain: {include_cross_domain}
+
+Domain Data Summary: {export_data["export_summary"]}
+Associated IDS: {export_data["domain_data"]["associated_ids"]}
+Measurement Types: {export_data["domain_data"]["measurement_types"]}
+Units Distribution: {list(export_data["domain_data"]["units_distribution"].keys())[:5]}
+
+Provide domain-specific analysis including:
+1. Comprehensive physics context for the {domain} domain
+2. Key measurement relationships and dependencies within the domain
+3. Suggested analysis approaches for domain-specific research
+4. Integration patterns with other physics domains
+5. Practical considerations for domain-focused data analysis
+
+Format as JSON with 'physics_context', 'measurement_relationships', 'analysis_approaches', 'integration_patterns', 'practical_considerations' fields."""
+
+            return export_data
+
+        except Exception as e:
+            logger.error(f"Physics domain export failed: {e}")
+            return {
+                "domain": domain,
+                "error": str(e),
+                "explanation": "Failed to export physics domain data",
+                "suggestions": [
+                    "Check domain name spelling",
+                    "Try with analysis_depth='overview' for faster processing",
+                    "Use search_imas to explore available domains",
+                    "Reduce max_paths for better performance",
                 ],
             }
 

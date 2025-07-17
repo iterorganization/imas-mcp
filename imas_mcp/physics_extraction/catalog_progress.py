@@ -7,11 +7,11 @@ including per-IDS path counts and physics domain categorization.
 
 import json
 import logging
-from typing import Dict, List, Optional, Any
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from .models import ExtractionStatus
+from imas_mcp.physics_extraction.models import ExtractionStatus
 
 logger = logging.getLogger(__name__)
 

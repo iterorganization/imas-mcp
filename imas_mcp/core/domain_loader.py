@@ -6,10 +6,11 @@ replacing the hardcoded Python-based categorization system.
 """
 
 import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-import yaml
 from importlib import resources
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import yaml
 
 logger = logging.getLogger(__name__)
 

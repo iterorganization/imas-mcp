@@ -5,10 +5,10 @@ Defines data structures for physics quantities, extraction results,
 and system state management.
 """
 
-from typing import List, Dict, Optional, Set, Any
-from enum import Enum
-from datetime import datetime
 import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field, validator
 
