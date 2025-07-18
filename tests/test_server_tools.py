@@ -25,23 +25,24 @@ class TestSearchImas:
     @pytest.mark.asyncio
     @pytest.mark.fast
     async def test_search_imas_empty_results(self, test_server):
-        """Test search with query that returns no results."""
+        """Test search with query that returns no results using lexical search."""
         async with test_server.client:
             result = await test_server.client.call_tool(
                 "search_imas",
                 {
-                    "query": "zzz_absolutely_nonexistent_impossible_query_xyz_zzz",
+                    "query": "nonexistent_impossible_query",
                     "max_results": 5,
+                    "search_mode": "lexical",
                 },
             )
 
         result = extract_result(result)
         assert isinstance(result, dict)
         assert "results" in result
-        # With semantic search, even nonsensical queries may return some results
-        # So we'll just verify the structure is correct
+        # With lexical search, nonsensical queries should return no results
         assert isinstance(result["results"], list)
-        assert len(result["results"]) <= 5
+        assert len(result["results"]) == 0
+        assert result["search_strategy"] == "lexical"
 
     @pytest.mark.asyncio
     @pytest.mark.fast
