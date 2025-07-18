@@ -50,534 +50,43 @@ This plan implements critical improvements to the IMAS MCP server based on compr
 
 **Purpose**: Establish performance baselines and regression detection
 
-```python
-# File: benchmarks/asv.conf.json
-{
-    "version": 1,
-    "project": "imas-mcp",
-    "project_url": "https://github.com/user/imas-mcp",
-    "repo": ".",
-    "branches": ["main"],
-    "environment_type": "conda",
-    "pythons": ["3.12"],
-    "matrix": {
-        "python": ["3.12"],
-        "req": {"pip": ["requirements.txt"]}
-    },
-    "benchmark_dir": "benchmarks",
-    "env_dir": ".asv/env",
-    "results_dir": ".asv/results",
-    "html_dir": ".asv/html",
-    "build_cache_size": 8
-}
-
-# File: benchmarks/benchmarks.py
-import asyncio
-import time
-from typing import List, Dict, Any
-from unittest.mock import AsyncMock
-from functools import cached_property
-from fastmcp.testing import MockContext
-
-# Import using composition to avoid costly imports in benchmark setup
-class BenchmarkFixture:
-    """Composition-based benchmark fixture for performance testing."""
-
-    @cached_property
-    def server(self):
-        """Lazy-loaded server instance."""
-        from imas_mcp.server import Server
-        return Server()
-
-    @cached_property
-    def mock_context(self):
-        """Lazy-loaded mock context."""
-        mock_context = MockContext()
-        mock_context.sample = AsyncMock(return_value="Mock AI response")
-        return mock_context
-
-    @cached_property
-    def sample_queries(self) -> List[str]:
-        """Sample queries for benchmarking."""
-        return [
-            "plasma temperature",
-            "equilibrium profiles",
-            "transport coefficients",
-            "electron density",
-            "magnetic field"
-        ]
-
-    @cached_property
-    def sample_ids_lists(self) -> List[List[str]]:
-        """Sample IDS lists for benchmarking."""
-        return [
-            ["core_profiles"],
-            ["core_profiles", "equilibrium"],
-            ["core_profiles", "equilibrium", "transport"],
-            ["core_profiles", "equilibrium", "transport", "ec_launchers"],
-            ["core_profiles", "equilibrium", "transport", "ec_launchers", "nbi"]
-        ]
-
-# Global benchmark fixture
-_benchmark_fixture = BenchmarkFixture()
-
-class SearchBenchmarks:
-    """Benchmark suite for search_imas tool."""
-
-    def setup(self):
-        """Setup benchmark environment."""
-        self.fixture = _benchmark_fixture
-        # Warm up the server components
-        asyncio.run(self._warmup())
-
-    async def _warmup(self):
-        """Warm up server components to avoid cold start penalties."""
-        # Initialize cached properties
-        _ = self.fixture.server.document_store
-        _ = self.fixture.server.semantic_search
-        _ = self.fixture.server.graph_analyzer
-
-        # Perform a small search to warm up indices
-        await self.fixture.server.search_imas(
-            query="test",
-            max_results=1
-        )
-
-    def time_search_imas_basic(self):
-        """Benchmark basic search performance."""
-        async def run_search():
-            return await self.fixture.server.search_imas(
-                query="plasma temperature",
-                max_results=10
-            )
-
-        return asyncio.run(run_search())
-
-    def time_search_imas_with_ai(self):
-        """Benchmark search with AI enhancement."""
-        async def run_search():
-            return await self.fixture.server.search_imas(
-                query="plasma temperature",
-                max_results=10,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_search())
-
-    def time_search_imas_complex_query(self):
-        """Benchmark complex query performance."""
-        async def run_search():
-            return await self.fixture.server.search_imas(
-                query=["plasma", "temperature", "density", "profile"],
-                max_results=20
-            )
-
-        return asyncio.run(run_search())
-
-    def time_search_imas_ids_filter(self):
-        """Benchmark search with IDS filtering."""
-        async def run_search():
-            return await self.fixture.server.search_imas(
-                query="temperature",
-                ids_name="core_profiles",
-                max_results=15
-            )
-
-        return asyncio.run(run_search())
-
-    def peakmem_search_imas_basic(self):
-        """Benchmark memory usage for basic search."""
-        async def run_search():
-            return await self.fixture.server.search_imas(
-                query="plasma temperature",
-                max_results=10
-            )
-
-        return asyncio.run(run_search())
-
-class ExplainConceptBenchmarks:
-    """Benchmark suite for explain_concept tool."""
-
-    def setup(self):
-        """Setup benchmark environment."""
-        self.fixture = _benchmark_fixture
-        asyncio.run(self._warmup())
-
-    async def _warmup(self):
-        """Warm up server components."""
-        _ = self.fixture.server.document_store
-        await self.fixture.server.explain_concept(
-            concept="test",
-            ctx=self.fixture.mock_context
-        )
-
-    def time_explain_concept_basic(self):
-        """Benchmark basic concept explanation."""
-        async def run_explain():
-            return await self.fixture.server.explain_concept(
-                concept="plasma temperature",
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_explain())
-
-    def time_explain_concept_advanced(self):
-        """Benchmark advanced concept explanation."""
-        async def run_explain():
-            return await self.fixture.server.explain_concept(
-                concept="transport coefficients",
-                detail_level="advanced",
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_explain())
-
-class StructureAnalysisBenchmarks:
-    """Benchmark suite for analyze_ids_structure tool."""
-
-    def setup(self):
-        """Setup benchmark environment."""
-        self.fixture = _benchmark_fixture
-        asyncio.run(self._warmup())
-
-    async def _warmup(self):
-        """Warm up server components."""
-        _ = self.fixture.server.graph_analyzer
-        await self.fixture.server.analyze_ids_structure(
-            ids_name="core_profiles",
-            ctx=self.fixture.mock_context
-        )
-
-    def time_analyze_ids_structure_small(self):
-        """Benchmark structure analysis for small IDS."""
-        async def run_analysis():
-            return await self.fixture.server.analyze_ids_structure(
-                ids_name="core_profiles",
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_analysis())
-
-    def time_analyze_ids_structure_large(self):
-        """Benchmark structure analysis for large IDS."""
-        async def run_analysis():
-            return await self.fixture.server.analyze_ids_structure(
-                ids_name="equilibrium",
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_analysis())
-
-class BulkExportBenchmarks:
-    """Benchmark suite for bulk export tools."""
-
-    def setup(self):
-        """Setup benchmark environment."""
-        self.fixture = _benchmark_fixture
-        asyncio.run(self._warmup())
-
-    async def _warmup(self):
-        """Warm up server components."""
-        _ = self.fixture.server.document_store
-        await self.fixture.server.export_ids_bulk(
-            ids_list=["core_profiles"],
-            ctx=self.fixture.mock_context
-        )
-
-    def time_export_ids_bulk_single(self):
-        """Benchmark bulk export with single IDS."""
-        async def run_export():
-            return await self.fixture.server.export_ids_bulk(
-                ids_list=["core_profiles"],
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_export())
-
-    def time_export_ids_bulk_multiple(self):
-        """Benchmark bulk export with multiple IDS."""
-        async def run_export():
-            return await self.fixture.server.export_ids_bulk(
-                ids_list=["core_profiles", "equilibrium", "transport"],
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_export())
-
-    def time_export_ids_bulk_with_relationships(self):
-        """Benchmark bulk export with relationships."""
-        async def run_export():
-            return await self.fixture.server.export_ids_bulk(
-                ids_list=["core_profiles", "equilibrium"],
-                include_relationships=True,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_export())
-
-    def time_export_physics_domain(self):
-        """Benchmark physics domain export."""
-        async def run_export():
-            return await self.fixture.server.export_physics_domain(
-                domain="equilibrium",
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_export())
-
-    def peakmem_export_ids_bulk_large(self):
-        """Benchmark memory usage for large bulk export."""
-        async def run_export():
-            return await self.fixture.server.export_ids_bulk(
-                ids_list=self.fixture.sample_ids_lists[-1],  # Largest list
-                include_relationships=True,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_export())
-
-class RelationshipBenchmarks:
-    """Benchmark suite for relationship exploration."""
-
-    def setup(self):
-        """Setup benchmark environment."""
-        self.fixture = _benchmark_fixture
-        asyncio.run(self._warmup())
-
-    async def _warmup(self):
-        """Warm up server components."""
-        _ = self.fixture.server.graph_analyzer
-        await self.fixture.server.explore_relationships(
-            path="core_profiles/profiles_1d/electrons/temperature",
-            ctx=self.fixture.mock_context
-        )
-
-    def time_explore_relationships_depth_1(self):
-        """Benchmark relationship exploration with depth 1."""
-        async def run_explore():
-            return await self.fixture.server.explore_relationships(
-                path="core_profiles/profiles_1d/electrons/temperature",
-                max_depth=1,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_explore())
-
-    def time_explore_relationships_depth_2(self):
-        """Benchmark relationship exploration with depth 2."""
-        async def run_explore():
-            return await self.fixture.server.explore_relationships(
-                path="equilibrium/time_slice/profiles_1d/psi",
-                max_depth=2,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_explore())
-
-    def time_explore_relationships_depth_3(self):
-        """Benchmark relationship exploration with depth 3."""
-        async def run_explore():
-            return await self.fixture.server.explore_relationships(
-                path="transport/model/diffusion_coefficient",
-                max_depth=3,
-                ctx=self.fixture.mock_context
-            )
-
-        return asyncio.run(run_explore())
-
-# File: benchmarks/benchmark_runner.py
-import subprocess
-import json
-import time
-from pathlib import Path
-from typing import Dict, Any, List
-
-class BenchmarkRunner:
-    """Utility for running and managing ASV benchmarks."""
-
-    def __init__(self, benchmark_dir: Path = Path("benchmarks")):
-        self.benchmark_dir = benchmark_dir
-        self.results_dir = Path(".asv/results")
-        self.html_dir = Path(".asv/html")
-
-    def run_benchmarks(self, benchmark_names: List[str] = None) -> Dict[str, Any]:
-        """Run ASV benchmarks and return results."""
-        cmd = ["asv", "run", "--python=3.12"]
-
-        if benchmark_names:
-            cmd.extend(["-b", ",".join(benchmark_names)])
-
-        print(f"Running benchmarks: {' '.join(cmd)}")
-
-        start_time = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        end_time = time.time()
-
-        return {
-            "command": " ".join(cmd),
-            "execution_time": end_time - start_time,
-            "return_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
-    def generate_html_report(self) -> Dict[str, Any]:
-        """Generate HTML benchmark report."""
-        cmd = ["asv", "publish"]
-
-        print(f"Generating HTML report: {' '.join(cmd)}")
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        return {
-            "command": " ".join(cmd),
-            "return_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "html_dir": str(self.html_dir.absolute())
-        }
-
-    def compare_benchmarks(self, commit1: str, commit2: str) -> Dict[str, Any]:
-        """Compare benchmarks between two commits."""
-        cmd = ["asv", "compare", commit1, commit2]
-
-        print(f"Comparing benchmarks: {' '.join(cmd)}")
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        return {
-            "command": " ".join(cmd),
-            "return_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
-    def get_latest_results(self) -> Dict[str, Any]:
-        """Get latest benchmark results."""
-        if not self.results_dir.exists():
-            return {"error": "No benchmark results found"}
-
-        # Find the latest results file
-        result_files = list(self.results_dir.glob("*.json"))
-        if not result_files:
-            return {"error": "No benchmark result files found"}
-
-        latest_file = max(result_files, key=lambda f: f.stat().st_mtime)
-
-        try:
-            with open(latest_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            return {"error": f"Failed to read results: {e}"}
-
-# File: scripts/run_performance_baseline.py
-#!/usr/bin/env python
-"""Script to establish performance baseline for current tools."""
-
-import asyncio
-import json
-import time
-from pathlib import Path
-from typing import Dict, Any
-from benchmarks.benchmark_runner import BenchmarkRunner
-
-def main():
-    """Establish performance baseline for current MCP tools."""
-    print("🚀 Establishing Performance Baseline for IMAS MCP Tools")
-    print("=" * 60)
-
-    runner = BenchmarkRunner()
-
-    # Core benchmarks to establish baseline
-    core_benchmarks = [
-        "SearchBenchmarks.time_search_imas_basic",
-        "SearchBenchmarks.time_search_imas_with_ai",
-        "SearchBenchmarks.time_search_imas_complex_query",
-        "ExplainConceptBenchmarks.time_explain_concept_basic",
-        "StructureAnalysisBenchmarks.time_analyze_ids_structure_small",
-        "BulkExportBenchmarks.time_export_ids_bulk_single",
-        "BulkExportBenchmarks.time_export_ids_bulk_multiple",
-        "RelationshipBenchmarks.time_explore_relationships_depth_1"
-    ]
-
-    # Run baseline benchmarks
-    print("\n📊 Running baseline benchmarks...")
-    baseline_results = runner.run_benchmarks(core_benchmarks)
-
-    if baseline_results["return_code"] != 0:
-        print(f"❌ Benchmark run failed: {baseline_results['stderr']}")
-        return 1
-
-    print("✅ Baseline benchmarks completed successfully")
-
-    # Generate HTML report
-    print("\n📈 Generating HTML report...")
-    html_results = runner.generate_html_report()
-
-    if html_results["return_code"] == 0:
-        print(f"✅ HTML report generated: {html_results['html_dir']}")
-    else:
-        print(f"❌ HTML report generation failed: {html_results['stderr']}")
-
-    # Save baseline metadata
-    baseline_metadata = {
-        "timestamp": time.time(),
-        "benchmarks_run": core_benchmarks,
-        "execution_time": baseline_results["execution_time"],
-        "status": "success" if baseline_results["return_code"] == 0 else "failed"
-    }
-
-    baseline_file = Path("benchmarks/baseline_metadata.json")
-    with open(baseline_file, 'w') as f:
-        json.dump(baseline_metadata, f, indent=2)
-
-    print(f"\n📄 Baseline metadata saved to: {baseline_file}")
-    print("\n🎉 Performance baseline established successfully!")
-
-    return 0
-
-if __name__ == "__main__":
-    exit(main())
-```
+**Status**: ✅ **IMPLEMENTED** - ASV configured with uv and performance monitoring ready
+
+**Files implemented**:
+
+- `benchmarks/asv.conf.json` - ASV configuration with uv integration
+- `benchmarks/benchmarks.py` - Comprehensive benchmark suite
+- `benchmarks/benchmark_runner.py` - Utility for running ASV benchmarks
+- `benchmarks/performance_targets.py` - Performance targets and validation
+- `scripts/run_performance_baseline.py` - Baseline establishment script
+- Updated `Makefile` with benchmark targets
 
 ### 0.3 Test and Performance Integration
 
 **Purpose**: Integrate testing and performance monitoring into development workflow
 
 ```python
-# File: pyproject.toml (additions)
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--verbose",
-    "--tb=short",
-    "--strict-markers",
-    "--disable-warnings",
-    "--cov=imas_mcp",
-    "--cov-report=html:htmlcov",
-    "--cov-report=term-missing",
-    "--cov-fail-under=85"
-]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "performance: marks tests as performance tests",
-    "unit: marks tests as unit tests"
-]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning"
-]
+# File: pyproject.toml (additions to existing file)
+[project.optional-dependencies]
+# ... existing optional dependencies ...
+bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
+
+# Installation commands:
+# uv sync --extra bench      # Install with benchmark dependencies
+# asv machine                # Setup machine configuration
+# asv run                    # Run benchmarks
 
 # File: Makefile (additions)
-.PHONY: test-baseline performance-baseline test-current performance-current
+.PHONY: test-baseline performance-baseline test-current performance-current install-bench
+
+install-bench:
+	@echo "Installing benchmark dependencies with uv..."
+	uv pip install -e ".[bench]"
+	asv machine --yes
 
 test-baseline:
 	@echo "Running baseline tests for current tools..."
-	python -m pytest tests/test_current_tools.py -v --tb=short
+	python -m pytest tests/test_server_tools.py -v --tb=short
 
 test-current: test-baseline
 	@echo "Running all current tests..."
@@ -585,6 +94,7 @@ test-current: test-baseline
 
 performance-baseline:
 	@echo "Establishing performance baseline..."
+	uv pip install -e ".[bench]"
 	python scripts/run_performance_baseline.py
 
 performance-current:
@@ -820,77 +330,40 @@ def validate_performance_results(results: Dict[str, Any], targets: Dict[str, Per
 
 ### 1.1 Enhanced search_imas Tool (Priority 1)
 
-**Problem**: Most-called tool with performance and consistency issues
-**Solution**: Implement tiered search strategy with caching
+**Status**: ✅ **IMPLEMENTED** - Search performance optimization with caching and search modes
+
+**Search Modes**: Implemented with `SearchMode` enum:
+
+- `AUTO` - Matches planned "adaptive" mode (intelligent search selection)
+- `SEMANTIC` - Matches planned "comprehensive" mode (full AI-powered search)
+- `LEXICAL` - Matches planned "fast" mode (traditional text search)
+- `HYBRID` - Advanced combination mode not in original plan
+
+**Caching System**: Fully implemented using `cachetools`:
+
+- `SearchCache` class with TTL and size limits (1000 items, 1 hour TTL)
+- Integrated into `search_imas` method with cache check/set
+- Performance statistics tracking (hits, misses, sets, hit rate)
+- Comprehensive test coverage in `tests/test_search_cache.py` and `tests/test_search_cache_integration.py`
+
+**Key files implemented**:
+
+- `imas_mcp/search/cache.py` - SearchCache class using cachetools
+- `imas_mcp/search/search_modes.py` - SearchMode enum and search strategies
+- `imas_mcp/server.py` - Integrated caching into search_imas method
+- `tests/test_search_cache.py` - Unit tests for caching functionality
+- `tests/test_search_cache_integration.py` - Integration tests with server
+
+**Main functionality covered**:
+
+- Performance-optimized search with automatic caching
+- Search strategies (semantic, lexical, hybrid, auto)
+- Cache statistics and monitoring for performance analysis
+- TTL-based cache timeout and size-based eviction
+
+**Remaining unimplemented features**:
 
 ```python
-# File: imas_mcp/server.py
-async def search_imas(
-    self,
-    query: Union[str, List[str]],
-    ids_name: Optional[str] = None,
-    max_results: int = 10,
-    search_mode: str = "adaptive",  # fast, adaptive, comprehensive
-    explain_ranking: bool = False,
-    include_suggestions: bool = True,
-    ctx: Optional[Context] = None,
-) -> Dict[str, Any]:
-    """
-    Adaptive search with intelligent performance optimization.
-
-    Search modes:
-    - fast: Cached + lexical search, no AI enhancement
-    - adaptive: Smart caching + selective semantic search
-    - comprehensive: Full semantic + AI enhancement
-    """
-
-    # Step 1: Query analysis and caching
-    cache_key = self._generate_cache_key(query, ids_name, max_results, search_mode)
-
-    if search_mode in ["fast", "adaptive"]:
-        cached_result = self._search_cache.get(cache_key)
-        if cached_result:
-            cached_result["cache_hit"] = True
-            return cached_result
-
-    # Step 2: Stratified search execution
-    if search_mode == "fast":
-        results = self._fast_lexical_search(query, ids_name, max_results)
-    elif search_mode == "adaptive":
-        results = await self._adaptive_search(query, ids_name, max_results, ctx)
-    else:  # comprehensive
-        results = await self._comprehensive_search(query, ids_name, max_results, ctx)
-
-    # Step 3: Add tool recommendations
-    if include_suggestions:
-        results["suggested_tools"] = self._suggest_follow_up_tools(results)
-
-    # Step 4: Cache results
-    if search_mode in ["fast", "adaptive"]:
-        self._search_cache.set(cache_key, results, ttl=3600)
-
-    return results
-
-def _fast_lexical_search(self, query: str, ids_name: Optional[str], max_results: int) -> Dict[str, Any]:
-    """Fast lexical search using existing DocumentStore methods."""
-    # Use existing search_by_keywords for simple queries
-    if " " not in query and not any(op in query for op in ["AND", "OR", "NOT", '"']):
-        results = self.document_store.search_by_keywords([query], max_results)
-    else:
-        # Use SQLite FTS5 for complex queries
-        results = self.document_store.search_full_text(query, max_results=max_results)
-
-    # Filter by IDS if specified
-    if ids_name:
-        results = [r for r in results if r.metadata.ids_name == ids_name]
-
-    return {
-        "results": [self._document_to_search_result(doc) for doc in results],
-        "total_results": len(results),
-        "search_strategy": "lexical_search",
-        "performance_mode": "fast"
-    }
-
 def _suggest_follow_up_tools(self, results: Dict[str, Any]) -> List[Dict[str, str]]:
     """Suggest relevant tools based on current results."""
     suggestions = []
@@ -924,6 +397,9 @@ def _suggest_follow_up_tools(self, results: Dict[str, Any]) -> List[Dict[str, st
             })
 
     return suggestions
+
+# Parameter needed in search_imas:
+# include_suggestions: bool = True,
 ```
 
 ### 1.2 Selective AI Enhancement Strategy

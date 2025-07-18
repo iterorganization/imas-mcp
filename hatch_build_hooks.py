@@ -2,7 +2,7 @@
 Custom build hooks for hatchling to initialize JSON data during wheel creation.
 """
 
-import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -38,48 +38,18 @@ class CustomBuildHook(BuildHookInterface):
             # Restore original sys.path
             sys.path[:] = original_path
 
-        # Configure logging to ensure progress messages are visible during build
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            force=True,  # Override any existing configuration
-        )
-
-        logger = logging.getLogger(__name__)
-        logger.info("Initializing build hook for IMAS MCP JSON data structures")
-
         # Get configuration options
-        verbose = self.config.get("verbose", False)
         ids_filter = self.config.get("ids-filter", "")
 
-        if verbose:
-            logging.getLogger().setLevel(logging.DEBUG)
-            logger.setLevel(logging.DEBUG)
+        # Allow environment variable override for ASV builds
+        ids_filter = os.environ.get("IDS_FILTER", ids_filter)
 
-        logger.info("Initializing JSON data structures as part of wheel creation")
-
-        # Transform ids_filter from space-separated string to set
+        # Transform ids_filter from space-separated or comma-separated string to set
         ids_set = None
         if ids_filter:
-            ids_set = set(ids_filter.split())
-            logger.info(f"Using IDS filter: {ids_filter}")
-        else:
-            logger.info(
-                "Building JSON data for all available IDS (no filter specified)"
-            )
+            # Support both space-separated and comma-separated formats
+            ids_set = set(ids_filter.replace(",", " ").split())
 
-        # Build JSON data structures for the AI-enhanced server
-        # Note: Document store and embeddings are now built separately using:
-        # `build-embeddings` command for better control and performance
-        logger.info("Starting JSON data structure creation...")
-        json_transformer = DataDictionaryTransformer(ids_set=ids_set)
-        json_outputs = json_transformer.transform_complete()
-
-        total_json_files = 2 + len(
-            json_outputs.detailed
-        )  # catalog + relationships + detailed
-        logger.info(
-            f"JSON data structures created successfully: {total_json_files} files"
-        )
-
-        logger.info("Build hook initialization completed")
+        # Build JSON data structures with Rich progress monitoring
+        json_transformer = DataDictionaryTransformer(ids_set=ids_set, use_rich=True)
+        json_transformer.transform_complete()

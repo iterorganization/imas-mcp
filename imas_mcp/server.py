@@ -39,6 +39,7 @@ from imas_mcp.search import (
     SEARCH_EXPERT,
     STRUCTURE_EXPERT,
     ai_enhancer,
+    SearchCache,
     SearchComposer,
     SearchConfig,
     SearchMode,
@@ -105,6 +106,11 @@ class Server:
     def search_composer(self) -> SearchComposer:
         """Lazily initialize and cache the search composer."""
         return SearchComposer(self.document_store)
+
+    @cached_property
+    def search_cache(self) -> SearchCache:
+        """Lazily initialize and cache the search cache."""
+        return SearchCache(maxsize=1000, ttl=3600)
 
     def _register_tools(self):
         """Register the MCP tools with the server."""
@@ -185,6 +191,16 @@ class Server:
             Lexical search: search_imas("plasma temperature", search_mode="lexical")
         """
         try:
+            # Check cache first for faster response
+            cached_result = self.search_cache.get(
+                query=query,
+                ids_name=ids_name,
+                max_results=max_results,
+                search_mode=search_mode,
+            )
+            if cached_result is not None:
+                return cached_result
+
             # Parse search mode
             try:
                 mode = SearchMode(search_mode.lower())
@@ -247,6 +263,15 @@ class Server:
                 result["ai_prompt"] = (
                     f"Query: {query}\nResults: {result['results'][:3]}\n\nProvide analysis as JSON with 'insights', 'related_terms', and 'suggestions' fields."
                 )
+
+            # Cache successful results for future use
+            self.search_cache.set(
+                query=query,
+                result=result,
+                ids_name=ids_name,
+                max_results=max_results,
+                search_mode=search_mode,
+            )
 
             return result
 
