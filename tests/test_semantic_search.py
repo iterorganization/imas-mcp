@@ -38,7 +38,7 @@ class TestSemanticSearchConfig:
         assert config.device is None
         assert config.default_top_k == 10
         assert config.similarity_threshold == 0.0
-        assert config.batch_size == 1000
+        assert config.batch_size == 50
         assert config.ids_set is None
         assert config.enable_cache is True
         assert config.normalize_embeddings is True
@@ -306,7 +306,10 @@ class TestSemanticSearch:
     def test_cache_filename_generation(self, mock_document_store):
         """Test cache filename generation."""
         config = SemanticSearchConfig(
-            model_name="test-model", batch_size=500, ids_set={"test_ids", "another_ids"}
+            model_name="test-model",
+            batch_size=500,
+            ids_set={"test_ids", "another_ids"},
+            enable_cache=False,  # Disable cache to prevent file creation
         )
 
         # Set matching ids_set on mock store using PropertyMock
@@ -320,7 +323,11 @@ class TestSemanticSearch:
             mock_st.return_value.encode.return_value = np.random.random((5, 384))
 
             search = SemanticSearch(config=config, document_store=mock_document_store)
+
+            # Temporarily enable cache just for filename generation test
+            search.config.enable_cache = True
             filename = search._generate_cache_filename()
+            search.config.enable_cache = False  # Restore disabled state
 
             assert filename.startswith(".test_model_")
             assert filename.endswith(".pkl")

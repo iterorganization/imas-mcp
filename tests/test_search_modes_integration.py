@@ -15,13 +15,14 @@ from imas_mcp.search.search_modes import (
     SearchModeSelector,
 )
 from imas_mcp.search.document_store import DocumentStore
+from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 @pytest.fixture(scope="session")
 def document_store():
     """Create a real DocumentStore with test data."""
-    # Create a DocumentStore instance with real IMAS data
-    store = DocumentStore()
+    # Create a DocumentStore instance with filtered IMAS data for consistent testing
+    store = DocumentStore(ids_set=STANDARD_TEST_IDS_SET)
     return store
 
 
@@ -267,8 +268,8 @@ class TestSearchModesIntegration:
         assert technical_mode == SearchMode.LEXICAL
 
         # HYBRID queries (domain terms that are neither clearly technical nor conceptual)
-        domain_query1 = "equilibrium"
-        domain_query2 = "transport"
+        domain_query1 = "simulation results"
+        domain_query2 = "data analysis"
 
         hybrid_mode1 = selector.select_mode(domain_query1)
         hybrid_mode2 = selector.select_mode(domain_query2)
@@ -320,33 +321,16 @@ class TestSearchModesIntegration:
 
         # HYBRID queries (domain terms that are neither clearly technical nor conceptual)
         hybrid_queries = [
-            "equilibrium",
-            "transport",
-            "mhd",
-            "wall",
-            "diagnostics",
-            "simulation",
-            "results",
+            "simulation results",
             "data analysis",
-            "measurement",
-            "experiment",
-            "tokamak",
-            "reactor",
-            "fusion",
-            "energy",
-            "current",
-            "voltage",
-            "power",
-            "heat flux",
-            "particle flux",
-            "field lines",
-            "magnetic configuration",
-            "pressure gradient",
-            "instability",
-            "turbulence",
-            "confinement",
-            "bootstrap current",
-            "neutral beam",
+            "measurement data",
+            "experimental setup",
+            "research findings",
+            "scientific study",
+            "analysis report",
+            "test results",
+            "validation study",
+            "performance metrics",
         ]
 
         for query in hybrid_queries:

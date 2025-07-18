@@ -18,6 +18,7 @@ import pytest
 from imas_mcp.core.data_model import TransformationOutputs
 from imas_mcp.core.xml_parser import DataDictionaryTransformer
 from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+from tests.conftest import STANDARD_TEST_IDS_SET
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +32,14 @@ def xml_accessor():
 @pytest.fixture(scope="session")
 def test_ids_set():
     """Fixture providing a small set of IDS for fast testing."""
-    return {"core_profiles", "equilibrium"}
+    return STANDARD_TEST_IDS_SET
 
 
 @pytest.fixture(scope="session")
 def large_test_ids_set():
     """Fixture providing a larger set of IDS for more comprehensive testing."""
-    return {
-        "core_profiles",
-        "equilibrium",
-        "pf_active",
-        "magnetics",
-    }
+    # Include the standard test IDS plus additional ones for comprehensive testing
+    return STANDARD_TEST_IDS_SET | {"pf_active", "magnetics"}
 
 
 @pytest.fixture

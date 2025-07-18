@@ -644,13 +644,18 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
         Args:
             path: Starting path (format: "ids_name/path" or just "ids_name")
             relationship_type: Type of relationships to explore
-            max_depth: Maximum depth of relationship traversal (1-3)
+            max_depth: Maximum depth of relationship traversal (1-3, limited for performance)
             ctx: MCP context for AI enhancement
 
         Returns:
             Dictionary with relationship network and AI insights
         """
         try:
+            # Validate and limit max_depth for performance
+            max_depth = min(max_depth, 3)  # Hard limit to prevent excessive traversal
+            if max_depth < 1:
+                max_depth = 1
+
             # Parse the path to extract IDS name
             if "/" in path:
                 ids_name = path.split("/")[0]
@@ -679,7 +684,7 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
 
                 search_results = self.semantic_search.search(
                     query=search_query,
-                    top_k=20,  # Get more results for relationship analysis
+                    top_k=min(10, max_depth * 8),  # Reduced from 20, scale with depth
                 )
             except Exception as e:
                 return {
@@ -718,7 +723,9 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
 
                     relationships.append(relationship_item)
 
-                    if len(relationships) >= max_depth * 5:  # Limit results
+                    if (
+                        len(relationships) >= max_depth * 3
+                    ):  # Reduced from 5, stricter limit
                         break
 
             # Build relationship analysis with identifier awareness
@@ -727,7 +734,7 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                 "relationship_type": relationship_type,
                 "max_depth": max_depth,
                 "ids_name": ids_name,
-                "related_paths": relationships[:10],
+                "related_paths": relationships[:5],  # Reduced from 10 for performance
                 "relationship_count": len(relationships),
                 "analysis": {
                     "same_ids_paths": len(
@@ -1265,7 +1272,7 @@ Format as JSON with 'usage_recommendations', 'physics_insights', 'analysis_workf
         domain: str,
         include_cross_domain: bool = False,  # Default to False to avoid performance issues
         analysis_depth: str = "focused",  # Default to focused instead of comprehensive
-        max_paths: int = 20,  # Reduced from 50 to prevent excessive processing
+        max_paths: int = 10,  # Reduced from 20 to prevent excessive processing
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
@@ -1279,7 +1286,7 @@ Format as JSON with 'usage_recommendations', 'physics_insights', 'analysis_workf
             domain: Physics domain name to export (e.g., 'core_profiles', 'equilibrium', 'transport')
             include_cross_domain: Whether to include cross-domain relationship analysis
             analysis_depth: Analysis depth (comprehensive, focused, overview)
-            max_paths: Maximum number of paths to include in export
+            max_paths: Maximum number of paths to include in export (limit: 50)
             ctx: MCP context for AI enhancement
 
         Returns:

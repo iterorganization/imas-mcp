@@ -255,8 +255,14 @@ class SearchModeSelector:
         # Check for mixed queries (both technical and conceptual elements)
         is_technical = self._is_technical_query(query_str)
         is_conceptual = self._is_conceptual_query(query_str)
+        has_explicit_operators = self._has_explicit_technical_operators(query_str)
 
-        if is_technical and is_conceptual:
+        # If query has explicit technical operators (AND, OR, quotes, wildcards, etc.),
+        # prioritize lexical search regardless of conceptual elements
+        if has_explicit_operators:
+            return SearchMode.LEXICAL
+        # If query has both IMAS technical terms AND conceptual terms, use hybrid
+        elif is_technical and is_conceptual:
             return SearchMode.HYBRID
         elif is_technical:
             return SearchMode.LEXICAL
@@ -265,10 +271,10 @@ class SearchModeSelector:
         else:
             return SearchMode.HYBRID
 
-    def _is_technical_query(self, query: str) -> bool:
-        """Check if query is technical and benefits from exact matching."""
-        # Technical query indicators
-        technical_indicators = [
+    def _has_explicit_technical_operators(self, query: str) -> bool:
+        """Check if query has explicit technical search operators."""
+        # Explicit technical operators that indicate user wants precise search
+        explicit_operators = [
             "units:",
             "documentation:",
             "ids_name:",
@@ -281,10 +287,10 @@ class SearchModeSelector:
             "~",
         ]
 
-        # Check for explicit technical indicators
-        if any(indicator in query for indicator in technical_indicators):
-            return True
+        return any(operator in query for operator in explicit_operators)
 
+    def _is_technical_query(self, query: str) -> bool:
+        """Check if query is technical and benefits from exact matching."""
         # Check for path-like queries (contains / and looks like IMAS paths)
         if "/" in query:
             # Additional checks to ensure it's a path-like query

@@ -11,6 +11,11 @@ from imas_mcp.search.semantic_search import SemanticSearch
 from imas_mcp.server import Server
 
 
+# Standard test IDS set for consistency across all tests
+# This avoids re-embedding and ensures consistent performance
+STANDARD_TEST_IDS_SET = {"equilibrium", "core_profiles"}
+
+
 def extract_result(result):
     """Extract JSON from FastMCP TextContent result."""
     if hasattr(result, "__iter__") and len(result) > 0:
@@ -23,7 +28,7 @@ class TestServer:
     """Long-lived server fixture for expensive operations using cached_property."""
 
     def __init__(self):
-        self.server = Server(ids_set={"equilibrium", "core_profiles"})
+        self.server = Server(ids_set=STANDARD_TEST_IDS_SET)
         self.client = Client(self.server.mcp)
 
     @cached_property
