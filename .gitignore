@@ -56,3 +56,4 @@ poetry.lock
 # Log files
 *.log
 .env
+.asv/
