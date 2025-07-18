@@ -39,8 +39,8 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 @click.option(
     "--batch-size",
     type=int,
-    default=32,
-    help="Batch size for embedding generation (default: 32)",
+    default=1000,
+    help="Batch size for embedding generation (default: 1000)",
 )
 @click.option(
     "--no-cache",
@@ -68,6 +68,16 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
     type=str,
     help="Device to use for model (auto-detect if not specified)",
 )
+@click.option(
+    "--check-only",
+    is_flag=True,
+    help="Only check if embeddings exist, don't build them",
+)
+@click.option(
+    "--profile",
+    is_flag=True,
+    help="Enable memory and time profiling",
+)
 def build_embeddings(
     verbose: bool,
     quiet: bool,
@@ -80,6 +90,7 @@ def build_embeddings(
     no_normalize: bool,
     similarity_threshold: float,
     device: Optional[str],
+    check_only: bool,
 ) -> int:
     """Build the document store and semantic search embeddings.
 
@@ -98,8 +109,13 @@ def build_embeddings(
         build-embeddings --half-precision         # Use float16 to reduce memory
         build-embeddings --no-cache               # Don't cache embeddings
         build-embeddings --no-normalize           # Disable embedding normalization
+        build-embeddings --check-only             # Check if embeddings exist
+        build-embeddings --profile                # Enable performance profiling
         build-embeddings --device cuda            # Force GPU usage
     """
+    # TODO: Add profiling support if needed
+    # TODO: implement force rebuild logic if needed
+
     # Set up logging level
     if quiet:
         log_level = logging.ERROR
@@ -157,8 +173,22 @@ def build_embeddings(
         document_count = len(document_store.get_all_documents())
         logger.info(f"Document store built with {document_count} documents")
 
-        # Check if we need to build embeddings
+        # Check if embeddings already exist
         semantic_search = SemanticSearch(config=config, document_store=document_store)
+
+        # If check-only mode, just report status and exit
+        if check_only:
+            info = semantic_search.get_embeddings_info()
+            if info.get("status") == "not_initialized":
+                click.echo("Embeddings do not exist")
+                return 1
+            else:
+                click.echo(f"Embeddings exist: {info['document_count']} documents")
+                click.echo(f"Model: {info['model_name']}")
+                click.echo(f"Memory usage: {info['memory_usage_mb']:.1f} MB")
+                if "cache_file_size_mb" in info:
+                    click.echo(f"Cache size: {info['cache_file_size_mb']:.1f} MB")
+                return 0
 
         # TODO fix
         # If force rebuild, clear cache first

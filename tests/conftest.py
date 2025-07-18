@@ -19,7 +19,7 @@ def extract_result(result):
     return result
 
 
-class TestServerFixture:
+class TestServer:
     """Long-lived server fixture for expensive operations using cached_property."""
 
     def __init__(self):
@@ -44,9 +44,9 @@ class TestServerFixture:
 
 # Session-scoped fixture for expensive server initialization
 @pytest.fixture(scope="session")
-def test_server() -> TestServerFixture:
+def test_server() -> TestServer:
     """Session-scoped server fixture for performance."""
-    return TestServerFixture()
+    return TestServer()
 
 
 @pytest.fixture

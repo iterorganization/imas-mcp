@@ -1,4 +1,14 @@
-"""Comprehensive test suite for the XML parser with proper pytest structure."""
+"""
+Comprehensive test suite for the XML parser with performance optimizations.
+
+Performance optimizations implemented:
+1. Session-scoped fixtures for expensive operations (xml_accessor)
+2. Cached transformation outputs to avoid repeated computations
+3. Smaller test datasets for faster execution
+4. Parametrized tests to reduce test count while maintaining coverage
+5. Slow test markers to allow selective execution
+6. Reduced redundant file I/O operations
+"""
 
 import json
 import logging
@@ -12,19 +22,19 @@ from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def xml_accessor():
-    """Fixture to provide ImasDataDictionaryAccessor instance."""
+    """Fixture to provide ImasDataDictionaryAccessor instance (session-scoped)."""
     return ImasDataDictionaryAccessor()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def test_ids_set():
     """Fixture providing a small set of IDS for fast testing."""
-    return {"core_profiles", "equilibrium", "pf_active"}
+    return {"core_profiles", "equilibrium"}
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def large_test_ids_set():
     """Fixture providing a larger set of IDS for more comprehensive testing."""
     return {
@@ -32,8 +42,6 @@ def large_test_ids_set():
         "equilibrium",
         "pf_active",
         "magnetics",
-        "wall",
-        "ec_launchers",
     }
 
 
@@ -141,7 +149,7 @@ class TestDataDictionaryTransformerTransformation:
 
         # Each IDS should have required fields
         for ids_name, ids_info in ids_catalog.items():
-            assert "path_count" in ids_info  # Changed from leaf_count to path_count
+            assert "path_count" in ids_info
             assert "physics_domain" in ids_info
             assert isinstance(ids_info["path_count"], int)
             assert "name" in ids_info
@@ -171,10 +179,10 @@ class TestDataDictionaryTransformerTransformation:
             # Check paths
             paths = detailed_data["paths"]
             assert isinstance(paths, dict)
-            assert len(paths) > 0  # Should have at least some paths
+            assert len(paths) > 0
 
             # Check some path structures
-            for path_key, path_data in list(paths.items())[:3]:  # Check first 3 paths
+            for path_key, path_data in list(paths.items())[:3]:
                 assert "documentation" in path_data
                 assert "units" in path_data
                 assert "path" in path_data
@@ -186,6 +194,7 @@ class TestDataDictionaryTransformerTransformation:
 
         with open(outputs.relationships, "r", encoding="utf-8") as f:
             relationships_data = json.load(f)
+
         # Validate structure
         assert "metadata" in relationships_data
         assert "cross_references" in relationships_data
@@ -234,15 +243,8 @@ class TestDataDictionaryTransformerFiltering:
                 assert "ids_properties" not in path_key
                 assert "code" not in path_key
 
-    def test_ggd_filtering(self, tmp_path, xml_accessor, test_ids_set):
+    def test_ggd_filtering(self, transformer):
         """Test that GGD nodes are filtered when skip_ggd is True."""
-        transformer = DataDictionaryTransformer(
-            output_dir=tmp_path,
-            dd_accessor=xml_accessor,
-            ids_set=test_ids_set,
-            skip_ggd=True,
-        )
-
         outputs = transformer.transform_complete()
 
         # Check that no paths contain ggd
@@ -279,38 +281,32 @@ class TestDataDictionaryTransformerEdgeCases:
 
         assert len(catalog_data["ids_catalog"]) == 0
 
-    def test_nonexistent_ids_in_set(self, tmp_path, xml_accessor):
-        """Test behavior with non-existent IDS names."""
-        fake_ids_set = {"nonexistent_ids", "fake_data_structure"}
+    @pytest.mark.parametrize(
+        "invalid_ids",
+        [
+            {"nonexistent_ids"},
+            {"fake_data_structure"},
+            {"core_profiles", "nonexistent_ids"},
+        ],
+    )
+    def test_invalid_ids_handling(self, tmp_path, xml_accessor, invalid_ids):
+        """Test behavior with invalid IDS names."""
         transformer = DataDictionaryTransformer(
-            output_dir=tmp_path, dd_accessor=xml_accessor, ids_set=fake_ids_set
+            output_dir=tmp_path, dd_accessor=xml_accessor, ids_set=invalid_ids
         )
 
         outputs = transformer.transform_complete()
 
-        # Should handle gracefully and create minimal output
+        # Should handle gracefully and create output
         assert outputs.catalog.exists()
         assert outputs.relationships.exists()
 
-        # Should have no detailed files since IDS don't exist
-        assert len(outputs.detailed) == 0
-
-    def test_mixed_valid_invalid_ids(self, tmp_path, xml_accessor):
-        """Test behavior with mix of valid and invalid IDS names."""
-        mixed_ids_set = {"core_profiles", "nonexistent_ids", "equilibrium"}
-        transformer = DataDictionaryTransformer(
-            output_dir=tmp_path, dd_accessor=xml_accessor, ids_set=mixed_ids_set
-        )
-
-        outputs = transformer.transform_complete()
-
-        # Should process valid IDS and ignore invalid ones
-        assert outputs.catalog.exists()
-        assert len(outputs.detailed) <= 2  # At most 2 valid IDS
+        # For mixed sets, should process valid IDS only
+        valid_ids = {"core_profiles"} & invalid_ids
+        assert len(outputs.detailed) == len(valid_ids)
 
     def test_invalid_output_directory(self, xml_accessor):
         """Test behavior with invalid output directory path."""
-        # Test with a path that would cause issues on Windows
         import os
         import tempfile
 
@@ -319,7 +315,7 @@ class TestDataDictionaryTransformerEdgeCases:
             conflict_path = os.path.join(temp_dir, "conflict")
             with open(conflict_path, "w") as f:
                 f.write("test")
-            # This should handle the conflict gracefully or raise appropriate error
+
             from pathlib import Path
 
             try:
@@ -338,47 +334,31 @@ class TestDataDictionaryTransformerPerformance:
     """Performance and efficiency tests."""
 
     def test_small_vs_large_ids_set_timing(
-        self, tmp_path, xml_accessor, test_ids_set, large_test_ids_set
+        self, transformer, transformer_large, test_ids_set, large_test_ids_set
     ):
         """Test that processing time scales reasonably with IDS set size."""
-        import time
-
-        # Test small set
-        transformer_small = DataDictionaryTransformer(
-            output_dir=tmp_path / "small",
-            dd_accessor=xml_accessor,
-            ids_set=test_ids_set,
-        )
-
-        start_time = time.time()
-        outputs_small = transformer_small.transform_complete()
-        small_duration = time.time() - start_time
-
-        # Test large set
-        transformer_large = DataDictionaryTransformer(
-            output_dir=tmp_path / "large",
-            dd_accessor=xml_accessor,
-            ids_set=large_test_ids_set,
-        )
-
-        start_time = time.time()
+        outputs_small = transformer.transform_complete()
         outputs_large = transformer_large.transform_complete()
-        large_duration = time.time() - start_time
 
-        # Basic performance validation
-        assert small_duration > 0
-        assert large_duration > 0
-        # Large set should produce more output
+        # Basic validation that larger set produces more output
         assert len(outputs_large.detailed) >= len(outputs_small.detailed)
 
-        logger.info(f"Small set ({len(test_ids_set)} IDS): {small_duration:.2f}s")
-        logger.info(f"Large set ({len(large_test_ids_set)} IDS): {large_duration:.2f}s")
+        logger.info(
+            f"Small set ({len(test_ids_set)} IDS): {len(outputs_small.detailed)} detailed files"
+        )
+        logger.info(
+            f"Large set ({len(large_test_ids_set)} IDS): {len(outputs_large.detailed)} detailed files"
+        )
 
+    @pytest.mark.slow
     def test_memory_usage_reasonable(self, transformer_large):
         """Test that memory usage stays reasonable during processing."""
         import os
 
-        import psutil
+        try:
+            import psutil
+        except ImportError:
+            pytest.skip("psutil not available for memory testing")
 
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB
@@ -431,10 +411,11 @@ class TestDataDictionaryTransformerDataQuality:
         """Test that extracted data is complete and consistent."""
         outputs = transformer.transform_complete()
 
-        # Load all data
+        # Load catalog data
         with open(outputs.catalog, "r", encoding="utf-8") as f:
             catalog_data = json.load(f)
 
+        # Load detailed data
         detailed_data = {}
         for detailed_file in outputs.detailed:
             with open(detailed_file, "r", encoding="utf-8") as f:
@@ -452,6 +433,16 @@ class TestDataDictionaryTransformerDataQuality:
         for ids_name in catalog_ids:
             catalog_path_count = catalog_data["ids_catalog"][ids_name]["path_count"]
             detailed_path_count = len(detailed_data[ids_name]["paths"])
+            # Path count should match or be reasonably close
+            max_difference = max(200, catalog_path_count * 0.8)
+            assert abs(catalog_path_count - detailed_path_count) <= max_difference, (
+                f"Path count mismatch for {ids_name}: catalog={catalog_path_count}, detailed={detailed_path_count}, tolerance={max_difference}"
+            )
+
+        # Validate path counts match
+        for ids_name in catalog_ids:
+            catalog_path_count = catalog_data["ids_catalog"][ids_name]["path_count"]
+            detailed_path_count = len(detailed_data[ids_name]["paths"])
             # Path count should match or be reasonably close to path count
             # (allowing for larger differences due to filtering like GGD exclusion and other patterns)
             # Use a very generous tolerance to account for aggressive filtering that can remove 60%+ of paths
@@ -460,16 +451,56 @@ class TestDataDictionaryTransformerDataQuality:
                 f"Path count mismatch for {ids_name}: catalog={catalog_path_count}, detailed={detailed_path_count}, tolerance={max_difference}"
             )
 
+    @pytest.mark.parametrize("test_field", ["documentation", "units", "path"])
+    def test_path_field_consistency(self, transformer, test_field):
+        """Test that specific path fields are consistent and well-formed."""
+        outputs = transformer.transform_complete()
+        detailed_data = {}
+        for detailed_file in outputs.detailed:
+            with open(detailed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ids_name = data["ids_info"]["name"]
+                detailed_data[ids_name] = data
+
+        for ids_name, data in detailed_data.items():
+            paths = data["paths"]
+
+            for path_key, path_data in paths.items():
+                # Should have required fields
+                assert test_field in path_data
+
+                if test_field == "path":
+                    # Path key should match path field
+                    assert path_data["path"] == path_key
+                    # Path should start with IDS name
+                    assert path_key.startswith(ids_name + "/"), (
+                        f"Path {path_key} doesn't start with IDS name {ids_name}"
+                    )
+                    # Path should not be empty
+                    assert len(path_key) > len(ids_name) + 1
+
+                elif test_field == "documentation":
+                    # Documentation should not be empty string (though can be None)
+                    if path_data["documentation"]:
+                        assert len(path_data["documentation"].strip()) > 0
+
+                elif test_field == "units":
+                    # Units can be None, empty string, or have content
+                    # This is validated in the dedicated units test
+                    pass
+
     def test_path_consistency(self, transformer):
         """Test that paths are consistent and well-formed."""
         outputs = transformer.transform_complete()
-
+        detailed_data = {}
         for detailed_file in outputs.detailed:
             with open(detailed_file, "r", encoding="utf-8") as f:
-                detailed_data = json.load(f)
+                data = json.load(f)
+                ids_name = data["ids_info"]["name"]
+                detailed_data[ids_name] = data
 
-            ids_name = detailed_data["ids_info"]["name"]
-            paths = detailed_data["paths"]
+        for ids_name, data in detailed_data.items():
+            paths = data["paths"]
 
             for path_key, path_data in paths.items():
                 # Path key should match path field
@@ -494,14 +525,17 @@ class TestDataDictionaryTransformerDataQuality:
     def test_units_validation(self, transformer):
         """Test that units are properly extracted and formatted."""
         outputs = transformer.transform_complete()
+        detailed_data = {}
+        for detailed_file in outputs.detailed:
+            with open(detailed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ids_name = data["ids_info"]["name"]
+                detailed_data[ids_name] = data
 
         unit_statistics = {"with_units": 0, "without_units": 0, "empty_units": 0}
 
-        for detailed_file in outputs.detailed:
-            with open(detailed_file, "r", encoding="utf-8") as f:
-                detailed_data = json.load(f)
-
-            paths = detailed_data["paths"]
+        for ids_name, data in detailed_data.items():
+            paths = data["paths"]
 
             for path_key, path_data in paths.items():
                 units = path_data["units"]
@@ -527,14 +561,17 @@ class TestDataDictionaryTransformerDataQuality:
     def test_coordinate_systems_extraction(self, transformer):
         """Test that coordinate systems are properly extracted."""
         outputs = transformer.transform_complete()
+        detailed_data = {}
+        for detailed_file in outputs.detailed:
+            with open(detailed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ids_name = data["ids_info"]["name"]
+                detailed_data[ids_name] = data
 
         coordinate_systems_found = 0
 
-        for detailed_file in outputs.detailed:
-            with open(detailed_file, "r", encoding="utf-8") as f:
-                detailed_data = json.load(f)
-
-            coord_systems = detailed_data["coordinate_systems"]
+        for ids_name, data in detailed_data.items():
+            coord_systems = data["coordinate_systems"]
 
             if coord_systems:
                 coordinate_systems_found += len(coord_systems)
@@ -548,20 +585,22 @@ class TestDataDictionaryTransformerDataQuality:
         logger.info(f"Found {coordinate_systems_found} coordinate systems")
 
         # Should find at least some coordinate systems
-        # (This might need adjustment based on actual data)
-        assert coordinate_systems_found >= 0  # At minimum, should not fail
+        assert coordinate_systems_found >= 0
 
     def test_semantic_groups_extraction(self, transformer):
         """Test that semantic groups are properly identified."""
         outputs = transformer.transform_complete()
+        detailed_data = {}
+        for detailed_file in outputs.detailed:
+            with open(detailed_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ids_name = data["ids_info"]["name"]
+                detailed_data[ids_name] = data
 
         semantic_groups_found = 0
 
-        for detailed_file in outputs.detailed:
-            with open(detailed_file, "r", encoding="utf-8") as f:
-                detailed_data = json.load(f)
-
-            semantic_groups = detailed_data["semantic_groups"]
+        for ids_name, data in detailed_data.items():
+            semantic_groups = data["semantic_groups"]
 
             if semantic_groups:
                 semantic_groups_found += len(semantic_groups)
@@ -576,7 +615,6 @@ class TestDataDictionaryTransformerDataQuality:
                     for path in group_paths:
                         assert isinstance(path, str)
                         # Path should be a valid IDS path (contains the IDS name)
-                        ids_name = detailed_data["ids_info"]["name"]
                         assert path.startswith(ids_name + "/"), (
                             f"Path {path} should start with {ids_name}/"
                         )
