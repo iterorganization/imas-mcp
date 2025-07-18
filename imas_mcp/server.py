@@ -39,6 +39,9 @@ from imas_mcp.search import (
     SEARCH_EXPERT,
     STRUCTURE_EXPERT,
     ai_enhancer,
+    SearchComposer,
+    SearchConfig,
+    SearchMode,
 )
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
@@ -98,6 +101,11 @@ class Server:
         """Lazily initialize and cache the graph analyzer."""
         return IMASGraphAnalyzer()
 
+    @cached_property
+    def search_composer(self) -> SearchComposer:
+        """Lazily initialize and cache the search composer."""
+        return SearchComposer(self.document_store)
+
     def _register_tools(self):
         """Register the MCP tools with the server."""
         self.mcp.tool(self.search_imas)
@@ -139,6 +147,7 @@ class Server:
         query: Union[str, List[str]],
         ids_name: Optional[str] = None,
         max_results: int = 10,
+        search_mode: str = "auto",
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
@@ -160,6 +169,7 @@ class Server:
                    - Fuzzy search: "temperatur~" (with tilde for fuzzy matching)
             ids_name: Optional specific IDS to search within
             max_results: Maximum number of results to return
+            search_mode: Search mode - "auto", "semantic", "lexical", or "hybrid"
             ctx: MCP context for AI enhancement
 
         Returns:
@@ -172,28 +182,29 @@ class Server:
             Wildcards: search_imas("temp* OR ion*")
             Field search: search_imas("documentation:electron units:eV")
             Fuzzy search: search_imas("temperatur~ densty~")
+            Lexical search: search_imas("plasma temperature", search_mode="lexical")
         """
         try:
-            # Use semantic search for enhanced physics-aware searching
-            search_results = self.semantic_search.search(
-                query=query if isinstance(query, str) else " ".join(query),
-                top_k=max_results,
+            # Parse search mode
+            try:
+                mode = SearchMode(search_mode.lower())
+            except ValueError:
+                mode = SearchMode.AUTO
+
+            # Configure search
+            config = SearchConfig(
+                mode=mode,
+                max_results=max_results,
                 filter_ids=[ids_name] if ids_name else None,
             )
 
-            # Convert semantic search results to standard format
+            # Execute search using composer
+            search_results = self.search_composer.search(query, config)
+
+            # Convert results to standard format
             results_dict = []
             for result in search_results:
-                result_item = {
-                    "path": result.document.metadata.path_name,
-                    "score": result.similarity_score,
-                    "documentation": result.document.documentation,
-                    "units": result.document.units.unit_str
-                    if result.document.units
-                    else "",
-                    "ids_name": result.document.metadata.ids_name,
-                    "highlights": "",  # Can be enhanced later if needed
-                }
+                result_item = result.to_dict()
 
                 # Add identifier information if present - critical for branching logic
                 result_item["identifier"] = self._extract_identifier_info(
@@ -201,11 +212,11 @@ class Server:
                 )
                 results_dict.append(result_item)
 
-            # Build response with enhanced semantic context
+            # Build response with enhanced context
             result = {
                 "results": results_dict,
                 "total_results": len(results_dict),
-                "search_strategy": "semantic_search",
+                "search_strategy": mode.value,
                 "suggestions": [],
             }
 

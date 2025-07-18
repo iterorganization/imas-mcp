@@ -16,9 +16,12 @@ from .ai_enhancer import (
     ai_enhancer,
 )
 from .document_store import Document, DocumentMetadata, DocumentStore
-
-# Don't import SemanticSearch here - make it lazy to avoid startup penalty
-# from .semantic_search import SemanticSearch, SemanticSearchConfig, SemanticSearchResult
+from .search_modes import (
+    SearchComposer,
+    SearchConfig,
+    SearchMode,
+    SearchResult,
+)
 
 __all__ = [
     "ai_enhancer",
@@ -32,4 +35,8 @@ __all__ = [
     "DocumentStore",
     "Document",
     "DocumentMetadata",
+    "SearchComposer",
+    "SearchConfig",
+    "SearchMode",
+    "SearchResult",
 ]
