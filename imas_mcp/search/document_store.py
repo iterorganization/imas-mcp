@@ -331,8 +331,15 @@ class DocumentStore:
     def _ensure_loaded(self) -> None:
         """Ensure all available documents are loaded (fallback for full loading)."""
         if not self._loaded:
-            logger.info("Loading all available IDS...")
             available_ids = self._get_available_ids()
+            # Filter by ids_set if specified
+            if self.ids_set is not None:
+                available_ids = [ids for ids in available_ids if ids in self.ids_set]
+                logger.info(
+                    f"Loading {len(available_ids)} filtered IDS: {available_ids}"
+                )
+            else:
+                logger.info("Loading all available IDS...")
             self._ensure_ids_loaded(available_ids)
 
     def _get_resources_path(self) -> Path:

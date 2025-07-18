@@ -63,7 +63,7 @@ class EmbeddingCache:
     ) -> bool:
         """Check if cache is valid for current state."""
         # More lenient validation - allow small document count differences
-        doc_count_valid = abs(self.document_count - current_doc_count) <= 5
+        doc_count_valid = self.document_count == current_doc_count
         model_valid = self.model_name == current_model
         embeddings_valid = len(self.embeddings) > 0 and len(self.path_ids) > 0
         ids_set_valid = self.ids_set == current_ids_set
@@ -82,7 +82,7 @@ class SemanticSearchConfig:
     # Search configuration
     default_top_k: int = 10
     similarity_threshold: float = 0.0  # Minimum similarity to return
-    batch_size: int = 500  # For embedding generation
+    batch_size: int = 1000  # For embedding generation
     ids_set: Optional[set] = None  # Limit to specific IDS for testing/performance
 
     # Cache configuration
@@ -195,10 +195,6 @@ class SemanticSearch:
                 f"Initializing semantic search with model: {self.config.model_name}"
             )
 
-            # Ensure DocumentStore is loaded
-            # DocumentStore automatically loads documents based on its ids_set configuration
-            # No manual loading needed since we removed auto_load=False functionality
-
             # Load sentence transformer model
             self._load_model()
 
@@ -213,15 +209,32 @@ class SemanticSearch:
         try:
             # Set cache folder to embeddings directory
             cache_folder = str(self._get_embeddings_dir() / "models")
-            self._model = SentenceTransformer(
-                self.config.model_name,
-                device=self.config.device,
-                cache_folder=cache_folder,
-                local_files_only=True,  # Prevent internet downloads
-            )
-            logger.info(
-                f"Loaded model {self.config.model_name} on device: {self._model.device}"
-            )
+
+            # Try to load with local_files_only first for speed
+            try:
+                self._model = SentenceTransformer(
+                    self.config.model_name,
+                    device=self.config.device,
+                    cache_folder=cache_folder,
+                    local_files_only=True,  # Prevent internet downloads
+                )
+                logger.info(
+                    f"Loaded model {self.config.model_name} from cache on device: {self._model.device}"
+                )
+            except Exception:
+                # If local loading fails, try downloading
+                logger.info(
+                    f"Model not in cache, downloading {self.config.model_name}..."
+                )
+                self._model = SentenceTransformer(
+                    self.config.model_name,
+                    device=self.config.device,
+                    cache_folder=cache_folder,
+                    local_files_only=False,  # Allow downloads
+                )
+                logger.info(
+                    f"Downloaded and loaded model {self.config.model_name} on device: {self._model.device}"
+                )
 
         except Exception as e:
             logger.error(f"Failed to load model {self.config.model_name}: {e}")
@@ -279,28 +292,23 @@ class SemanticSearch:
             return False
 
     def _generate_embeddings(self) -> None:
-        """Generate embeddings for all documents."""
+        """Generate embeddings for all documents with memory-efficient processing."""
         if not self._model:
             raise RuntimeError("Model not loaded")
 
-        # Always get ALL documents for embedding generation
-        # Filtering by IDS is applied during search, not during embedding
-        documents = self.document_store.get_all_documents()
+        # Get document count first to avoid loading all documents into memory
+        doc_count = self.document_store.get_document_count()
 
-        if not documents:
+        if doc_count == 0:
             logger.warning("No documents found for embedding generation")
             self._embeddings_cache = EmbeddingCache()
             return
 
-        logger.info(f"Generating embeddings for {len(documents)} documents...")
-
-        # Extract embedding texts
-        texts = [doc.embedding_text for doc in documents]
-        path_ids = [doc.metadata.path_id for doc in documents]
+        logger.info(f"Generating embeddings for {doc_count} documents...")
 
         # Calculate batch information for progress monitoring
         total_batches = (
-            len(texts) + self.config.batch_size - 1
+            doc_count + self.config.batch_size - 1
         ) // self.config.batch_size
         batch_names = [f"Batch {i + 1}/{total_batches}" for i in range(total_batches)]
 
@@ -316,16 +324,23 @@ class SemanticSearch:
 
         try:
             embeddings_list = []
+            path_ids = []
 
-            # Process in batches with progress monitoring
-            for i in range(0, len(texts), self.config.batch_size):
-                batch_name = (
-                    f"Batch {(i // self.config.batch_size) + 1}/{total_batches}"
-                )
+            # Get all documents once for iteration
+            documents = self.document_store.get_all_documents()
+
+            # Process documents in batches to reduce memory usage
+            for i in range(0, len(documents), self.config.batch_size):
+                batch_idx = (i // self.config.batch_size) + 1
+                batch_name = f"Batch {batch_idx}/{total_batches}"
                 progress.set_current_item(batch_name)
 
-                # Extract batch
-                batch_texts = texts[i : i + self.config.batch_size]
+                # Extract batch documents
+                batch_docs = documents[i : i + self.config.batch_size]
+
+                # Extract texts and path_ids for this batch only
+                batch_texts = [doc.embedding_text for doc in batch_docs]
+                batch_path_ids = [doc.metadata.path_id for doc in batch_docs]
 
                 # Generate embeddings for this batch
                 batch_embeddings = self._model.encode(
@@ -336,6 +351,7 @@ class SemanticSearch:
                 )
 
                 embeddings_list.append(batch_embeddings)
+                path_ids.extend(batch_path_ids)
                 progress.update_progress(batch_name)
 
             # Combine all batch embeddings
@@ -416,6 +432,7 @@ class SemanticSearch:
             [query],
             convert_to_numpy=True,
             normalize_embeddings=self.config.normalize_embeddings,
+            show_progress_bar=False,
         )[0]
 
         # Compute similarities
@@ -454,6 +471,10 @@ class SemanticSearch:
         """Compute cosine similarities between query and all document embeddings."""
         if not self._embeddings_cache:
             raise RuntimeError("Embeddings cache not initialized")
+
+        # Handle empty embeddings case
+        if self._embeddings_cache.embeddings.shape[0] == 0:
+            return np.array([])
 
         if self.config.normalize_embeddings:
             # Fast cosine similarity for normalized embeddings
@@ -605,6 +626,7 @@ class SemanticSearch:
             batch_size=self.config.batch_size,
             convert_to_numpy=True,
             normalize_embeddings=self.config.normalize_embeddings,
+            show_progress_bar=False,  # Disable individual progress, use our own
         )
 
         # Search for each query
