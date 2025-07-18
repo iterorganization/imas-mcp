@@ -62,13 +62,13 @@ class EmbeddingCache:
         current_ids_set: Optional[set] = None,
     ) -> bool:
         """Check if cache is valid for current state."""
-        # More lenient validation - allow small document count differences
-        doc_count_valid = self.document_count == current_doc_count
-        model_valid = self.model_name == current_model
-        embeddings_valid = len(self.embeddings) > 0 and len(self.path_ids) > 0
-        ids_set_valid = self.ids_set == current_ids_set
-
-        return doc_count_valid and model_valid and embeddings_valid and ids_set_valid
+        return (
+            self.document_count == current_doc_count
+            and self.model_name == current_model
+            and len(self.embeddings) > 0
+            and len(self.path_ids) > 0
+            and self.ids_set == current_ids_set
+        )
 
 
 @dataclass
@@ -82,7 +82,7 @@ class SemanticSearchConfig:
     # Search configuration
     default_top_k: int = 10
     similarity_threshold: float = 0.0  # Minimum similarity to return
-    batch_size: int = 1000  # For embedding generation
+    batch_size: int = 50  # For embedding generation
     ids_set: Optional[set] = None  # Limit to specific IDS for testing/performance
 
     # Cache configuration
@@ -157,28 +157,27 @@ class SemanticSearch:
         # Extract clean model name (remove path and normalize)
         model_name = self.config.model_name.split("/")[-1].replace("-", "_")
 
-        # Build configuration parts for hashing (excluding model name)
+        # Build configuration parts for hashing (excluding model name, batch_size, and threshold)
         config_parts = [
-            f"batch_{self.config.batch_size}",
             f"norm_{self.config.normalize_embeddings}",
             f"half_{self.config.use_half_precision}",
-            f"threshold_{self.config.similarity_threshold}",
         ]
 
-        # Add IDS set to hash computation
+        # Add IDS set to hash computation only if using a subset
         if self.config.ids_set:
             # Sort IDS names for consistent hashing
             ids_list = sorted(list(self.config.ids_set))
             config_parts.append(f"ids_{'_'.join(ids_list)}")
-        else:
-            config_parts.append("ids_all")
 
         # Compute short hash from config parts
         config_str = "_".join(config_parts)
         config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
 
-        # Generate clean filename: .{model_name}_{hash}.pkl
-        filename = f".{model_name}_{config_hash}.pkl"
+        # Generate clean filename: .{model_name}_{hash}.pkl for ids_set, .{model_name}.pkl for full
+        if self.config.ids_set:
+            filename = f".{model_name}_{config_hash}.pkl"
+        else:
+            filename = f".{model_name}.pkl"
 
         logger.debug(
             f"Generated cache filename: {filename} (from config: {config_str})"
