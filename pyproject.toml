@@ -161,15 +161,9 @@ addopts = [
     "--strict-markers",
     "--strict-config",
     "--verbose",
-    "--tb=short",
     "--maxfail=5",
-    "--disable-warnings",
-    "--no-header",
-    "--no-summary",
-    "-q",
     "--durations=10",
     "--cache-clear",
-    "-x"
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
@@ -187,7 +181,6 @@ filterwarnings = [
 ]
 # Performance optimizations
 cache_dir = ".pytest_cache"
-collect_ignore = ["build", "dist"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

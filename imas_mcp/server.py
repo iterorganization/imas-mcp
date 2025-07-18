@@ -67,7 +67,11 @@ class Server:
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
         if self.search_config is None:
-            self.search_config = SemanticSearchConfig()
+            self.search_config = SemanticSearchConfig(ids_set=self.ids_set)
+        else:
+            assert self.ids_set == self.search_config.ids_set, (
+                "If search_config is provided, it must match the ids_set."
+            )
         self.mcp = FastMCP(name="imas-dd")
         self._register_tools()
 
