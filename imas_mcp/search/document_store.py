@@ -331,10 +331,8 @@ class DocumentStore:
     def _ensure_loaded(self) -> None:
         """Ensure all available documents are loaded (fallback for full loading)."""
         if not self._loaded:
-            available_ids = self._get_available_ids()
-            # Filter by ids_set if specified
+            available_ids = self._get_available_ids()  # This now respects ids_set
             if self.ids_set is not None:
-                available_ids = [ids for ids in available_ids if ids in self.ids_set]
                 logger.info(
                     f"Loading {len(available_ids)} filtered IDS: {available_ids}"
                 )
@@ -375,9 +373,9 @@ class DocumentStore:
         if self.ids_set:
             ids_str = "_".join(sorted(self.ids_set))
             ids_hash = hashlib.md5(ids_str.encode()).hexdigest()[:8]
-            return f"document_store_{ids_hash}.db"
+            return f"imas_fts_{ids_hash}.db"
         else:
-            return "document_store_all.db"
+            return "imas_fts.db"
 
     def is_available(self) -> bool:
         """Check if IMAS data is available."""
@@ -436,8 +434,11 @@ class DocumentStore:
             )
 
     def _get_available_ids(self) -> List[str]:
-        """Get list of available IDS names without loading documents."""
+        """Get list of available IDS names without loading documents, respecting ids_set filter."""
         if self._available_ids is not None:
+            # If ids_set is specified, filter the cached available IDS
+            if self.ids_set is not None:
+                return [ids for ids in self._available_ids if ids in self.ids_set]
             return self._available_ids
 
         catalog_path = self._data_dir / "ids_catalog.json"
@@ -449,8 +450,13 @@ class DocumentStore:
         try:
             with open(catalog_path, encoding="utf-8") as f:
                 catalog = json.load(f)
-            self._available_ids = list(catalog.get("ids_catalog", {}).keys())
-            return self._available_ids
+            all_ids = list(catalog.get("ids_catalog", {}).keys())
+            self._available_ids = all_ids
+
+            # If ids_set is specified, filter the available IDS
+            if self.ids_set is not None:
+                return [ids for ids in all_ids if ids in self.ids_set]
+            return all_ids
         except Exception as e:
             logger.error(f"Failed to load catalog: {e}")
             self._available_ids = []
@@ -722,12 +728,12 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return [self._index.by_path_id[pid] for pid in path_ids]
 
     def get_all_documents(self) -> List[Document]:
-        """Get all documents for embedding generation."""
+        """Get all documents for embedding generation, respecting ids_set filter."""
         self._ensure_loaded()
         return list(self._index.by_path_id.values())
 
     def __len__(self) -> int:
-        """Get the number of documents in the store."""
+        """Get the number of documents in the store, respecting ids_set filter."""
         self._ensure_loaded()
         return len(self._index.by_path_id)
 
