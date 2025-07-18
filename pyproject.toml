@@ -51,7 +51,8 @@ dependencies = [
     "PyYAML>=6.0,<7.0",
     "numpy>=2.3.1",
     "sentence-transformers>=5.0.0",
-    "huggingface-hub>=0.33.4",
+    "huggingface-hub[hf_xet]>=0.33.4",
+    "cachetools>=5.3.0,<6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +70,7 @@ test = [
     "pytest-timeout>=2.1.0,<3.0.0",
     "coverage>=7.0.0",
 ]
+bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
 
 [dependency-groups]
 dev = [
@@ -106,10 +108,6 @@ source = "vcs"
 packages = ["imas_mcp"]
 include = ["README.md", "LICENSE"]
 exclude = ["*.pyc", "__pycache__/*", "imas_mcp/resources/.gitkeep"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"imas_mcp/resources" = "imas_mcp/resources"
-"imas_mcp/definitions" = "imas_mcp/definitions"
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"

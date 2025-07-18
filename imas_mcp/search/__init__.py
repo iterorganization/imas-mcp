@@ -15,6 +15,7 @@ from .ai_enhancer import (
     STRUCTURE_EXPERT,
     ai_enhancer,
 )
+from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_modes import (
     SearchComposer,
@@ -32,6 +33,7 @@ __all__ = [
     "RELATIONSHIP_EXPERT",
     "BULK_EXPORT_EXPERT",
     "PHYSICS_DOMAIN_EXPERT",
+    "SearchCache",
     "DocumentStore",
     "Document",
     "DocumentMetadata",
