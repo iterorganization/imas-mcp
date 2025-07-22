@@ -57,6 +57,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-schemas && \
     echo "✓ Schema data ready"
 
+# Build embeddings (conditional on IDS_FILTER)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building embeddings..." && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building embeddings for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-embeddings --ids-filter "${IDS_FILTER}"; \
+    else \
+    echo "Building embeddings for all IDS" && \
+    uv run --no-dev build-embeddings; \ 
+    fi && \
+    echo "✓ Embeddings ready"
+
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
