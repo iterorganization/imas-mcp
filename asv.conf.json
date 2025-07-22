@@ -8,7 +8,7 @@
     "pythons": ["3.12"],
     "build_command": [
         "python -m pip install build",
-        "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; subprocess.run([sys.executable, '-m', 'build', '--wheel', '--outdir', '{build_cache_dir}', '{build_dir}'], check=True)\""
+        "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
     ],
     "install_command": [
         "in-dir={env_dir} python -m pip install {wheel_file}"
@@ -20,5 +20,10 @@
     "env_dir": ".asv/env",
     "results_dir": ".asv/results",
     "html_dir": ".asv/html",
-    "build_cache_size": 8
+    "build_cache_size": 8,
+    "regressions_first_commits": {},
+    "regressions_thresholds": {
+        "regress": 1.5,
+        "improve": 0.8
+    }
 }

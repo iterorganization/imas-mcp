@@ -20,7 +20,9 @@ class BenchmarkRunner:
         cmd = ["asv", "run", "--python=3.12"]
 
         if benchmark_names:
-            cmd.extend(["-b", ",".join(benchmark_names)])
+            # Use individual -b flags for each benchmark
+            for benchmark in benchmark_names:
+                cmd.extend(["-b", benchmark])
 
         print(f"Running benchmarks: {' '.join(cmd)}")
 
@@ -68,16 +70,31 @@ class BenchmarkRunner:
         }
 
     def get_latest_results(self) -> Dict[str, Any]:
-        """Get latest benchmark results."""
+        """Get latest benchmark results with actual timing data."""
         if not self.results_dir.exists():
             return {"error": "No benchmark results found"}
 
-        # Find the latest results file
-        result_files = list(self.results_dir.glob("*.json"))
+        # Look for machine-specific results which contain actual timing data
+        machine_dirs = [d for d in self.results_dir.iterdir() if d.is_dir()]
+        if not machine_dirs:
+            return {"error": "No machine-specific result directories found"}
+
+        # Get the latest machine directory
+        latest_machine_dir = max(machine_dirs, key=lambda d: d.stat().st_mtime)
+
+        # Find the latest result file in that directory
+        result_files = list(latest_machine_dir.glob("*.json"))
         if not result_files:
             return {"error": "No benchmark result files found"}
 
-        latest_file = max(result_files, key=lambda f: f.stat().st_mtime)
+        # Filter out machine.json and get actual benchmark results
+        benchmark_files = [
+            f for f in result_files if not f.name.endswith("machine.json")
+        ]
+        if not benchmark_files:
+            return {"error": "No benchmark timing files found"}
+
+        latest_file = max(benchmark_files, key=lambda f: f.stat().st_mtime)
 
         try:
             with open(latest_file, "r") as f:
@@ -103,4 +120,47 @@ class BenchmarkRunner:
             "return_code": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
+        }
+
+    def list_benchmarks(self) -> Dict[str, Any]:
+        """List all available benchmarks by scanning benchmark files."""
+        import ast
+
+        benchmarks = []
+        benchmark_files = list(self.benchmark_dir.glob("*.py"))
+
+        for file_path in benchmark_files:
+            if file_path.name.startswith("__"):
+                continue
+
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+
+                # Parse the AST to find classes and methods
+                tree = ast.parse(content)
+
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ClassDef):
+                        class_name = node.name
+                        if class_name.endswith("Benchmarks"):
+                            # Find benchmark methods in this class
+                            for item in node.body:
+                                if isinstance(item, ast.FunctionDef):
+                                    method_name = item.name
+                                    if method_name.startswith(
+                                        ("time_", "mem_", "peakmem_")
+                                    ):
+                                        benchmarks.append(f"{class_name}.{method_name}")
+
+            except Exception as e:
+                print(f"Warning: Could not parse {file_path}: {e}")
+                continue
+
+        return {
+            "benchmarks": sorted(benchmarks),
+            "total_count": len(benchmarks),
+            "return_code": 0,
+            "stdout": "\n".join(sorted(benchmarks)),
+            "stderr": "",
         }

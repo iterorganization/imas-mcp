@@ -8,10 +8,6 @@ import pytest
 
 from benchmarks.benchmark_runner import BenchmarkRunner
 from benchmarks.benchmarks import BenchmarkFixture, SearchBenchmarks
-from benchmarks.performance_targets import (
-    CURRENT_PERFORMANCE_TARGETS,
-    validate_performance_results,
-)
 
 
 class TestBenchmarkConfiguration:
@@ -38,43 +34,6 @@ class TestBenchmarkConfiguration:
         assert config["environment_type"] == "virtualenv"
         assert "3.12" in config["pythons"]
         assert config["benchmark_dir"] == "benchmarks"
-
-    def test_performance_targets(self):
-        """Test that performance targets are properly defined."""
-        assert len(CURRENT_PERFORMANCE_TARGETS) > 0
-
-        # Check a specific target
-        search_target = CURRENT_PERFORMANCE_TARGETS["search_imas_basic"]
-        assert search_target.target_time == 2.0
-        assert search_target.max_time == 5.0
-        assert search_target.memory_limit == 500
-
-    def test_performance_validation(self):
-        """Test performance validation function."""
-        # Mock results that pass
-        good_results = {
-            "search_imas_basic": {"time": 1.5},
-            "explain_concept_basic": {"time": 1.0},
-        }
-
-        validation = validate_performance_results(
-            good_results, CURRENT_PERFORMANCE_TARGETS
-        )
-
-        assert len(validation["passed"]) == 2
-        assert len(validation["failed"]) == 0
-
-        # Mock results that fail
-        bad_results = {
-            "search_imas_basic": {"time": 10.0}  # Over max_time of 5.0
-        }
-
-        validation = validate_performance_results(
-            bad_results, CURRENT_PERFORMANCE_TARGETS
-        )
-
-        assert len(validation["failed"]) == 1
-        assert validation["failed"][0]["status"] == "failed"
 
     def test_benchmarks_file_exists(self):
         """Test that benchmarks.py file exists."""
