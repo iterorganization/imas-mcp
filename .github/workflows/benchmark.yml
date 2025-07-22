@@ -38,8 +38,27 @@ jobs:
         uses: astral-sh/setup-uv@v2
 
       - name: Install dependencies
+        run: uv sync --extra bench
+        env:
+          HATCH_BUILD_NO_HOOKS: true
+
+      - name: Build schema data
+        run: uv run build-schemas --ids-filter "equilibrium core_profiles" --quiet
+
+      - name: Build embeddings
+        run: uv run build-embeddings --ids-filter "equilibrium core_profiles" --quiet --no-cache
+
+      - name: Verify schema files
         run: |
-          uv sync --extra bench
+          echo "Checking for required schema files..."
+          ls -la imas_mcp/resources/schemas/ || true
+          if [ -f "imas_mcp/resources/schemas/ids_catalog.json" ]; then
+            echo "✅ ids_catalog.json found"
+            wc -l imas_mcp/resources/schemas/ids_catalog.json
+          else
+            echo "❌ ids_catalog.json missing"
+            exit 1
+          fi
 
       - name: Download previous benchmark results
         uses: actions/download-artifact@v4
@@ -50,22 +69,31 @@ jobs:
 
       - name: Setup ASV machine
         run: |
-          source .venv/bin/activate
-          asv machine --yes
+          uv run asv machine --yes
 
       - name: Run benchmarks
         run: |
-          source .venv/bin/activate
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
-            asv run --python=3.12 -b "${{ github.event.inputs.benchmark_filter }}"
+            echo "Running filtered benchmarks: ${{ github.event.inputs.benchmark_filter }}"
+            uv run asv run --python=3.12 -b "${{ github.event.inputs.benchmark_filter }}" --verbose
           else
-            asv run --python=3.12 HEAD^!
+            echo "Running benchmarks for HEAD^!"
+            uv run asv run --python=3.12 HEAD^! --verbose
           fi
+
+      - name: Show benchmark results on failure
+        if: failure()
+        run: |
+          echo "Benchmark run failed. Checking for logs..."
+          find .asv -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; || true
+          echo "Checking ASV results directory..."
+          ls -la .asv/ || true
+          echo "Checking if schema files exist..."
+          ls -la imas_mcp/resources/schemas/ || true
 
       - name: Generate HTML report
         run: |
-          source .venv/bin/activate
-          asv publish
+          uv run asv publish
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
