@@ -4,8 +4,8 @@
 [![Ruff][ruff-badge]][ruff-link]
 [![Python versions][python-badge]][python-link]
 [![CI/CD status][build-deploy-badge]][build-deploy-link]
-<!-- [![Coverage status][codecov-badge]][codecov-link]
-[![Documentation][docs-badge]][docs-link] -->
+[![Coverage status][codecov-badge]][codecov-link]
+[![Documentation][docs-badge]][docs-link]
 [![ASV][asv-badge]][asv-link]
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.

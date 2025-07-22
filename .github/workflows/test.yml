@@ -25,9 +25,10 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --extra test
         env:
           HATCH_BUILD_NO_HOOKS: true
+
 
       - name: Lint with ruff
         run: uv run ruff check .
