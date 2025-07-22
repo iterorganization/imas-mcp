@@ -15,6 +15,11 @@ from .ai_enhancer import (
     STRUCTURE_EXPERT,
     ai_enhancer,
 )
+from .ai_enhancement_strategy import (
+    AI_ENHANCEMENT_STRATEGY,
+    should_apply_ai_enhancement,
+    suggest_follow_up_tools,
+)
 from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_modes import (
@@ -33,6 +38,9 @@ __all__ = [
     "RELATIONSHIP_EXPERT",
     "BULK_EXPORT_EXPERT",
     "PHYSICS_DOMAIN_EXPERT",
+    "AI_ENHANCEMENT_STRATEGY",
+    "should_apply_ai_enhancement",
+    "suggest_follow_up_tools",
     "SearchCache",
     "DocumentStore",
     "Document",

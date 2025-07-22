@@ -43,6 +43,7 @@ from imas_mcp.search import (
     SearchComposer,
     SearchConfig,
     SearchMode,
+    suggest_follow_up_tools,
 )
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
@@ -236,6 +237,15 @@ class Server:
                 "suggestions": [],
             }
 
+            # Add tool suggestions based on results
+            try:
+                result["suggested_tools"] = suggest_follow_up_tools(
+                    result, "search_imas"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate tool suggestions: {e}")
+                result["suggested_tools"] = []
+
             # Try physics search enhancement
             try:
                 from .physics_integration import physics_search
@@ -258,10 +268,13 @@ class Server:
             except Exception:
                 pass  # Physics enhancement is optional
 
-            # AI enhancement if MCP context available - handled by decorator
-            if ctx and result["results"]:
+            # AI enhancement if MCP context available - handled by decorator with selective strategy
+            # Add AI prompt for conditional enhancement - decorator will handle cases without context
+            if result["results"]:
+                # The selective AI enhancement strategy will determine if this should be processed
                 result["ai_prompt"] = (
-                    f"Query: {query}\nResults: {result['results'][:3]}\n\nProvide analysis as JSON with 'insights', 'related_terms', and 'suggestions' fields."
+                    f"Query: {query}\nSearch Mode: {mode.value}\nResults: {result['results'][:3]}\n\n"
+                    f"Provide analysis as JSON with 'insights', 'related_terms', and 'suggestions' fields."
                 )
 
             # Cache successful results for future use
@@ -979,7 +992,7 @@ Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usag
         ids_list: List[str],
         include_relationships: bool = True,
         include_physics_context: bool = True,
-        output_format: str = "comprehensive",
+        output_format: str = "structured",  # raw, structured, enhanced
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
@@ -993,7 +1006,7 @@ Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usag
             ids_list: List of IDS names to export
             include_relationships: Whether to include cross-IDS relationship analysis
             include_physics_context: Whether to include physics domain context
-            output_format: Export format (comprehensive, structured, minimal)
+            output_format: Export format (raw, structured, enhanced)
             ctx: MCP context for AI enhancement
 
         Returns:
@@ -1008,6 +1021,23 @@ Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usag
                         "Use get_overview to see available IDS",
                     ],
                 }
+
+            # Validate format
+            if output_format not in ["raw", "structured", "enhanced"]:
+                return {
+                    "error": f"Invalid format: {output_format}. Use: raw, structured, enhanced",
+                    "suggestions": [
+                        "Use 'raw' for pure data export (fastest)",
+                        "Use 'structured' for organized data with relationships",
+                        "Use 'enhanced' for AI-enhanced insights (requires context)",
+                    ],
+                }
+
+            # Handle format-specific logic
+            if output_format == "raw":
+                # Raw format: minimal processing, maximum performance
+                include_relationships = False
+                include_physics_context = False
 
             # Validate IDS names
             available_ids = self.document_store.get_available_ids()

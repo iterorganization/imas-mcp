@@ -2,7 +2,8 @@
 AI Enhancement Module for IMAS MCP Server.
 
 This module provides a decorator for AI-powered enhancement of MCP tool responses
-using MCP context sampling when available.
+using MCP context sampling when available. Implements selective AI enhancement
+strategy for optimal performance.
 """
 
 import json
@@ -11,6 +12,11 @@ from functools import wraps
 from typing import Any, Callable, Dict, cast
 
 from mcp.types import TextContent
+
+from .ai_enhancement_strategy import (
+    should_apply_ai_enhancement,
+    suggest_follow_up_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +92,11 @@ def ai_enhancer(
     max_tokens: int = 800,
 ):
     """
-    Decorator for AI enhancement of MCP tool responses.
+    Decorator for selective AI enhancement of MCP tool responses.
 
-    Automatically adds AI insights to tool responses when MCP context is available.
-    Falls back gracefully when context is unavailable.
+    Automatically adds AI insights to tool responses when MCP context is available
+    and when the selective enhancement strategy determines AI would be valuable.
+    Falls back gracefully when context is unavailable or enhancement is not needed.
 
     Args:
         system_prompt: The system prompt defining AI behavior for this tool
@@ -103,11 +110,15 @@ def ai_enhancer(
             # Tool implementation returns base response
             results = self.perform_search(query)
 
-            # If ctx is available, decorator will add AI insights
-            return {
+            # Add tool suggestions and AI prompt for conditional enhancement
+            base_response = {
                 "results": results,
+                "suggested_tools": suggest_follow_up_tools(results, "search_imas"),
                 "ai_prompt": f"Analyze search for: {query}\\nResults: {results}"
             }
+
+            # Decorator will apply AI enhancement based on selective strategy
+            return base_response
     """
 
     def decorator(func: Callable) -> Callable:
@@ -119,15 +130,43 @@ def ai_enhancer(
             # Call the original tool function
             base_response = await func(*args, **kwargs)
 
-            # If no context or no AI prompt in response, return as-is
+            # Always add tool suggestions if not present
+            if (
+                isinstance(base_response, dict)
+                and "suggested_tools" not in base_response
+            ):
+                try:
+                    suggestions = suggest_follow_up_tools(base_response, func.__name__)
+                    base_response["suggested_tools"] = suggestions
+                except Exception as e:
+                    logger.warning(f"Failed to generate tool suggestions: {e}")
+                    base_response["suggested_tools"] = []
+
+            # Check if AI enhancement should be applied using selective strategy
+            should_enhance = should_apply_ai_enhancement(
+                func.__name__, args, kwargs, ctx
+            )
+
+            # If no context, no AI prompt, or selective strategy says no enhancement
             if (
                 not ctx
                 or not isinstance(base_response, dict)
                 or "ai_prompt" not in base_response
+                or not should_enhance
             ):
-                # Remove ai_prompt from response if present
+                # Remove ai_prompt from response if present and add status
                 if isinstance(base_response, dict) and "ai_prompt" in base_response:
-                    ai_insights = {"error": "AI enhancement temporarily unavailable"}
+                    if not ctx:
+                        ai_insights = {"status": "AI context not available"}
+                    elif not should_enhance:
+                        ai_insights = {
+                            "status": "AI enhancement not needed for this request"
+                        }
+                    else:
+                        ai_insights = {
+                            "status": "AI enhancement temporarily unavailable"
+                        }
+
                     base_response["ai_insights"] = ai_insights
                     del base_response["ai_prompt"]
                 return base_response
@@ -147,13 +186,17 @@ def ai_enhancer(
                     text_content = cast(TextContent, ai_response)
                     try:
                         ai_insights = json.loads(text_content.text)
+                        ai_insights["status"] = "AI enhancement applied"
                     except json.JSONDecodeError:
-                        ai_insights = {"response": text_content.text}
+                        ai_insights = {
+                            "response": text_content.text,
+                            "status": "AI enhancement applied (unstructured)",
+                        }
                 else:
                     ai_insights = {"error": "No AI response received"}
 
             except Exception as e:
-                logger.warning(f"{operation_name} failed: {e}")
+                logger.warning(f"{operation_name} AI enhancement failed: {e}")
                 ai_insights = {"error": "AI enhancement temporarily unavailable"}
 
             # Add AI insights to the response
