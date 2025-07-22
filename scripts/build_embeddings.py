@@ -91,6 +91,7 @@ def build_embeddings(
     similarity_threshold: float,
     device: Optional[str],
     check_only: bool,
+    profile: bool,
 ) -> int:
     """Build the document store and semantic search embeddings.
 
