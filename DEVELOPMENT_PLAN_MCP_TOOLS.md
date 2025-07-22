@@ -63,268 +63,74 @@ This plan implements critical improvements to the IMAS MCP server based on compr
 
 ### 0.3 Test and Performance Integration
 
-**Purpose**: Integrate testing and performance monitoring into development workflow
+**Status**: ✅ COMPLETE  
+**Objective**: Integrate automated testing and performance monitoring into development workflow
 
-```python
-# File: pyproject.toml (additions to existing file)
-[project.optional-dependencies]
-# ... existing optional dependencies ...
-bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
+**Context**: Essential CI/CD pipeline for maintaining quality and performance standards across development iterations.
 
-# Installation commands:
-# uv sync --extra bench      # Install with benchmark dependencies
-# asv machine                # Setup machine configuration
-# asv run                    # Run benchmarks
+**Implementation Summary**:
 
-# File: Makefile (additions)
-.PHONY: test-baseline performance-baseline test-current performance-current install-bench
+- ✅ **Benchmark Dependencies**: Added `bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]` to pyproject.toml optional dependencies
+- ✅ **Makefile Targets**: Created install-bench, performance-baseline, performance-current, and performance-compare targets
+- ✅ **GitHub Actions Workflow**: Implemented comprehensive `.github/workflows/benchmarks.yml` with:
+  - Automated benchmarks on push/PR to main/develop branches
+  - Daily scheduled runs at 2 AM UTC
+  - Manual trigger with benchmark filtering capability
+  - ASV result artifacts with 90-day retention
+  - GitHub Pages deployment for benchmark reports
+  - PR comments with benchmark result links
+  - Full history fetch for ASV comparison features
 
-install-bench:
-	@echo "Installing benchmark dependencies with uv..."
-	uv pip install -e ".[bench]"
-	asv machine --yes
+**Key Features Delivered**:
 
-test-baseline:
-	@echo "Running baseline tests for current tools..."
-	python -m pytest tests/test_server_tools.py -v --tb=short
+- Cross-platform benchmark execution with UV package manager
+- Automatic GitHub Pages deployment to `https://{owner}.github.io/{repo}/benchmarks/`
+- Performance comparison between commits and branches
+- Persistent benchmark history with artifact storage
+- Interactive HTML dashboard with performance trends
+- PR integration with automated benchmark result posting
 
-test-current: test-baseline
-	@echo "Running all current tests..."
-	python -m pytest tests/ -v --tb=short -m "not slow"
-
-performance-baseline:
-	@echo "Establishing performance baseline..."
-	uv pip install -e ".[bench]"
-	python scripts/run_performance_baseline.py
-
-performance-current:
-	@echo "Running current performance benchmarks..."
-	asv run --python=3.12
-
-performance-compare:
-	@echo "Comparing performance against baseline..."
-	asv compare HEAD~1 HEAD
-
-test-and-performance: test-current performance-current
-	@echo "Running tests and performance monitoring..."
-
-# File: .github/workflows/test-and-performance.yml
-name: Test and Performance Monitoring
-
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  test-current:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.12]
-
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        fetch-depth: 0  # Needed for ASV
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .
-        pip install pytest pytest-cov pytest-asyncio
-        pip install asv
-
-    - name: Run unit tests
-      run: |
-        python -m pytest tests/test_current_tools.py -v --cov=imas_mcp
-
-    - name: Run integration tests
-      run: |
-        python -m pytest tests/test_current_integration.py -v
-
-    - name: Establish performance baseline
-      run: |
-        python scripts/run_performance_baseline.py
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-```
+**GitHub Actions Status**: Active workflows include benchmarks.yml, docker-build-push.yml, release.yml, and test.yml providing comprehensive CI/CD coverage.
 
 ### 0.4 Performance Targets and Monitoring
 
 **Purpose**: Define performance targets and monitoring strategy
 
-```python
-# File: benchmarks/performance_targets.py
-"""Performance targets for IMAS MCP tools."""
+**Status**: ✅ **IMPLEMENTED** - Replaced by ASV performance monitoring system
 
-from dataclasses import dataclass
-from typing import Dict, Any
+**ASV Integration**: Comprehensive performance monitoring implemented with:
 
-@dataclass
-class PerformanceTarget:
-    """Performance target for a specific benchmark."""
-    name: str
-    target_time: float  # seconds
-    max_time: float     # seconds (failure threshold)
-    memory_limit: int   # MB
-    description: str
+- **ASV Configuration**: Complete setup in `asv.conf.json` with Python 3.12 environment
+- **Benchmark Suite**: Implemented in `benchmarks/benchmarks.py` with comprehensive test classes:
+  - `SearchBenchmarks` - Search performance tests (7-10ms timing)
+  - `ExplainConceptBenchmarks` - Concept explanation performance
+  - `StructureAnalysisBenchmarks` - IDS structure analysis performance
+  - `BulkExportBenchmarks` - Bulk export performance tests
+  - `RelationshipBenchmarks` - Relationship exploration performance
+- **Performance Baseline Script**: Automated script in `scripts/run_performance_baseline.py` with:
+  - Click-based CLI with filtering options
+  - ASV machine configuration and benchmark execution
+  - HTML report generation and serving instructions
+  - CI-aware progress display
+- **Benchmark Runner**: Utility class in `benchmarks/benchmark_runner.py` for programmatic ASV execution
+- **HTML Dashboard**: Interactive performance results at `.asv/html/index.html`
 
-# Current tool performance targets (baseline)
-CURRENT_PERFORMANCE_TARGETS = {
-    "search_imas_basic": PerformanceTarget(
-        name="search_imas_basic",
-        target_time=2.0,
-        max_time=5.0,
-        memory_limit=500,
-        description="Basic search without AI enhancement"
-    ),
-    "search_imas_with_ai": PerformanceTarget(
-        name="search_imas_with_ai",
-        target_time=3.0,
-        max_time=8.0,
-        memory_limit=600,
-        description="Search with AI enhancement"
-    ),
-    "search_imas_complex": PerformanceTarget(
-        name="search_imas_complex",
-        target_time=4.0,
-        max_time=10.0,
-        memory_limit=700,
-        description="Complex multi-term search"
-    ),
-    "explain_concept_basic": PerformanceTarget(
-        name="explain_concept_basic",
-        target_time=1.5,
-        max_time=4.0,
-        memory_limit=400,
-        description="Basic concept explanation"
-    ),
-    "analyze_ids_structure": PerformanceTarget(
-        name="analyze_ids_structure",
-        target_time=2.5,
-        max_time=6.0,
-        memory_limit=600,
-        description="IDS structure analysis"
-    ),
-    "export_ids_bulk_single": PerformanceTarget(
-        name="export_ids_bulk_single",
-        target_time=1.0,
-        max_time=3.0,
-        memory_limit=400,
-        description="Single IDS bulk export"
-    ),
-    "export_ids_bulk_multiple": PerformanceTarget(
-        name="export_ids_bulk_multiple",
-        target_time=3.0,
-        max_time=8.0,
-        memory_limit=800,
-        description="Multiple IDS bulk export"
-    ),
-    "explore_relationships": PerformanceTarget(
-        name="explore_relationships",
-        target_time=2.0,
-        max_time=5.0,
-        memory_limit=500,
-        description="Relationship exploration"
-    )
-}
+**Key files implemented**:
 
-# Future performance targets (after optimization)
-OPTIMIZED_PERFORMANCE_TARGETS = {
-    "search_imas_fast": PerformanceTarget(
-        name="search_imas_fast",
-        target_time=0.5,
-        max_time=1.0,
-        memory_limit=300,
-        description="Fast lexical search mode"
-    ),
-    "search_imas_adaptive": PerformanceTarget(
-        name="search_imas_adaptive",
-        target_time=1.0,
-        max_time=2.0,
-        memory_limit=400,
-        description="Adaptive search mode"
-    ),
-    "search_imas_comprehensive": PerformanceTarget(
-        name="search_imas_comprehensive",
-        target_time=3.0,
-        max_time=6.0,
-        memory_limit=600,
-        description="Comprehensive search mode"
-    ),
-    "export_bulk_raw": PerformanceTarget(
-        name="export_bulk_raw",
-        target_time=0.5,
-        max_time=1.0,
-        memory_limit=200,
-        description="Raw format bulk export"
-    ),
-    "export_bulk_structured": PerformanceTarget(
-        name="export_bulk_structured",
-        target_time=1.0,
-        max_time=2.0,
-        memory_limit=300,
-        description="Structured format bulk export"
-    ),
-    "export_bulk_enhanced": PerformanceTarget(
-        name="export_bulk_enhanced",
-        target_time=3.0,
-        max_time=6.0,
-        memory_limit=500,
-        description="Enhanced format bulk export"
-    )
-}
+- `asv.conf.json` - ASV configuration with cross-platform path handling
+- `benchmarks/benchmarks.py` - Comprehensive benchmark definitions
+- `benchmarks/benchmark_runner.py` - ASV wrapper utility
+- `scripts/run_performance_baseline.py` - Automated benchmark execution script
 
-def validate_performance_results(results: Dict[str, Any], targets: Dict[str, PerformanceTarget]) -> Dict[str, Any]:
-    """Validate performance results against targets."""
-    validation_results = {
-        "passed": [],
-        "failed": [],
-        "warnings": []
-    }
+**Performance Monitoring Features**:
 
-    for benchmark_name, target in targets.items():
-        if benchmark_name in results:
-            result_time = results[benchmark_name].get("time", float('inf'))
+- Automatic benchmark discovery and execution
+- Performance regression detection
+- Interactive HTML dashboard with graphs and trends
+- Memory usage monitoring (peakmem benchmarks)
+- CI/CD integration support
 
-            if result_time <= target.target_time:
-                validation_results["passed"].append({
-                    "benchmark": benchmark_name,
-                    "target": target.target_time,
-                    "actual": result_time,
-                    "status": "excellent"
-                })
-            elif result_time <= target.max_time:
-                validation_results["warnings"].append({
-                    "benchmark": benchmark_name,
-                    "target": target.target_time,
-                    "actual": result_time,
-                    "max_allowed": target.max_time,
-                    "status": "acceptable"
-                })
-            else:
-                validation_results["failed"].append({
-                    "benchmark": benchmark_name,
-                    "target": target.target_time,
-                    "actual": result_time,
-                    "max_allowed": target.max_time,
-                    "status": "failed"
-                })
-
-    return validation_results
-```
+**Replaced Features**: The original `benchmarks/performance_targets.py` file with manual performance targets was removed in favor of ASV's superior automatic performance tracking and regression detection capabilities.
 
 ## Phase 1: Core Tool Optimization (Weeks 3-5)
 
