@@ -11,6 +11,7 @@ import pytest
 from unittest.mock import Mock
 
 from imas_mcp.server import Server
+from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 class SlowMockContext:
@@ -40,7 +41,7 @@ class TestSelectiveAIPerformance:
     @pytest.fixture
     def server(self):
         """Create test server instance."""
-        return Server()
+        return Server(ids_set=STANDARD_TEST_IDS_SET)
 
     @pytest.mark.asyncio
     async def test_fast_search_performance(self, server):
@@ -49,17 +50,17 @@ class TestSelectiveAIPerformance:
 
         # Fast mode should not use AI, so should be fast even with slow context
         start_time = time.time()
-        result = await server.search_imas(
+        result = await server.tools.search_imas(
             query="plasma temperature", search_mode="fast", max_results=5, ctx=slow_ctx
         )
         execution_time = time.time() - start_time
 
         # Should complete quickly since AI is not used
         assert execution_time < 0.3  # Should be much faster than AI delay
-        assert result["search_strategy"] == "lexical"
+        assert result["search_mode"] == "fast"
         assert (
             result.get("ai_insights", {}).get("status")
-            == "AI enhancement not needed for this request"
+            == "AI enhancement not applied - conditions not met"
         )
 
     @pytest.mark.asyncio
@@ -69,7 +70,7 @@ class TestSelectiveAIPerformance:
 
         # Comprehensive mode should use AI, so will be slower
         start_time = time.time()
-        result = await server.search_imas(
+        result = await server.tools.search_imas(
             query="plasma temperature profiles",
             search_mode="comprehensive",
             max_results=10,
@@ -79,7 +80,7 @@ class TestSelectiveAIPerformance:
 
         # Should take longer due to AI processing
         assert execution_time >= 0.2  # Should include AI delay
-        assert result["search_strategy"] == "semantic"
+        assert result["search_mode"] == "comprehensive"
         ai_insights = result.get("ai_insights", {})
         assert ai_insights.get("status") in ["AI enhancement applied", "enhanced"]
 
@@ -90,17 +91,17 @@ class TestSelectiveAIPerformance:
 
         # Raw format should not use AI
         start_time = time.time()
-        result = await server.export_ids_bulk(
+        result = await server.tools.export_ids(
             ids_list=["core_profiles"], output_format="raw", ctx=slow_ctx
         )
         execution_time = time.time() - start_time
 
         # Should complete quickly since AI is not used
         assert execution_time < 0.3
-        assert result["export_format"] == "raw"
+        assert result["output_format"] == "raw"
         assert (
             result.get("ai_insights", {}).get("status")
-            == "AI enhancement not needed for this request"
+            == "AI enhancement not applied - conditions not met"
         )
 
     @pytest.mark.asyncio
@@ -110,14 +111,14 @@ class TestSelectiveAIPerformance:
 
         # Enhanced format should use AI
         start_time = time.time()
-        result = await server.export_ids_bulk(
+        result = await server.tools.export_ids(
             ids_list=["core_profiles"], output_format="enhanced", ctx=slow_ctx
         )
         execution_time = time.time() - start_time
 
         # Should take longer due to AI processing
         assert execution_time >= 0.2
-        assert result["export_format"] == "enhanced"
+        assert result["output_format"] == "enhanced"
         ai_insights = result.get("ai_insights", {})
         assert ai_insights.get("status") in ["AI enhancement applied", "enhanced"]
 
@@ -128,7 +129,7 @@ class TestSelectiveAIPerformance:
 
         # explore_identifiers should never use AI
         start_time = time.time()
-        result = await server.explore_identifiers(
+        result = await server.tools.explore_identifiers(
             query="temperature", scope="summary", ctx=slow_ctx
         )
         execution_time = time.time() - start_time
@@ -137,7 +138,7 @@ class TestSelectiveAIPerformance:
         assert execution_time < 0.3
         assert (
             result.get("ai_insights", {}).get("status")
-            == "AI enhancement not needed for this request"
+            == "AI enhancement not applied - conditions not met"
         )
 
     @pytest.mark.asyncio
@@ -147,7 +148,7 @@ class TestSelectiveAIPerformance:
 
         # explain_concept should always use AI
         start_time = time.time()
-        result = await server.explain_concept(
+        result = await server.tools.explain_concept(
             concept="plasma temperature", detail_level="intermediate", ctx=slow_ctx
         )
         execution_time = time.time() - start_time
@@ -164,7 +165,7 @@ class TestSelectiveAIPerformance:
 
         # Test structure analysis with simple IDS (should not use AI)
         start_time = time.time()
-        result1 = await server.analyze_ids_structure(
+        result1 = await server.tools.analyze_ids_structure(
             ids_name="simple_test",  # Simple name that shouldn't trigger AI
             ctx=slow_ctx,
         )
@@ -172,7 +173,7 @@ class TestSelectiveAIPerformance:
 
         # Test structure analysis with complex IDS (should use AI if IDS exists)
         start_time = time.time()
-        result2 = await server.analyze_ids_structure(
+        result2 = await server.tools.analyze_ids_structure(
             ids_name="core_profiles",  # Complex name that should trigger AI
             ctx=slow_ctx,
         )
@@ -192,7 +193,7 @@ class TestSelectiveAIPerformance:
         """Test that tool suggestions don't significantly impact performance."""
         # Test with and without suggestion generation
         start_time = time.time()
-        result = await server.search_imas(
+        result = await server.tools.search_imas(
             query="plasma temperature", search_mode="fast", max_results=5
         )
         execution_time = time.time() - start_time
@@ -207,7 +208,7 @@ class TestSelectiveAIPerformance:
         """Test that operations without context are fast."""
         # No context should mean no AI processing delay
         start_time = time.time()
-        result = await server.search_imas(
+        result = await server.tools.search_imas(
             query="plasma temperature",
             search_mode="comprehensive",  # Would use AI if context available
             max_results=10,
@@ -217,7 +218,10 @@ class TestSelectiveAIPerformance:
 
         # Should be fast without context
         assert execution_time < 0.3
-        assert result.get("ai_insights", {}).get("status") == "AI context not available"
+        assert (
+            result.get("ai_insights", {}).get("status")
+            == "AI enhancement not applied - conditions not met"
+        )
 
 
 @pytest.mark.performance
@@ -227,7 +231,7 @@ class TestMultiFormatExportPerformance:
     @pytest.fixture
     def server(self):
         """Create test server instance."""
-        return Server()
+        return Server(ids_set=STANDARD_TEST_IDS_SET)
 
     @pytest.mark.asyncio
     async def test_format_performance_hierarchy(self, server):
@@ -237,29 +241,29 @@ class TestMultiFormatExportPerformance:
 
         # Test raw format (should be fastest)
         start_time = time.time()
-        raw_result = await server.export_ids_bulk(
+        raw_result = await server.tools.export_ids(
             ids_list=test_ids, output_format="raw", ctx=slow_ctx
         )
         raw_time = time.time() - start_time
 
         # Test structured format (medium speed)
         start_time = time.time()
-        structured_result = await server.export_ids_bulk(
+        structured_result = await server.tools.export_ids(
             ids_list=test_ids, output_format="structured", ctx=slow_ctx
         )
         structured_time = time.time() - start_time
 
         # Test enhanced format (should be slowest due to AI)
         start_time = time.time()
-        enhanced_result = await server.export_ids_bulk(
+        enhanced_result = await server.tools.export_ids(
             ids_list=test_ids, output_format="enhanced", ctx=slow_ctx
         )
         enhanced_time = time.time() - start_time
 
         # Verify format characteristics
-        assert raw_result["export_format"] == "raw"
-        assert structured_result["export_format"] == "structured"
-        assert enhanced_result["export_format"] == "enhanced"
+        assert raw_result["output_format"] == "raw"
+        assert structured_result["output_format"] == "structured"
+        assert enhanced_result["output_format"] == "enhanced"
 
         # Raw should be fastest (no AI, minimal processing)
         assert raw_time < 0.3
@@ -279,7 +283,7 @@ class TestMultiFormatExportPerformance:
 
         # Small export
         start_time = time.time()
-        small_result = await server.export_ids_bulk(
+        small_result = await server.tools.export_ids(
             ids_list=["core_profiles"], output_format="structured", ctx=fast_ctx
         )
         small_time = time.time() - start_time
@@ -291,7 +295,7 @@ class TestMultiFormatExportPerformance:
             test_ids = available_ids[:1] * 2  # Test with repeated IDS if needed
 
             start_time = time.time()
-            large_result = await server.export_ids_bulk(
+            large_result = await server.tools.export_ids(
                 ids_list=test_ids, output_format="structured", ctx=fast_ctx
             )
             large_time = time.time() - start_time
@@ -299,7 +303,7 @@ class TestMultiFormatExportPerformance:
             # Larger exports should generally take more time
             # (though this depends on data availability)
             assert isinstance(large_time, float)  # Basic validation
-            assert large_result["export_format"] == "structured"
+            assert large_result["output_format"] == "structured"
             assert small_time >= 0  # Ensure timing was recorded
             assert large_time >= 0  # Ensure timing was recorded
 
@@ -311,7 +315,7 @@ class TestConditionalAIPerformanceBenefits:
     @pytest.fixture
     def server(self):
         """Create test server instance."""
-        return Server()
+        return Server(ids_set=STANDARD_TEST_IDS_SET)
 
     @pytest.mark.asyncio
     async def test_search_complexity_performance_scaling(self, server):
@@ -320,7 +324,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Simple query (should not trigger AI in conditional mode)
         start_time = time.time()
-        simple_result = await server.search_imas(
+        simple_result = await server.tools.search_imas(
             query="plasma",  # Simple single term
             search_mode="auto",  # Conditional mode
             max_results=5,
@@ -330,7 +334,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Complex query (should trigger AI in conditional mode)
         start_time = time.time()
-        complex_result = await server.search_imas(
+        complex_result = await server.tools.search_imas(
             query="plasma AND temperature AND (density OR pressure)",  # Complex boolean
             search_mode="auto",  # Conditional mode
             max_results=15,  # High result count
@@ -343,7 +347,7 @@ class TestConditionalAIPerformanceBenefits:
         complex_ai = complex_result.get("ai_insights", {}).get("status", "")
 
         # Simple should avoid AI processing
-        assert "not needed" in simple_ai or "not available" in simple_ai
+        assert "not applied" in simple_ai or "conditions not met" in simple_ai
         assert simple_time < 0.3
 
         # Complex may use AI depending on conditions
@@ -357,7 +361,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Shallow analysis (should not trigger AI)
         start_time = time.time()
-        shallow_result = await server.explore_relationships(
+        shallow_result = await server.tools.explore_relationships(
             path="core_profiles",
             max_depth=1,  # Shallow depth
             ctx=slow_ctx,
@@ -366,7 +370,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Deep analysis (should trigger AI)
         start_time = time.time()
-        deep_result = await server.explore_relationships(
+        deep_result = await server.tools.explore_relationships(
             path="core_profiles",
             max_depth=3,  # Deep analysis
             ctx=slow_ctx,
@@ -379,7 +383,7 @@ class TestConditionalAIPerformanceBenefits:
             deep_ai = deep_result.get("ai_insights", {}).get("status", "")
 
             # Shallow should avoid AI, deep should use it
-            if "not needed" in shallow_ai and "applied" in deep_ai:
+            if "not applied" in shallow_ai and "applied" in deep_ai:
                 assert deep_time > shallow_time
 
     @pytest.mark.asyncio
@@ -389,7 +393,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Focused analysis (should not trigger AI)
         start_time = time.time()
-        focused_result = await server.export_physics_domain(
+        focused_result = await server.tools.export_physics_domain(
             domain="core_plasma",
             analysis_depth="focused",  # Should not trigger AI
             max_paths=5,
@@ -399,7 +403,7 @@ class TestConditionalAIPerformanceBenefits:
 
         # Comprehensive analysis (should trigger AI)
         start_time = time.time()
-        comprehensive_result = await server.export_physics_domain(
+        comprehensive_result = await server.tools.export_physics_domain(
             domain="core_plasma",
             analysis_depth="comprehensive",  # Should trigger AI
             max_paths=5,
@@ -415,7 +419,7 @@ class TestConditionalAIPerformanceBenefits:
             )
 
             # Focused should avoid AI, comprehensive should use it
-            assert "not needed" in focused_ai
+            assert "not applied" in focused_ai
             if "applied" in comprehensive_ai:
                 assert comprehensive_time > focused_time
 

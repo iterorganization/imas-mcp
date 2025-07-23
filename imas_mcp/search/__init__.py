@@ -5,21 +5,7 @@ This module provides semantic search capabilities using sentence transformers
 and document storage for efficient IMAS data dictionary querying.
 """
 
-from .ai_enhancer import (
-    BULK_EXPORT_EXPERT,
-    EXPLANATION_EXPERT,
-    OVERVIEW_EXPERT,
-    PHYSICS_DOMAIN_EXPERT,
-    RELATIONSHIP_EXPERT,
-    SEARCH_EXPERT,
-    STRUCTURE_EXPERT,
-    ai_enhancer,
-)
-from .ai_enhancement_strategy import (
-    AI_ENHANCEMENT_STRATEGY,
-    should_apply_ai_enhancement,
-    suggest_follow_up_tools,
-)
+from .ai_enhancer import ai_enhancer
 from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_modes import (
@@ -28,19 +14,11 @@ from .search_modes import (
     SearchMode,
     SearchResult,
 )
+from .tool_suggestions import tool_suggestions
 
 __all__ = [
     "ai_enhancer",
-    "SEARCH_EXPERT",
-    "EXPLANATION_EXPERT",
-    "OVERVIEW_EXPERT",
-    "STRUCTURE_EXPERT",
-    "RELATIONSHIP_EXPERT",
-    "BULK_EXPORT_EXPERT",
-    "PHYSICS_DOMAIN_EXPERT",
-    "AI_ENHANCEMENT_STRATEGY",
-    "should_apply_ai_enhancement",
-    "suggest_follow_up_tools",
+    "tool_suggestions",
     "SearchCache",
     "DocumentStore",
     "Document",

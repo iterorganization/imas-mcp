@@ -7,11 +7,17 @@ to provide physics-aware search and explanation capabilities.
 
 from typing import Any, Dict, List
 
+from imas_mcp.models.physics_models import (
+    ConceptSuggestion,
+    PhysicsMatch,
+    PhysicsSearchResult,
+    SymbolSuggestion,
+    UnitSuggestion,
+)
 from imas_mcp.physics_context import (
     PhysicsContextEngine,
     PhysicsDomain,
     PhysicsQuantity,
-    concept_to_imas_paths,
     get_physics_engine,
     search_physics_concepts,
 )
@@ -23,39 +29,39 @@ class PhysicsSearch:
     def __init__(self, engine: PhysicsContextEngine):
         self.engine = engine
 
-    def search_with_physics_context(self, query: str) -> Dict[str, Any]:
+    def search_with_physics_context(self, query: str) -> PhysicsSearchResult:
         """Search IMAS data with physics context enhancement."""
-        results = {
-            "query": query,
-            "physics_matches": [],
-            "concept_suggestions": [],
-            "unit_suggestions": [],
-            "symbol_suggestions": [],
-            "imas_path_suggestions": [],
-        }
+        physics_matches = []
 
         # Search for physics concepts
         concept_matches = search_physics_concepts(query)
         for concept, quantity in concept_matches[:5]:  # Top 5 matches
-            physics_match = {
-                "concept": concept,
-                "quantity_name": quantity.name,
-                "symbol": quantity.symbol,
-                "units": quantity.units,
-                "description": quantity.description,
-                "imas_paths": quantity.imas_paths[:3],  # Top 3 paths
-                "domain": quantity.physics_domain.value,
-                "relevance_score": self._calculate_relevance(query, concept, quantity),
-            }
-            results["physics_matches"].append(physics_match)
+            physics_match = PhysicsMatch(
+                concept=concept,
+                quantity_name=quantity.name,
+                symbol=quantity.symbol,
+                units=quantity.units,
+                description=quantity.description,
+                imas_paths=quantity.imas_paths[:3],  # Top 3 paths
+                domain=quantity.physics_domain.value,
+                relevance_score=self._calculate_relevance(query, concept, quantity),
+            )
+            physics_matches.append(physics_match)
 
         # Generate suggestions based on query
-        results["concept_suggestions"] = self._generate_concept_suggestions(query)
-        results["unit_suggestions"] = self._generate_unit_suggestions(query)
-        results["symbol_suggestions"] = self._generate_symbol_suggestions(query)
-        results["imas_path_suggestions"] = self._generate_path_suggestions(query)
+        concept_suggestions = self._generate_concept_suggestions(query)
+        unit_suggestions = self._generate_unit_suggestions(query)
+        symbol_suggestions = self._generate_symbol_suggestions(query)
+        imas_path_suggestions = self._generate_path_suggestions(query)
 
-        return results
+        return PhysicsSearchResult(
+            query=query,
+            physics_matches=physics_matches,
+            concept_suggestions=concept_suggestions,
+            unit_suggestions=unit_suggestions,
+            symbol_suggestions=symbol_suggestions,
+            imas_path_suggestions=imas_path_suggestions,
+        )
 
     def _calculate_relevance(
         self, query: str, concept: str, quantity: PhysicsQuantity
@@ -89,9 +95,8 @@ class PhysicsSearch:
 
         return 0.3
 
-    def _generate_concept_suggestions(self, query: str) -> List[str]:
+    def _generate_concept_suggestions(self, query: str) -> List[ConceptSuggestion]:
         """Generate concept suggestions based on query."""
-        suggestions = []
         query_lower = query.lower()
 
         # Physics concept keywords
@@ -107,16 +112,17 @@ class PhysicsSearch:
             "heating": ["NBI power", "EC power", "IC power", "auxiliary heating"],
         }
 
+        concept_list = []
         for keyword, concepts in concept_keywords.items():
             if keyword in query_lower:
-                suggestions.extend(concepts)
+                concept_list.extend(concepts)
 
-        return list(set(suggestions))[:5]  # Unique, top 5
+        # Convert to ConceptSuggestion objects
+        unique_concepts = list(set(concept_list))[:5]  # Unique, top 5
+        return [ConceptSuggestion(concept=concept) for concept in unique_concepts]
 
-    def _generate_unit_suggestions(self, query: str) -> List[Dict[str, Any]]:
+    def _generate_unit_suggestions(self, query: str) -> List[UnitSuggestion]:
         """Generate unit-based suggestions."""
-        suggestions = []
-
         # Common physics units in fusion
         unit_mappings = {
             "eV": "energy/temperature",
@@ -131,20 +137,21 @@ class PhysicsSearch:
             "1": "dimensionless/normalized",
         }
 
+        suggestions = []
         for unit, description in unit_mappings.items():
             quantities = self.engine.find_quantities_by_units(unit)
             if quantities:
                 suggestions.append(
-                    {
-                        "unit": unit,
-                        "description": description,
-                        "example_quantities": [q.concept for q in quantities[:3]],
-                    }
+                    UnitSuggestion(
+                        unit=unit,
+                        description=description,
+                        example_quantities=[q.concept for q in quantities[:3]],
+                    )
                 )
 
         return suggestions
 
-    def _generate_symbol_suggestions(self, query: str) -> List[Dict[str, str]]:
+    def _generate_symbol_suggestions(self, query: str) -> List[SymbolSuggestion]:
         """Generate symbol-based suggestions."""
         # Common physics symbols
         symbol_mappings = {
@@ -167,11 +174,11 @@ class PhysicsSearch:
         for symbol, concept in symbol_mappings.items():
             if query_lower in symbol.lower() or symbol.lower() in query_lower:
                 suggestions.append(
-                    {
-                        "symbol": symbol,
-                        "concept": concept,
-                        "imas_paths": concept_to_imas_paths(concept)[:2],
-                    }
+                    SymbolSuggestion(
+                        symbol=symbol,
+                        concept=concept,
+                        description=f"Symbol {symbol} represents {concept}",
+                    )
                 )
 
         return suggestions
@@ -390,7 +397,8 @@ class IMASPhysicsIntegration:
 
     def search(self, query: str) -> Dict[str, Any]:
         """Perform physics search."""
-        return self.searcher.search_with_physics_context(query)
+        result = self.searcher.search_with_physics_context(query)
+        return result.model_dump()
 
     def explain_physics_concept(
         self, concept: str, detail_level: str = "intermediate"
@@ -547,10 +555,10 @@ def get_physics_integration() -> IMASPhysicsIntegration:
 
 
 # Convenience functions for easy access
-def physics_search(query: str) -> Dict[str, Any]:
-    """Perform physics search."""
+def physics_search(query: str) -> PhysicsSearchResult:
+    """Perform physics search and return structured result."""
     integration = get_physics_integration()
-    return integration.search(query)
+    return integration.searcher.search_with_physics_context(query)
 
 
 def explain_physics_concept(
@@ -576,12 +584,10 @@ if __name__ == "__main__":
     # Test search
     print("\n1. Search for 'poloidal flux':")
     search_result = physics_search("poloidal flux")
-    print(f"   Found {len(search_result['physics_matches'])} physics matches")
-    if search_result["physics_matches"]:
-        match = search_result["physics_matches"][0]
-        print(
-            f"   Best match: {match['concept']} -> {match['symbol']} [{match['units']}]"
-        )
+    print(f"   Found {len(search_result.physics_matches)} physics matches")
+    if search_result.physics_matches:
+        match = search_result.physics_matches[0]
+        print(f"   Best match: {match.concept} -> {match.symbol} [{match.units}]")
 
     # Test concept explanation
     print("\n2. Explain 'electron temperature':")

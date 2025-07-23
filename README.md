@@ -153,6 +153,66 @@ uv add imas-mcp
 }
 ```
 
+## Example IMAS Queries
+
+Once you have the IMAS MCP server configured, you can interact with it using natural language queries. Use the `@imas` prefix to direct queries to the IMAS server:
+
+### Basic Search Examples
+
+```text
+@imas Find data paths related to plasma temperature
+@imas Search for electron density measurements
+@imas What data is available for magnetic field analysis?
+@imas Show me core plasma profiles
+```
+
+### Physics Concept Exploration
+
+```text
+@imas Explain what equilibrium reconstruction means in plasma physics
+@imas What is the relationship between pressure and magnetic fields?
+@imas How do transport coefficients relate to plasma confinement?
+@imas Describe the physics behind current drive mechanisms
+```
+
+### Data Structure Analysis
+
+```text
+@imas Analyze the structure of the core_profiles IDS
+@imas What are the relationships between equilibrium and core_profiles?
+@imas Show me identifier schemas for transport data
+@imas Export bulk data for equilibrium, core_profiles, and transport IDS
+```
+
+### Advanced Queries
+
+```text
+@imas Find all paths containing temperature measurements across different IDS
+@imas What physics domains are covered in the IMAS data dictionary?
+@imas Show me measurement dependencies for fusion power calculations
+@imas Explore cross-domain relationships between heating and confinement
+```
+
+### Workflow and Integration
+
+```text
+@imas How do I access electron temperature profiles from IMAS data?
+@imas What's the recommended workflow for equilibrium analysis?
+@imas Show me the branching logic for diagnostic identifier schemas
+@imas Export physics domain data for comprehensive transport analysis
+```
+
+The IMAS MCP server provides 8 specialized tools for different types of queries:
+
+- **Search**: Natural language and structured search across IMAS data paths
+- **Explain**: Physics concepts with IMAS context and domain expertise
+- **Overview**: General information about IMAS structure and available data
+- **Analyze**: Detailed structural analysis of specific IDS
+- **Explore**: Relationship discovery between data paths and physics domains
+- **Identifiers**: Exploration of enumerated options and branching logic
+- **Bulk Export**: Comprehensive export of multiple IDS with relationships
+- **Domain Export**: Physics domain-specific data with measurement dependencies
+
 ## Development
 
 For local development and customization:

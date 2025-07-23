@@ -212,7 +212,7 @@ class TestSearchResult:
         assert isinstance(result_dict, dict)
         assert result_dict["path"] == "test/path"  # This matches metadata.path_name
         assert result_dict["ids_name"] == "test_ids"
-        assert result_dict["score"] == 0.85
+        assert result_dict["relevance_score"] == 0.85  # Updated to match Pydantic model
         assert result_dict["rank"] == 1
 
 
@@ -584,7 +584,7 @@ class TestSearchModeIntegration:
             assert isinstance(results, dict)
             assert "results" in results
             assert "search_strategy" in results
-            assert "total_results" in results
+            assert "results_count" in results  # Updated to match actual implementation
             assert isinstance(results["results"], list)
             assert len(results["results"]) <= 3
 

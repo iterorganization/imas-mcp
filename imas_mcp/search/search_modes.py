@@ -8,10 +8,10 @@ and extensibility.
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
+from pydantic import BaseModel
 from .document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,7 @@ class SearchMode(Enum):
     AUTO = "auto"  # Automatically choose best mode based on query
 
 
-@dataclass
-class SearchConfig:
+class SearchConfig(BaseModel):
     """Configuration for search operations."""
 
     mode: SearchMode = SearchMode.AUTO
@@ -38,9 +37,8 @@ class SearchConfig:
     enable_physics_enhancement: bool = True
 
 
-@dataclass
-class SearchResult:
-    """Standardized search result format."""
+class SearchResult(BaseModel):
+    """Standardized search result format with clear field intentions."""
 
     document: Document
     score: float
@@ -49,17 +47,58 @@ class SearchResult:
     highlights: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert search result to dictionary format."""
+        """Convert search result to dictionary format with clear field names.
+
+        This method provides a custom serialization that transforms internal
+        field names to the expected API format (e.g., score -> relevance_score).
+        This is kept for backward compatibility with existing code.
+        """
         return {
             "path": self.document.metadata.path_name,
-            "score": self.score,
+            "relevance_score": self.score,
             "documentation": self.document.documentation,
             "units": self.document.units.unit_str if self.document.units else "",
             "ids_name": self.document.metadata.ids_name,
+            "data_type": self.document.metadata.data_type,
+            "physics_domain": self.document.metadata.physics_domain or "general",
             "highlights": self.highlights,
             "search_mode": self.search_mode.value,
             "rank": self.rank,
         }
+
+    @property
+    def physics_domain_valid(self) -> bool:
+        """Check if this result has a valid physics domain."""
+        return bool(self.document.metadata.physics_domain)
+
+    @property
+    def has_units(self) -> bool:
+        """Check if this result has units defined."""
+        return bool(self.document.units and self.document.units.unit_str)
+
+    def extract_measurement_context(self) -> Optional[Dict[str, str]]:
+        """Extract measurement context information from documentation."""
+        doc_lower = self.document.documentation.lower()
+        measurement_terms = [
+            "temperature",
+            "density",
+            "pressure",
+            "magnetic",
+            "current",
+        ]
+
+        matching_terms = [term for term in measurement_terms if term in doc_lower]
+
+        if matching_terms:
+            measurement_type = (
+                "multiple" if len(matching_terms) > 1 else matching_terms[0]
+            )
+            return {
+                "path": self.document.metadata.path_name,
+                "measurement_type": measurement_type,
+                "context": self.document.documentation[:150],
+            }
+        return None
 
 
 class SearchStrategy(ABC):
@@ -141,9 +180,13 @@ class SemanticSearchStrategy(SearchStrategy):
     def semantic_search(self):
         """Lazy initialization of semantic search."""
         if self._semantic_search is None:
-            from .semantic_search import SemanticSearch
+            from .semantic_search import SemanticSearch, SemanticSearchConfig
 
-            self._semantic_search = SemanticSearch(document_store=self.document_store)
+            # Create config that matches document store's ids_set
+            config = SemanticSearchConfig(ids_set=self.document_store.ids_set)
+            self._semantic_search = SemanticSearch(
+                config=config, document_store=self.document_store
+            )
         return self._semantic_search
 
     def search(
@@ -420,7 +463,7 @@ class SearchComposer:
         # Convert to server format
         return {
             "results": [result.to_dict() for result in results],
-            "total_results": len(results),
+            "results_count": len(results),
             "search_strategy": config.mode.value,
             "max_results": config.max_results,
             "filter_ids": config.filter_ids,

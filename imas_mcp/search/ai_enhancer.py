@@ -2,27 +2,326 @@
 AI Enhancement Module for IMAS MCP Server.
 
 This module provides a decorator for AI-powered enhancement of MCP tool responses
-using MCP context sampling when available. Implements selective AI enhancement
-strategy for optimal performance.
+using MCP context sampling when available. Uses clear enhancement strategies
+for optimal performance and maintainability.
 """
 
 import json
 import logging
+from enum import Enum
 from functools import wraps
 from typing import Any, Callable, Dict, cast
 
 from mcp.types import TextContent
 
-from .ai_enhancement_strategy import (
-    should_apply_ai_enhancement,
-    suggest_follow_up_tools,
-)
-
 logger = logging.getLogger(__name__)
 
 
-# AI prompts focused on specific tasks with relationship awareness
-SEARCH_EXPERT = """You are an IMAS search expert with deep knowledge of data relationships. Analyze relevance-ranked search results and provide:
+class EnhancementStrategy(Enum):
+    """Enhancement strategies for AI processing."""
+
+    ALWAYS = "always"
+    NEVER = "never"
+    CONDITIONAL = "conditional"
+
+
+class ToolCategory(Enum):
+    """Tool categories for enhancement decisions."""
+
+    SEARCH = "search"
+    EXPLANATION = "explanation"
+    ANALYSIS = "analysis"
+    EXPORT = "export"
+    OVERVIEW = "overview"
+    IDENTIFIERS = "identifiers"
+
+
+# Configuration mapping tools to their enhancement strategies
+TOOL_ENHANCEMENT_CONFIG = {
+    "search_imas": {
+        "strategy": EnhancementStrategy.CONDITIONAL,
+        "category": ToolCategory.SEARCH,
+    },
+    "explain_concept": {
+        "strategy": EnhancementStrategy.ALWAYS,
+        "category": ToolCategory.EXPLANATION,
+    },
+    "get_overview": {
+        "strategy": EnhancementStrategy.ALWAYS,
+        "category": ToolCategory.OVERVIEW,
+    },
+    "analyze_ids_structure": {
+        "strategy": EnhancementStrategy.CONDITIONAL,
+        "category": ToolCategory.ANALYSIS,
+    },
+    "explore_relationships": {
+        "strategy": EnhancementStrategy.CONDITIONAL,
+        "category": ToolCategory.ANALYSIS,
+    },
+    "explore_identifiers": {
+        "strategy": EnhancementStrategy.NEVER,
+        "category": ToolCategory.IDENTIFIERS,
+    },
+    "export_ids": {
+        "strategy": EnhancementStrategy.CONDITIONAL,
+        "category": ToolCategory.EXPORT,
+    },
+    "export_physics_domain": {
+        "strategy": EnhancementStrategy.CONDITIONAL,
+        "category": ToolCategory.EXPORT,
+    },
+}
+
+
+class EnhancementDecisionEngine:
+    """
+    Engine for making clear AI enhancement decisions.
+
+    This class centralizes the logic for determining when to apply AI enhancement
+    using a clear, switch-case-like structure for maintainability.
+    """
+
+    @staticmethod
+    def should_enhance(tool_name: str, args: tuple, kwargs: dict, ctx: Any) -> bool:
+        """
+        Determine if AI enhancement should be applied.
+
+        Args:
+            tool_name: Name of the tool function
+            args: Function arguments
+            kwargs: Function keyword arguments
+            ctx: MCP context for AI enhancement
+
+        Returns:
+            Boolean indicating whether to apply AI enhancement
+        """
+        # No enhancement without context
+        if not ctx:
+            return False
+
+        # Get tool configuration
+        config = TOOL_ENHANCEMENT_CONFIG.get(
+            tool_name,
+            {"strategy": EnhancementStrategy.ALWAYS, "category": ToolCategory.OVERVIEW},
+        )
+
+        strategy = config["strategy"]
+        category = config["category"]
+
+        # Switch-case style strategy decision
+        match strategy:
+            case EnhancementStrategy.NEVER:
+                return False
+            case EnhancementStrategy.ALWAYS:
+                return True
+            case EnhancementStrategy.CONDITIONAL:
+                return EnhancementDecisionEngine._evaluate_conditional(
+                    category, tool_name, args, kwargs
+                )
+            case _:
+                return True  # Default to enhancement
+
+    @staticmethod
+    def _evaluate_conditional(
+        category: ToolCategory, tool_name: str, args: tuple, kwargs: dict
+    ) -> bool:
+        """
+        Evaluate conditional enhancement using clear category-based logic.
+
+        Args:
+            category: Tool category for enhancement logic
+            tool_name: Name of the tool function
+            args: Function arguments
+            kwargs: Function keyword arguments
+
+        Returns:
+            Boolean indicating whether to apply enhancement
+        """
+        try:
+            # Switch-case style conditional evaluation
+            match category:
+                case ToolCategory.SEARCH:
+                    return EnhancementDecisionEngine._should_enhance_search(
+                        args, kwargs
+                    )
+                case ToolCategory.ANALYSIS:
+                    return EnhancementDecisionEngine._should_enhance_analysis(
+                        tool_name, args, kwargs
+                    )
+                case ToolCategory.EXPORT:
+                    return EnhancementDecisionEngine._should_enhance_export(
+                        tool_name, args, kwargs
+                    )
+                case _:
+                    return True  # Default to enhancement for unknown categories
+
+        except Exception as e:
+            logger.warning(
+                f"Error evaluating conditional enhancement for {tool_name}: {e}"
+            )
+            return True  # Default to enhancement on error
+
+    @staticmethod
+    def _should_enhance_search(args: tuple, kwargs: dict) -> bool:
+        """Determine if search should use AI enhancement."""
+        # Check search mode
+        search_mode = kwargs.get("search_mode", "auto")
+        if search_mode in ["comprehensive", "semantic"]:
+            return True
+
+        # Check query complexity
+        query = args[1] if len(args) > 1 else kwargs.get("query", "")
+
+        # Multiple terms in list
+        if isinstance(query, list) and len(query) > 2:
+            return True
+
+        # Boolean operators in string
+        if isinstance(query, str):
+            boolean_ops = ["AND", "OR", "NOT"]
+            if any(op in query.upper() for op in boolean_ops):
+                return True
+            # Long queries (more than 3 words)
+            if len(query.split()) > 3:
+                return True
+
+        # High result count requests
+        max_results = kwargs.get("max_results", 10)
+        if max_results > 15:
+            return True
+
+        return False
+
+    @staticmethod
+    def _should_enhance_analysis(tool_name: str, args: tuple, kwargs: dict) -> bool:
+        """Determine if analysis tools should use AI enhancement."""
+        match tool_name:
+            case "analyze_ids_structure":
+                return EnhancementDecisionEngine._should_enhance_structure_analysis(
+                    args, kwargs
+                )
+            case "explore_relationships":
+                return EnhancementDecisionEngine._should_enhance_relationships(
+                    args, kwargs
+                )
+            case _:
+                return True
+
+    @staticmethod
+    def _should_enhance_structure_analysis(args: tuple, kwargs: dict) -> bool:
+        """Determine if structure analysis should use AI enhancement."""
+        ids_name = args[1] if len(args) > 1 else kwargs.get("ids_name", "")
+
+        # Complex IDS patterns that benefit from AI analysis
+        complex_patterns = [
+            "core_profiles",
+            "equilibrium",
+            "transport",
+            "edge_profiles",
+            "mhd",
+            "disruption",
+            "pellets",
+            "wall",
+            "ec_launchers",
+        ]
+
+        return any(pattern in ids_name.lower() for pattern in complex_patterns)
+
+    @staticmethod
+    def _should_enhance_relationships(args: tuple, kwargs: dict) -> bool:
+        """Determine if relationship exploration should use AI enhancement."""
+        # Deep analysis (high max_depth)
+        max_depth = kwargs.get("max_depth", 2)
+        if max_depth >= 3:
+            return True
+
+        # Complex physics domain paths
+        path = args[1] if len(args) > 1 else kwargs.get("path", "")
+        complex_path_patterns = [
+            "profiles",
+            "transport",
+            "equilibrium",
+            "mhd",
+            "disruption",
+            "heating",
+            "current_drive",
+            "edge",
+            "pedestal",
+        ]
+        if any(pattern in path.lower() for pattern in complex_path_patterns):
+            return True
+
+        # Specific relationship types that need AI interpretation
+        relationship_type = kwargs.get("relationship_type", "all")
+        if relationship_type in ["physics", "measurement_dependencies"]:
+            return True
+
+        return False
+
+    @staticmethod
+    def _should_enhance_export(tool_name: str, args: tuple, kwargs: dict) -> bool:
+        """Determine if export tools should use AI enhancement."""
+        match tool_name:
+            case "export_ids":
+                return EnhancementDecisionEngine._should_enhance_bulk_export(
+                    args, kwargs
+                )
+            case "export_physics_domain":
+                return EnhancementDecisionEngine._should_enhance_physics_domain(
+                    args, kwargs
+                )
+            case _:
+                return True
+
+    @staticmethod
+    def _should_enhance_bulk_export(args: tuple, kwargs: dict) -> bool:
+        """Determine if bulk export should use AI enhancement."""
+        # Raw format explicitly disables AI
+        output_format = kwargs.get("output_format", "structured")
+        if output_format == "raw":
+            return False
+
+        # Enhanced format always enables AI
+        if output_format == "enhanced":
+            return True
+
+        # Multiple IDS (4+) enable AI
+        ids_list = args[1] if len(args) > 1 else kwargs.get("ids_list", [])
+        if len(ids_list) > 3:
+            return True
+
+        # Full analysis with relationships and physics context (3+ IDS)
+        include_relationships = kwargs.get("include_relationships", True)
+        include_physics_context = kwargs.get("include_physics_context", True)
+        if include_relationships and include_physics_context and len(ids_list) > 2:
+            return True
+
+        return False
+
+    @staticmethod
+    def _should_enhance_physics_domain(args: tuple, kwargs: dict) -> bool:
+        """Determine if physics domain export should use AI enhancement."""
+        # Comprehensive analysis depth
+        analysis_depth = kwargs.get("analysis_depth", "focused")
+        if analysis_depth == "comprehensive":
+            return True
+
+        # Cross-domain analysis
+        include_cross_domain = kwargs.get("include_cross_domain", False)
+        if include_cross_domain:
+            return True
+
+        # Large exports
+        max_paths = kwargs.get("max_paths", 10)
+        if max_paths > 20:
+            return True
+
+        return False
+
+
+# AI prompts for different tool categories
+AI_PROMPTS = {
+    ToolCategory.SEARCH: """You are an IMAS search expert with deep knowledge of data relationships. Analyze relevance-ranked search results and provide:
 1. 5 related search terms for plasma physics research, considering cross-references and physics concepts
 2. Brief physics insights about the found data paths and their measurement context
 3. Suggestions for complementary searches based on measurement relationships and connected IDS
@@ -30,94 +329,65 @@ SEARCH_EXPERT = """You are an IMAS search expert with deep knowledge of data rel
 The search results are ordered by relevance considering exact matches, path position, 
 documentation content, path specificity, physics concepts, and cross-reference connectivity. 
 Focus on practical physics relationships and measurement considerations that would lead to 
-valuable follow-up searches using the rich relationship network."""
-
-EXPLANATION_EXPERT = """You are an IMAS physics expert providing clear explanations of plasma physics concepts. Provide:
+valuable follow-up searches using the rich relationship network.""",
+    ToolCategory.EXPLANATION: """You are an IMAS physics expert providing clear explanations of plasma physics concepts. Provide:
 1. Physics significance and context from physics concepts database
 2. Domain-specific explanations appropriate for the detail level requested  
 3. Related IMAS paths and measurement considerations
 4. Practical applications and measurement scenarios
 
 Focus on accurate physics explanations that connect theoretical concepts to practical 
-IMAS data structures and measurement workflows."""
-
-OVERVIEW_EXPERT = """You are an IMAS data expert providing comprehensive overviews. Focus on:
+IMAS data structures and measurement workflows.""",
+    ToolCategory.OVERVIEW: """You are an IMAS data expert providing comprehensive overviews. Focus on:
 1. Clear explanations of IMAS structure and physics domains
 2. Practical guidance for researchers and data analysts
 3. Navigation strategies for finding relevant data
 4. Physics context and measurement workflows
-Provide actionable insights for effective IMAS usage."""
-
-STRUCTURE_EXPERT = """You are an IMAS structural analysis expert. Analyze IDS organization and provide:
+Provide actionable insights for effective IMAS usage.""",
+    ToolCategory.ANALYSIS: """You are an IMAS structural analysis expert. Analyze IDS organization and provide:
 1. Physics domain context and measurement scope
 2. Data hierarchy and organization logic
 3. Critical measurement paths and their physics significance
 4. Practical usage guidance for researchers
 5. Integration patterns with other IDS
-Focus on actionable insights for data analysis workflows."""
-
-RELATIONSHIP_EXPERT = """You are an IMAS relationship analysis expert. Analyze connection patterns and provide:
-1. Physics-based relationship explanations for the discovered connections
-2. Measurement workflow insights showing how data paths connect in practice
-3. Practical navigation suggestions for related data exploration
-
-Focus on quantitative insights with physics context, emphasizing how the relationship 
-network reflects actual plasma measurement dependencies and physics coupling."""
-
-BULK_EXPORT_EXPERT = """You are an IMAS bulk data export expert. Analyze export selections and provide:
+Focus on actionable insights for data analysis workflows.""",
+    ToolCategory.EXPORT: """You are an IMAS data export expert. Analyze export selections and provide:
 1. Data usage recommendations for the exported datasets
 2. Physics context explaining relationships between selected IDS or data paths
 3. Suggested analysis workflows utilizing the exported data
 4. Integration patterns and measurement dependencies
 5. Quality considerations and data validation approaches
 
-Focus on practical guidance for researchers working with bulk IMAS data exports,
-emphasizing physics-aware analysis workflows and cross-IDS relationships."""
-
-PHYSICS_DOMAIN_EXPERT = """You are an IMAS physics domain expert. Analyze domain-specific data and provide:
-1. Comprehensive physics context for the selected domain
-2. Key measurement relationships and dependencies within the domain
-3. Suggested analysis approaches for domain-specific research
-4. Integration patterns with other physics domains
-5. Practical considerations for domain-focused data analysis
-
-Focus on domain-specific physics insights, measurement workflows, and research guidance
-that leverages the rich IMAS data structure for comprehensive plasma analysis."""
+Focus on practical guidance for researchers working with IMAS data exports,
+emphasizing physics-aware analysis workflows and cross-IDS relationships.""",
+}
 
 
-def ai_enhancer(
-    system_prompt: str,
-    operation_name: str,
-    temperature: float = 0.3,
-    max_tokens: int = 800,
-):
+def ai_enhancer(temperature: float = 0.3, max_tokens: int = 800):
     """
     Decorator for selective AI enhancement of MCP tool responses.
 
     Automatically adds AI insights to tool responses when MCP context is available
-    and when the selective enhancement strategy determines AI would be valuable.
+    and when the enhancement decision engine determines AI would be valuable.
     Falls back gracefully when context is unavailable or enhancement is not needed.
 
     Args:
-        system_prompt: The system prompt defining AI behavior for this tool
-        operation_name: Name of the operation for logging
         temperature: Sampling temperature for AI response
         max_tokens: Maximum tokens for AI response
 
     Usage:
-        @ai_enhancer(SEARCH_EXPERT, "Search analysis", temperature=0.3)
+        @ai_enhancer(temperature=0.3)
         async def search_imas(self, query: str, ctx: Optional[Context] = None):
             # Tool implementation returns base response
             results = self.perform_search(query)
 
-            # Add tool suggestions and AI prompt for conditional enhancement
+            # Add AI prompt for conditional enhancement
             base_response = {
                 "results": results,
-                "suggested_tools": suggest_follow_up_tools(results, "search_imas"),
                 "ai_prompt": f"Analyze search for: {query}\\nResults: {results}"
             }
 
-            # Decorator will apply AI enhancement based on selective strategy
+            # Decorator will apply AI enhancement if conditions are met
             return base_response
     """
 
@@ -130,49 +400,34 @@ def ai_enhancer(
             # Call the original tool function
             base_response = await func(*args, **kwargs)
 
-            # Always add tool suggestions if not present
-            if (
-                isinstance(base_response, dict)
-                and "suggested_tools" not in base_response
-            ):
-                try:
-                    suggestions = suggest_follow_up_tools(base_response, func.__name__)
-                    base_response["suggested_tools"] = suggestions
-                except Exception as e:
-                    logger.warning(f"Failed to generate tool suggestions: {e}")
-                    base_response["suggested_tools"] = []
-
-            # Check if AI enhancement should be applied using selective strategy
-            should_enhance = should_apply_ai_enhancement(
+            # Use the decision engine to determine if AI enhancement should be applied
+            should_enhance = EnhancementDecisionEngine.should_enhance(
                 func.__name__, args, kwargs, ctx
             )
 
-            # If no context, no AI prompt, or selective strategy says no enhancement
-            if (
-                not ctx
-                or not isinstance(base_response, dict)
-                or "ai_prompt" not in base_response
-                or not should_enhance
-            ):
-                # Remove ai_prompt from response if present and add status
+            if not should_enhance:
+                # Remove ai_prompt from response if present and provide status feedback
                 if isinstance(base_response, dict) and "ai_prompt" in base_response:
-                    if not ctx:
-                        ai_insights = {"status": "AI context not available"}
-                    elif not should_enhance:
-                        ai_insights = {
-                            "status": "AI enhancement not needed for this request"
-                        }
-                    else:
-                        ai_insights = {
-                            "status": "AI enhancement temporarily unavailable"
-                        }
-
-                    base_response["ai_insights"] = ai_insights
                     del base_response["ai_prompt"]
+                    base_response["ai_insights"] = {
+                        "status": "AI enhancement not applied - conditions not met"
+                    }
+                return base_response
+
+            # Check if AI prompt is available for enhancement
+            if not isinstance(base_response, dict) or "ai_prompt" not in base_response:
                 return base_response
 
             # Extract AI prompt and remove from response
             ai_prompt = base_response.pop("ai_prompt")
+
+            # Get the appropriate system prompt for this tool category
+            config = TOOL_ENHANCEMENT_CONFIG.get(
+                func.__name__, {"category": ToolCategory.OVERVIEW}
+            )
+            system_prompt = AI_PROMPTS.get(
+                config["category"], AI_PROMPTS[ToolCategory.OVERVIEW]
+            )
 
             try:
                 ai_response = await ctx.sample(
@@ -196,7 +451,7 @@ def ai_enhancer(
                     ai_insights = {"error": "No AI response received"}
 
             except Exception as e:
-                logger.warning(f"{operation_name} AI enhancement failed: {e}")
+                logger.warning(f"AI enhancement failed for {func.__name__}: {e}")
                 ai_insights = {"error": "AI enhancement temporarily unavailable"}
 
             # Add AI insights to the response

@@ -26,7 +26,7 @@ This plan implements critical improvements to the IMAS MCP server based on compr
 - `TestAnalyzeIDSStructure` - IDS structure analysis tests
 - `TestExploreRelationships` - Relationship exploration tests
 - `TestExploreIdentifiers` - Identifier exploration tests
-- `TestExportIDSBulk` - Bulk export tests
+- `TestExportIDS` - Bulk export tests
 - `TestExportPhysicsDomain` - Physics domain export tests
 - `TestExplainConcept` - Concept explanation tests
 - `TestServerErrorHandling` - Error handling tests
@@ -42,7 +42,7 @@ This plan implements critical improvements to the IMAS MCP server based on compr
 - TestAnalyzeIDSStructure: Tests for IDS structure analysis with valid/invalid IDS
 - TestExploreRelationships: Tests for relationship exploration with different depths
 - TestExploreIdentifiers: Tests for identifier exploration with queries
-- TestExportIDSBulk: Tests for bulk export functionality with relationships
+- TestExportIDS: Tests for bulk export functionality with relationships
 - TestExportPhysicsDomain: Tests for physics domain export with cross-domain analysis
 - TestIntegration: Integration tests for tool workflows (search->explain, search->structure, bulk export)
 
@@ -197,9 +197,9 @@ def _suggest_follow_up_tools(self, results: Dict[str, Any]) -> List[Dict[str, st
         unique_ids = list(set(r["ids_name"] for r in results["results"]))
         if len(unique_ids) > 1:
             suggestions.append({
-                "tool": "export_ids_bulk",
+                "tool": "export_ids",
                 "reason": f"Export bulk data for {len(unique_ids)} IDS with relationships",
-                "sample_call": f"export_ids_bulk({unique_ids[:3]})"
+                "sample_call": f"export_ids({unique_ids[:3]})"
             })
 
     return suggestions
@@ -210,127 +210,49 @@ def _suggest_follow_up_tools(self, results: Dict[str, Any]) -> List[Dict[str, st
 
 ### 1.2 Selective AI Enhancement Strategy
 
-**Problem**: AI enhancement on all tools adds unnecessary latency
-**Solution**: Implement conditional AI enhancement
+**Status**: ✅ **IMPLEMENTED**
 
-```python
-# File: imas_mcp/search/ai_enhancer.py
-AI_ENHANCEMENT_STRATEGY = {
-    "search_imas": "conditional",      # Only for complex queries or when requested
-    "explain_concept": "always",       # Core value-add
-    "get_overview": "always",          # Benefits from synthesis
-    "analyze_ids_structure": "conditional",  # Only for complex IDS
-    "explore_relationships": "conditional",  # Only for deep analysis
-    "explore_identifiers": "never",    # Structured data doesn't need AI
-    "export_ids_bulk": "conditional",  # Only for enhanced format
-    "export_physics_domain": "conditional"  # Only for workflow guidance
-}
+**AI Enhancement Strategy**: Comprehensive selective AI enhancement system implemented with conditional logic for optimal performance.
 
-def ai_enhancer(expert_prompt: str, task_description: str,
-                strategy: str = "always", **kwargs):
-    """Enhanced AI decorator with conditional enhancement."""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Check if AI enhancement should be applied
-            ctx = kwargs.get('ctx')
+**Key files implemented**:
 
-            if strategy == "never" or not ctx:
-                # Remove AI prompt setup, execute without enhancement
-                return await func(*args, **kwargs)
+- `imas_mcp/search/ai_enhancer.py` - AI enhancement decorator with selective strategy
+- `imas_mcp/search/ai_enhancement_strategy.py` - Conditional enhancement logic and tool suggestions
+- `tests/test_enhancement_strategy.py` - Unit tests for enhancement strategy logic
+- `tests/test_enhancer_integration.py` - Integration tests with server tools
 
-            elif strategy == "conditional":
-                # Apply AI enhancement based on specific conditions
-                should_enhance = _should_apply_ai_enhancement(func.__name__, args, kwargs)
-                if not should_enhance:
-                    return await func(*args, **kwargs)
+**Main functionality covered**:
 
-            # Apply AI enhancement
-            result = await func(*args, **kwargs)
+- **AI Enhancement Strategy Mapping**: All 8 tools configured with appropriate strategies:
+  - `search_imas`, `analyze_ids_structure`, `explore_relationships`, `export_ids`, `export_physics_domain`: "conditional"
+  - `explain_concept`, `get_overview`: "always"
+  - `explore_identifiers`: "never"
+- **Conditional Enhancement Logic**: Smart evaluation based on search modes, export formats, analysis depth, and complexity
+- **Multi-Format Export Support**: `export_ids` supports raw, structured, and enhanced formats with AI only for enhanced format
+- **Tool Suggestions**: Automatic follow-up tool recommendations for all tools
+- **Graceful Degradation**: Handles AI service unavailability without blocking tool functionality
+- **Comprehensive Test Coverage**: 629 lines of tests covering all conditional logic scenarios
 
-            if ctx and result.get("ai_prompt"):
-                try:
-                    ai_response = await ctx.sample(result["ai_prompt"], **kwargs)
-                    result["ai_enhancement"] = ai_response
-                except Exception as e:
-                    logger.warning(f"AI enhancement failed: {e}")
-                    result["ai_enhancement"] = {"error": "AI enhancement unavailable"}
+### 1.3 Multi-Format Export Tools
 
-            return result
-        return wrapper
-    return decorator
+**Status**: ✅ **IMPLEMENTED**
 
-def _should_apply_ai_enhancement(func_name: str, args: tuple, kwargs: dict) -> bool:
-    """Determine if AI enhancement should be applied based on context."""
-    if func_name == "search_imas":
-        search_mode = kwargs.get("search_mode", "adaptive")
-        return search_mode == "comprehensive"
+**Multi-Format Export System**: Comprehensive format-based processing implemented in `export_ids` method.
 
-    elif func_name == "export_ids_bulk":
-        output_format = kwargs.get("output_format", "structured")
-        return output_format == "enhanced"
+**Key files implemented**:
 
-    elif func_name == "analyze_ids_structure":
-        # Apply AI for complex IDS (>100 paths)
-        ids_name = args[1] if len(args) > 1 else kwargs.get("ids_name")
-        return _is_complex_ids(ids_name)
+- `imas_mcp/server.py` - Multi-format export logic integrated into `export_ids` method
+- `tests/test_enhancer_integration.py` - Integration tests for all three export formats
 
-    return True  # Default to enhancement for conditional tools
-```
+**Main functionality covered**:
 
-### 1.3 Multi-Format Bulk Export Tools
-
-**Problem**: Bulk tools always apply AI enhancement, but researchers need raw data
-**Solution**: Implement format-based processing
-
-```python
-# File: imas_mcp/server.py
-async def export_ids_bulk(
-    self,
-    ids_list: List[str],
-    format: str = "structured",  # raw, structured, enhanced
-    include_relationships: bool = True,
-    include_physics_context: bool = True,
-    ctx: Optional[Context] = None,
-) -> Dict[str, Any]:
-    """
-    Multi-format bulk export with optional AI enhancement.
-
-    Formats:
-    - raw: Pure data export, no AI enhancement, fastest
-    - structured: Organized data with relationships, medium speed
-    - enhanced: AI-enhanced with insights, requires ctx, slowest
-    """
-
-    # Validate format
-    if format not in ["raw", "structured", "enhanced"]:
-        return {"error": f"Invalid format: {format}. Use: raw, structured, enhanced"}
-
-    # Raw format bypasses AI entirely
-    if format == "raw":
-        return self._export_raw_bulk(ids_list, include_relationships)
-
-    # Structured format provides organized data
-    if format == "structured":
-        return self._export_structured_bulk(ids_list, include_relationships, include_physics_context)
-
-    # Enhanced format uses AI only if context available
-    if format == "enhanced":
-        if not ctx:
-            logger.warning("Enhanced format requested but no AI context available, falling back to structured")
-            return self._export_structured_bulk(ids_list, include_relationships, include_physics_context)
-        return await self._export_enhanced_bulk(ids_list, include_relationships, include_physics_context, ctx)
-
-def _export_raw_bulk(self, ids_list: List[str], include_relationships: bool) -> Dict[str, Any]:
-    """Raw data export for maximum performance."""
-    # Implementation focused on speed, minimal processing
-    pass
-
-def _export_structured_bulk(self, ids_list: List[str], include_relationships: bool, include_physics_context: bool) -> Dict[str, Any]:
-    """Structured data export with relationships but no AI."""
-    # Implementation with organized data and relationships
-    pass
-```
+- **Format Validation**: Validates export format parameter with clear error messages and suggestions
+- **Raw Format**: Minimal processing with disabled relationships and physics context for maximum performance
+- **Structured Format**: Organized data with relationships and physics context but no AI enhancement
+- **Enhanced Format**: AI-enhanced insights with comprehensive data analysis (conditional on context availability)
+- **Format-Specific Processing**: Different levels of data detail based on format (truncated documentation for non-comprehensive formats)
+- **Graceful Fallback**: Enhanced format falls back to structured when AI context unavailable
+- **Performance Optimization**: Raw format optimized for speed with minimal data processing
 
 ## Phase 2: MCP Resources Implementation (Weeks 6-8)
 
@@ -500,7 +422,7 @@ class ExamplesResource:
                 "transport_study": {
                     "steps": [
                         "search_imas('transport coefficients')",
-                        "export_ids_bulk(['core_profiles', 'transport', 'core_transport'])",
+                        "export_ids(['core_profiles', 'transport', 'core_transport'])",
                         "explore_relationships('transport/model/diffusion')"
                     ],
                     "description": "Transport physics study workflow"
@@ -956,9 +878,9 @@ class TestMCPTools:
         assert "suggested_tools" in result
 
     @pytest.mark.asyncio
-    async def test_export_ids_bulk_raw_format(self, server):
+    async def test_export_ids_raw_format(self, server):
         """Test bulk export in raw format."""
-        result = await server.export_ids_bulk(
+        result = await server.export_ids(
             ids_list=["core_profiles", "equilibrium"],
             format="raw",
             include_relationships=True
@@ -969,9 +891,9 @@ class TestMCPTools:
         assert len(result["valid_ids"]) == 2
 
     @pytest.mark.asyncio
-    async def test_export_ids_bulk_enhanced_format(self, server, mock_context):
+    async def test_export_ids_enhanced_format(self, server, mock_context):
         """Test bulk export in enhanced format."""
-        result = await server.export_ids_bulk(
+        result = await server.export_ids(
             ids_list=["core_profiles"],
             format="enhanced",
             include_relationships=True,
@@ -1148,7 +1070,7 @@ class TestPerformance:
         """Test bulk export performance."""
         start_time = time.time()
 
-        result = await server.export_ids_bulk(
+        result = await server.export_ids(
             ids_list=["core_profiles", "equilibrium"],
             format="raw",
             include_relationships=False
@@ -1212,7 +1134,7 @@ class TestPerformance:
 - **adaptive**: Intelligent search selection, <1s response time, conditional AI
 - **comprehensive**: Full semantic search, <3s response time, AI enhancement
 
-### export_ids_bulk
+### export_ids
 - **raw**: Pure data export, fastest, no AI enhancement
 - **structured**: Organized with relationships, medium speed
 - **enhanced**: AI-enhanced insights, slowest, requires AI context
@@ -1283,7 +1205,7 @@ class PerformanceBenchmark:
             for _ in range(iterations):
                 for ids_list in ids_lists:
                     start_time = time.time()
-                    await self.server.export_ids_bulk(
+                    await self.server.export_ids(
                         ids_list=ids_list,
                         format=format_type
                     )
@@ -1335,7 +1257,7 @@ PERFORMANCE_TARGETS = {
 
 - **Search Fast Mode**: <0.5s response time, >90% cache hit rate
 - **Search Adaptive Mode**: <1s response time, intelligent mode selection
-- **Bulk Export Raw**: <1s for 2 IDS, <2s for 5 IDS
+- **Export Raw**: <1s for 2 IDS, <2s for 5 IDS
 - **Overall Error Rate**: <1% across all tools
 
 ### Quality Metrics

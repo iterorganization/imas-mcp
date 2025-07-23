@@ -248,7 +248,7 @@ def show_domains(coordinator: ExtractionCoordinator):
     print("=== Physics Domains Summary ===")
 
     # Import the categorizer
-    from ..core.physics_categorization import physics_categorizer
+    from imas_mcp.core.physics_categorization import physics_categorizer
 
     # Get domain summary from categorizer
     domain_summary = physics_categorizer.get_domain_summary()
