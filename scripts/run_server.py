@@ -8,7 +8,7 @@ import click
 from imas_mcp.server import Server
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

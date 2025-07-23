@@ -312,7 +312,7 @@ class DocumentStore:
         if not to_load:
             return  # All requested IDS already loaded
 
-        logger.info(f"Loading {len(to_load)} IDS on-demand: {to_load}")
+        logger.info(f"Loading {len(to_load)} IDS")
 
         # Load each missing IDS
         for ids_name in to_load:
@@ -344,7 +344,7 @@ class DocumentStore:
         """Get the path to the resources directory using importlib.resources."""
         try:
             # Use the new files() API instead of deprecated path()
-            resources_dir = resources.files("imas_mcp.resources") / "schemas"
+            resources_dir = resources.files("imas_mcp") / "resources" / "schemas"
             # Convert Traversable to Path using str conversion
             return Path(str(resources_dir))
         except (ImportError, FileNotFoundError):
@@ -358,7 +358,7 @@ class DocumentStore:
         """Get the database directory for database files."""
         try:
             # Use resources directory for database files
-            database_dir = resources.files("imas_mcp.resources") / "database"
+            database_dir = resources.files("imas_mcp") / "resources" / "database"
             return Path(str(database_dir))
         except (ImportError, FileNotFoundError):
             # Fallback to package relative path
@@ -1020,6 +1020,13 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             search_full_text('physics_domain:transport AND units:eV')
             search_full_text('"electron density" OR "ion density"')
         """
+        # Ensure documents are loaded and FTS index exists
+        self._ensure_loaded()
+
+        # Check if FTS index needs to be built
+        if self._should_rebuild_fts_index():
+            self._build_sqlite_fts_index()
+
         with self._sqlite_connection() as conn:
             # Build FTS5 query
             if fields:

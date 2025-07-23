@@ -1,6 +1,6 @@
 {
 	"servers": {
-		"imas-dd": {
+		"imas": {
 			"type": "stdio",
 			"command": "uv",
 			"args": [
@@ -17,7 +17,7 @@
 				"Authorization": "Bearer ${input:github_mcp_pat}"
 			}
 		},
-		// "my-mcp-server-33573347": {
+		// "imas-dd": {
 		// 	"url": "https://imas-dd.iter.org/mcp/",
 		// 	"type": "http"
 		// }

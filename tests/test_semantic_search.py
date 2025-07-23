@@ -746,9 +746,8 @@ class TestSemanticSearchIntegration:
 
     @pytest.mark.integration
     @pytest.mark.fast
-    def test_integration_with_test_server(self, test_server):
+    def test_integration_with_test_server(self, semantic_search):
         """Test SemanticSearch integration with test server."""
-        semantic_search = test_server.semantic_search
 
         # Test that semantic search is properly initialized
         assert semantic_search._initialized is True
@@ -770,9 +769,8 @@ class TestSemanticSearchIntegration:
 
     @pytest.mark.integration
     @pytest.mark.fast
-    def test_integration_search_results_quality(self, test_server):
+    def test_integration_search_results_quality(self, semantic_search):
         """Test quality of search results."""
-        semantic_search = test_server.semantic_search
 
         # Search for physics-related terms
         results = semantic_search.search("electron density", top_k=10)
@@ -791,9 +789,8 @@ class TestSemanticSearchIntegration:
 
     @pytest.mark.integration
     @pytest.mark.fast
-    def test_integration_similar_documents(self, test_server):
+    def test_integration_similar_documents(self, semantic_search):
         """Test finding similar documents."""
-        semantic_search = test_server.semantic_search
 
         # Get first document
         first_results = semantic_search.search("temperature", top_k=1)
@@ -809,9 +806,8 @@ class TestSemanticSearchIntegration:
 
     @pytest.mark.integration
     @pytest.mark.slow
-    def test_integration_batch_search(self, test_server):
+    def test_integration_batch_search(self, semantic_search):
         """Test batch search functionality."""
-        semantic_search = test_server.semantic_search
 
         queries = ["plasma temperature", "magnetic field", "electron density"]
 
@@ -888,9 +884,8 @@ class TestSemanticSearchErrorHandling:
             with pytest.raises(Exception, match="Complete failure"):
                 SemanticSearch(document_store=mock_store)
 
-    def test_hybrid_search_failure(self, test_server):
+    def test_hybrid_search_failure(self, semantic_search):
         """Test hybrid search with FTS failure."""
-        semantic_search = test_server.semantic_search
 
         # Mock FTS to raise exception
         with patch.object(
@@ -908,9 +903,8 @@ class TestSemanticSearchPerformance:
 
     @pytest.mark.performance
     @pytest.mark.fast
-    def test_search_performance(self, test_server):
+    def test_search_performance(self, semantic_search):
         """Test search performance."""
-        semantic_search = test_server.semantic_search
 
         start_time = time.time()
         results = semantic_search.search("plasma temperature", top_k=10)
@@ -922,9 +916,8 @@ class TestSemanticSearchPerformance:
 
     @pytest.mark.performance
     @pytest.mark.fast
-    def test_batch_search_efficiency(self, test_server):
+    def test_batch_search_efficiency(self, semantic_search):
         """Test batch search efficiency."""
-        semantic_search = test_server.semantic_search
 
         queries = ["temperature", "density", "magnetic", "pressure", "velocity"]
 
@@ -938,9 +931,8 @@ class TestSemanticSearchPerformance:
 
     @pytest.mark.performance
     @pytest.mark.fast
-    def test_memory_usage_stability(self, test_server):
+    def test_memory_usage_stability(self, semantic_search):
         """Test memory usage stability during repeated searches."""
-        semantic_search = test_server.semantic_search
 
         # Perform multiple searches
         for i in range(10):
