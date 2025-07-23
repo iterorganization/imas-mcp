@@ -31,9 +31,8 @@
   "chat.mcp.discovery.enabled": true,
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: imas-dd": {
-      "allowedDuringChat": true,
-      "allowedModels": ["github.copilot-chat/claude-sonnet-4"]
+    "imas-mcp/.vscode/mcp.json: imas": {
+      "allowedDuringChat": true
     }
   }
 }

@@ -3,6 +3,9 @@ from typing import List
 from functools import cached_property
 from fastmcp import Client
 
+# Standard test IDS set for consistency across all tests and benchmarks
+STANDARD_TEST_IDS_SET = {"equilibrium", "core_profiles"}
+
 
 # Import using composition to avoid costly imports in benchmark setup
 class BenchmarkFixture:
@@ -14,7 +17,7 @@ class BenchmarkFixture:
         from imas_mcp.server import Server
 
         # Use consistent IDS set to avoid multiple embeddings
-        return Server(ids_set={"core_profiles", "equilibrium"})
+        return Server(ids_set=STANDARD_TEST_IDS_SET)
 
     @cached_property
     def client(self):
@@ -59,9 +62,9 @@ class SearchBenchmarks:
     async def _warmup(self):
         """Warm up server components to avoid cold start penalties."""
         # Initialize cached properties
-        _ = self.fixture.server.document_store
-        _ = self.fixture.server.semantic_search
-        _ = self.fixture.server.graph_analyzer
+        _ = self.fixture.server.tools.document_store
+        _ = self.fixture.server.tools.search_composer
+        _ = self.fixture.server.tools.graph_analyzer
 
         # Ensure embeddings are generated for our sample IDS during warmup
         # This prevents embedding generation from being included in benchmark timing
@@ -148,7 +151,7 @@ class ExplainConceptBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.document_store
+        _ = self.fixture.server.tools.document_store
 
         # Warm up with a simple concept explanation to load any models/caches
         async with self.fixture.client:
@@ -191,14 +194,15 @@ class StructureAnalysisBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.graph_analyzer
+        _ = self.fixture.server.tools.graph_analyzer
 
-        # Warm up structure analysis for both sample IDS to load any caches
-        async with self.fixture.client:
-            for ids_name in self.fixture.ids_pair:
-                await self.fixture.client.call_tool(
-                    "analyze_ids_structure", {"ids_name": ids_name}
-                )
+        # Note: analyze_ids_structure is not yet implemented, so skip warmup calls
+        # When implemented, can add:
+        # async with self.fixture.client:
+        #     for ids_name in self.fixture.ids_pair:
+        #         await self.fixture.client.call_tool(
+        #             "analyze_ids_structure", {"ids_name": ids_name}
+        #         )
 
     def time_analyze_ids_structure_single(self):
         """Benchmark structure analysis for single IDS."""
@@ -233,26 +237,27 @@ class BulkExportBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.document_store
+        _ = self.fixture.server.tools.document_store
 
-        # Warm up bulk export to load any caches
-        async with self.fixture.client:
-            await self.fixture.client.call_tool(
-                "export_ids_bulk",
-                {
-                    "ids_list": self.fixture.ids_pair,
-                    "include_relationships": False,
-                    "include_physics_context": False,
-                },
-            )
+        # Note: export_ids is not yet implemented, so skip warmup calls
+        # When implemented, can add:
+        # async with self.fixture.client:
+        #     await self.fixture.client.call_tool(
+        #         "export_ids",
+        #         {
+        #             "ids_list": self.fixture.ids_pair,
+        #             "include_relationships": False,
+        #             "include_physics_context": False,
+        #         },
+        #     )
 
-    def time_export_ids_bulk_single(self):
+    def time_export_ids_single(self):
         """Benchmark bulk export with single IDS."""
 
         async def run_export():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "export_ids_bulk",
+                    "export_ids",
                     {
                         "ids_list": [self.fixture.single_ids],
                         "include_relationships": False,
@@ -262,25 +267,25 @@ class BulkExportBenchmarks:
 
         return asyncio.run(run_export())
 
-    def time_export_ids_bulk_multiple(self):
+    def time_export_ids_multiple(self):
         """Benchmark bulk export with multiple IDS."""
 
         async def run_export():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "export_ids_bulk",
+                    "export_ids",
                     {"ids_list": self.fixture.ids_pair, "include_relationships": True},
                 )
 
         return asyncio.run(run_export())
 
-    def time_export_ids_bulk_with_relationships(self):
+    def time_export_ids_with_relationships(self):
         """Benchmark bulk export with relationships."""
 
         async def run_export():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "export_ids_bulk",
+                    "export_ids",
                     {
                         "ids_list": self.fixture.ids_pair,
                         "include_relationships": True,
@@ -302,13 +307,13 @@ class BulkExportBenchmarks:
 
         return asyncio.run(run_export())
 
-    def peakmem_export_ids_bulk_large(self):
+    def peakmem_export_ids_large(self):
         """Benchmark memory usage for large bulk export."""
 
         async def run_export():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
-                    "export_ids_bulk",
+                    "export_ids",
                     {
                         "ids_list": self.fixture.ids_pair,
                         "include_relationships": True,
@@ -329,21 +334,22 @@ class RelationshipBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.graph_analyzer
+        _ = self.fixture.server.tools.graph_analyzer
 
-        # Warm up relationship exploration for sample paths from both IDS
-        async with self.fixture.client:
-            await self.fixture.client.call_tool(
-                "explore_relationships",
-                {
-                    "path": "core_profiles/profiles_1d/electrons/temperature",
-                    "max_depth": 1,
-                },
-            )
-            await self.fixture.client.call_tool(
-                "explore_relationships",
-                {"path": "equilibrium/time_slice/profiles_2d/psi", "max_depth": 1},
-            )
+        # Note: explore_relationships is not yet implemented, so skip warmup calls
+        # When implemented, can add:
+        # async with self.fixture.client:
+        #     await self.fixture.client.call_tool(
+        #         "explore_relationships",
+        #         {
+        #             "path": "core_profiles/profiles_1d/electrons/temperature",
+        #             "max_depth": 1,
+        #         },
+        #     )
+        #     await self.fixture.client.call_tool(
+        #         "explore_relationships",
+        #         {"path": "equilibrium/time_slice/profiles_2d/psi", "max_depth": 1},
+        #     )
 
     def time_explore_relationships_depth_1(self):
         """Benchmark relationship exploration with depth 1."""

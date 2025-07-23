@@ -162,7 +162,7 @@ class TestBenchmarkSetup:
         assert len(single_ids_methods) == 1, (
             f"Expected exactly one single IDS method, found: {single_ids_methods}"
         )
-        assert "time_export_ids_bulk_single" in single_ids_methods
+        assert "time_export_ids_single" in single_ids_methods
 
     @pytest.mark.asyncio
     async def test_warmup_performance_impact(self, search_benchmarks):
@@ -174,17 +174,17 @@ class TestBenchmarkSetup:
         search_benchmarks.setup()
 
         with patch.object(search_benchmarks.fixture, "server") as mock_server:
-            mock_server.document_store = AsyncMock()
-            mock_server.semantic_search = AsyncMock()
-            mock_server.graph_analyzer = AsyncMock()
+            mock_server.tools.document_store = AsyncMock()
+            mock_server.tools.search_composer = AsyncMock()
+            mock_server.tools.graph_analyzer = AsyncMock()
 
             # Warmup should complete without errors
             await search_benchmarks._warmup()
 
             # Verify warmup touched all major components
-            assert mock_server.document_store is not None
-            assert mock_server.semantic_search is not None
-            assert mock_server.graph_analyzer is not None
+            assert mock_server.tools.document_store is not None
+            assert mock_server.tools.search_composer is not None
+            assert mock_server.tools.graph_analyzer is not None
 
     def test_benchmark_method_naming(self):
         """Test that benchmark methods follow ASV naming conventions."""

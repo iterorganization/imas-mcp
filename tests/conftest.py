@@ -1,5 +1,4 @@
 import json
-from functools import cached_property
 from typing import Any, Dict
 
 import pytest
@@ -24,34 +23,52 @@ def extract_result(result):
     return result
 
 
-class TestServer:
-    """Long-lived server fixture for expensive operations using cached_property."""
-
-    def __init__(self):
-        self.server = Server(ids_set=STANDARD_TEST_IDS_SET)
-        self.client = Client(self.server.mcp)
-
-    @cached_property
-    def document_store(self) -> DocumentStore:
-        """Get or create document store - cached for performance."""
-        return self.server.document_store
-
-    @cached_property
-    def semantic_search(self) -> SemanticSearch:
-        """Get or create semantic search - cached for performance."""
-        return self.server.semantic_search
-
-    @cached_property
-    def graph_analyzer(self) -> IMASGraphAnalyzer:
-        """Get or create graph analyzer - cached for performance."""
-        return self.server.graph_analyzer
-
-
-# Session-scoped fixture for expensive server initialization
 @pytest.fixture(scope="session")
-def test_server() -> TestServer:
+def server() -> Server:
     """Session-scoped server fixture for performance."""
-    return TestServer()
+    return Server(ids_set=STANDARD_TEST_IDS_SET)
+
+
+@pytest.fixture(scope="session")
+def client(server):
+    """Session-scoped client fixture."""
+    return Client(server.mcp)
+
+
+@pytest.fixture(scope="session")
+def tools(server):
+    """Session-scoped tools fixture."""
+    return server.tools
+
+
+@pytest.fixture(scope="session")
+def document_store(tools) -> DocumentStore:
+    """Session-scoped document store fixture."""
+    return tools.document_store
+
+
+@pytest.fixture(scope="session")
+def semantic_search(tools) -> SemanticSearch:
+    """Session-scoped semantic search fixture."""
+    return tools.semantic_search
+
+
+@pytest.fixture(scope="session")
+def graph_analyzer(tools) -> IMASGraphAnalyzer:
+    """Session-scoped graph analyzer fixture."""
+    return tools.graph_analyzer
+
+
+@pytest.fixture(scope="session")
+def search_cache(tools):
+    """Session-scoped search cache fixture."""
+    return tools.search_cache
+
+
+@pytest.fixture(scope="session")
+def search_composer(tools):
+    """Session-scoped search composer fixture."""
+    return tools.search_composer
 
 
 @pytest.fixture
