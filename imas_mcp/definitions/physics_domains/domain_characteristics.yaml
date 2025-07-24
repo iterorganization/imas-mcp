@@ -7,7 +7,7 @@ metadata:
   created: "2025-01-09"
   description: "Comprehensive physics domain characteristics for IMAS categorization"
   ai_assisted: true
-  generation_context: "Option 1 diagnostic reorganization - physics-based categorization"
+  generation_context: "physics-based categorization"
 
 domains:
   equilibrium:
