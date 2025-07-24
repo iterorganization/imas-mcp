@@ -98,12 +98,23 @@ jobs:
 
       - name: Run benchmarks
         run: |
+          # Ensure ASV directory structure exists
+          mkdir -p .asv/results
+          mkdir -p .asv/html
+          
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
             echo "Running filtered benchmarks: ${{ github.event.inputs.benchmark_filter }}"
-            asv run --python=3.12 -b "${{ github.event.inputs.benchmark_filter }}" --verbose
+            asv run --python=3.12 -b "${{ github.event.inputs.benchmark_filter }}" --verbose --machine github-actions
           else
             echo "Running benchmarks for HEAD^!"
-            asv run --python=3.12 HEAD^! --verbose
+            asv run --python=3.12 HEAD^! --verbose --machine github-actions
+          fi
+          
+          # Ensure results are saved to .asv directory
+          echo "Checking ASV results..."
+          ls -la .asv/ || true
+          if [ -d ".asv/results" ]; then
+            ls -la .asv/results/ || true
           fi
 
       - name: Show benchmark results on failure
@@ -118,14 +129,44 @@ jobs:
 
       - name: Generate HTML report
         run: |
-          asv publish
+          echo "Generating ASV HTML report..."
+          asv publish --machine github-actions
+          
+          echo "Checking generated files..."
+          ls -la .asv/ || true
+          if [ -d ".asv/html" ]; then
+            echo "HTML directory contents:"
+            ls -la .asv/html/ || true
+          fi
+          if [ -d ".asv/results" ]; then
+            echo "Results directory contents:"
+            ls -la .asv/results/ || true
+          fi
+
+      - name: Check ASV results before upload
+        run: |
+          echo "Checking ASV directory structure..."
+          if [ -d ".asv" ]; then
+            echo "✅ .asv directory exists"
+            ls -la .asv/
+            if [ -d ".asv/results" ]; then
+              echo "✅ .asv/results directory exists"
+              ls -la .asv/results/
+            else
+              echo "❌ .asv/results directory missing"
+            fi
+          else
+            echo "❌ .asv directory does not exist"
+          fi
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
+        if: always() && hashFiles('.asv/**') != ''
         with:
           name: asv-results
           path: .asv
           retention-days: 90
+          if-no-files-found: warn
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'
