@@ -79,6 +79,9 @@ class ConceptResponse(ToolResponse):
     physics_context: Optional[PhysicsSearchResult] = None
     measurement_contexts: List[Dict[str, Any]] = Field(default_factory=list)
     identifier_analysis: Dict[str, Any] = Field(default_factory=dict)
+    physics_enhancement: Optional[Dict[str, Any]] = Field(
+        None, description="Physics context enhancement from definitions"
+    )
 
 
 class OverviewResponse(ToolResponse):

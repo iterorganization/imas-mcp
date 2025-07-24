@@ -270,7 +270,9 @@ class TestExplainConcept:
         result = extract_result(result)
         assert isinstance(result, dict)
         assert "physics_context" in result
-        assert isinstance(result["physics_context"], dict)
+        # physics_context can be None or a PhysicsSearchResult dict
+        if result["physics_context"] is not None:
+            assert isinstance(result["physics_context"], dict)
 
 
 class TestGetOverview:

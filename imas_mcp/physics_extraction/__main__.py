@@ -254,9 +254,9 @@ def show_domains(coordinator: ExtractionCoordinator):
     domain_summary = physics_categorizer.get_domain_summary()
 
     # Display domain information
-    for domain_name, info in domain_summary.items():
+    for domain_enum, info in domain_summary.items():
         if info["ids_count"] > 0:  # Only show domains with IDS
-            print(f"\n{domain_name.upper()}:")
+            print(f"\n{domain_enum.value.upper()}:")
             print(f"  Description: {info['description']}")
             print(f"  IDS count: {info['ids_count']}")
             print(f"  Complexity: {info['complexity_level']}")
