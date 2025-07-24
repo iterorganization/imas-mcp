@@ -284,7 +284,7 @@ class DocumentStore:
 
         # Build cache in dedicated database directory with consistent naming
         sqlite_dir = self._get_sqlite_dir()
-        sqlite_dir.mkdir(exist_ok=True)
+        sqlite_dir.mkdir(parents=True, exist_ok=True)
         self._sqlite_path = sqlite_dir / self._generate_db_filename()
 
         # Load unit contexts from YAML file (these are small and always needed)

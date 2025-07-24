@@ -7,7 +7,7 @@ metadata:
   created: "2025-01-09"
   description: "Mapping of IMAS IDS names to physics domains"
   ai_assisted: true
-  generation_context: "Option 1 diagnostic reorganization - physics-based categorization"
+  generation_context: "physics-based categorization"
   total_ids: 84
   total_domains: 21
 

@@ -239,17 +239,15 @@ class BulkExportBenchmarks:
         """Warm up server components."""
         _ = self.fixture.server.tools.document_store
 
-        # Note: export_ids is not yet implemented, so skip warmup calls
-        # When implemented, can add:
-        # async with self.fixture.client:
-        #     await self.fixture.client.call_tool(
-        #         "export_ids",
-        #         {
-        #             "ids_list": self.fixture.ids_pair,
-        #             "include_relationships": False,
-        #             "include_physics_context": False,
-        #         },
-        #     )
+        async with self.fixture.client:
+            await self.fixture.client.call_tool(
+                "export_ids",
+                {
+                    "ids_list": self.fixture.ids_pair,
+                    "include_relationships": False,
+                    "include_physics_context": False,
+                },
+            )
 
     def time_export_ids_single(self):
         """Benchmark bulk export with single IDS."""
