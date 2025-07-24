@@ -312,15 +312,23 @@ class TestMultiFormatExportPerformance:
 class TestConditionalAIPerformanceBenefits:
     """Test specific performance benefits of conditional AI logic."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def server(self):
-        """Create test server instance."""
+        """Create test server instance - shared across all tests in this class."""
         return Server(ids_set=STANDARD_TEST_IDS_SET)
 
     @pytest.mark.asyncio
     async def test_search_complexity_performance_scaling(self, server):
         """Test that search complexity appropriately affects AI usage."""
         slow_ctx = SlowMockContext(delay=0.3)
+
+        # Warm-up search to initialize lazy-loaded components
+        await server.tools.search_imas(
+            query="warmup",
+            search_mode="auto",
+            max_results=1,
+            ctx=slow_ctx,
+        )
 
         # Simple query (should not trigger AI in conditional mode)
         start_time = time.time()

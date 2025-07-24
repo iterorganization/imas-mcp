@@ -169,6 +169,10 @@ class EnhancementDecisionEngine:
         if search_mode in ["comprehensive", "semantic"]:
             return True
 
+        # Fast mode explicitly disables AI
+        if search_mode == "fast":
+            return False
+
         # Check query complexity
         query = args[1] if len(args) > 1 else kwargs.get("query", "")
 
@@ -181,8 +185,14 @@ class EnhancementDecisionEngine:
             boolean_ops = ["AND", "OR", "NOT"]
             if any(op in query.upper() for op in boolean_ops):
                 return True
+
+            # Simple single-word queries don't need AI enhancement
+            words = query.strip().split()
+            if len(words) == 1:
+                return False
+
             # Long queries (more than 3 words)
-            if len(query.split()) > 3:
+            if len(words) > 3:
                 return True
 
         # High result count requests
