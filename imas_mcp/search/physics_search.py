@@ -11,6 +11,7 @@ import logging
 import pickle
 import time
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import List, Optional, Set
 
@@ -77,8 +78,6 @@ class PhysicsSemanticSearch:
 
     def _get_default_cache_dir(self) -> Path:
         """Get default cache directory."""
-        from importlib.resources import files
-
         # Use the same embeddings directory as the main semantic search system
         resources_dir = Path(str(files("imas_mcp") / "resources"))
         embeddings_dir = resources_dir / "embeddings"
@@ -157,12 +156,37 @@ class PhysicsSemanticSearch:
             logger.error(f"Failed to save physics embeddings cache: {e}")
 
     def _load_model(self) -> None:
-        """Load sentence transformer model."""
+        """Load sentence transformer model with optimized loading pattern."""
         if self._model is not None:
             return
 
         logger.info(f"Loading sentence transformer model: {self.model_name}")
-        self._model = SentenceTransformer(self.model_name, device=self.device)
+
+        # Get embeddings directory for model cache (same pattern as DD semantic search)
+        resources_dir = Path(str(files("imas_mcp") / "resources"))
+        embeddings_dir = resources_dir / "embeddings"
+        embeddings_dir.mkdir(parents=True, exist_ok=True)
+        cache_folder = str(embeddings_dir / "models")
+
+        # Try to load with local_files_only first for speed (like DD semantic search)
+        try:
+            self._model = SentenceTransformer(
+                self.model_name,
+                device=self.device,
+                cache_folder=cache_folder,
+                local_files_only=True,  # Prevent internet downloads
+            )
+            logger.info(f"Loaded model {self.model_name} from cache")
+        except Exception:
+            # If local loading fails, try downloading
+            logger.info(f"Model not in cache, downloading {self.model_name}...")
+            self._model = SentenceTransformer(
+                self.model_name,
+                device=self.device,
+                cache_folder=cache_folder,
+                local_files_only=False,  # Allow downloads
+            )
+            logger.info(f"Downloaded and loaded model {self.model_name}")
 
     def _create_physics_documents(self) -> List[PhysicsEmbeddingDocument]:
         """Create embedding documents from physics domain data."""
