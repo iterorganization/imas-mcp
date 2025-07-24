@@ -7,9 +7,6 @@
     "environment_type": "virtualenv",
     "pythons": ["3.12"],
     "plugins": ["virtualenv"],
-    "matrix": {
-        "machine": ["github-actions"]
-    },
     "build_command": [
         "python -m pip install build",
         "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
