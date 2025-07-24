@@ -1,4 +1,4 @@
-name: Performance Benchmarks
+name: Benchmark
 
 on:
   push:
@@ -56,9 +56,9 @@ jobs:
           # Explicitly disable conda/mamba detection and force virtualenv
           export ASV_NO_MAMBA=1
           export ASV_NO_CONDA=1
-          
-          # Setup ASV with our configuration
-          asv setup --python=3.12 --machine github-actions 2>&1 | tee asv-setup.log || {
+
+          # Setup ASV with our configuration (without specifying machine yet)
+          asv setup --python=3.12 2>&1 | tee asv-setup.log || {
             echo "ASV setup failed, checking for specific errors..."
             if grep -q "Couldn't load asv.plugins._mamba_helpers" asv-setup.log; then
               echo "Mamba helper error detected (expected), continuing..."
@@ -107,21 +107,23 @@ jobs:
           echo "  Runner Arch: $RUNNER_ARCH"
           echo "  OS Version: $OS_VERSION"
 
-          # Setup ASV machine with detected specs (only if not already configured)
-          if ! asv machine --machine github-actions --list 2>/dev/null | grep -q "github-actions"; then
-            asv machine \
-              --machine github-actions \
-              --os "$RUNNER_OS $OS_VERSION" \
-              --arch "$ARCH" \
-              --cpu "$CPU_INFO" \
-              --num_cpu "$CPU_COUNT" \
-              --ram "${RAM_GB}GB" \
-              --yes
-          else
-            echo "Machine 'github-actions' already configured"
-          fi
+          # Check what machines ASV knows about
+          echo "Checking existing ASV machines:"
+          asv machine --list || echo "No machines configured yet"
 
-          echo "Machine setup completed"
+          # Setup ASV machine with detected specs
+          echo "Setting up ASV machine 'github-actions'..."
+          asv machine \
+            --machine github-actions \
+            --os "$RUNNER_OS $OS_VERSION" \
+            --arch "$ARCH" \
+            --cpu "$CPU_INFO" \
+            --num_cpu "$CPU_COUNT" \
+            --ram "${RAM_GB}GB" \
+            --yes
+
+          echo "Machine setup completed. Verifying:"
+          asv machine --list
 
       - name: Run benchmarks
         run: |
@@ -129,17 +131,19 @@ jobs:
           mkdir -p .asv/results
           mkdir -p .asv/html
 
-          # Check if virtualenv exists, if not, set up environment
+          # Verify machine is configured
+          echo "Verifying ASV machine configuration:"
+          asv machine --list
+
+          # Verify environment exists
           if [ ! -d ".asv/env" ]; then
-            echo "Setting up ASV environment..."
+            echo "ASV environment not found, running setup again..."
             export ASV_NO_MAMBA=1
             export ASV_NO_CONDA=1
-            asv setup --python=3.12 --verbose || {
-              echo "ASV setup during benchmark run failed, trying to continue..."
-              ls -la .asv/ || true
-            }
+            asv setup --python=3.12 --verbose
           fi
 
+          # Run benchmarks with the configured machine
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
             echo "Running filtered benchmarks: ${{ github.event.inputs.benchmark_filter }}"
             asv run --python=3.12 --machine github-actions -b "${{ github.event.inputs.benchmark_filter }}" --verbose --show-stderr
