@@ -57,17 +57,8 @@ jobs:
           export ASV_NO_MAMBA=1
           export ASV_NO_CONDA=1
 
-          # Setup ASV with our configuration (without specifying machine yet)
-          asv setup --python=3.12 2>&1 | tee asv-setup.log || {
-            echo "ASV setup failed, checking for specific errors..."
-            if grep -q "Couldn't load asv.plugins._mamba_helpers" asv-setup.log; then
-              echo "Mamba helper error detected (expected), continuing..."
-            else
-              echo "Unexpected ASV setup error:"
-              cat asv-setup.log
-              exit 1
-            fi
-          }
+          # Simple ASV setup
+          asv setup --python=3.12
 
           echo "ASV setup completed"
           echo "Checking ASV environment:"
@@ -89,71 +80,55 @@ jobs:
           RAM_GB=$((RAM_MB / 1024))
           ARCH=$(uname -m)
 
-          # Use GitHub Actions context variables
-          RUNNER_OS="${{ runner.os }}"
-          RUNNER_ARCH="${{ runner.arch }}"
-          RUNNER_NAME="${{ runner.name }}"
-
           # Get OS details
           OS_VERSION=$(lsb_release -ds 2>/dev/null | tr -d '"' || echo "Unknown")
 
-          echo "Detected GitHub Actions runner specifications:"
-          echo "  Runner Name: $RUNNER_NAME"
+          echo "Detected system specifications:"
           echo "  CPU: $CPU_INFO"
           echo "  Cores: $CPU_COUNT"
-          echo "  RAM: ${RAM_GB}GB (${RAM_MB}MB)"
+          echo "  RAM: ${RAM_GB}GB"
           echo "  Arch: $ARCH"
-          echo "  Runner OS: $RUNNER_OS"
-          echo "  Runner Arch: $RUNNER_ARCH"
-          echo "  OS Version: $OS_VERSION"
+          echo "  OS: $OS_VERSION"
 
-          # Check what machines ASV knows about
-          echo "Checking existing ASV machines:"
-          asv machine --list || echo "No machines configured yet"
+          # Create machine name from key specs to detect hardware changes
+          # Format: ghactions-{arch}-{cores}c-{ram}gb
+          MACHINE_NAME="ghactions-${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
+          echo "Machine name: $MACHINE_NAME"
 
-          # Setup ASV machine with detected specs
-          echo "Setting up ASV machine 'github-actions'..."
+          # Configure machine with detected specs
           asv machine \
-            --machine github-actions \
-            --os "$RUNNER_OS $OS_VERSION" \
+            --machine "$MACHINE_NAME" \
+            --os "$OS_VERSION" \
             --arch "$ARCH" \
             --cpu "$CPU_INFO" \
             --num_cpu "$CPU_COUNT" \
             --ram "${RAM_GB}GB" \
             --yes
 
-          echo "Machine setup completed. Verifying:"
+          # Store machine name for benchmark run
+          echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
+
+          echo "Machine configured. Available machines:"
           asv machine --list
 
       - name: Run benchmarks
         run: |
-          # Ensure ASV directory structure exists
-          mkdir -p .asv/results
-          mkdir -p .asv/html
-
           # Verify machine is configured
-          echo "Verifying ASV machine configuration:"
+          echo "Available ASV machines:"
           asv machine --list
+          echo "Using machine: $MACHINE_NAME"
 
-          # Verify environment exists
-          if [ ! -d ".asv/env" ]; then
-            echo "ASV environment not found, running setup again..."
-            export ASV_NO_MAMBA=1
-            export ASV_NO_CONDA=1
-            asv setup --python=3.12 --verbose
-          fi
-
-          # Run benchmarks with the configured machine
+          # Run benchmarks
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
             echo "Running filtered benchmarks: ${{ github.event.inputs.benchmark_filter }}"
-            asv run --python=3.12 --machine github-actions -b "${{ github.event.inputs.benchmark_filter }}" --verbose --show-stderr
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose
           else
             echo "Running benchmarks for HEAD^!"
-            asv run --python=3.12 --machine github-actions HEAD^! --verbose --show-stderr
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose
           fi
 
-          # Ensure results are saved to .asv directory
-          echo "Checking ASV results..."
+          # Check results
+          echo "Benchmark results:"
           ls -la .asv/ || true
           if [ -d ".asv/results" ]; then
             ls -la .asv/results/ || true
