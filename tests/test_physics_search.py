@@ -292,7 +292,12 @@ class TestPhysicsSemanticSearch:
         search._load_model()
 
         assert search._model is not None
-        mock_st_class.assert_called_once_with("all-MiniLM-L6-v2", device="cpu")
+        mock_st_class.assert_called_once_with(
+            "all-MiniLM-L6-v2",
+            device="cpu",
+            cache_folder="/home/runner/work/imas-mcp/imas-mcp/imas_mcp/resources/embeddings/models",
+            local_files_only=True,
+        )
 
     @patch("imas_mcp.search.physics_search.DomainAccessor")
     @patch("imas_mcp.search.physics_search.UnitAccessor")
