@@ -1,6 +1,7 @@
 import subprocess
 import json
 import time
+import os
 from pathlib import Path
 from typing import Dict, Any, List
 
@@ -18,6 +19,10 @@ class BenchmarkRunner:
     ) -> Dict[str, Any]:
         """Run ASV benchmarks and return results."""
         cmd = ["asv", "run", "--python=3.12"]
+
+        # Use the specific machine if we're in GitHub Actions
+        if os.getenv("GITHUB_ACTIONS", "").lower() == "true":
+            cmd.extend(["--machine", "github-actions"])
 
         if benchmark_names:
             # Use individual -b flags for each benchmark
@@ -108,12 +113,35 @@ class BenchmarkRunner:
             return {"error": f"Failed to read results: {e}"}
 
     def setup_machine(self) -> Dict[str, Any]:
-        """Setup ASV machine configuration."""
-        cmd = ["asv", "machine", "--yes"]
+        """Setup ASV machine configuration with fallback for CI environments."""
+        import os
+
+        # Check if we're in a CI environment
+        is_ci = os.getenv("CI", "").lower() == "true"
+        is_github_actions = os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+
+        if is_github_actions:
+            # GitHub Actions - use predefined machine config
+            machine_name = "github-actions"
+            cmd = ["asv", "machine", "--machine", machine_name]
+        elif is_ci:
+            # Other CI environments - try with --yes flag
+            cmd = ["asv", "machine", "--yes"]
+        else:
+            # Local development - interactive setup
+            cmd = ["asv", "machine", "--yes"]
 
         print(f"Setting up ASV machine: {' '.join(cmd)}")
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            return {
+                "command": " ".join(cmd),
+                "return_code": 1,
+                "stdout": "",
+                "stderr": "Machine setup timed out after 60 seconds",
+            }
 
         return {
             "command": " ".join(cmd),

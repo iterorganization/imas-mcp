@@ -50,11 +50,12 @@ def main(benchmark_filter) -> int:
     machine_result = runner.setup_machine()
 
     if machine_result["return_code"] != 0:
-        print(f"❌ Machine setup failed: {machine_result['stderr']}")
+        print(f"⚠️  Machine setup had issues: {machine_result['stderr']}")
         print(f"stdout: {machine_result['stdout']}")
-        return 1
-
-    print("✅ ASV machine configuration completed")
+        # Try to continue anyway - ASV might still work with default config
+        print("🔄 Attempting to continue with default configuration...")
+    else:
+        print("✅ ASV machine configuration completed")
 
     # Run benchmarks
     print("\n📊 Running benchmarks...")
