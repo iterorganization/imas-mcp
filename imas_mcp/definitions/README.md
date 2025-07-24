@@ -1,30 +1,35 @@
-# Physics Domain Definitions
+# IMAS MCP Definitions
 
-This folder contains YAML-based definitions for the IMAS Data Dictionary physics domain categorization system. These definitions were generated with AI assistance and are designed to be version-controlled, maintainable, and reusable.
+This directory contains data definitions and configurations used by the IMAS MCP server.
 
 ## Structure
 
-### `physics_domains/`
+### Physics Definitions (`physics/`)
 
-Contains physics domain categorization definitions:
+- `domains/` - Physics domain definitions with characteristics, relationships, and IDS mappings
+- `units/` - Unit contexts, categories, and domain hints
+- `constants/` - Physics constants (future expansion)
 
-- **`domain_characteristics.yaml`** - Comprehensive characteristics for each physics domain including:
-  - Description and primary phenomena
-  - Typical units and measurement methods
-  - Related domains and complexity levels
-- **`ids_mapping.yaml`** - Mapping of IMAS IDS names to their primary physics domains
-- **`domain_relationships.yaml`** - Relationships and connections between different physics domains
+### IMAS Definitions (`imas/`)
 
-### `unit_contexts.yaml`
+- `data_dictionary/` - IMAS data dictionary schema mappings and validation rules
+- `workflows/` - Standard IMAS workflows
+- `metadata/` - IMAS metadata definitions
 
-Contains semantic context definitions for physical units used in the IMAS data dictionary:
+### Validation (`validation/`)
 
-- **Unit Contexts** - Mapping of unit strings to semantic descriptions for enhanced sentence transformer embeddings
-- **Unit Categories** - Grouping of related units by physical domain (electromagnetic, spatial, temporal, etc.)
-- **Physics Domain Hints** - Mapping of unit categories to likely physics domains for enhanced context
-- **Metadata** - Version information and usage documentation
+- JSON schemas for validating YAML definitions
+- Separate schemas for physics and IMAS definitions
 
-This file supports semantic search optimization by providing meaningful context for physical quantities, helping distinguish between similar measurements (e.g., time coordinates vs magnetic field strength).
+### Templates (`templates/`)
+
+- Template files for creating new definitions
+- Documentation for definition formats
+
+## Data Format
+
+All definition files use YAML format for human readability and maintainability.
+JSON schemas in the `validation/` directory ensure data integrity.
 
 ## Design Principles
 

@@ -41,6 +41,25 @@ jobs:
       - name: Install ASV
         run: uv tool install asv
 
+      - name: Initialize ASV environment
+        run: |
+          # Create ASV directory structure
+          mkdir -p .asv/results
+          mkdir -p .asv/html
+          mkdir -p .asv/env
+          
+          echo "ASV directory structure created:"
+          ls -la .asv/ || true
+
+      - name: Setup ASV environment
+        run: |
+          # Setup ASV with our configuration
+          asv setup --python=3.12
+          
+          echo "ASV setup completed"
+          echo "Checking ASV environment:"
+          ls -la .asv/ || true
+
       - name: Download previous benchmark results
         uses: actions/download-artifact@v4
         with:
@@ -50,9 +69,6 @@ jobs:
 
       - name: Setup ASV machine
         run: |
-          # Dynamically detect actual GitHub Actions runner specifications
-          mkdir -p .asv/machines
-
           # Get actual system specifications from the runner
           CPU_INFO=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
           CPU_COUNT=$(nproc)
@@ -78,38 +94,32 @@ jobs:
           echo "  Runner Arch: $RUNNER_ARCH"
           echo "  OS Version: $OS_VERSION"
 
-          # Create machine config with detected specs
-          cat > .asv/machines/github-actions.json << EOF
-          {
-            "machine": "github-actions",
-            "arch": "$ARCH",
-            "cpu": "$CPU_INFO",
-            "num_cpu": "$CPU_COUNT",
-            "os": "$RUNNER_OS $OS_VERSION",
-            "ram": "${RAM_GB}GB",
-            "version": 1
-          }
-          EOF
+          # Setup ASV machine with detected specs
+          asv machine \
+            --machine github-actions \
+            --os "$RUNNER_OS $OS_VERSION" \
+            --arch "$ARCH" \
+            --cpu "$CPU_INFO" \
+            --num_cpu "$CPU_COUNT" \
+            --ram "${RAM_GB}GB" \
+            --yes
 
-          echo "Machine config created:"
-          cat .asv/machines/github-actions.json
-
-          asv machine --machine github-actions
+          echo "Machine setup completed"
 
       - name: Run benchmarks
         run: |
           # Ensure ASV directory structure exists
           mkdir -p .asv/results
           mkdir -p .asv/html
-          
+
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
             echo "Running filtered benchmarks: ${{ github.event.inputs.benchmark_filter }}"
-            asv run --python=3.12 -b "${{ github.event.inputs.benchmark_filter }}" --verbose --machine github-actions
+            asv run --python=3.12 --machine github-actions -b "${{ github.event.inputs.benchmark_filter }}" --verbose
           else
             echo "Running benchmarks for HEAD^!"
-            asv run --python=3.12 HEAD^! --verbose --machine github-actions
+            asv run --python=3.12 --machine github-actions HEAD^! --verbose
           fi
-          
+
           # Ensure results are saved to .asv directory
           echo "Checking ASV results..."
           ls -la .asv/ || true
@@ -130,8 +140,8 @@ jobs:
       - name: Generate HTML report
         run: |
           echo "Generating ASV HTML report..."
-          asv publish --machine github-actions
-          
+          asv publish
+
           echo "Checking generated files..."
           ls -la .asv/ || true
           if [ -d ".asv/html" ]; then
@@ -161,12 +171,12 @@ jobs:
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
-        if: always() && hashFiles('.asv/**') != ''
+        if: always()
         with:
           name: asv-results
           path: .asv
           retention-days: 90
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'
