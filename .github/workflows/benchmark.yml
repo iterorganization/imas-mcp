@@ -95,9 +95,6 @@ jobs:
           # Store machine name for benchmark run
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
-          echo "Machine configured. Available machines:"
-          asv machine --list
-
       - name: Run benchmarks
         run: |
           # Verify machine is configured
