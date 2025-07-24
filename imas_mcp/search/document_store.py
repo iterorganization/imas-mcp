@@ -17,15 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from imas_mcp.core.unit_loader import (
-    get_unit_category,
-    get_unit_dimensionality,
-    get_unit_name,
-    get_unit_physics_domains,
-    load_physics_domain_hints,
-    load_unit_categories,
-    load_unit_contexts,
-)
+from imas_mcp.core.physics_accessors import UnitAccessor
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +37,18 @@ class Units:
     def from_unit_string(
         cls,
         unit_str: str,
-        unit_contexts: Dict[str, str],
-        unit_categories: Dict[str, List[str]],
-        physics_domain_hints: Dict[str, List[str]],
+        unit_accessor: UnitAccessor,
     ) -> "Units":
-        """Create Units instance from unit string and loaded contexts."""
+        """Create Units instance from unit string using UnitAccessor."""
+        # Get unit context from the physics accessor
+        context = unit_accessor.get_unit_context(unit_str) or ""
+        category = unit_accessor.get_category_for_unit(unit_str)
+        physics_domains = unit_accessor.get_domains_for_unit(unit_str)
+
+        # Get unit name and dimensionality using pint (keeping these from unit_loader)
+        from imas_mcp.core.unit_loader import get_unit_name, get_unit_dimensionality
+
         name = get_unit_name(unit_str)
-        context = unit_contexts.get(unit_str, "")
-        category = get_unit_category(unit_str, unit_categories)
-        physics_domains = get_unit_physics_domains(
-            unit_str, unit_categories, physics_domain_hints
-        )
         dimensionality = get_unit_dimensionality(unit_str)
 
         return cls(
@@ -63,7 +56,7 @@ class Units:
             name=name,
             context=context,
             category=category,
-            physics_domains=physics_domains,
+            physics_domains=[domain.value for domain in physics_domains],
             dimensionality=dimensionality,
         )
 
@@ -122,19 +115,12 @@ class Document:
     raw_data: Dict[str, Any] = field(default_factory=dict)
     units: Optional[Units] = None
 
-    def set_units(
-        self,
-        unit_contexts: Dict[str, str],
-        unit_categories: Dict[str, List[str]],
-        physics_domain_hints: Dict[str, List[str]],
-    ) -> None:
-        """Set units information from loaded contexts."""
+    def set_units(self, unit_accessor: UnitAccessor) -> None:
+        """Set units information using UnitAccessor."""
         if self.metadata.units:
             self.units = Units.from_unit_string(
                 self.metadata.units,
-                unit_contexts,
-                unit_categories,
-                physics_domain_hints,
+                unit_accessor,
             )
 
     @property
@@ -287,12 +273,13 @@ class DocumentStore:
         sqlite_dir.mkdir(parents=True, exist_ok=True)
         self._sqlite_path = sqlite_dir / self._generate_db_filename()
 
-        # Load unit contexts from YAML file (these are small and always needed)
-        self._unit_contexts = load_unit_contexts()
-        self._unit_categories = load_unit_categories()
-        self._physics_domain_hints = load_physics_domain_hints()
+        # Initialize unit accessor for physics context
+        self._unit_accessor = UnitAccessor()
+
+        # Get all available unit contexts for logging
+        all_unit_contexts = self._unit_accessor.get_all_unit_contexts()
         logger.info(
-            f"Loaded {len(self._unit_contexts)} unit context definitions with categories and domain hints"
+            f"Loaded {len(all_unit_contexts)} unit context definitions via physics integration"
         )
 
         # Initialize lazy loading state
@@ -587,7 +574,7 @@ Paths using this schema:
         )
 
         # Set empty units since this is a schema document
-        document.set_units({}, {}, {})
+        document.set_units(self._unit_accessor)
         return document
 
     def _create_identifier_path_document(
@@ -644,7 +631,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             raw_data=raw_data,
         )
 
-        document.set_units({}, {}, {})
+        document.set_units(self._unit_accessor)
         return document
 
     def _create_document(
@@ -698,9 +685,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         )
 
         # Set unit contexts for this document
-        document.set_units(
-            self._unit_contexts, self._unit_categories, self._physics_domain_hints
-        )
+        document.set_units(self._unit_accessor)
 
         return document
 
