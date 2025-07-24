@@ -51,19 +51,6 @@ jobs:
           echo "ASV directory structure created:"
           ls -la .asv/ || true
 
-      - name: Setup ASV environment
-        run: |
-          # Explicitly disable conda/mamba detection and force virtualenv
-          export ASV_NO_MAMBA=1
-          export ASV_NO_CONDA=1
-
-          # Simple ASV setup
-          asv setup --python=3.12
-
-          echo "ASV setup completed"
-          echo "Checking ASV environment:"
-          ls -la .asv/ || true
-
       - name: Download previous benchmark results
         uses: actions/download-artifact@v4
         with:
