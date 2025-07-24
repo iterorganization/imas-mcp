@@ -98,8 +98,6 @@ jobs:
       - name: Run benchmarks
         run: |
           # Verify machine is configured
-          echo "Available ASV machines:"
-          asv machine --list
           echo "Using machine: $MACHINE_NAME"
 
           # Run benchmarks
