@@ -15,17 +15,17 @@ on:
         required: false
         default: ""
       action:
-        description: "Action to perform (run or delete)"
+        description: "Action to perform (run or clear)"
         required: false
         default: "run"
         type: choice
         options:
           - run
-          - delete
+          - clear
 
 jobs:
-  benchmark:
-    if: github.event.inputs.action != 'delete'
+  run-benchmark:
+    if: github.event.inputs.action != 'clear'
     # Use specific runner for consistent benchmark results
     runs-on: ubuntu-22.04 # 4 cores, 16GB RAM, consistent specs
     permissions:
@@ -179,8 +179,8 @@ jobs:
               });
             }
 
-  delete:
-    if: github.event.inputs.action == 'delete'
+  clear-benchmarks:
+    if: github.event.inputs.action == 'clear'
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -210,9 +210,9 @@ jobs:
       - name: Prepare empty deployment
         if: github.ref == 'refs/heads/main'
         run: |
-          # Create empty deploy directory (this will effectively remove benchmarks)
+          # Create empty deploy directory (this will effectively clear benchmarks)
           mkdir -p deploy
-          echo '<!DOCTYPE html><html><head><title>Benchmarks Removed</title></head><body><h1>Benchmarks have been removed</h1><p>The benchmark reports have been deleted from this site.</p></body></html>' > deploy/index.html
+          echo '<!DOCTYPE html><html><head><title>Benchmarks Cleared</title></head><body><h1>Benchmarks have been cleared</h1><p>The benchmark reports have been removed from this site.</p></body></html>' > deploy/index.html
 
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'
