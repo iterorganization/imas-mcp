@@ -14,6 +14,14 @@ on:
         description: "Benchmark filter (e.g., SearchBenchmarks)"
         required: false
         default: ""
+      action:
+        description: "Action to perform (run or delete)"
+        required: false
+        default: "run"
+        type: choice
+        options:
+          - run
+          - delete
 
 jobs:
   benchmark:
@@ -81,8 +89,8 @@ jobs:
           echo "  OS: $OS_VERSION"
 
           # Create machine name from key specs to detect hardware changes
-          # Format: ghactions-{arch}-{cores}c-{ram}gb
-          MACHINE_NAME="ghactions-${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
+          # Format: {arch}-{cores}c-{ram}gb
+          MACHINE_NAME="${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
           echo "Machine name: $MACHINE_NAME"
 
           # Configure machine with detected specs
@@ -99,6 +107,7 @@ jobs:
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
       - name: Run benchmarks
+        if: github.event.inputs.action != 'delete'
         run: |
           # Verify machine is configured
           echo "Using machine: $MACHINE_NAME"
@@ -120,7 +129,7 @@ jobs:
           fi
 
       - name: Show benchmark results on failure
-        if: failure()
+        if: failure() && github.event.inputs.action != 'delete'
         run: |
           echo "Benchmark run failed. Checking for logs..."
           find .asv -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; || true
@@ -130,6 +139,7 @@ jobs:
           ls -la imas_mcp/resources/schemas/ || true
 
       - name: Generate HTML report
+        if: github.event.inputs.action != 'delete'
         run: |
           echo "Generating ASV HTML report..."
           asv publish
@@ -146,6 +156,7 @@ jobs:
           fi
 
       - name: Check ASV results before upload
+        if: github.event.inputs.action != 'delete'
         run: |
           echo "Current working directory:"
           pwd
@@ -167,10 +178,11 @@ jobs:
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
-        if: always()
+        if: success() && github.event.inputs.action != 'delete'
         with:
           name: asv-results
-          path: .asv
+          path: |
+            .asv/**
           retention-days: 90
           if-no-files-found: warn
 
@@ -179,7 +191,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Prepare benchmarks for deployment
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.event.inputs.action != 'delete'
         run: |
           # Create benchmarks subdirectory structure
           mkdir -p deploy/benchmarks
@@ -187,6 +199,13 @@ jobs:
           
           # Create a simple index.html that redirects to docs if needed
           echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=./benchmarks/"></head><body>Redirecting to benchmarks...</body></html>' > deploy/index.html
+
+      - name: Prepare empty deployment for deletion
+        if: github.ref == 'refs/heads/main' && github.event.inputs.action == 'delete'
+        run: |
+          # Create empty deploy directory (this will effectively remove benchmarks)
+          mkdir -p deploy
+          echo '<!DOCTYPE html><html><head><title>Benchmarks Removed</title></head><body><h1>Benchmarks have been removed</h1><p>The benchmark reports have been deleted from this site.</p></body></html>' > deploy/index.html
 
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'
