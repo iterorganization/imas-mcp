@@ -136,12 +136,12 @@ jobs:
       - name: Prepare benchmarks for deployment
         if: github.ref == 'refs/heads/main'
         run: |
-          # Create benchmarks subdirectory structure
+          # Create benchmark-specific subdirectory that won't conflict with docs
           mkdir -p deploy/benchmarks
           cp -r .asv/html/* deploy/benchmarks/
-
-          # Create a simple index.html that redirects to docs if needed
-          echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=./benchmarks/"></head><body>Redirecting to benchmarks...</body></html>' > deploy/index.html
+          
+          # Create a simple landing page for benchmarks only
+          echo '<!DOCTYPE html><html><head><title>IMAS MCP Benchmarks</title></head><body><h1>Performance Benchmarks</h1><p><a href="./benchmarks/">View Benchmark Reports</a></p></body></html>' > deploy/index.html
 
       - name: Upload Pages artifact
         if: github.ref == 'refs/heads/main'
