@@ -176,6 +176,20 @@ jobs:
           echo "Full directory listing:"
           ls -la
 
+      - name: Final verification before upload
+        if: github.event.inputs.action != 'delete'
+        run: |
+          echo "=== FINAL CHECK BEFORE UPLOAD ==="
+          echo "Working directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
+          echo "ASV directory check:"
+          test -d .asv && echo "✅ .asv exists" || echo "❌ .asv missing"
+          echo "ASV directory contents:"
+          find .asv -type f | head -10 || echo "No files found in .asv"
+          echo "File count in .asv:"
+          find .asv -type f | wc -l || echo "Cannot count files"
+
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         if: success() && github.event.inputs.action != 'delete'
@@ -184,6 +198,7 @@ jobs:
           path: .asv/
           retention-days: 90
           if-no-files-found: warn
+          include-hidden-files: true
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'
