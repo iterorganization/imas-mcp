@@ -181,8 +181,7 @@ jobs:
         if: success() && github.event.inputs.action != 'delete'
         with:
           name: asv-results
-          path: |
-            .asv/**
+          path: .asv/
           retention-days: 90
           if-no-files-found: warn
 
@@ -196,7 +195,7 @@ jobs:
           # Create benchmarks subdirectory structure
           mkdir -p deploy/benchmarks
           cp -r .asv/html/* deploy/benchmarks/
-          
+
           # Create a simple index.html that redirects to docs if needed
           echo '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=./benchmarks/"></head><body>Redirecting to benchmarks...</body></html>' > deploy/index.html
 
