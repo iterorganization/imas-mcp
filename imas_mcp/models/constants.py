@@ -1,14 +1,13 @@
-"""Centralized enums for IMAS MCP models.
+"""Constants for IMAS MCP models.
 
-This module contains all enum definitions used across search, response, and physics models.
-Consolidating enums here prevents conflicts and provides a single source of truth.
+This module contains all constant definitions used across search, response, and physics models.
 """
 
 from enum import Enum
 
 
 # ============================================================================
-# SEARCH ENUMS
+# SEARCH CONSTANTS
 # ============================================================================
 
 
@@ -22,7 +21,7 @@ class SearchMode(Enum):
 
 
 # ============================================================================
-# RESPONSE ENUMS
+# RESPONSE CONSTANTS
 # ============================================================================
 
 
@@ -38,21 +37,42 @@ class RelationshipType(str, Enum):
     """Types of relationships to explore."""
 
     ALL = "all"
-    PARENT = "parent"
-    CHILD = "child"
-    SIBLING = "sibling"
+    SEMANTIC = "semantic"
+    STRUCTURAL = "structural"
+    PHYSICS = "physics"
+    MEASUREMENT = "measurement"
 
 
 class IdentifierScope(str, Enum):
     """Scopes for identifier exploration."""
 
     ALL = "all"
-    PATHS = "paths"
-    SCHEMAS = "schemas"
+    ENUMS = "enums"
+    IDENTIFIERS = "identifiers"
+    COORDINATES = "coordinates"
+    CONSTANTS = "constants"
+
+
+class OutputFormat(str, Enum):
+    """Output formats for export tools."""
+
+    STRUCTURED = "structured"
+    JSON = "json"
+    YAML = "yaml"
+    MARKDOWN = "markdown"
+
+
+class AnalysisDepth(str, Enum):
+    """Analysis depth levels for exports."""
+
+    OVERVIEW = "overview"
+    FOCUSED = "focused"
+    COMPREHENSIVE = "comprehensive"
+    DETAILED = "detailed"
 
 
 # ============================================================================
-# PHYSICS ENUMS
+# PHYSICS CONSTANTS
 # ============================================================================
 
 

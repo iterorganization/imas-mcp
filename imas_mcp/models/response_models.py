@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from imas_mcp.core.data_model import DataPath
 from imas_mcp.models.physics_models import PhysicsSearchResult, ConceptExplanation
-from imas_mcp.models.enums import (
+from imas_mcp.models.constants import (
     SearchMode,
     DetailLevel,
     RelationshipType,
