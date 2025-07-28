@@ -21,7 +21,7 @@ import nest_asyncio
 from fastmcp import FastMCP
 
 from imas_mcp.resources import Resources
-from imas_mcp.tools import Tools
+from imas_mcp.tools_original import Tools
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments
@@ -33,9 +33,10 @@ logging.basicConfig(
     level=logging.WARNING, format="%(name)s - %(levelname)s - %(message)s"
 )
 
-# Set our application logger to INFO for useful messages
+# Set our application logger to WARNING for stdio transport to prevent
+# INFO messages from appearing as warnings in MCP clients
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)
 
 # Suppress FastMCP startup messages by setting to ERROR level
 # This prevents the "Starting MCP server" message from appearing as a warning
@@ -70,24 +71,29 @@ class Server:
         # Register components with MCP server
         self._register_components()
 
-        logger.info("IMAS MCP Server initialized with tools and resources")
+        logger.debug("IMAS MCP Server initialized with tools and resources")
 
     def _register_components(self):
         """Register tools and resources with the MCP server."""
-        logger.info("Registering tools component")
+        logger.debug("Registering tools component")
         self.tools.register(self.mcp)
 
-        logger.info("Registering resources component")
+        logger.debug("Registering resources component")
         self.resources.register(self.mcp)
 
-        logger.info("Successfully registered all components")
+        logger.debug("Successfully registered all components")
 
     def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
         """Run the server with the specified transport."""
+        # Adjust logging level based on transport
+        # For stdio transport, suppress INFO logs to prevent them appearing as warnings in MCP clients
+        # For HTTP transport, allow INFO logs for useful debugging information
         if transport == "stdio":
-            logger.info("Starting IMAS MCP server with stdio transport")
+            logger.setLevel(logging.WARNING)
+            logger.debug("Starting IMAS MCP server with stdio transport")
             self.mcp.run()
         elif transport == "http":
+            logger.setLevel(logging.INFO)
             logger.info(
                 f"Starting IMAS MCP server with HTTP transport on {host}:{port}"
             )

@@ -14,10 +14,11 @@ import numpy as np
 import pytest
 
 from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.core.physics_domains import DomainCharacteristics, ComplexityLevel
+from imas_mcp.core.physics_domains import DomainCharacteristics
+from imas_mcp.models.enums import ComplexityLevel, ConceptType
 from imas_mcp.models.physics_models import (
-    PhysicsEmbeddingDocument,
-    PhysicsSemanticResult,
+    EmbeddingDocument,
+    SemanticResult,
 )
 from imas_mcp.search.physics_search import (
     PhysicsEmbeddingCache,
@@ -29,13 +30,13 @@ from imas_mcp.search.physics_search import (
 
 
 class TestPhysicsEmbeddingDocument:
-    """Test cases for PhysicsEmbeddingDocument model."""
+    """Test cases for EmbeddingDocument model."""
 
     def test_document_creation_valid(self):
         """Test creating a valid physics embedding document."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="domain:equilibrium",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="equilibrium",
             title="Equilibrium Domain",
             description="Magnetohydrodynamic equilibrium modeling",
@@ -44,7 +45,7 @@ class TestPhysicsEmbeddingDocument:
         )
 
         assert doc.concept_id == "domain:equilibrium"
-        assert doc.concept_type == "domain"
+        assert doc.concept_type == ConceptType.DOMAIN
         assert doc.domain_name == "equilibrium"
         assert doc.title == "Equilibrium Domain"
         assert doc.description == "Magnetohydrodynamic equilibrium modeling"
@@ -52,9 +53,9 @@ class TestPhysicsEmbeddingDocument:
 
     def test_document_frozen(self):
         """Test that document is immutable due to frozen config."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="test",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="test",
             title="Test",
             description="Test description",
@@ -69,9 +70,9 @@ class TestPhysicsEmbeddingDocument:
 
     def test_document_default_metadata(self):
         """Test document with default empty metadata."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="test",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="test",
             title="Test",
             description="Test description",
@@ -82,20 +83,20 @@ class TestPhysicsEmbeddingDocument:
 
 
 class TestPhysicsSemanticResult:
-    """Test cases for PhysicsSemanticResult model."""
+    """Test cases for SemanticResult model."""
 
     def test_result_creation(self):
         """Test creating a physics semantic result."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="domain:equilibrium",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="equilibrium",
             title="Equilibrium Domain",
             description="Test description",
             content="Test content",
         )
 
-        result = PhysicsSemanticResult(
+        result = SemanticResult(
             document=doc,
             similarity_score=0.85,
             rank=0,
@@ -109,16 +110,16 @@ class TestPhysicsSemanticResult:
 
     def test_result_properties(self):
         """Test result properties delegate to document correctly."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="phenomenon:transport:diffusion",
-            concept_type="phenomenon",
+            concept_type=ConceptType.PHENOMENON,
             domain_name="transport",
             title="Diffusion",
             description="Test description",
             content="Test content",
         )
 
-        result = PhysicsSemanticResult(
+        result = SemanticResult(
             document=doc,
             similarity_score=0.75,
             rank=1,
@@ -143,9 +144,9 @@ class TestPhysicsEmbeddingCache:
 
     def test_cache_creation_with_data(self):
         """Test creating cache with data."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="test",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="test",
             title="Test",
             description="Test description",
@@ -169,9 +170,9 @@ class TestPhysicsEmbeddingCache:
 
     def test_cache_validation_invalid(self):
         """Test cache validation with inconsistent data."""
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="test",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="test",
             title="Test",
             description="Test description",
@@ -346,13 +347,13 @@ class TestPhysicsSemanticSearch:
 
         # Validate document structure
         for doc in documents:
-            assert isinstance(doc, PhysicsEmbeddingDocument)
+            assert isinstance(doc, EmbeddingDocument)
             assert doc.concept_id is not None
             assert doc.concept_type in [
-                "domain",
-                "phenomenon",
-                "measurement_method",
-                "unit",
+                ConceptType.DOMAIN,
+                ConceptType.PHENOMENON,
+                ConceptType.MEASUREMENT_METHOD,
+                ConceptType.UNIT,
             ]
             assert doc.domain_name is not None
             assert doc.title is not None
@@ -407,7 +408,7 @@ class TestPhysicsSemanticSearch:
         results = search.search("magnetic field", max_results=5)
 
         assert isinstance(results, list)
-        assert all(isinstance(result, PhysicsSemanticResult) for result in results)
+        assert all(isinstance(result, SemanticResult) for result in results)
         assert len(results) <= 5
 
         for result in results:
@@ -438,7 +439,7 @@ class TestPhysicsSemanticSearch:
         results = search.search("test", concept_types=["domain"])
 
         for result in results:
-            assert result.document.concept_type == "domain"
+            assert result.document.concept_type == ConceptType.DOMAIN
 
         # Test with domain filter
         results = search.search("test", domains=["equilibrium"])
@@ -502,7 +503,7 @@ class TestPhysicsSemanticSearch:
             results = search.find_similar_concepts(concept_id)
 
             assert isinstance(results, list)
-            assert all(isinstance(result, PhysicsSemanticResult) for result in results)
+            assert all(isinstance(result, SemanticResult) for result in results)
 
             # Original concept should not be in results
             for result in results:
@@ -533,7 +534,7 @@ class TestPhysicsSemanticSearch:
             document = search.get_concept_by_id(concept_id)
 
             assert document is not None
-            assert isinstance(document, PhysicsEmbeddingDocument)
+            assert isinstance(document, EmbeddingDocument)
             assert document.concept_id == concept_id
 
         # Test with non-existent ID
@@ -546,9 +547,9 @@ class TestPhysicsSemanticSearch:
         cache_dir.mkdir()
 
         # Create a test document and cache
-        doc = PhysicsEmbeddingDocument(
+        doc = EmbeddingDocument(
             concept_id="test",
-            concept_type="domain",
+            concept_type=ConceptType.DOMAIN,
             domain_name="test",
             title="Test",
             description="Test description",

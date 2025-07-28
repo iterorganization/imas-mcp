@@ -1,33 +1,28 @@
 {
-	"servers": {
-		"imas": {
-			"type": "stdio",
-			"command": "uv",
-			"args": [
-				"run",
-				"python",
-				"-m",
-				"imas_mcp.server"
-			]
-		},
-		"github": {
-			"type": "http",
-			"url": "https://api.githubcopilot.com/mcp/",
-			"headers": {
-				"Authorization": "Bearer ${input:github_mcp_pat}"
-			}
-		},
-		// "imas-dd": {
-		// 	"url": "https://imas-dd.iter.org/mcp/",
-		// 	"type": "http"
-		// }
-	},
-	"inputs": [
-		{
-			"type": "promptString",
-			"id": "github_mcp_pat",
-			"description": "GitHub Personal Access Token",
-			"password": true
-		}
-	]
+  "servers": {
+    "imas": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "run-server", "--log-level", "DEBUG"] // note: first initialize will take ~10 minutes to build DD embeddings
+    },
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${input:github_mcp_pat}"
+      }
+    },
+    // "imas-dd": {
+    //   "url": "https://imas-dd.iter.org/mcp/",
+    //   "type": "http"
+    // }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "github_mcp_pat",
+      "description": "GitHub Personal Access Token",
+      "password": true
+    }
+  ]
 }
