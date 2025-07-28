@@ -6,5 +6,15 @@ Each engine provides a specific search strategy (semantic, lexical, hybrid).
 """
 
 from .base_engine import SearchEngine, SearchEngineError, MockSearchEngine
+from .semantic_engine import SemanticSearchEngine
+from .lexical_engine import LexicalSearchEngine
+from .hybrid_engine import HybridSearchEngine
 
-__all__ = ["SearchEngine", "SearchEngineError", "MockSearchEngine"]
+__all__ = [
+    "SearchEngine",
+    "SearchEngineError",
+    "MockSearchEngine",
+    "SemanticSearchEngine",
+    "LexicalSearchEngine",
+    "HybridSearchEngine",
+]
