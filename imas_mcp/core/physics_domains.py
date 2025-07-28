@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator
 
-from imas_mcp.models.enums import ComplexityLevel
+from imas_mcp.models.constants import ComplexityLevel
 
 
 class DomainCharacteristics(BaseModel):

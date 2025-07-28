@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)

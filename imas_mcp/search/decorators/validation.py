@@ -5,7 +5,8 @@ Provides Pydantic-based input validation with standardized error responses.
 """
 
 import functools
-from typing import Any, Callable, Dict, Type, TypeVar
+import inspect
+from typing import Any, Callable, Dict, Type, TypeVar, Optional
 from pydantic import BaseModel, ValidationError
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -29,8 +30,22 @@ def validate_input(schema: Type[BaseModel]) -> Callable[[F], F]:
             instance = args[0] if args else None
             ctx = kwargs.pop("ctx", None)
 
-            # Create request data for validation
-            request_data = {k: v for k, v in kwargs.items()}
+            # Map positional arguments to schema fields
+            sig = inspect.signature(func)
+            param_names = list(sig.parameters.keys())
+
+            # Skip 'self' parameter
+            if param_names and param_names[0] == "self":
+                param_names = param_names[1:]
+
+            # Map positional args (excluding self) to parameter names
+            request_data = {}
+            for i, arg in enumerate(args[1:]):  # Skip self
+                if i < len(param_names) and param_names[i] != "ctx":
+                    request_data[param_names[i]] = arg
+
+            # Add kwargs (excluding ctx)
+            request_data.update({k: v for k, v in kwargs.items() if k != "ctx"})
 
             try:
                 # Validate input using schema
@@ -73,8 +88,8 @@ def validate_input(schema: Type[BaseModel]) -> Callable[[F], F]:
 
 def create_validation_schema(
     required_fields: Dict[str, Type],
-    optional_fields: Dict[str, Any] = None,
-    validators: Dict[str, Callable] = None,
+    optional_fields: Optional[Dict[str, Any]] = None,
+    validators: Optional[Dict[str, Callable]] = None,
 ) -> Type[BaseModel]:
     """
     Helper to create validation schemas dynamically.

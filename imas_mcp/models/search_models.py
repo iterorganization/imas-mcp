@@ -7,7 +7,7 @@ extracted from search_modes.py for better organization.
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
-from .enums import SearchMode
+from .constants import SearchMode
 from ..search.document_store import Document
 
 

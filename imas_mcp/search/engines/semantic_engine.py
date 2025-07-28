@@ -11,7 +11,7 @@ from typing import List, Union
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
 

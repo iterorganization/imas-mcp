@@ -9,7 +9,7 @@ import logging
 
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_accessors import DomainAccessor, UnitAccessor
-from imas_mcp.models.enums import ComplexityLevel, UnitCategory
+from imas_mcp.models.constants import ComplexityLevel, UnitCategory
 from imas_mcp.models.physics_models import (
     PhysicsMatch,
     PhysicsSearchResult,

@@ -163,6 +163,34 @@ def cache_results(ttl: int = 300, key_strategy: str = "semantic") -> Callable[[F
     return decorator
 
 
+def no_cache_results(
+    ttl: int = 300, key_strategy: str = "semantic"
+) -> Callable[[F], F]:
+    """
+    Decorator that bypasses caching (for testing).
+
+    This decorator has the same signature as cache_results but never caches,
+    making it perfect for replacing cache_results during testing.
+
+    Args:
+        ttl: Ignored (for signature compatibility)
+        key_strategy: Ignored (for signature compatibility)
+
+    Returns:
+        Decorated function without caching
+    """
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Execute function directly without caching
+            return await func(*args, **kwargs)
+
+        return wrapper  # type: ignore
+
+    return decorator
+
+
 def clear_cache() -> None:
     """Clear the global cache."""
     _cache.clear()

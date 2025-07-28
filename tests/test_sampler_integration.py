@@ -1,7 +1,7 @@
 """
-Integration tests for Phase 1.2 Selective AI Enhancement.
+Integration tests for sampler (AI enhancement) functionality.
 
-Tests the integration of selective AI enhancement strategy with the MCP server,
+Tests the integration of sampling decorator with the MCP server,
 including tool suggestions, multi-format exports, and conditional AI processing.
 """
 
@@ -14,7 +14,7 @@ from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 class MockContext:
-    """Mock MCP context for testing AI enhancement."""
+    """Mock MCP context for testing sampling enhancement."""
 
     def __init__(self, should_fail=False):
         self.should_fail = should_fail
@@ -27,7 +27,7 @@ class MockContext:
         return Mock(text='{"insights": "AI enhancement working", "status": "enhanced"}')
 
 
-class TestSelectiveAIEnhancement:
+class TestSelectiveSampling:
     """Test selective AI enhancement integration with server."""
 
     @pytest.fixture
@@ -310,7 +310,7 @@ class TestMultiFormatExport:
         assert "ai_insights" in enhanced_result
 
 
-class TestConditionalAILogic:
+class TestConditionalSamplingLogic:
     """Test conditional AI logic for various tools."""
 
     @pytest.fixture

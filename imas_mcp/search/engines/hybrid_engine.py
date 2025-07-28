@@ -13,7 +13,7 @@ from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
 
