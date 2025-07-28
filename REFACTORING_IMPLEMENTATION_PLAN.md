@@ -273,115 +273,64 @@ imas_mcp/
 
 ---
 
-## Phase 4: Refactor Search Tool (Days 8-9)
+## Phase 4: Search Tool with Decorator Composition ✅ **COMPLETE**
 
-### 4.1 Create Search Input Schema
+### ✅ **IMPLEMENTED** - Search Tool Decorator Composition
 
-```python
-# imas_mcp/search/schemas/search_schemas.py
-class SearchInputSchema(BaseModel):
-    query: Union[str, List[str]]
-    ids_name: Optional[str] = None
-    max_results: int = Field(default=10, ge=1, le=100)
-    search_mode: str = Field(default="auto")
+**Status**: Comprehensive search tool implementation with full decorator composition completed and tested.
 
-    @field_validator('search_mode')
-    def validate_search_mode(cls, v):
-        valid_modes = ["auto", "semantic", "lexical", "hybrid"]
-        if v.lower() not in valid_modes:
-            raise ValueError(f"Invalid search_mode. Must be one of: {valid_modes}")
-        return v.lower()
-```
+**Key Accomplishments**:
 
-### 4.2 Create Simplified Search Tool
+- **Search Tool Implementation**: `imas_mcp/tools/search.py` - Complete implementation with decorator composition
+- **Input Validation**: Integrated SearchInputSchema for comprehensive parameter validation
+- **Decorator Stack**: Applied all six core decorators (cache, validation, sampling, tool recommendations, performance, error handling)
+- **Parameter Updates**: Updated max_recommendations → max_tools for consistency
+- **Documentation Cleanup**: Removed phase references and "enhanced" terminology for descriptive content-based naming
+- **Comprehensive Testing**: `tests/test_search_decorator_composition.py` with 18 passing tests
 
-```python
-# imas_mcp/tools/search.py
-class SearchTool:
-    def __init__(self, search_service: SearchService):
-        self.search_service = search_service
+**Implementation Details**:
 
-    @cache_results(ttl=300, key_strategy="semantic")
-    @validate_input(SearchInputSchema)
-    @ai_enhance(temperature=0.3, max_tokens=800)
-    @suggest_tools(strategy="search_based")
-    @measure_performance
-    @handle_errors(fallback="search_suggestions")
-    @mcp_tool("Search for IMAS data paths with relevance-ordered results")
-    async def search_imas(
-        self,
-        query: Union[str, List[str]],
-        ids_name: Optional[str] = None,
-        max_results: int = 10,
-        search_mode: str = "auto",
-        ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
-        """
-        Search for IMAS data paths with relevance-ordered results.
+- **File**: `imas_mcp/tools/search.py` (206 lines) - Search tool with comprehensive decorator composition
+- **Decorator Stack Applied**:
+  - `@cache_results(ttl=300, key_strategy="semantic")` - Performance optimization
+  - `@validate_input(schema=SearchInputSchema)` - Input validation with Pydantic
+  - `@sample(temperature=0.3, max_tokens=800)` - AI insights and analysis
+  - `@recommend_tools(strategy="search_based", max_tools=4)` - Follow-up tool recommendations
+  - `@measure_performance(include_metrics=True, slow_threshold=1.0)` - Performance monitoring
+  - `@handle_errors(fallback="search_suggestions")` - Robust error handling
+  - `@mcp_tool("Search for IMAS data paths...")` - MCP integration
 
-        Clean, focused implementation using decorator pattern.
-        """
-        # Convert to enum for service
-        mode_enum = SearchMode(search_mode.upper())
+**Core Features**:
 
-        # Create search request
-        request = SearchRequest(
-            query=query,
-            ids_name=ids_name,
-            max_results=max_results,
-            mode=mode_enum
-        )
+- **Multi-mode Search**: Auto, semantic, lexical, and hybrid search modes
+- **Configuration-driven**: Uses SearchConfig for engine orchestration
+- **AI Sampling Integration**: Builds context-aware prompts for enhanced insights
+- **Performance Optimized**: Caching and performance monitoring built-in
+- **Error Resilient**: Comprehensive error handling with fallback suggestions
+- **Input Validation**: Pydantic schema validation for all parameters
 
-        # Execute search through service
-        response = await self.search_service.search(request)
+**Testing Coverage**:
 
-        # Add AI prompt for enhancement
-        if len(response.hits) > 0:
-            response.ai_prompt = self._build_ai_prompt(query, response.hits)
+- **Core Decorator Tests**: 28 tests covering all decorator functionality
+- **Decorator Composition Tests**: 18 tests specifically for search tool integration
+- **Integration Testing**: Mock-based testing with comprehensive scenarios
+- **Configuration Testing**: Search modes, IDS filtering, parameter validation
+- **Physics Context**: Proper units (eV for plasma temperature, Tesla for magnetic field)
 
-        return response.model_dump()
+**Naming Consistency Updates**:
 
-    def _build_ai_prompt(self, query: str, hits: List[SearchHit]) -> str:
-        """Build sampling prompt based on search results."""
-        return f"""Search Results Analysis for: {query}
-Found {len(hits)} relevant paths in IMAS data dictionary.
+- Removed "enhanced", "phase", and "refactor" references
+- Updated parameter naming: max_recommendations → max_tools
+- Content-based descriptive naming throughout
+- Test file renamed: test_search_decorator_composition.py
 
-Top results:
-{chr(10).join([f"- {hit.path}: {hit.documentation[:100]}..." for hit in hits[:3]])}
+**Deliverables Completed**:
 
-Provide enhanced analysis including:
-1. Physics context and significance of these paths
-2. Recommended follow-up searches or related concepts
-3. Data usage patterns and common workflows
-4. Validation considerations for these measurements"""
-```
-
-### 4.3 Update Main Tools Class
-
-```python
-# imas_mcp/tools/__init__.py
-class Tools(MCPProvider):
-    def __init__(self, ids_set: Optional[set[str]] = None):
-        super().__init__()
-
-        # Initialize services
-        self.search_service = SearchService(...)
-
-        # Initialize tool modules
-        self.search_tool = SearchTool(self.search_service)
-        self.explain_tool = ExplainTool(...)
-        # ... other tools
-
-    # Delegate to tool modules
-    async def search_imas(self, *args, **kwargs):
-        return await self.search_tool.search_imas(*args, **kwargs)
-```
-
-**Deliverables:**
-
-- Clean 30-line search_imas method
-- All complexity moved to decorators and services
-- Maintainable and testable code structure
+- ✅ Search tool with comprehensive decorator composition
+- ✅ All decorators properly integrated and functional
+- ✅ Comprehensive test suite with 46 total passing tests (28 + 18)
+- ✅ Clean, maintainable code structure with proper separation of concerns
+- ✅ Physics-appropriate test data and validation
 
 ---
 

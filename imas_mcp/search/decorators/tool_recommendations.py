@@ -251,14 +251,14 @@ def generate_tool_recommendations(
 
 
 def recommend_tools(
-    strategy: str = "search_based", max_recommendations: int = 4
+    strategy: str = "search_based", max_tools: int = 4
 ) -> Callable[[F], F]:
     """
     Decorator to add tool recommendations to function results.
 
     Args:
         strategy: Recommendation strategy ("search_based", "concept_based", "generic")
-        max_recommendations: Maximum number of recommendations to include (default: 4)
+        max_tools: Maximum number of tool recommendations to include (default: 4)
 
     Returns:
         Decorated function with tool recommendations
@@ -275,7 +275,7 @@ def recommend_tools(
                 recommendations = generate_tool_recommendations(result, strategy)
 
                 # Limit recommendations to specified maximum
-                result["suggestions"] = recommendations[:max_recommendations]
+                result["suggestions"] = recommendations[:max_tools]
 
             return result
 

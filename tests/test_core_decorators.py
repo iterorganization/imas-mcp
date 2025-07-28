@@ -278,7 +278,7 @@ class TestToolRecommendationsDecorator:
     async def test_tool_recommendations_decorator_search_results(self):
         """Test tool recommendations decorator with search results."""
 
-        @recommend_tools(strategy="search_based", max_recommendations=3)
+        @recommend_tools(strategy="search_based", max_tools=3)
         async def test_function() -> Dict[str, Any]:
             return {
                 "results": [
@@ -290,14 +290,14 @@ class TestToolRecommendationsDecorator:
         result = await test_function()
 
         assert "suggestions" in result
-        assert len(result["suggestions"]) <= 3  # Respects max_recommendations
+        assert len(result["suggestions"]) <= 3  # Respects max_tools
         assert all("tool" in suggestion for suggestion in result["suggestions"])
 
     @pytest.mark.asyncio
     async def test_tool_recommendations_decorator_no_results(self):
         """Test tool recommendations decorator with no results."""
 
-        @recommend_tools(strategy="search_based", max_recommendations=4)
+        @recommend_tools(strategy="search_based", max_tools=4)
         async def test_function() -> Dict[str, Any]:
             return {"results": []}
 
