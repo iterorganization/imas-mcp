@@ -7,7 +7,7 @@ This module contains the explore_relationships tool logic extracted from the mon
 from .base import BaseTool
 
 
-class Relationships(BaseTool):
+class RelationshipsTool(BaseTool):
     """Tool for exploring relationships."""
 
     def get_tool_name(self) -> str:

@@ -7,7 +7,7 @@ This module contains the explore_identifiers tool logic extracted from the monol
 from .base import BaseTool
 
 
-class Identifiers(BaseTool):
+class IdentifiersTool(BaseTool):
     """Tool for exploring identifiers."""
 
     def get_tool_name(self) -> str:

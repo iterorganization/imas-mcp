@@ -8,7 +8,7 @@ extracted from the monolithic Tools class.
 from .base import BaseTool
 
 
-class Export(BaseTool):
+class ExportTool(BaseTool):
     """Tool for exporting IDS and physics domain data."""
 
     def get_tool_name(self) -> str:

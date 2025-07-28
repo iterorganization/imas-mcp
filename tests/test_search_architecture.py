@@ -13,7 +13,7 @@ import pytest
 from imas_mcp.models.enums import SearchMode
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.tools.search import Search
+from imas_mcp.tools.search_tool import SearchTool
 from imas_mcp.tools import Tools
 
 
@@ -91,7 +91,7 @@ class TestSearchToolExtraction:
 
     def test_search_tool_creation(self):
         """Test Search tool can be created."""
-        search_tool = Search()
+        search_tool = SearchTool()
 
         assert search_tool is not None
         assert search_tool.get_tool_name() == "search_imas"
@@ -100,14 +100,14 @@ class TestSearchToolExtraction:
     def test_search_tool_with_ids_set(self):
         """Test Search tool can be created with ids_set."""
         ids_set = {"core_profiles", "equilibrium"}
-        search_tool = Search(ids_set)
+        search_tool = SearchTool(ids_set)
 
         assert search_tool.ids_set == ids_set
 
     @pytest.mark.asyncio
     async def test_search_imas_method_exists(self):
         """Test search_imas method exists and is callable."""
-        search_tool = Search()
+        search_tool = SearchTool()
 
         assert hasattr(search_tool, "search_imas")
         assert callable(search_tool.search_imas)
@@ -115,7 +115,7 @@ class TestSearchToolExtraction:
     @pytest.mark.asyncio
     async def test_search_imas_validation(self):
         """Test search_imas validates input parameters."""
-        search_tool = Search()
+        search_tool = SearchTool()
 
         # Test invalid search mode
         result = await search_tool.search_imas(
@@ -128,7 +128,7 @@ class TestSearchToolExtraction:
     @pytest.mark.asyncio
     async def test_search_imas_max_results_validation(self):
         """Test search_imas validates max_results parameter."""
-        search_tool = Search()
+        search_tool = SearchTool()
 
         # Test invalid max_results (too high)
         result = await search_tool.search_imas(query="temperature", max_results=150)
@@ -139,7 +139,7 @@ class TestSearchToolExtraction:
     @pytest.mark.asyncio
     async def test_search_imas_response_format(self):
         """Test search_imas returns properly formatted response."""
-        search_tool = Search()
+        search_tool = SearchTool()
 
         # Test search - may return error or results, but should have proper format
         result = await search_tool.search_imas(
@@ -169,7 +169,7 @@ class TestModularToolsIntegration:
 
         assert tools is not None
         assert hasattr(tools, "search_tool")
-        assert isinstance(tools.search_tool, Search)
+        assert isinstance(tools.search_tool, SearchTool)
 
     def test_tools_class_with_ids_set(self):
         """Test Tools class respects ids_set parameter."""
@@ -251,7 +251,7 @@ class TestSearchArchitectureDeliverables:
         assert isinstance(tools.search_tool._search_service, SearchService)
 
         # Search tool should be separate from tools orchestration
-        assert isinstance(tools.search_tool, Search)
+        assert isinstance(tools.search_tool, SearchTool)
         assert tools.search_tool.get_tool_name() == "search_imas"
 
 
