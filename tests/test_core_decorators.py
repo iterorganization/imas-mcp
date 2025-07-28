@@ -522,7 +522,7 @@ class TestDecoratorDeliverables:
 
     def test_schemas_importable(self):
         """Test that all schemas can be imported."""
-        from imas_mcp.search.schemas import (
+        from imas_mcp.models.request_models import (
             SearchInputSchema,
             ExplainInputSchema,
             AnalysisInputSchema,

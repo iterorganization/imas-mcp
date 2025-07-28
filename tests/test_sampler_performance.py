@@ -1,7 +1,7 @@
 """
-Performance tests for Phase 1.2 Selective AI Enhancement.
+Performance tests for sampling (AI enhancement) functionality.
 
-Tests that the selective AI enhancement strategy provides the expected
+Tests that the sampling strategy provides the expected
 performance benefits by avoiding unnecessary AI processing.
 """
 

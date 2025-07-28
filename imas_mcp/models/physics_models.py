@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.models.enums import ConceptType, ComplexityLevel, UnitCategory
+from imas_mcp.models.constants import ConceptType, ComplexityLevel, UnitCategory
 
 
 # ============================================================================

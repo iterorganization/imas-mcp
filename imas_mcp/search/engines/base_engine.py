@@ -133,7 +133,7 @@ class MockSearchEngine(SearchEngine):
     ) -> List[SearchResult]:
         """Return mock search results for testing."""
         from imas_mcp.search.document_store import Document, DocumentMetadata
-        from imas_mcp.models.enums import SearchMode
+        from imas_mcp.models.constants import SearchMode
 
         # Create mock document for testing
         mock_metadata = DocumentMetadata(

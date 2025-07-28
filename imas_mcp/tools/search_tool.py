@@ -9,13 +9,13 @@ monitoring, and error handling.
 import logging
 from typing import Dict, Any, List, Optional, Union
 
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.search.schemas.search_schemas import SearchInputSchema
+from imas_mcp.models.request_models import SearchInputSchema
 
 # Import all decorators
 from imas_mcp.search.decorators import (

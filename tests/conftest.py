@@ -1,5 +1,6 @@
 import json
 from typing import Any, Dict
+from unittest.mock import patch
 
 import pytest
 from fastmcp import Client
@@ -13,6 +14,16 @@ from imas_mcp.server import Server
 # Standard test IDS set for consistency across all tests
 # This avoids re-embedding and ensures consistent performance
 STANDARD_TEST_IDS_SET = {"equilibrium", "core_profiles"}
+
+
+@pytest.fixture(autouse=True)
+def disable_caching():
+    """Automatically disable caching for all tests by making cache always miss."""
+    # Patch the cache get method to always return None (cache miss)
+    with patch("imas_mcp.search.decorators.cache._cache.get", return_value=None):
+        # Also patch the set method to do nothing
+        with patch("imas_mcp.search.decorators.cache._cache.set"):
+            yield
 
 
 def extract_result(result):

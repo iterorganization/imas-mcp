@@ -15,8 +15,8 @@ from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.search.schemas.explain_schemas import ExplainInputSchema
-from imas_mcp.models.enums import SearchMode, DetailLevel
+from imas_mcp.models.request_models import ExplainInputSchema
+from imas_mcp.models.constants import SearchMode, DetailLevel
 from imas_mcp.models.response_models import ConceptResult, ErrorResponse
 from imas_mcp.core.data_model import DataPath, PhysicsContext
 
