@@ -156,7 +156,7 @@ Focus on providing actionable insights for researchers working with this specifi
                 description=f"IDS '{ids_name}' containing {len(paths)} data paths",
                 structure=structure_data,
                 sample_paths=paths[:10],
-                max_depth=max(len(path.split(".")) for path in paths) if paths else 0,
+                max_depth=max(len(path.split("/")) for path in paths) if paths else 0,
                 physics_domains=[
                     domain
                     for domain in [

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from imas_mcp.tools.explain_tool import ExplainTool
 from imas_mcp.search.search_strategy import SearchResult
 from imas_mcp.search.document_store import Document, DocumentMetadata
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 
 
 class TestExplainTool:
