@@ -217,8 +217,8 @@ def _suggest_follow_up_tools(self, results: Dict[str, Any]) -> List[Dict[str, st
 **Key files implemented**:
 
 - `imas_mcp/search/ai_enhancer.py` - AI enhancement decorator with selective strategy
-- `imas_mcp/search/ai_enhancement_strategy.py` - Conditional enhancement logic and tool suggestions
-- `tests/test_enhancement_strategy.py` - Unit tests for enhancement strategy logic
+- `imas_mcp/search/ai_sample_strategy.py` - Conditional sample logic and tool suggestions
+- `tests/test_sample_strategy.py` - Unit tests for sample strategy logic
 - `tests/test_enhancer_integration.py` - Integration tests with server tools
 
 **Main functionality covered**:

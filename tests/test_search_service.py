@@ -15,7 +15,7 @@ from imas_mcp.search.services.search_service import (
 )
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 
 
 class TestSearchService:

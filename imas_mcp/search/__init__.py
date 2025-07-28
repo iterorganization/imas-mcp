@@ -5,7 +5,7 @@ This module provides semantic search capabilities using sentence transformers
 and document storage for efficient IMAS data dictionary querying.
 """
 
-from .ai_enhancer import ai_enhancer
+from .decorators.sampling import sample
 from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_strategy import (
@@ -16,7 +16,7 @@ from .search_strategy import (
 from .tool_suggestions import tool_suggestions
 
 __all__ = [
-    "ai_enhancer",
+    "sample",
     "tool_suggestions",
     "SearchCache",
     "DocumentStore",

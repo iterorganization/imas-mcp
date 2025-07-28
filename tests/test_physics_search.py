@@ -15,7 +15,7 @@ import pytest
 
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_domains import DomainCharacteristics
-from imas_mcp.models.enums import ComplexityLevel, ConceptType
+from imas_mcp.models.constants import ComplexityLevel, ConceptType
 from imas_mcp.models.physics_models import (
     EmbeddingDocument,
     SemanticResult,

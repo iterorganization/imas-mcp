@@ -2,7 +2,7 @@
 Explain tool implementation.
 
 This module contains the explain_concept tool logic with decorators
-for caching, validation, AI enhancement, tool recommendations, performance
+for caching, validation, AI sampling, tool recommendations, performance
 monitoring, and error handling.
 """
 
