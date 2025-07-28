@@ -95,6 +95,27 @@ class UsageExample(BaseModel):
     notes: str
 
 
+class IdentifierOption(BaseModel):
+    """Single identifier enumeration option."""
+
+    name: str
+    index: int
+    description: str
+
+
+class IdentifierSchema(BaseModel):
+    """Complete identifier schema from XML file."""
+
+    schema_path: str  # The path used to access the schema (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+    documentation: Optional[str] = None  # Documentation from the schema file
+    options: List[IdentifierOption] = Field(
+        default_factory=list
+    )  # Available enumeration values
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict
+    )  # Additional metadata from schema
+
+
 class DataPath(BaseModel):
     """Complete data path information extracted from XML."""
 
@@ -111,9 +132,6 @@ class DataPath(BaseModel):
     related_paths: List[str] = Field(default_factory=list)
     usage_examples: List[UsageExample] = Field(default_factory=list)
     validation_rules: Optional[ValidationRules] = None
-    relationships: Optional["RelationshipCategories"] = (
-        None  # Categorized relationships
-    )
     identifier_schema: Optional[IdentifierSchema] = (
         None  # Schema information for identifier fields
     )
@@ -230,27 +248,6 @@ class TransformationOutputs(BaseModel):
     identifier_catalog: Path
 
 
-class IdentifierOption(BaseModel):
-    """Single identifier enumeration option."""
-
-    name: str
-    index: int
-    description: str
-
-
-class IdentifierSchema(BaseModel):
-    """Complete identifier schema from XML file."""
-
-    schema_path: str  # The path used to access the schema (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
-    documentation: Optional[str] = None  # Documentation from the schema file
-    options: List[IdentifierOption] = Field(
-        default_factory=list
-    )  # Available enumeration values
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict
-    )  # Additional metadata from schema
-
-
 class IdentifierPath(BaseModel):
     """Represents a single path with identifier schema."""
 
@@ -286,18 +283,3 @@ class IdentifierCatalog(BaseModel):
     cross_references: Dict[str, List[str]]
     physics_mapping: Dict[str, List[str]]
     branching_analytics: Dict[str, Any]
-
-
-class RelationshipCategories(BaseModel):
-    """Categorized relationships for semantic understanding."""
-
-    coordinates: List[str] = Field(default_factory=list)  # Coordinate dependencies
-    physics_related: List[str] = Field(default_factory=list)  # Same physics domain
-    cross_ids: List[str] = Field(default_factory=list)  # Cross-IDS references
-    validation: List[str] = Field(default_factory=list)  # Validation/control fields
-    hierarchical: List[str] = Field(default_factory=list)  # Parent/child/sibling
-    units_compatible: List[str] = Field(default_factory=list)  # Same units
-    semantic_similarity: List[str] = Field(default_factory=list)  # Name similarity
-    documentation_refs: List[str] = Field(
-        default_factory=list
-    )  # Documentation references

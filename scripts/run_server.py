@@ -58,12 +58,19 @@ def run_server(
         python -m scripts.run_server --transport streamable-http --port 8080
     """
     # Configure logging based on the provided level
+    # For stdio transport, default to WARNING to prevent INFO logs appearing as warnings in MCP clients
+    if transport == "stdio" and log_level == "INFO":
+        log_level = "WARNING"
+        logger.debug(
+            "Adjusted log level to WARNING for stdio transport to prevent client warnings"
+        )
+
     logging.basicConfig(level=getattr(logging, log_level))
-    logger.info(f"Starting MCP server with transport={transport}")
+    logger.debug(f"Starting MCP server with transport={transport}")
 
     match transport:
         case "stdio":
-            logger.info("Using STDIO transport")
+            logger.debug("Using STDIO transport")
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 

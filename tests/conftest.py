@@ -17,9 +17,19 @@ STANDARD_TEST_IDS_SET = {"equilibrium", "core_profiles"}
 
 def extract_result(result):
     """Extract JSON from FastMCP TextContent result."""
+    # New format - structured_content is already a dict
+    if hasattr(result, "structured_content") and result.structured_content:
+        return result.structured_content
+
+    # Alternative format - data attribute
+    if hasattr(result, "data") and result.data:
+        return result.data
+
+    # Legacy format - text content that needs parsing
     if hasattr(result, "__iter__") and len(result) > 0:
         if hasattr(result[0], "text"):
             return json.loads(result[0].text)
+
     return result
 
 

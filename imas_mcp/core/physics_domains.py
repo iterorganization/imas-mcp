@@ -5,18 +5,11 @@ This module provides Pydantic models for parsing and validating the YAML domain 
 Models ensure type safety and provide structured access to domain data.
 """
 
-from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field, field_validator
 
-
-class ComplexityLevel(str, Enum):
-    """Complexity levels for physics domains."""
-
-    BASIC = "basic"
-    INTERMEDIATE = "intermediate"
-    ADVANCED = "advanced"
+from imas_mcp.models.enums import ComplexityLevel
 
 
 class DomainCharacteristics(BaseModel):

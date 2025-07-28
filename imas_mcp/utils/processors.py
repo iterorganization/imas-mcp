@@ -7,7 +7,7 @@ ensuring consistent use of Pydantic models throughout the codebase.
 
 from typing import Any, Dict, List
 
-from imas_mcp.models.tool_responses import DataPath
+from imas_mcp.models.response_models import DataPath
 
 
 class SearchResultProcessor:

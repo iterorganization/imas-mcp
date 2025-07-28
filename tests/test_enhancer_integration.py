@@ -9,6 +9,7 @@ import pytest
 from unittest.mock import Mock, AsyncMock
 
 from imas_mcp.server import Server
+from imas_mcp.models.enums import SearchMode
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
@@ -47,7 +48,7 @@ class TestSelectiveAIEnhancement:
         # Should have results but no AI enhancement for lexical mode
         assert "results" in result
         assert "suggestions" in result
-        assert result["search_mode"] == "lexical"
+        assert result["search_mode"] == SearchMode.LEXICAL
         # New system always includes ai_insights with status message
         ai_insights = result.get("ai_insights", {})
         assert (
@@ -68,7 +69,7 @@ class TestSelectiveAIEnhancement:
         # Should have results with AI enhancement for semantic mode
         assert "results" in result
         assert "suggestions" in result
-        assert result["search_mode"] == "semantic"
+        assert result["search_mode"] == SearchMode.SEMANTIC
 
         # AI should be applied for semantic mode if implemented
         ai_insights = result.get("ai_insights", {})

@@ -9,11 +9,11 @@ import pytest
 from unittest.mock import Mock, patch
 
 from imas_mcp.search.search_modes import (
-    SearchMode,
-    SearchConfig,
     SearchComposer,
     SearchModeSelector,
+    SearchConfig,
 )
+from imas_mcp.models.enums import SearchMode
 from imas_mcp.search.document_store import DocumentStore
 from tests.conftest import STANDARD_TEST_IDS_SET
 

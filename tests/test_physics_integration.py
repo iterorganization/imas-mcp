@@ -9,15 +9,16 @@ import pytest
 from unittest.mock import Mock, patch
 
 from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.core.physics_domains import DomainCharacteristics, ComplexityLevel
+from imas_mcp.core.physics_domains import DomainCharacteristics
+from imas_mcp.models.enums import ComplexityLevel
 from imas_mcp.models.physics_models import (
     PhysicsMatch,
     ConceptSuggestion,
     UnitSuggestion,
     PhysicsSearchResult,
     ConceptExplanation,
-    UnitPhysicsContext,
-    DomainConceptsResult,
+    UnitContext,
+    DomainConcepts,
 )
 from imas_mcp.physics_integration import (
     physics_search,
@@ -247,7 +248,7 @@ class TestPhysicsIntegration:
         result = get_domain_concepts(PhysicsDomain.EQUILIBRIUM)
 
         # Verify
-        assert isinstance(result, DomainConceptsResult)
+        assert isinstance(result, DomainConcepts)
         assert result.domain == PhysicsDomain.EQUILIBRIUM
         assert len(result.concepts) > 0
         assert "Equilibrium" in result.concepts
@@ -265,7 +266,7 @@ class TestPhysicsIntegration:
         result = get_domain_concepts(PhysicsDomain.GENERAL)
 
         # Should return empty concepts list
-        assert isinstance(result, DomainConceptsResult)
+        assert isinstance(result, DomainConcepts)
         assert result.domain == PhysicsDomain.GENERAL
         assert len(result.concepts) == 0
 
@@ -282,7 +283,7 @@ class TestPhysicsIntegration:
         context = get_unit_physics_context("T")
 
         # Verify
-        assert isinstance(context, UnitPhysicsContext)
+        assert isinstance(context, UnitContext)
         assert context.unit == "T"
         assert context.context == "Tesla - magnetic field strength"
         assert context.category == "magnetic_field"
@@ -317,7 +318,7 @@ class TestPhysicsIntegration:
 
         # Verify search was called and fallback worked
         mock_search.assert_called_once()
-        assert isinstance(context, UnitPhysicsContext)
+        assert isinstance(context, UnitContext)
         assert context.context == "Tesla - found via search"
         assert context.unit == "T"  # Should be updated to resolved symbol
 

@@ -22,8 +22,8 @@ from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_accessors import DomainAccessor, UnitAccessor
 from imas_mcp.core.physics_domains import DomainCharacteristics
 from imas_mcp.models.physics_models import (
-    PhysicsEmbeddingDocument,
-    PhysicsSemanticResult,
+    EmbeddingDocument,
+    SemanticResult,
 )
 from imas_mcp.units import unit_registry
 
@@ -35,7 +35,7 @@ class PhysicsEmbeddingCache:
     """Cache for physics concept embeddings."""
 
     embeddings: np.ndarray = field(default_factory=lambda: np.array([]))
-    documents: List[PhysicsEmbeddingDocument] = field(default_factory=list)
+    documents: List[EmbeddingDocument] = field(default_factory=list)
     concept_ids: List[str] = field(default_factory=list)
     model_name: str = ""
     cache_version: str = "1.0"
@@ -188,7 +188,7 @@ class PhysicsSemanticSearch:
             )
             logger.info(f"Downloaded and loaded model {self.model_name}")
 
-    def _create_physics_documents(self) -> List[PhysicsEmbeddingDocument]:
+    def _create_physics_documents(self) -> List[EmbeddingDocument]:
         """Create embedding documents from physics domain data."""
         documents = []
         domain_names = self._domain_accessor.get_all_domains()
@@ -200,7 +200,7 @@ class PhysicsSemanticSearch:
 
             # Create domain document
             domain_content = self._create_domain_content(domain_name.value, domain_info)
-            domain_doc = PhysicsEmbeddingDocument(
+            domain_doc = EmbeddingDocument(
                 concept_id=f"domain:{domain_name.value}",
                 concept_type="domain",
                 domain_name=domain_name.value,
@@ -220,7 +220,7 @@ class PhysicsSemanticSearch:
                 phenomenon_content = self._create_phenomenon_content(
                     domain_name.value, phenomenon, domain_info
                 )
-                phenomenon_doc = PhysicsEmbeddingDocument(
+                phenomenon_doc = EmbeddingDocument(
                     concept_id=f"phenomenon:{domain_name.value}:{i}",
                     concept_type="phenomenon",
                     domain_name=domain_name.value,
@@ -240,7 +240,7 @@ class PhysicsSemanticSearch:
                 method_content = self._create_method_content(
                     domain_name.value, method, domain_info
                 )
-                method_doc = PhysicsEmbeddingDocument(
+                method_doc = EmbeddingDocument(
                     concept_id=f"method:{domain_name.value}:{i}",
                     concept_type="measurement_method",
                     domain_name=domain_name.value,
@@ -277,7 +277,7 @@ class PhysicsSemanticSearch:
                 full_unit_name,
             )
 
-            unit_doc = PhysicsEmbeddingDocument(
+            unit_doc = EmbeddingDocument(
                 concept_id=f"unit:{unit_symbol}",
                 concept_type="unit",
                 domain_name="units",  # Special domain for units
@@ -427,7 +427,7 @@ class PhysicsSemanticSearch:
         min_similarity: float = 0.1,
         concept_types: Optional[List[str]] = None,
         domains: Optional[List[str]] = None,
-    ) -> List[PhysicsSemanticResult]:
+    ) -> List[SemanticResult]:
         """
         Search physics concepts using semantic similarity.
 
@@ -476,7 +476,7 @@ class PhysicsSemanticSearch:
             if domains and document.domain_name not in domains:
                 continue
 
-            result = PhysicsSemanticResult(
+            result = SemanticResult(
                 document=document, similarity_score=float(similarities[idx]), rank=rank
             )
             results.append(result)
@@ -485,7 +485,7 @@ class PhysicsSemanticSearch:
 
     def find_similar_concepts(
         self, concept_id: str, max_results: int = 5, min_similarity: float = 0.3
-    ) -> List[PhysicsSemanticResult]:
+    ) -> List[SemanticResult]:
         """Find concepts similar to a given concept ID."""
         if self._cache is None:
             self.build_embeddings()
@@ -514,7 +514,7 @@ class PhysicsSemanticSearch:
 
         results = []
         for rank, idx in enumerate(sorted_indices[:max_results]):
-            result = PhysicsSemanticResult(
+            result = SemanticResult(
                 document=self._cache.documents[idx],
                 similarity_score=float(similarities[idx]),
                 rank=rank,
@@ -523,7 +523,7 @@ class PhysicsSemanticSearch:
 
         return results
 
-    def get_concept_by_id(self, concept_id: str) -> Optional[PhysicsEmbeddingDocument]:
+    def get_concept_by_id(self, concept_id: str) -> Optional[EmbeddingDocument]:
         """Get a physics concept document by ID."""
         if self._cache is None:
             self.build_embeddings()
@@ -552,7 +552,7 @@ def get_physics_search() -> PhysicsSemanticSearch:
 
 def search_physics_concepts(
     query: str, max_results: int = 10, **kwargs
-) -> List[PhysicsSemanticResult]:
+) -> List[SemanticResult]:
     """Search physics concepts using semantic similarity."""
     physics_search = get_physics_search()
     return physics_search.search(query, max_results=max_results, **kwargs)
