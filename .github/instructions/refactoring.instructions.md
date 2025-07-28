@@ -5,7 +5,9 @@ description: "Refactoring guidelines for this workspace - no backwards compatibi
 
 Do not maintain backwards compatibility when refactoring code
 When updating a function or class, do not use specifiers such as
-enhanced, simple, optimized, advanced, intelligent, smart, improved in file names or doc strings. Just update the existing code
+enhanced, simple, optimized, advanced, intelligent, smart, improved, refactor, phase*, in file names or doc strings. Just update the existing code
+
+when following a refactoring plan do not include phase numbers or 'refactor' in filenames, class, function, or test names. These terms are irrelevant once the refactoring is complete. implement a naming strategy based on contents rather than the generation processes that created them.
 
 When augmenting existing tools or functions:
 
