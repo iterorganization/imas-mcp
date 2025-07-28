@@ -17,7 +17,7 @@ This document outlines a comprehensive refactoring plan to transform the monolit
 1. **Monolithic Tools class** (1800+ lines) with mixed responsibilities
 2. **search_imas method** has 11 dependent private methods (160+ lines)
 3. **Abandoned decorator pattern** that was actually working well
-4. **Mixed concerns**: search, caching, validation, AI enhancement all coupled
+4. **Mixed concerns**: search, caching, validation, sampling all coupled
 5. **Poor testability**: Hard to test individual components in isolation
 
 ## Proposed Architecture
@@ -27,7 +27,7 @@ This document outlines a comprehensive refactoring plan to transform the monolit
 ```python
 @cache_results(ttl=300, key_strategy="semantic")
 @validate_input(schema=SearchInputSchema)
-@ai_enhance(temperature=0.3, max_tokens=800)
+@sample(temperature=0.3, max_tokens=800)
 @suggest_tools(strategy="search_based")
 @measure_performance
 @handle_errors(fallback="search_suggestions")
@@ -62,7 +62,7 @@ imas_mcp/
 │   │   ├── __init__.py
 │   │   ├── cache.py                   # @cache_results decorator
 │   │   ├── validation.py              # @validate_input decorator
-│   │   ├── ai_enhancement.py          # @ai_enhance decorator
+│   │   ├── sampling.py                 # @sample decorator
 │   │   ├── suggestions.py             # @suggest_tools decorator
 │   │   ├── performance.py             # @measure_performance decorator
 │   │   └── error_handling.py          # @handle_errors decorator
@@ -76,7 +76,7 @@ imas_mcp/
 │   │   ├── __init__.py
 │   │   ├── search_service.py          # Core search orchestration
 │   │   ├── suggestion_service.py      # Tool suggestion logic
-│   │   └── enhancement_service.py     # AI enhancement logic
+│   │   └── sampling_service.py        # Sampling logic
 │   └── schemas/                       # NEW: Input validation schemas
 │       ├── __init__.py
 │       ├── search_schemas.py
@@ -154,6 +154,7 @@ imas_mcp/
 **Phase Status: ✅ COMPLETE** - All search engine extraction and modular architecture goals achieved
 
 **Phase Summary:**
+
 - Pure search engines created with clean separation of concerns
 - Search service orchestration layer implemented
 - Search logic extracted from monolithic tools
@@ -165,13 +166,15 @@ imas_mcp/
 **Status: ✅ COMPLETE** - Pure search engines have been fully implemented with proper separation of concerns.
 
 **Implementation Summary:**
+
 - **Base Engine**: `imas_mcp/search/engines/base_engine.py` (130 lines) - Abstract SearchEngine class
-- **Semantic Engine**: `imas_mcp/search/engines/semantic_engine.py` (160 lines) - Embedding-based similarity search  
+- **Semantic Engine**: `imas_mcp/search/engines/semantic_engine.py` (160 lines) - Embedding-based similarity search
 - **Lexical Engine**: `imas_mcp/search/engines/lexical_engine.py` (186 lines) - Whoosh full-text search
 - **Hybrid Engine**: `imas_mcp/search/engines/hybrid_engine.py` (191 lines) - Combined weighted scoring
 - **Engine Factory**: `imas_mcp/search/engines/__init__.py` (17 lines) - Type-based engine creation
 
 **Key Features Implemented:**
+
 - Configuration-driven initialization via SearchConfig
 - Abstract search interface with consistent SearchResult output
 - Engine type identification and validation
@@ -189,8 +192,9 @@ imas_mcp/
 **Status: ✅ COMPLETE** - Search logic successfully extracted and modular Tools class implemented
 
 **Completed Items:**
+
 - ✅ **SearchConfig created**: Comprehensive configuration model in `search_strategy.py`
-- ✅ **SearchResult models created**: Full result model with metadata in `search_strategy.py`  
+- ✅ **SearchResult models created**: Full result model with metadata in `search_strategy.py`
 - ✅ **Tools structure split**: Individual tool classes in `imas_mcp/tools/` directory
 - ✅ **Search engines created**: All three engines (Semantic, Lexical, Hybrid) fully implemented
 - ✅ **Search logic extracted**: `search_imas` method implemented in `imas_mcp/tools/search.py`
@@ -198,6 +202,7 @@ imas_mcp/
 - ✅ **Tools class delegation**: Main Tools class delegates to Search tool with backward compatibility
 
 **Implementation Details:**
+
 - **File**: `imas_mcp/tools/search.py` (171 lines) - Complete search_imas implementation
 - **File**: `imas_mcp/tools/__init__.py` (73 lines) - Main Tools class with delegation
 - **Validation**: Comprehensive input validation for search mode and parameters
@@ -209,6 +214,7 @@ imas_mcp/
 **Status: ✅ COMPLETE** - Full SearchService implementation with advanced orchestration features
 
 **Implementation Details:**
+
 - **File**: `imas_mcp/search/services/search_service.py` (274 lines)
 - **Core Features**: Engine orchestration, mode resolution, result post-processing
 - **Advanced Features**: Health checking, engine registration, structured request/response models
@@ -217,12 +223,14 @@ imas_mcp/
 - **Testing Support**: Mock engines for development and testing
 
 **Key Classes Implemented:**
+
 - `SearchService`: Main orchestration service with async search execution
-- `SearchRequest`: Structured request model for clean interfaces  
+- `SearchRequest`: Structured request model for clean interfaces
 - `SearchResponse`: Structured response with metadata and conversion utilities
 - `SearchServiceError`: Custom exception with query context
 
 **Deliverables: ✅ COMPLETE**
+
 - ✅ Separate search engines for each mode (SemanticSearchEngine, LexicalSearchEngine, HybridSearchEngine)
 - ✅ Search service orchestrating engine selection with intelligent mode resolution
 - ✅ Clean separation of search logic from tools with service pattern
@@ -231,93 +239,37 @@ imas_mcp/
 
 ## Phase 3: Implement Core Decorators (Days 5-7)
 
-### 3.1 Cache Decorator
+### ✅ **IMPLEMENTED** - Core Decorators System
 
-```python
-# imas_mcp/search/decorators/cache.py
-def cache_results(ttl: int = 300, key_strategy: str = "semantic"):
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            cache_key = build_cache_key(args, kwargs, strategy=key_strategy)
-            if cached := cache.get(cache_key):
-                return cached
-            result = await func(*args, **kwargs)
-            cache.set(cache_key, result, ttl=ttl)
-            return result
-        return wrapper
-    return decorator
-```
+**Status**: All six core decorators fully implemented and tested with comprehensive functionality.
 
-### 3.2 Validation Decorator
+**Key Files**:
 
-```python
-# imas_mcp/search/decorators/validation.py
-def validate_input(schema: Type[BaseModel]):
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Extract 'self' and create request object
-            instance = args[0]
-            request_data = {k: v for k, v in kwargs.items() if k != 'ctx'}
+- `imas_mcp/search/decorators/cache.py` - Result caching with TTL and key strategies
+- `imas_mcp/search/decorators/validation.py` - Pydantic input validation with error handling
+- `imas_mcp/search/decorators/sampling.py` - AI-powered result enrichment (renamed from ai_enhancement)
+- `imas_mcp/search/decorators/suggestions.py` - Tool recommendations with configurable max_suggestions
+- `imas_mcp/search/decorators/performance.py` - Execution metrics and performance scoring
+- `imas_mcp/search/decorators/error_handling.py` - Robust error handling with fallback support
+- `imas_mcp/search/schemas/search_schemas.py` - Input validation schemas for all tools
+- `tests/test_core_decorators.py` - 28 comprehensive tests (all passing)
 
-            try:
-                validated = schema(**request_data)
-                # Replace kwargs with validated data
-                kwargs.update(validated.model_dump())
-                return await func(*args, **kwargs)
-            except ValidationError as e:
-                return instance._create_error_response(str(e), request_data.get('query', ''))
-        return wrapper
-    return decorator
-```
+**Main Functionality Implemented**:
 
-### 3.3 AI Enhancement Decorator
+- **Cache System**: LRU cache with TTL, key strategies (args_only, semantic), cache statistics
+- **Input Validation**: Pydantic schema validation, standardized error responses, context preservation
+- **Sampling Enhancement**: AI-powered result enrichment with configurable temperature and token limits
+- **Tool Suggestions**: Intelligent follow-up tool recommendations with max_suggestions parameter (default: 4)
+- **Performance Monitoring**: Execution timing, memory tracking, performance scoring, slow operation logging
+- **Error Handling**: Standardized error responses, fallback suggestions, timeout handling, recovery actions
 
-```python
-# imas_mcp/search/decorators/ai_enhancement.py
-def ai_enhance(temperature: float = 0.3, max_tokens: int = 800):
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            ctx = kwargs.get('ctx')
-            result = await func(*args, **kwargs)
+**Deliverables Completed**:
 
-            if ctx and 'ai_prompt' in result:
-                enhancement = await apply_ai_enhancement(
-                    result['ai_prompt'], ctx, temperature, max_tokens
-                )
-                result['ai_insights'] = enhancement
-
-            return result
-        return wrapper
-    return decorator
-```
-
-### 3.4 Suggestions Decorator
-
-```python
-# imas_mcp/search/decorators/suggestions.py
-def suggest_tools(strategy: str = "search_based"):
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            result = await func(*args, **kwargs)
-
-            if 'error' not in result and 'hits' in result:
-                suggestions = generate_tool_suggestions(result, strategy)
-                result['suggestions'] = suggestions
-
-            return result
-        return wrapper
-    return decorator
-```
-
-**Deliverables:**
-
-- Four core decorators implemented and tested
-- Clean separation of cross-cutting concerns
-- Reusable decorators for all tools
+- ✅ Six core decorators implemented and tested
+- ✅ Clean separation of cross-cutting concerns
+- ✅ Reusable decorators for all tools
+- ✅ Comprehensive input validation schemas
+- ✅ Full test coverage with 28 passing tests
 
 ---
 
@@ -390,7 +342,7 @@ class SearchTool:
         return response.model_dump()
 
     def _build_ai_prompt(self, query: str, hits: List[SearchHit]) -> str:
-        """Build AI enhancement prompt based on search results."""
+        """Build sampling prompt based on search results."""
         return f"""Search Results Analysis for: {query}
 Found {len(hits)} relevant paths in IMAS data dictionary.
 
@@ -524,7 +476,7 @@ class TestSearchTool:
 - [ ] Test full decorator chains
 - [ ] Verify MCP integration still works
 - [ ] Test error handling paths
-- [ ] Validate AI enhancement integration
+- [ ] Validate sampling integration
 
 **Deliverables:**
 
@@ -594,7 +546,7 @@ class TestSearchTool:
 ## Timeline Summary
 
 - **Phase 1-2**: Foundation (4 days)
-- **Phase 3**: Core decorators (3 days)
+- **✅ Phase 3**: Core decorators (3 days) - **COMPLETED**
 - **Phase 4**: Search tool refactor (2 days)
 - **Phase 5**: Remaining tools (3 days)
 - **Phase 6**: Testing & optimization (3 days)
