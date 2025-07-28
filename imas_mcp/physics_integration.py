@@ -9,14 +9,15 @@ import logging
 
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_accessors import DomainAccessor, UnitAccessor
+from imas_mcp.models.enums import ComplexityLevel, UnitCategory
 from imas_mcp.models.physics_models import (
     PhysicsMatch,
     PhysicsSearchResult,
     ConceptSuggestion,
     UnitSuggestion,
     ConceptExplanation,
-    UnitPhysicsContext,
-    DomainConceptsResult,
+    UnitContext,
+    DomainConcepts,
 )
 from imas_mcp.search.physics_search import (
     search_physics_concepts,
@@ -139,7 +140,7 @@ def explain_physics_concept(
                     typical_units=domain_data.typical_units,
                     measurement_methods=domain_data.measurement_methods,
                     related_domains=domain_accessor.get_related_domains(domain_enum),
-                    complexity_level=domain_data.complexity_level.value,
+                    complexity_level=domain_data.complexity_level,
                 )
         except ValueError:
             pass
@@ -153,7 +154,7 @@ def explain_physics_concept(
             typical_units=[],
             measurement_methods=[],
             related_domains=[],
-            complexity_level="unknown",
+            complexity_level=ComplexityLevel.BASIC,
         )
 
     # Use the best matching result
@@ -178,7 +179,7 @@ def explain_physics_concept(
             typical_units=[],
             measurement_methods=[],
             related_domains=[],
-            complexity_level="unknown",
+            complexity_level=ComplexityLevel.BASIC,
         )
 
     return ConceptExplanation(
@@ -189,17 +190,17 @@ def explain_physics_concept(
         typical_units=domain_data.typical_units,
         measurement_methods=domain_data.measurement_methods,
         related_domains=domain_accessor.get_related_domains(domain_enum),
-        complexity_level=domain_data.complexity_level.value,
+        complexity_level=domain_data.complexity_level,
     )
 
 
-def get_domain_concepts(domain: PhysicsDomain) -> DomainConceptsResult:
+def get_domain_concepts(domain: PhysicsDomain) -> DomainConcepts:
     """Get all physics concepts for a specific domain."""
     domain_accessor = DomainAccessor()
     domain_data = domain_accessor.get_domain_info(domain)
 
     if not domain_data:
-        return DomainConceptsResult(domain=domain, concepts=[])
+        return DomainConcepts(domain=domain, concepts=[])
 
     concepts = [domain.value.replace("_", " ").title()]
     concepts.extend(
@@ -209,10 +210,10 @@ def get_domain_concepts(domain: PhysicsDomain) -> DomainConceptsResult:
         [m.replace("_", " ").title() for m in domain_data.measurement_methods]
     )
 
-    return DomainConceptsResult(domain=domain, concepts=concepts)
+    return DomainConcepts(domain=domain, concepts=concepts)
 
 
-def get_unit_physics_context(unit: str) -> UnitPhysicsContext:
+def get_unit_physics_context(unit: str) -> UnitContext:
     """Get physics context for a unit from YAML definitions."""
     unit_accessor = UnitAccessor()
     context = unit_accessor.get_unit_context(unit)
@@ -228,9 +229,18 @@ def get_unit_physics_context(unit: str) -> UnitPhysicsContext:
             unit = unit_symbol  # Use the resolved symbol
 
     category = unit_accessor.get_category_for_unit(unit)
+    # Convert string category to UnitCategory enum if needed
+    if category and isinstance(category, str) and category.strip():
+        try:
+            category = UnitCategory(category)
+        except ValueError:
+            category = None
+    else:
+        category = None
+
     physics_domains = unit_accessor.get_domains_for_unit(unit)
 
-    return UnitPhysicsContext(
+    return UnitContext(
         unit=unit,
         context=context,
         category=category,

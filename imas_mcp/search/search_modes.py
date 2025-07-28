@@ -8,22 +8,14 @@ and extensibility.
 
 import logging
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
-from .document_store import Document, DocumentStore
+
+from imas_mcp.models.enums import SearchMode
+from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
-
-
-class SearchMode(Enum):
-    """Enumeration of available search modes."""
-
-    SEMANTIC = "semantic"  # AI-powered semantic search using sentence transformers
-    LEXICAL = "lexical"  # Traditional full-text search using SQLite FTS5
-    HYBRID = "hybrid"  # Combination of semantic and lexical search
-    AUTO = "auto"  # Automatically choose best mode based on query
 
 
 class SearchConfig(BaseModel):

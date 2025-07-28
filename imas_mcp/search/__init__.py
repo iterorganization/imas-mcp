@@ -11,7 +11,6 @@ from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_modes import (
     SearchComposer,
     SearchConfig,
-    SearchMode,
     SearchResult,
 )
 from .tool_suggestions import tool_suggestions
@@ -25,6 +24,5 @@ __all__ = [
     "DocumentMetadata",
     "SearchComposer",
     "SearchConfig",
-    "SearchMode",
     "SearchResult",
 ]

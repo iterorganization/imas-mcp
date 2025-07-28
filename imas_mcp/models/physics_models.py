@@ -1,9 +1,15 @@
-"""Pydantic models for physics search results and semantic search."""
+"""Clean, focused Pydantic models for physics search and semantic analysis."""
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from imas_mcp.core.data_model import PhysicsDomain
+from imas_mcp.models.enums import ConceptType, ComplexityLevel, UnitCategory
+
+
+# ============================================================================
+# PHYSICS SEARCH COMPONENTS
+# ============================================================================
 
 
 class PhysicsMatch(BaseModel):
@@ -15,7 +21,7 @@ class PhysicsMatch(BaseModel):
     units: str
     description: str
     imas_paths: List[str] = Field(default_factory=list)
-    domain: str
+    domain: PhysicsDomain
     relevance_score: float
 
 
@@ -42,6 +48,11 @@ class SymbolSuggestion(BaseModel):
     description: Optional[str] = None
 
 
+# ============================================================================
+# PHYSICS SEARCH RESULTS
+# ============================================================================
+
+
 class PhysicsSearchResult(BaseModel):
     """Complete physics search result."""
 
@@ -51,6 +62,11 @@ class PhysicsSearchResult(BaseModel):
     unit_suggestions: List[UnitSuggestion] = Field(default_factory=list)
     symbol_suggestions: List[SymbolSuggestion] = Field(default_factory=list)
     imas_path_suggestions: List[str] = Field(default_factory=list)
+
+
+# ============================================================================
+# CONCEPT & DOMAIN MODELS
+# ============================================================================
 
 
 class ConceptExplanation(BaseModel):
@@ -63,33 +79,35 @@ class ConceptExplanation(BaseModel):
     typical_units: List[str] = Field(default_factory=list)
     measurement_methods: List[str] = Field(default_factory=list)
     related_domains: List[PhysicsDomain] = Field(default_factory=list)
-    complexity_level: str
+    complexity_level: ComplexityLevel = ComplexityLevel.INTERMEDIATE
 
 
-class UnitPhysicsContext(BaseModel):
+class UnitContext(BaseModel):
     """Physics context for a unit."""
 
     unit: str
     context: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[UnitCategory] = None
     physics_domains: List[PhysicsDomain] = Field(default_factory=list)
 
 
-class DomainConceptsResult(BaseModel):
-    """Result containing all concepts for a physics domain."""
+class DomainConcepts(BaseModel):
+    """All concepts for a physics domain."""
 
     domain: PhysicsDomain
     concepts: List[str] = Field(default_factory=list)
 
 
-# Physics Semantic Search Models
+# ============================================================================
+# SEMANTIC SEARCH MODELS
+# ============================================================================
 
 
-class PhysicsEmbeddingDocument(BaseModel):
-    """Document model for physics concepts that can be embedded and searched."""
+class EmbeddingDocument(BaseModel):
+    """Document for physics concepts that can be embedded and searched."""
 
     concept_id: str
-    concept_type: str  # "domain", "phenomenon", "unit", "measurement_method"
+    concept_type: ConceptType
     domain_name: str
     title: str
     description: str
@@ -99,10 +117,10 @@ class PhysicsEmbeddingDocument(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-class PhysicsSemanticResult(BaseModel):
+class SemanticResult(BaseModel):
     """Result from physics semantic search."""
 
-    document: PhysicsEmbeddingDocument
+    document: EmbeddingDocument
     similarity_score: float
     rank: int
 
@@ -115,7 +133,7 @@ class PhysicsSemanticResult(BaseModel):
         return self.document.domain_name
 
 
-class PhysicsSearchRequest(BaseModel):
+class SemanticSearchRequest(BaseModel):
     """Request parameters for physics semantic search."""
 
     query: str
@@ -125,11 +143,11 @@ class PhysicsSearchRequest(BaseModel):
     domains: Optional[List[str]] = None
 
 
-class PhysicsSearchResponse(BaseModel):
+class SemanticSearchResult(BaseModel):
     """Response from physics semantic search."""
 
     query: str
-    results: List[PhysicsSemanticResult] = Field(default_factory=list)
+    results: List[SemanticResult] = Field(default_factory=list)
     total_results: int
     max_results: int
     min_similarity: float

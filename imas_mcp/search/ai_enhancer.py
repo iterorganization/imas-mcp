@@ -440,6 +440,9 @@ def ai_enhancer(temperature: float = 0.3, max_tokens: int = 800):
             )
 
             try:
+                logger.debug(f"Attempting AI enhancement for {func.__name__}")
+
+                # Use the FastMCP recommended approach with system_prompt parameter
                 ai_response = await ctx.sample(
                     ai_prompt,
                     system_prompt=system_prompt,
@@ -462,6 +465,10 @@ def ai_enhancer(temperature: float = 0.3, max_tokens: int = 800):
 
             except Exception as e:
                 logger.warning(f"AI enhancement failed for {func.__name__}: {e}")
+                # Log more detailed error information for debugging
+                logger.debug(
+                    f"AI enhancement error details: {type(e).__name__}: {str(e)}"
+                )
                 ai_insights = {"error": "AI enhancement temporarily unavailable"}
 
             # Add AI insights to the response

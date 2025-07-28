@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from imas_mcp.core.data_model import DataPath, PhysicsContext, IdentifierSchema
 from imas_mcp.core.physics_accessors import UnitAccessor
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,58 @@ class Document:
             components.append(f"Data type: {self.metadata.data_type}")
 
         return " | ".join(components)
+
+    def to_datapath(self) -> DataPath:
+        """Convert Document to DataPath for consistent API responses."""
+        # Build physics context if available
+        physics_context = None
+        if self.metadata.physics_domain:
+            physics_context = PhysicsContext(
+                domain=self.metadata.physics_domain,
+                phenomena=list(self.metadata.physics_phenomena)
+                if self.metadata.physics_phenomena
+                else [],
+                typical_values={},
+            )
+
+        # Build identifier schema if available
+        identifier_schema = None
+        if self.raw_data.get("identifier_schema"):
+            schema_data = self.raw_data["identifier_schema"]
+            if isinstance(schema_data, dict):
+                identifier_schema = IdentifierSchema(
+                    schema_path=schema_data.get("schema_path", ""),
+                    documentation=schema_data.get("documentation"),
+                    options=schema_data.get("options", []),
+                    metadata=schema_data.get("metadata", {}),
+                )
+
+        return DataPath(
+            path=self.metadata.path_name,
+            documentation=self.documentation,
+            units=self.units.unit_str if self.units else "",
+            coordinates=list(self.metadata.coordinates)
+            if self.metadata.coordinates
+            else [],
+            lifecycle=self.raw_data.get(
+                "lifecycle", "active"
+            ),  # Extract from raw_data with fallback
+            data_type=self.metadata.data_type,
+            introduced_after_version=self.raw_data.get("introduced_after_version"),
+            lifecycle_status=self.raw_data.get("lifecycle_status"),
+            lifecycle_version=self.raw_data.get("lifecycle_version"),
+            physics_context=physics_context,
+            related_paths=self.raw_data.get("related_paths", []),
+            usage_examples=self.raw_data.get("usage_examples", []),
+            validation_rules=self.raw_data.get("validation_rules"),
+            relationships=self.raw_data.get("relationships"),
+            identifier_schema=identifier_schema,
+            coordinate1=self.raw_data.get("coordinate1"),
+            coordinate2=self.raw_data.get("coordinate2"),
+            timebase=self.raw_data.get("timebase"),
+            type=self.raw_data.get("type"),
+            structure_reference=self.raw_data.get("structure_reference"),
+        )
 
 
 @dataclass
@@ -986,6 +1039,63 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         finally:
             conn.close()
 
+    def _preprocess_fts_query(self, query: str) -> str:
+        """
+        Preprocess FTS query to handle common user patterns that cause SQL errors.
+
+        Args:
+            query: Raw user query string
+
+        Returns:
+            Processed query safe for FTS5
+        """
+        import re
+
+        # First, find all quoted sections and temporarily replace them to protect from processing
+        quoted_sections = []
+        quote_pattern = r'"[^"]*"'
+
+        def protect_quotes(match):
+            quoted_sections.append(match.group(0))
+            return f"__QUOTE_{len(quoted_sections) - 1}__"
+
+        # Protect quoted sections
+        protected_query = re.sub(quote_pattern, protect_quotes, query)
+
+        # Handle various problematic dash patterns:
+
+        # 1. Handle "-word" patterns by converting to "NOT word"
+        # This prevents "no such column" errors when users type things like "plasma -wall"
+        def replace_minus_term(match):
+            prefix = match.group(1)
+            term = match.group(2)
+            # Only replace if the term doesn't look like it's part of a field specification
+            if ":" not in term:
+                return f"{prefix}NOT {term}"
+            return match.group(0)
+
+        # Pattern to match "-word" but not "field:-word"
+        # Look for space or start of string, followed by -, followed by word characters
+        processed_query = re.sub(
+            r"(^|\s)-([a-zA-Z_][a-zA-Z0-9_]*)", replace_minus_term, protected_query
+        )
+
+        # 2. Handle standalone dashes and dash with spaces that could cause syntax errors
+        # Remove isolated dashes (- surrounded by spaces or at boundaries)
+        processed_query = re.sub(r"\s+-\s+", " ", processed_query)  # " - " -> " "
+        processed_query = re.sub(r"^-\s+", "", processed_query)  # "- " at start -> ""
+        processed_query = re.sub(r"\s+-$", "", processed_query)  # " -" at end -> ""
+        processed_query = re.sub(r"^-$", "", processed_query)  # just "-" -> ""
+
+        # 3. Clean up multiple spaces
+        processed_query = re.sub(r"\s+", " ", processed_query)
+
+        # Restore quoted sections
+        for i, quoted_text in enumerate(quoted_sections):
+            processed_query = processed_query.replace(f"__QUOTE_{i}__", quoted_text)
+
+        return processed_query.strip()
+
     def search_full_text(
         self, query: str, fields: Optional[List[str]] = None, max_results: int = 50
     ) -> List[Document]:
@@ -1004,6 +1114,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             search_full_text('plasma temperature')
             search_full_text('physics_domain:transport AND units:eV')
             search_full_text('"electron density" OR "ion density"')
+            search_full_text('plasma temperature -wall')  # converted to 'plasma temperature NOT wall'
         """
         # Ensure documents are loaded and FTS index exists
         self._ensure_loaded()
@@ -1012,17 +1123,20 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         if self._should_rebuild_fts_index():
             self._build_sqlite_fts_index()
 
+        # Preprocess query to handle common user patterns
+        processed_query = self._preprocess_fts_query(query)
+
         with self._sqlite_connection() as conn:
             # Build FTS5 query
             if fields:
                 # Search specific fields
                 field_queries = []
                 for field in fields:
-                    field_queries.append(f"{field}:{query}")
+                    field_queries.append(f"{field}:{processed_query}")
                 fts_query = " OR ".join(field_queries)
             else:
                 # Search all fields
-                fts_query = query
+                fts_query = processed_query
 
             try:
                 cursor = conn.execute(

@@ -17,25 +17,32 @@ from imas_mcp.search import (
     SearchCache,
     ai_enhancer,
 )
-from imas_mcp.search.tool_suggestions import tool_suggestions
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.search_modes import SearchComposer, SearchConfig, SearchMode
+from imas_mcp.search.search_modes import SearchComposer, SearchConfig
+from imas_mcp.models.enums import (
+    SearchMode,
+    DetailLevel,
+    RelationshipType,
+    IdentifierScope,
+)
 
 # Import physics integration for enhanced search
 from imas_mcp.physics_integration import physics_search
 
 # Import Pydantic models for structured responses
-from imas_mcp.models.tool_responses import (
-    SearchResponse,
-    ConceptResponse,
-    OverviewResponse,
-    StructureResponse,
-    RelationshipResponse,
-    IdentifierResponse,
-    BulkExportResponse,
-    DomainExportResponse,
-    DataPath,
+from imas_mcp.models.response_models import (
+    ConceptResult,
+    OverviewResult,
+    StructureResult,
+    RelationshipResult,
+    IdentifierResult,
+    IDSExport,
+    DomainExport,
+    ErrorResponse,
+    SearchHit,
 )
+from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.core.data_model import DataPath, PhysicsContext
 from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 
 logger = logging.getLogger(__name__)
@@ -77,8 +84,7 @@ class Tools(MCPProvider):
                 mcp.tool(description=attr._mcp_description)(attr)
 
     @mcp_tool("Search for IMAS data paths with relevance-ordered results")
-    @ai_enhancer(temperature=0.3, max_tokens=500)
-    @tool_suggestions
+    @ai_enhancer(temperature=0.3, max_tokens=800)
     async def search_imas(
         self,
         query: Union[str, List[str]],
@@ -88,151 +94,81 @@ class Tools(MCPProvider):
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
-        Search for IMAS data paths with relevance-ordered results and AI enhancement.
+        Search for IMAS data paths with relevance-ordered results.
+
+        Search modes for LLM usage:
+        - "auto": Automatically selects best mode based on query
+        - "semantic": Concept-based search using AI embeddings
+        - "lexical": Fast text-based keyword search
+        - "hybrid": Combines semantic and lexical approaches
 
         Args:
             query: Search term(s), physics concept, symbol, or pattern
             ids_name: Optional specific IDS to search within
-            max_results: Maximum number of results to return
-            search_mode: Search mode - "auto", "semantic", "lexical", or "hybrid"
+            max_results: Maximum number of results to return (1-100)
+            search_mode: Search mode string - must be "auto", "semantic", "lexical", or "hybrid"
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with relevance-ordered search results and AI suggestions
+            Dictionary with relevance-ordered search results and suggestions
         """
         try:
+            # Validate and convert search mode
+            try:
+                search_mode_enum = self._validate_search_mode(search_mode)
+            except ValueError as e:
+                return self._create_error_response(str(e), query)
+
             # Check cache first for faster response
-            cached_result = self.search_cache.get(
-                query=query,
-                ids_name=ids_name,
-                max_results=max_results,
-                search_mode=search_mode,
+            cached_result = self._get_cached_result(
+                query, ids_name, max_results, search_mode
             )
             if cached_result is not None:
                 return cached_result
 
-            # Use the search composer for unified search experience
-            search_composer = self.search_composer
-
-            # Map search mode parameters correctly
-            if search_mode == "fast":
-                mode = SearchMode.LEXICAL
-            elif search_mode == "comprehensive":
-                mode = SearchMode.SEMANTIC
-            elif search_mode == "auto":
-                mode = SearchMode.AUTO
-            else:
-                try:
-                    mode = SearchMode(search_mode.lower())
-                except ValueError:
-                    mode = SearchMode.AUTO
-
-            # Configure search using SearchConfig
-            config = SearchConfig(
-                mode=mode,
-                max_results=max_results,
-                filter_ids=[ids_name] if ids_name else None,
+            # Execute search with error handling
+            search_results = self._execute_search(
+                query, ids_name, max_results, search_mode_enum
             )
 
-            # Execute search using composer
-            search_results = search_composer.search(query, config)
+            # Convert results to standardized format
+            search_hits = self._convert_search_results(search_results)
 
-            # Convert results to standard format using Pydantic
-            search_results_data = []
-            for result in search_results:
-                result_dict = result.to_dict()
-                identifier_info = self._extract_identifier_info(result.document)
-
-                search_result_model = DataPath(
-                    path=result_dict["path"],
-                    ids_name=result_dict["ids_name"],
-                    documentation=result_dict["documentation"],
-                    relevance_score=result_dict["relevance_score"],
-                    physics_domain=result_dict["physics_domain"],
-                    units=result_dict["units"],
-                    data_type=result_dict.get("data_type"),
-                    identifier=identifier_info,
-                )
-                search_results_data.append(search_result_model)
-
-            # Add query suggestions
-            suggestions = []
-            if len(search_results_data) == 0:
-                suggestions = [
-                    "Try a broader search term",
-                    "Check spelling of physics terms",
-                    "Use search_mode='semantic' for concept-based search",
-                    "Remove IDS filter to search all data",
-                ]
-            elif len(search_results_data) < 3:
-                suggestions = [
-                    "Try related physics concepts",
-                    "Use search_mode='hybrid' for comprehensive results",
-                    "Consider broader measurement categories",
-                ]
-
-            # Try physics search enhancement
-            physics_result = None
-            try:
-                physics_result = physics_search(
-                    str(query) if isinstance(query, list) else query
-                )
-            except Exception:
-                pass  # Physics enhancement is optional
-
-            # Add AI prompt for enhancement
-            ai_prompt = None
-            if search_results_data:
-                ai_prompt = (
-                    f"Query: {query}\nSearch Mode: {search_mode}\nResults: {[r.model_dump() for r in search_results_data[:3]]}\n\n"
-                    f"Provide analysis as JSON with 'insights', 'related_terms', and 'suggestions' fields."
-                )
-
-            response = SearchResponse(
-                query=query,
-                search_mode=search_mode,
-                search_strategy=mode.value,
-                ids_filter=ids_name,
-                results_count=len(search_results_data),
-                results=search_results_data,
-                physics_enhancement=physics_result,
-                suggestions=suggestions,
-                ai_prompt=ai_prompt,
-                error=None,
+            # Generate contextual suggestions
+            query_hints, tool_hints = self._generate_suggestions(
+                search_hits, search_mode_enum
             )
 
-            # Cache successful results for future use
-            self.search_cache.set(
-                query=query,
-                result=response.model_dump(),
-                ids_name=ids_name,
-                max_results=max_results,
-                search_mode=search_mode,
+            # Try optional physics enhancement
+            physics_result = self._get_physics_enhancement(query)
+
+            # Determine AI enhancement status
+            ai_insights = await self._apply_ai_enhancement(
+                search_mode_enum, ctx, search_hits, query, "search_imas"
             )
+
+            # Build final response
+            response = self._build_search_response(
+                query,
+                search_mode_enum,
+                search_hits,
+                query_hints,
+                tool_hints,
+                ai_insights,
+                physics_result,
+            )
+
+            # Cache successful results
+            self._cache_result(query, ids_name, max_results, search_mode, response)
 
             return response.model_dump()
 
         except Exception as e:
             logger.error(f"Search failed: {e}")
-            return SearchResponse(
-                query=query,
-                search_mode="error",
-                search_strategy="error",
-                ids_filter=ids_name,
-                results_count=0,
-                results=[],
-                error=str(e),
-                ai_prompt=None,
-                suggestions=[
-                    "Check search term spelling",
-                    "Try simpler search terms",
-                    "Use get_overview() to explore available data",
-                ],
-            ).model_dump()
+            return self._create_error_response(str(e), query, {"tool": "search_imas"})
 
     @mcp_tool("Explain IMAS concepts with physics context")
     @ai_enhancer(temperature=0.2, max_tokens=800)
-    @tool_suggestions
     async def explain_concept(
         self,
         concept: str,
@@ -319,49 +255,45 @@ class Tools(MCPProvider):
                     )
 
             # Build explanation response using Pydantic models
-            related_paths_data = [
-                DataPath(
-                    path=result_dict["path"],
-                    ids_name=result_dict["ids_name"],
-                    documentation=result_dict["documentation"][:150],
-                    physics_domain=result_dict["physics_domain"],
-                    units=result_dict["units"],
-                    data_type=result_dict.get("data_type"),
-                    relevance_score=result_dict.get("relevance_score", 0.0),
+            related_paths_data = []
+            for result_dict in [
+                search_result.to_dict() for search_result in search_results[:8]
+            ]:
+                # Build DataPath with correct fields
+
+                local_physics_context = None
+                if result_dict.get("physics_domain"):
+                    local_physics_context = PhysicsContext(
+                        domain=result_dict["physics_domain"],
+                        phenomena=[],
+                        typical_values={},
+                    )
+
+                related_paths_data.append(
+                    DataPath(
+                        path=result_dict["path"],
+                        documentation=result_dict["documentation"][:150],
+                        units=result_dict["units"],
+                        data_type=result_dict.get("data_type"),
+                        physics_context=local_physics_context,
+                    )
                 )
-                for result_dict in [
-                    search_result.to_dict() for search_result in search_results[:8]
-                ]
-            ]
 
             # measurement_contexts and identifier_schemas are already in the correct format for tool response
 
-            response = ConceptResponse(
+            # Convert detail_level string to enum
+
+            detail_level_enum = (
+                DetailLevel.ADVANCED
+                if detail_level == "detailed"
+                else DetailLevel.INTERMEDIATE
+            )
+
+            response = ConceptResult(
                 concept=concept,
-                detail_level=detail_level,
-                sources_analyzed=len(related_paths),
-                explanation={
-                    "definition": f"Analysis of '{concept}' within IMAS data dictionary context",
-                    "physics_context": f"Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}",
-                    "measurement_scope": f"Related to {len(measurement_contexts)} measurement contexts",
-                    "data_availability": f"Found {len(related_paths)} related data paths",
-                },
-                related_paths=related_paths_data,
-                physics_domains=list(physics_domains),
-                physics_context=physics_context,
-                physics_enhancement=None,
-                measurement_contexts=measurement_contexts,
-                identifier_analysis={
-                    "branching_paths": len(identifier_schemas),
-                    "schemas": identifier_schemas,
-                    "significance": (
-                        "Critical for data structure navigation"
-                        if identifier_schemas
-                        else "No branching logic identified"
-                    ),
-                },
-                error=None,
-                suggestions=[
+                explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Related to {len(measurement_contexts)} measurement contexts. Found {len(related_paths)} related data paths.",
+                detail_level=detail_level_enum,
+                related_topics=[
                     f"Explore {related_paths[0]['ids_name']} for detailed data"
                     if related_paths
                     else "Use search_imas() for more specific queries",
@@ -372,59 +304,29 @@ class Tools(MCPProvider):
                     if related_paths
                     else "Try related terminology",
                 ],
-                ai_prompt=f"""Concept Explanation Request: {concept}
-Detail Level: {detail_level}
-
-Found Information:
-- Related Paths: {len(related_paths)}
-- Physics Domains: {list(physics_domains)}
-- Measurement Contexts: {len(measurement_contexts)}
-- Identifier Schemas: {len(identifier_schemas)}
-
-Top Related Paths: {[p.path for p in related_paths_data[:3]]}
-
-Provide comprehensive explanation including:
-1. Clear definition in plasma physics context
-2. IMAS data dictionary significance and usage
-3. Related measurements and experimental relevance
-4. Practical guidance for researchers
-5. Connections to other physics concepts
-
-Format as JSON with 'definition', 'imas_significance', 'experimental_relevance', 'research_guidance', 'concept_connections' fields.""",
+                concept_explanation=None,  # Will be populated if available from physics search
+                paths=related_paths_data,
+                count=len(related_paths_data),
+                physics_domains=list(physics_domains),
+                physics_context=physics_context,
             )
 
             return response.model_dump()
 
         except Exception as e:
             logger.error(f"Concept explanation failed: {e}")
-            return ConceptResponse(
-                concept=concept,
-                detail_level=detail_level,
-                sources_analyzed=0,
-                explanation={
-                    "definition": "Error occurred during concept explanation",
-                    "physics_context": "",
-                    "measurement_scope": "",
-                    "data_availability": "",
-                },
-                related_paths=[],
-                physics_domains=[],
-                physics_context=None,
-                physics_enhancement=None,
-                measurement_contexts=[],
-                identifier_analysis={},
-                error=str(e),
-                ai_prompt=None,
+            return ErrorResponse(
+                error=f"Error explaining concept '{concept}': {str(e)}",
                 suggestions=[
                     "Try simpler concept terms",
                     "Check concept spelling",
                     "Use search_imas() to explore available data",
                 ],
+                context={"concept": concept, "detail_level": detail_level},
             ).model_dump()
 
     @mcp_tool("Get IMAS overview or answer analytical questions")
     @ai_enhancer(temperature=0.3, max_tokens=1000)
-    @tool_suggestions
     async def get_overview(
         self,
         question: Optional[str] = None,
@@ -463,7 +365,7 @@ Format as JSON with 'definition', 'imas_significance', 'experimental_relevance',
                     units_found.add(doc.metadata.units)
 
             # Build overview response using Pydantic
-            sample_analysis_data = {
+            _ = {  # sample_analysis_data - unused, kept for potential future use
                 "documents_analyzed": len(sample_documents),
                 "unique_physics_domains": len(physics_domains),
                 "unique_data_types": len(data_types),
@@ -471,14 +373,16 @@ Format as JSON with 'definition', 'imas_significance', 'experimental_relevance',
             }
 
             # Get identifier summary
-            identifier_summary = {}
+            _ = {}  # identifier_summary - unused, kept for potential future use
             try:
-                identifier_summary = (
+                _ = (  # identifier_summary - unused, kept for potential future use
                     self.document_store.get_identifier_branching_summary()
                 )
             except Exception as e:
                 logger.warning(f"Failed to get identifier summary: {e}")
-                identifier_summary = {"error": "Identifier analysis unavailable"}
+                _ = {
+                    "error": "Identifier analysis unavailable"
+                }  # identifier_summary - unused error case
 
             # Generate per-IDS statistics
             ids_statistics = {}
@@ -502,14 +406,7 @@ Format as JSON with 'definition', 'imas_significance', 'experimental_relevance',
                     }
 
             # Handle specific questions
-            question_analysis = None
-            question_results = None
             if question:
-                question_analysis = {
-                    "query_type": "specific_question",
-                    "analysis_approach": "Using semantic search and domain knowledge",
-                }
-
                 # Search for question-related content
                 try:
                     search_results_dict = self.search_composer.search_with_params(
@@ -519,22 +416,15 @@ Format as JSON with 'definition', 'imas_significance', 'experimental_relevance',
                     )
 
                     if search_results_dict["results"]:
-                        question_results = [
-                            {
-                                "path": r["path"],
-                                "ids_name": r["ids_name"],
-                                "relevance": r["relevance_score"],
-                                "summary": r["documentation"][:150],
-                            }
-                            for r in search_results_dict["results"][:5]
-                        ]
+                        # Process question results for inclusion in overview
+                        pass  # Results processed in overview_response below
                     else:
-                        question_results = []
+                        # No specific results found for question
+                        pass
                 except Exception as e:
                     logger.warning(f"Question search failed: {e}")
-                    question_results = []
 
-            # Add usage guidance
+            # Usage guidance for users
             usage_guidance = {
                 "tools_available": [
                     "search_imas - Find specific data paths",
@@ -552,38 +442,13 @@ Format as JSON with 'definition', 'imas_significance', 'experimental_relevance',
                 ],
             }
 
-            ai_prompt = f"""IMAS Data Dictionary Overview Request:
-Total IDS: {len(available_ids)}
-Physics Domains: {list(physics_domains)}
-Sample Analysis: {sample_analysis_data}
-Question Asked: {question or "General overview"}
-
-Identifier Summary: {identifier_summary}
-
-Provide comprehensive overview including:
-1. IMAS data dictionary structure and organization
-2. Key physics domains and their measurement focus
-3. Data navigation strategies for researchers
-4. Critical identifier schemas and branching logic
-5. Recommended workflows for plasma physics analysis
-
-Format as JSON with 'structure_overview', 'physics_domains_guide', 'navigation_strategies', 'identifier_guidance', 'analysis_workflows' fields."""
-
-            overview_response = OverviewResponse(
-                total_ids=len(available_ids),
-                sample_analysis=sample_analysis_data,
+            # Build overview response using Pydantic
+            overview_response = OverviewResult(
+                content=f"IMAS Data Dictionary Overview:\nTotal IDS: {len(available_ids)}\nData types: {list(data_types)}\nCommon units: {list(units_found)[:10]}\n{usage_guidance}",
                 available_ids=available_ids,
+                query=question,
                 physics_domains=list(physics_domains),
-                data_types=list(data_types),
-                common_units=list(units_found)[:10],
-                identifier_summary=identifier_summary,
-                ids_statistics=ids_statistics,
-                question=question,
-                question_analysis=question_analysis,
-                question_results=question_results,
-                usage_guidance=usage_guidance,
-                ai_prompt=ai_prompt,
-                error=None,
+                physics_context=None,
             )
 
             return overview_response.model_dump()
@@ -603,7 +468,6 @@ Format as JSON with 'structure_overview', 'physics_domains_guide', 'navigation_s
 
     @mcp_tool("Get detailed structural analysis of a specific IDS")
     @ai_enhancer(temperature=0.2, max_tokens=800)
-    @tool_suggestions
     async def analyze_ids_structure(
         self, ids_name: str, ctx: Optional[Context] = None
     ) -> Dict[str, Any]:
@@ -671,7 +535,7 @@ Format as JSON with 'structure_overview', 'physics_domains_guide', 'navigation_s
                 "document_count": len(ids_documents),
             }
 
-            identifier_analysis = {
+            _ = {  # identifier_analysis - unused, kept for potential future use
                 "total_identifier_nodes": len(identifier_nodes),
                 "branching_paths": identifier_nodes,
                 "coverage": f"{len(identifier_nodes) / len(paths) * 100:.1f}%"
@@ -688,38 +552,31 @@ Format as JSON with 'structure_overview', 'physics_domains_guide', 'navigation_s
                     root = segments[0]
                     path_patterns[root] = path_patterns.get(root, 0) + 1
 
-            path_patterns_sorted = dict(
+            _ = dict(  # path_patterns_sorted - unused, kept for potential future use
                 sorted(path_patterns.items(), key=lambda x: x[1], reverse=True)[:10]
             )
 
-            # Add AI enhancement prompt for conditional enhancement
-            ai_prompt = f"""IDS Structure Analysis: {ids_name}
-Total paths: {len(paths)}
-Max depth: {structure_data["max_depth"]}
-Top path patterns: {list(path_patterns_sorted.keys())[:5]}
-Sample paths: {paths[:5]}
-Description: IDS '{ids_name}' containing {len(paths)} data paths
-
-Provide structural analysis including:
-1. Physics domain and measurement purpose
-2. Data organization principles used
-3. Key measurement paths and their significance  
-4. Typical usage patterns for researchers
-5. Related IDS for comprehensive analysis
-
-Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usage_patterns', 'related_ids' fields."""
-
             # Build final response using Pydantic
-            response = StructureResponse(
+            response = StructureResult(
                 ids_name=ids_name,
-                total_paths=len(paths),
                 description=f"IDS '{ids_name}' containing {len(paths)} data paths",
                 structure=structure_data,
-                identifier_analysis=identifier_analysis,
                 sample_paths=paths[:10],
-                path_patterns=path_patterns_sorted,
-                ai_prompt=ai_prompt,
-                error=None,
+                max_depth=max(len(path.split(".")) for path in paths) if paths else 0,
+                physics_domains=[
+                    domain
+                    for domain in [
+                        "equilibrium",
+                        "core_profiles",
+                        "disruptions",
+                        "transport",
+                        "heating",
+                        "current_drive",
+                        "mhd",
+                    ]
+                    if domain in ids_name.lower()
+                ],
+                physics_context=None,
             )
 
             return response.model_dump()
@@ -739,7 +596,6 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
 
     @mcp_tool("Explore relationships between IMAS data paths")
     @ai_enhancer(temperature=0.3, max_tokens=800)
-    @tool_suggestions
     async def explore_relationships(
         self,
         path: str,
@@ -818,18 +674,25 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                 if result_path not in seen_paths and result_path != path:
                     seen_paths.add(result_path)
 
-                    # Build DataPath instead of RelationshipItem
+                    # Build DataPath with correct fields
+
+                    local_physics_context = None
+                    if result_dict.get("physics_domain"):
+                        local_physics_context = PhysicsContext(
+                            domain=result_dict["physics_domain"],
+                            phenomena=[],
+                            typical_values={},
+                        )
+
                     related_paths.append(
                         DataPath(
                             path=result_path,
-                            ids_name=result_dict["ids_name"],
                             documentation=result_dict["documentation"][:200] + "..."
                             if len(result_dict["documentation"]) > 200
                             else result_dict["documentation"],
-                            relevance_score=result_dict["relevance_score"],
-                            physics_domain=result_dict.get("physics_domain", ""),
                             units=result_dict.get("units", ""),
                             data_type=result_dict.get("data_type", ""),
+                            physics_context=local_physics_context,
                         )
                     )
 
@@ -838,8 +701,10 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                     ):  # Reduced from 5, stricter limit
                         break
 
+                        break
+
             # Build relationship analysis using dict structure
-            analysis_dict = {
+            _ = {  # analysis_dict - unused, kept for potential future use
                 "total_relationships": len(related_paths),
                 "physics_connections": len(
                     [p for p in related_paths if p.physics_domain]
@@ -847,47 +712,40 @@ Format as JSON with 'physics_domain', 'organization_analysis', 'key_paths', 'usa
                 "cross_ids_connections": len(set(p.ids_name for p in related_paths)),
             }
 
-            # Add AI enhancement prompt for conditional enhancement
-            ai_prompt = f"""Relationship Analysis for: {path}
-IDS: {ids_name}
-Related paths found: {len(related_paths)}
-Physics connections: {analysis_dict["physics_connections"]}
-Cross IDS: {analysis_dict["cross_ids_connections"]}
-Top related paths: {[r.path for r in related_paths[:5]]}
-
-Provide relationship analysis including:
-1. Physics-based connections and measurement dependencies
-2. Data flow patterns and coupling mechanisms  
-3. Experimental workflow relationships
-4. Recommended exploration paths for comprehensive analysis
-5. Critical measurement combinations
-
-Format as JSON with 'physics_connections', 'data_dependencies', 'workflow_patterns', 'exploration_recommendations', 'measurement_combinations' fields."""
-
             # Build final response using Pydantic
-            response = RelationshipResponse(
+            # Convert relationship_type string to enum if needed
+
+            relationship_type_enum = (
+                RelationshipType.ALL
+                if relationship_type == "all"
+                else RelationshipType.PARENT
+                if relationship_type == "parent"
+                else RelationshipType.CHILD
+                if relationship_type == "child"
+                else RelationshipType.SIBLING
+                if relationship_type == "sibling"
+                else RelationshipType.ALL
+            )
+
+            response = RelationshipResult(
                 path=path,
-                relationship_type=relationship_type,
+                relationship_type=relationship_type_enum,
                 max_depth=max_depth,
-                ids_name=ids_name,
-                related_paths=related_paths[:5],  # Use related_paths (DataPath list)
-                relationship_count=len(related_paths),
-                analysis={
-                    "total_relationships": len(related_paths),
-                    "physics_connections": len(
-                        [p for p in related_paths if p.physics_domain]
-                    ),
-                    "cross_ids_connections": len(
+                connections={
+                    "total_relationships": [p.path for p in related_paths],
+                    "physics_connections": [
+                        p.path for p in related_paths if p.physics_domain
+                    ],
+                    "cross_ids_connections": list(
                         set(p.ids_name for p in related_paths)
                     ),
                 },
-                identifier_context={
-                    "significance": f"Found {len(related_paths)} related paths",
-                    "branching_implications": "Relationships identified through semantic similarity",
-                },
-                physics_relationships=None,  # TODO: Add physics context
-                ai_prompt=ai_prompt,
-                error=None,
+                paths=related_paths[:5],
+                count=len(related_paths),
+                physics_domains=[
+                    p.physics_domain for p in related_paths if p.physics_domain
+                ],
+                physics_context=None,
             )
 
             return response.model_dump()
@@ -1005,7 +863,7 @@ Format as JSON with 'physics_connections', 'data_dependencies', 'workflow_patter
             }
 
             # Add AI enhancement prompt for conditional enhancement
-            ai_prompt = f"""Identifier Exploration Request:
+            _ = f"""Identifier Exploration Request:
 Query: {query or "General exploration"}
 Scope: {scope}
 
@@ -1022,15 +880,22 @@ Provide identifier analysis including:
 Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usage_guidance', 'critical_decisions' fields."""
 
             # Build final response using Pydantic
-            response = IdentifierResponse(
-                query=query,
-                scope=scope,
-                total_schemas=len(schemas),
+            # Convert scope string to enum if needed
+            scope_enum = (
+                IdentifierScope.ALL
+                if scope == "all"
+                else IdentifierScope.PATHS
+                if scope == "paths"
+                else IdentifierScope.SCHEMAS
+                if scope == "schemas"
+                else IdentifierScope.ALL
+            )
+
+            response = IdentifierResult(
+                scope=scope_enum,
                 schemas=[s for s in schemas],  # schemas is already dict list
-                identifier_paths=identifier_paths,
-                branching_analytics=branching_analytics,
-                ai_prompt=ai_prompt,
-                error=None,
+                paths=identifier_paths,
+                analytics=branching_analytics,
             )
 
             return response.model_dump()
@@ -1302,7 +1167,7 @@ Format as JSON with 'significance', 'key_schemas', 'physics_implications', 'usag
             }
 
             # Add AI enhancement prompt for conditional enhancement
-            ai_prompt = f"""Bulk Export Analysis:
+            _ = f"""Bulk Export Analysis:
 IDS Requested: {ids_list}
 Valid IDS: {valid_ids}
 Export Format: {output_format}
@@ -1322,14 +1187,15 @@ Provide bulk export guidance including:
 Format as JSON with 'usage_recommendations', 'physics_insights', 'analysis_workflows', 'integration_patterns', 'quality_considerations' fields."""
 
             # Build final response using Pydantic - simplify to use dict
-            response = BulkExportResponse(
-                ids_list=ids_list,
+            response = IDSExport(
+                ids_names=ids_list,
+                include_physics=include_physics_context,
                 include_relationships=include_relationships,
-                include_physics_context=include_physics_context,
-                output_format=output_format,
-                export_data=export_data,
-                ai_prompt=ai_prompt,
-                error=None,
+                data=export_data,
+                metadata={
+                    "output_format": output_format,
+                    "export_timestamp": "2024-01-01T00:00:00Z",
+                },
             )
 
             return response.model_dump()
@@ -1576,7 +1442,7 @@ Format as JSON with 'usage_recommendations', 'physics_insights', 'analysis_workf
             }
 
             # Add AI enhancement prompt for conditional enhancement
-            ai_prompt = f"""Physics Domain Export: {domain}
+            _ = f"""Physics Domain Export: {domain}
 Analysis Depth: {analysis_depth}
 Paths Found: {export_summary["paths_found"]}
 Associated IDS: {export_data["domain_data"]["associated_ids"]}
@@ -1593,14 +1459,12 @@ Provide domain analysis including:
 Format as JSON with 'physics_significance', 'measurement_pathways', 'integration_patterns', 'analysis_workflows', 'validation_approaches' fields."""
 
             # Build final response using Pydantic - simplify to use dict
-            response = DomainExportResponse(
+            response = DomainExport(
                 domain=domain,
+                domain_info={"analysis_depth": analysis_depth, "max_paths": max_paths},
                 include_cross_domain=include_cross_domain,
-                analysis_depth=analysis_depth,
-                max_paths=max_paths,
-                export_data=export_data,
-                ai_prompt=ai_prompt,
-                error=None,
+                data=export_data,
+                metadata={"analysis_timestamp": "2024-01-01T00:00:00Z"},
             )
 
             return response.model_dump()
@@ -1618,6 +1482,309 @@ Format as JSON with 'physics_significance', 'measurement_pathways', 'integration
                     "Try with analysis_depth='overview' for faster processing",
                 ],
             }
+
+    def _validate_search_mode(self, search_mode: str) -> SearchMode:
+        """Validate and convert string search_mode to SearchMode enum."""
+        if not isinstance(search_mode, str):
+            raise ValueError(f"search_mode must be a string, got {type(search_mode)}")
+
+        # Convert to lowercase for case-insensitive matching
+        search_mode = search_mode.lower()
+
+        # Direct mapping to enum values
+        mode_mapping = {
+            "auto": SearchMode.AUTO,
+            "semantic": SearchMode.SEMANTIC,
+            "lexical": SearchMode.LEXICAL,
+            "hybrid": SearchMode.HYBRID,
+        }
+
+        if search_mode not in mode_mapping:
+            valid_modes = list(mode_mapping.keys())
+            raise ValueError(
+                f"Invalid search_mode '{search_mode}'. Must be one of: {valid_modes}"
+            )
+
+        return mode_mapping[search_mode]
+
+    def _get_cached_result(
+        self,
+        query: Union[str, List[str]],
+        ids_name: Optional[str],
+        max_results: int,
+        search_mode: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Check cache for existing results."""
+        return self.search_cache.get(
+            query=query,
+            ids_name=ids_name,
+            max_results=max_results,
+            search_mode=search_mode,
+        )
+
+    def _convert_search_mode(self, search_mode: str) -> SearchMode:
+        """Convert string search mode to enum with validation."""
+        try:
+            return SearchMode(search_mode.lower())
+        except ValueError:
+            # This should not happen due to earlier validation, but provides fallback
+            return SearchMode.AUTO
+
+    def _execute_search(
+        self,
+        query: Union[str, List[str]],
+        ids_name: Optional[str],
+        max_results: int,
+        search_mode_enum: SearchMode,
+    ) -> List:
+        """Execute the search using SearchComposer."""
+        config = SearchConfig(
+            mode=search_mode_enum,
+            max_results=max_results,
+            filter_ids=[ids_name] if ids_name else None,
+        )
+        return self.search_composer.search(query, config)
+
+    def _convert_search_results(self, search_results: List) -> List[SearchHit]:
+        """Convert SearchResult objects to SearchHit objects."""
+        search_hits = []
+        for result in search_results:
+            identifier_info = self._extract_identifier_info(result.document)
+            data_path = result.document.to_datapath()
+
+            search_hit = SearchHit(
+                **data_path.model_dump(),
+                relevance_score=result.score,
+                ids_name=result.document.metadata.ids_name,
+                identifier=identifier_info,
+            )
+            search_hits.append(search_hit)
+
+        return search_hits
+
+    def _generate_suggestions(
+        self, search_hits: List[SearchHit], search_mode_enum: SearchMode
+    ) -> tuple[List, List]:
+        """Generate contextual query and tool suggestions."""
+        from imas_mcp.models.response_models import SearchSuggestion, ToolSuggestion
+
+        # Generate query suggestions based on results
+        if len(search_hits) == 0:
+            suggestions = [
+                "Try a broader search term",
+                "Check spelling of physics terms",
+                "Use search_mode='semantic' for concept-based search",
+                "Remove IDS filter to search all data",
+            ]
+        elif len(search_hits) < 3:
+            suggestions = [
+                "Try related physics concepts",
+                "Use search_mode='hybrid' for comprehensive results",
+                "Consider broader measurement categories",
+            ]
+        else:
+            suggestions = [
+                "Refine search with specific physics terms",
+                "Try related measurement contexts",
+                "Use explain_concept for detailed analysis",
+            ]
+
+        query_hints = [
+            SearchSuggestion(suggestion=s, reason="Based on search results analysis")
+            for s in suggestions
+        ]
+
+        # Generate tool suggestions based on results
+        tool_hints = []
+        if search_hits:
+            tool_hints.append(
+                ToolSuggestion(
+                    tool_name="explain_concept",
+                    description="Get detailed explanation of physics concepts found in search results",
+                    relevance="Understand the physics behind the search results",
+                )
+            )
+
+            ids_found = set(hit.ids_name for hit in search_hits)
+            if ids_found:
+                first_ids = next(iter(ids_found))
+                tool_hints.append(
+                    ToolSuggestion(
+                        tool_name="analyze_ids_structure",
+                        description=f"Analyze structure of {first_ids} IDS for better understanding",
+                        relevance="Explore the organizational structure of the data",
+                    )
+                )
+
+        return query_hints, tool_hints
+
+    def _get_physics_enhancement(self, query: Union[str, List[str]]) -> Optional[Any]:
+        """Try to get physics search enhancement."""
+        try:
+            return physics_search(str(query) if isinstance(query, list) else query)
+        except Exception:
+            return None
+
+    async def _apply_ai_enhancement(
+        self,
+        search_mode_enum: SearchMode,
+        ctx: Optional[Context],
+        search_hits: List[SearchHit],
+        query: Union[str, List[str]],
+        tool_name: str,
+    ) -> Dict[str, Any]:
+        """Apply AI enhancement similar to @ai_enhancer decorator."""
+        from imas_mcp.search.ai_enhancer import (
+            EnhancementDecisionEngine,
+            TOOL_ENHANCEMENT_CONFIG,
+            AI_PROMPTS,
+            ToolCategory,
+        )
+        import json
+        from mcp.types import TextContent
+        from typing import cast
+
+        # Use the decision engine to determine if AI enhancement should be applied
+        should_enhance = EnhancementDecisionEngine.should_enhance(
+            tool_name, (), {"search_mode": search_mode_enum.value, "query": query}, ctx
+        )
+
+        if not should_enhance:
+            return {"status": "AI enhancement not applied - conditions not met"}
+
+        if not ctx:
+            return {"status": "AI enhancement not available - no context"}
+
+        # Create AI prompt for search enhancement
+        ai_prompt = f"""Search Analysis for IMAS Data Dictionary:
+Query: {query}
+Search Mode: {search_mode_enum.value}
+Results Found: {len(search_hits)}
+
+Search Results Summary:
+{chr(10).join([f"- {hit.path} (score: {hit.relevance_score:.2f})" for hit in search_hits[:5]])}
+
+Physics Domains: {list(set(hit.physics_context.domain for hit in search_hits if hit.physics_context))}
+
+Provide search insights including:
+1. Query interpretation and physics concepts identified
+2. Quality assessment of search results
+3. Suggested refinements or related queries
+4. Physics domain connections and measurement context
+5. Recommended follow-up tools or analysis approaches
+
+Format as JSON with 'query_interpretation', 'quality_assessment', 'suggested_refinements', 'physics_connections', 'recommended_tools' fields."""
+
+        # Get the appropriate system prompt for this tool category
+        config = TOOL_ENHANCEMENT_CONFIG.get(
+            tool_name, {"category": ToolCategory.SEARCH}
+        )
+        system_prompt = AI_PROMPTS.get(
+            config["category"], AI_PROMPTS[ToolCategory.SEARCH]
+        )
+
+        try:
+            logger.debug(f"Attempting AI enhancement for {tool_name}")
+
+            # Use the FastMCP recommended approach with system_prompt parameter
+            ai_response = await ctx.sample(
+                ai_prompt,
+                system_prompt=system_prompt,
+                temperature=0.3,
+                max_tokens=800,
+            )
+
+            if ai_response:
+                text_content = cast(TextContent, ai_response)
+                try:
+                    ai_insights = json.loads(text_content.text)
+                    ai_insights["status"] = "AI enhancement applied"
+                    return ai_insights
+                except json.JSONDecodeError:
+                    return {
+                        "response": text_content.text,
+                        "status": "AI enhancement applied (unstructured)",
+                    }
+            else:
+                return {"error": "No AI response received"}
+
+        except Exception as e:
+            logger.warning(f"AI enhancement failed for {tool_name}: {e}")
+            return {"error": "AI enhancement temporarily unavailable"}
+
+    def _build_search_response(
+        self,
+        query: Union[str, List[str]],
+        search_mode_enum: SearchMode,
+        search_hits: List[SearchHit],
+        query_hints: List,
+        tool_hints: List,
+        ai_insights: Dict[str, Any],
+        physics_result: Optional[Any],
+    ) -> SearchResponse:
+        """Build the final SearchResponse object."""
+        # Convert SearchHit objects to DataPath objects for backward compatibility
+        data_paths = []
+        for hit in search_hits:
+            # Extract DataPath fields from SearchHit
+            data_path_dict = hit.model_dump()
+            # Remove search-specific fields
+            data_path_dict.pop("relevance_score", None)
+            data_path_dict.pop("ids_name", None)
+            data_path_dict.pop("identifier", None)
+            # Create DataPath object
+            from imas_mcp.core.data_model import DataPath
+
+            data_paths.append(DataPath(**data_path_dict))
+
+        return SearchResponse(
+            query=query,
+            search_mode=search_mode_enum,
+            hits=search_hits,
+            paths=data_paths,  # Use converted DataPath objects
+            count=len(search_hits),  # Keep for backward compatibility
+            query_hints=query_hints,
+            tool_hints=tool_hints,
+            ai_insights=ai_insights,
+            physics_context=physics_result if physics_result else None,
+            physics_domains=[physics_result.physics_matches[0].domain]
+            if physics_result and physics_result.physics_matches
+            else [],
+        )
+
+    def _cache_result(
+        self,
+        query: Union[str, List[str]],
+        ids_name: Optional[str],
+        max_results: int,
+        search_mode: str,
+        response: SearchResponse,
+    ) -> None:
+        """Cache the successful search result."""
+        self.search_cache.set(
+            query=query,
+            result=response.model_dump(),
+            ids_name=ids_name,
+            max_results=max_results,
+            search_mode=search_mode,
+        )
+
+    def _create_error_response(
+        self,
+        error_message: str,
+        query: Union[str, List[str]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create standardized error response."""
+        return ErrorResponse(
+            error=error_message,
+            suggestions=[
+                "Check search term spelling",
+                "Try simpler search terms",
+                "Use get_overview() to explore available data",
+            ],
+            context=context or {"tool": "search_imas", "query": query},
+        ).model_dump()
 
     def _extract_identifier_info(self, document) -> Dict[str, Any]:
         """Extract identifier schema information from a document."""

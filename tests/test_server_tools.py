@@ -7,6 +7,7 @@ Tests are categorized by speed and use session-scoped fixtures for expensive ope
 
 import pytest
 
+from imas_mcp.models.enums import SearchMode
 from tests.conftest import extract_result
 
 
@@ -27,10 +28,13 @@ class TestSearchImas:
         assert isinstance(result, dict)
         assert "results" in result
         assert "results_count" in result
-        assert "search_strategy" in result
+        assert "search_mode" in result
         assert len(result["results"]) <= 5
-        # Accept either semantic_search or auto (fallback mode)
-        assert result["search_strategy"] in ["semantic_search", "auto"]
+        # Accept either semantic or auto (fallback mode) - compare with string values
+        assert result["search_mode"] in [
+            SearchMode.SEMANTIC.value,
+            SearchMode.AUTO.value,
+        ]
 
     @pytest.mark.asyncio
     @pytest.mark.fast
@@ -89,7 +93,7 @@ class TestSearchImas:
         # With lexical search, nonsensical queries should return no results
         assert isinstance(result["results"], list)
         assert len(result["results"]) == 0
-        assert result["search_strategy"] == "lexical"
+        assert result["search_mode"] == SearchMode.LEXICAL.value
 
     @pytest.mark.asyncio
     @pytest.mark.fast
@@ -305,8 +309,8 @@ class TestGetOverview:
         result = extract_result(result)
         assert isinstance(result, dict)
         assert "total_ids" in result
-        assert "question" in result
-        assert result["question"] == "What IDS are available?"
+        assert "query" in result
+        assert result["query"] == "What IDS are available?"
         assert "question_results" in result
 
     @pytest.mark.asyncio

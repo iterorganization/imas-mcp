@@ -17,7 +17,6 @@ from imas_mcp.core.data_model import (
     IdsDetailed,
     IdsInfo,
     PhysicsConcept,
-    RelationshipCategories,
     Relationships,
     TransformationOutputs,
     UnitFamily,
@@ -504,27 +503,6 @@ class DataDictionaryTransformer:
             # Convert paths to DataPath objects, handling relationships properly
             data_paths = {}
             for path_key, path_data in data["paths"].items():
-                # Handle relationships conversion
-                relationships_data = path_data.get("relationships")
-                if relationships_data and isinstance(relationships_data, dict):
-                    # Convert dict to RelationshipCategories object
-                    relationships = RelationshipCategories(
-                        coordinates=relationships_data.get("coordinates", []),
-                        physics_related=relationships_data.get("physics_related", []),
-                        cross_ids=relationships_data.get("cross_ids", []),
-                        validation=relationships_data.get("validation", []),
-                        hierarchical=relationships_data.get("hierarchical", []),
-                        units_compatible=relationships_data.get("units_compatible", []),
-                        semantic_similarity=relationships_data.get(
-                            "semantic_similarity", []
-                        ),
-                        documentation_refs=relationships_data.get(
-                            "documentation_refs", []
-                        ),
-                    )
-                    path_data = path_data.copy()
-                    path_data["relationships"] = relationships
-
                 # Handle usage_examples conversion
                 usage_examples_data = path_data.get("usage_examples", [])
                 if usage_examples_data and isinstance(usage_examples_data, list):
