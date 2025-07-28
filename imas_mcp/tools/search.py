@@ -1,7 +1,9 @@
 """
-Search tool implementation.
+Search tool implementation with comprehensive decorator composition.
 
-This module contains the search_imas tool logic extracted from the monolithic Tools class.
+This module contains the search_imas tool logic with comprehensive decorators
+for caching, validation, AI enhancement, tool recommendations, performance
+monitoring, and error handling.
 """
 
 import logging
@@ -13,7 +15,17 @@ from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.search.ai_enhancer import ai_enhancer
+from imas_mcp.search.schemas.search_schemas import SearchInputSchema
+
+# Import all decorators for Phase 4 implementation
+from imas_mcp.search.decorators import (
+    cache_results,
+    validate_input,
+    sample,
+    recommend_tools,
+    measure_performance,
+    handle_errors,
+)
 
 from .base import BaseTool
 
@@ -32,7 +44,7 @@ def mcp_tool(description: str):
 
 
 class Search(BaseTool):
-    """Tool for searching IMAS data paths."""
+    """Tool for searching IMAS data paths with comprehensive decorator composition."""
 
     def __init__(self, ids_set: Optional[set[str]] = None):
         """Initialize search tool with search service."""
@@ -70,8 +82,13 @@ class Search(BaseTool):
     def get_tool_name(self) -> str:
         return "search_imas"
 
+    @cache_results(ttl=300, key_strategy="semantic")
+    @validate_input(schema=SearchInputSchema)
+    @sample(temperature=0.3, max_tokens=800)
+    @recommend_tools(strategy="search_based", max_tools=4)
+    @measure_performance(include_metrics=True, slow_threshold=1.0)
+    @handle_errors(fallback="search_suggestions")
     @mcp_tool("Search for IMAS data paths with relevance-ordered results")
-    @ai_enhancer(temperature=0.3, max_tokens=800)
     async def search_imas(
         self,
         query: Union[str, List[str]],
@@ -83,7 +100,15 @@ class Search(BaseTool):
         """
         Search for IMAS data paths with relevance-ordered results.
 
-        Search modes for LLM usage:
+        Implementation with comprehensive decorator composition:
+        - Caching for performance optimization
+        - Input validation with Pydantic schemas
+        - AI sampling for enriched insights and analysis
+        - Tool recommendations for follow-up actions
+        - Performance monitoring and metrics collection
+        - Error handling with fallback suggestions
+
+        Search modes:
         - "auto": Automatically selects best mode based on query
         - "semantic": Concept-based search using AI embeddings
         - "lexical": Fast text-based keyword search
@@ -93,108 +118,87 @@ class Search(BaseTool):
             query: Search term(s), physics concept, symbol, or pattern
             ids_name: Optional specific IDS to search within
             max_results: Maximum number of results to return (1-100)
-            search_mode: Search mode string - must be "auto", "semantic", "lexical", or "hybrid"
-            ctx: MCP context for AI enhancement
+            search_mode: Search mode - "auto", "semantic", "lexical", or "hybrid"
+            ctx: MCP context for enhancement
 
         Returns:
-            Dictionary containing search results with paths, descriptions, and metadata
+            Dictionary with search results processed by decorators:
+            - results: List of matching paths with metadata
+            - sample_insights: AI-generated analysis (from @sample)
+            - suggestions: Follow-up tool recommendations (from @recommend_tools)
+            - performance: Execution metrics (from @measure_performance)
         """
-        try:
-            # Validate search mode
-            if search_mode not in ["auto", "semantic", "lexical", "hybrid"]:
-                return self._create_error_response(
-                    f"Invalid search mode: {search_mode}. Must be auto, semantic, lexical, or hybrid.",
-                    query,
-                )
+        # Convert search mode string to enum for service
+        mode_map = {
+            "auto": SearchMode.AUTO,
+            "semantic": SearchMode.SEMANTIC,
+            "lexical": SearchMode.LEXICAL,
+            "hybrid": SearchMode.HYBRID,
+        }
+        search_mode_enum = mode_map[search_mode]
 
-            # Validate max_results
-            if not (1 <= max_results <= 100):
-                return self._create_error_response(
-                    f"Invalid max_results: {max_results}. Must be between 1 and 100.",
-                    query,
-                )
+        # Create search configuration for service
+        config = SearchConfig(
+            mode=search_mode_enum,
+            max_results=max_results,
+            filter_ids=[ids_name] if ids_name else None,
+            similarity_threshold=0.0,
+        )
 
-            # Convert search mode string to enum
-            mode_map = {
-                "auto": SearchMode.AUTO,
-                "semantic": SearchMode.SEMANTIC,
-                "lexical": SearchMode.LEXICAL,
-                "hybrid": SearchMode.HYBRID,
-            }
-            search_mode_enum = mode_map[search_mode]
+        # Execute search through service
+        logger.info(
+            f"Executing search: query='{query}' mode={search_mode} max_results={max_results}"
+        )
+        results = await self._search_service.search(query, config)
 
-            # Create search configuration
-            config = SearchConfig(
-                mode=search_mode_enum,
-                max_results=max_results,
-                filter_ids=[ids_name] if ids_name else None,
-                similarity_threshold=0.0,
-            )
+        # Build AI sampling prompt for @sample decorator
+        ai_prompt = self._build_sampling_prompt(query, results)
 
-            # Execute search using search service
-            logger.info(
-                f"Executing search: query='{query}' mode={search_mode} max_results={max_results}"
-            )
-            results = await self._search_service.search(query, config)
-
-            # Convert results to expected format
-            response = self._format_search_response(results, search_mode, query)
-
-            logger.info(f"Search completed: {len(results)} results returned")
-            return response
-
-        except Exception as e:
-            logger.error(f"Search failed: {str(e)}")
-            return self._create_error_response(str(e), query)
-
-    def _format_search_response(
-        self,
-        results: List[SearchResult],
-        search_mode: str,
-        query: Union[str, List[str]],
-    ) -> Dict[str, Any]:
-        """Format search results into expected response format."""
-        formatted_results = []
-
-        for result in results:
-            # Use the SearchResult.to_dict() method for consistency
-            result_dict = result.to_dict()
-
-            # Ensure we have the expected fields with fallbacks
-            formatted_result = {
-                "path": result_dict.get("path", ""),
-                "description": result_dict.get("documentation", ""),
-                "relevance_score": result_dict.get("relevance_score", result.score),
-                "rank": result_dict.get("rank", result.rank),
-                "metadata": {
-                    "ids_name": result_dict.get("ids_name", ""),
-                    "data_type": result_dict.get("data_type", ""),
-                    "physics_domain": result_dict.get("physics_domain", "general"),
-                    "units": result_dict.get("units", ""),
-                },
-            }
-
-            # Add highlights if available
-            if result_dict.get("highlights"):
-                formatted_result["context"] = result_dict["highlights"]
-
-            formatted_results.append(formatted_result)
-
-        return {
-            "results": formatted_results,
-            "results_count": len(formatted_results),
+        # Convert to expected format with sampling prompt
+        result = {
+            "results": [hit.to_dict() for hit in results],
+            "results_count": len(results),
             "search_mode": search_mode,
             "query": query,
-            "max_results": len(formatted_results),  # Actual results returned
+            "ai_prompt": ai_prompt,  # Used by @sample decorator
         }
 
-    def _create_error_response(
-        self, error_message: str, query: Union[str, List[str]]
-    ) -> Dict[str, Any]:
-        """Create standardized error response."""
-        return {
-            "error": error_message,
-            "query": query,
-            "results": [],
-            "results_count": 0,
-        }
+        logger.info(f"Search completed: {len(results)} results returned")
+        return result
+
+    def _build_sampling_prompt(
+        self, query: Union[str, List[str]], results: List[SearchResult]
+    ) -> str:
+        """Build AI sampling prompt based on search results."""
+        query_str = query if isinstance(query, str) else " ".join(query)
+
+        if not results:
+            return f"""No results found for IMAS search: "{query_str}"
+
+Provide helpful guidance including:
+1. Alternative search terms or concepts to try
+2. Common IMAS data paths that might be related
+3. Physics context that might help refine the search
+4. Suggestions for broader or narrower search strategies"""
+
+        # Build prompt with top results using to_dict() method
+        top_results = results[:3]
+        results_text = "\n".join(
+            [
+                f"- {hit.to_dict()['path']}: {hit.to_dict()['documentation'][:100]}..."
+                for hit in top_results
+            ]
+        )
+
+        return f"""Search Results Analysis for: "{query_str}"
+Found {len(results)} relevant paths in IMAS data dictionary.
+
+Top results:
+{results_text}
+
+Provide comprehensive analysis including:
+1. Physics context and significance of these paths
+2. Recommended follow-up searches or related concepts  
+3. Data usage patterns and common workflows
+4. Validation considerations for these measurements
+5. Relationships between the found paths"""
