@@ -63,11 +63,6 @@ class ExplainInputSchema(BaseModel):
         default=DetailLevel.INTERMEDIATE,
         description="Level of detail for explanation",
     )
-    context: Optional[str] = Field(
-        default=None,
-        max_length=500,
-        description="Optional context for more targeted explanation",
-    )
 
     @field_validator("concept")
     @classmethod

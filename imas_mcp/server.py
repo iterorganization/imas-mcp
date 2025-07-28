@@ -21,7 +21,7 @@ import nest_asyncio
 from fastmcp import FastMCP
 
 from imas_mcp.resources import Resources
-from imas_mcp.tools_original import Tools
+from imas_mcp.tools import Tools
 
 # apply nest_asyncio to allow nested event loops
 # This is necessary for Jupyter notebooks and some other environments

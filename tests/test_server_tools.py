@@ -7,7 +7,7 @@ Tests are categorized by speed and use session-scoped fixtures for expensive ope
 
 import pytest
 
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 from tests.conftest import extract_result
 
 

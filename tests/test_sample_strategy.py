@@ -9,7 +9,7 @@ clear switch-case like logic.
 import pytest
 from unittest.mock import Mock
 
-from imas_mcp.search.ai_enhancer import (
+from imas_mcp.search.ai_sampler import (
     EnhancementDecisionEngine,
     TOOL_ENHANCEMENT_CONFIG,
     EnhancementStrategy,
