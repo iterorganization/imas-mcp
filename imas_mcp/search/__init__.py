@@ -8,7 +8,7 @@ and document storage for efficient IMAS data dictionary querying.
 from .ai_enhancer import ai_enhancer
 from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
-from .search_modes import (
+from .search_strategy import (
     SearchComposer,
     SearchConfig,
     SearchResult,

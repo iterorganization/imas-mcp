@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Union
 
-from imas_mcp.search.search_modes import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 
 logger = logging.getLogger(__name__)
 

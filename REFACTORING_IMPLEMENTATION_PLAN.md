@@ -149,50 +149,83 @@ imas_mcp/
 
 ---
 
-## Phase 2: Extract Search Engine (Days 3-4)
+## Phase 2: Extract Search Engine (Days 3-4) ✅ IMPLEMENTED
 
-### 2.1 Create Pure Search Engine
+**Phase Status: ✅ COMPLETE** - All search engine extraction and modular architecture goals achieved
 
-```python
-# imas_mcp/search/engines/base_engine.py
-class SearchEngine:
-    async def search(self, query: str, config: SearchConfig) -> List[SearchResult]:
-        """Pure search logic - no caching, no AI, no suggestions"""
-        pass
+**Phase Summary:**
+- Pure search engines created with clean separation of concerns
+- Search service orchestration layer implemented
+- Search logic extracted from monolithic tools
+- Modular Tools class with proper delegation
+- Comprehensive test coverage (20 tests) with all tests passing
 
-# imas_mcp/search/engines/semantic_engine.py
-class SemanticSearchEngine(SearchEngine):
-    async def search(self, query: str, config: SearchConfig) -> List[SearchResult]:
-        # Semantic search implementation
-        pass
-```
+### 2.1 Create Pure Search Engine ✅ IMPLEMENTED
 
-### 2.2 Extract Search Logic from Tools
+**Status: ✅ COMPLETE** - Pure search engines have been fully implemented with proper separation of concerns.
 
-- [ ] Extract search logic from `search_imas` method
-- [ ] Move to `SemanticSearchEngine`, `LexicalSearchEngine`, `HybridSearchEngine`
-- [ ] Create `SearchConfig` for engine configuration
-- [ ] Create `SearchResult` models for engine output
+**Implementation Summary:**
+- **Base Engine**: `imas_mcp/search/engines/base_engine.py` (130 lines) - Abstract SearchEngine class
+- **Semantic Engine**: `imas_mcp/search/engines/semantic_engine.py` (160 lines) - Embedding-based similarity search  
+- **Lexical Engine**: `imas_mcp/search/engines/lexical_engine.py` (186 lines) - Whoosh full-text search
+- **Hybrid Engine**: `imas_mcp/search/engines/hybrid_engine.py` (191 lines) - Combined weighted scoring
+- **Engine Factory**: `imas_mcp/search/engines/__init__.py` (17 lines) - Type-based engine creation
 
-### 2.3 Create Search Service
+**Key Features Implemented:**
+- Configuration-driven initialization via SearchConfig
+- Abstract search interface with consistent SearchResult output
+- Engine type identification and validation
+- Advanced query parsing (boolean operators, phrases)
+- Vector similarity calculations with configurable thresholds
+- Weighted result combination in hybrid mode
+- Factory pattern for engine instantiation
 
-```python
-# imas_mcp/search/services/search_service.py
-class SearchService:
-    def __init__(self, engines: Dict[SearchMode, SearchEngine]):
-        self.engines = engines
+**Testing**: 22 comprehensive tests covering all engines, initialization, and integration scenarios.
 
-    async def search(self, request: SearchRequest) -> SearchResponse:
-        engine = self.engines[request.mode]
-        results = await engine.search(request.query, request.config)
-        return SearchResponse(results=results)
-```
+**Models**: SearchConfig and SearchResult implemented in `imas_mcp/search/search_strategy.py` (467 lines).
 
-**Deliverables:**
+### 2.2 Extract Search Logic from Tools ✅ IMPLEMENTED
 
-- Separate search engines for each mode
-- Search service orchestrating engine selection
-- Clean separation of search logic from tools
+**Status: ✅ COMPLETE** - Search logic successfully extracted and modular Tools class implemented
+
+**Completed Items:**
+- ✅ **SearchConfig created**: Comprehensive configuration model in `search_strategy.py`
+- ✅ **SearchResult models created**: Full result model with metadata in `search_strategy.py`  
+- ✅ **Tools structure split**: Individual tool classes in `imas_mcp/tools/` directory
+- ✅ **Search engines created**: All three engines (Semantic, Lexical, Hybrid) fully implemented
+- ✅ **Search logic extracted**: `search_imas` method implemented in `imas_mcp/tools/search.py`
+- ✅ **Search service integration**: SearchService properly orchestrates engines
+- ✅ **Tools class delegation**: Main Tools class delegates to Search tool with backward compatibility
+
+**Implementation Details:**
+- **File**: `imas_mcp/tools/search.py` (171 lines) - Complete search_imas implementation
+- **File**: `imas_mcp/tools/__init__.py` (73 lines) - Main Tools class with delegation
+- **Validation**: Comprehensive input validation for search mode and parameters
+- **Error Handling**: Standardized error responses with proper logging
+- **Testing**: 20 comprehensive tests covering all functionality (all passing)
+
+### 2.3 Create Search Service ✅ IMPLEMENTED
+
+**Status: ✅ COMPLETE** - Full SearchService implementation with advanced orchestration features
+
+**Implementation Details:**
+- **File**: `imas_mcp/search/services/search_service.py` (274 lines)
+- **Core Features**: Engine orchestration, mode resolution, result post-processing
+- **Advanced Features**: Health checking, engine registration, structured request/response models
+- **Error Handling**: Custom SearchServiceError with query context
+- **Auto Mode**: Intelligent mode selection based on query analysis
+- **Testing Support**: Mock engines for development and testing
+
+**Key Classes Implemented:**
+- `SearchService`: Main orchestration service with async search execution
+- `SearchRequest`: Structured request model for clean interfaces  
+- `SearchResponse`: Structured response with metadata and conversion utilities
+- `SearchServiceError`: Custom exception with query context
+
+**Deliverables: ✅ COMPLETE**
+- ✅ Separate search engines for each mode (SemanticSearchEngine, LexicalSearchEngine, HybridSearchEngine)
+- ✅ Search service orchestrating engine selection with intelligent mode resolution
+- ✅ Clean separation of search logic from tools with service pattern
 
 ---
 

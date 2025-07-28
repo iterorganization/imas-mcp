@@ -8,7 +8,7 @@ and real SQLite FTS capabilities.
 import pytest
 from unittest.mock import Mock, patch
 
-from imas_mcp.search.search_modes import (
+from imas_mcp.search.search_strategy import (
     SearchComposer,
     SearchModeSelector,
     SearchConfig,

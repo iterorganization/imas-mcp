@@ -18,7 +18,7 @@ from imas_mcp.search import (
     ai_enhancer,
 )
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.search_modes import SearchComposer, SearchConfig
+from imas_mcp.search.search_strategy import SearchComposer, SearchConfig
 from imas_mcp.models.enums import (
     SearchMode,
     DetailLevel,

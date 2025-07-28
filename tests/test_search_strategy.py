@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from typing import List
 
-from imas_mcp.search.search_modes import (
+from imas_mcp.search.search_strategy import (
     SearchMode,
     SearchConfig,
     SearchResult,
