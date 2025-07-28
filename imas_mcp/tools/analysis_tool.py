@@ -7,7 +7,7 @@ This module contains the analyze_ids_structure tool logic extracted from the mon
 from .base import BaseTool
 
 
-class Analysis(BaseTool):
+class AnalysisTool(BaseTool):
     """Tool for analyzing IDS structure."""
 
     def get_tool_name(self) -> str:
