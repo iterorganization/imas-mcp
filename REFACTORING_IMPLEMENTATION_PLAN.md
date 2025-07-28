@@ -410,7 +410,7 @@ class TestSearchTool:
 
         assert "hits" in result
         assert "ai_insights" in result
-        assert "suggestions" in result
+        assert "tool_recommendations" in result
 ```
 
 ### 6.2 Performance Testing

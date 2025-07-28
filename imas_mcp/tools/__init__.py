@@ -11,13 +11,13 @@ from imas_mcp.providers import MCPProvider
 
 # Import individual tool classes
 from .base import BaseTool
-from .search import Search
-from .explain import Explain
-from .overview import Overview
-from .analysis import Analysis
-from .relationships import Relationships
-from .identifiers import Identifiers
-from .export import Export
+from .search_tool import SearchTool
+from .explain_tool import ExplainTool
+from .overview_tool import OverviewTool
+from .analysis_tool import AnalysisTool
+from .relationships_tool import RelationshipsTool
+from .identifiers_tool import IdentifiersTool
+from .export_tool import ExportTool
 
 
 class Tools(MCPProvider):
@@ -33,13 +33,13 @@ class Tools(MCPProvider):
         self.ids_set = ids_set
 
         # Initialize individual tools
-        self.search_tool = Search(ids_set)
-        self.explain_tool = Explain()
-        self.overview_tool = Overview()
-        self.analysis_tool = Analysis()
-        self.relationships_tool = Relationships()
-        self.identifiers_tool = Identifiers()
-        self.export_tool = Export()
+        self.search_tool = SearchTool(ids_set)
+        self.explain_tool = ExplainTool()
+        self.overview_tool = OverviewTool()
+        self.analysis_tool = AnalysisTool()
+        self.relationships_tool = RelationshipsTool()
+        self.identifiers_tool = IdentifiersTool()
+        self.export_tool = ExportTool()
 
     @property
     def name(self) -> str:
@@ -68,10 +68,13 @@ class Tools(MCPProvider):
         """Delegate to search tool."""
         return await self.search_tool.search_imas(*args, **kwargs)
 
-    # TODO: Implement other tool delegations when those tools are completed
-    # async def explain_concept(self, *args, **kwargs):
-    #     """Delegate to explain tool."""
-    #     return await self.explain_tool.explain_concept(*args, **kwargs)
+    async def explain_concept(self, *args, **kwargs):
+        """Delegate to explain tool."""
+        return await self.explain_tool.explain_concept(*args, **kwargs)
+
+    async def get_overview(self, *args, **kwargs):
+        """Delegate to overview tool."""
+        return await self.overview_tool.get_overview(*args, **kwargs)
 
 
 __all__ = [

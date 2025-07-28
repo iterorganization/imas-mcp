@@ -1,7 +1,7 @@
 """
-Comprehensive test suite for search tool with decorator composition.
+Test suite for search tool with decorator composition.
 
-Tests the search tool with comprehensive decorator functionality:
+Tests the search tool with decorator functionality:
 - Cache decorator for performance optimization
 - Input validation decorator for data integrity
 - Sampling decorator for AI insights
@@ -13,7 +13,7 @@ Tests the search tool with comprehensive decorator functionality:
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from imas_mcp.tools.search import Search
+from imas_mcp.tools.search_tool import SearchTool
 from imas_mcp.search.search_strategy import SearchResult, SearchConfig
 from imas_mcp.search.document_store import Document, DocumentMetadata, Units
 from imas_mcp.models.enums import SearchMode
@@ -71,7 +71,7 @@ class TestSearchDecoratorComposition:
     @pytest.fixture
     def search_tool(self, mock_search_service):
         """Create search tool with mocked search service."""
-        tool = Search()
+        tool = SearchTool()
         tool._search_service = mock_search_service
         return tool
 
@@ -79,7 +79,7 @@ class TestSearchDecoratorComposition:
     async def test_search_with_decorator_composition(
         self, search_tool, mock_search_service, sample_search_results
     ):
-        """Test search tool with comprehensive decorator composition."""
+        """Test search tool with decorator composition."""
         # Setup mock to return sample results
         mock_search_service.search.return_value = sample_search_results
 
@@ -297,19 +297,19 @@ class TestSearchDecoratorComposition:
     def test_search_tool_initialization(self):
         """Test search tool initialization."""
         # Test with default IDS set
-        tool1 = Search()
+        tool1 = SearchTool()
         assert tool1.get_tool_name() == "search_imas"
         assert tool1._search_service is not None
 
         # Test with custom IDS set
         ids_set = {"core_profiles", "equilibrium"}
-        tool2 = Search(ids_set=ids_set)
+        tool2 = SearchTool(ids_set=ids_set)
         assert tool2.ids_set == ids_set
         assert tool2._search_service is not None
 
     def test_engine_creation(self):
         """Test search engine creation."""
-        tool = Search()
+        tool = SearchTool()
 
         # Test valid engine types
         config = SearchConfig(mode=SearchMode.SEMANTIC)
@@ -333,7 +333,7 @@ class TestSearchDecoratorsIntegration:
 
     @pytest.fixture
     def search_tool(self):
-        return Search()
+        return SearchTool()
 
     def test_mcp_tool_decorator(self, search_tool):
         """Test MCP tool decorator is applied."""
@@ -364,14 +364,14 @@ class TestSearchDecoratorsIntegration:
 
     @pytest.mark.asyncio
     async def test_decorator_composition_execution(self, search_tool):
-        """Test that the comprehensive decorator composition executes without errors."""
+        """Test that the decorator composition executes without errors."""
         # Mock the search service to avoid actual search
         with patch.object(
             search_tool._search_service, "search", new_callable=AsyncMock
         ) as mock_search:
             mock_search.return_value = []
 
-            # This should execute through the comprehensive decorator composition
+            # This should execute through the decorator composition
             result = await search_tool.search_imas(
                 query="test", search_mode="semantic", max_results=5
             )
@@ -386,7 +386,7 @@ class TestSearchConfigurationSupport:
 
     def test_search_mode_mapping(self):
         """Test search mode string to enum mapping."""
-        tool = Search()
+        tool = SearchTool()
 
         # This is tested indirectly through the search method
         # The mapping is internal to search_imas method
@@ -394,7 +394,7 @@ class TestSearchConfigurationSupport:
 
     def test_config_creation(self):
         """Test SearchConfig creation in search tool."""
-        tool = Search()
+        tool = SearchTool()
 
         # Test internal _create_search_service method
         service = tool._create_search_service()
@@ -403,7 +403,7 @@ class TestSearchConfigurationSupport:
     @pytest.mark.asyncio
     async def test_parameter_validation_integration(self):
         """Test parameter validation integration."""
-        tool = Search()
+        tool = SearchTool()
 
         # Mock the service
         with patch.object(

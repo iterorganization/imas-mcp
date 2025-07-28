@@ -1,7 +1,7 @@
 """
-Search tool implementation with comprehensive decorator composition.
+Search tool implementation.
 
-This module contains the search_imas tool logic with comprehensive decorators
+This module contains the search_imas tool logic with decorators
 for caching, validation, AI enhancement, tool recommendations, performance
 monitoring, and error handling.
 """
@@ -17,7 +17,7 @@ from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.search.schemas.search_schemas import SearchInputSchema
 
-# Import all decorators for Phase 4 implementation
+# Import all decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
@@ -43,8 +43,8 @@ def mcp_tool(description: str):
     return decorator
 
 
-class Search(BaseTool):
-    """Tool for searching IMAS data paths with comprehensive decorator composition."""
+class SearchTool(BaseTool):
+    """Tool for searching IMAS data paths."""
 
     def __init__(self, ids_set: Optional[set[str]] = None):
         """Initialize search tool with search service."""
@@ -100,7 +100,7 @@ class Search(BaseTool):
         """
         Search for IMAS data paths with relevance-ordered results.
 
-        Implementation with comprehensive decorator composition:
+        Implementation with decorators:
         - Caching for performance optimization
         - Input validation with Pydantic schemas
         - AI sampling for enriched insights and analysis
@@ -196,7 +196,7 @@ Found {len(results)} relevant paths in IMAS data dictionary.
 Top results:
 {results_text}
 
-Provide comprehensive analysis including:
+Provide detailed analysis including:
 1. Physics context and significance of these paths
 2. Recommended follow-up searches or related concepts  
 3. Data usage patterns and common workflows
