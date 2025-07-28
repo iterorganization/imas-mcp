@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Optional, Union
 
 from imas_mcp.search.engines.base_engine import SearchEngine
-from imas_mcp.search.search_modes import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.models.enums import SearchMode
 
 logger = logging.getLogger(__name__)
