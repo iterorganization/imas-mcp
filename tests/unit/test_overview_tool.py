@@ -37,7 +37,7 @@ class TestOverviewTool:
     @pytest.fixture
     def overview_tool(self, mock_document_store):
         """Create OverviewTool instance with mocked dependencies."""
-        tool = OverviewTool()
+        tool = OverviewTool(document_store=mock_document_store)
         # Replace the ids_set and search service with our mocks
         tool.ids_set = {"core_profiles", "equilibrium", "transport", "heating", "wall"}
         tool._search_service = Mock(spec=SearchService)
@@ -97,14 +97,16 @@ class TestOverviewTool:
     @pytest.mark.asyncio
     async def test_get_overview_error_handling(self, overview_tool):
         """Test error handling in get_overview."""
-        # Make the tool raise an exception
-        overview_tool._search_service = None  # This will cause an error
+        # Make the search service fail
+        overview_tool._search_service = None  # This will cause search to fail
 
         result = await overview_tool.get_overview()
 
+        # Tool should still return a successful overview despite search failure
         assert isinstance(result, dict)
-        assert "error" in result
-        assert "suggestions" in result
+        assert "content" in result  # Overview should still be generated
+        assert "available_ids" in result
+        assert "suggestions" in result  # Tool suggestions should be present
 
     def test_build_overview_sample_prompt(self, overview_tool):
         """Test sample prompt building."""

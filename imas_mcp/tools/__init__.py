@@ -8,6 +8,7 @@ Each module handles a specific tool functionality with clean separation of conce
 from typing import Optional
 from fastmcp import FastMCP
 from imas_mcp.providers import MCPProvider
+from imas_mcp.search.document_store import DocumentStore
 
 # Import individual tool classes
 from .base import BaseTool
@@ -32,14 +33,17 @@ class Tools(MCPProvider):
         """
         self.ids_set = ids_set
 
-        # Initialize individual tools
-        self.search_tool = SearchTool(ids_set)
-        self.explain_tool = ExplainTool()
-        self.overview_tool = OverviewTool()
-        self.analysis_tool = AnalysisTool()
-        self.relationships_tool = RelationshipsTool()
-        self.identifiers_tool = IdentifiersTool()
-        self.export_tool = ExportTool()
+        # Create shared DocumentStore with ids_set
+        self.document_store = DocumentStore(ids_set=ids_set)
+
+        # Initialize individual tools with shared document store
+        self.search_tool = SearchTool(self.document_store)
+        self.explain_tool = ExplainTool(self.document_store)
+        self.overview_tool = OverviewTool(self.document_store)
+        self.analysis_tool = AnalysisTool(self.document_store)
+        self.relationships_tool = RelationshipsTool(self.document_store)
+        self.identifiers_tool = IdentifiersTool(self.document_store)
+        self.export_tool = ExportTool(self.document_store)
 
     @property
     def name(self) -> str:
@@ -79,12 +83,12 @@ class Tools(MCPProvider):
 
 __all__ = [
     "BaseTool",
-    "Search",
-    "Explain",
-    "Overview",
-    "Analysis",
-    "Relationships",
-    "Identifiers",
-    "Export",
-    "Tools",  # Main Tools class for backward compatibility
+    "SearchTool",
+    "ExplainTool",
+    "OverviewTool",
+    "AnalysisTool",
+    "RelationshipsTool",
+    "IdentifiersTool",
+    "ExportTool",
+    "Tools",
 ]

@@ -1,7 +1,12 @@
 """
 Semantic search engine implementation for IMAS MCP.
 
-This module provides semantic search capabilities using sentence transformers
+This module provid            results = self.semantic_search.search(
+                query=query_str,
+                top_k=config.max_results,
+                ids_filter=config.ids_filter,
+                similarity_threshold=config.similarity_threshold,
+            )antic search capabilities using sentence transformers
 for embedding-based similarity search in the IMAS data dictionary.
 """
 
@@ -79,7 +84,7 @@ class SemanticSearchEngine(SearchEngine):
             semantic_results = self.semantic_search.search(
                 query=query_str,
                 top_k=config.max_results,
-                filter_ids=config.filter_ids,
+                ids_filter=config.ids_filter,
                 similarity_threshold=config.similarity_threshold,
             )
 

@@ -92,6 +92,62 @@ def search_composer(tools):
     return tools.search_composer
 
 
+@pytest.fixture(scope="session")
+def search_tool(document_store):
+    """Session-scoped search tool fixture."""
+    from imas_mcp.tools.search_tool import SearchTool
+
+    return SearchTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def analysis_tool(document_store):
+    """Session-scoped analysis tool fixture."""
+    from imas_mcp.tools.analysis_tool import AnalysisTool
+
+    return AnalysisTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def export_tool(document_store):
+    """Session-scoped export tool fixture."""
+    from imas_mcp.tools.export_tool import ExportTool
+
+    return ExportTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def explain_tool(document_store):
+    """Session-scoped explain tool fixture."""
+    from imas_mcp.tools.explain_tool import ExplainTool
+
+    return ExplainTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def identifiers_tool(document_store):
+    """Session-scoped identifiers tool fixture."""
+    from imas_mcp.tools.identifiers_tool import IdentifiersTool
+
+    return IdentifiersTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def overview_tool(document_store):
+    """Session-scoped overview tool fixture."""
+    from imas_mcp.tools.overview_tool import OverviewTool
+
+    return OverviewTool(document_store)
+
+
+@pytest.fixture(scope="session")
+def relationships_tool(document_store):
+    """Session-scoped relationships tool fixture."""
+    from imas_mcp.tools.relationships_tool import RelationshipsTool
+
+    return RelationshipsTool(document_store)
+
+
 @pytest.fixture
 def sample_search_results() -> Dict[str, Any]:
     """Sample search results for testing."""

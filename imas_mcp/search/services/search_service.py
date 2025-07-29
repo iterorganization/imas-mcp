@@ -102,8 +102,8 @@ class SearchService:
         Returns:
             Resolved search mode (never AUTO)
         """
-        if config.mode != SearchMode.AUTO:
-            return config.mode
+        if config.search_mode != SearchMode.AUTO:
+            return config.search_mode
 
         # Simple heuristic for mode selection
         # In a full implementation, this would use the SearchModeSelector
@@ -245,38 +245,8 @@ class SearchRequest:
         """
         self.query = query
         self.config = SearchConfig(
-            mode=mode,
+            search_mode=mode,
             max_results=max_results,
-            filter_ids=ids_filter,
+            ids_filter=ids_filter,
             similarity_threshold=similarity_threshold,
         )
-
-
-class SearchResponse:
-    """Structured search response from service."""
-
-    def __init__(self, results: List[SearchResult], request: SearchRequest):
-        """Initialize search response.
-
-        Args:
-            results: Search results from engine
-            request: Original search request
-        """
-        self.results = results
-        self.request = request
-        self.results_count = len(results)
-        self.search_mode = request.config.mode.value
-
-    def to_dict(self) -> Dict[str, any]:
-        """Convert response to dictionary format.
-
-        Returns:
-            Dictionary representation of search response
-        """
-        return {
-            "results": [result.to_dict() for result in self.results],
-            "results_count": self.results_count,
-            "search_mode": self.search_mode,
-            "max_results": self.request.config.max_results,
-            "filter_ids": self.request.config.filter_ids,
-        }

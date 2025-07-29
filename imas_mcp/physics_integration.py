@@ -73,7 +73,7 @@ def physics_search(query: str, max_results: int = 10) -> PhysicsSearchResult:
             units=", ".join(domain_data.typical_units[:3] if domain_data else []),
             description=doc.description,
             imas_paths=doc.metadata.get("imas_paths", []),
-            domain=doc.domain_name,
+            domain=domain_enum,
             relevance_score=result.similarity_score,
         )
 

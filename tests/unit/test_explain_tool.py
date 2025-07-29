@@ -17,9 +17,16 @@ class TestExplainTool:
     """Test cases for explain tool with decorator composition."""
 
     @pytest.fixture
-    def explain_tool(self):
+    def mock_document_store(self):
+        """Create mock document store for testing."""
+        mock_store = MagicMock()
+        mock_store.get_available_ids.return_value = ["core_profiles", "equilibrium"]
+        return mock_store
+
+    @pytest.fixture
+    def explain_tool(self, mock_document_store):
         """Create explain tool for testing."""
-        return ExplainTool()
+        return ExplainTool(document_store=mock_document_store)
 
     @pytest.fixture
     def mock_search_service(self):

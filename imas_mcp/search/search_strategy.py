@@ -8,9 +8,9 @@ and extensibility.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Union
+from typing import List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.document_store import Document, DocumentStore
@@ -21,76 +21,73 @@ logger = logging.getLogger(__name__)
 class SearchConfig(BaseModel):
     """Configuration for search operations."""
 
-    mode: SearchMode = SearchMode.AUTO
+    search_mode: SearchMode = SearchMode.AUTO
     max_results: int = 10
-    filter_ids: Optional[List[str]] = None
+    ids_filter: Optional[List[str]] = None
     similarity_threshold: float = 0.0
     boost_exact_matches: bool = True
     enable_physics_enhancement: bool = True
 
+    @field_validator("search_mode", mode="before")
+    @classmethod
+    def validate_search_mode(cls, v):
+        """Convert string to SearchMode enum if needed.
+
+        Accepts both string values ('auto', 'semantic', 'lexical', 'hybrid')
+        and SearchMode enum instances. Always returns SearchMode enum.
+        """
+        if isinstance(v, str):
+            # Create mapping from string values to enum members
+            value_map = {member.value: member for member in SearchMode}
+            if v not in value_map:
+                valid_values = list(value_map.keys())
+                raise ValueError(
+                    f"Invalid search_mode: {v}. Valid options: {valid_values}"
+                )
+            return value_map[v]
+        return v
+
+    @field_validator("ids_filter", mode="before")
+    @classmethod
+    def validate_ids_filter(cls, v):
+        """Convert string or list to list of strings for IDS filtering.
+
+        Accepts:
+        - None: No filtering
+        - str: Single IDS name or space-separated IDS names
+        - List[str]: List of IDS names
+
+        Always returns Optional[List[str]].
+        """
+        if v is None:
+            return None
+
+        if isinstance(v, str):
+            # Handle space-separated string or single IDS
+            return v.split() if " " in v else [v]
+
+        if isinstance(v, list):
+            # Validate all items are strings
+            if not all(isinstance(item, str) for item in v):
+                raise ValueError("All items in ids_filter list must be strings")
+            return v
+
+        raise ValueError(
+            f"ids_filter must be None, string, or list of strings, got {type(v)}"
+        )
+
 
 class SearchResult(BaseModel):
-    """Standardized search result format with clear field intentions."""
+    """Base search result with core fields needed for search processing."""
 
-    document: Document
-    score: float
-    rank: int
-    search_mode: SearchMode
-    highlights: str = ""
+    # Core search metadata
+    score: float = Field(description="Relevance/similarity score")
+    rank: int = Field(description="Rank/position in search results")
+    search_mode: SearchMode = Field(description="Search mode that found this result")
+    highlights: str = Field(default="", description="Highlighted text snippets")
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert search result to dictionary format with clear field names.
-
-        This method provides a custom serialization that transforms internal
-        field names to the expected API format (e.g., score -> relevance_score).
-        This is kept for backward compatibility with existing code.
-        """
-        return {
-            "path": self.document.metadata.path_name,
-            "relevance_score": self.score,
-            "documentation": self.document.documentation,
-            "units": self.document.units.unit_str if self.document.units else "",
-            "ids_name": self.document.metadata.ids_name,
-            "data_type": self.document.metadata.data_type,
-            "physics_domain": self.document.metadata.physics_domain or "general",
-            "highlights": self.highlights,
-            "search_mode": self.search_mode.value,
-            "rank": self.rank,
-        }
-
-    @property
-    def physics_domain_valid(self) -> bool:
-        """Check if this result has a valid physics domain."""
-        return bool(self.document.metadata.physics_domain)
-
-    @property
-    def has_units(self) -> bool:
-        """Check if this result has units defined."""
-        return bool(self.document.units and self.document.units.unit_str)
-
-    def extract_measurement_context(self) -> Optional[Dict[str, str]]:
-        """Extract measurement context information from documentation."""
-        doc_lower = self.document.documentation.lower()
-        measurement_terms = [
-            "temperature",
-            "density",
-            "pressure",
-            "magnetic",
-            "current",
-        ]
-
-        matching_terms = [term for term in measurement_terms if term in doc_lower]
-
-        if matching_terms:
-            measurement_type = (
-                "multiple" if len(matching_terms) > 1 else matching_terms[0]
-            )
-            return {
-                "path": self.document.metadata.path_name,
-                "measurement_type": measurement_type,
-                "context": self.document.documentation[:150],
-            }
-        return None
+    # Internal document reference for search processing
+    document: Document = Field(description="Internal document with full metadata")
 
 
 class SearchStrategy(ABC):
@@ -127,9 +124,9 @@ class LexicalSearchStrategy(SearchStrategy):
         query_str = query if isinstance(query, str) else " ".join(query)
 
         # Apply IDS filtering if specified
-        if config.filter_ids:
+        if config.ids_filter:
             # Add IDS filter to query
-            ids_filter = " OR ".join([f"ids_name:{ids}" for ids in config.filter_ids])
+            ids_filter = " OR ".join([f"ids_name:{ids}" for ids in config.ids_filter])
             query_str = f"({query_str}) AND ({ids_filter})"
 
         # Execute full-text search
@@ -195,7 +192,7 @@ class SemanticSearchStrategy(SearchStrategy):
             semantic_results = self.semantic_search.search(
                 query=query_str,
                 top_k=config.max_results,
-                filter_ids=config.filter_ids,
+                ids_filter=config.ids_filter,
                 similarity_threshold=config.similarity_threshold,
             )
 
@@ -399,68 +396,3 @@ class SearchModeSelector:
             "magnetic field",
         ]
         return any(indicator in query.lower() for indicator in conceptual_indicators)
-
-
-class SearchComposer:
-    """Main search composition class that orchestrates different search strategies."""
-
-    def __init__(self, document_store: DocumentStore):
-        self.document_store = document_store
-        self.strategies = {
-            SearchMode.LEXICAL: LexicalSearchStrategy(document_store),
-            SearchMode.SEMANTIC: SemanticSearchStrategy(document_store),
-            SearchMode.HYBRID: HybridSearchStrategy(document_store),
-        }
-        self.mode_selector = SearchModeSelector()
-
-    def search(
-        self,
-        query: Union[str, List[str]],
-        config: Optional[SearchConfig] = None,
-    ) -> List[SearchResult]:
-        """Execute search with automatic mode selection or explicit configuration."""
-        if config is None:
-            config = SearchConfig()
-
-        # Auto-select mode if needed
-        if config.mode == SearchMode.AUTO:
-            config.mode = self.mode_selector.select_mode(query)
-
-        # Execute search with selected strategy
-        strategy = self.strategies[config.mode]
-        return strategy.search(query, config)
-
-    def search_with_params(
-        self,
-        query: Union[str, List[str]],
-        mode: SearchMode,
-        max_results: int = 10,
-        filter_ids: Optional[List[str]] = None,
-        similarity_threshold: float = 0.0,
-        boost_exact_matches: bool = True,
-        enable_physics_enhancement: bool = True,
-    ) -> Dict[str, Any]:
-        """Convenience method for search with individual parameters."""
-        config = SearchConfig(
-            mode=mode,
-            max_results=max_results,
-            filter_ids=filter_ids,
-            similarity_threshold=similarity_threshold,
-            boost_exact_matches=boost_exact_matches,
-            enable_physics_enhancement=enable_physics_enhancement,
-        )
-
-        results = self.search(query, config)
-
-        # Convert to server format
-        return {
-            "results": [result.to_dict() for result in results],
-            "results_count": len(results),
-            "search_strategy": config.mode.value,
-            "max_results": config.max_results,
-            "filter_ids": config.filter_ids,
-        }
-
-    def get_available_modes(self) -> List[SearchMode]:
-        """Get list of available search modes."""
-        return list(self.strategies.keys())

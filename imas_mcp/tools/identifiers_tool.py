@@ -7,7 +7,7 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from fastmcp import Context
 
 from imas_mcp.search.document_store import DocumentStore
@@ -86,7 +86,7 @@ Focus on providing actionable insights for researchers working with IMAS identif
     async def explore_identifiers(
         self,
         query: Optional[str] = None,
-        scope: str = "all",
+        scope: Union[str, IdentifierScope] = "all",
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
@@ -178,20 +178,8 @@ Focus on providing actionable insights for researchers working with IMAS identif
                 "significance": "Identifier schemas define critical branching logic and enumeration options in IMAS data structures",
             }
 
-            # Convert scope string to enum
-            scope_enum = (
-                IdentifierScope.ALL
-                if scope == "all"
-                else IdentifierScope.ENUMS
-                if scope == "enums"
-                else IdentifierScope.IDENTIFIERS
-                if scope == "identifiers"
-                else IdentifierScope.COORDINATES
-                if scope == "coordinates"
-                else IdentifierScope.CONSTANTS
-                if scope == "constants"
-                else IdentifierScope.ALL
-            )
+            # Convert scope to enum (handle both string and enum inputs)
+            scope_enum = self._convert_to_enum(scope, IdentifierScope)
 
             # Build final response using Pydantic
             response = IdentifierResult(

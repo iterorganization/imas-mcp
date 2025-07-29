@@ -7,11 +7,13 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.response_models import SearchResponse, SearchHit
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
@@ -46,10 +48,10 @@ def mcp_tool(description: str):
 class SearchTool(BaseTool):
     """Tool for searching IMAS data paths."""
 
-    def __init__(self, ids_set: Optional[set[str]] = None):
-        """Initialize search tool with search service."""
+    def __init__(self, document_store: DocumentStore):
+        """Initialize search tool with document store."""
         super().__init__()
-        self.ids_set = ids_set
+        self.document_store = document_store
         self._search_service = self._create_search_service()
 
     def _create_search_service(self) -> SearchService:
@@ -58,7 +60,7 @@ class SearchTool(BaseTool):
         engines = {}
         for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
             config = SearchConfig(
-                mode=mode, max_results=100
+                search_mode=mode, max_results=100
             )  # Service will limit based on request
             engine = self._create_engine(mode.value, config)
             engines[mode] = engine
@@ -92,11 +94,11 @@ class SearchTool(BaseTool):
     async def search_imas(
         self,
         query: Union[str, List[str]],
-        ids_name: Optional[str] = None,
+        ids_filter: Optional[Union[str, List[str]]] = None,
         max_results: int = 10,
-        search_mode: str = "auto",
+        search_mode: Union[str, SearchMode] = "auto",
         ctx: Optional[Any] = None,
-    ) -> Dict[str, Any]:
+    ) -> SearchResponse:
         """
         Search for IMAS data paths with relevance-ordered results.
 
@@ -128,20 +130,11 @@ class SearchTool(BaseTool):
             - suggestions: Follow-up tool recommendations (from @recommend_tools)
             - performance: Execution metrics (from @measure_performance)
         """
-        # Convert search mode string to enum for service
-        mode_map = {
-            "auto": SearchMode.AUTO,
-            "semantic": SearchMode.SEMANTIC,
-            "lexical": SearchMode.LEXICAL,
-            "hybrid": SearchMode.HYBRID,
-        }
-        search_mode_enum = mode_map[search_mode]
-
         # Create search configuration for service
         config = SearchConfig(
-            mode=search_mode_enum,
+            search_mode=search_mode,  # type: ignore[arg-type]  # Pydantic field validator converts str to SearchMode
             max_results=max_results,
-            filter_ids=[ids_name] if ids_name else None,
+            ids_filter=ids_filter,  # type: ignore[arg-type]  # Pydantic field validator converts str/list to List[str]
             similarity_threshold=0.0,
         )
 
@@ -154,17 +147,39 @@ class SearchTool(BaseTool):
         # Build AI sampling prompt for @sample decorator
         ai_prompt = self._build_sampling_prompt(query, results)
 
-        # Convert to expected format with sampling prompt
-        result = {
-            "results": [hit.to_dict() for hit in results],
-            "results_count": len(results),
-            "search_mode": search_mode,
-            "query": query,
-            "ai_prompt": ai_prompt,  # Used by @sample decorator
-        }
+        # Convert SearchResult objects to SearchHit objects
+        hits = []
+        for result in results:
+            # Create SearchHit by copying SearchResult fields and adding API-specific fields
+            hit = SearchHit(
+                # Inherited from SearchResult
+                score=result.score,
+                rank=result.rank,
+                search_mode=result.search_mode,
+                highlights=result.highlights,
+                # API-specific fields from document
+                path=result.document.metadata.path_name,
+                documentation=result.document.documentation,
+                units=result.document.units.unit_str if result.document.units else None,
+                data_type=result.document.metadata.data_type,
+                ids_name=result.document.metadata.ids_name,
+                physics_domain=result.document.metadata.physics_domain,
+                # Exclude the internal document from API response
+                document=None,
+            )
+            hits.append(hit)
+
+        # Create proper SearchResponse
+        response = SearchResponse(
+            hits=hits,
+            count=len(hits),
+            search_mode=config.search_mode,  # This is already a SearchMode enum after validation
+            query=query,
+            ai_insights={"ai_prompt": ai_prompt},  # Used by @sample decorator
+        )
 
         logger.info(f"Search completed: {len(results)} results returned")
-        return result
+        return response
 
     def _build_sampling_prompt(
         self, query: Union[str, List[str]], results: List[SearchResult]
@@ -181,12 +196,12 @@ Provide helpful guidance including:
 3. Physics context that might help refine the search
 4. Suggestions for broader or narrower search strategies"""
 
-        # Build prompt with top results using to_dict() method
+        # Build prompt with top results using direct field access
         top_results = results[:3]
         results_text = "\n".join(
             [
-                f"- {hit.to_dict()['path']}: {hit.to_dict()['documentation'][:100]}..."
-                for hit in top_results
+                f"- {result.document.metadata.path_name}: {result.document.documentation[:100]}..."
+                for result in top_results
             ]
         )
 

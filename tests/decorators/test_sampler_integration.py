@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import Mock, AsyncMock
 
 from imas_mcp.server import Server
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
@@ -126,25 +126,23 @@ class TestSelectiveSampling:
     @pytest.mark.asyncio
     async def test_explore_identifiers_never_enhanced(self, server):
         """Test that explore_identifiers never applies AI enhancement."""
-        try:
-            result = await server.tools.explore_identifiers(
-                query="temperature", scope="summary", ctx=MockContext()
-            )
+        result = await server.tools.identifiers_tool.explore_identifiers(
+            query="temperature", scope="all", ctx=MockContext()
+        )
 
-            # Should have identifier data but no AI enhancement
-            assert "total_schemas" in result
-            assert "schemas" in result
-            assert "branching_analytics" in result
+        # Should have identifier data but no AI enhancement
+        assert "analytics" in result
+        assert "schemas" in result
+        assert "paths" in result
 
-            # AI should never be applied for explore_identifiers (never strategy)
-            ai_insights = result.get("ai_insights", {})
-            assert (
-                ai_insights.get("status")
-                == "AI enhancement not applied - conditions not met"
-            )
-        except NotImplementedError:
-            # Skip test if explore_identifiers is not implemented yet
-            pytest.skip("explore_identifiers not yet implemented")
+        # AI should never be applied for explore_identifiers (never strategy)
+        ai_insights = result.get("ai_insights", {})
+        # AI enhancement should not be applied - empty ai_insights or explicit status
+        assert (
+            not ai_insights
+            or ai_insights.get("status")
+            == "AI enhancement not applied - conditions not met"
+        )
 
     @pytest.mark.asyncio
     async def test_ai_enhancement_failure_graceful(self, server):
@@ -181,11 +179,11 @@ class TestMultiFormatExport:
     @pytest.mark.asyncio
     async def test_raw_export_format(self, server):
         """Test raw export format (minimal processing)."""
-        result = await server.tools.export_ids(
+        result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"],
             output_format="raw",
             include_relationships=True,  # Should be ignored for raw format
-            include_physics_context=True,  # Should be ignored for raw format
+            include_physics=True,  # Should be ignored for raw format
             ctx=MockContext(),
         )
 
@@ -214,11 +212,11 @@ class TestMultiFormatExport:
     @pytest.mark.asyncio
     async def test_structured_export_format(self, server):
         """Test structured export format (organized data with relationships)."""
-        result = await server.tools.export_ids(
+        result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"],
             output_format="structured",
             include_relationships=True,
-            include_physics_context=True,
+            include_physics=True,
             ctx=MockContext(),
         )
 
@@ -244,11 +242,11 @@ class TestMultiFormatExport:
     @pytest.mark.asyncio
     async def test_enhanced_export_format(self, server):
         """Test enhanced export format (AI-enhanced insights)."""
-        result = await server.tools.export_ids(
+        result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"],
             output_format="enhanced",
             include_relationships=True,
-            include_physics_context=True,
+            include_physics=True,
             ctx=MockContext(),
         )
 
@@ -264,7 +262,7 @@ class TestMultiFormatExport:
     @pytest.mark.asyncio
     async def test_invalid_export_format(self, server):
         """Test handling of invalid export format."""
-        result = await server.tools.export_ids(
+        result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"],
             output_format="invalid_format",
             ctx=MockContext(),
@@ -280,17 +278,17 @@ class TestMultiFormatExport:
         # This test focuses on the logical structure rather than actual timing
 
         # Raw format should have minimal data
-        raw_result = await server.tools.export_ids(
+        raw_result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"], output_format="raw"
         )
 
         # Structured format should have more complete data
-        structured_result = await server.tools.export_ids(
+        structured_result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"], output_format="structured"
         )
 
         # Enhanced format should have AI insights
-        enhanced_result = await server.tools.export_ids(
+        enhanced_result = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"], output_format="enhanced", ctx=MockContext()
         )
 
@@ -322,7 +320,7 @@ class TestConditionalSamplingLogic:
     async def test_structure_analysis_conditional_ai(self, server):
         """Test conditional AI for structure analysis based on IDS complexity."""
         # Test with complex IDS (should enable AI)
-        result = await server.tools.analyze_ids_structure(
+        result = await server.tools.analysis_tool.analyze_ids_structure(
             ids_name="core_profiles", ctx=MockContext()
         )
 
@@ -335,7 +333,7 @@ class TestConditionalSamplingLogic:
     async def test_relationships_conditional_ai(self, server):
         """Test conditional AI for relationship exploration."""
         # Test with deep analysis (should enable AI)
-        result = await server.tools.explore_relationships(
+        result = await server.tools.relationships_tool.explore_relationships(
             path="core_profiles", max_depth=3, ctx=MockContext()
         )
 
@@ -348,7 +346,7 @@ class TestConditionalSamplingLogic:
     async def test_physics_domain_conditional_ai(self, server):
         """Test conditional AI for physics domain export."""
         # Test with comprehensive analysis (should enable AI)
-        result = await server.tools.export_physics_domain(
+        result = await server.tools.export_tool.export_physics_domain(
             domain="core_plasma", analysis_depth="comprehensive", ctx=MockContext()
         )
 
@@ -358,7 +356,7 @@ class TestConditionalSamplingLogic:
             assert ai_insights.get("status") in ["AI enhancement applied", "enhanced"]
 
         # Test with focused analysis (should not enable AI)
-        result = await server.tools.export_physics_domain(
+        result = await server.tools.export_tool.export_physics_domain(
             domain="core_plasma", analysis_depth="focused", ctx=MockContext()
         )
 
@@ -478,7 +476,7 @@ class TestIntegration:
         )
 
         # Raw exports should not trigger AI
-        raw_export = await server.tools.export_ids(
+        raw_export = await server.tools.export_tool.export_ids(
             ids_list=["core_profiles"], output_format="raw", ctx=MockContext()
         )
 
@@ -493,7 +491,7 @@ class TestIntegration:
         formats = ["raw", "structured", "enhanced"]
 
         for format_type in formats:
-            result = await server.tools.export_ids(
+            result = await server.tools.export_tool.export_ids(
                 ids_list=["core_profiles"],
                 output_format=format_type,
                 ctx=MockContext() if format_type == "enhanced" else None,

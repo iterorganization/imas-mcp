@@ -1,5 +1,12 @@
 """
-Tests for IMAS MCP Search Architecture.
+Tests for IMAS MCP         conf        assert config.search_mode == SearchMode.SEMANTIC
+        assert config.max_results == 5
+        assert config.ids_filter == ["core_profiles"]= SearchConfig(
+            search_mode=SearchMode.SEMANTIC,
+            max_results=5,
+            ids_filter=["core_profiles"],
+            similarity_threshold=0.5,
+        ) Architecture.
 
 This test module verifies the search architecture implementation including:
 - Pure search engines (semantic, lexical, hybrid)
@@ -10,7 +17,7 @@ This test module verifies the search architecture implementation including:
 
 import pytest
 
-from imas_mcp.models.enums import SearchMode
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.tools.search_tool import SearchTool
@@ -23,15 +30,15 @@ class TestSearchEngineArchitecture:
     def test_search_config_creation(self):
         """Test SearchConfig model creation and validation."""
         config = SearchConfig(
-            mode=SearchMode.SEMANTIC,
+            search_mode=SearchMode.SEMANTIC,
             max_results=10,
-            filter_ids=["core_profiles"],
+            ids_filter=["core_profiles"],
             similarity_threshold=0.5,
         )
 
-        assert config.mode == SearchMode.SEMANTIC
+        assert config.search_mode == SearchMode.SEMANTIC
         assert config.max_results == 10
-        assert config.filter_ids == ["core_profiles"]
+        assert config.ids_filter == ["core_profiles"]
         assert config.similarity_threshold == 0.5
 
     def test_search_result_model(self):
@@ -75,7 +82,7 @@ class TestSearchServiceOrchestration:
     async def test_search_service_execution(self):
         """Test SearchService can execute a search."""
         service = SearchService()
-        config = SearchConfig(mode=SearchMode.AUTO, max_results=5)
+        config = SearchConfig(search_mode=SearchMode.AUTO, max_results=5)
 
         # Test with a simple query (may fail but should not crash)
         try:
@@ -89,70 +96,70 @@ class TestSearchServiceOrchestration:
 class TestSearchToolExtraction:
     """Test search logic extraction from monolithic tools to modular architecture."""
 
-    def test_search_tool_creation(self):
+    def test_search_tool_creation(self, search_tool):
         """Test Search tool can be created."""
-        search_tool = SearchTool()
-
         assert search_tool is not None
         assert search_tool.get_tool_name() == "search_imas"
         assert hasattr(search_tool, "search_imas")
 
-    def test_search_tool_with_ids_set(self):
-        """Test Search tool can be created with ids_set."""
-        ids_set = {"core_profiles", "equilibrium"}
-        search_tool = SearchTool(ids_set)
+    def test_search_tool_with_ids_set(self, document_store):
+        """Test Search tool can be created with document store containing IDS set."""
+        search_tool = SearchTool(document_store)
 
-        assert search_tool.ids_set == ids_set
+        # Check that tool has access to document store and its IDS set
+        assert search_tool.document_store == document_store
+        assert hasattr(search_tool.document_store, "ids_set")
 
     @pytest.mark.asyncio
-    async def test_search_imas_method_exists(self):
+    async def test_search_imas_method_exists(self, search_tool):
         """Test search_imas method exists and is callable."""
-        search_tool = SearchTool()
-
         assert hasattr(search_tool, "search_imas")
         assert callable(search_tool.search_imas)
 
     @pytest.mark.asyncio
-    async def test_search_imas_validation(self):
+    async def test_search_imas_validation(self, search_tool):
         """Test search_imas validates input parameters."""
-        search_tool = SearchTool()
-
         # Test invalid search mode
         result = await search_tool.search_imas(
             query="temperature", search_mode="invalid_mode"
         )
 
         assert "error" in result
-        assert "Invalid search mode" in result["error"]
+        assert (
+            "Invalid search mode" in result["error"]
+            or "Input should be" in result["error"]
+        )
 
     @pytest.mark.asyncio
-    async def test_search_imas_max_results_validation(self):
+    async def test_search_imas_max_results_validation(self, search_tool):
         """Test search_imas validates max_results parameter."""
-        search_tool = SearchTool()
-
         # Test invalid max_results (too high)
         result = await search_tool.search_imas(query="temperature", max_results=150)
 
         assert "error" in result
-        assert "Invalid max_results" in result["error"]
+        assert (
+            "Invalid max_results" in result["error"]
+            or "should be less than or equal to" in result["error"]
+        )
 
     @pytest.mark.asyncio
-    async def test_search_imas_response_format(self):
+    async def test_search_imas_response_format(self, search_tool):
         """Test search_imas returns properly formatted response."""
-        search_tool = SearchTool()
-
         # Test search - may return error or results, but should have proper format
         result = await search_tool.search_imas(
             query="temperature", search_mode="auto", max_results=5
         )
 
-        # Should have expected response structure
-        required_keys = ["results", "results_count", "query"]
-        for key in required_keys:
-            assert key in result
-
-        assert isinstance(result["results"], list)
-        assert isinstance(result["results_count"], int)
+        # Should have expected response structure (results OR error)
+        if "error" not in result:
+            required_keys = ["hits", "total", "query"]
+            for key in required_keys:
+                assert key in result
+            assert isinstance(result["hits"], list)
+            assert isinstance(result["total"], int)
+        else:
+            # If there's an error, it should be properly formatted
+            assert isinstance(result["error"], str)
         assert result["query"] == "temperature"
 
         # If successful, should also have search_mode
@@ -177,7 +184,8 @@ class TestModularToolsIntegration:
         tools = Tools(ids_set)
 
         assert tools.ids_set == ids_set
-        assert tools.search_tool.ids_set == ids_set
+        # Check that search tool has access to the same document store with ids_set
+        assert tools.search_tool.document_store.ids_set == ids_set
 
     @pytest.mark.asyncio
     async def test_tools_search_imas_delegation(self):

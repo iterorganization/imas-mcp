@@ -97,7 +97,7 @@ class SearchEngine(ABC):
         query_str = self.normalize_query(query)
         self.logger.info(
             f"[{self.name}] Search executed: query='{query_str[:50]}...' "
-            f"mode={config.mode.value} max_results={config.max_results} "
+            f"search_mode={config.search_mode.value} max_results={config.max_results} "
             f"returned={result_count}"
         )
 

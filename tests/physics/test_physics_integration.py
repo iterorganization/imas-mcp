@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_domains import DomainCharacteristics
-from imas_mcp.models.enums import ComplexityLevel
+from imas_mcp.models.constants import ComplexityLevel
 from imas_mcp.models.physics_models import (
     PhysicsMatch,
     ConceptSuggestion,
@@ -368,7 +368,7 @@ class TestPhysicsIntegration:
             typical_units=["unit"],
             measurement_methods=["method"],
             related_domains=[PhysicsDomain.EQUILIBRIUM],
-            complexity_level="basic",
+            complexity_level=ComplexityLevel.BASIC,
         )
 
         assert explanation.concept == "test"

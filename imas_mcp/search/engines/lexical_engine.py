@@ -1,7 +1,11 @@
 """
 Lexical search engine implementation for IMAS MCP.
 
-This module provides full-text search capabilities using SQLite FTS5
+T            if config.ids_filter:
+                # Add IDS filter to query
+                ids_filter_query = " OR ".join(
+                    [f"ids_name:{ids}" for ids in config.ids_filter]
+                )odule provides full-text search capabilities using SQLite FTS5
 for exact matching and keyword-based search in the IMAS data dictionary.
 """
 
@@ -58,10 +62,10 @@ class LexicalSearchEngine(SearchEngine):
             query_str = self.normalize_query(query)
 
             # Apply IDS filtering if specified
-            if config.filter_ids:
+            if config.ids_filter:
                 # Add IDS filter to query
                 ids_filter = " OR ".join(
-                    [f"ids_name:{ids}" for ids in config.filter_ids]
+                    [f"ids_name:{ids}" for ids in config.ids_filter]
                 )
                 query_str = f"({query_str}) AND ({ids_filter})"
 
