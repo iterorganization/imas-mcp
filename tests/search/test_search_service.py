@@ -11,10 +11,10 @@ from imas_mcp.search.services.search_service import (
     SearchService,
     SearchServiceError,
     SearchRequest,
-    SearchResponse,
 )
+from imas_mcp.models.response_models import SearchResponse
 from imas_mcp.search.engines.base_engine import MockSearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.constants import SearchMode
 
 
@@ -80,7 +80,7 @@ class TestSearchService:
     async def test_search_with_semantic_mode(self):
         """Test search execution with semantic mode."""
         service = SearchService()
-        config = SearchConfig(mode=SearchMode.SEMANTIC, max_results=1)
+        config = SearchConfig(search_mode=SearchMode.SEMANTIC, max_results=1)
 
         results = await service.search("temperature", config)
 
@@ -93,7 +93,7 @@ class TestSearchService:
         service = SearchService()
 
         # Test path-like query (should resolve to LEXICAL)
-        config = SearchConfig(mode=SearchMode.AUTO)
+        config = SearchConfig(search_mode=SearchMode.AUTO)
         results = await service.search("core_profiles/temperature", config)
         assert isinstance(results, list)
 
@@ -109,7 +109,7 @@ class TestSearchService:
         engines = {SearchMode.SEMANTIC: mock_engine}
         service = SearchService(engines)  # type: ignore
 
-        config = SearchConfig(mode=SearchMode.LEXICAL)  # Not available
+        config = SearchConfig(search_mode=SearchMode.LEXICAL)  # Not available
 
         with pytest.raises(SearchServiceError):
             await service.search("test", config)
@@ -119,7 +119,7 @@ class TestSearchService:
         """Test search result post-processing."""
         service = SearchService()
         config = SearchConfig(
-            mode=SearchMode.SEMANTIC, max_results=1, similarity_threshold=0.5
+            search_mode=SearchMode.SEMANTIC, max_results=1, similarity_threshold=0.5
         )
 
         results = await service.search("temperature", config)
@@ -138,7 +138,7 @@ class TestSearchService:
         engines = {SearchMode.SEMANTIC: broken_engine}
         service = SearchService(engines)  # type: ignore
 
-        config = SearchConfig(mode=SearchMode.SEMANTIC)
+        config = SearchConfig(search_mode=SearchMode.SEMANTIC)
 
         with pytest.raises(SearchServiceError):
             await service.search("test", config)
@@ -152,7 +152,7 @@ class TestSearchRequest:
         request = SearchRequest("test query")
 
         assert request.query == "test query"
-        assert request.config.mode == SearchMode.AUTO
+        assert request.config.search_mode == SearchMode.AUTO
         assert request.config.max_results == 10
 
     def test_search_request_with_parameters(self):
@@ -166,9 +166,9 @@ class TestSearchRequest:
         )
 
         assert request.query == ["multi", "term"]
-        assert request.config.mode == SearchMode.SEMANTIC
+        assert request.config.search_mode == SearchMode.SEMANTIC
         assert request.config.max_results == 5
-        assert request.config.filter_ids == ["core_profiles"]
+        assert request.config.ids_filter == ["core_profiles"]
         assert request.config.similarity_threshold == 0.7
 
 
@@ -177,33 +177,13 @@ class TestSearchResponse:
 
     def test_search_response_creation(self):
         """Test SearchResponse creation with results."""
-        # Create mock results
-        mock_results = [Mock(spec=SearchResult)]
-        request = SearchRequest("test")
+        response = SearchResponse(
+            hits=[], count=1, search_mode=SearchMode.AUTO, query="test"
+        )  # type: ignore
 
-        response = SearchResponse(mock_results, request)  # type: ignore
-
-        assert response.results == mock_results
-        assert response.results_count == 1
-        assert response.request == request
-
-    def test_search_response_to_dict(self):
-        """Test SearchResponse conversion to dictionary."""
-        # Create mock result with to_dict method
-        mock_result = Mock()
-        mock_result.to_dict.return_value = {"path": "test/path", "score": 0.9}
-
-        request = SearchRequest("test", max_results=5)
-        response = SearchResponse([mock_result], request)
-
-        result_dict = response.to_dict()
-
-        assert "results" in result_dict
-        assert "results_count" in result_dict
-        assert "search_mode" in result_dict
-        assert "max_results" in result_dict
-        assert result_dict["results_count"] == 1
-        assert result_dict["max_results"] == 5
+        assert response.hits == []
+        assert response.count == 1
+        assert response.search_mode == SearchMode.AUTO
 
 
 class TestSearchServiceError:

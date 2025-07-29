@@ -9,7 +9,6 @@ from .decorators.sampling import sample
 from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_strategy import (
-    SearchComposer,
     SearchConfig,
     SearchResult,
 )
@@ -22,7 +21,6 @@ __all__ = [
     "DocumentStore",
     "Document",
     "DocumentMetadata",
-    "SearchComposer",
     "SearchConfig",
     "SearchResult",
 ]

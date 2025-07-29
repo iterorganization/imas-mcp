@@ -11,12 +11,16 @@ from typing import Dict, Any, List, Optional, Set
 from fastmcp import Context
 
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.search_strategy import SearchComposer
+from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
+from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
+from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
+from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import (
     ExportIdsInputSchema,
     ExportPhysicsDomainInputSchema,
 )
-from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.constants import SearchMode, OutputFormat
 from imas_mcp.models.response_models import IDSExport, DomainExport
 
 # Import all decorators
@@ -51,12 +55,38 @@ class ExportTool(BaseTool):
     def __init__(
         self,
         document_store: Optional[DocumentStore] = None,
-        search_composer: Optional[SearchComposer] = None,
     ):
         """Initialize the export tool."""
         super().__init__()
         self.document_store = document_store or DocumentStore()
-        self.search_composer = search_composer or SearchComposer(self.document_store)
+        self._search_service = self._create_search_service()
+
+    def _create_search_service(self) -> SearchService:
+        """Create search service with appropriate engines."""
+        # Create engines for each mode
+        engines = {}
+        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
+            config = SearchConfig(
+                search_mode=mode, max_results=100
+            )  # Service will limit based on request
+            engine = self._create_engine(mode.value, config)
+            engines[mode] = engine
+
+        return SearchService(engines)
+
+    def _create_engine(self, engine_type: str, config: SearchConfig):
+        """Create a search engine of the specified type."""
+        engine_map = {
+            "semantic": SemanticSearchEngine,
+            "lexical": LexicalSearchEngine,
+            "hybrid": HybridSearchEngine,
+        }
+
+        if engine_type not in engine_map:
+            raise ValueError(f"Unknown engine type: {engine_type}")
+
+        engine_class = engine_map[engine_type]
+        return engine_class(config)
 
     def get_tool_name(self) -> str:
         return "export_tools"
@@ -128,7 +158,7 @@ Focus on providing actionable insights for researchers working in this physics d
         self,
         ids_list: List[str],
         include_relationships: bool = True,
-        include_physics_context: bool = True,
+        include_physics: bool = True,
         output_format: str = "structured",
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
@@ -141,8 +171,8 @@ Focus on providing actionable insights for researchers working in this physics d
         Args:
             ids_list: List of IDS names to export
             include_relationships: Whether to include cross-IDS relationship analysis
-            include_physics_context: Whether to include physics domain context
-            output_format: Export format (raw, structured, enhanced)
+            include_physics: Whether to include physics domain context
+            output_format: Export format (structured, json, yaml, markdown)
             ctx: MCP context for AI enhancement
 
         Returns:
@@ -159,21 +189,17 @@ Focus on providing actionable insights for researchers working in this physics d
                 }
 
             # Validate format
-            if output_format not in ["raw", "structured", "enhanced"]:
+            valid_formats = [format.value for format in OutputFormat]
+            if output_format not in valid_formats:
                 return {
-                    "error": f"Invalid format: {output_format}. Use: raw, structured, enhanced",
+                    "error": f"Invalid format: {output_format}. Use: {', '.join(valid_formats)}",
                     "suggestions": [
-                        "Use 'raw' for pure data export (fastest)",
                         "Use 'structured' for organized data with relationships",
-                        "Use 'enhanced' for AI-enhanced insights (requires context)",
+                        "Use 'json' for JSON format export",
+                        "Use 'yaml' for YAML format export",
+                        "Use 'markdown' for documentation-style export",
                     ],
                 }
-
-            # Handle format-specific logic
-            if output_format == "raw":
-                # Raw format: minimal processing, maximum performance
-                include_relationships = False
-                include_physics_context = False
 
             # Validate IDS names
             available_ids = self.document_store.get_available_ids()
@@ -286,28 +312,26 @@ Focus on providing actionable insights for researchers working in this physics d
                         for ids2 in valid_ids[i + 1 :]:
                             try:
                                 # Find relationships between IDS pairs
-                                search_results_dict = (
-                                    self.search_composer.search_with_params(
-                                        query=f"{ids1} {ids2} relationships",
-                                        mode=SearchMode.SEMANTIC,
+                                search_results = await self._search_service.search(
+                                    query=f"{ids1} {ids2} relationships",
+                                    config=SearchConfig(
+                                        search_mode=SearchMode.SEMANTIC,
                                         max_results=5,
-                                    )
+                                    ),
                                 )
 
-                                if search_results_dict.get("results"):
+                                if search_results:
                                     relationship_analysis[f"{ids1}_{ids2}"] = {
-                                        "shared_concepts": len(
-                                            search_results_dict["results"]
-                                        ),
+                                        "shared_concepts": len(search_results),
                                         "top_connections": [
                                             {
-                                                "path": r["path"],
-                                                "relevance_score": r.get(
-                                                    "relevance_score", 0.0
-                                                ),
-                                                "context": r["documentation"][:100],
+                                                "path": r.document.metadata.path_name,
+                                                "relevance_score": r.score,
+                                                "context": r.document.documentation[
+                                                    :100
+                                                ],
                                             }
-                                            for r in search_results_dict["results"][:3]
+                                            for r in search_results[:3]
                                         ],
                                     }
                             except Exception as e:
@@ -339,7 +363,7 @@ Focus on providing actionable insights for researchers working in this physics d
             # Build final response using Pydantic
             response = IDSExport(
                 ids_names=ids_list,
-                include_physics=include_physics_context,
+                include_physics=include_physics,
                 include_relationships=include_relationships,
                 data=export_data,
                 metadata={
@@ -360,7 +384,7 @@ Focus on providing actionable insights for researchers working in this physics d
                     "Check IDS names are valid",
                     "Try with fewer IDS names",
                     "Use get_overview to see available IDS",
-                    "Try with output_format='raw' for faster processing",
+                    "Try with output_format='structured' for organized data",
                 ],
             }
 
@@ -411,13 +435,15 @@ Focus on providing actionable insights for researchers working in this physics d
             max_paths = min(max_paths, 50)
 
             # Search for domain-related paths
-            search_results_dict = self.search_composer.search_with_params(
+            search_results = await self._search_service.search(
                 query=domain,
-                mode=SearchMode.SEMANTIC,
-                max_results=max_paths,
+                config=SearchConfig(
+                    search_mode=SearchMode.SEMANTIC,
+                    max_results=max_paths,
+                ),
             )
 
-            if not search_results_dict.get("results"):
+            if not search_results:
                 return {
                     "domain": domain,
                     "error": f"No data found for domain '{domain}'",
@@ -432,20 +458,22 @@ Focus on providing actionable insights for researchers working in this physics d
             domain_paths = []
             related_ids: Set[str] = set()
 
-            for result in search_results_dict["results"]:
+            for result in search_results:
                 path_info = {
-                    "path": result["path"],
-                    "documentation": result["documentation"][:300]
+                    "path": result.document.metadata.path_name,
+                    "documentation": result.document.documentation[:300]
                     if analysis_depth == "comprehensive"
-                    else result["documentation"][:150],
-                    "physics_domain": result.get("physics_domain", ""),
-                    "data_type": result.get("data_type", ""),
-                    "units": result.get("units", ""),
+                    else result.document.documentation[:150],
+                    "physics_domain": result.document.metadata.physics_domain or "",
+                    "data_type": result.document.metadata.data_type or "",
+                    "units": result.document.units.unit_str
+                    if result.document.units
+                    else "",
                 }
 
                 # Extract IDS name from path
-                if "/" in result["path"]:
-                    ids_name = result["path"].split("/")[0]
+                if "/" in result.document.metadata.path_name:
+                    ids_name = result.document.metadata.path_name.split("/")[0]
                     related_ids.add(ids_name)
 
                 domain_paths.append(path_info)

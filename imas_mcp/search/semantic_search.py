@@ -400,7 +400,7 @@ class SemanticSearch:
         query: str,
         top_k: Optional[int] = None,
         similarity_threshold: Optional[float] = None,
-        filter_ids: Optional[List[str]] = None,
+        ids_filter: Optional[List[str]] = None,
         hybrid_search: bool = True,
     ) -> List[SemanticSearchResult]:
         """
@@ -410,7 +410,7 @@ class SemanticSearch:
             query: Search query text
             top_k: Number of results to return
             similarity_threshold: Minimum similarity score
-            filter_ids: Optional list of IDS names to filter by
+            ids_filter: Optional list of IDS names to filter by
             hybrid_search: Combine with full-text search for better results
 
         Returns:
@@ -439,7 +439,7 @@ class SemanticSearch:
 
         # Get candidate indices
         candidate_indices = self._get_candidate_indices(
-            similarities, top_k * 2, similarity_threshold, filter_ids
+            similarities, top_k * 2, similarity_threshold, ids_filter
         )
 
         # Create results
@@ -493,7 +493,7 @@ class SemanticSearch:
         similarities: np.ndarray,
         max_candidates: int,
         similarity_threshold: float,
-        filter_ids: Optional[List[str]],
+        ids_filter: Optional[List[str]],
     ) -> List[int]:
         """Get candidate document indices based on similarity and filters."""
         if not self._embeddings_cache:
@@ -503,11 +503,11 @@ class SemanticSearch:
         valid_mask = similarities >= similarity_threshold
 
         # Apply IDS filter if specified
-        if filter_ids:
+        if ids_filter:
             ids_mask = []
             for path_id in self._embeddings_cache.path_ids:
                 doc = self.document_store.get_document(path_id)
-                if doc and doc.metadata.ids_name in filter_ids:
+                if doc and doc.metadata.ids_name in ids_filter:
                     ids_mask.append(True)
                 else:
                     ids_mask.append(False)
