@@ -7,11 +7,12 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List, Set, Union
 from fastmcp import Context
 
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
@@ -52,10 +53,10 @@ def mcp_tool(description: str):
 class ExplainTool(BaseTool):
     """Tool for explaining IMAS concepts."""
 
-    def __init__(self, ids_set: Optional[Set[str]] = None):
-        """Initialize the explain tool with search capabilities."""
+    def __init__(self, document_store: DocumentStore):
+        """Initialize the explain tool with document store."""
         super().__init__()
-        self.ids_set = ids_set
+        self.document_store = document_store
         self._search_service = self._create_search_service()
 
     def _create_search_service(self) -> SearchService:
@@ -119,10 +120,7 @@ Top related paths found:
 """
 
         for i, result in enumerate(search_results[:5], 1):
-            result_dict = result.to_dict()
-            prompt += (
-                f"{i}. {result_dict['path']} - {result_dict['documentation'][:100]}\n"
-            )
+            prompt += f"{i}. {result.document.metadata.path_name} - {result.document.documentation[:100]}\n"
 
         return prompt
 
@@ -138,7 +136,7 @@ Top related paths found:
     async def explain_concept(
         self,
         concept: str,
-        detail_level: str = "intermediate",
+        detail_level: Union[str, DetailLevel] = "intermediate",
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
         """
@@ -192,69 +190,64 @@ Top related paths found:
             identifier_schemas = []
 
             for search_result in search_results[:10]:
-                # Use standardized SearchResult methods and clear field names
-                result_dict = search_result.to_dict()
+                # Use direct field access instead of to_dict()
                 path_info = {
-                    "path": result_dict["path"],
-                    "ids_name": result_dict["ids_name"],
-                    "description": result_dict["documentation"][:150],
-                    "relevance_score": result_dict["relevance_score"],
-                    "physics_domain": result_dict["physics_domain"],
-                    "units": result_dict["units"],
+                    "path": search_result.document.metadata.path_name,
+                    "ids_name": search_result.document.metadata.ids_name,
+                    "description": search_result.document.documentation[:150],
+                    "relevance_score": search_result.score,
+                    "physics_domain": search_result.document.metadata.physics_domain,
+                    "units": search_result.document.units.unit_str
+                    if search_result.document.units
+                    else None,
                 }
                 related_paths.append(path_info)
 
-                # Use SearchResult helper methods for cleaner logic
-                if search_result.physics_domain_valid:
-                    physics_domains.add(result_dict["physics_domain"])
+                # Use direct field access for physics domain
+                if search_result.document.metadata.physics_domain:
+                    physics_domains.add(search_result.document.metadata.physics_domain)
 
-                # Use SearchResult helper method for measurement context
-                measurement_context = search_result.extract_measurement_context()
-                if measurement_context:
-                    measurement_contexts.append(measurement_context)
+                # Skip measurement context extraction for now - method doesn't exist
+                # measurement_context = search_result.extract_measurement_context()
+                # if measurement_context:
+                #     measurement_contexts.append(measurement_context)
 
                 # Check for identifier schemas using SearchResult
                 identifier_info = self._extract_identifier_info(search_result.document)
                 if identifier_info["has_identifier"]:
                     identifier_schemas.append(
                         {
-                            "path": result_dict["path"],
+                            "path": search_result.document.metadata.path_name,
                             "schema_info": identifier_info,
                         }
                     )
 
             # Build explanation response using Pydantic models
             related_paths_data = []
-            for result_dict in [
-                search_result.to_dict() for search_result in search_results[:8]
-            ]:
+            for search_result in search_results[:8]:
                 # Build DataPath with correct fields
                 local_physics_context = None
-                if result_dict.get("physics_domain"):
+                if search_result.document.metadata.physics_domain:
                     local_physics_context = PhysicsContext(
-                        domain=result_dict["physics_domain"],
+                        domain=search_result.document.metadata.physics_domain,
                         phenomena=[],
                         typical_values={},
                     )
 
                 related_paths_data.append(
                     DataPath(
-                        path=result_dict["path"],
-                        documentation=result_dict["documentation"][:150],
-                        units=result_dict["units"],
-                        data_type=result_dict.get("data_type"),
+                        path=search_result.document.metadata.path_name,
+                        documentation=search_result.document.documentation[:150],
+                        units=search_result.document.units.unit_str
+                        if search_result.document.units
+                        else None,
+                        data_type=search_result.document.metadata.data_type,
                         physics_context=local_physics_context,
                     )
                 )
 
-            # Convert detail_level string to enum
-            detail_level_enum = (
-                DetailLevel.ADVANCED
-                if detail_level == "advanced"
-                else DetailLevel.BASIC
-                if detail_level == "basic"
-                else DetailLevel.INTERMEDIATE
-            )
+            # Convert detail_level to enum (handle both string and enum inputs)
+            detail_level_enum = self._convert_to_enum(detail_level, DetailLevel)
 
             # Build sampling prompt for AI enhancement - handled by decorator
 

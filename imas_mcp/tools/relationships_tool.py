@@ -7,11 +7,15 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, Union
 from fastmcp import Context
 
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.search_strategy import SearchComposer
+from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
+from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
+from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
+from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import RelationshipsInputSchema
 from imas_mcp.models.constants import SearchMode, RelationshipType
 from imas_mcp.models.response_models import RelationshipResult
@@ -49,12 +53,38 @@ class RelationshipsTool(BaseTool):
     def __init__(
         self,
         document_store: Optional[DocumentStore] = None,
-        search_composer: Optional[SearchComposer] = None,
     ):
         """Initialize the relationships tool."""
         super().__init__()
         self.document_store = document_store or DocumentStore()
-        self.search_composer = search_composer or SearchComposer(self.document_store)
+        self._search_service = self._create_search_service()
+
+    def _create_search_service(self) -> SearchService:
+        """Create search service with appropriate engines."""
+        # Create engines for each mode
+        engines = {}
+        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
+            config = SearchConfig(
+                search_mode=mode, max_results=100
+            )  # Service will limit based on request
+            engine = self._create_engine(mode.value, config)
+            engines[mode] = engine
+
+        return SearchService(engines)
+
+    def _create_engine(self, engine_type: str, config: SearchConfig):
+        """Create a search engine of the specified type."""
+        engine_map = {
+            "semantic": SemanticSearchEngine,
+            "lexical": LexicalSearchEngine,
+            "hybrid": HybridSearchEngine,
+        }
+
+        if engine_type not in engine_map:
+            raise ValueError(f"Unknown engine type: {engine_type}")
+
+        engine_class = engine_map[engine_type]
+        return engine_class(config)
 
     def get_tool_name(self) -> str:
         return "explore_relationships"
@@ -90,7 +120,7 @@ Provide actionable insights for researchers exploring data relationships.
     async def explore_relationships(
         self,
         path: str,
-        relationship_type: str = "all",
+        relationship_type: Union[str, RelationshipType] = "all",
         max_depth: int = 2,
         ctx: Optional[Context] = None,
     ) -> Dict[str, Any]:
@@ -141,10 +171,12 @@ Provide actionable insights for researchers exploring data relationships.
                 else:
                     search_query = f"{ids_name} relationships physics concepts"
 
-                search_results_dict = self.search_composer.search_with_params(
+                search_results_dict = await self._search_service.search(
                     query=search_query,
-                    mode=SearchMode.SEMANTIC,
-                    max_results=min(10, max_depth * 8),  # Scale with depth
+                    config=SearchConfig(
+                        search_mode=SearchMode.SEMANTIC,
+                        max_results=min(10, max_depth * 8),  # Scale with depth
+                    ),
                 )
             except Exception as e:
                 return {
@@ -158,16 +190,16 @@ Provide actionable insights for researchers exploring data relationships.
             related_paths = []
             seen_paths: Set[str] = set()
 
-            for result_dict in search_results_dict.get("results", []):
-                result_path = result_dict["path"]
+            for search_result in search_results_dict:
+                result_path = search_result.document.metadata.path_name
                 if result_path not in seen_paths and result_path != path:
                     seen_paths.add(result_path)
 
                     # Build physics context if available
                     local_physics_context = None
-                    if result_dict.get("physics_domain"):
+                    if search_result.document.metadata.physics_domain:
                         local_physics_context = PhysicsContext(
-                            domain=result_dict["physics_domain"],
+                            domain=search_result.document.metadata.physics_domain,
                             phenomena=[],
                             typical_values={},
                         )
@@ -175,11 +207,14 @@ Provide actionable insights for researchers exploring data relationships.
                     related_paths.append(
                         DataPath(
                             path=result_path,
-                            documentation=result_dict["documentation"][:200] + "..."
-                            if len(result_dict["documentation"]) > 200
-                            else result_dict["documentation"],
-                            units=result_dict.get("units", ""),
-                            data_type=result_dict.get("data_type", ""),
+                            documentation=search_result.document.documentation[:200]
+                            + "..."
+                            if len(search_result.document.documentation) > 200
+                            else search_result.document.documentation,
+                            units=search_result.document.units.unit_str
+                            if search_result.document.units
+                            else "",
+                            data_type=search_result.document.metadata.data_type or "",
                             physics_context=local_physics_context,
                         )
                     )
@@ -187,19 +222,9 @@ Provide actionable insights for researchers exploring data relationships.
                     if len(related_paths) >= max_depth * 3:  # Limit results
                         break
 
-            # Convert relationship_type string to enum
-            relationship_type_enum = (
-                RelationshipType.ALL
-                if relationship_type == "all"
-                else RelationshipType.STRUCTURAL
-                if relationship_type in ["parent", "child", "sibling", "structural"]
-                else RelationshipType.SEMANTIC
-                if relationship_type == "semantic"
-                else RelationshipType.PHYSICS
-                if relationship_type == "physics"
-                else RelationshipType.MEASUREMENT
-                if relationship_type == "measurement"
-                else RelationshipType.ALL
+            # Convert relationship_type to enum (handle both string and enum inputs)
+            relationship_type_enum = self._convert_to_enum(
+                relationship_type, RelationshipType
             )
 
             # Build final response using Pydantic

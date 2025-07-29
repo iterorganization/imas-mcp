@@ -22,7 +22,7 @@ with patch.dict(
     from imas_mcp.search.engines.base_engine import SearchEngineError
     from imas_mcp.search.search_strategy import SearchConfig, SearchResult
     from imas_mcp.search.document_store import Document, DocumentMetadata
-    from imas_mcp.models.enums import SearchMode
+    from imas_mcp.models.constants import SearchMode
 
 
 @pytest.fixture

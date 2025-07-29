@@ -7,11 +7,12 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional
 from fastmcp import Context
 
 from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
@@ -48,10 +49,10 @@ def mcp_tool(description: str):
 class OverviewTool(BaseTool):
     """Tool for getting IMAS overview."""
 
-    def __init__(self, ids_set: Optional[Set[str]] = None):
-        """Initialize the overview tool with search capabilities."""
+    def __init__(self, document_store: DocumentStore):
+        """Initialize the overview tool with document store."""
         super().__init__()
-        self.ids_set = ids_set
+        self.document_store = document_store
         self._search_service = self._create_search_service()
 
     def _create_search_service(self) -> SearchService:
@@ -162,7 +163,15 @@ Provide practical guidance for fusion researchers and IMAS users.
                     search_results = await self._search_service.search(
                         query, search_config
                     )
-                    query_results = [result.to_dict() for result in search_results[:5]]
+                    query_results = [
+                        {
+                            "path": result.document.metadata.path_name,
+                            "documentation": result.document.documentation,
+                            "score": result.score,
+                            "physics_domain": result.document.metadata.physics_domain,
+                        }
+                        for result in search_results[:5]
+                    ]
                 except Exception as e:
                     logger.warning(f"Query search failed: {e}")
 

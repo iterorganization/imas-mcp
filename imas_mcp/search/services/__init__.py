@@ -9,7 +9,6 @@ from .search_service import (
     SearchService,
     SearchServiceError,
     SearchRequest,
-    SearchResponse,
 )
 
-__all__ = ["SearchService", "SearchServiceError", "SearchRequest", "SearchResponse"]
+__all__ = ["SearchService", "SearchServiceError", "SearchRequest"]
