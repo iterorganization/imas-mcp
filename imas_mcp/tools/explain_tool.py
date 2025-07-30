@@ -11,15 +11,10 @@ from typing import Dict, Any, Optional, List, Set, Union
 from fastmcp import Context
 
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.models.request_models import ExplainInputSchema
+from imas_mcp.models.request_models import ExplainInput
 from imas_mcp.models.constants import SearchMode, DetailLevel
 from imas_mcp.models.response_models import ConceptResult, ErrorResponse
-from imas_mcp.core.data_model import DataPath, PhysicsContext
+from imas_mcp.core.data_model import IdsNode, PhysicsContext
 
 # Import physics integration for enhanced search
 from imas_mcp.physics_integration import physics_search
@@ -52,39 +47,6 @@ def mcp_tool(description: str):
 
 class ExplainTool(BaseTool):
     """Tool for explaining IMAS concepts."""
-
-    def __init__(self, document_store: DocumentStore):
-        """Initialize the explain tool with document store."""
-        super().__init__()
-        self.document_store = document_store
-        self._search_service = self._create_search_service()
-
-    def _create_search_service(self) -> SearchService:
-        """Create search service with appropriate engines."""
-        # Create engines for each mode
-        engines = {}
-        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
-            config = SearchConfig(
-                mode=mode, max_results=100
-            )  # Service will limit based on request
-            engine = self._create_engine(mode.value, config)
-            engines[mode] = engine
-
-        return SearchService(engines)
-
-    def _create_engine(self, engine_type: str, config: SearchConfig):
-        """Create a search engine of the specified type."""
-        engine_map = {
-            "semantic": SemanticSearchEngine,
-            "lexical": LexicalSearchEngine,
-            "hybrid": HybridSearchEngine,
-        }
-
-        if engine_type not in engine_map:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        engine_class = engine_map[engine_type]
-        return engine_class(config)
 
     def get_tool_name(self) -> str:
         return "explain_concept"
@@ -125,7 +87,7 @@ Top related paths found:
         return prompt
 
     @cache_results(ttl=600, key_strategy="semantic")  # Longer cache for explanations
-    @validate_input(schema=ExplainInputSchema)
+    @validate_input(schema=ExplainInput)
     @sample(
         temperature=0.2, max_tokens=1000
     )  # Lower temperature for factual explanations
@@ -136,9 +98,9 @@ Top related paths found:
     async def explain_concept(
         self,
         concept: str,
-        detail_level: Union[str, DetailLevel] = "intermediate",
+        detail_level: DetailLevel = DetailLevel.INTERMEDIATE,
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[ConceptResult, ErrorResponse]:
         """
         Explain IMAS concepts with physics context.
 
@@ -153,7 +115,7 @@ Top related paths found:
         try:
             # Use SearchService with standardized SearchResult format
             search_config = SearchConfig(
-                mode=SearchMode.SEMANTIC,
+                search_mode=SearchMode.SEMANTIC,
                 max_results=15,
                 enable_physics_enhancement=True,
             )
@@ -168,20 +130,25 @@ Top related paths found:
                 # physics_context remains None for optional enhancement
 
             if not search_results:
-                return {
-                    "concept": concept,
-                    "detail_level": detail_level,
-                    "error": "No information found for concept",
-                    "suggestions": [
+                return ConceptResult(
+                    concept=concept,
+                    detail_level=detail_level,
+                    explanation="No information found for concept",
+                    related_topics=[
                         "Try alternative terminology",
                         "Check concept spelling",
                         "Use search_imas() to explore related terms",
                     ],
-                    "related_paths": [],
-                    "physics_context": None,
-                    "sources_analyzed": 0,
-                    "identifier_analysis": [],
-                }
+                    concept_explanation=None,
+                    nodes=[],
+                    physics_domains=[],
+                    physics_context=None,
+                    ai_insights={
+                        "sources_analyzed": 0,
+                        "identifier_analysis": [],
+                        "error": "No matching data found",
+                    },
+                )
 
             # Build comprehensive explanation from standardized SearchResult objects
             related_paths = []
@@ -235,7 +202,7 @@ Top related paths found:
                     )
 
                 related_paths_data.append(
-                    DataPath(
+                    IdsNode(
                         path=search_result.document.metadata.path_name,
                         documentation=search_result.document.documentation[:150],
                         units=search_result.document.units.unit_str
@@ -246,15 +213,12 @@ Top related paths found:
                     )
                 )
 
-            # Convert detail_level to enum (handle both string and enum inputs)
-            detail_level_enum = self._convert_to_enum(detail_level, DetailLevel)
-
             # Build sampling prompt for AI enhancement - handled by decorator
 
             response = ConceptResult(
                 concept=concept,
                 explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Related to {len(measurement_contexts)} measurement contexts. Found {len(related_paths)} related data paths.",
-                detail_level=detail_level_enum,
+                detail_level=detail_level,
                 related_topics=[
                     f"Explore {related_paths[0]['ids_name']} for detailed data"
                     if related_paths
@@ -267,22 +231,26 @@ Top related paths found:
                     else "Try related terminology",
                 ],
                 concept_explanation=None,  # Will be populated by AI enhancement
-                paths=related_paths_data,
-                count=len(related_paths_data),
+                nodes=related_paths_data,
                 physics_domains=list(physics_domains),
                 physics_context=physics_context,
             )
 
-            return response.model_dump()
+            return response
 
         except Exception as e:
             logger.error(f"Concept explanation failed: {e}")
             return ErrorResponse(
-                error=f"Error explaining concept '{concept}': {str(e)}",
+                error=str(e),
                 suggestions=[
                     "Try simpler concept terms",
                     "Check concept spelling",
                     "Use search_imas() to explore available data",
                 ],
-                context={"concept": concept, "detail_level": detail_level},
-            ).model_dump()
+                context={
+                    "concept": concept,
+                    "detail_level": detail_level.value,
+                    "tool": "explain_concept",
+                    "operation": "concept_explanation",
+                },
+            )

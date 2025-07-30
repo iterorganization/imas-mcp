@@ -6,8 +6,17 @@ This module contains common functionality shared across all tool implementations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict
-from enum import Enum
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from imas_mcp.models.response_models import ErrorResponse
+
+from imas_mcp.search.document_store import DocumentStore
+from imas_mcp.search.services.search_service import SearchService
+from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
+from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
+from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
+from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
 
@@ -15,65 +24,52 @@ logger = logging.getLogger(__name__)
 class BaseTool(ABC):
     """Base class for all IMAS MCP tools."""
 
-    def __init__(self):
+    def __init__(self, document_store: Optional[DocumentStore] = None):
         self.logger = logger
+        self.document_store = document_store or DocumentStore()
+        self._search_service = self._create_search_service()
 
     @abstractmethod
     def get_tool_name(self) -> str:
         """Return the name of this tool."""
         pass
 
-    def _create_error_response(
-        self, error_message: str, query: str = ""
-    ) -> Dict[str, Any]:
-        """Create a standardized error response."""
-        return {
-            "error": error_message,
-            "query": query,
-            "tool": self.get_tool_name(),
-            "status": "error",
+    def _create_search_service(self) -> SearchService:
+        """Create search service with appropriate engines."""
+        # Create engines for each mode
+        engines = {}
+        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
+            engine = self._create_engine(mode.value)
+            engines[mode] = engine
+
+        return SearchService(engines)
+
+    def _create_engine(self, engine_type: str):
+        """Create a search engine of the specified type."""
+        engine_map = {
+            "semantic": SemanticSearchEngine,
+            "lexical": LexicalSearchEngine,
+            "hybrid": HybridSearchEngine,
         }
 
-    def _convert_to_enum(self, value: str | Enum, enum_class: type[Enum]) -> Enum:
-        """
-        Convert string value to enum, handling both string and enum inputs.
+        if engine_type not in engine_map:
+            raise ValueError(f"Unknown engine type: {engine_type}")
 
-        This utility handles the common pattern of accepting both string and enum
-        parameters in tool methods, where validation decorators convert strings to enums
-        but the method needs to handle both cases.
+        engine_class = engine_map[engine_type]
+        return engine_class(self.document_store)
 
-        Args:
-            value: String value or already-converted enum
-            enum_class: Target enum class
+    def _create_error_response(
+        self, error_message: str, query: str = ""
+    ) -> "ErrorResponse":
+        """Create a standardized error response."""
+        from imas_mcp.models.response_models import ErrorResponse
 
-        Returns:
-            Enum value
-
-        Raises:
-            ValueError: If string value is not a valid enum option
-            TypeError: If value is neither string nor target enum type
-        """
-        # Auto-generate parameter name from enum class name
-        import re
-
-        parameter_name = re.sub(r"(?<!^)(?=[A-Z])", "_", enum_class.__name__).lower()
-
-        if isinstance(value, enum_class):
-            return value
-
-        if isinstance(value, str):
-            # Create mapping from string values to enum members
-            value_map = {member.value: member for member in enum_class}
-
-            if value not in value_map:
-                valid_values = list(value_map.keys())
-                raise ValueError(
-                    f"Invalid {parameter_name}: {value}. Valid options: {valid_values}"
-                )
-
-            return value_map[value]
-
-        raise TypeError(
-            f"{parameter_name} must be string or {enum_class.__name__} enum, "
-            f"got {type(value).__name__}"
+        return ErrorResponse(
+            error=error_message,
+            suggestions=[],
+            context={
+                "query": query,
+                "tool": self.get_tool_name(),
+                "status": "error",
+            },
         )

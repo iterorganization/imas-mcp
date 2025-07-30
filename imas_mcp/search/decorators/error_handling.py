@@ -8,6 +8,8 @@ import functools
 import logging
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
+from imas_mcp.models.response_models import ErrorResponse
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 logger = logging.getLogger(__name__)
@@ -46,7 +48,8 @@ def create_error_response(
     query: str = "",
     tool_name: str = "",
     include_suggestions: bool = True,
-) -> Dict[str, Any]:
+    fallback_data: Optional[Dict[str, Any]] = None,
+) -> ErrorResponse:
     """
     Create standardized error response.
 
@@ -55,6 +58,7 @@ def create_error_response(
         query: Original query that caused the error
         tool_name: Name of the tool that failed
         include_suggestions: Whether to include error recovery suggestions
+        fallback_data: Optional fallback data to include
 
     Returns:
         Standardized error response
@@ -66,25 +70,32 @@ def create_error_response(
         error_message = error
         error_type = "ToolError"
 
-    response = {
-        "error": error_message,
+    suggestions = []
+    context = {
         "error_type": error_type,
-        "query": query,
         "tool_name": tool_name,
-        "timestamp": None,  # Will be set by performance decorator if enabled
+        "operation": "tool_execution",
     }
 
+    if query:
+        context["query"] = query
+
     if include_suggestions:
-        response["error_recovery"] = generate_error_recovery_suggestions(
+        suggestions = generate_error_recovery_suggestions(
             error_message, query, tool_name
         )
 
-    return response
+    return ErrorResponse(
+        error=error_message,
+        suggestions=suggestions,
+        context=context,
+        fallback_data=fallback_data,
+    )
 
 
 def generate_error_recovery_suggestions(
     error_message: str, query: str, tool_name: str
-) -> list[Dict[str, str]]:
+) -> list[str]:
     """
     Generate error recovery suggestions.
 
@@ -102,95 +113,53 @@ def generate_error_recovery_suggestions(
     # Common error patterns and suggestions
     if "validation" in error_lower or "invalid" in error_lower:
         suggestions.append(
-            {
-                "action": "Check input parameters",
-                "description": "Verify that all required parameters are provided and valid",
-            }
+            "Check input parameters - verify that all required parameters are provided and valid"
         )
 
         if "search_mode" in error_lower:
             suggestions.append(
-                {
-                    "action": "Use valid search mode",
-                    "description": 'Try "auto", "semantic", "lexical", or "hybrid"',
-                }
+                'Use valid search mode - try "auto", "semantic", "lexical", or "hybrid"'
             )
 
         if "max_results" in error_lower:
-            suggestions.append(
-                {
-                    "action": "Adjust max_results",
-                    "description": "Use a value between 1 and 100",
-                }
-            )
+            suggestions.append("Adjust max_results - use a value between 1 and 100")
 
     elif "not found" in error_lower or "no results" in error_lower:
         suggestions.append(
-            {
-                "action": "Try broader search terms",
-                "description": "Use more general keywords or physics concepts",
-            }
+            "Try broader search terms - use more general keywords or physics concepts"
         )
-
         suggestions.append(
-            {
-                "action": "Check spelling and terminology",
-                "description": "Verify scientific terms and IMAS-specific vocabulary",
-            }
+            "Check spelling and terminology - verify scientific terms and IMAS-specific vocabulary"
         )
 
         if tool_name == "search_imas":
             suggestions.append(
-                {
-                    "action": "Try different search mode",
-                    "description": "Switch between semantic, lexical, or hybrid search",
-                }
+                "Try different search mode - switch between semantic, lexical, or hybrid search"
             )
 
     elif "timeout" in error_lower or "slow" in error_lower:
         suggestions.append(
-            {
-                "action": "Reduce search scope",
-                "description": "Use more specific queries or limit max_results",
-            }
+            "Reduce search scope - use more specific queries or limit max_results"
         )
-
         suggestions.append(
-            {
-                "action": "Try simpler query",
-                "description": "Break complex queries into simpler parts",
-            }
+            "Try simpler query - break complex queries into simpler parts"
         )
 
     elif "service" in error_lower or "connection" in error_lower:
         suggestions.append(
-            {
-                "action": "Retry the operation",
-                "description": "The service may be temporarily unavailable",
-            }
+            "Retry the operation - the service may be temporarily unavailable"
         )
-
         suggestions.append(
-            {
-                "action": "Check service status",
-                "description": "Verify that required services are running",
-            }
+            "Check service status - verify that required services are running"
         )
 
     # General fallback suggestions
     if not suggestions:
         suggestions.append(
-            {
-                "action": "Try alternative approach",
-                "description": "Consider using a different tool or search strategy",
-            }
+            "Try alternative approach - consider using a different tool or search strategy"
         )
-
         suggestions.append(
-            {
-                "action": "Get overview",
-                "description": "Use get_overview to understand available data",
-            }
+            "Get overview - use get_overview to understand available data"
         )
 
     return suggestions
@@ -301,14 +270,17 @@ def handle_errors(
 
                 # Extract query from exception if available
                 error_query = getattr(e, "query", query)
-                error_response = create_error_response(e, error_query, tool_name)
 
-                # Add fallback if specified
+                # Get fallback data if specified
+                fallback_data = None
                 if fallback:
                     fallback_data = get_fallback_response(
                         fallback, error_query, tool_name
                     )
-                    error_response["fallback"] = fallback_data
+
+                error_response = create_error_response(
+                    e, error_query, tool_name, fallback_data=fallback_data
+                )
 
                 return error_response
 
@@ -320,17 +292,23 @@ def handle_errors(
                     else:
                         logger.error(f"Unexpected error in {tool_name}: {e}")
 
-                # Create proper error type classification
-                error_type = type(e).__name__
-                error_response = create_error_response(
-                    f"Unexpected error: {e}", query, tool_name
-                )
-                error_response["error_type"] = error_type
-
-                # Add fallback if specified
+                # Get fallback data if specified
+                fallback_data = None
                 if fallback:
                     fallback_data = get_fallback_response(fallback, query, tool_name)
-                    error_response["fallback"] = fallback_data
+
+                # Create proper error response with additional context
+                error_response = create_error_response(
+                    f"Unexpected error: {e}",
+                    query,
+                    tool_name,
+                    fallback_data=fallback_data,
+                )
+
+                # Add error type to context
+                if error_response.context is None:
+                    error_response.context = {}
+                error_response.context["error_type"] = type(e).__name__
 
                 return error_response
 

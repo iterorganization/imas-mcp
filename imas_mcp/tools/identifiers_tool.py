@@ -7,13 +7,13 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Optional, Union
 from fastmcp import Context
 
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.request_models import IdentifiersInputSchema
+from imas_mcp.models.request_models import IdentifiersInput
 from imas_mcp.models.constants import IdentifierScope
-from imas_mcp.models.response_models import IdentifierResult
+from imas_mcp.models.response_models import IdentifierResult, ErrorResponse
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -25,7 +25,7 @@ from imas_mcp.search.decorators import (
     handle_errors,
 )
 
-from .base import BaseTool
+from imas_mcp.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ Focus on providing actionable insights for researchers working with IMAS identif
     @cache_results(
         ttl=1200, key_strategy="content_based"
     )  # Longer cache for identifiers
-    @validate_input(schema=IdentifiersInputSchema)
+    @validate_input(schema=IdentifiersInput)
     @sample(temperature=0.3, max_tokens=800)  # Balanced creativity for analysis
     @recommend_tools(strategy="identifiers_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
@@ -86,9 +86,9 @@ Focus on providing actionable insights for researchers working with IMAS identif
     async def explore_identifiers(
         self,
         query: Optional[str] = None,
-        scope: Union[str, IdentifierScope] = "all",
+        scope: IdentifierScope = IdentifierScope.ALL,
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[IdentifierResult, ErrorResponse]:
         """
         Explore IMAS identifier schemas and branching logic.
 
@@ -178,30 +178,30 @@ Focus on providing actionable insights for researchers working with IMAS identif
                 "significance": "Identifier schemas define critical branching logic and enumeration options in IMAS data structures",
             }
 
-            # Convert scope to enum (handle both string and enum inputs)
-            scope_enum = self._convert_to_enum(scope, IdentifierScope)
-
             # Build final response using Pydantic
             response = IdentifierResult(
-                scope=scope_enum,
+                scope=scope,
                 schemas=schemas,  # schemas is already dict list
                 paths=identifier_paths,
                 analytics=branching_analytics,
             )
 
-            return response.model_dump()
+            return response
 
         except Exception as e:
             logger.error(f"Identifier exploration failed: {e}")
-            return {
-                "query": query,
-                "scope": scope,
-                "error": str(e),
-                "explanation": "Failed to explore identifiers",
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Try scope='summary' for overview",
                     "Use scope='schemas' for schema details",
                     "Use scope='paths' for identifier paths",
                     "Add query to filter results",
                 ],
-            }
+                context={
+                    "scope": scope.value,
+                    "query": query,
+                    "tool": "explore_identifiers",
+                    "operation": "identifier_exploration",
+                },
+            )

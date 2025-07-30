@@ -7,18 +7,13 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Optional, Union
 from fastmcp import Context
 
 from imas_mcp.search.search_strategy import SearchConfig
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.models.request_models import OverviewInputSchema
+from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.response_models import OverviewResult
+from imas_mcp.models.response_models import OverviewResult, SearchHit, ErrorResponse
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -48,39 +43,6 @@ def mcp_tool(description: str):
 
 class OverviewTool(BaseTool):
     """Tool for getting IMAS overview."""
-
-    def __init__(self, document_store: DocumentStore):
-        """Initialize the overview tool with document store."""
-        super().__init__()
-        self.document_store = document_store
-        self._search_service = self._create_search_service()
-
-    def _create_search_service(self) -> SearchService:
-        """Create search service with appropriate engines."""
-        # Create engines for each mode
-        engines = {}
-        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
-            config = SearchConfig(
-                mode=mode, max_results=100
-            )  # Service will limit based on request
-            engine = self._create_engine(mode.value, config)
-            engines[mode] = engine
-
-        return SearchService(engines)
-
-    def _create_engine(self, engine_type: str, config: SearchConfig):
-        """Create a search engine of the specified type."""
-        engine_map = {
-            "semantic": SemanticSearchEngine,
-            "lexical": LexicalSearchEngine,
-            "hybrid": HybridSearchEngine,
-        }
-
-        if engine_type not in engine_map:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        engine_class = engine_map[engine_type]
-        return engine_class(config)
 
     def get_tool_name(self) -> str:
         return "get_overview"
@@ -115,7 +77,7 @@ Provide practical guidance for fusion researchers and IMAS users.
 """
 
     @cache_results(ttl=1800, key_strategy="semantic")  # Longer cache for overviews
-    @validate_input(schema=OverviewInputSchema)
+    @validate_input(schema=OverviewInput)
     @sample(temperature=0.3, max_tokens=1000)  # Balanced creativity for overviews
     @recommend_tools(strategy="overview_based", max_tools=4)
     @measure_performance(include_metrics=True, slow_threshold=3.0)
@@ -125,7 +87,7 @@ Provide practical guidance for fusion researchers and IMAS users.
         self,
         query: Optional[str] = None,
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[OverviewResult, ErrorResponse]:
         """
         Get IMAS overview or answer analytical queries with insights.
 
@@ -157,20 +119,31 @@ Provide practical guidance for fusion researchers and IMAS users.
                 # Search for query-related content
                 try:
                     search_config = SearchConfig(
-                        mode=SearchMode.SEMANTIC,
+                        search_mode=SearchMode.SEMANTIC,
                         max_results=10,
                     )
                     search_results = await self._search_service.search(
                         query, search_config
                     )
+                    # Convert SearchResult objects to SearchHit objects
                     query_results = [
-                        {
-                            "path": result.document.metadata.path_name,
-                            "documentation": result.document.documentation,
-                            "score": result.score,
-                            "physics_domain": result.document.metadata.physics_domain,
-                        }
-                        for result in search_results[:5]
+                        SearchHit(
+                            path=result.document.metadata.path_name,
+                            documentation=result.document.documentation,
+                            score=result.score,
+                            rank=idx + 1,
+                            search_mode=SearchMode.SEMANTIC,
+                            ids_name=result.document.metadata.path_name.split("/")[0]
+                            if "/" in result.document.metadata.path_name
+                            else result.document.metadata.path_name,
+                            physics_domain=result.document.metadata.physics_domain,
+                            units=getattr(result.document.metadata, "units", None),
+                            data_type=getattr(
+                                result.document.metadata, "data_type", None
+                            ),
+                            document=result.document,
+                        )
+                        for idx, result in enumerate(search_results[:5])
                     ]
                 except Exception as e:
                     logger.warning(f"Query search failed: {e}")
@@ -230,31 +203,25 @@ Provide practical guidance for fusion researchers and IMAS users.
                 query=query,
                 physics_domains=list(physics_domains),
                 physics_context=None,
+                hits=query_results if query else [],
+                ids_statistics=ids_statistics,
+                usage_guidance=usage_guidance,
             )
 
-            result = overview_response.model_dump()
-
-            # Add additional context for queries
-            if query and query_results:
-                result["query_results"] = query_results
-                result["query_results_count"] = len(query_results)
-
-            result["ids_statistics"] = ids_statistics
-            result["usage_guidance"] = usage_guidance
-
-            return result
+            return overview_response
 
         except Exception as e:
             logger.error(f"Overview generation failed: {e}")
-            return {
-                "query": query,
-                "error": str(e),
-                "overview": "Failed to generate overview",
-                "available_ids": [],
-                "physics_domains": [],
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Try simpler queries",
                     "Use search_imas() to explore specific topics",
-                    "Check system status",
+                    "Check for system availability",
                 ],
-            }
+                context={
+                    "query": query,
+                    "tool": "get_overview",
+                    "operation": "overview_generation",
+                },
+            )

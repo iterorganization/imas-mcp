@@ -287,7 +287,7 @@ class SemanticSearch:
             return True
 
         except Exception as e:
-            logger.warning(f"Failed to load embeddings cache: {e}")
+            logger.error(f"Failed to load embeddings cache: {e}")
             return False
 
     def _generate_embeddings(self) -> None:

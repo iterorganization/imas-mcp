@@ -116,10 +116,10 @@ class IdentifierSchema(BaseModel):
     )  # Additional metadata from schema
 
 
-class DataPath(BaseModel):
+class IdsNode(BaseModel):
     """Complete data path information extracted from XML."""
 
-    path: str  # The full path (added for consistency)
+    path: str
     documentation: str
     units: Optional[str] = None  # Make units optional
     coordinates: List[str] = Field(default_factory=list)
@@ -171,7 +171,7 @@ class IdsDetailed(BaseModel):
 
     ids_info: IdsInfo
     coordinate_systems: Dict[str, CoordinateSystem] = Field(default_factory=dict)
-    paths: Dict[str, DataPath] = Field(default_factory=dict)
+    paths: Dict[str, IdsNode] = Field(default_factory=dict)
     semantic_groups: Dict[str, List[str]] = Field(default_factory=dict)
 
 

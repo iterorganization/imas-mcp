@@ -6,7 +6,7 @@ scattered across search/schemas/ directory.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import (
     SearchMode,
@@ -18,7 +18,13 @@ from .constants import (
 )
 
 
-class SearchInputSchema(BaseModel):
+class BaseInputSchema(BaseModel):
+    """Base schema for all input validation with strict parameter checking."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchInput(BaseInputSchema):
     """Input validation schema for search_imas tool."""
 
     query: str = Field(
@@ -51,7 +57,7 @@ class SearchInputSchema(BaseModel):
         return v
 
 
-class ExplainInputSchema(BaseModel):
+class ExplainInput(BaseInputSchema):
     """Input validation schema for explain_concept tool."""
 
     concept: str = Field(
@@ -74,7 +80,7 @@ class ExplainInputSchema(BaseModel):
         return v
 
 
-class AnalysisInputSchema(BaseModel):
+class AnalysisInput(BaseInputSchema):
     """Input validation schema for analyze_ids_structure tool."""
 
     ids_name: str = Field(
@@ -100,7 +106,7 @@ class AnalysisInputSchema(BaseModel):
         return v
 
 
-class RelationshipsInputSchema(BaseModel):
+class RelationshipsInput(BaseInputSchema):
     """Input validation schema for explore_relationships tool."""
 
     path: str = Field(
@@ -134,7 +140,7 @@ class RelationshipsInputSchema(BaseModel):
         return v
 
 
-class IdentifiersInputSchema(BaseModel):
+class IdentifiersInput(BaseInputSchema):
     """Input validation schema for explore_identifiers tool."""
 
     scope: IdentifierScope = Field(
@@ -158,7 +164,7 @@ class IdentifiersInputSchema(BaseModel):
         return v
 
 
-class OverviewInputSchema(BaseModel):
+class OverviewInput(BaseInputSchema):
     """Input validation schema for get_overview tool."""
 
     query: Optional[str] = Field(
@@ -178,7 +184,7 @@ class OverviewInputSchema(BaseModel):
         return v
 
 
-class ExportIdsInputSchema(BaseModel):
+class ExportIdsInput(BaseInputSchema):
     """Input validation schema for export_ids tool."""
 
     ids_list: List[str] = Field(
@@ -222,7 +228,7 @@ class ExportIdsInputSchema(BaseModel):
         return [ids.strip() for ids in v]
 
 
-class ExportPhysicsDomainInputSchema(BaseModel):
+class ExportPhysicsDomainInput(BaseInputSchema):
     """Input validation schema for export_physics_domain tool."""
 
     domain: str = Field(

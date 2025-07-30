@@ -12,12 +12,7 @@ from typing import Any, List, Optional, Union
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.response_models import SearchResponse, SearchHit
 from imas_mcp.search.search_strategy import SearchConfig, SearchResult
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.models.request_models import SearchInputSchema
+from imas_mcp.models.request_models import SearchInput
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -48,44 +43,11 @@ def mcp_tool(description: str):
 class SearchTool(BaseTool):
     """Tool for searching IMAS data paths."""
 
-    def __init__(self, document_store: DocumentStore):
-        """Initialize search tool with document store."""
-        super().__init__()
-        self.document_store = document_store
-        self._search_service = self._create_search_service()
-
-    def _create_search_service(self) -> SearchService:
-        """Create search service with appropriate engines."""
-        # Create engines for each mode
-        engines = {}
-        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
-            config = SearchConfig(
-                search_mode=mode, max_results=100
-            )  # Service will limit based on request
-            engine = self._create_engine(mode.value, config)
-            engines[mode] = engine
-
-        return SearchService(engines)
-
-    def _create_engine(self, engine_type: str, config: SearchConfig):
-        """Create a search engine of the specified type."""
-        engine_map = {
-            "semantic": SemanticSearchEngine,
-            "lexical": LexicalSearchEngine,
-            "hybrid": HybridSearchEngine,
-        }
-
-        if engine_type not in engine_map:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        engine_class = engine_map[engine_type]
-        return engine_class(config)
-
     def get_tool_name(self) -> str:
         return "search_imas"
 
     @cache_results(ttl=300, key_strategy="semantic")
-    @validate_input(schema=SearchInputSchema)
+    @validate_input(schema=SearchInput)
     @sample(temperature=0.3, max_tokens=800)
     @recommend_tools(strategy="search_based", max_tools=4)
     @measure_performance(include_metrics=True, slow_threshold=1.0)
