@@ -7,12 +7,12 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Optional, Union
 from fastmcp import Context
 
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.request_models import AnalysisInputSchema
-from imas_mcp.models.response_models import StructureResult
+from imas_mcp.models.request_models import AnalysisInput
+from imas_mcp.models.response_models import StructureResult, ErrorResponse
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -69,7 +69,7 @@ Focus on providing actionable insights for researchers working with this specifi
 """
 
     @cache_results(ttl=900, key_strategy="path_based")  # Cache structure analysis
-    @validate_input(schema=AnalysisInputSchema)
+    @validate_input(schema=AnalysisInput)
     @sample(temperature=0.2, max_tokens=800)  # Conservative temperature for analysis
     @recommend_tools(strategy="analysis_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
@@ -77,7 +77,7 @@ Focus on providing actionable insights for researchers working with this specifi
     @mcp_tool("Get detailed structural analysis of a specific IDS")
     async def analyze_ids_structure(
         self, ids_name: str, ctx: Optional[Context] = None
-    ) -> Dict[str, Any]:
+    ) -> Union[StructureResult, ErrorResponse]:
         """
         Get detailed structural analysis of a specific IDS using graph metrics.
 
@@ -92,12 +92,15 @@ Focus on providing actionable insights for researchers working with this specifi
             # Validate IDS exists
             available_ids = self.document_store.get_available_ids()
             if ids_name not in available_ids:
-                return {
-                    "ids_name": ids_name,
-                    "error": f"IDS '{ids_name}' not found",
-                    "available_ids": available_ids[:10],  # Show first 10
-                    "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
-                }
+                return ErrorResponse(
+                    error=f"IDS '{ids_name}' not found",
+                    suggestions=[f"Try: {ids}" for ids in available_ids[:5]],
+                    context={
+                        "available_ids": available_ids[:10],
+                        "ids_name": ids_name,
+                        "tool": "analyze_ids_structure",
+                    },
+                )
 
             # Get detailed IDS data from document store
             ids_documents = self.document_store.get_documents_by_ids(ids_name)
@@ -173,10 +176,8 @@ Focus on providing actionable insights for researchers working with this specifi
                 physics_context=None,
             )
 
-            result = response.model_dump()
-
-            # Add identifier analysis
-            result["identifier_analysis"] = {
+            # Add identifier analysis as ai_insights
+            response.ai_insights = {
                 "total_identifier_nodes": len(identifier_nodes),
                 "branching_paths": identifier_nodes,
                 "coverage": f"{len(identifier_nodes) / len(paths) * 100:.1f}%"
@@ -184,17 +185,20 @@ Focus on providing actionable insights for researchers working with this specifi
                 else "0%",
             }
 
-            return result
+            return response
 
         except Exception as e:
             logger.error(f"IDS structure analysis failed: {e}")
-            return {
-                "ids_name": ids_name,
-                "error": str(e),
-                "analysis": "Failed to analyze IDS structure",
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Check IDS name spelling",
                     "Verify IDS exists in data dictionary",
                     "Try get_overview() to see available IDS",
                 ],
-            }
+                context={
+                    "ids_name": ids_name,
+                    "tool": "analyze_ids_structure",
+                    "operation": "structure_analysis",
+                },
+            )

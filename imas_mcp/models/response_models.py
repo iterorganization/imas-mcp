@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
-from imas_mcp.core.data_model import DataPath
+from imas_mcp.core.data_model import IdsNode
 from imas_mcp.search.search_strategy import SearchResult
 from imas_mcp.models.physics_models import PhysicsSearchResult, ConceptExplanation
 from imas_mcp.models.constants import (
@@ -52,6 +52,9 @@ class ErrorResponse(BaseModel):
     error: str
     suggestions: List[str] = Field(default_factory=list)
     context: Optional[Dict[str, Any]] = None
+    fallback_data: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional fallback data when primary operation fails"
+    )
 
 
 # ============================================================================
@@ -76,11 +79,15 @@ class AIResponse(BaseModel):
     )
 
 
-class DataResponse(BaseModel):
-    """Response containing IMAS data paths."""
+class IdsResponse(BaseModel):
+    """Response containing IMAS data nodes."""
 
-    paths: List[DataPath] = Field(default_factory=list)
-    count: int = 0
+    nodes: List[IdsNode] = Field(default_factory=list)
+
+    @property
+    def node_count(self) -> int:
+        """Number of nodes in the response."""
+        return len(self.nodes)
 
 
 class PhysicsResponse(BaseModel):
@@ -90,11 +97,87 @@ class PhysicsResponse(BaseModel):
     physics_context: Optional[PhysicsSearchResult] = None
 
 
-class ExportResponse(BaseModel):
-    """Response from export operations."""
+# ============================================================================
+# EXPORT DATA STRUCTURES
+# ============================================================================
 
-    data: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class IdsPath(BaseModel):
+    """Information about an exported path."""
+
+    path: str = Field(description="Full IMAS path")
+    documentation: str = Field(description="Path documentation")
+    physics_domain: Optional[str] = Field(default=None, description="Physics domain")
+    data_type: Optional[str] = Field(default=None, description="Data type")
+    units: Optional[str] = Field(default=None, description="Physical units")
+
+
+class IdsInfo(BaseModel):
+    """Information about an exported IDS."""
+
+    ids_name: str = Field(description="IDS name")
+    description: Optional[str] = Field(default=None, description="IDS description")
+    paths: List[IdsPath] = Field(default_factory=list, description="Paths in this IDS")
+    physics_domains: List[str] = Field(
+        default_factory=list, description="Physics domains"
+    )
+    measurement_types: List[str] = Field(
+        default_factory=list, description="Measurement types"
+    )
+
+
+class ExportSummary(BaseModel):
+    """Summary of export operation."""
+
+    total_requested: int = Field(description="Total items requested")
+    successfully_exported: int = Field(description="Successfully exported items")
+    failed_exports: int = Field(description="Failed export count")
+    total_paths_exported: int = Field(description="Total paths exported")
+    export_completeness: str = Field(description="Export completeness status")
+
+
+class ExportData(BaseModel):
+    """Structured export data instead of free-form dict."""
+
+    # For IDS exports
+    ids_data: Optional[Dict[str, IdsInfo]] = Field(
+        default=None, description="IDS export data"
+    )
+    cross_relationships: Optional[Dict[str, Any]] = Field(
+        default=None, description="Cross-IDS relationships"
+    )
+    export_summary: Optional[ExportSummary] = Field(
+        default=None, description="Export summary"
+    )
+
+    # For domain exports
+    analysis_depth: Optional[str] = Field(
+        default=None, description="Analysis depth used"
+    )
+    paths: Optional[List[IdsPath]] = Field(default=None, description="Domain paths")
+    related_ids: Optional[List[str]] = Field(
+        default=None, description="Related IDS names"
+    )
+
+    # For errors
+    error: Optional[str] = Field(
+        default=None, description="Error message if export failed"
+    )
+    explanation: Optional[str] = Field(default=None, description="Error explanation")
+    suggestions: Optional[List[str]] = Field(
+        default=None, description="Suggested actions"
+    )
+
+
+class ExportResponse(BaseModel):
+    """Response from export operations with structured data."""
+
+    data: ExportData = Field(
+        default_factory=ExportData, description="Structured export data"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Export metadata"
+    )
 
 
 # ============================================================================
@@ -105,7 +188,7 @@ class ExportResponse(BaseModel):
 class SearchHit(SearchResult):
     """A single search hit that extends SearchResult with API-specific fields."""
 
-    # API-specific fields (inherited from SearchResult: score->relevance_score, rank, search_mode, highlights)
+    # API-specific fields (inherited from SearchResult: score, rank, search_mode, highlights)
     path: str = Field(description="Full IMAS path")
     documentation: str = Field(description="Path documentation")
     units: Optional[str] = Field(default=None, description="Physical units")
@@ -120,17 +203,24 @@ class SearchHit(SearchResult):
         default=None, exclude=True, description="Internal document reference"
     )
 
+
+class SearchHits(BaseModel):
+    """Base class for responses that contain search hits."""
+
+    hits: List["SearchHit"] = Field(default_factory=list, description="Search hits")
+
     @property
-    def relevance_score(self) -> float:
-        """Alias for score to maintain API compatibility."""
-        return self.score
+    def hit_count(self) -> int:
+        """Number of search hits returned."""
+        return len(self.hits)
 
 
-class SearchResponse(DataResponse, PhysicsResponse, QueryContext, AIResponse):
+class SearchResponse(
+    IdsResponse, PhysicsResponse, QueryContext, AIResponse, SearchHits
+):
     """Search tool response."""
 
-    # Core search results
-    hits: List[SearchHit] = Field(default_factory=list, description="Search hits")
+    # Search-specific fields
     search_mode: SearchMode = Field(
         default=SearchMode.AUTO, description="Search mode used"
     )
@@ -141,17 +231,21 @@ class SearchResponse(DataResponse, PhysicsResponse, QueryContext, AIResponse):
         default_factory=list, description="Tool suggestions for follow-up analysis"
     )
 
-    @property
-    def hit_count(self) -> int:
-        """Number of search hits returned."""
-        return len(self.hits)
 
-
-class OverviewResult(PhysicsResponse, QueryContext, AIResponse):
+class OverviewResult(PhysicsResponse, QueryContext, AIResponse, SearchHits):
     """Overview tool response."""
 
     content: str
     available_ids: List[str] = Field(default_factory=list)
+
+    # System analytics and statistics
+    ids_statistics: Dict[str, Any] = Field(
+        default_factory=dict, description="IDS usage and availability statistics"
+    )
+    usage_guidance: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Usage guidance and getting started information",
+    )
 
 
 # ============================================================================
@@ -159,7 +253,7 @@ class OverviewResult(PhysicsResponse, QueryContext, AIResponse):
 # ============================================================================
 
 
-class ConceptResult(DataResponse, PhysicsResponse, QueryContext, AIResponse):
+class ConceptResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse):
     """Concept explanation response."""
 
     concept: str
@@ -188,7 +282,7 @@ class IdentifierResult(AIResponse, BaseModel):
     analytics: Dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipResult(DataResponse, PhysicsResponse, QueryContext, AIResponse):
+class RelationshipResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse):
     """Relationship exploration response."""
 
     path: str

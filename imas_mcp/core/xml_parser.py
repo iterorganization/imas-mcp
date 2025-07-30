@@ -10,7 +10,7 @@ from imas_mcp.core.data_model import (
     CatalogMetadata,
     CoordinateSystem,
     CrossIdsRelationship,
-    DataPath,
+    IdsNode,
     IdentifierCatalog,
     IdentifierCatalogSchema,
     IdentifierPath,
@@ -523,7 +523,7 @@ class DataDictionaryTransformer:
                     path_data["usage_examples"] = usage_examples
 
                 # Create DataPath object
-                data_paths[path_key] = DataPath(**path_data)
+                data_paths[path_key] = IdsNode(**path_data)
 
             detailed = IdsDetailed(
                 ids_info=IdsInfo(**data["ids_info"]),

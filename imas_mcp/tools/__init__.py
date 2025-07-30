@@ -80,6 +80,26 @@ class Tools(MCPProvider):
         """Delegate to overview tool."""
         return await self.overview_tool.get_overview(*args, **kwargs)
 
+    async def explore_identifiers(self, *args, **kwargs):
+        """Delegate to identifiers tool."""
+        return await self.identifiers_tool.explore_identifiers(*args, **kwargs)
+
+    async def analyze_ids_structure(self, *args, **kwargs):
+        """Delegate to analysis tool."""
+        return await self.analysis_tool.analyze_ids_structure(*args, **kwargs)
+
+    async def explore_relationships(self, *args, **kwargs):
+        """Delegate to relationships tool."""
+        return await self.relationships_tool.explore_relationships(*args, **kwargs)
+
+    async def export_ids(self, *args, **kwargs):
+        """Delegate to export tool."""
+        return await self.export_tool.export_ids(*args, **kwargs)
+
+    async def export_physics_domain(self, *args, **kwargs):
+        """Delegate to export tool."""
+        return await self.export_tool.export_physics_domain(*args, **kwargs)
+
 
 __all__ = [
     "BaseTool",

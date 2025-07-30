@@ -7,19 +7,14 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, Optional, Set, Union
+from typing import Optional, Set, Union
 from fastmcp import Context
 
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.search.search_strategy import SearchConfig
-from imas_mcp.models.request_models import RelationshipsInputSchema
+from imas_mcp.models.request_models import RelationshipsInput
 from imas_mcp.models.constants import SearchMode, RelationshipType
-from imas_mcp.models.response_models import RelationshipResult
-from imas_mcp.core.data_model import DataPath, PhysicsContext
+from imas_mcp.models.response_models import RelationshipResult, ErrorResponse
+from imas_mcp.core.data_model import IdsNode, PhysicsContext
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -50,42 +45,6 @@ def mcp_tool(description: str):
 class RelationshipsTool(BaseTool):
     """Tool for exploring relationships."""
 
-    def __init__(
-        self,
-        document_store: Optional[DocumentStore] = None,
-    ):
-        """Initialize the relationships tool."""
-        super().__init__()
-        self.document_store = document_store or DocumentStore()
-        self._search_service = self._create_search_service()
-
-    def _create_search_service(self) -> SearchService:
-        """Create search service with appropriate engines."""
-        # Create engines for each mode
-        engines = {}
-        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
-            config = SearchConfig(
-                search_mode=mode, max_results=100
-            )  # Service will limit based on request
-            engine = self._create_engine(mode.value, config)
-            engines[mode] = engine
-
-        return SearchService(engines)
-
-    def _create_engine(self, engine_type: str, config: SearchConfig):
-        """Create a search engine of the specified type."""
-        engine_map = {
-            "semantic": SemanticSearchEngine,
-            "lexical": LexicalSearchEngine,
-            "hybrid": HybridSearchEngine,
-        }
-
-        if engine_type not in engine_map:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        engine_class = engine_map[engine_type]
-        return engine_class(config)
-
     def get_tool_name(self) -> str:
         return "explore_relationships"
 
@@ -111,7 +70,7 @@ Provide actionable insights for researchers exploring data relationships.
 """
 
     @cache_results(ttl=600, key_strategy="path_based")  # Cache relationships
-    @validate_input(schema=RelationshipsInputSchema)
+    @validate_input(schema=RelationshipsInput)
     @sample(temperature=0.3, max_tokens=800)  # Balanced creativity for relationships
     @recommend_tools(strategy="relationships_based", max_tools=4)
     @measure_performance(include_metrics=True, slow_threshold=2.5)
@@ -120,10 +79,10 @@ Provide actionable insights for researchers exploring data relationships.
     async def explore_relationships(
         self,
         path: str,
-        relationship_type: Union[str, RelationshipType] = "all",
+        relationship_type: RelationshipType = RelationshipType.ALL,
         max_depth: int = 2,
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[RelationshipResult, ErrorResponse]:
         """
         Explore relationships between IMAS data paths using the rich relationship data.
 
@@ -156,12 +115,15 @@ Provide actionable insights for researchers exploring data relationships.
             # Validate IDS exists
             available_ids = self.document_store.get_available_ids()
             if ids_name not in available_ids:
-                return {
-                    "path": path,
-                    "error": f"IDS '{ids_name}' not found",
-                    "available_ids": available_ids[:10],
-                    "suggestions": [f"Try: {ids}" for ids in available_ids[:5]],
-                }
+                return ErrorResponse(
+                    error=f"IDS '{ids_name}' not found",
+                    suggestions=[f"Try: {ids}" for ids in available_ids[:5]],
+                    context={
+                        "available_ids": available_ids[:10],
+                        "path": path,
+                        "tool": "explore_relationships",
+                    },
+                )
 
             # Get relationship data through semantic search
             try:
@@ -179,12 +141,18 @@ Provide actionable insights for researchers exploring data relationships.
                     ),
                 )
             except Exception as e:
-                return {
-                    "path": path,
-                    "error": f"Failed to search relationships: {e}",
-                    "relationship_type": relationship_type,
-                    "max_depth": max_depth,
-                }
+                return ErrorResponse(
+                    error=f"Failed to search relationships: {e}",
+                    suggestions=[
+                        "Check path format and accessibility",
+                        "Verify search service availability",
+                    ],
+                    context={
+                        "path": path,
+                        "tool": "explore_relationships",
+                        "operation": "relationship_search",
+                    },
+                )
 
             # Process search results for relationships
             related_paths = []
@@ -205,7 +173,7 @@ Provide actionable insights for researchers exploring data relationships.
                         )
 
                     related_paths.append(
-                        DataPath(
+                        IdsNode(
                             path=result_path,
                             documentation=search_result.document.documentation[:200]
                             + "..."
@@ -222,15 +190,10 @@ Provide actionable insights for researchers exploring data relationships.
                     if len(related_paths) >= max_depth * 3:  # Limit results
                         break
 
-            # Convert relationship_type to enum (handle both string and enum inputs)
-            relationship_type_enum = self._convert_to_enum(
-                relationship_type, RelationshipType
-            )
-
             # Build final response using Pydantic
             response = RelationshipResult(
                 path=path,
-                relationship_type=relationship_type_enum,
+                relationship_type=relationship_type,
                 max_depth=max_depth,
                 connections={
                     "total_relationships": [p.path for p in related_paths],
@@ -245,8 +208,7 @@ Provide actionable insights for researchers exploring data relationships.
                         )
                     ),
                 },
-                paths=related_paths[:5],
-                count=len(related_paths),
+                nodes=related_paths[:5],
                 physics_domains=[
                     p.physics_context.domain
                     for p in related_paths
@@ -255,19 +217,20 @@ Provide actionable insights for researchers exploring data relationships.
                 physics_context=None,
             )
 
-            return response.model_dump()
+            return response
 
         except Exception as e:
             logger.error(f"Relationship exploration failed: {e}")
-            return {
-                "path": path,
-                "relationship_type": relationship_type,
-                "max_depth": max_depth,
-                "error": str(e),
-                "relationships": "Failed to explore relationships",
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Check path format (ids_name/path or just ids_name)",
                     "Verify IDS exists in data dictionary",
                     "Try search_imas() first to find valid paths",
                 ],
-            }
+                context={
+                    "path": path,
+                    "tool": "explore_relationships",
+                    "operation": "relationship_exploration",
+                },
+            )
