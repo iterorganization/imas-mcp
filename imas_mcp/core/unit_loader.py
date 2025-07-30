@@ -145,6 +145,10 @@ def get_unit_name(unit_str: str) -> str:
     """
 
     try:
+        # Handle special case for dimensionless units
+        if unit_str in ("1", "dimensionless", ""):
+            return "dimensionless"
+
         # Parse the unit with pint
         unit = unit_registry(unit_str)
 
@@ -168,8 +172,23 @@ def get_unit_dimensionality(unit_str: str) -> str:
         Pint's dimensionality string or empty string
     """
     try:
+        # Handle special case for dimensionless units
+        if unit_str in ("1", "dimensionless", ""):
+            return "dimensionless"
+
         unit = unit_registry(unit_str)
-        dimensionality = str(unit.dimensionality)
+
+        # Check if unit has dimensionality attribute (some parsed units might not)
+        if hasattr(unit, "dimensionality"):
+            dimensionality = str(unit.dimensionality)
+        elif hasattr(unit, "units") and hasattr(unit.units, "dimensionality"):
+            dimensionality = str(unit.units.dimensionality)
+        else:
+            # Fallback for cases where dimensionality is not accessible
+            logger.debug(
+                f"Unit '{unit_str}' parsed as {type(unit)} but no dimensionality found"
+            )
+            return "unknown"
 
         # Return pint's clean dimensionality formatting directly
         return dimensionality

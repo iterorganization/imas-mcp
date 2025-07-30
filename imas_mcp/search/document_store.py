@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from imas_mcp.core.data_model import DataPath, PhysicsContext, IdentifierSchema
+from imas_mcp.core.data_model import IdsNode, PhysicsContext, IdentifierSchema
 from imas_mcp.core.physics_accessors import UnitAccessor
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ class Document:
 
         return " | ".join(components)
 
-    def to_datapath(self) -> DataPath:
+    def to_datapath(self) -> IdsNode:
         """Convert Document to DataPath for consistent API responses."""
         # Build physics context if available
         physics_context = None
@@ -188,7 +188,7 @@ class Document:
                     metadata=schema_data.get("metadata", {}),
                 )
 
-        return DataPath(
+        return IdsNode(
             path=self.metadata.path_name,
             documentation=self.documentation,
             units=self.units.unit_str if self.units else "",
@@ -206,7 +206,6 @@ class Document:
             related_paths=self.raw_data.get("related_paths", []),
             usage_examples=self.raw_data.get("usage_examples", []),
             validation_rules=self.raw_data.get("validation_rules"),
-            relationships=self.raw_data.get("relationships"),
             identifier_schema=identifier_schema,
             coordinate1=self.raw_data.get("coordinate1"),
             coordinate2=self.raw_data.get("coordinate2"),

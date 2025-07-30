@@ -7,21 +7,16 @@ performance monitoring, and error handling.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Union
 from fastmcp import Context
 
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import (
-    ExportIdsInputSchema,
-    ExportPhysicsDomainInputSchema,
+    ExportIdsInput,
+    ExportPhysicsDomainInput,
 )
 from imas_mcp.models.constants import SearchMode, OutputFormat
-from imas_mcp.models.response_models import IDSExport, DomainExport
+from imas_mcp.models.response_models import IDSExport, DomainExport, ErrorResponse
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -51,42 +46,6 @@ def mcp_tool(description: str):
 
 class ExportTool(BaseTool):
     """Tool for exporting IDS and physics domain data."""
-
-    def __init__(
-        self,
-        document_store: Optional[DocumentStore] = None,
-    ):
-        """Initialize the export tool."""
-        super().__init__()
-        self.document_store = document_store or DocumentStore()
-        self._search_service = self._create_search_service()
-
-    def _create_search_service(self) -> SearchService:
-        """Create search service with appropriate engines."""
-        # Create engines for each mode
-        engines = {}
-        for mode in [SearchMode.SEMANTIC, SearchMode.LEXICAL, SearchMode.HYBRID]:
-            config = SearchConfig(
-                search_mode=mode, max_results=100
-            )  # Service will limit based on request
-            engine = self._create_engine(mode.value, config)
-            engines[mode] = engine
-
-        return SearchService(engines)
-
-    def _create_engine(self, engine_type: str, config: SearchConfig):
-        """Create a search engine of the specified type."""
-        engine_map = {
-            "semantic": SemanticSearchEngine,
-            "lexical": LexicalSearchEngine,
-            "hybrid": HybridSearchEngine,
-        }
-
-        if engine_type not in engine_map:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        engine_class = engine_map[engine_type]
-        return engine_class(config)
 
     def get_tool_name(self) -> str:
         return "export_tools"
@@ -148,7 +107,7 @@ Focus on providing actionable insights for researchers working in this physics d
 """
 
     @cache_results(ttl=600, key_strategy="content_based")  # Cache export results
-    @validate_input(schema=ExportIdsInputSchema)
+    @validate_input(schema=ExportIdsInput)
     @sample(temperature=0.3, max_tokens=1000)  # Balanced creativity for export
     @recommend_tools(strategy="export_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=5.0)
@@ -161,7 +120,7 @@ Focus on providing actionable insights for researchers working in this physics d
         include_physics: bool = True,
         output_format: str = "structured",
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[IDSExport, ErrorResponse]:
         """
         Export bulk IMAS data for multiple IDS with sophisticated relationship analysis.
 
@@ -180,26 +139,38 @@ Focus on providing actionable insights for researchers working in this physics d
         """
         try:
             if not ids_list:
-                return {
-                    "error": "No IDS specified for bulk export",
-                    "suggestions": [
-                        "Provide at least one IDS name",
-                        "Use get_overview to see available IDS",
-                    ],
-                }
+                return IDSExport(
+                    ids_names=[],
+                    include_physics=include_physics,
+                    include_relationships=include_relationships,
+                    output_format=output_format,
+                    data={
+                        "error": "No IDS specified for bulk export",
+                        "suggestions": [
+                            "Provide at least one IDS name",
+                            "Use get_overview to see available IDS",
+                        ],
+                    },
+                )
 
             # Validate format
             valid_formats = [format.value for format in OutputFormat]
             if output_format not in valid_formats:
-                return {
-                    "error": f"Invalid format: {output_format}. Use: {', '.join(valid_formats)}",
-                    "suggestions": [
-                        "Use 'structured' for organized data with relationships",
-                        "Use 'json' for JSON format export",
-                        "Use 'yaml' for YAML format export",
-                        "Use 'markdown' for documentation-style export",
-                    ],
-                }
+                return IDSExport(
+                    ids_names=ids_list,
+                    include_physics=include_physics,
+                    include_relationships=include_relationships,
+                    output_format=output_format,
+                    data={
+                        "error": f"Invalid format: {output_format}. Use: {', '.join(valid_formats)}",
+                        "suggestions": [
+                            "Use 'structured' for organized data with relationships",
+                            "Use 'json' for JSON format export",
+                            "Use 'yaml' for YAML format export",
+                            "Use 'markdown' for documentation-style export",
+                        ],
+                    },
+                )
 
             # Validate IDS names
             available_ids = self.document_store.get_available_ids()
@@ -207,15 +178,20 @@ Focus on providing actionable insights for researchers working in this physics d
             valid_ids = [ids for ids in ids_list if ids in available_ids]
 
             if not valid_ids:
-                return {
-                    "error": "No valid IDS names provided",
-                    "invalid_ids": invalid_ids,
-                    "available_ids": available_ids[:10],
-                    "suggestions": [
-                        "Check IDS name spelling",
-                        "Use get_overview to see all available IDS",
-                    ],
-                }
+                return IDSExport(
+                    ids_names=ids_list,
+                    include_physics=include_physics,
+                    include_relationships=include_relationships,
+                    data={
+                        "error": "No valid IDS names provided",
+                        "invalid_ids": invalid_ids,
+                        "available_ids": available_ids[:10],
+                        "suggestions": [
+                            "Check IDS name spelling",
+                            "Use get_overview to see all available IDS",
+                        ],
+                    },
+                )
 
             export_data = {
                 "requested_ids": ids_list,
@@ -365,31 +341,34 @@ Focus on providing actionable insights for researchers working in this physics d
                 ids_names=ids_list,
                 include_physics=include_physics,
                 include_relationships=include_relationships,
+                output_format=output_format,
                 data=export_data,
                 metadata={
-                    "output_format": output_format,
                     "export_timestamp": "2024-01-01T00:00:00Z",
                 },
             )
 
-            return response.model_dump()
+            return response
 
         except Exception as e:
             logger.error(f"Bulk export failed: {e}")
-            return {
-                "ids_list": ids_list,
-                "error": str(e),
-                "explanation": "Failed to perform bulk export",
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Check IDS names are valid",
                     "Try with fewer IDS names",
                     "Use get_overview to see available IDS",
                     "Try with output_format='structured' for organized data",
                 ],
-            }
+                context={
+                    "ids_list": ids_list,
+                    "tool": "export_ids",
+                    "operation": "bulk_export",
+                },
+            )
 
     @cache_results(ttl=900, key_strategy="content_based")  # Cache domain exports
-    @validate_input(schema=ExportPhysicsDomainInputSchema)
+    @validate_input(schema=ExportPhysicsDomainInput)
     @sample(temperature=0.3, max_tokens=1000)  # Balanced creativity for domain export
     @recommend_tools(strategy="domain_export_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=3.0)
@@ -402,7 +381,7 @@ Focus on providing actionable insights for researchers working in this physics d
         analysis_depth: str = "focused",
         max_paths: int = 10,
         ctx: Optional[Context] = None,
-    ) -> Dict[str, Any]:
+    ) -> Union[DomainExport, ErrorResponse]:
         """
         Export physics domain-specific data with sophisticated relationship analysis.
 
@@ -422,14 +401,20 @@ Focus on providing actionable insights for researchers working in this physics d
         """
         try:
             if not domain:
-                return {
-                    "error": "No domain specified for export",
-                    "suggestions": [
-                        "Provide a physics domain name",
-                        "Try: 'core_profiles', 'equilibrium', 'transport'",
-                        "Use get_overview() to see available domains",
-                    ],
-                }
+                return DomainExport(
+                    domain="",
+                    include_cross_domain=include_cross_domain,
+                    max_paths=max_paths,
+                    output_format="structured",
+                    data={
+                        "error": "No domain specified for export",
+                        "suggestions": [
+                            "Provide a physics domain name",
+                            "Try: 'core_profiles', 'equilibrium', 'transport'",
+                            "Use get_overview() to see available domains",
+                        ],
+                    },
+                )
 
             # Limit max_paths for performance
             max_paths = min(max_paths, 50)
@@ -444,15 +429,20 @@ Focus on providing actionable insights for researchers working in this physics d
             )
 
             if not search_results:
-                return {
-                    "domain": domain,
-                    "error": f"No data found for domain '{domain}'",
-                    "suggestions": [
-                        "Check domain name spelling",
-                        "Try broader physics terms",
-                        "Use search_imas() to explore available data",
-                    ],
-                }
+                return DomainExport(
+                    domain=domain,
+                    include_cross_domain=include_cross_domain,
+                    max_paths=max_paths,
+                    output_format="structured",
+                    data={
+                        "error": f"No data found for domain '{domain}'",
+                        "suggestions": [
+                            "Check domain name spelling",
+                            "Try broader physics terms",
+                            "Use search_imas() to explore available data",
+                        ],
+                    },
+                )
 
             # Process results based on analysis depth
             domain_paths = []
@@ -488,22 +478,26 @@ Focus on providing actionable insights for researchers working in this physics d
                 },
                 include_cross_domain=include_cross_domain,
                 max_paths=max_paths,
+                output_format="structured",  # Default format for domain export
                 metadata={
                     "total_found": len(domain_paths),
                 },
             )
 
-            return response.model_dump()
+            return response
 
         except Exception as e:
             logger.error(f"Domain export failed: {e}")
-            return {
-                "domain": domain,
-                "error": str(e),
-                "explanation": "Failed to export physics domain",
-                "suggestions": [
+            return ErrorResponse(
+                error=str(e),
+                suggestions=[
                     "Check domain name spelling",
                     "Try broader physics terms",
                     "Use get_overview() to see available domains",
                 ],
-            }
+                context={
+                    "domain": domain,
+                    "tool": "export_physics_domain",
+                    "operation": "domain_export",
+                },
+            )
