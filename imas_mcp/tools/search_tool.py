@@ -22,6 +22,8 @@ from imas_mcp.search.decorators import (
 )
 
 from .base import BaseTool
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,15 @@ def mcp_tool(description: str):
 class SearchTool(BaseTool):
     """Tool for searching IMAS data paths using service composition."""
 
+    # Enable both services for search tool
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+
+    # Use search-appropriate strategies
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.SEARCH_BASED
+    max_recommended_tools: int = 5
+
     def get_tool_name(self) -> str:
         return "search_imas"
 
@@ -50,8 +61,8 @@ class SearchTool(BaseTool):
     @mcp_tool("Search for IMAS data paths with relevance-ordered results")
     async def search_imas(
         self,
-        query: Union[str, List[str]],
-        ids_filter: Optional[Union[str, List[str]]] = None,
+        query: str,
+        ids_filter: Optional[List[str]] = None,
         max_results: int = 10,
         search_mode: Union[str, SearchMode] = "auto",
         ctx: Optional[Any] = None,
@@ -92,17 +103,16 @@ class SearchTool(BaseTool):
         )
         search_results = await self._search_service.search(query, config)
 
-        # Enhance with physics context if available
-        physics_context = None
-        if ctx:
-            physics_context = await self.physics.enhance_query(
-                query if isinstance(query, str) else " ".join(query)
-            )
+        # Enhance with physics context
+        physics_context = await self.physics.enhance_query(query)
 
         # Prepare AI insights for potential sampling
         ai_insights = {}
         if physics_context:
             ai_insights["physics_context"] = physics_context
+            logger.debug(f"Physics context added for query: {query}")
+        else:
+            logger.debug(f"No physics context found for query: {query}")
 
         if not search_results:
             ai_insights["guidance"] = self._build_no_results_guidance(query)
@@ -114,9 +124,18 @@ class SearchTool(BaseTool):
         # Build response using service
         response = self.response.build_search_response(
             results=search_results,
-            query=query if isinstance(query, str) else " ".join(query),
+            query=query,
             search_mode=config.search_mode,
             ai_insights=ai_insights,
+        )
+
+        # Apply post-processing services (sampling and recommendations)
+        response = await self.apply_services(
+            result=response,
+            query=query,
+            search_mode=config.search_mode,
+            tool_name=self.get_tool_name(),
+            ctx=ctx,
         )
 
         # Add standard metadata
@@ -125,10 +144,9 @@ class SearchTool(BaseTool):
         logger.info(f"Search completed: {len(search_results)} results returned")
         return response
 
-    def _build_no_results_guidance(self, query: Union[str, List[str]]) -> str:
+    def _build_no_results_guidance(self, query: str) -> str:
         """Build guidance for queries with no results."""
-        query_str = query if isinstance(query, str) else " ".join(query)
-        return f"""No results found for IMAS search: "{query_str}"
+        return f"""No results found for IMAS search: "{query}"
 
 Provide helpful guidance including:
 1. Alternative search terms or concepts to try
@@ -136,11 +154,8 @@ Provide helpful guidance including:
 3. Physics context that might help refine the search
 4. Suggestions for broader or narrower search strategies"""
 
-    def _build_analysis_prompt(
-        self, query: Union[str, List[str]], results: List[Any]
-    ) -> str:
+    def _build_analysis_prompt(self, query: str, results: List[Any]) -> str:
         """Build analysis prompt for AI enhancement."""
-        query_str = query if isinstance(query, str) else " ".join(query)
 
         top_results = results[:3]
         results_text = "\n".join(
@@ -150,7 +165,7 @@ Provide helpful guidance including:
             ]
         )
 
-        return f"""Search Results Analysis for: "{query_str}"
+        return f"""Search Results Analysis for: "{query}"
 Found {len(results)} relevant paths in IMAS data dictionary.
 
 Top results:

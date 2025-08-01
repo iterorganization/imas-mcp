@@ -6,55 +6,13 @@ from pydantic import BaseModel, Field
 from imas_mcp.core.data_model import IdsNode
 from imas_mcp.search.search_strategy import SearchHit
 from imas_mcp.models.physics_models import PhysicsSearchResult, ConceptExplanation
+from imas_mcp.models.suggestion_models import ToolSuggestion, SearchSuggestion
 from imas_mcp.models.constants import (
     SearchMode,
     DetailLevel,
     RelationshipType,
     IdentifierScope,
 )
-
-
-# ============================================================================
-# SUGGESTION MODELS
-# ============================================================================
-
-
-class SearchSuggestion(BaseModel):
-    """A search suggestion with context."""
-
-    suggestion: str = Field(description="The suggested search term or phrase")
-    reason: Optional[str] = Field(
-        default=None, description="Why this suggestion is relevant"
-    )
-    confidence: Optional[float] = Field(
-        default=None, description="Confidence score 0-1"
-    )
-
-
-class ToolSuggestion(BaseModel):
-    """A tool suggestion with context."""
-
-    tool_name: str = Field(description="Name of the suggested tool")
-    description: str = Field(description="Description of what the tool does")
-    relevance: Optional[str] = Field(
-        default=None, description="Why this tool is relevant"
-    )
-
-
-# ============================================================================
-# ERROR HANDLING
-# ============================================================================
-
-
-class ErrorResponse(BaseModel):
-    """Response for when tools encounter errors."""
-
-    error: str
-    suggestions: List[str] = Field(default_factory=list)
-    context: Optional[Dict[str, Any]] = None
-    fallback_data: Optional[Dict[str, Any]] = Field(
-        default=None, description="Optional fallback data when primary operation fails"
-    )
 
 
 # ============================================================================
@@ -270,6 +228,24 @@ class RelationshipResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse)
     relationship_type: RelationshipType = RelationshipType.ALL
     max_depth: int = 2
     connections: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+# ============================================================================
+# ERROR HANDLING
+# ============================================================================
+
+
+class ErrorResponse(AIResponse):
+    """Error response with suggestions, context, and fallback data."""
+
+    error: str = Field(description="Error message")
+    suggestions: List[str] = Field(
+        default_factory=list, description="Suggested actions"
+    )
+    context: Dict[str, Any] = Field(default_factory=dict, description="Error context")
+    fallback_data: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional fallback data when primary operation fails"
+    )
 
 
 # ============================================================================

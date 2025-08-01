@@ -19,8 +19,8 @@ from imas_mcp.models.response_models import (
     RelationshipResult,
     SearchResponse,
     StructureResult,
-    ErrorResponse,
 )
+from imas_mcp.models.response_models import ErrorResponse
 
 
 class TestUserWorkflows:

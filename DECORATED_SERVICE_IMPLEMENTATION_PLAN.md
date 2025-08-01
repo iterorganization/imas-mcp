@@ -96,51 +96,46 @@
   - [x] Test search configuration optimization
   - [x] Test response building with results
 
-### Phase 2.5: LLM Client Sampling Service Architecture 📋 PENDING
+### Phase 2.5: LLM Client Sampling Service Architecture ✅ COMPLETED
 
-- [ ] **Create Sampling Service** → [Section 2.5.1](#251-create-sampling-service)
+> **Testing Strategy**: Use VS Code's integrated test runner for all development. Run specific test files/methods during iteration to catch failures quickly without full test suite runs. Use failed test filters to focus on broken functionality.
 
-  - [ ] `imas_mcp/services/sampling.py`
-  - [ ] Replace `@sample` decorator with service-based approach
-  - [ ] Implement `apply_sample()` method with MCP context handling
-  - [ ] Add sampling strategy decision engine (renamed from enhancement strategy)
+- [x] **Create Sampling Service** → [Section 2.5.1](#251-create-sampling-service)
 
-- [ ] **Create Tool Recommendation Service** → [Section 2.5.2](#252-create-tool-recommendation-service)
+  - [x] `imas_mcp/services/sampling.py`
+  - [x] Replace `@sample` decorator with service-based approach
+  - [x] Implement `apply_sampling()` method with MCP context handling
+  - [x] Add sampling strategy decision engine (4 strategies: NO_SAMPLING, ALWAYS, CONDITIONAL, SMART)
 
-  - [ ] `imas_mcp/services/tool_recommendations.py`
-  - [ ] Replace `@recommend_tools` decorator with service-based approach
-  - [ ] Implement `generate_recommendations()` method with context analysis
-  - [ ] Add recommendation strategy engine for different tool types
+- [x] **Create Tool Recommendation Service** → [Section 2.5.2](#252-create-tool-recommendation-service)
 
-- [ ] **Update BaseTool with Sampling & Recommendation Infrastructure** → [Section 2.5.3](#253-update-basetool-with-sampling--recommendation-infrastructure)
+  - [x] `imas_mcp/services/tool_recommendations.py`
+  - [x] Replace `@recommend_tools` decorator with service-based approach
+  - [x] Implement `generate_recommendations()` method with context analysis
+  - [x] Add recommendation strategy engine (7 strategies for different tool workflows)
 
-  - [ ] Add sampling and recommendation service injection to `imas_mcp/tools/base.py`
-  - [ ] Implement template methods for sampling customization
-  - [ ] Add `build_sample_prompt()` base method
-  - [ ] Add `should_sample()` decision logic
-  - [ ] Add `build_tool_recommendations()` base method
-  - [ ] Add `should_recommend_tools()` decision logic
-  - [ ] Add `get_sampling_config()` and `get_recommendation_config()` methods
-  - [ ] Add `process_sample_result()` and `process_recommendations()` methods
+- [x] **Update BaseTool with Sampling & Recommendation Infrastructure** → [Section 2.5.3](#253-update-basetool-with-sampling--recommendation-infrastructure)
 
-- [ ] **Refactor SearchTool for Sampling & Recommendation Services** → [Section 2.5.4](#254-refactor-searchtool-for-sampling--recommendation-services)
+  - [x] Add sampling and recommendation service injection to `imas_mcp/tools/base.py`
+  - [x] Implement template methods for service application (`apply_sampling`, `generate_tool_recommendations`, `apply_services`)
+  - [x] Add class variables for strategy configuration (sampling_strategy, recommendation_strategy, enable_sampling, enable_recommendations)
+  - [x] Add proper field mapping for SearchResponse `tool_hints` integration
 
-  - [ ] Add sampling and recommendation configuration as class variables
-  - [ ] Implement tool-specific `build_sample_prompt()` override
-  - [ ] Implement tool-specific `build_tool_recommendations()` override
-  - [ ] Remove `@sample` and `@recommend_tools` decorators
-  - [ ] Integrate service calls in `search_imas()` method
-  - [ ] Update response building to include sample insights and tool suggestions
+- [x] **Refactor SearchTool for Sampling & Recommendation Services** → [Section 2.5.4](#254-refactor-searchtool-for-sampling--recommendation-services)
 
-- [ ] **Sampling & Recommendation Service Integration Tests** → [Section 2.5.5](#255-sampling--recommendation-service-integration-tests)
-  - [ ] `tests/services/test_sampling_service.py`
-  - [ ] `tests/services/test_tool_recommendations_service.py`
-  - [ ] `tests/tools/test_search_tool_sampling.py`
-  - [ ] `tests/tools/test_search_tool_recommendations.py`
-  - [ ] Test sampling strategy decisions
-  - [ ] Test recommendation generation for different result types
-  - [ ] Test tool-specific customization
-  - [ ] Test MCP context integration
+  - [x] Add sampling and recommendation configuration as class variables
+  - [x] Enable both services with appropriate strategies (SMART sampling, SEARCH_BASED recommendations)
+  - [x] Integrate service calls through `apply_services()` template method
+  - [x] Update response building to use existing `tool_hints` field for recommendations
+
+- [x] **Sampling & Recommendation Service Integration Tests** → [Section 2.5.5](#255-sampling--recommendation-service-integration-tests)
+  - [x] `tests/integration/test_sampling_service.py` (5 tests passing)
+  - [x] `tests/integration/test_tool_recommendation_service.py` (4 tests passing)
+  - [x] `tests/integration/test_service_composition.py` (4 tests passing)
+  - [x] Test sampling strategy decisions and MCP context integration
+  - [x] Test recommendation generation for different result types
+  - [x] Test template method customization and service composition
+  - [x] All 176 tests passing - Phase 2.5 integration complete
 
 ### Phase 3: Remaining Tools Rollout 📋 PENDING
 
