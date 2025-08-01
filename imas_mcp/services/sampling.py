@@ -131,7 +131,7 @@ class SamplingService(BaseService):
     def _get_result_count(self, result: BaseModel) -> int:
         """Extract result count from various result structures."""
         # Use getattr to safely access dynamic attributes
-        hits = getattr(result, "hits", None)
+        hits = getattr(result, "hits", [])
         if hits is not None and hasattr(hits, "__len__"):
             return len(hits)
 
@@ -139,7 +139,7 @@ class SamplingService(BaseService):
         if hit_count is not None:
             return hit_count
 
-        nodes = getattr(result, "nodes", None)
+        nodes = getattr(result, "nodes", [])
         if nodes is not None and hasattr(nodes, "__len__"):
             return len(nodes)
 
