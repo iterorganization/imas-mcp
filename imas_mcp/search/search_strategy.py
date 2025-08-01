@@ -77,17 +77,58 @@ class SearchConfig(BaseModel):
         )
 
 
-class SearchResult(BaseModel):
-    """Base search result with core fields needed for search processing."""
+class SearchBase(BaseModel):
+    """Base class for all search-related models with common metadata."""
 
-    # Core search metadata
+    # Core search metadata shared by all search models
     score: float = Field(description="Relevance/similarity score")
     rank: int = Field(description="Rank/position in search results")
     search_mode: SearchMode = Field(description="Search mode that found this result")
     highlights: str = Field(default="", description="Highlighted text snippets")
 
+
+class SearchHit(SearchBase):
+    """API-friendly search hit without internal document reference."""
+
+    # Flattened API fields from document metadata
+    path: str = Field(description="Full IMAS path")
+    documentation: str = Field(description="Path documentation")
+    units: Optional[str] = Field(default=None, description="Physical units")
+    data_type: Optional[str] = Field(default=None, description="Data type")
+    ids_name: str = Field(description="IDS name this path belongs to")
+    physics_domain: Optional[str] = Field(default=None, description="Physics domain")
+
+
+class SearchResult(SearchBase):
+    """Internal search result with document reference for search processing."""
+
     # Internal document reference for search processing
     document: Document = Field(description="Internal document with full metadata")
+
+    def to_hit(self) -> SearchHit:
+        """
+        Convert SearchResult to SearchHit for API responses.
+
+        Flattens document metadata into API-friendly fields while
+        excluding the internal document reference for clean API responses.
+
+        Returns:
+            SearchHit suitable for API responses
+        """
+        return SearchHit(
+            # Inherited base fields
+            score=self.score,
+            rank=self.rank,
+            search_mode=self.search_mode,
+            highlights=self.highlights,
+            # Flattened document fields for API
+            path=self.document.metadata.path_name,
+            documentation=self.document.documentation,
+            units=self.document.units.unit_str if self.document.units else None,
+            data_type=self.document.metadata.data_type,
+            ids_name=self.document.metadata.ids_name,
+            physics_domain=self.document.metadata.physics_domain,
+        )
 
 
 class SearchStrategy(ABC):

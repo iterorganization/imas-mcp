@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 from imas_mcp.core.data_model import IdsNode
-from imas_mcp.search.search_strategy import SearchResult
+from imas_mcp.search.search_strategy import SearchHit
 from imas_mcp.models.physics_models import PhysicsSearchResult, ConceptExplanation
 from imas_mcp.models.constants import (
     SearchMode,
@@ -183,25 +183,6 @@ class ExportResponse(BaseModel):
 # ============================================================================
 # SEARCH & DISCOVERY
 # ============================================================================
-
-
-class SearchHit(SearchResult):
-    """A single search hit that extends SearchResult with API-specific fields."""
-
-    # API-specific fields (inherited from SearchResult: score, rank, search_mode, highlights)
-    path: str = Field(description="Full IMAS path")
-    documentation: str = Field(description="Path documentation")
-    units: Optional[str] = Field(default=None, description="Physical units")
-    data_type: Optional[str] = Field(default=None, description="Data type")
-    ids_name: str = Field(description="IDS name this path belongs to")
-    physics_domain: Optional[str] = Field(
-        default=None, description="Physics domain classification"
-    )
-
-    # Make document field optional for API responses since we flatten its contents
-    document: Optional[Any] = Field(
-        default=None, exclude=True, description="Internal document reference"
-    )
 
 
 class SearchHits(BaseModel):

@@ -13,7 +13,7 @@ from fastmcp import Context
 from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.response_models import OverviewResult, SearchHit, ErrorResponse
+from imas_mcp.models.response_models import OverviewResult, ErrorResponse
 
 # Import all decorators
 from imas_mcp.search.decorators import (
@@ -126,25 +126,7 @@ Provide practical guidance for fusion researchers and IMAS users.
                         query, search_config
                     )
                     # Convert SearchResult objects to SearchHit objects
-                    query_results = [
-                        SearchHit(
-                            path=result.document.metadata.path_name,
-                            documentation=result.document.documentation,
-                            score=result.score,
-                            rank=idx + 1,
-                            search_mode=SearchMode.SEMANTIC,
-                            ids_name=result.document.metadata.path_name.split("/")[0]
-                            if "/" in result.document.metadata.path_name
-                            else result.document.metadata.path_name,
-                            physics_domain=result.document.metadata.physics_domain,
-                            units=getattr(result.document.metadata, "units", None),
-                            data_type=getattr(
-                                result.document.metadata, "data_type", None
-                            ),
-                            document=result.document,
-                        )
-                        for idx, result in enumerate(search_results[:5])
-                    ]
+                    query_results = [result.to_hit() for result in search_results[:5]]
                 except Exception as e:
                     logger.warning(f"Query search failed: {e}")
 
