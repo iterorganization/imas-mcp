@@ -9,7 +9,8 @@ import time
 
 import pytest
 
-from imas_mcp.models.response_models import SearchResponse, ErrorResponse
+from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.models.response_models import ErrorResponse
 
 
 class TestSearchFeatures:
@@ -184,7 +185,6 @@ class TestSearchErrorHandling:
         result = await tools.search_imas(query=long_query, max_results=5)
 
         # Should handle without crashing - validation error returns ErrorResponse
-        from imas_mcp.models.response_models import ErrorResponse
 
         assert isinstance(result, ErrorResponse)
         assert "Validation error" in result.error

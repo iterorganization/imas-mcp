@@ -6,10 +6,10 @@ This module contains common functionality shared across all tool implementations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
+from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.response_models import ErrorResponse
 
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.services.search_service import SearchService
@@ -22,7 +22,11 @@ from imas_mcp.services import (
     ResponseService,
     DocumentService,
     SearchConfigurationService,
+    SamplingService,
+    ToolRecommendationService,
 )
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +34,20 @@ logger = logging.getLogger(__name__)
 class BaseTool(ABC):
     """Base class for all IMAS MCP tools with service injection."""
 
+    # Class variables for template method pattern
+    sampling_strategy: SamplingStrategy = SamplingStrategy.NO_SAMPLING
+    recommendation_strategy: RecommendationStrategy = (
+        RecommendationStrategy.SEARCH_BASED
+    )
+    max_recommended_tools: int = 4
+    enable_sampling: bool = False
+    enable_recommendations: bool = True
+
     def __init__(self, document_store: Optional[DocumentStore] = None):
         self.logger = logger
         self.document_store = document_store or DocumentStore()
 
-        # Initialize search service (existing pattern)
+        # Initialize search service
         self._search_service = self._create_search_service()
 
         # Initialize business logic services
@@ -43,10 +56,66 @@ class BaseTool(ABC):
         self.documents = DocumentService(self.document_store)
         self.search_config = SearchConfigurationService()
 
+        # New services for Phase 2.5
+        self.sampling = SamplingService()
+        self.recommendations = ToolRecommendationService()
+
     @abstractmethod
     def get_tool_name(self) -> str:
         """Return the name of this tool."""
         pass
+
+    async def apply_sampling(self, result: BaseModel, **kwargs) -> BaseModel:
+        """
+        Template method for applying sampling to tool results.
+        Subclasses can customize by setting sampling_strategy class variable.
+        """
+        if not self.enable_sampling:
+            return result
+
+        return await self.sampling.apply_sampling(
+            result=result, strategy=self.sampling_strategy, **kwargs
+        )
+
+    def generate_tool_recommendations(
+        self, result: BaseModel, query: Optional[str] = None, **kwargs
+    ) -> list:
+        """
+        Template method for generating tool recommendations.
+        Subclasses can customize by setting recommendation_strategy class variable.
+        Note: This method is mainly for compatibility. Use apply_services() instead.
+        """
+        if not self.enable_recommendations:
+            return []
+
+        return self.recommendations.generate_recommendations(
+            result=result,
+            strategy=self.recommendation_strategy,
+            max_tools=self.max_recommended_tools,
+            query=query,
+            **kwargs,
+        )
+
+    async def apply_services(self, result: BaseModel, **kwargs) -> BaseModel:
+        """
+        Template method for applying all post-processing services.
+        Called after tool execution but before response formatting.
+        """
+
+        # Apply recommendations (only for SearchResponse)
+        if self.enable_recommendations:
+            result = self.recommendations.apply_recommendations(
+                result=result,
+                strategy=self.recommendation_strategy,
+                max_tools=self.max_recommended_tools,
+                **kwargs,
+            )
+
+        # Apply sampling last
+        if self.enable_sampling:
+            result = await self.apply_sampling(result, **kwargs)
+
+        return result
 
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""
@@ -74,10 +143,8 @@ class BaseTool(ABC):
 
     def _create_error_response(
         self, error_message: str, query: str = ""
-    ) -> "ErrorResponse":
+    ) -> ErrorResponse:
         """Create a standardized error response."""
-        from imas_mcp.models.response_models import ErrorResponse
-
         return ErrorResponse(
             error=error_message,
             suggestions=[],

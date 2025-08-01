@@ -13,8 +13,8 @@ from imas_mcp.models.response_models import (
     StructureResult,
     IdentifierResult,
     RelationshipResult,
-    ErrorResponse,
 )
+from imas_mcp.models.response_models import ErrorResponse
 
 
 class TestAnalysisFeatures:
