@@ -17,17 +17,31 @@ from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.services import (
+    PhysicsService,
+    ResponseService,
+    DocumentService,
+    SearchConfigurationService,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class BaseTool(ABC):
-    """Base class for all IMAS MCP tools."""
+    """Base class for all IMAS MCP tools with service injection."""
 
     def __init__(self, document_store: Optional[DocumentStore] = None):
         self.logger = logger
         self.document_store = document_store or DocumentStore()
+
+        # Initialize search service (existing pattern)
         self._search_service = self._create_search_service()
+
+        # Initialize business logic services
+        self.physics = PhysicsService()
+        self.response = ResponseService()
+        self.documents = DocumentService(self.document_store)
+        self.search_config = SearchConfigurationService()
 
     @abstractmethod
     def get_tool_name(self) -> str:
