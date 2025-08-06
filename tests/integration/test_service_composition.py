@@ -73,10 +73,10 @@ class TestServiceComposition:
     @pytest.mark.asyncio
     async def test_apply_services_method(self, search_tool):
         """Test the apply_services method works correctly."""
-        from imas_mcp.models.response_models import SearchResponse
+        from imas_mcp.models.result_models import SearchResult
 
-        # Create a proper AIResponse instance instead of MagicMock
-        mock_result = SearchResponse(hits=[], query="test", ai_insights={})
+        # Create a proper SearchResult instance
+        mock_result = SearchResult(hits=[], query="test")
 
         # Mock the services
         search_tool.sampling.apply_sampling = AsyncMock(return_value=mock_result)

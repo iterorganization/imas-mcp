@@ -10,7 +10,8 @@ from typing import Optional, Union
 from fastmcp import Context
 
 from imas_mcp.models.request_models import OverviewInput
-from imas_mcp.models.response_models import OverviewResult, ErrorResponse
+from imas_mcp.models.result_models import OverviewResult
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.services.sampling import SamplingStrategy
 from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
@@ -89,7 +90,7 @@ Provide practical guidance for fusion researchers and IMAS users.
         self,
         query: Optional[str] = None,
         ctx: Optional[Context] = None,
-    ) -> Union[OverviewResult, ErrorResponse]:
+    ) -> Union[OverviewResult, ToolError]:
         """
         Get IMAS overview or answer analytical queries using service composition.
 
@@ -397,7 +398,7 @@ Provide practical guidance for fusion researchers and IMAS users.
                 hits=query_results if query else [],
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
-                ai_insights=ai_insights,
+                ai_response=ai_insights,
             )
 
             # Add standard metadata using service
@@ -416,7 +417,7 @@ Provide practical guidance for fusion researchers and IMAS users.
             # Type check and return proper response
             if isinstance(processed_response, OverviewResult):
                 return processed_response
-            elif isinstance(processed_response, ErrorResponse):
+            elif isinstance(processed_response, ToolError):
                 return processed_response
             else:
                 # If apply_services changed the type unexpectedly, return original
@@ -427,7 +428,7 @@ Provide practical guidance for fusion researchers and IMAS users.
 
         except Exception as e:
             logger.error(f"Overview generation failed: {e}")
-            return ErrorResponse(
+            return ToolError(
                 error=str(e),
                 suggestions=[
                     "Try simpler queries",

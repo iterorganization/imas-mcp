@@ -4,7 +4,6 @@ from enum import Enum
 from typing import Any, Optional
 from pydantic import BaseModel
 from .base import BaseService
-from ..models.response_models import AIResponse
 
 
 class SamplingStrategy(Enum):
@@ -21,14 +20,14 @@ class SamplingService(BaseService):
 
     async def apply_sampling(
         self,
-        result: AIResponse,
+        result: BaseModel,
         strategy: SamplingStrategy = SamplingStrategy.SMART,
         sample_prompt: Optional[str] = None,
         ctx: Optional[Any] = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         **kwargs,
-    ) -> AIResponse:
+    ) -> BaseModel:
         """
         Apply LLM sampling to generate insights.
 
@@ -59,7 +58,26 @@ class SamplingService(BaseService):
                 return result
 
             # Attach sampling result to the original result
-            result.ai_response = sampled_content
+            # Check if result has ai_response attribute (from AIContext mixin)
+            ai_response_attr = getattr(result, "ai_response", None)
+            if ai_response_attr is not None:
+                if isinstance(ai_response_attr, dict) and ai_response_attr:
+                    # If it's a non-empty dict, merge the content
+                    ai_response_attr.update(
+                        sampled_content
+                        if isinstance(sampled_content, dict)
+                        else {"sampled": sampled_content}
+                    )
+                else:
+                    # If it's empty dict or not a dict, set it directly
+                    try:
+                        setattr(result, "ai_response", sampled_content)
+                    except Exception:
+                        self.logger.warning(
+                            "Could not set ai_response on result object"
+                        )
+            else:
+                self.logger.debug("Result object doesn't have ai_response attribute")
 
             self.logger.debug("Sampling applied successfully")
             return result

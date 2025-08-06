@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from imas_mcp.models.suggestion_models import ToolSuggestion
-from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.models.result_models import SearchResult
 from .base import BaseService
 
 
@@ -45,8 +45,8 @@ class ToolRecommendationService(BaseService):
         Returns:
             Original result with recommendations attached (if applicable)
         """
-        # Only apply recommendations to SearchResponse instances
-        if not isinstance(result, SearchResponse):
+        # Only apply recommendations to SearchResult instances
+        if not isinstance(result, SearchResult):
             return result
 
         try:

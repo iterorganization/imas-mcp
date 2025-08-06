@@ -13,7 +13,7 @@ import logging
 from typing import List, Union
 
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.constants import SearchMode
 
@@ -38,7 +38,7 @@ class LexicalSearchEngine(SearchEngine):
 
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute lexical search using full-text search.
 
         Args:
@@ -46,7 +46,7 @@ class LexicalSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchResult objects ordered by relevance
+            List of SearchMatch objects ordered by relevance
 
         Raises:
             SearchEngineError: When lexical search execution fails
@@ -74,13 +74,13 @@ class LexicalSearchEngine(SearchEngine):
                 query_str, max_results=config.max_results
             )
 
-            # Convert to SearchResult objects
+            # Convert to SearchMatch objects
             results = []
             for rank, doc in enumerate(documents):
                 # Calculate simple ranking score based on position
                 score = 1.0 - (rank / max(len(documents), 1))
 
-                result = SearchResult(
+                result = SearchMatch(
                     document=doc,
                     score=score,
                     rank=rank,

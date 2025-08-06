@@ -11,10 +11,10 @@ from typing import List, Any
 from pydantic import Field
 
 from imas_mcp.services.sampling import SamplingService, SamplingStrategy
-from imas_mcp.models.response_models import AIResponse
+from imas_mcp.models.context_models import AIContext
 
 
-class MockResult(AIResponse):
+class MockResult(AIContext):
     """Mock result for testing."""
 
     hits: List[Any] = Field(default_factory=list)
@@ -57,10 +57,8 @@ class TestSamplingService:
 
         assert processed_result == result
         # Check that ai_insights is either empty dict or not set
-        assert (
-            not getattr(processed_result, "ai_insights", {})
-            or processed_result.ai_response == {}
-        )
+        ai_response = getattr(processed_result, "ai_response", {})
+        assert not ai_response or ai_response == {}
 
     @pytest.mark.asyncio
     async def test_apply_sampling_always_strategy(self):
@@ -77,7 +75,7 @@ class TestSamplingService:
         # Should attempt sampling
         assert mock_context.sample.called
         assert processed_result == result
-        assert processed_result.ai_response == "AI generated insights"
+        assert getattr(processed_result, "ai_response", None) == "AI generated insights"
 
     @pytest.mark.asyncio
     async def test_apply_sampling_without_context(self):
@@ -113,7 +111,7 @@ class TestSamplingService:
         call_args = mock_context.sample.call_args
         assert "prompt" in call_args.kwargs
         assert call_args.kwargs["prompt"] == custom_prompt
-        assert processed_result.ai_response == "Custom insights"
+        assert getattr(processed_result, "ai_response", None) == "Custom insights"
 
     @pytest.mark.asyncio
     async def test_apply_sampling_error_handling(self):

@@ -9,7 +9,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Union, List, Dict, Any
 from pydantic import BaseModel
 
-from imas_mcp.models.response_models import ErrorResponse, SearchResponse
+from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.result_models import SearchResult
 
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.services.search_service import SearchService
@@ -48,6 +49,9 @@ class BaseTool(ABC):
         self.logger = logger
         self.document_store = document_store or DocumentStore()
 
+        # Initialize service orchestrator
+        self._orchestrator = ServiceOrchestrator(self)
+
         # Initialize search service
         self._search_service = self._create_search_service()
 
@@ -58,9 +62,6 @@ class BaseTool(ABC):
         self.search_config = SearchConfigurationService()
         self.sampling = SamplingService()
         self.recommendations = ToolRecommendationService()
-
-        # Initialize service orchestrator
-        self._orchestrator = ServiceOrchestrator(self)
 
     @abstractmethod
     def get_tool_name(self) -> str:
@@ -110,7 +111,7 @@ class BaseTool(ABC):
         Called after tool execution but before response formatting.
         """
 
-        # Apply recommendations (only for SearchResponse)
+        # Apply recommendations (only for SearchResult)
         if self.enable_recommendations:
             result = self.recommendations.apply_recommendations(
                 result=result,
@@ -131,9 +132,9 @@ class BaseTool(ABC):
         search_mode: Union[str, SearchMode] = "auto",
         max_results: int = 10,
         ids_filter: Optional[List[str]] = None,
-    ) -> SearchResponse:
+    ) -> SearchResult:
         """
-        Unified search execution that returns a complete SearchResponse.
+        Unified search execution that returns a complete SearchResult.
 
         Args:
             query: Search query
@@ -142,7 +143,7 @@ class BaseTool(ABC):
             ids_filter: Optional IDS filter
 
         Returns:
-            SearchResponse with all search data and context
+            SearchResult with all search data and context
         """
         # Create and optimize configuration
         config = self.search_config.create_config(
@@ -245,11 +246,9 @@ class BaseTool(ABC):
         engine_class = engine_map[engine_type]
         return engine_class(self.document_store)
 
-    def _create_error_response(
-        self, error_message: str, query: str = ""
-    ) -> ErrorResponse:
+    def _create_error_response(self, error_message: str, query: str = "") -> ToolError:
         """Create a standardized error response."""
-        return ErrorResponse(
+        return ToolError(
             error=error_message,
             suggestions=[],
             context={

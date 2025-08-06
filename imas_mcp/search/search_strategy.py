@@ -98,7 +98,7 @@ class SearchHit(SearchBase):
     physics_domain: Optional[str] = Field(default=None, description="Physics domain")
 
 
-class SearchResult(SearchBase):
+class SearchMatch(SearchBase):
     """Internal search result with document reference for search processing."""
 
     # Internal document reference for search processing
@@ -106,7 +106,7 @@ class SearchResult(SearchBase):
 
     def to_hit(self) -> SearchHit:
         """
-        Convert SearchResult to SearchHit for API responses.
+        Convert SearchMatch to SearchHit for API responses.
 
         Flattens document metadata into API-friendly fields while
         excluding the internal document reference for clean API responses.
@@ -141,7 +141,7 @@ class SearchStrategy(ABC):
         self,
         query: Union[str, List[str]],
         config: SearchConfig,
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute search with given query and configuration."""
         pass
 
@@ -158,7 +158,7 @@ class LexicalSearchStrategy(SearchStrategy):
         self,
         query: Union[str, List[str]],
         config: SearchConfig,
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute lexical search using full-text search."""
         # Convert query to string format
         query_str = query if isinstance(query, str) else " ".join(query)
@@ -175,10 +175,10 @@ class LexicalSearchStrategy(SearchStrategy):
                 query_str, max_results=config.max_results
             )
 
-            # Convert to SearchResult objects
+            # Convert to SearchMatch objects
             results = []
             for rank, doc in enumerate(documents):
-                result = SearchResult(
+                result = SearchMatch(
                     document=doc,
                     score=1.0 - (rank / max(len(documents), 1)),  # Simple ranking score
                     rank=rank,
@@ -222,7 +222,7 @@ class SemanticSearchStrategy(SearchStrategy):
         self,
         query: Union[str, List[str]],
         config: SearchConfig,
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute semantic search using sentence transformers."""
         # Convert query to string format
         query_str = query if isinstance(query, str) else " ".join(query)
@@ -236,10 +236,10 @@ class SemanticSearchStrategy(SearchStrategy):
                 similarity_threshold=config.similarity_threshold,
             )
 
-            # Convert to SearchResult objects
+            # Convert to SearchMatch objects
             results = []
             for rank, semantic_result in enumerate(semantic_results):
-                result = SearchResult(
+                result = SearchMatch(
                     document=semantic_result.document,
                     score=semantic_result.similarity_score,
                     rank=rank,
@@ -271,7 +271,7 @@ class HybridSearchStrategy(SearchStrategy):
         self,
         query: Union[str, List[str]],
         config: SearchConfig,
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute hybrid search combining semantic and lexical results."""
         # Get results from both strategies
         semantic_results = self.semantic_strategy.search(query, config)

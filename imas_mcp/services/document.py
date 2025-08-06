@@ -3,7 +3,7 @@
 from typing import List, Optional, Any
 
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 from .base import BaseService
 
 
@@ -34,12 +34,10 @@ class DocumentService(BaseService):
             self.logger.error(f"Failed to get documents for {ids_name}: {e}")
             return []
 
-    def create_ids_not_found_error(
-        self, ids_name: str, tool_name: str
-    ) -> ErrorResponse:
+    def create_ids_not_found_error(self, ids_name: str, tool_name: str) -> ToolError:
         """Create standardized IDS not found error."""
         available_ids = self.store.get_available_ids()
-        return ErrorResponse(
+        return ToolError(
             error=f"IDS '{ids_name}' not found",
             suggestions=[f"Try: {ids}" for ids in available_ids[:5]],
             context={

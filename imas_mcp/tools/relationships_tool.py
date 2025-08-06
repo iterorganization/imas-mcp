@@ -12,7 +12,8 @@ from fastmcp import Context
 
 from imas_mcp.models.request_models import RelationshipsInput
 from imas_mcp.models.constants import SearchMode, RelationshipType
-from imas_mcp.models.response_models import RelationshipResult, ErrorResponse
+from imas_mcp.models.result_models import RelationshipResult
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 
 # Import only essential decorators
@@ -88,7 +89,7 @@ Provide actionable insights for researchers exploring data relationships.
         relationship_type: RelationshipType = RelationshipType.ALL,
         max_depth: int = 2,
         ctx: Optional[Context] = None,
-    ) -> Union[RelationshipResult, ErrorResponse]:
+    ) -> Union[RelationshipResult, ToolError]:
         """
         Explore relationships between IMAS data paths using service composition.
 

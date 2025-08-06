@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Optional, Union
 
 from imas_mcp.search.engines.base_engine import SearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ class SearchService:
 
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute search request with given configuration.
 
         Args:
@@ -59,7 +59,7 @@ class SearchService:
             config: Search configuration including mode, filters, limits
 
         Returns:
-            List of SearchResult objects ordered by relevance
+            List of SearchMatch objects ordered by relevance
 
         Raises:
             SearchServiceError: When search execution fails
@@ -141,8 +141,8 @@ class SearchService:
         return self.engines[mode]
 
     def _post_process_results(
-        self, results: List[SearchResult], config: SearchConfig
-    ) -> List[SearchResult]:
+        self, results: List[SearchMatch], config: SearchConfig
+    ) -> List[SearchMatch]:
         """Post-process search results based on configuration.
 
         Args:

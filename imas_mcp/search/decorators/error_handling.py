@@ -8,14 +8,14 @@ import functools
 import logging
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 logger = logging.getLogger(__name__)
 
 
-class ToolError(Exception):
+class ToolException(Exception):
     """Base exception for tool-related errors."""
 
     def __init__(self, message: str, query: str = "", tool_name: str = ""):
@@ -25,19 +25,19 @@ class ToolError(Exception):
         self.tool_name = tool_name
 
 
-class ValidationError(ToolError):
+class ValidationError(ToolException):
     """Error for input validation failures."""
 
     pass
 
 
-class SearchError(ToolError):
+class SearchError(ToolException):
     """Error for search operation failures."""
 
     pass
 
 
-class ServiceError(ToolError):
+class ServiceError(ToolException):
     """Error for service operation failures."""
 
     pass
@@ -49,7 +49,7 @@ def create_error_response(
     tool_name: str = "",
     include_suggestions: bool = True,
     fallback_data: Optional[Dict[str, Any]] = None,
-) -> ErrorResponse:
+) -> ToolError:
     """
     Create standardized error response.
 
@@ -61,7 +61,7 @@ def create_error_response(
         fallback_data: Optional fallback data to include
 
     Returns:
-        Standardized error response
+        Standardized error response as dictionary (will be converted to ToolError by caller)
     """
     if isinstance(error, Exception):
         error_message = str(error)
@@ -85,11 +85,14 @@ def create_error_response(
             error_message, query, tool_name
         )
 
-    return ErrorResponse(
+    return ToolError(
         error=error_message,
         suggestions=suggestions,
         context=context,
         fallback_data=fallback_data,
+        query=query,
+        ai_prompt={},
+        ai_response={},
     )
 
 

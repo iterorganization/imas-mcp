@@ -14,7 +14,7 @@ import logging
 from typing import List, Union
 
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.constants import SearchMode
 
@@ -57,7 +57,7 @@ class SemanticSearchEngine(SearchEngine):
 
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute semantic search using sentence transformers.
 
         Args:
@@ -65,7 +65,7 @@ class SemanticSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchResult objects ordered by semantic similarity
+            List of SearchMatch objects ordered by semantic similarity
 
         Raises:
             SearchEngineError: When semantic search execution fails
@@ -88,10 +88,10 @@ class SemanticSearchEngine(SearchEngine):
                 similarity_threshold=config.similarity_threshold,
             )
 
-            # Convert to SearchResult objects
+            # Convert to SearchMatch objects
             results = []
             for rank, semantic_result in enumerate(semantic_results):
-                result = SearchResult(
+                result = SearchMatch(
                     document=semantic_result.document,
                     score=semantic_result.similarity_score,
                     rank=rank,
