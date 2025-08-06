@@ -31,7 +31,8 @@ class TestSearchToolServices:
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="test query",
-            ai_insights={},
+            ai_response={},
+            ai_prompt={},
         )
         search_tool.response.build_search_response = MagicMock(
             return_value=mock_response
@@ -64,7 +65,8 @@ class TestSearchToolServices:
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="complex query",
-            ai_insights={},
+            ai_response={},
+            ai_prompt={},
         )
         search_tool.response.build_search_response = MagicMock(
             return_value=mock_response
@@ -105,7 +107,8 @@ class TestSearchToolServices:
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="temperature",
-            ai_insights={},
+            ai_response={},
+            ai_prompt={},
         )
         search_tool.response.build_search_response = MagicMock(
             return_value=mock_response
@@ -120,7 +123,9 @@ class TestSearchToolServices:
         build_call = search_tool.response.build_search_response.call_args
         assert build_call[1]["query"] == "temperature"
         assert len(build_call[1]["results"]) == 1
-        assert "analysis_prompt" in build_call[1]["ai_insights"]
+        assert "ai_prompt" in build_call[1]
+        assert "ai_response" in build_call[1]
+        # Physics is now always enabled, so no explicit enable_physics parameter
 
     @pytest.mark.asyncio
     async def test_no_results_guidance(self, search_tool):
@@ -133,7 +138,8 @@ class TestSearchToolServices:
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="nonexistent",
-            ai_insights={},
+            ai_response={},
+            ai_prompt={},
         )
         search_tool.response.build_search_response = MagicMock(
             return_value=mock_response
@@ -146,10 +152,10 @@ class TestSearchToolServices:
 
         # Verify guidance was built for empty results
         build_call = search_tool.response.build_search_response.call_args
-        assert "guidance" in build_call[1]["ai_insights"]
-        guidance = build_call[1]["ai_insights"]["guidance"]
+        assert "guidance" in build_call[1]["ai_prompt"]
+        guidance = build_call[1]["ai_prompt"]["guidance"]
         assert "No results found" in guidance
-        assert "Alternative search terms" in guidance
+        assert "alternatives" in guidance
 
     @pytest.mark.asyncio
     async def test_service_initialization(self, search_tool):
@@ -181,7 +187,11 @@ class TestSearchToolServices:
         search_tool._search_service.search = AsyncMock(return_value=[])
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
         mock_response = SearchResponse(
-            hits=[], search_mode=SearchMode.LEXICAL, query="test", ai_insights={}
+            hits=[],
+            search_mode=SearchMode.LEXICAL,
+            query="test",
+            ai_response={},
+            ai_prompt={},
         )
         search_tool.response.build_search_response = MagicMock(
             return_value=mock_response
@@ -200,6 +210,6 @@ class TestSearchToolServices:
         config = search_call[0][1]
 
         assert config.max_results == 15
-        assert config.enable_physics_enhancement is True
+        # Physics is now always enabled at the core level, no longer a config parameter
         # Boolean query should be optimized to lexical
         assert config.search_mode == SearchMode.LEXICAL

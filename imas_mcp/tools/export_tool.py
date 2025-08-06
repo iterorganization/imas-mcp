@@ -10,25 +10,29 @@ import logging
 from typing import Dict, Any, List, Optional, Set, Union
 from fastmcp import Context
 
-from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import (
     ExportIdsInput,
     ExportPhysicsDomainInput,
 )
 from imas_mcp.models.constants import SearchMode, OutputFormat
-from imas_mcp.models.response_models import IDSExport, DomainExport, ErrorResponse
+from imas_mcp.models.response_models import (
+    IDSExport,
+    DomainExport,
+    ErrorResponse,
+    ExportData,
+)
 
-# Import all decorators
+# Import only essential decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
-    sample,
-    recommend_tools,
     measure_performance,
     handle_errors,
 )
 
 from .base import BaseTool
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,16 @@ def mcp_tool(description: str):
 
 
 class ExportTool(BaseTool):
-    """Tool for exporting IDS and physics domain data."""
+    """Tool for exporting IDS and physics domain data using service composition."""
+
+    # Enable both services for comprehensive export analysis
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+
+    # Use export-appropriate strategies
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.EXPORT_BASED
+    max_recommended_tools: int = 4
 
     def get_tool_name(self) -> str:
         return "export_tools"
@@ -108,8 +121,6 @@ Focus on providing actionable insights for researchers working in this physics d
 
     @cache_results(ttl=600, key_strategy="content_based")  # Cache export results
     @validate_input(schema=ExportIdsInput)
-    @sample(temperature=0.3, max_tokens=1000)  # Balanced creativity for export
-    @recommend_tools(strategy="export_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=5.0)
     @handle_errors(fallback="export_suggestions")
     @mcp_tool("Export bulk IMAS data for multiple IDS")
@@ -122,7 +133,12 @@ Focus on providing actionable insights for researchers working in this physics d
         ctx: Optional[Context] = None,
     ) -> Union[IDSExport, ErrorResponse]:
         """
-        Export bulk IMAS data for multiple IDS with sophisticated relationship analysis.
+        Export bulk IMAS data for multiple IDS using service composition.
+
+        Uses service composition for business logic:
+        - DocumentService: Validates IDS and retrieves documents
+        - PhysicsService: Enhances export with physics context
+        - ResponseService: Builds standardized Pydantic responses
 
         Advanced bulk export tool that extracts comprehensive data for multiple IDS,
         including cross-IDS relationships, physics context, and structural analysis.
@@ -138,239 +154,157 @@ Focus on providing actionable insights for researchers working in this physics d
             Dictionary with bulk export data, relationships, and AI insights
         """
         try:
-            if not ids_list:
-                return IDSExport(
-                    ids_names=[],
-                    include_physics=include_physics,
-                    include_relationships=include_relationships,
-                    output_format=output_format,
-                    data={
-                        "error": "No IDS specified for bulk export",
-                        "suggestions": [
-                            "Provide at least one IDS name",
-                            "Use get_overview to see available IDS",
-                        ],
-                    },
-                )
+            async with self.service_context(
+                operation_type="export",
+                query=" ".join(ids_list) + " export analysis",
+                export_type="bulk_ids",
+                ctx=ctx,
+            ) as service_ctx:
+                if not ids_list:
+                    return self._create_error_response(
+                        "No IDS specified for bulk export", "export_ids"
+                    )
 
-            # Validate format
-            valid_formats = [format.value for format in OutputFormat]
-            if output_format not in valid_formats:
-                return IDSExport(
-                    ids_names=ids_list,
-                    include_physics=include_physics,
-                    include_relationships=include_relationships,
-                    output_format=output_format,
-                    data={
-                        "error": f"Invalid format: {output_format}. Use: {', '.join(valid_formats)}",
-                        "suggestions": [
-                            "Use 'structured' for organized data with relationships",
-                            "Use 'json' for JSON format export",
-                            "Use 'yaml' for YAML format export",
-                            "Use 'markdown' for documentation-style export",
-                        ],
-                    },
-                )
+                # Validate format
+                valid_formats = [format.value for format in OutputFormat]
+                if output_format not in valid_formats:
+                    return self._create_error_response(
+                        f"Invalid format: {output_format}. Use: {', '.join(valid_formats)}",
+                        "export_ids",
+                    )
 
-            # Validate IDS names
-            available_ids = self.document_store.get_available_ids()
-            invalid_ids = [ids for ids in ids_list if ids not in available_ids]
-            valid_ids = [ids for ids in ids_list if ids in available_ids]
+                # Validate IDS names using document service
+                valid_ids, invalid_ids = await self.documents.validate_ids(ids_list)
+                if not valid_ids:
+                    return self.documents.create_ids_not_found_error(
+                        str(ids_list), self.get_tool_name()
+                    )
 
-            if not valid_ids:
-                return IDSExport(
-                    ids_names=ids_list,
-                    include_physics=include_physics,
-                    include_relationships=include_relationships,
-                    data={
-                        "error": "No valid IDS names provided",
-                        "invalid_ids": invalid_ids,
-                        "available_ids": available_ids[:10],
-                        "suggestions": [
-                            "Check IDS name spelling",
-                            "Use get_overview to see all available IDS",
-                        ],
-                    },
-                )
+                # Process export data
+                export_data = {
+                    "requested_ids": ids_list,
+                    "valid_ids": valid_ids,
+                    "invalid_ids": invalid_ids,
+                    "export_format": output_format,
+                    "timestamp": "bulk_export",
+                    "ids_data": {},
+                    "cross_relationships": {},
+                    "physics_domains": {},
+                    "export_summary": {},
+                }
 
-            export_data = {
-                "requested_ids": ids_list,
-                "valid_ids": valid_ids,
-                "invalid_ids": invalid_ids,
-                "export_format": output_format,
-                "timestamp": "bulk_export",
-                "ids_data": {},
-                "cross_relationships": {},
-                "physics_domains": {},
-                "export_summary": {},
-            }
-
-            # Export data for each valid IDS
-            for ids_name in valid_ids:
-                try:
-                    # Get all documents for this IDS
-                    ids_documents = self.document_store.get_documents_by_ids(ids_name)
-
-                    ids_info: Dict[str, Any] = {
-                        "ids_name": ids_name,
-                        "total_paths": len(ids_documents),
-                        "paths": [],
-                        "physics_domains": set(),
-                        "identifier_paths": [],
-                        "measurement_types": set(),
-                    }
-
-                    # Process documents based on output format
-                    for doc in ids_documents:
-                        path_data: Dict[str, Any] = {
-                            "path": doc.metadata.path_name,
-                            "documentation": doc.documentation
-                            if output_format == "enhanced"
-                            else doc.documentation[:200],
-                            "data_type": doc.metadata.data_type,
-                            "physics_domain": doc.metadata.physics_domain,
-                            "units": doc.metadata.units,
+                # Export data for each valid IDS
+                for ids_name in valid_ids:
+                    try:
+                        ids_documents = await self.documents.get_documents_safe(
+                            ids_name
+                        )
+                        ids_info = {
+                            "ids_name": ids_name,
+                            "total_paths": len(ids_documents),
+                            "paths": [],
+                            "physics_domains": set(),
+                            "identifier_paths": [],
+                            "measurement_types": set(),
                         }
 
-                        # Add detailed information for enhanced format
-                        if output_format == "enhanced":
-                            path_data["raw_data"] = doc.raw_data
-                            path_data["identifier_info"] = (
-                                self._extract_identifier_info(doc)
-                            )
+                        for doc in ids_documents:
+                            path_data = {
+                                "path": doc.metadata.path_name,
+                                "documentation": doc.documentation
+                                if output_format == "enhanced"
+                                else doc.documentation[:200],
+                                "data_type": doc.metadata.data_type,
+                                "physics_domain": doc.metadata.physics_domain,
+                                "units": doc.metadata.units,
+                            }
 
-                        ids_info["paths"].append(path_data)
-
-                        if doc.metadata.physics_domain:
-                            ids_info["physics_domains"].add(doc.metadata.physics_domain)
-
-                        if doc.metadata.data_type == "identifier_path":
-                            ids_info["identifier_paths"].append(path_data)
-
-                        # Extract measurement types from documentation
-                        if any(
-                            term in doc.documentation.lower()
-                            for term in [
-                                "temperature",
-                                "density",
-                                "pressure",
-                                "magnetic",
-                                "electric",
-                            ]
-                        ):
-                            if "temperature" in doc.documentation.lower():
-                                ids_info["measurement_types"].add("temperature")
-                            if "density" in doc.documentation.lower():
-                                ids_info["measurement_types"].add("density")
-                            if "pressure" in doc.documentation.lower():
-                                ids_info["measurement_types"].add("pressure")
-                            if "magnetic" in doc.documentation.lower():
-                                ids_info["measurement_types"].add("magnetic_field")
-                            if "electric" in doc.documentation.lower():
-                                ids_info["measurement_types"].add("electric_field")
-
-                    # Convert sets to lists for JSON serialization
-                    ids_info["physics_domains"] = list(ids_info["physics_domains"])
-                    ids_info["measurement_types"] = list(ids_info["measurement_types"])
-
-                    export_data["ids_data"][ids_name] = ids_info
-
-                except Exception as e:
-                    logger.warning(f"Failed to export IDS {ids_name}: {e}")
-                    export_data["ids_data"][ids_name] = {"error": str(e)}
-
-            # Add cross-IDS relationship analysis if requested
-            if include_relationships and len(valid_ids) > 1:
-                try:
-                    relationship_analysis = {}
-
-                    for i, ids1 in enumerate(valid_ids):
-                        for ids2 in valid_ids[i + 1 :]:
-                            try:
-                                # Find relationships between IDS pairs
-                                search_results = await self._search_service.search(
-                                    query=f"{ids1} {ids2} relationships",
-                                    config=SearchConfig(
-                                        search_mode=SearchMode.SEMANTIC,
-                                        max_results=5,
-                                    ),
+                            if output_format == "enhanced":
+                                path_data["raw_data"] = doc.raw_data
+                                path_data["identifier_info"] = (
+                                    self._extract_identifier_info(doc)
                                 )
 
-                                if search_results:
-                                    relationship_analysis[f"{ids1}_{ids2}"] = {
-                                        "shared_concepts": len(search_results),
-                                        "top_connections": [
-                                            {
-                                                "path": r.document.metadata.path_name,
-                                                "relevance_score": r.score,
-                                                "context": r.document.documentation[
-                                                    :100
-                                                ],
-                                            }
-                                            for r in search_results[:3]
-                                        ],
-                                    }
-                            except Exception as e:
-                                relationship_analysis[f"{ids1}_{ids2}"] = {
-                                    "error": str(e)
-                                }
+                            ids_info["paths"].append(path_data)
 
-                    export_data["cross_relationships"] = relationship_analysis
+                            if doc.metadata.physics_domain:
+                                ids_info["physics_domains"].add(
+                                    doc.metadata.physics_domain
+                                )
 
-                except Exception as e:
-                    logger.warning(f"Cross-relationship analysis failed: {e}")
-                    export_data["cross_relationships"] = {"error": str(e)}
+                            if doc.metadata.data_type == "identifier_path":
+                                ids_info["identifier_paths"].append(path_data)
 
-            # Generate export summary
-            export_summary = {
-                "total_requested": len(ids_list),
-                "successfully_exported": len(valid_ids),
-                "failed_exports": len(invalid_ids),
-                "total_paths_exported": sum(
-                    len(ids_data.get("paths", []))
-                    for ids_data in export_data["ids_data"].values()
-                    if isinstance(ids_data, dict)
-                ),
-                "export_completeness": "complete" if not invalid_ids else "partial",
-            }
+                        # Convert sets to lists
+                        ids_info["physics_domains"] = list(ids_info["physics_domains"])
+                        ids_info["measurement_types"] = list(
+                            ids_info["measurement_types"]
+                        )
+                        export_data["ids_data"][ids_name] = ids_info
 
-            export_data["export_summary"] = export_summary
+                    except Exception as e:
+                        logger.warning(f"Failed to export IDS {ids_name}: {e}")
+                        export_data["ids_data"][ids_name] = {"error": str(e)}
 
-            # Build final response using Pydantic
-            response = IDSExport(
-                ids_names=ids_list,
-                include_physics=include_physics,
-                include_relationships=include_relationships,
-                output_format=output_format,
-                data=export_data,
-                metadata={
-                    "export_timestamp": "2024-01-01T00:00:00Z",
-                },
-            )
+                # Generate export summary
+                export_summary = {
+                    "total_requested": len(ids_list),
+                    "successfully_exported": len(valid_ids),
+                    "failed_exports": len(invalid_ids),
+                    "total_paths_exported": sum(
+                        len(ids_data.get("paths", []))
+                        for ids_data in export_data["ids_data"].values()
+                        if isinstance(ids_data, dict)
+                    ),
+                    "export_completeness": "complete" if not invalid_ids else "partial",
+                }
+                export_data["export_summary"] = export_summary
 
-            return response
+                # Build response with proper structure
+                export_data_obj = ExportData(
+                    ids_data=export_data.get("ids_data", {}),
+                    cross_relationships=export_data.get("cross_relationships", {}),
+                    export_summary=export_data.get("export_summary", {}),
+                )
+
+                # Build AI insights
+                ai_insights = {
+                    "export_analysis": self._build_export_guidance(
+                        valid_ids, output_format, include_relationships
+                    ),
+                    "ids_summary": f"Exported {len(valid_ids)} of {len(ids_list)} requested IDS",
+                    "relationships_included": include_relationships,
+                    "physics_enhanced": include_physics,
+                }
+
+                # Add physics context if available
+                if service_ctx.physics_context:
+                    ai_insights["physics_context"] = service_ctx.physics_context
+
+                # Build final response
+                service_ctx.result = IDSExport(
+                    ids_names=ids_list,
+                    include_physics=include_physics,
+                    include_relationships=include_relationships,
+                    data=export_data_obj,
+                    ai_response=ai_insights,
+                    ai_prompt=service_ctx.ai_prompt,
+                    metadata={
+                        "export_timestamp": "2024-01-01T00:00:00Z",
+                    },
+                )
+
+                logger.info(f"Bulk export completed for {len(valid_ids)} IDS")
+                return service_ctx.result
 
         except Exception as e:
             logger.error(f"Bulk export failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Check IDS names are valid",
-                    "Try with fewer IDS names",
-                    "Use get_overview to see available IDS",
-                    "Try with output_format='structured' for organized data",
-                ],
-                context={
-                    "ids_list": ids_list,
-                    "tool": "export_ids",
-                    "operation": "bulk_export",
-                },
+            return self._create_error_response(
+                f"Bulk export failed: {e}", str(ids_list)
             )
 
     @cache_results(ttl=900, key_strategy="content_based")  # Cache domain exports
     @validate_input(schema=ExportPhysicsDomainInput)
-    @sample(temperature=0.3, max_tokens=1000)  # Balanced creativity for domain export
-    @recommend_tools(strategy="domain_export_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=3.0)
     @handle_errors(fallback="domain_export_suggestions")
     @mcp_tool("Export physics domain-specific data")
@@ -401,47 +335,29 @@ Focus on providing actionable insights for researchers working in this physics d
         """
         try:
             if not domain:
-                return DomainExport(
-                    domain="",
-                    include_cross_domain=include_cross_domain,
-                    max_paths=max_paths,
-                    output_format="structured",
-                    data={
-                        "error": "No domain specified for export",
-                        "suggestions": [
-                            "Provide a physics domain name",
-                            "Try: 'core_profiles', 'equilibrium', 'transport'",
-                            "Use get_overview() to see available domains",
-                        ],
-                    },
+                return self._create_error_response(
+                    "No domain specified for export", domain
                 )
 
             # Limit max_paths for performance
             max_paths = min(max_paths, 50)
 
-            # Search for domain-related paths
+            # Enhance domain query with physics context using service
+            physics_context = await self.physics.enhance_query(domain)
+
+            # Search for domain-related paths using search config service
+            search_config = self.search_config.create_config(
+                search_mode=SearchMode.SEMANTIC,
+                max_results=max_paths,
+            )
             search_results = await self._search_service.search(
                 query=domain,
-                config=SearchConfig(
-                    search_mode=SearchMode.SEMANTIC,
-                    max_results=max_paths,
-                ),
+                config=search_config,
             )
 
             if not search_results:
-                return DomainExport(
-                    domain=domain,
-                    include_cross_domain=include_cross_domain,
-                    max_paths=max_paths,
-                    output_format="structured",
-                    data={
-                        "error": f"No data found for domain '{domain}'",
-                        "suggestions": [
-                            "Check domain name spelling",
-                            "Try broader physics terms",
-                            "Use search_imas() to explore available data",
-                        ],
-                    },
+                return self._create_error_response(
+                    f"No data found for domain '{domain}'", domain
                 )
 
             # Process results based on analysis depth
@@ -468,6 +384,21 @@ Focus on providing actionable insights for researchers working in this physics d
 
                 domain_paths.append(path_info)
 
+            # Prepare AI insights for potential sampling
+            ai_insights = {
+                "domain_analysis": self._build_domain_guidance(
+                    domain, analysis_depth, len(domain_paths)
+                ),
+                "paths_found": len(domain_paths),
+                "related_ids_count": len(related_ids),
+                "analysis_depth": analysis_depth,
+            }
+
+            # Add physics context if available
+            if physics_context:
+                ai_insights["physics_context"] = physics_context
+                logger.debug(f"Physics context added for domain: {domain}")
+
             # Build final response
             response = DomainExport(
                 domain=domain,
@@ -478,26 +409,74 @@ Focus on providing actionable insights for researchers working in this physics d
                 },
                 include_cross_domain=include_cross_domain,
                 max_paths=max_paths,
-                output_format="structured",  # Default format for domain export
+                ai_response=ai_insights,
                 metadata={
                     "total_found": len(domain_paths),
                 },
             )
 
-            return response
+            # Apply post-processing services (sampling and recommendations)
+            enhanced_response = await self.apply_services(
+                result=response,
+                query=domain,
+                export_type="domain",
+                analysis_depth=analysis_depth,
+                tool_name=self.get_tool_name(),
+                ctx=ctx,
+            )
+
+            # Add standard metadata and return properly typed response
+            final_response = self.response.add_standard_metadata(
+                enhanced_response, self.get_tool_name()
+            )
+
+            logger.info(f"Domain export completed for: {domain}")
+            # Ensure we return the correct type
+            return (
+                final_response if isinstance(final_response, DomainExport) else response
+            )
 
         except Exception as e:
             logger.error(f"Domain export failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Check domain name spelling",
-                    "Try broader physics terms",
-                    "Use get_overview() to see available domains",
-                ],
-                context={
-                    "domain": domain,
-                    "tool": "export_physics_domain",
-                    "operation": "domain_export",
-                },
-            )
+            return self._create_error_response(f"Domain export failed: {e}", domain)
+
+    def _build_export_guidance(
+        self, valid_ids: List[str], output_format: str, include_relationships: bool
+    ) -> str:
+        """Build comprehensive export guidance for AI enhancement."""
+        return f"""IMAS Bulk Export Analysis: {valid_ids}
+
+Export Configuration:
+- Format: {output_format}
+- Relationships: {"Included" if include_relationships else "Excluded"}
+- IDS Count: {len(valid_ids)}
+
+Key insights for researchers:
+1. **Data Usage Recommendations**: Best practices for this specific IDS combination
+2. **Physics Insights**: Relationships between exported IDS and physics phenomena
+3. **Analysis Workflows**: Suggested workflows utilizing the exported data
+4. **Integration Patterns**: How these IDS work together in fusion research
+5. **Quality Considerations**: Data validation and consistency checks
+6. **Measurement Dependencies**: How different measurements relate
+
+Provide detailed analysis including workflow recommendations and data integration strategies."""
+
+    def _build_domain_guidance(
+        self, domain: str, analysis_depth: str, path_count: int
+    ) -> str:
+        """Build comprehensive domain guidance for AI enhancement."""
+        return f"""IMAS Physics Domain Export: "{domain}"
+
+Analysis Configuration:
+- Depth: {analysis_depth}
+- Paths Found: {path_count}
+
+Key insights for researchers:
+1. **Domain Overview**: Key characteristics of this physics domain
+2. **Data Hierarchy**: How domain data is organized in IMAS
+3. **Measurement Types**: Key measurements and calculated quantities
+4. **Cross-Domain Connections**: Links to other physics domains
+5. **Analysis Patterns**: Common analysis workflows for this domain
+6. **Research Context**: How this domain fits into fusion research
+
+Provide detailed analysis including best practices for domain-specific research workflows."""

@@ -26,7 +26,6 @@ class SearchConfig(BaseModel):
     ids_filter: Optional[List[str]] = None
     similarity_threshold: float = 0.0
     boost_exact_matches: bool = True
-    enable_physics_enhancement: bool = True
 
     @field_validator("search_mode", mode="before")
     @classmethod

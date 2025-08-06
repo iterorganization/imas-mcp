@@ -1,25 +1,22 @@
 """
-Analysis tool implementation.
+Analysis tool implementation with service composition.
 
-This module contains the analyze_ids_structure tool logic with decorators
-for caching, validation, AI enhancement, tool recommendations, performance
-monitoring, and error handling.
+This module contains the analyze_ids_structure tool logic using service-based architecture
+for physics integration, response building, and standardized metadata.
 """
 
 import logging
 from typing import Optional, Union
 from fastmcp import Context
 
-from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.request_models import AnalysisInput
 from imas_mcp.models.response_models import StructureResult, ErrorResponse
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
-# Import all decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
-    sample,
-    recommend_tools,
     measure_performance,
     handle_errors,
 )
@@ -41,12 +38,14 @@ def mcp_tool(description: str):
 
 
 class AnalysisTool(BaseTool):
-    """Tool for analyzing IDS structure."""
+    """Tool for analyzing IDS structure with service composition."""
 
-    def __init__(self, document_store: Optional[DocumentStore] = None):
-        """Initialize the analysis tool with document store."""
-        super().__init__()
-        self.document_store = document_store or DocumentStore()
+    # Enable services for analysis-based tool
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.ANALYSIS_BASED
+    max_recommended_tools: int = 4
 
     def get_tool_name(self) -> str:
         return "analyze_ids_structure"
@@ -70,8 +69,6 @@ Focus on providing actionable insights for researchers working with this specifi
 
     @cache_results(ttl=900, key_strategy="path_based")  # Cache structure analysis
     @validate_input(schema=AnalysisInput)
-    @sample(temperature=0.2, max_tokens=800)  # Conservative temperature for analysis
-    @recommend_tools(strategy="analysis_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="analysis_suggestions")
     @mcp_tool("Get detailed structural analysis of a specific IDS")
@@ -79,126 +76,110 @@ Focus on providing actionable insights for researchers working with this specifi
         self, ids_name: str, ctx: Optional[Context] = None
     ) -> Union[StructureResult, ErrorResponse]:
         """
-        Get detailed structural analysis of a specific IDS using graph metrics.
+        Get detailed structural analysis of a specific IDS using service composition.
+
+        Uses service context manager for consistent orchestration:
+        - Service context handles pre/post processing
+        - DocumentService: Validates IDS and retrieves documents
+        - PhysicsService: Enhances analysis with physics context
 
         Args:
             ids_name: Name of the IDS to analyze
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with detailed graph analysis and AI insights
+            StructureResult with detailed analysis and AI insights
         """
         try:
-            # Validate IDS exists
-            available_ids = self.document_store.get_available_ids()
-            if ids_name not in available_ids:
-                return ErrorResponse(
-                    error=f"IDS '{ids_name}' not found",
-                    suggestions=[f"Try: {ids}" for ids in available_ids[:5]],
-                    context={
-                        "available_ids": available_ids[:10],
-                        "ids_name": ids_name,
-                        "tool": "analyze_ids_structure",
-                    },
-                )
-
-            # Get detailed IDS data from document store
-            ids_documents = self.document_store.get_documents_by_ids(ids_name)
-
-            # Build structural analysis from documents with identifier awareness
-            paths = [doc.metadata.path_name for doc in ids_documents]
-
-            # Analyze identifier schemas in this IDS
-            identifier_nodes = []
-            for doc in ids_documents:
-                identifier_schema = doc.raw_data.get("identifier_schema")
-                if identifier_schema and isinstance(identifier_schema, dict):
-                    options = identifier_schema.get("options", [])
-                    identifier_nodes.append(
-                        {
-                            "path": doc.metadata.path_name,
-                            "schema_path": identifier_schema.get(
-                                "schema_path", "unknown"
-                            ),
-                            "option_count": len(options),
-                            "branching_significance": "CRITICAL"
-                            if len(options) > 5
-                            else "MODERATE"
-                            if len(options) > 1
-                            else "MINIMAL",
-                            "sample_options": [
-                                {
-                                    "name": opt.get("name", ""),
-                                    "index": opt.get("index", 0),
-                                }
-                                for opt in options[:3]
-                            ]
-                            if options
-                            else [],
-                        }
+            async with self.service_context(
+                operation_type="analysis",
+                query=ids_name,
+                analysis_type="structure",
+                ctx=ctx,
+            ) as service_ctx:
+                # Validate IDS exists using document service
+                valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
+                if not valid_ids:
+                    return self.documents.create_ids_not_found_error(
+                        ids_name, self.get_tool_name()
                     )
 
-            # Build structure analysis using dict format
-            structure_data = {
-                "root_level_paths": len([p for p in paths if "/" not in p.strip("/")]),
-                "max_depth": max(len(p.split("/")) for p in paths) if paths else 0,
-                "document_count": len(ids_documents),
-            }
+                # Get detailed IDS data from document store
+                ids_documents = await self.documents.get_documents_safe(ids_name)
 
-            # Analyze path patterns
-            path_patterns = {}
-            for path in paths:
-                segments = path.split("/")
-                if len(segments) > 1:
-                    root = segments[0]
-                    path_patterns[root] = path_patterns.get(root, 0) + 1
+                if not ids_documents:
+                    service_ctx.result = StructureResult(
+                        ids_name=ids_name,
+                        description=f"No detailed structure data available for {ids_name}",
+                        structure={"total_paths": 0},
+                        sample_paths=[],
+                        max_depth=0,
+                        ai_response={
+                            "analysis": "No structure data available",
+                            "note": "IDS exists but has no accessible structure information",
+                        },
+                    )
+                    return service_ctx.result
 
-            # Build final response using Pydantic
-            response = StructureResult(
-                ids_name=ids_name,
-                description=f"IDS '{ids_name}' containing {len(paths)} data paths",
-                structure=structure_data,
-                sample_paths=paths[:10],
-                max_depth=max(len(path.split("/")) for path in paths) if paths else 0,
-                physics_domains=[
-                    domain
-                    for domain in [
-                        "equilibrium",
-                        "core_profiles",
-                        "disruptions",
-                        "transport",
-                        "heating",
-                        "current_drive",
-                        "mhd",
-                    ]
-                    if domain in ids_name.lower()
-                ],
-                physics_context=None,
-            )
+                # Analyze structure
+                structure_analysis = self._analyze_structure(ids_documents)
+                sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
 
-            # Add identifier analysis as ai_insights
-            response.ai_insights = {
-                "total_identifier_nodes": len(identifier_nodes),
-                "branching_paths": identifier_nodes,
-                "coverage": f"{len(identifier_nodes) / len(paths) * 100:.1f}%"
-                if paths
-                else "0%",
-            }
+                # Build AI analysis context
+                ai_analysis = {
+                    "structure_summary": f"Analyzed {len(ids_documents)} paths in {ids_name}",
+                    "analysis_prompt": self._build_analysis_sample_prompt(ids_name),
+                    "physics_enhanced": bool(service_ctx.physics_context),
+                }
 
-            return response
+                # Add physics context if available
+                if service_ctx.physics_context:
+                    ai_analysis["physics_context"] = service_ctx.physics_context
+
+                # Build response
+                service_ctx.result = StructureResult(
+                    ids_name=ids_name,
+                    description=f"Structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths",
+                    structure=structure_analysis,
+                    sample_paths=sample_paths,
+                    max_depth=structure_analysis.get("max_depth", 0),
+                    ai_response=ai_analysis,
+                    ai_prompt=service_ctx.ai_prompt,
+                )
+
+                logger.info(f"Structure analysis completed for {ids_name}")
+                return service_ctx.result
 
         except Exception as e:
-            logger.error(f"IDS structure analysis failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Check IDS name spelling",
-                    "Verify IDS exists in data dictionary",
-                    "Try get_overview() to see available IDS",
-                ],
-                context={
-                    "ids_name": ids_name,
-                    "tool": "analyze_ids_structure",
-                    "operation": "structure_analysis",
-                },
-            )
+            logger.error(f"Structure analysis failed for {ids_name}: {e}")
+            return self._create_error_response(f"Analysis failed: {e}", ids_name)
+
+    def _analyze_structure(self, ids_documents):
+        """Analyze structure of IDS documents."""
+        paths = [doc.metadata.path_name for doc in ids_documents]
+
+        # Analyze identifier schemas
+        identifier_nodes = []
+        for doc in ids_documents:
+            identifier_schema = doc.raw_data.get("identifier_schema")
+            if identifier_schema and isinstance(identifier_schema, dict):
+                options = identifier_schema.get("options", [])
+                identifier_nodes.append(
+                    {
+                        "path": doc.metadata.path_name,
+                        "option_count": len(options),
+                    }
+                )
+
+        # Build structure analysis
+        structure_data = {
+            "root_level_paths": len([p for p in paths if "/" not in p.strip("/")]),
+            "max_depth": max(len(p.split("/")) for p in paths) if paths else 0,
+            "document_count": len(ids_documents),
+            "identifier_nodes": len(identifier_nodes),
+            "branching_complexity": sum(
+                node["option_count"] for node in identifier_nodes
+            ),
+        }
+
+        return structure_data

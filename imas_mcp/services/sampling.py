@@ -59,7 +59,7 @@ class SamplingService(BaseService):
                 return result
 
             # Attach sampling result to the original result
-            result.ai_insights = sampled_content
+            result.ai_response = sampled_content
 
             self.logger.debug("Sampling applied successfully")
             return result

@@ -26,9 +26,12 @@ class ResponseService(BaseService):
         results: List[SearchResult],
         query: str,
         search_mode: SearchMode,
-        ai_insights: Optional[Dict[str, Any]] = None,
+        ids_filter: Optional[List[str]] = None,
+        max_results: Optional[int] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+        ai_prompt: Optional[Dict[str, str]] = None,
     ) -> SearchResponse:
-        """Build SearchResponse from search results."""
+        """Build SearchResponse from search results with complete context."""
 
         # Convert SearchResult objects to SearchHit for API response
         hits = [result.to_hit() for result in results]
@@ -37,7 +40,10 @@ class ResponseService(BaseService):
             hits=hits,
             search_mode=search_mode,
             query=query,
-            ai_insights=ai_insights or {},
+            ids_filter=ids_filter,
+            max_results=max_results,
+            ai_response=ai_response or {},
+            ai_prompt=ai_prompt or {},
         )
 
     def add_standard_metadata(self, response: T, tool_name: str) -> T:
