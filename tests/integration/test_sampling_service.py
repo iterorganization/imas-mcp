@@ -39,8 +39,8 @@ class TestSamplingServiceIntegration:
         assert mock_context.sample.called
         # Result should be the original mock with insights attached
         assert result is mock_result
-        assert hasattr(result, "ai_insights")
-        assert result.ai_insights == "Sampled result"
+        assert hasattr(result, "ai_response")
+        assert result.ai_response == "Sampled result"
 
     @pytest.mark.asyncio
     async def test_no_sampling_strategy(self, sampling_service, mock_result):

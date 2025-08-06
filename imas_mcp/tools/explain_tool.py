@@ -1,30 +1,24 @@
 """
-Explain tool implementation.
+Explain tool implementation with service composition.
 
-This module contains the explain_concept tool logic with decorators
-for caching, validation, AI sampling, tool recommendations, performance
-monitoring, and error handling.
+This module contains the explain_concept tool logic using service-based architecture
+for physics integration, response building, and standardized metadata.
 """
 
 import logging
-from typing import Dict, Any, Optional, List, Set, Union
+from typing import Dict, Any, Optional, List, Union
 from fastmcp import Context
 
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
 from imas_mcp.models.request_models import ExplainInput
-from imas_mcp.models.constants import SearchMode, DetailLevel
+from imas_mcp.models.constants import DetailLevel
 from imas_mcp.models.response_models import ConceptResult, ErrorResponse
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
-# Import physics integration for enhanced search
-from imas_mcp.physics_integration import physics_search
-
-# Import all decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
-    sample,
-    recommend_tools,
     measure_performance,
     handle_errors,
 )
@@ -46,7 +40,14 @@ def mcp_tool(description: str):
 
 
 class ExplainTool(BaseTool):
-    """Tool for explaining IMAS concepts."""
+    """Tool for explaining IMAS concepts with service composition."""
+
+    # Enable services for concept-based tool
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.CONCEPT_BASED
+    max_recommended_tools: int = 4
 
     def get_tool_name(self) -> str:
         return "explain_concept"
@@ -62,10 +63,10 @@ class ExplainTool(BaseTool):
             else None,
         }
 
-    def _build_concept_sample_prompt(
-        self, concept: str, detail_level: str, search_results: List[SearchResult]
+    def _build_concept_analysis_prompt(
+        self, concept: str, detail_level: str, search_results: List[Any]
     ) -> str:
-        """Build sampling prompt for concept explanation."""
+        """Build AI analysis prompt for concept explanation."""
         prompt = f"""IMAS Concept Explanation: "{concept}"
 
 Detail Level: {detail_level}
@@ -88,10 +89,6 @@ Top related paths found:
 
     @cache_results(ttl=600, key_strategy="semantic")  # Longer cache for explanations
     @validate_input(schema=ExplainInput)
-    @sample(
-        temperature=0.2, max_tokens=1000
-    )  # Lower temperature for factual explanations
-    @recommend_tools(strategy="concept_based", max_tools=4)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="concept_suggestions")
     @mcp_tool("Explain IMAS concepts with physics context")
@@ -102,7 +99,7 @@ Top related paths found:
         ctx: Optional[Context] = None,
     ) -> Union[ConceptResult, ErrorResponse]:
         """
-        Explain IMAS concepts with physics context.
+        Explain IMAS concepts with physics context using service composition.
 
         Args:
             concept: The concept to explain (physics concept, IMAS path, or general term)
@@ -113,144 +110,154 @@ Top related paths found:
             Dictionary with explanation, physics context, IMAS mappings, and related information
         """
         try:
-            # Use SearchService with standardized SearchResult format
-            search_config = SearchConfig(
-                search_mode=SearchMode.SEMANTIC,
+            async with self.service_context(
+                operation_type="explain",
+                query=concept,
+                search_mode="semantic",
                 max_results=15,
-                enable_physics_enhancement=True,
-            )
-            search_results = await self._search_service.search(concept, search_config)
-
-            # Try physics search enhancement
-            physics_context = None
-            try:
-                physics_context = physics_search(concept)
-            except Exception as e:
-                logger.warning(f"Physics enhancement failed: {e}")
-                # physics_context remains None for optional enhancement
-
-            if not search_results:
-                return ConceptResult(
-                    concept=concept,
-                    detail_level=detail_level,
-                    explanation="No information found for concept",
-                    related_topics=[
-                        "Try alternative terminology",
-                        "Check concept spelling",
-                        "Use search_imas() to explore related terms",
-                    ],
-                    concept_explanation=None,
-                    nodes=[],
-                    physics_domains=[],
-                    physics_context=None,
-                    ai_insights={
-                        "sources_analyzed": 0,
-                        "identifier_analysis": [],
-                        "error": "No matching data found",
-                    },
-                )
-
-            # Build comprehensive explanation from standardized SearchResult objects
-            related_paths = []
-            physics_domains: Set[str] = set()
-            measurement_contexts = []
-            identifier_schemas = []
-
-            for search_result in search_results[:10]:
-                # Use direct field access instead of to_dict()
-                path_info = {
-                    "path": search_result.document.metadata.path_name,
-                    "ids_name": search_result.document.metadata.ids_name,
-                    "description": search_result.document.documentation[:150],
-                    "relevance_score": search_result.score,
-                    "physics_domain": search_result.document.metadata.physics_domain,
-                    "units": search_result.document.units.unit_str
-                    if search_result.document.units
-                    else None,
-                }
-                related_paths.append(path_info)
-
-                # Use direct field access for physics domain
-                if search_result.document.metadata.physics_domain:
-                    physics_domains.add(search_result.document.metadata.physics_domain)
-
-                # Skip measurement context extraction for now - method doesn't exist
-                # measurement_context = search_result.extract_measurement_context()
-                # if measurement_context:
-                #     measurement_contexts.append(measurement_context)
-
-                # Check for identifier schemas using SearchResult
-                identifier_info = self._extract_identifier_info(search_result.document)
-                if identifier_info["has_identifier"]:
-                    identifier_schemas.append(
-                        {
-                            "path": search_result.document.metadata.path_name,
-                            "schema_info": identifier_info,
-                        }
-                    )
-
-            # Build explanation response using Pydantic models
-            related_paths_data = []
-            for search_result in search_results[:8]:
-                # Build DataPath with correct fields
-                local_physics_context = None
-                if search_result.document.metadata.physics_domain:
-                    local_physics_context = PhysicsContext(
-                        domain=search_result.document.metadata.physics_domain,
-                        phenomena=[],
-                        typical_values={},
-                    )
-
-                related_paths_data.append(
-                    IdsNode(
-                        path=search_result.document.metadata.path_name,
-                        documentation=search_result.document.documentation[:150],
-                        units=search_result.document.units.unit_str
-                        if search_result.document.units
-                        else None,
-                        data_type=search_result.document.metadata.data_type,
-                        physics_context=local_physics_context,
-                    )
-                )
-
-            # Build sampling prompt for AI enhancement - handled by decorator
-
-            response = ConceptResult(
-                concept=concept,
-                explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Related to {len(measurement_contexts)} measurement contexts. Found {len(related_paths)} related data paths.",
                 detail_level=detail_level,
-                related_topics=[
-                    f"Explore {related_paths[0]['ids_name']} for detailed data"
-                    if related_paths
-                    else "Use search_imas() for more specific queries",
-                    f"Investigate {list(physics_domains)[0]} domain connections"
-                    if physics_domains
-                    else "Consider broader physics concepts",
-                    "Use analyze_ids_structure() for structural details"
-                    if related_paths
-                    else "Try related terminology",
-                ],
-                concept_explanation=None,  # Will be populated by AI enhancement
-                nodes=related_paths_data,
-                physics_domains=list(physics_domains),
-                physics_context=physics_context,
-            )
+                ctx=ctx,
+            ) as service_ctx:
+                # Ensure search config is available
+                if not service_ctx.search_config:
+                    service_ctx.search_config = self.search_config.create_config(
+                        search_mode="semantic",
+                        max_results=15,
+                    )
 
-            return response
+                # Execute search with configured context
+                search_results = await self._search_service.search(
+                    concept, service_ctx.search_config
+                )
+
+                if not search_results:
+                    service_ctx.result = ConceptResult(
+                        concept=concept,
+                        detail_level=detail_level,
+                        explanation="No information found for concept",
+                        related_topics=[
+                            "Try alternative terminology",
+                            "Check concept spelling",
+                            "Use search_imas() to explore related terms",
+                        ],
+                        concept_explanation=None,
+                        nodes=[],
+                        physics_domains=[],
+                        physics_context=service_ctx.physics_context,
+                        ai_response={
+                            "sources_analyzed": 0,
+                            "identifier_analysis": [],
+                            "error": "No matching data found",
+                        },
+                    )
+                    return service_ctx.result
+
+                # Process search results for concept explanation
+                related_paths_data = []
+                physics_domains = set()
+                identifier_schemas = []
+
+                for search_result in search_results[:8]:
+                    # Collect physics domains
+                    if search_result.document.metadata.physics_domain:
+                        physics_domains.add(
+                            search_result.document.metadata.physics_domain
+                        )
+
+                    # Check for identifier schemas
+                    identifier_info = self._extract_identifier_info(
+                        search_result.document
+                    )
+                    if identifier_info["has_identifier"]:
+                        identifier_schemas.append(
+                            {
+                                "path": search_result.document.metadata.path_name,
+                                "schema_info": identifier_info,
+                            }
+                        )
+
+                    # Build PhysicsContext if available
+                    local_physics_context = None
+                    if search_result.document.metadata.physics_domain:
+                        local_physics_context = PhysicsContext(
+                            domain=search_result.document.metadata.physics_domain,
+                            phenomena=[],
+                            typical_values={},
+                        )
+
+                    related_paths_data.append(
+                        IdsNode(
+                            path=search_result.document.metadata.path_name,
+                            documentation=search_result.document.documentation[:150],
+                            units=search_result.document.units.unit_str
+                            if search_result.document.units
+                            else None,
+                            data_type=search_result.document.metadata.data_type,
+                            physics_context=local_physics_context,
+                        )
+                    )
+
+                # Build AI insights for sampling service
+                ai_insights = {
+                    "sources_analyzed": len(search_results),
+                    "identifier_analysis": identifier_schemas,
+                    "physics_enhancement": bool(service_ctx.physics_context),
+                    "analysis_prompt": self._build_concept_analysis_prompt(
+                        concept, detail_level.value, search_results
+                    ),
+                }
+
+                # Build response
+                service_ctx.result = ConceptResult(
+                    concept=concept,
+                    explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Found {len(related_paths_data)} related data paths.",
+                    detail_level=detail_level,
+                    related_topics=[
+                        f"Explore {search_results[0].document.metadata.ids_name} for detailed data"
+                        if search_results
+                        else "Use search_imas() for more specific queries",
+                        f"Investigate {list(physics_domains)[0]} domain connections"
+                        if physics_domains
+                        else "Consider broader physics concepts",
+                        "Use analyze_ids_structure() for structural details"
+                        if search_results
+                        else "Try related terminology",
+                    ],
+                    concept_explanation=None,  # Will be populated by AI sampling service
+                    nodes=related_paths_data,
+                    physics_domains=list(physics_domains),
+                    physics_context=service_ctx.physics_context,
+                    ai_response=ai_insights,
+                    ai_prompt=service_ctx.ai_prompt,
+                )
+
+                # Type check and return proper response
+                if isinstance(service_ctx.result, (ConceptResult, ErrorResponse)):
+                    return service_ctx.result
+
+                # If something changed the type unexpectedly, return original
+                logger.warning(
+                    f"Service processing changed response type: {type(service_ctx.result)}"
+                )
+                return service_ctx.result
 
         except Exception as e:
             logger.error(f"Concept explanation failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Try simpler concept terms",
-                    "Check concept spelling",
-                    "Use search_imas() to explore available data",
-                ],
-                context={
-                    "concept": concept,
-                    "detail_level": detail_level.value,
-                    "tool": "explain_concept",
-                    "operation": "concept_explanation",
-                },
+            return (
+                self.documents.create_ids_not_found_error(concept, self.get_tool_name())
+                if "not found" in str(e).lower()
+                else ErrorResponse(
+                    error=str(e),
+                    suggestions=[
+                        "Try simpler concept terms",
+                        "Check concept spelling",
+                        "Use search_imas() to explore available data",
+                    ],
+                    context={
+                        "concept": concept,
+                        "detail_level": detail_level.value,
+                        "tool": "explain_concept",
+                        "operation": "concept_explanation",
+                    },
+                )
             )

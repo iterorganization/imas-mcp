@@ -6,10 +6,10 @@ This module contains common functionality shared across all tool implementations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Union, List, Dict, Any
 from pydantic import BaseModel
 
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.response_models import ErrorResponse, SearchResponse
 
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.services.search_service import SearchService
@@ -27,6 +27,7 @@ from imas_mcp.services import (
 )
 from imas_mcp.services.sampling import SamplingStrategy
 from imas_mcp.services.tool_recommendations import RecommendationStrategy
+from imas_mcp.services.service_context import ServiceOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -50,32 +51,39 @@ class BaseTool(ABC):
         # Initialize search service
         self._search_service = self._create_search_service()
 
-        # Initialize business logic services
+        # Initialize services
         self.physics = PhysicsService()
         self.response = ResponseService()
         self.documents = DocumentService(self.document_store)
         self.search_config = SearchConfigurationService()
-
-        # New services for Phase 2.5
         self.sampling = SamplingService()
         self.recommendations = ToolRecommendationService()
+
+        # Initialize service orchestrator
+        self._orchestrator = ServiceOrchestrator(self)
 
     @abstractmethod
     def get_tool_name(self) -> str:
         """Return the name of this tool."""
         pass
 
+    def service_context(self, operation_type: str, **kwargs):
+        """Access to the service context manager."""
+        return self._orchestrator.service_context(operation_type, **kwargs)
+
     async def apply_sampling(self, result: BaseModel, **kwargs) -> BaseModel:
         """
         Template method for applying sampling to tool results.
         Subclasses can customize by setting sampling_strategy class variable.
         """
-        if not self.enable_sampling:
-            return result
+        if self.enable_sampling:
+            return await self.sampling.apply_sampling(
+                result=result,  # type: ignore
+                strategy=self.sampling_strategy,
+                **kwargs,
+            )
 
-        return await self.sampling.apply_sampling(
-            result=result, strategy=self.sampling_strategy, **kwargs
-        )
+        return result
 
     def generate_tool_recommendations(
         self, result: BaseModel, query: Optional[str] = None, **kwargs
@@ -116,6 +124,102 @@ class BaseTool(ABC):
             result = await self.apply_sampling(result, **kwargs)
 
         return result
+
+    async def execute_search(
+        self,
+        query: str,
+        search_mode: Union[str, SearchMode] = "auto",
+        max_results: int = 10,
+        ids_filter: Optional[List[str]] = None,
+    ) -> SearchResponse:
+        """
+        Unified search execution that returns a complete SearchResponse.
+
+        Args:
+            query: Search query
+            search_mode: Search mode to use
+            max_results: Maximum results to return
+            ids_filter: Optional IDS filter
+
+        Returns:
+            SearchResponse with all search data and context
+        """
+        # Create and optimize configuration
+        config = self.search_config.create_config(
+            search_mode=search_mode,
+            max_results=max_results,
+            ids_filter=ids_filter,
+        )
+        config = self.search_config.optimize_for_query(query, config)
+
+        # Execute search
+        search_results = await self._search_service.search(query, config)
+
+        # Generate AI prompts separately
+        ai_prompt = self.generate_ai_prompts(query, search_results)
+        ai_response = {}  # Will be populated by services later
+
+        # Add physics context to response (always enabled)
+        physics_context = await self.physics.enhance_query(query)
+        if physics_context:
+            ai_response["physics_context"] = physics_context
+
+        # Build complete response using service
+        response = self.response.build_search_response(
+            results=search_results,
+            query=query,
+            search_mode=config.search_mode,
+            ids_filter=ids_filter,
+            max_results=max_results,
+            ai_response=ai_response,
+            ai_prompt=ai_prompt,
+        )
+
+        return response
+
+    def generate_ai_prompts(
+        self,
+        query: str,
+        results: List[Any],
+        tool_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """
+        Generate AI prompts based on search results and context.
+
+        Args:
+            query: Original search query
+            results: Search results
+            tool_context: Optional tool-specific context
+
+        Returns:
+            Dictionary of AI prompts for processing
+        """
+        prompts = {}
+
+        if not results:
+            prompts["guidance"] = self._build_no_results_guidance(query)
+        else:
+            prompts["analysis"] = self._build_analysis_prompt(query, results)
+
+        # Add tool-specific prompts
+        if tool_context:
+            prompts.update(self._build_tool_specific_prompts(tool_context))
+
+        return prompts
+
+    def _build_no_results_guidance(self, query: str) -> str:
+        """Generate guidance for empty results."""
+        return f"""No results found for "{query}". Suggest alternatives and related concepts."""
+
+    def _build_analysis_prompt(self, query: str, results: List[Any]) -> str:
+        """Generate analysis prompt for search results."""
+        return f"""Analyze {len(results)} search results for "{query}" and provide insights."""
+
+    def _build_tool_specific_prompts(
+        self, tool_context: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Override in subclasses to add tool-specific AI prompts."""
+        return {}
 
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""

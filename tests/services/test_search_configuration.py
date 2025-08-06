@@ -25,7 +25,7 @@ class TestSearchConfigurationService:
         assert config.search_mode == SearchMode.AUTO
         assert config.max_results == 10
         assert config.ids_filter is None
-        assert config.enable_physics_enhancement is False
+        # Physics is now always enabled at the core level, no longer a config parameter
 
     def test_create_config_with_params(self):
         """Test creating configuration with specific parameters."""
@@ -35,13 +35,12 @@ class TestSearchConfigurationService:
             search_mode="semantic",
             max_results=20,
             ids_filter=["equilibrium"],
-            enable_physics=True,
         )
 
         assert config.search_mode == SearchMode.SEMANTIC
         assert config.max_results == 20
         assert config.ids_filter == ["equilibrium"]
-        assert config.enable_physics_enhancement is True
+        # Physics is now always enabled at the core level, no longer a config parameter
 
     def test_create_config_string_ids_filter(self):
         """Test creating configuration with string IDS filter."""
@@ -59,7 +58,6 @@ class TestSearchConfigurationService:
             search_mode=SearchMode.AUTO,
             max_results=10,
             ids_filter=None,
-            enable_physics_enhancement=False,
             similarity_threshold=0.0,
         )
 
@@ -78,7 +76,6 @@ class TestSearchConfigurationService:
             search_mode=SearchMode.AUTO,
             max_results=10,
             ids_filter=None,
-            enable_physics_enhancement=False,
             similarity_threshold=0.0,
         )
 
@@ -94,7 +91,6 @@ class TestSearchConfigurationService:
             search_mode=SearchMode.AUTO,
             max_results=10,
             ids_filter=None,
-            enable_physics_enhancement=False,
             similarity_threshold=0.0,
         )
 
