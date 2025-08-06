@@ -11,7 +11,8 @@ from fastmcp import Context
 
 from imas_mcp.models.request_models import ExplainInput
 from imas_mcp.models.constants import DetailLevel
-from imas_mcp.models.response_models import ConceptResult, ErrorResponse
+from imas_mcp.models.result_models import ConceptResult
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 from imas_mcp.services.sampling import SamplingStrategy
 from imas_mcp.services.tool_recommendations import RecommendationStrategy
@@ -97,7 +98,7 @@ Top related paths found:
         concept: str,
         detail_level: DetailLevel = DetailLevel.INTERMEDIATE,
         ctx: Optional[Context] = None,
-    ) -> Union[ConceptResult, ErrorResponse]:
+    ) -> Union[ConceptResult, ToolError]:
         """
         Explain IMAS concepts with physics context using service composition.
 
@@ -232,7 +233,7 @@ Top related paths found:
                 )
 
                 # Type check and return proper response
-                if isinstance(service_ctx.result, (ConceptResult, ErrorResponse)):
+                if isinstance(service_ctx.result, (ConceptResult, ToolError)):
                     return service_ctx.result
 
                 # If something changed the type unexpectedly, return original
@@ -246,7 +247,7 @@ Top related paths found:
             return (
                 self.documents.create_ids_not_found_error(concept, self.get_tool_name())
                 if "not found" in str(e).lower()
-                else ErrorResponse(
+                else ToolError(
                     error=str(e),
                     suggestions=[
                         "Try simpler concept terms",

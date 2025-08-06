@@ -11,7 +11,7 @@ from typing import List, Union
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.constants import SearchMode
 
@@ -38,7 +38,7 @@ class HybridSearchEngine(SearchEngine):
 
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute hybrid search combining semantic and lexical results.
 
         Args:
@@ -46,7 +46,7 @@ class HybridSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchResult objects ordered by combined relevance
+            List of SearchMatch objects ordered by combined relevance
 
         Raises:
             SearchEngineError: When hybrid search execution fails

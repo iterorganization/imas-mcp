@@ -10,7 +10,8 @@ from typing import Optional, Union
 from fastmcp import Context
 
 from imas_mcp.models.request_models import AnalysisInput
-from imas_mcp.models.response_models import StructureResult, ErrorResponse
+from imas_mcp.models.result_models import StructureResult
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.services.sampling import SamplingStrategy
 from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
@@ -74,7 +75,7 @@ Focus on providing actionable insights for researchers working with this specifi
     @mcp_tool("Get detailed structural analysis of a specific IDS")
     async def analyze_ids_structure(
         self, ids_name: str, ctx: Optional[Context] = None
-    ) -> Union[StructureResult, ErrorResponse]:
+    ) -> Union[StructureResult, ToolError]:
         """
         Get detailed structural analysis of a specific IDS using service composition.
 

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from imas_mcp.services.response import ResponseService
 from imas_mcp.search.search_strategy import SearchHit
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.models.result_models import SearchResult
 
 
 class TestResponseService:
@@ -39,7 +39,7 @@ class TestResponseService:
             results=results, query="test query", search_mode=SearchMode.SEMANTIC
         )
 
-        assert isinstance(response, SearchResponse)
+        assert isinstance(response, SearchResult)
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
@@ -71,7 +71,7 @@ class TestResponseService:
             ai_response=ai_response,
         )
 
-        assert isinstance(response, SearchResponse)
+        assert isinstance(response, SearchResult)
         assert response.query == "plasma temperature"
         assert response.search_mode == SearchMode.SEMANTIC
         assert response.ai_response == ai_response

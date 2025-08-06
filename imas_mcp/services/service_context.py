@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass, field
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.response_models import QueryContext, AIResponse
+from imas_mcp.models.context_models import QueryContext, AIContext
 from imas_mcp.search.search_strategy import SearchConfig
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ class ServiceContext:
 
     operation_type: str
     query_context: QueryContext = field(default_factory=QueryContext)
-    ai_context: AIResponse = field(default_factory=AIResponse)
+    ai_context: AIContext = field(default_factory=AIContext)
 
     # Service states
     search_config: Optional[SearchConfig] = field(default=None, init=False)
@@ -50,12 +50,12 @@ class ServiceContext:
 
     @property
     def ai_prompt(self) -> Dict[str, str]:
-        """Access AI prompts from composed AIResponse."""
+        """Access AI prompts from composed AIContext."""
         return self.ai_context.ai_prompt or {}
 
     @property
     def ai_response(self) -> Dict[str, Any]:
-        """Access AI response from composed AIResponse."""
+        """Access AI response from composed AIContext."""
         return self.ai_context.ai_response or {}
 
     def update_search_context(

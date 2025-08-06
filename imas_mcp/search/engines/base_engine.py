@@ -9,7 +9,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Union
 
-from imas_mcp.search.search_strategy import SearchConfig, SearchResult
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class SearchEngine(ABC):
     @abstractmethod
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Execute search with given query and configuration.
 
         Args:
@@ -38,7 +38,7 @@ class SearchEngine(ABC):
             config: Search configuration with parameters like max_results, filters
 
         Returns:
-            List of SearchResult objects ordered by relevance
+            List of SearchMatch objects ordered by relevance
 
         Raises:
             SearchEngineError: When search execution fails
@@ -130,7 +130,7 @@ class MockSearchEngine(SearchEngine):
 
     async def search(
         self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchResult]:
+    ) -> List[SearchMatch]:
         """Return mock search results for testing."""
         from imas_mcp.search.document_store import Document, DocumentMetadata
         from imas_mcp.models.constants import SearchMode
@@ -151,7 +151,7 @@ class MockSearchEngine(SearchEngine):
         )
 
         # Create mock search result
-        mock_result = SearchResult(
+        mock_result = SearchMatch(
             document=mock_document,
             score=0.95,
             rank=0,
