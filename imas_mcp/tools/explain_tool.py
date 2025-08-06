@@ -10,9 +10,10 @@ from typing import Dict, Any, Optional, List, Union
 from fastmcp import Context
 
 from imas_mcp.models.request_models import ExplainInput
-from imas_mcp.models.constants import DetailLevel
+from imas_mcp.models.constants import DetailLevel, SearchMode
 from imas_mcp.models.result_models import ConceptResult
 from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.context_models import QueryContext
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 from imas_mcp.services.sampling import SamplingStrategy
 from imas_mcp.services.tool_recommendations import RecommendationStrategy
@@ -100,7 +101,7 @@ Top related paths found:
         ctx: Optional[Context] = None,
     ) -> Union[ConceptResult, ToolError]:
         """
-        Explain IMAS concepts with physics context using service composition.
+        Explain IMAS concepts with physics context using clean service orchestration.
 
         Args:
             concept: The concept to explain (physics concept, IMAS path, or general term)
@@ -108,31 +109,25 @@ Top related paths found:
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with explanation, physics context, IMAS mappings, and related information
+            ConceptResult with explanation, physics context, and related information
         """
         try:
-            async with self.service_context(
-                operation_type="explain",
+            # Create clean query context for concept explanation
+            query_context = QueryContext(
                 query=concept,
-                search_mode="semantic",
+                search_mode=SearchMode.SEMANTIC,
                 max_results=15,
-                detail_level=detail_level,
-                ctx=ctx,
-            ) as service_ctx:
-                # Ensure search config is available
-                if not service_ctx.search_config:
-                    service_ctx.search_config = self.search_config.create_config(
-                        search_mode="semantic",
-                        max_results=15,
-                    )
+            )
 
-                # Execute search with configured context
-                search_results = await self._search_service.search(
-                    concept, service_ctx.search_config
-                )
+            # Use clean operation context
+            async with self.operation_context(
+                "explain", query_context
+            ) as operation_ctx:
+                # Execute search using orchestrator
+                search_results = await self._orchestrator.search(operation_ctx)
 
                 if not search_results:
-                    service_ctx.result = ConceptResult(
+                    return ConceptResult(
                         concept=concept,
                         detail_level=detail_level,
                         explanation="No information found for concept",
@@ -141,17 +136,21 @@ Top related paths found:
                             "Check concept spelling",
                             "Use search_imas() to explore related terms",
                         ],
-                        concept_explanation=None,
-                        nodes=[],
-                        physics_domains=[],
-                        physics_context=service_ctx.physics_context,
+                        query=concept,
+                        search_mode=SearchMode.SEMANTIC,
+                        max_results=15,
+                        ids_filter=None,
+                        ai_prompt={},
                         ai_response={
                             "sources_analyzed": 0,
                             "identifier_analysis": [],
                             "error": "No matching data found",
                         },
+                        physics_context=None,
+                        nodes=[],
+                        physics_domains=[],
+                        concept_explanation=None,
                     )
-                    return service_ctx.result
 
                 # Process search results for concept explanation
                 related_paths_data = []
@@ -198,18 +197,23 @@ Top related paths found:
                         )
                     )
 
+                # Generate AI prompts for concept explanation
+                ai_prompts = self._orchestrator.generate_ai_prompts(operation_ctx)
+
                 # Build AI insights for sampling service
                 ai_insights = {
                     "sources_analyzed": len(search_results),
                     "identifier_analysis": identifier_schemas,
-                    "physics_enhancement": bool(service_ctx.physics_context),
+                    "physics_enhancement": bool(
+                        operation_ctx.ai_prompts.get("physics_context")
+                    ),
                     "analysis_prompt": self._build_concept_analysis_prompt(
                         concept, detail_level.value, search_results
                     ),
                 }
 
-                # Build response
-                service_ctx.result = ConceptResult(
+                # Build concept result
+                concept_result = ConceptResult(
                     concept=concept,
                     explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Found {len(related_paths_data)} related data paths.",
                     detail_level=detail_level,
@@ -225,25 +229,26 @@ Top related paths found:
                         else "Try related terminology",
                     ],
                     concept_explanation=None,  # Will be populated by AI sampling service
+                    # QueryContext fields
+                    query=concept,
+                    search_mode=SearchMode.SEMANTIC,
+                    max_results=15,
+                    ids_filter=None,
+                    # AIContext fields
+                    ai_prompt=ai_prompts,
+                    ai_response=ai_insights,
+                    # PhysicsContext fields
+                    physics_context=None,  # Will be enhanced by service processing
+                    # IdsResult fields
                     nodes=related_paths_data,
                     physics_domains=list(physics_domains),
-                    physics_context=service_ctx.physics_context,
-                    ai_response=ai_insights,
-                    ai_prompt=service_ctx.ai_prompt,
                 )
 
-                # Type check and return proper response
-                if isinstance(service_ctx.result, (ConceptResult, ToolError)):
-                    return service_ctx.result
-
-                # If something changed the type unexpectedly, return original
-                logger.warning(
-                    f"Service processing changed response type: {type(service_ctx.result)}"
-                )
-                return service_ctx.result
+                # Apply metadata and return
+                return self._orchestrator.add_metadata(concept_result)
 
         except Exception as e:
-            logger.error(f"Concept explanation failed: {e}")
+            self.logger.error(f"Concept explanation failed: {e}")
             return (
                 self.documents.create_ids_not_found_error(concept, self.get_tool_name())
                 if "not found" in str(e).lower()

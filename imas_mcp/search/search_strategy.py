@@ -13,17 +13,20 @@ from typing import List, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.context_models import SearchParameters
 from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
 
 
-class SearchConfig(BaseModel):
+class SearchConfig(SearchParameters):
     """Configuration for search operations."""
 
+    # Override base class fields to make them required and set proper defaults
     search_mode: SearchMode = SearchMode.AUTO
     max_results: int = 10
-    ids_filter: Optional[List[str]] = None
+
+    # Additional search-specific configuration
     similarity_threshold: float = 0.0
     boost_exact_matches: bool = True
 
