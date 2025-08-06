@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.context_models import QueryContext
 
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.services.search_service import SearchService
@@ -68,9 +69,19 @@ class BaseTool(ABC):
         """Return the name of this tool."""
         pass
 
-    def service_context(self, operation_type: str, **kwargs):
-        """Access to the service context manager."""
-        return self._orchestrator.service_context(operation_type, **kwargs)
+    def operation_context(self, operation_type: str, query_context: QueryContext):
+        """Clean access to the service orchestrator's operation context."""
+        return self._orchestrator.operation_context(operation_type, query_context)
+
+    # Convenience methods for common operations
+    async def search_with_context(self, query_context: QueryContext) -> List[Any]:
+        """Execute search with clean context management."""
+        async with self.operation_context("search", query_context) as ctx:
+            return await self._orchestrator.search(ctx)
+
+    def build_search_response_with_context(self, ctx) -> Any:
+        """Build search response using orchestrator's service."""
+        return self._orchestrator.build_search_response(ctx)
 
     async def apply_sampling(self, result: BaseModel, **kwargs) -> BaseModel:
         """

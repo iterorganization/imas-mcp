@@ -17,20 +17,25 @@ from imas_mcp.models.physics_models import PhysicsSearchResult
 # ============================================================================
 
 
-class QueryContext(BaseModel):
+class SearchParameters(BaseModel):
+    """Base model for search configuration parameters."""
+
+    search_mode: Optional[SearchMode] = Field(
+        default=SearchMode.AUTO, description="Search mode to use"
+    )
+    ids_filter: Optional[List[str]] = Field(
+        default=None, description="IDS filter to apply"
+    )
+    max_results: Optional[int] = Field(
+        default=None, description="Maximum results to return"
+    )
+
+
+class QueryContext(SearchParameters):
     """Query metadata and parameters."""
 
     query: Optional[Union[str, List[str]]] = Field(
         default=None, description="Original user query"
-    )
-    search_mode: Optional[SearchMode] = Field(
-        default=SearchMode.AUTO, description="Search mode used"
-    )
-    ids_filter: Optional[List[str]] = Field(
-        default=None, description="IDS filter applied"
-    )
-    max_results: Optional[int] = Field(
-        default=None, description="Maximum results requested"
     )
 
 

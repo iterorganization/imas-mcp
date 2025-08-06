@@ -21,6 +21,7 @@ from imas_mcp.models.result_models import (
     ExportData,
 )
 from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.context_models import QueryContext
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
@@ -154,12 +155,14 @@ Focus on providing actionable insights for researchers working in this physics d
             Dictionary with bulk export data, relationships, and AI insights
         """
         try:
-            async with self.service_context(
-                operation_type="export",
+            # Create query context for bulk export
+            query_context = QueryContext(
                 query=" ".join(ids_list) + " export analysis",
-                export_type="bulk_ids",
-                ctx=ctx,
-            ) as service_ctx:
+                search_mode=SearchMode.AUTO,
+                max_results=10,
+            )
+
+            async with self.operation_context("export", query_context) as operation_ctx:
                 if not ids_list:
                     return self._create_error_response(
                         "No IDS specified for bulk export", "export_ids"
@@ -278,24 +281,25 @@ Focus on providing actionable insights for researchers working in this physics d
                 }
 
                 # Add physics context if available
-                if service_ctx.physics_context:
-                    ai_insights["physics_context"] = service_ctx.physics_context
+                physics_context_data = operation_ctx.ai_prompts.get("physics_context")
+                if physics_context_data:
+                    ai_insights["physics_context"] = physics_context_data
 
                 # Build final response
-                service_ctx.result = IDSExport(
+                export_result = IDSExport(
                     ids_names=ids_list,
                     include_physics=include_physics,
                     include_relationships=include_relationships,
                     data=export_data_obj,
                     ai_response=ai_insights,
-                    ai_prompt=service_ctx.ai_prompt,
+                    ai_prompt=operation_ctx.ai_prompts,
                     metadata={
                         "export_timestamp": "2024-01-01T00:00:00Z",
                     },
                 )
 
                 logger.info(f"Bulk export completed for {len(valid_ids)} IDS")
-                return service_ctx.result
+                return self._orchestrator.add_metadata(export_result)
 
         except Exception as e:
             logger.error(f"Bulk export failed: {e}")
@@ -345,15 +349,17 @@ Focus on providing actionable insights for researchers working in this physics d
             # Enhance domain query with physics context using service
             physics_context = await self.physics.enhance_query(domain)
 
-            # Search for domain-related paths using search config service
-            search_config = self.search_config.create_config(
+            # Create query context for domain export
+            query_context = QueryContext(
+                query=domain,
                 search_mode=SearchMode.SEMANTIC,
                 max_results=max_paths,
             )
-            search_results = await self._search_service.search(
-                query=domain,
-                config=search_config,
-            )
+
+            # Use operation context for unified search functionality
+            async with self.operation_context("export", query_context) as operation_ctx:
+                # Execute search using service context
+                search_results = await self._orchestrator.search(operation_ctx)
 
             if not search_results:
                 return self._create_error_response(

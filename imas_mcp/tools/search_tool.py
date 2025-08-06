@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Union
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.request_models import SearchInput
+from imas_mcp.models.context_models import QueryContext
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
@@ -86,47 +87,35 @@ class SearchTool(BaseTool):
             SearchResult with hits, metadata, and AI insights
         """
 
-        async with self.service_context(
-            operation_type="search",
+        # Create clean query context
+        query_context = QueryContext(
             query=query,
-            search_mode=search_mode,
+            search_mode=search_mode
+            if isinstance(search_mode, SearchMode)
+            else SearchMode.AUTO,
             max_results=max_results,
             ids_filter=ids_filter,
-            ctx=ctx,
-        ) as service_ctx:
-            # Ensure search config is available
-            if not service_ctx.search_config:
-                # Fallback configuration
-                service_ctx.search_config = self.search_config.create_config(
-                    search_mode=search_mode,
-                    max_results=max_results,
-                    ids_filter=ids_filter,
-                )
+        )
 
-            # Execute search with configured context
-            search_results = await self._search_service.search(
-                query, service_ctx.search_config
-            )
+        # Use clean operation context
+        async with self.operation_context("search", query_context) as ctx:
+            # Execute search
+            search_results = await self._orchestrator.search(ctx)
 
-            # Build response using response service directly
-            response = self.response.build_search_response(
-                results=search_results,
-                query=query,
-                search_mode=service_ctx.search_config.search_mode,
-                ids_filter=ids_filter,
-                max_results=max_results,
-                ai_response=service_ctx.ai_response,
-                ai_prompt=service_ctx.ai_prompt,
-            )
+            # Generate AI prompts
+            ctx.ai_context.ai_prompt = self._orchestrator.generate_ai_prompts(ctx)
+
+            # Build and return response
+            response = self._orchestrator.build_search_response(ctx)
 
             # Store result in context for post-processing
-            service_ctx.result = response
+            ctx.result = response
 
             logger.info(f"Search completed: {len(search_results)} results returned")
 
             # Type assertion for return
-            assert isinstance(service_ctx.result, SearchResult)
-            return service_ctx.result
+            assert isinstance(ctx.result, SearchResult)
+            return ctx.result
 
     def _build_tool_specific_prompts(
         self, tool_context: Dict[str, Any]
