@@ -15,7 +15,6 @@ class SearchConfigurationService(BaseService):
         search_mode: Union[str, SearchMode] = "auto",
         max_results: int = 10,
         ids_filter: Optional[Union[str, List[str]]] = None,
-        enable_physics: bool = False,
     ) -> SearchConfig:
         """Create optimized search configuration."""
 
@@ -37,7 +36,6 @@ class SearchConfigurationService(BaseService):
             search_mode=search_mode,
             max_results=max_results,
             ids_filter=ids_filter,
-            enable_physics_enhancement=enable_physics,
             similarity_threshold=0.0,
         )
 

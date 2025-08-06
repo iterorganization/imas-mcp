@@ -115,12 +115,13 @@ class TestExportErrorHandling:
         """Test export handles invalid IDS names gracefully."""
         invalid_ids = ["nonexistent_ids_name"]
         result = await tools.export_ids(ids_list=invalid_ids)
-        # The tool returns a successful IDSExport even for invalid IDS, with error in data
-        assert isinstance(result, IDSExport)
-        assert result.ids_names == invalid_ids
-        # Error information should be in the data field
-        if result.data and hasattr(result.data, "error"):
-            assert isinstance(result.data.error, str)
+        # The tool returns an ErrorResponse for invalid IDS names
+        assert isinstance(result, ErrorResponse)
+        assert "not found" in result.error
+        assert result.suggestions  # Should provide suggestions
+        assert (
+            "available_ids" in result.context
+        )  # Should include available alternatives
 
     @pytest.mark.asyncio
     async def test_export_invalid_domain(self, tools):

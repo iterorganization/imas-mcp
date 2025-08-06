@@ -15,17 +15,17 @@ from imas_mcp.models.request_models import IdentifiersInput
 from imas_mcp.models.constants import IdentifierScope
 from imas_mcp.models.response_models import IdentifierResult, ErrorResponse
 
-# Import all decorators
+# Import only essential decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
-    sample,
-    recommend_tools,
     measure_performance,
     handle_errors,
 )
 
 from imas_mcp.tools.base import BaseTool
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +42,20 @@ def mcp_tool(description: str):
 
 
 class IdentifiersTool(BaseTool):
-    """Tool for exploring identifiers."""
+    """Tool for exploring identifiers using service composition."""
+
+    # Enable both services for comprehensive identifier analysis
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+
+    # Use identifier-appropriate strategies
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.IDENTIFIERS_BASED
+    max_recommended_tools: int = 4
 
     def __init__(self, document_store: Optional[DocumentStore] = None):
         """Initialize the identifiers tool."""
-        super().__init__()
+        super().__init__(document_store)
         self.document_store = document_store or DocumentStore()
 
     def get_tool_name(self) -> str:
@@ -78,8 +87,6 @@ Focus on providing actionable insights for researchers working with IMAS identif
         ttl=1200, key_strategy="content_based"
     )  # Longer cache for identifiers
     @validate_input(schema=IdentifiersInput)
-    @sample(temperature=0.3, max_tokens=800)  # Balanced creativity for analysis
-    @recommend_tools(strategy="identifiers_based", max_tools=3)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="identifiers_suggestions")
     @mcp_tool("Explore IMAS identifier schemas and branching logic")
@@ -90,7 +97,12 @@ Focus on providing actionable insights for researchers working with IMAS identif
         ctx: Optional[Context] = None,
     ) -> Union[IdentifierResult, ErrorResponse]:
         """
-        Explore IMAS identifier schemas and branching logic.
+        Explore IMAS identifier schemas and branching logic using service composition.
+
+        Uses service composition for business logic:
+        - DocumentService: Validates queries and retrieves identifier documents
+        - PhysicsService: Enhances analysis with physics context
+        - ResponseService: Builds standardized Pydantic responses
 
         Provides access to enumerated options and branching logic that define
         critical decision points in the IMAS data structure.
@@ -101,9 +113,14 @@ Focus on providing actionable insights for researchers working with IMAS identif
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with identifier schemas, paths, and branching analytics
+            IdentifierResult with identifier schemas, paths, and branching analytics
         """
         try:
+            # Enhance query with physics context using service if provided
+            physics_context = None
+            if query:
+                physics_context = await self.physics.enhance_query(query)
+
             # Get overall identifier branching summary
             summary = self.document_store.get_identifier_branching_summary()
 
@@ -170,38 +187,85 @@ Focus on providing actionable insights for researchers working with IMAS identif
                 except Exception as e:
                     logger.warning(f"Failed to get identifier paths: {e}")
 
-            # Prepare branching analytics
+            # Prepare branching analytics with enhanced insights
             branching_analytics = {
                 "total_schemas": summary["total_schemas"],
                 "total_paths": summary["total_identifier_paths"],
                 "enumeration_space": summary["total_enumeration_options"],
                 "significance": "Identifier schemas define critical branching logic and enumeration options in IMAS data structures",
+                "query_context": query,
+                "physics_relevance": bool(physics_context),
             }
 
-            # Build final response using Pydantic
+            # Prepare AI insights for potential sampling
+            ai_insights = {
+                "identifier_analysis": self._build_identifier_guidance(
+                    query, scope, schemas, identifier_paths
+                ),
+                "scope_summary": f"Explored {scope.value} scope with {len(schemas)} schemas and {len(identifier_paths)} paths",
+                "branching_complexity": summary["total_enumeration_options"],
+            }
+
+            # Add physics context if available
+            if physics_context:
+                ai_insights["physics_context"] = physics_context
+                logger.debug(f"Physics context added for identifier query: {query}")
+
+            # Build response using Pydantic
             response = IdentifierResult(
                 scope=scope,
                 schemas=schemas,  # schemas is already dict list
                 paths=identifier_paths,
                 analytics=branching_analytics,
+                ai_insights=ai_insights,
             )
 
-            return response
+            # Apply post-processing services (sampling and recommendations)
+            enhanced_response = await self.apply_services(
+                result=response,
+                query=query or "identifier_exploration",
+                scope=scope.value,
+                tool_name=self.get_tool_name(),
+                ctx=ctx,
+            )
+
+            # Add standard metadata and return properly typed response
+            final_response = self.response.add_standard_metadata(
+                enhanced_response, self.get_tool_name()
+            )
+
+            logger.info(f"Identifier exploration completed with scope: {scope.value}")
+            # Ensure we return the correct type
+            return (
+                final_response
+                if isinstance(final_response, IdentifierResult)
+                else response
+            )
 
         except Exception as e:
             logger.error(f"Identifier exploration failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Try scope='summary' for overview",
-                    "Use scope='schemas' for schema details",
-                    "Use scope='paths' for identifier paths",
-                    "Add query to filter results",
-                ],
-                context={
-                    "scope": scope.value,
-                    "query": query,
-                    "tool": "explore_identifiers",
-                    "operation": "identifier_exploration",
-                },
+            return self._create_error_response(
+                f"Identifier exploration failed: {e}", query or "unknown"
             )
+
+    def _build_identifier_guidance(
+        self, query: Optional[str], scope: IdentifierScope, schemas: list, paths: list
+    ) -> str:
+        """Build comprehensive identifier guidance for AI enhancement."""
+        return f"""IMAS Identifier Schema Exploration: {query or "General exploration"}
+
+Scope: {scope.value} | Found {len(schemas)} schemas and {len(paths)} identifier paths
+
+Key insights for researchers:
+1. **Significance**: Importance of identifier branching logic in IMAS data navigation
+2. **Key Schemas**: Major identifier schemas and their enumeration options
+3. **Physics Implications**: How identifier choices affect physics domain access
+4. **Usage Guidance**: Practical guidance for using identifier information
+5. **Critical Decisions**: Key branching points for data structure navigation
+6. **Enumeration Options**: Available choices at each branching point
+
+Provide detailed analysis including:
+- Best practices for identifier-based data access
+- Physics significance of different identifier choices
+- Workflow recommendations for complex identifier navigation
+- Validation considerations for identifier-dependent operations"""

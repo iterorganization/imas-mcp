@@ -43,7 +43,7 @@ class TestResponseService:
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
-        assert response.ai_insights == {}
+        assert response.ai_response == {}
         assert response.hits[0].path == "test.path"
 
     def test_build_search_response_with_insights(self):
@@ -62,16 +62,19 @@ class TestResponseService:
         )
 
         results = [mock_result]  # type: ignore
-        ai_insights = {"physics_context": "plasma physics"}
+        ai_response = {"physics_context": "plasma physics"}
 
         response = service.build_search_response(
             results=results,
             query="plasma temperature",
             search_mode=SearchMode.SEMANTIC,
-            ai_insights=ai_insights,
+            ai_response=ai_response,
         )
 
-        assert response.ai_insights == ai_insights
+        assert isinstance(response, SearchResponse)
+        assert response.query == "plasma temperature"
+        assert response.search_mode == SearchMode.SEMANTIC
+        assert response.ai_response == ai_response
         assert len(response.hits) == 1
 
     def test_add_standard_metadata(self):

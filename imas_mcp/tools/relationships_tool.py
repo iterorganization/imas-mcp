@@ -10,23 +10,22 @@ import logging
 from typing import Optional, Set, Union
 from fastmcp import Context
 
-from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.request_models import RelationshipsInput
 from imas_mcp.models.constants import SearchMode, RelationshipType
 from imas_mcp.models.response_models import RelationshipResult, ErrorResponse
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 
-# Import all decorators
+# Import only essential decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
-    sample,
-    recommend_tools,
     measure_performance,
     handle_errors,
 )
 
 from .base import BaseTool
+from imas_mcp.services.sampling import SamplingStrategy
+from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,16 @@ def mcp_tool(description: str):
 
 
 class RelationshipsTool(BaseTool):
-    """Tool for exploring relationships."""
+    """Tool for exploring relationships using service composition."""
+
+    # Enable both services for comprehensive relationship analysis
+    enable_sampling: bool = True
+    enable_recommendations: bool = True
+
+    # Use relationship-appropriate strategies
+    sampling_strategy = SamplingStrategy.SMART
+    recommendation_strategy = RecommendationStrategy.RELATIONSHIPS_BASED
+    max_recommended_tools: int = 5
 
     def get_tool_name(self) -> str:
         return "explore_relationships"
@@ -71,8 +79,6 @@ Provide actionable insights for researchers exploring data relationships.
 
     @cache_results(ttl=600, key_strategy="path_based")  # Cache relationships
     @validate_input(schema=RelationshipsInput)
-    @sample(temperature=0.3, max_tokens=800)  # Balanced creativity for relationships
-    @recommend_tools(strategy="relationships_based", max_tools=4)
     @measure_performance(include_metrics=True, slow_threshold=2.5)
     @handle_errors(fallback="relationships_suggestions")
     @mcp_tool("Explore relationships between IMAS data paths")
@@ -84,7 +90,12 @@ Provide actionable insights for researchers exploring data relationships.
         ctx: Optional[Context] = None,
     ) -> Union[RelationshipResult, ErrorResponse]:
         """
-        Explore relationships between IMAS data paths using the rich relationship data.
+        Explore relationships between IMAS data paths using service composition.
+
+        Uses service composition for business logic:
+        - DocumentService: Validates paths and retrieves related documents
+        - PhysicsService: Enhances relationships with physics context
+        - ResponseService: Builds standardized Pydantic responses
 
         Advanced tool that discovers connections, physics concepts, and measurement
         relationships between different parts of the IMAS data dictionary.
@@ -96,7 +107,7 @@ Provide actionable insights for researchers exploring data relationships.
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with relationship network and AI insights
+            RelationshipResult with relationship network and AI insights
         """
         try:
             # Validate and limit max_depth for performance
@@ -112,53 +123,41 @@ Provide actionable insights for researchers exploring data relationships.
                 ids_name = path
                 specific_path = None
 
-            # Validate IDS exists
-            available_ids = self.document_store.get_available_ids()
-            if ids_name not in available_ids:
-                return ErrorResponse(
-                    error=f"IDS '{ids_name}' not found",
-                    suggestions=[f"Try: {ids}" for ids in available_ids[:5]],
-                    context={
-                        "available_ids": available_ids[:10],
-                        "path": path,
-                        "tool": "explore_relationships",
-                    },
+            # Validate IDS exists using document service
+            valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
+            if not valid_ids:
+                return self.documents.create_ids_not_found_error(
+                    path, self.get_tool_name()
                 )
 
-            # Get relationship data through semantic search
-            try:
-                # Use semantic search to find related concepts
-                if specific_path:
-                    search_query = f"{ids_name} {specific_path} relationships"
-                else:
-                    search_query = f"{ids_name} relationships physics concepts"
+            # Enhance query with physics context using service
+            if specific_path:
+                search_query = f"{ids_name} {specific_path} relationships"
+            else:
+                search_query = f"{ids_name} relationships physics concepts"
 
-                search_results_dict = await self._search_service.search(
-                    query=search_query,
-                    config=SearchConfig(
-                        search_mode=SearchMode.SEMANTIC,
-                        max_results=min(10, max_depth * 8),  # Scale with depth
-                    ),
+            physics_context = await self.physics.enhance_query(search_query)
+
+            # Get relationship data through semantic search with improved config
+            search_config = self.search_config.create_config(
+                search_mode=SearchMode.SEMANTIC,
+                max_results=min(15, max_depth * 8),  # Scale with depth
+            )
+
+            try:
+                search_results = await self._search_service.search(
+                    query=search_query, config=search_config
                 )
             except Exception as e:
-                return ErrorResponse(
-                    error=f"Failed to search relationships: {e}",
-                    suggestions=[
-                        "Check path format and accessibility",
-                        "Verify search service availability",
-                    ],
-                    context={
-                        "path": path,
-                        "tool": "explore_relationships",
-                        "operation": "relationship_search",
-                    },
+                return self._create_error_response(
+                    f"Failed to search relationships: {e}", path
                 )
 
             # Process search results for relationships
             related_paths = []
             seen_paths: Set[str] = set()
 
-            for search_result in search_results_dict:
+            for search_result in search_results:
                 result_path = search_result.document.metadata.path_name
                 if result_path not in seen_paths and result_path != path:
                     seen_paths.add(result_path)
@@ -187,10 +186,35 @@ Provide actionable insights for researchers exploring data relationships.
                         )
                     )
 
-                    if len(related_paths) >= max_depth * 3:  # Limit results
+                    if (
+                        len(related_paths) >= max_depth * 5
+                    ):  # Increase limit for better results
                         break
 
-            # Build final response using Pydantic
+            # Prepare AI prompts and responses separately
+            ai_prompt = {
+                "relationship_analysis": self._build_relationship_guidance(
+                    path, relationship_type, related_paths
+                ),
+            }
+
+            ai_response = {
+                "cross_ids_analysis": list(
+                    set(p.path.split("/")[0] for p in related_paths if "/" in p.path)
+                ),
+                "physics_connections": [
+                    p.path
+                    for p in related_paths
+                    if p.physics_context and p.physics_context.domain
+                ],
+            }
+
+            # Add physics context if available
+            if physics_context:
+                ai_response["physics_context"] = physics_context
+                logger.debug(f"Physics context added for relationship: {path}")
+
+            # Build response using Pydantic
             response = RelationshipResult(
                 path=path,
                 relationship_type=relationship_type,
@@ -208,29 +232,64 @@ Provide actionable insights for researchers exploring data relationships.
                         )
                     ),
                 },
-                nodes=related_paths[:5],
+                nodes=related_paths[:8],  # Increase visible nodes
                 physics_domains=[
                     p.physics_context.domain
                     for p in related_paths
                     if p.physics_context and p.physics_context.domain
                 ],
-                physics_context=None,
+                physics_context=physics_context,
+                ai_response=ai_response,
+                ai_prompt=ai_prompt,
             )
 
-            return response
+            # Apply post-processing services (sampling and recommendations)
+            enhanced_response = await self.apply_services(
+                result=response,
+                query=search_query,
+                path=path,
+                relationship_type=relationship_type.value,
+                tool_name=self.get_tool_name(),
+                ctx=ctx,
+            )
+
+            # Add standard metadata and return properly typed response
+            final_response = self.response.add_standard_metadata(
+                enhanced_response, self.get_tool_name()
+            )
+
+            logger.info(f"Relationship exploration completed for path: {path}")
+            # Ensure we return the correct type
+            return (
+                final_response
+                if isinstance(final_response, RelationshipResult)
+                else response
+            )
 
         except Exception as e:
             logger.error(f"Relationship exploration failed: {e}")
-            return ErrorResponse(
-                error=str(e),
-                suggestions=[
-                    "Check path format (ids_name/path or just ids_name)",
-                    "Verify IDS exists in data dictionary",
-                    "Try search_imas() first to find valid paths",
-                ],
-                context={
-                    "path": path,
-                    "tool": "explore_relationships",
-                    "operation": "relationship_exploration",
-                },
+            return self._create_error_response(
+                f"Relationship exploration failed: {e}", path
             )
+
+    def _build_relationship_guidance(
+        self, path: str, relationship_type: RelationshipType, related_paths: list
+    ) -> str:
+        """Build comprehensive relationship guidance for AI enhancement."""
+        return f"""IMAS Relationship Exploration: "{path}"
+
+Found {len(related_paths)} related data paths with relationship type: {relationship_type.value}
+
+Key relationship insights:
+1. **Connected Data Paths**: Direct measurements and calculated quantities related to this path
+2. **Physics Relationships**: How this data connects to underlying physics phenomena  
+3. **Cross-IDS Connections**: Links between different IMAS data structures
+4. **Measurement Dependencies**: What this data depends on or influences
+5. **Data Flow Context**: How this fits into typical fusion data workflows
+6. **Usage Patterns**: Common analysis patterns involving this data
+
+Provide detailed analysis including:
+- Physics significance of the identified relationships
+- Recommended follow-up analyses or related data to explore
+- Cross-IDS workflow patterns and data dependencies
+- Validation considerations for related measurements"""

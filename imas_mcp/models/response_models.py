@@ -21,19 +21,32 @@ from imas_mcp.models.constants import (
 
 
 class QueryContext(BaseModel):
-    """Provides original query context for LLM processing."""
+    """Provides original query context and search metadata."""
 
     query: Optional[Union[str, List[str]]] = Field(
         default=None, description="Original user query that generated this response"
     )
+    search_mode: Optional[SearchMode] = Field(
+        default=SearchMode.AUTO, description="Search mode used for this query"
+    )
+    ids_filter: Optional[List[str]] = Field(
+        default=None, description="IDS filter applied to search"
+    )
+    max_results: Optional[int] = Field(
+        default=None, description="Maximum results requested"
+    )
 
 
 class AIResponse(BaseModel):
-    """Provides AI enhancement information."""
+    """Provides AI enhancement information with separate prompts and responses."""
 
-    ai_insights: Optional[Dict[str, Any]] = Field(
+    ai_prompt: Optional[Dict[str, str]] = Field(
         default_factory=dict,
-        description="AI enhancement insights and status information",
+        description="AI prompts that were used to generate responses",
+    )
+    ai_response: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="AI-generated responses and content",
     )
 
 

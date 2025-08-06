@@ -7,7 +7,7 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.response_models import SearchResponse
@@ -70,10 +70,10 @@ class SearchTool(BaseTool):
         """
         Search for IMAS data paths with relevance-ordered results.
 
-        Uses service composition for business logic:
-        - SearchConfigurationService: Creates and optimizes search configuration
-        - PhysicsService: Enhances queries with physics context
-        - ResponseService: Builds standardized Pydantic responses
+        Uses service composition and context manager for consistent orchestration:
+        - Service context manager handles pre/post processing
+        - SearchService: Executes search with optimized configuration
+        - Unified service pipeline for physics enhancement and AI processing
 
         Args:
             query: Search term(s), physics concept, symbol, or pattern
@@ -83,97 +83,59 @@ class SearchTool(BaseTool):
             ctx: MCP context for enhancement
 
         Returns:
-            SearchResponse with hits, metadata, and optional AI insights
+            SearchResponse with hits, metadata, and AI insights
         """
 
-        # Create search configuration using service
-        config = self.search_config.create_config(
+        async with self.service_context(
+            operation_type="search",
+            query=query,
             search_mode=search_mode,
             max_results=max_results,
             ids_filter=ids_filter,
-            enable_physics=True,
-        )
+            ctx=ctx,
+        ) as service_ctx:
+            # Ensure search config is available
+            if not service_ctx.search_config:
+                # Fallback configuration
+                service_ctx.search_config = self.search_config.create_config(
+                    search_mode=search_mode,
+                    max_results=max_results,
+                    ids_filter=ids_filter,
+                )
 
-        # Optimize configuration based on query characteristics
-        config = self.search_config.optimize_for_query(query, config)
-
-        # Execute search through existing search service
-        logger.info(
-            f"Executing search: query='{query}' mode={config.search_mode} max_results={max_results}"
-        )
-        search_results = await self._search_service.search(query, config)
-
-        # Enhance with physics context
-        physics_context = await self.physics.enhance_query(query)
-
-        # Prepare AI insights for potential sampling
-        ai_insights = {}
-        if physics_context:
-            ai_insights["physics_context"] = physics_context
-            logger.debug(f"Physics context added for query: {query}")
-        else:
-            logger.debug(f"No physics context found for query: {query}")
-
-        if not search_results:
-            ai_insights["guidance"] = self._build_no_results_guidance(query)
-        else:
-            ai_insights["analysis_prompt"] = self._build_analysis_prompt(
-                query, search_results
+            # Execute search with configured context
+            search_results = await self._search_service.search(
+                query, service_ctx.search_config
             )
 
-        # Build response using service
-        response = self.response.build_search_response(
-            results=search_results,
-            query=query,
-            search_mode=config.search_mode,
-            ai_insights=ai_insights,
-        )
+            # Build response using response service directly
+            response = self.response.build_search_response(
+                results=search_results,
+                query=query,
+                search_mode=service_ctx.search_config.search_mode,
+                ids_filter=ids_filter,
+                max_results=max_results,
+                ai_response=service_ctx.ai_response,
+                ai_prompt=service_ctx.ai_prompt,
+            )
 
-        # Apply post-processing services (sampling and recommendations)
-        response = await self.apply_services(
-            result=response,
-            query=query,
-            search_mode=config.search_mode,
-            tool_name=self.get_tool_name(),
-            ctx=ctx,
-        )
+            # Store result in context for post-processing
+            service_ctx.result = response
 
-        # Add standard metadata
-        response = self.response.add_standard_metadata(response, self.get_tool_name())
+            logger.info(f"Search completed: {len(search_results)} results returned")
 
-        logger.info(f"Search completed: {len(search_results)} results returned")
-        return response
+            # Type assertion for return
+            assert isinstance(service_ctx.result, SearchResponse)
+            return service_ctx.result
 
-    def _build_no_results_guidance(self, query: str) -> str:
-        """Build guidance for queries with no results."""
-        return f"""No results found for IMAS search: "{query}"
+    def _build_tool_specific_prompts(
+        self, tool_context: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Build search-specific AI prompts."""
+        prompts = {}
 
-Provide helpful guidance including:
-1. Alternative search terms or concepts to try
-2. Common IMAS data paths that might be related
-3. Physics context that might help refine the search
-4. Suggestions for broader or narrower search strategies"""
+        if tool_context.get("search_mode"):
+            prompts["search_context"] = f"""Search mode: {tool_context["search_mode"]}
+Provide mode-specific analysis and recommendations."""
 
-    def _build_analysis_prompt(self, query: str, results: List[Any]) -> str:
-        """Build analysis prompt for AI enhancement."""
-
-        top_results = results[:3]
-        results_text = "\n".join(
-            [
-                f"- {result.document.metadata.path_name}: {result.document.documentation[:100]}..."
-                for result in top_results
-            ]
-        )
-
-        return f"""Search Results Analysis for: "{query}"
-Found {len(results)} relevant paths in IMAS data dictionary.
-
-Top results:
-{results_text}
-
-Provide detailed analysis including:
-1. Physics context and significance of these paths
-2. Recommended follow-up searches or related concepts
-3. Data usage patterns and common workflows
-4. Validation considerations for these measurements
-5. Relationships between the found paths"""
+        return prompts
