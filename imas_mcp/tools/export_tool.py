@@ -15,12 +15,12 @@ from imas_mcp.models.request_models import (
     ExportPhysicsDomainInput,
 )
 from imas_mcp.models.constants import SearchMode, OutputFormat
-from imas_mcp.models.response_models import (
+from imas_mcp.models.result_models import (
     IDSExport,
     DomainExport,
-    ErrorResponse,
     ExportData,
 )
+from imas_mcp.models.error_models import ToolError
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
@@ -131,7 +131,7 @@ Focus on providing actionable insights for researchers working in this physics d
         include_physics: bool = True,
         output_format: str = "structured",
         ctx: Optional[Context] = None,
-    ) -> Union[IDSExport, ErrorResponse]:
+    ) -> Union[IDSExport, ToolError]:
         """
         Export bulk IMAS data for multiple IDS using service composition.
 
@@ -315,7 +315,7 @@ Focus on providing actionable insights for researchers working in this physics d
         analysis_depth: str = "focused",
         max_paths: int = 10,
         ctx: Optional[Context] = None,
-    ) -> Union[DomainExport, ErrorResponse]:
+    ) -> Union[DomainExport, ToolError]:
         """
         Export physics domain-specific data with sophisticated relationship analysis.
 

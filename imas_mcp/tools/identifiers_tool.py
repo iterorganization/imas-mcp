@@ -13,7 +13,8 @@ from fastmcp import Context
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.request_models import IdentifiersInput
 from imas_mcp.models.constants import IdentifierScope
-from imas_mcp.models.response_models import IdentifierResult, ErrorResponse
+from imas_mcp.models.result_models import IdentifierResult
+from imas_mcp.models.error_models import ToolError
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
@@ -95,7 +96,7 @@ Focus on providing actionable insights for researchers working with IMAS identif
         query: Optional[str] = None,
         scope: IdentifierScope = IdentifierScope.ALL,
         ctx: Optional[Context] = None,
-    ) -> Union[IdentifierResult, ErrorResponse]:
+    ) -> Union[IdentifierResult, ToolError]:
         """
         Explore IMAS identifier schemas and branching logic using service composition.
 
@@ -217,7 +218,7 @@ Focus on providing actionable insights for researchers working with IMAS identif
                 schemas=schemas,  # schemas is already dict list
                 paths=identifier_paths,
                 analytics=branching_analytics,
-                ai_insights=ai_insights,
+                ai_response=ai_insights,
             )
 
             # Apply post-processing services (sampling and recommendations)

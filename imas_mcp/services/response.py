@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, TypeVar
 from pydantic import BaseModel
 
-from imas_mcp.models.response_models import SearchResponse
-from imas_mcp.search.search_strategy import SearchResult
+from imas_mcp.models.result_models import SearchResult
+from imas_mcp.search.search_strategy import SearchMatch
 from imas_mcp.models.constants import SearchMode
 from .base import BaseService
 
@@ -23,20 +23,20 @@ class ResponseService(BaseService):
 
     def build_search_response(
         self,
-        results: List[SearchResult],
+        results: List[SearchMatch],
         query: str,
         search_mode: SearchMode,
         ids_filter: Optional[List[str]] = None,
         max_results: Optional[int] = None,
         ai_response: Optional[Dict[str, Any]] = None,
         ai_prompt: Optional[Dict[str, str]] = None,
-    ) -> SearchResponse:
-        """Build SearchResponse from search results with complete context."""
+    ) -> SearchResult:
+        """Build SearchResult from search results with complete context."""
 
-        # Convert SearchResult objects to SearchHit for API response
+        # Convert SearchMatch objects to SearchHit for API response
         hits = [result.to_hit() for result in results]
 
-        return SearchResponse(
+        return SearchResult(
             hits=hits,
             search_mode=search_mode,
             query=query,

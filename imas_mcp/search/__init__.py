@@ -10,7 +10,7 @@ from .cache import SearchCache
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_strategy import (
     SearchConfig,
-    SearchResult,
+    SearchMatch,
 )
 from .tool_suggestions import tool_suggestions
 
@@ -22,5 +22,5 @@ __all__ = [
     "Document",
     "DocumentMetadata",
     "SearchConfig",
-    "SearchResult",
+    "SearchMatch",
 ]

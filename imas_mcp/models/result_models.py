@@ -1,12 +1,17 @@
 """Clean, focused Pydantic models for IMAS MCP tool responses."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from imas_mcp.core.data_model import IdsNode
 from imas_mcp.search.search_strategy import SearchHit
-from imas_mcp.models.physics_models import PhysicsSearchResult, ConceptExplanation
+from imas_mcp.models.physics_models import ConceptExplanation
 from imas_mcp.models.suggestion_models import ToolSuggestion, SearchSuggestion
+from imas_mcp.models.context_models import (
+    QueryContext,
+    AIContext,
+    PhysicsContext,
+)
 from imas_mcp.models.constants import (
     SearchMode,
     DetailLevel,
@@ -20,52 +25,35 @@ from imas_mcp.models.constants import (
 # ============================================================================
 
 
-class QueryContext(BaseModel):
-    """Provides original query context and search metadata."""
+class ToolResult(AIContext, QueryContext, BaseModel):
+    """
+    Common base class for all IMAS MCP tool results.
 
-    query: Optional[Union[str, List[str]]] = Field(
-        default=None, description="Original user query that generated this response"
-    )
-    search_mode: Optional[SearchMode] = Field(
-        default=SearchMode.AUTO, description="Search mode used for this query"
-    )
-    ids_filter: Optional[List[str]] = Field(
-        default=None, description="IDS filter applied to search"
-    )
-    max_results: Optional[int] = Field(
-        default=None, description="Maximum results requested"
-    )
+    Provides standard context that all tools can benefit from:
+    - Query tracking (query, search_mode, ids_filter, max_results)
+    - AI enhancement capabilities (ai_response, ai_prompt)
+    - Standard metadata fields
+    """
 
-
-class AIResponse(BaseModel):
-    """Provides AI enhancement information with separate prompts and responses."""
-
-    ai_prompt: Optional[Dict[str, str]] = Field(
-        default_factory=dict,
-        description="AI prompts that were used to generate responses",
+    # Standard tool metadata
+    tool_name: str = Field(
+        default="", description="Name of the tool that generated this result"
     )
-    ai_response: Optional[Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="AI-generated responses and content",
+    processing_timestamp: str = Field(
+        default="", description="When this result was generated"
     )
+    version: str = Field(default="1.0.0", description="Result format version")
 
 
-class IdsResponse(BaseModel):
-    """Response containing IMAS data nodes."""
+class IdsResult(BaseModel):
+    """Result containing IMAS data nodes."""
 
     nodes: List[IdsNode] = Field(default_factory=list)
 
     @property
     def node_count(self) -> int:
-        """Number of nodes in the response."""
+        """Number of nodes in the result."""
         return len(self.nodes)
-
-
-class PhysicsResponse(BaseModel):
-    """Response with physics context."""
-
-    physics_domains: List[str] = Field(default_factory=list)
-    physics_context: Optional[PhysicsSearchResult] = None
 
 
 # ============================================================================
@@ -140,8 +128,8 @@ class ExportData(BaseModel):
     )
 
 
-class ExportResponse(BaseModel):
-    """Response from export operations with structured data."""
+class ExportResult(BaseModel):
+    """Result from export operations with structured data."""
 
     data: ExportData = Field(
         default_factory=ExportData, description="Structured export data"
@@ -167,10 +155,8 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResponse(
-    IdsResponse, PhysicsResponse, QueryContext, AIResponse, SearchHits
-):
-    """Search tool response."""
+class SearchResult(IdsResult, PhysicsContext, QueryContext, AIContext, SearchHits):
+    """Search tool result."""
 
     # Search-specific fields
     search_mode: SearchMode = Field(
@@ -184,7 +170,7 @@ class SearchResponse(
     )
 
 
-class OverviewResult(PhysicsResponse, QueryContext, AIResponse, SearchHits):
+class OverviewResult(PhysicsContext, QueryContext, AIContext, SearchHits):
     """Overview tool response."""
 
     content: str
@@ -205,8 +191,8 @@ class OverviewResult(PhysicsResponse, QueryContext, AIResponse, SearchHits):
 # ============================================================================
 
 
-class ConceptResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse):
-    """Concept explanation response."""
+class ConceptResult(IdsResult, PhysicsContext, QueryContext, AIContext):
+    """Concept explanation result."""
 
     concept: str
     explanation: str
@@ -215,8 +201,8 @@ class ConceptResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse):
     concept_explanation: Optional[ConceptExplanation] = None
 
 
-class StructureResult(PhysicsResponse, AIResponse):
-    """IDS structure analysis response."""
+class StructureResult(ToolResult, PhysicsContext):
+    """IDS structure analysis result."""
 
     ids_name: str
     description: str
@@ -225,8 +211,8 @@ class StructureResult(PhysicsResponse, AIResponse):
     max_depth: int = 0
 
 
-class IdentifierResult(AIResponse, BaseModel):
-    """Identifier exploration response."""
+class IdentifierResult(ToolResult):
+    """Identifier exploration result."""
 
     scope: IdentifierScope = IdentifierScope.ALL
     schemas: List[Dict[str, Any]] = Field(default_factory=list)
@@ -234,8 +220,8 @@ class IdentifierResult(AIResponse, BaseModel):
     analytics: Dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse):
-    """Relationship exploration response."""
+class RelationshipResult(IdsResult, PhysicsContext, QueryContext, AIContext):
+    """Relationship exploration result."""
 
     path: str
     relationship_type: RelationshipType = RelationshipType.ALL
@@ -244,38 +230,20 @@ class RelationshipResult(IdsResponse, PhysicsResponse, QueryContext, AIResponse)
 
 
 # ============================================================================
-# ERROR HANDLING
-# ============================================================================
-
-
-class ErrorResponse(AIResponse):
-    """Error response with suggestions, context, and fallback data."""
-
-    error: str = Field(description="Error message")
-    suggestions: List[str] = Field(
-        default_factory=list, description="Suggested actions"
-    )
-    context: Dict[str, Any] = Field(default_factory=dict, description="Error context")
-    fallback_data: Optional[Dict[str, Any]] = Field(
-        default=None, description="Optional fallback data when primary operation fails"
-    )
-
-
-# ============================================================================
 # EXPORT
 # ============================================================================
 
 
-class IDSExport(ExportResponse, AIResponse):
-    """IDS export response."""
+class IDSExport(ToolResult, ExportResult):
+    """IDS export result."""
 
     ids_names: List[str]
     include_physics: bool = True
     include_relationships: bool = True
 
 
-class DomainExport(ExportResponse, AIResponse):
-    """Physics domain export response."""
+class DomainExport(ToolResult, ExportResult):
+    """Physics domain export result."""
 
     domain: str
     domain_info: Optional[Dict[str, Any]] = None

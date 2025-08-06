@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.request_models import SearchInput
 
 # Import only essential decorators
@@ -66,7 +66,7 @@ class SearchTool(BaseTool):
         max_results: int = 10,
         search_mode: Union[str, SearchMode] = "auto",
         ctx: Optional[Any] = None,
-    ) -> SearchResponse:
+    ) -> SearchResult:
         """
         Search for IMAS data paths with relevance-ordered results.
 
@@ -83,7 +83,7 @@ class SearchTool(BaseTool):
             ctx: MCP context for enhancement
 
         Returns:
-            SearchResponse with hits, metadata, and AI insights
+            SearchResult with hits, metadata, and AI insights
         """
 
         async with self.service_context(
@@ -125,7 +125,7 @@ class SearchTool(BaseTool):
             logger.info(f"Search completed: {len(search_results)} results returned")
 
             # Type assertion for return
-            assert isinstance(service_ctx.result, SearchResponse)
+            assert isinstance(service_ctx.result, SearchResult)
             return service_ctx.result
 
     def _build_tool_specific_prompts(
