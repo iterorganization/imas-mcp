@@ -63,8 +63,6 @@ class SearchBenchmarks:
         """Warm up server components to avoid cold start penalties."""
         # Initialize cached properties
         _ = self.fixture.server.tools.document_store
-        _ = self.fixture.server.tools.search_composer
-        _ = self.fixture.server.tools.graph_analyzer
 
         # Ensure embeddings are generated for our sample IDS during warmup
         # This prevents embedding generation from being included in benchmark timing
@@ -75,7 +73,7 @@ class SearchBenchmarks:
                     "search_imas",
                     {
                         "query": "temperature",  # Simple query to trigger embedding load
-                        "ids_name": ids_name,
+                        "ids_filter": [ids_name],
                         "max_results": 1,
                     },
                 )
@@ -106,7 +104,7 @@ class SearchBenchmarks:
                     "search_imas",
                     {
                         "query": self.fixture.sample_queries[1],
-                        "ids_name": self.fixture.single_ids,
+                        "ids_filter": [self.fixture.single_ids],
                         "max_results": 10,
                     },
                 )
@@ -194,15 +192,19 @@ class StructureAnalysisBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.tools.graph_analyzer
+        _ = self.fixture.server.tools.document_store
 
-        # Note: analyze_ids_structure is not yet implemented, so skip warmup calls
-        # When implemented, can add:
-        # async with self.fixture.client:
-        #     for ids_name in self.fixture.ids_pair:
-        #         await self.fixture.client.call_tool(
-        #             "analyze_ids_structure", {"ids_name": ids_name}
-        #         )
+        # Warm up with search_imas to initialize embeddings and caches
+        async with self.fixture.client:
+            for ids_name in self.fixture.ids_pair:
+                await self.fixture.client.call_tool(
+                    "search_imas",
+                    {
+                        "query": "structure",  # Simple query to trigger initialization
+                        "ids_filter": [ids_name],
+                        "max_results": 1,
+                    },
+                )
 
     def time_analyze_ids_structure_single(self):
         """Benchmark structure analysis for single IDS."""
@@ -245,7 +247,7 @@ class BulkExportBenchmarks:
                 {
                     "ids_list": self.fixture.ids_pair,
                     "include_relationships": False,
-                    "include_physics_context": False,
+                    "include_physics": False,
                 },
             )
 
@@ -259,7 +261,7 @@ class BulkExportBenchmarks:
                     {
                         "ids_list": [self.fixture.single_ids],
                         "include_relationships": False,
-                        "include_physics_context": False,
+                        "include_physics": False,
                     },
                 )
 
@@ -287,7 +289,7 @@ class BulkExportBenchmarks:
                     {
                         "ids_list": self.fixture.ids_pair,
                         "include_relationships": True,
-                        "include_physics_context": True,
+                        "include_physics": True,
                     },
                 )
 
@@ -315,7 +317,7 @@ class BulkExportBenchmarks:
                     {
                         "ids_list": self.fixture.ids_pair,
                         "include_relationships": True,
-                        "include_physics_context": True,
+                        "include_physics": True,
                     },
                 )
 
@@ -332,22 +334,27 @@ class RelationshipBenchmarks:
 
     async def _warmup(self):
         """Warm up server components."""
-        _ = self.fixture.server.tools.graph_analyzer
+        _ = self.fixture.server.tools.document_store
 
-        # Note: explore_relationships is not yet implemented, so skip warmup calls
-        # When implemented, can add:
-        # async with self.fixture.client:
-        #     await self.fixture.client.call_tool(
-        #         "explore_relationships",
-        #         {
-        #             "path": "core_profiles/profiles_1d/electrons/temperature",
-        #             "max_depth": 1,
-        #         },
-        #     )
-        #     await self.fixture.client.call_tool(
-        #         "explore_relationships",
-        #         {"path": "equilibrium/time_slice/profiles_2d/psi", "max_depth": 1},
-        #     )
+        # Warm up with search_imas to initialize embeddings and caches
+        async with self.fixture.client:
+            await self.fixture.client.call_tool(
+                "search_imas",
+                {
+                    "query": "relationships",  # Simple query to trigger initialization
+                    "max_results": 1,
+                },
+            )
+            # Also warm up each IDS individually
+            for ids_name in self.fixture.ids_pair:
+                await self.fixture.client.call_tool(
+                    "search_imas",
+                    {
+                        "query": "temperature",
+                        "ids_filter": [ids_name],
+                        "max_results": 1,
+                    },
+                )
 
     def time_explore_relationships_depth_1(self):
         """Benchmark relationship exploration with depth 1."""
