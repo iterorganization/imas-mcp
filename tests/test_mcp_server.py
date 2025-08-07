@@ -12,7 +12,7 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from imas_mcp.models.result_models import OverviewResult
-from imas_mcp.resources import Resources
+from imas_mcp.resource_provider import Resources
 from imas_mcp.server import Server
 from imas_mcp.tools import Tools
 from tests.conftest import STANDARD_TEST_IDS_SET

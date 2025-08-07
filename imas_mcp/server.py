@@ -20,7 +20,7 @@ from typing import Optional
 import nest_asyncio
 from fastmcp import FastMCP
 
-# Import Resources from the resource provider module
+# Import Resources from the resource_provider module
 from imas_mcp.resource_provider import Resources
 from imas_mcp.tools import Tools
 
