@@ -8,13 +8,13 @@ focusing on concept explanation, structure analysis, and relationship exploratio
 import time
 import pytest
 
-from imas_mcp.models.response_models import (
+from imas_mcp.models.result_models import (
     ConceptResult,
     StructureResult,
     IdentifierResult,
     RelationshipResult,
 )
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 
 
 class TestAnalysisFeatures:
@@ -143,9 +143,9 @@ class TestAnalysisErrorHandling:
         """Test analysis tools handle invalid IDS names gracefully."""
         invalid_ids = "nonexistent_ids_name"
 
-        # Test structure analysis - should return ErrorResponse for invalid IDS
+        # Test structure analysis - should return ToolError for invalid IDS
         result = await tools.analyze_ids_structure(ids_name=invalid_ids)
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         assert hasattr(result, "error")
         assert hasattr(result, "suggestions")
 
@@ -155,7 +155,7 @@ class TestAnalysisErrorHandling:
         invalid_path = "nonexistent_ids_name/invalid/path"
 
         result = await tools.explore_relationships(path=invalid_path)
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         # Should provide helpful error information
         assert isinstance(result.error, str)
 
@@ -166,14 +166,14 @@ class TestAnalysisErrorHandling:
 
         result = await tools.explore_identifiers(query=invalid_ids)
         # May return either success with empty results or error - both valid
-        assert isinstance(result, (IdentifierResult, ErrorResponse))
+        assert isinstance(result, (IdentifierResult, ToolError))
 
     @pytest.mark.asyncio
     async def test_explain_empty_concept(self, tools):
         """Test concept explanation handles empty input."""
         result = await tools.explain_concept(concept="")
-        # Empty concept should return ErrorResponse due to validation
-        assert isinstance(result, ErrorResponse)
+        # Empty concept should return ToolError due to validation
+        assert isinstance(result, ToolError)
 
 
 class TestAnalysisQuality:
@@ -248,7 +248,7 @@ class TestAnalysisPerformance:
 
         execution_time = end_time - start_time
         assert execution_time < 15.0, f"Analysis took {execution_time:.2f}s, too slow"
-        assert isinstance(result, (StructureResult, ErrorResponse))
+        assert isinstance(result, (StructureResult, ToolError))
 
     @pytest.mark.asyncio
     async def test_explanation_response_time(self, tools):
@@ -261,7 +261,7 @@ class TestAnalysisPerformance:
         assert execution_time < 10.0, (
             f"Explanation took {execution_time:.2f}s, too slow"
         )
-        assert isinstance(result, (ConceptResult, ErrorResponse))
+        assert isinstance(result, (ConceptResult, ToolError))
 
 
 if __name__ == "__main__":

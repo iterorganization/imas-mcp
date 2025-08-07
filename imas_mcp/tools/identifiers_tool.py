@@ -16,50 +16,33 @@ from imas_mcp.models.constants import IdentifierScope
 from imas_mcp.models.result_models import IdentifierResult
 from imas_mcp.models.error_models import ToolError
 
-# Import only essential decorators
+# Import identifier-appropriate decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
     measure_performance,
     handle_errors,
+    sample,
+    tool_hints,
+    mcp_tool,
 )
 
 from imas_mcp.tools.base import BaseTool
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
 
 
-def mcp_tool(description: str):
-    """Decorator to mark methods as MCP tools with descriptions."""
-
-    def decorator(func):
-        func._mcp_tool = True
-        func._mcp_description = description
-        return func
-
-    return decorator
-
-
 class IdentifiersTool(BaseTool):
     """Tool for exploring identifiers using service composition."""
-
-    # Enable both services for comprehensive identifier analysis
-    enable_sampling: bool = True
-    enable_recommendations: bool = True
-
-    # Use identifier-appropriate strategies
-    sampling_strategy = SamplingStrategy.SMART
-    recommendation_strategy = RecommendationStrategy.IDENTIFIERS_BASED
-    max_recommended_tools: int = 4
 
     def __init__(self, document_store: Optional[DocumentStore] = None):
         """Initialize the identifiers tool."""
         super().__init__(document_store)
         self.document_store = document_store or DocumentStore()
 
-    def get_tool_name(self) -> str:
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
         return "explore_identifiers"
 
     def _build_identifiers_sample_prompt(
@@ -84,12 +67,12 @@ Focus on providing actionable insights for researchers working with IMAS identif
 """
         return base_prompt
 
-    @cache_results(
-        ttl=1200, key_strategy="content_based"
-    )  # Longer cache for identifiers
+    @cache_results(ttl=1200, key_strategy="content_based")
     @validate_input(schema=IdentifiersInput)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="identifiers_suggestions")
+    @tool_hints(max_hints=3)
+    @sample(temperature=0.2, max_tokens=650)
     @mcp_tool("Explore IMAS identifier schemas and branching logic")
     async def explore_identifiers(
         self,
@@ -198,50 +181,17 @@ Focus on providing actionable insights for researchers working with IMAS identif
                 "physics_relevance": bool(physics_context),
             }
 
-            # Prepare AI insights for potential sampling
-            ai_insights = {
-                "identifier_analysis": self._build_identifier_guidance(
-                    query, scope, schemas, identifier_paths
-                ),
-                "scope_summary": f"Explored {scope.value} scope with {len(schemas)} schemas and {len(identifier_paths)} paths",
-                "branching_complexity": summary["total_enumeration_options"],
-            }
-
-            # Add physics context if available
-            if physics_context:
-                ai_insights["physics_context"] = physics_context
-                logger.debug(f"Physics context added for identifier query: {query}")
-
             # Build response using Pydantic
             response = IdentifierResult(
                 scope=scope,
-                schemas=schemas,  # schemas is already dict list
+                schemas=schemas,
                 paths=identifier_paths,
                 analytics=branching_analytics,
-                ai_response=ai_insights,
-            )
-
-            # Apply post-processing services (sampling and recommendations)
-            enhanced_response = await self.apply_services(
-                result=response,
-                query=query or "identifier_exploration",
-                scope=scope.value,
-                tool_name=self.get_tool_name(),
-                ctx=ctx,
-            )
-
-            # Add standard metadata and return properly typed response
-            final_response = self.response.add_standard_metadata(
-                enhanced_response, self.get_tool_name()
+                ai_response={},  # Reserved for LLM sampling only
             )
 
             logger.info(f"Identifier exploration completed with scope: {scope.value}")
-            # Ensure we return the correct type
-            return (
-                final_response
-                if isinstance(final_response, IdentifierResult)
-                else response
-            )
+            return response
 
         except Exception as e:
             logger.error(f"Identifier exploration failed: {e}")

@@ -12,8 +12,6 @@ from fastmcp import Context
 from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.result_models import OverviewResult
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 
 from imas_mcp.search.decorators import (
@@ -21,6 +19,9 @@ from imas_mcp.search.decorators import (
     validate_input,
     measure_performance,
     handle_errors,
+    sample,
+    tool_hints,
+    mcp_tool,
 )
 
 from .base import BaseTool
@@ -28,28 +29,12 @@ from .base import BaseTool
 logger = logging.getLogger(__name__)
 
 
-def mcp_tool(description: str):
-    """Decorator to mark methods as MCP tools with descriptions."""
-
-    def decorator(func):
-        func._mcp_tool = True
-        func._mcp_description = description
-        return func
-
-    return decorator
-
-
 class OverviewTool(BaseTool):
     """Tool for getting IMAS overview."""
 
-    # Enable services for overview-based tool
-    enable_sampling: bool = True
-    enable_recommendations: bool = True
-    sampling_strategy = SamplingStrategy.SMART
-    recommendation_strategy = RecommendationStrategy.OVERVIEW_BASED
-    max_recommended_tools: int = 4
-
-    def get_tool_name(self) -> str:
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
         return "get_overview"
 
     def _build_overview_analysis_prompt(self, query: Optional[str] = None) -> str:
@@ -81,10 +66,12 @@ Please provide a comprehensive overview of the IMAS (Integrated Modelling & Anal
 Provide practical guidance for fusion researchers and IMAS users.
 """
 
-    @cache_results(ttl=1800, key_strategy="semantic")  # Longer cache for overviews
+    @cache_results(ttl=1800, key_strategy="semantic")
     @validate_input(schema=OverviewInput)
     @measure_performance(include_metrics=True, slow_threshold=3.0)
     @handle_errors(fallback="overview_suggestions")
+    @tool_hints(max_hints=3)
+    @sample(temperature=0.4, max_tokens=800)
     @mcp_tool("Get IMAS overview or answer analytical queries")
     async def get_overview(
         self,
@@ -308,42 +295,6 @@ Provide practical guidance for fusion researchers and IMAS users.
                         "sample_domains": [],
                     }
 
-            # Prepare AI insights for sampling service using PhysicsService
-            analysis_prompt = self._build_overview_analysis_prompt(query)
-
-            # Enhance AI insights with physics context if available
-            physics_insights = {}
-            if physics_domains:
-                try:
-                    first_domain = next(iter(physics_domains))
-                    physics_context = await self.physics.get_concept_context(
-                        first_domain
-                    )
-                    if physics_context:
-                        physics_insights = {
-                            "primary_domain": first_domain,
-                            "domain_context": physics_context.get("description", ""),
-                            "complexity": physics_context.get(
-                                "complexity_level", "intermediate"
-                            ),
-                            "typical_units": physics_context.get("typical_units", []),
-                        }
-                except Exception as e:
-                    logger.warning(f"Physics insights generation failed: {e}")
-
-            ai_insights = {
-                "analysis_prompt": analysis_prompt,
-                "stats_analyzed": len(valid_ids),
-                "query_results_found": len(query_results) if query else 0,
-                "dynamic_analysis": {
-                    "physics_domains_found": len(physics_domains),
-                    "data_types_found": len(data_types),
-                    "units_found": len(units_found),
-                    "query_focused": bool(query),
-                },
-                "physics_insights": physics_insights,
-            }
-
             # Build dynamic overview response content
             content_parts = []
 
@@ -398,33 +349,11 @@ Provide practical guidance for fusion researchers and IMAS users.
                 hits=query_results if query else [],
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
-                ai_response=ai_insights,
+                ai_response={},  # Reserved for LLM sampling only
             )
 
-            # Add standard metadata using service
-            overview_response = self.response.add_standard_metadata(
-                overview_response, self.get_tool_name()
-            )
-
-            # Apply post-processing services (sampling and recommendations)
-            processed_response = await self.apply_services(
-                result=overview_response,
-                query=query,
-                tool_name=self.get_tool_name(),
-                ctx=ctx,
-            )
-
-            # Type check and return proper response
-            if isinstance(processed_response, OverviewResult):
-                return processed_response
-            elif isinstance(processed_response, ToolError):
-                return processed_response
-            else:
-                # If apply_services changed the type unexpectedly, return original
-                logger.warning(
-                    f"Service processing changed response type: {type(processed_response)}"
-                )
-                return overview_response
+            logger.info("IMAS overview generation completed")
+            return overview_response
 
         except Exception as e:
             logger.error(f"Overview generation failed: {e}")

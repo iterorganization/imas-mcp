@@ -16,45 +16,29 @@ from imas_mcp.models.result_models import RelationshipResult
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 
-# Import only essential decorators
+# Import relationship-appropriate decorators
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
     measure_performance,
     handle_errors,
+    sample,
+    tool_hints,
+    physics_hints,
+    mcp_tool,
 )
 
 from .base import BaseTool
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
-
-
-def mcp_tool(description: str):
-    """Decorator to mark methods as MCP tools with descriptions."""
-
-    def decorator(func):
-        func._mcp_tool = True
-        func._mcp_description = description
-        return func
-
-    return decorator
 
 
 class RelationshipsTool(BaseTool):
     """Tool for exploring relationships using service composition."""
 
-    # Enable both services for comprehensive relationship analysis
-    enable_sampling: bool = True
-    enable_recommendations: bool = True
-
-    # Use relationship-appropriate strategies
-    sampling_strategy = SamplingStrategy.SMART
-    recommendation_strategy = RecommendationStrategy.RELATIONSHIPS_BASED
-    max_recommended_tools: int = 5
-
-    def get_tool_name(self) -> str:
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
         return "explore_relationships"
 
     def _build_relationships_sample_prompt(
@@ -78,10 +62,13 @@ Relationship type focus: {relationship_type}
 Provide actionable insights for researchers exploring data relationships.
 """
 
-    @cache_results(ttl=600, key_strategy="path_based")  # Cache relationships
+    @cache_results(ttl=600, key_strategy="path_based")
     @validate_input(schema=RelationshipsInput)
     @measure_performance(include_metrics=True, slow_threshold=2.5)
     @handle_errors(fallback="relationships_suggestions")
+    @tool_hints(max_hints=3)
+    @physics_hints()
+    @sample(temperature=0.3, max_tokens=700)
     @mcp_tool("Explore relationships between IMAS data paths")
     async def explore_relationships(
         self,
@@ -127,9 +114,7 @@ Provide actionable insights for researchers exploring data relationships.
             # Validate IDS exists using document service
             valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
             if not valid_ids:
-                return self.documents.create_ids_not_found_error(
-                    path, self.get_tool_name()
-                )
+                return self.documents.create_ids_not_found_error(path, self.tool_name)
 
             # Enhance query with physics context using service
             if specific_path:
@@ -192,29 +177,6 @@ Provide actionable insights for researchers exploring data relationships.
                     ):  # Increase limit for better results
                         break
 
-            # Prepare AI prompts and responses separately
-            ai_prompt = {
-                "relationship_analysis": self._build_relationship_guidance(
-                    path, relationship_type, related_paths
-                ),
-            }
-
-            ai_response = {
-                "cross_ids_analysis": list(
-                    set(p.path.split("/")[0] for p in related_paths if "/" in p.path)
-                ),
-                "physics_connections": [
-                    p.path
-                    for p in related_paths
-                    if p.physics_context and p.physics_context.domain
-                ],
-            }
-
-            # Add physics context if available
-            if physics_context:
-                ai_response["physics_context"] = physics_context
-                logger.debug(f"Physics context added for relationship: {path}")
-
             # Build response using Pydantic
             response = RelationshipResult(
                 path=path,
@@ -233,39 +195,18 @@ Provide actionable insights for researchers exploring data relationships.
                         )
                     ),
                 },
-                nodes=related_paths[:8],  # Increase visible nodes
+                nodes=related_paths[:8],
                 physics_domains=[
                     p.physics_context.domain
                     for p in related_paths
                     if p.physics_context and p.physics_context.domain
                 ],
                 physics_context=physics_context,
-                ai_response=ai_response,
-                ai_prompt=ai_prompt,
-            )
-
-            # Apply post-processing services (sampling and recommendations)
-            enhanced_response = await self.apply_services(
-                result=response,
-                query=search_query,
-                path=path,
-                relationship_type=relationship_type.value,
-                tool_name=self.get_tool_name(),
-                ctx=ctx,
-            )
-
-            # Add standard metadata and return properly typed response
-            final_response = self.response.add_standard_metadata(
-                enhanced_response, self.get_tool_name()
+                ai_response={},  # Reserved for LLM sampling only
             )
 
             logger.info(f"Relationship exploration completed for path: {path}")
-            # Ensure we return the correct type
-            return (
-                final_response
-                if isinstance(final_response, RelationshipResult)
-                else response
-            )
+            return response
 
         except Exception as e:
             logger.error(f"Relationship exploration failed: {e}")

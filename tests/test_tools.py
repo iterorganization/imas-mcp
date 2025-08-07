@@ -9,17 +9,17 @@ import inspect
 
 import pytest
 
-from imas_mcp.models.response_models import (
+from imas_mcp.models.result_models import (
     ConceptResult,
     OverviewResult,
     RelationshipResult,
-    SearchResponse,
+    SearchResult,
     StructureResult,
     IdentifierResult,
     IDSExport,
     DomainExport,
 )
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
@@ -43,7 +43,7 @@ class TestToolsComposition:
         """Test search tool interface and basic functionality."""
         result = await tools.search_imas(query="plasma temperature", max_results=5)
 
-        assert isinstance(result, SearchResponse)
+        assert isinstance(result, SearchResult)
         assert hasattr(result, "hits")
         assert isinstance(result.hits, list)
         assert len(result.hits) <= 5
@@ -138,7 +138,7 @@ class TestToolsErrorHandling:
         result = await tools.search_imas(query="test", max_results=-1)
 
         # Should handle gracefully - either clamp to valid range or return error
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         assert "max_results" in result.error.lower()
 
     @pytest.mark.asyncio
@@ -146,7 +146,7 @@ class TestToolsErrorHandling:
         """Test analysis tool handles invalid IDS name gracefully."""
         result = await tools.analyze_ids_structure(ids_name="nonexistent_ids")
 
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         # Should return structured error response
         assert isinstance(result.error, str)
         assert hasattr(result, "context")
@@ -157,7 +157,7 @@ class TestToolsErrorHandling:
         """Test explain tool handles empty concept gracefully."""
         result = await tools.explain_concept(concept="")
 
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         assert "concept" in result.error.lower()
 
     @pytest.mark.asyncio
@@ -177,13 +177,13 @@ class TestToolsParameterValidation:
         """Test search tool parameter validation."""
         # Test required parameter
         result = await tools.search_imas(query="test")
-        assert isinstance(result, SearchResponse)
+        assert isinstance(result, SearchResult)
 
         # Test optional parameters
         result = await tools.search_imas(
             query="test", max_results=10, ids_filter=["core_profiles"]
         )
-        assert isinstance(result, SearchResponse)
+        assert isinstance(result, SearchResult)
 
     @pytest.mark.asyncio
     async def test_analysis_tool_parameter_validation(self, tools):
