@@ -10,12 +10,12 @@ import time
 
 import pytest
 
-from imas_mcp.models.response_models import (
+from imas_mcp.models.result_models import (
     DomainExport,
     ExportData,
     IDSExport,
 )
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 
 
 class TestExportFeatures:
@@ -115,8 +115,8 @@ class TestExportErrorHandling:
         """Test export handles invalid IDS names gracefully."""
         invalid_ids = ["nonexistent_ids_name"]
         result = await tools.export_ids(ids_list=invalid_ids)
-        # The tool returns an ErrorResponse for invalid IDS names
-        assert isinstance(result, ErrorResponse)
+        # The tool returns an ToolError for invalid IDS names
+        assert isinstance(result, ToolError)
         assert "not found" in result.error
         assert result.suggestions  # Should provide suggestions
         assert (
@@ -136,13 +136,13 @@ class TestExportErrorHandling:
     @pytest.mark.asyncio
     async def test_export_empty_parameters(self, tools):
         """Test export handles empty parameters gracefully."""
-        # Test empty IDS list - should return ErrorResponse due to validation
+        # Test empty IDS list - should return ToolError due to validation
         result = await tools.export_ids(ids_list=[])
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
 
-        # Test empty domain - should return ErrorResponse due to validation
+        # Test empty domain - should return ToolError due to validation
         result = await tools.export_physics_domain(domain="")
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
 
 
 class TestExportDataQuality:

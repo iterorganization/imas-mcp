@@ -1,7 +1,7 @@
 """
 Sample decorator for SearchResult enhancement.
 
-Provides AI-powered sampling on search results with tool-specific prompts.
+Provides AI-powered sampling on search results with configurable prompts.
 """
 
 import functools
@@ -103,7 +103,7 @@ async def apply_ai_sampling(
 
 def sample(temperature: float = 0.3, max_tokens: int = 800) -> Callable[[F], F]:
     """
-    Decorator to add AI sampling to SearchResult using tool-specific prompts.
+    Decorator to add AI sampling to SearchResult.
 
     Args:
         temperature: AI temperature setting (0.0-1.0)

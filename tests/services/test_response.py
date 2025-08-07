@@ -62,7 +62,7 @@ class TestResponseService:
         )
 
         results = [mock_result]  # type: ignore
-        ai_response = {"physics_context": "plasma physics"}
+        ai_response = {}  # ai_response should be empty (reserved for LLM sampling)
 
         response = service.build_search_response(
             results=results,

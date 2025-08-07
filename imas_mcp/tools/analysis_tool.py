@@ -12,14 +12,16 @@ from fastmcp import Context
 from imas_mcp.models.request_models import AnalysisInput
 from imas_mcp.models.result_models import StructureResult
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 from imas_mcp.search.decorators import (
     cache_results,
     validate_input,
     measure_performance,
     handle_errors,
+    sample,
+    tool_hints,
+    physics_hints,
+    mcp_tool,
 )
 
 from .base import BaseTool
@@ -27,28 +29,12 @@ from .base import BaseTool
 logger = logging.getLogger(__name__)
 
 
-def mcp_tool(description: str):
-    """Decorator to mark methods as MCP tools with descriptions."""
-
-    def decorator(func):
-        func._mcp_tool = True
-        func._mcp_description = description
-        return func
-
-    return decorator
-
-
 class AnalysisTool(BaseTool):
     """Tool for analyzing IDS structure with service composition."""
 
-    # Enable services for analysis-based tool
-    enable_sampling: bool = True
-    enable_recommendations: bool = True
-    sampling_strategy = SamplingStrategy.SMART
-    recommendation_strategy = RecommendationStrategy.ANALYSIS_BASED
-    max_recommended_tools: int = 4
-
-    def get_tool_name(self) -> str:
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
         return "analyze_ids_structure"
 
     def _build_analysis_sample_prompt(self, ids_name: str) -> str:
@@ -68,10 +54,13 @@ Please provide a comprehensive structural analysis that includes:
 Focus on providing actionable insights for researchers working with this specific IDS.
 """
 
-    @cache_results(ttl=900, key_strategy="path_based")  # Cache structure analysis
+    @cache_results(ttl=900, key_strategy="path_based")
     @validate_input(schema=AnalysisInput)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="analysis_suggestions")
+    @tool_hints(max_hints=3)
+    @physics_hints()
+    @sample(temperature=0.2, max_tokens=600)
     @mcp_tool("Get detailed structural analysis of a specific IDS")
     async def analyze_ids_structure(
         self, ids_name: str, ctx: Optional[Context] = None
@@ -79,8 +68,8 @@ Focus on providing actionable insights for researchers working with this specifi
         """
         Get detailed structural analysis of a specific IDS using service composition.
 
-        Uses service context manager for consistent orchestration:
-        - Service context handles pre/post processing
+        Uses service composition and context manager for consistent orchestration:
+        - Service context manager handles pre/post processing
         - DocumentService: Validates IDS and retrieves documents
         - PhysicsService: Enhances analysis with physics context
 
@@ -92,64 +81,51 @@ Focus on providing actionable insights for researchers working with this specifi
             StructureResult with detailed analysis and AI insights
         """
         try:
-            async with self.service_context(
-                operation_type="analysis",
-                query=ids_name,
-                analysis_type="structure",
-                ctx=ctx,
-            ) as service_ctx:
-                # Validate IDS exists using document service
-                valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
-                if not valid_ids:
-                    return self.documents.create_ids_not_found_error(
-                        ids_name, self.get_tool_name()
-                    )
-
-                # Get detailed IDS data from document store
-                ids_documents = await self.documents.get_documents_safe(ids_name)
-
-                if not ids_documents:
-                    service_ctx.result = StructureResult(
-                        ids_name=ids_name,
-                        description=f"No detailed structure data available for {ids_name}",
-                        structure={"total_paths": 0},
-                        sample_paths=[],
-                        max_depth=0,
-                        ai_response={
-                            "analysis": "No structure data available",
-                            "note": "IDS exists but has no accessible structure information",
-                        },
-                    )
-                    return service_ctx.result
-
-                # Analyze structure
-                structure_analysis = self._analyze_structure(ids_documents)
-                sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
-
-                # Build AI analysis context
-                ai_analysis = {
-                    "structure_summary": f"Analyzed {len(ids_documents)} paths in {ids_name}",
-                    "analysis_prompt": self._build_analysis_sample_prompt(ids_name),
-                    "physics_enhanced": bool(service_ctx.physics_context),
-                }
-
-                # Add physics context if available
-                if service_ctx.physics_context:
-                    ai_analysis["physics_context"] = service_ctx.physics_context
-
-                # Build response
-                service_ctx.result = StructureResult(
-                    ids_name=ids_name,
-                    description=f"Structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths",
-                    structure=structure_analysis,
-                    sample_paths=sample_paths,
-                    max_depth=structure_analysis.get("max_depth", 0),
-                    ai_response=ai_analysis,
-                    ai_prompt=service_ctx.ai_prompt,
+            # Validate IDS exists using document service
+            valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
+            if not valid_ids:
+                return self.documents.create_ids_not_found_error(
+                    ids_name, self.tool_name
                 )
 
+            # Get detailed IDS data from document store
+            ids_documents = await self.documents.get_documents_safe(ids_name)
+
+            if not ids_documents:
+                result = StructureResult(
+                    ids_name=ids_name,
+                    description=f"No detailed structure data available for {ids_name}",
+                    structure={"total_paths": 0},
+                    sample_paths=[],
+                    max_depth=0,
+                    ai_response={
+                        "analysis": "No structure data available",
+                        "note": "IDS exists but has no accessible structure information",
+                    },
+                )
                 logger.info(f"Structure analysis completed for {ids_name}")
-                return service_ctx.result
+                return result
+
+            # Analyze structure
+            structure_analysis = self._analyze_structure(ids_documents)
+            sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
+
+            # Get physics context
+            physics_context = await self.physics.enhance_query(ids_name)
+
+            # Build response
+            result = StructureResult(
+                ids_name=ids_name,
+                description=f"Structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths",
+                structure=structure_analysis,
+                sample_paths=sample_paths,
+                max_depth=structure_analysis.get("max_depth", 0),
+                ai_response={},  # Reserved for LLM sampling only
+                physics_context=physics_context,
+            )
+
+            logger.info(f"Structure analysis completed for {ids_name}")
+            return result
 
         except Exception as e:
             logger.error(f"Structure analysis failed for {ids_name}: {e}")

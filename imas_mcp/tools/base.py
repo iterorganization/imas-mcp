@@ -7,11 +7,9 @@ This module contains common functionality shared across all tool implementations
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional, Union, List, Dict, Any
-from pydantic import BaseModel
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import SearchResult
-from imas_mcp.models.context_models import QueryContext
 
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.services.search_service import SearchService
@@ -24,12 +22,7 @@ from imas_mcp.services import (
     ResponseService,
     DocumentService,
     SearchConfigurationService,
-    SamplingService,
-    ToolRecommendationService,
 )
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
-from imas_mcp.services.service_context import ServiceOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -37,21 +30,9 @@ logger = logging.getLogger(__name__)
 class BaseTool(ABC):
     """Base class for all IMAS MCP tools with service injection."""
 
-    # Class variables for template method pattern
-    sampling_strategy: SamplingStrategy = SamplingStrategy.NO_SAMPLING
-    recommendation_strategy: RecommendationStrategy = (
-        RecommendationStrategy.SEARCH_BASED
-    )
-    max_recommended_tools: int = 4
-    enable_sampling: bool = False
-    enable_recommendations: bool = True
-
     def __init__(self, document_store: Optional[DocumentStore] = None):
         self.logger = logger
         self.document_store = document_store or DocumentStore()
-
-        # Initialize service orchestrator
-        self._orchestrator = ServiceOrchestrator(self)
 
         # Initialize search service
         self._search_service = self._create_search_service()
@@ -61,81 +42,16 @@ class BaseTool(ABC):
         self.response = ResponseService()
         self.documents = DocumentService(self.document_store)
         self.search_config = SearchConfigurationService()
-        self.sampling = SamplingService()
-        self.recommendations = ToolRecommendationService()
 
+    @property
     @abstractmethod
-    def get_tool_name(self) -> str:
-        """Return the name of this tool."""
+    def tool_name(self) -> str:
+        """Return the name of this tool - must be implemented by subclasses."""
         pass
 
-    def operation_context(self, operation_type: str, query_context: QueryContext):
-        """Clean access to the service orchestrator's operation context."""
-        return self._orchestrator.operation_context(operation_type, query_context)
-
-    # Convenience methods for common operations
-    async def search_with_context(self, query_context: QueryContext) -> List[Any]:
-        """Execute search with clean context management."""
-        async with self.operation_context("search", query_context) as ctx:
-            return await self._orchestrator.search(ctx)
-
-    def build_search_response_with_context(self, ctx) -> Any:
-        """Build search response using orchestrator's service."""
-        return self._orchestrator.build_search_response(ctx)
-
-    async def apply_sampling(self, result: BaseModel, **kwargs) -> BaseModel:
-        """
-        Template method for applying sampling to tool results.
-        Subclasses can customize by setting sampling_strategy class variable.
-        """
-        if self.enable_sampling:
-            return await self.sampling.apply_sampling(
-                result=result,  # type: ignore
-                strategy=self.sampling_strategy,
-                **kwargs,
-            )
-
-        return result
-
-    def generate_tool_recommendations(
-        self, result: BaseModel, query: Optional[str] = None, **kwargs
-    ) -> list:
-        """
-        Template method for generating tool recommendations.
-        Subclasses can customize by setting recommendation_strategy class variable.
-        Note: This method is mainly for compatibility. Use apply_services() instead.
-        """
-        if not self.enable_recommendations:
-            return []
-
-        return self.recommendations.generate_recommendations(
-            result=result,
-            strategy=self.recommendation_strategy,
-            max_tools=self.max_recommended_tools,
-            query=query,
-            **kwargs,
-        )
-
-    async def apply_services(self, result: BaseModel, **kwargs) -> BaseModel:
-        """
-        Template method for applying all post-processing services.
-        Called after tool execution but before response formatting.
-        """
-
-        # Apply recommendations (only for SearchResult)
-        if self.enable_recommendations:
-            result = self.recommendations.apply_recommendations(
-                result=result,
-                strategy=self.recommendation_strategy,
-                max_tools=self.max_recommended_tools,
-                **kwargs,
-            )
-
-        # Apply sampling last
-        if self.enable_sampling:
-            result = await self.apply_sampling(result, **kwargs)
-
-        return result
+    # =====================================
+    # CORE TOOL METHODS
+    # =====================================
 
     async def execute_search(
         self,
@@ -167,71 +83,20 @@ class BaseTool(ABC):
         # Execute search
         search_results = await self._search_service.search(query, config)
 
-        # Generate AI prompts separately
-        ai_prompt = self.generate_ai_prompts(query, search_results)
-        ai_response = {}  # Will be populated by services later
-
-        # Add physics context to response (always enabled)
-        physics_context = await self.physics.enhance_query(query)
-        if physics_context:
-            ai_response["physics_context"] = physics_context
-
-        # Build complete response using service
+        # Build response using search response service
         response = self.response.build_search_response(
             results=search_results,
             query=query,
             search_mode=config.search_mode,
             ids_filter=ids_filter,
             max_results=max_results,
-            ai_response=ai_response,
-            ai_prompt=ai_prompt,
         )
 
         return response
 
-    def generate_ai_prompts(
-        self,
-        query: str,
-        results: List[Any],
-        tool_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, str]:
-        """
-        Generate AI prompts based on search results and context.
-
-        Args:
-            query: Original search query
-            results: Search results
-            tool_context: Optional tool-specific context
-
-        Returns:
-            Dictionary of AI prompts for processing
-        """
-        prompts = {}
-
-        if not results:
-            prompts["guidance"] = self._build_no_results_guidance(query)
-        else:
-            prompts["analysis"] = self._build_analysis_prompt(query, results)
-
-        # Add tool-specific prompts
-        if tool_context:
-            prompts.update(self._build_tool_specific_prompts(tool_context))
-
-        return prompts
-
-    def _build_no_results_guidance(self, query: str) -> str:
-        """Generate guidance for empty results."""
-        return f"""No results found for "{query}". Suggest alternatives and related concepts."""
-
-    def _build_analysis_prompt(self, query: str, results: List[Any]) -> str:
-        """Generate analysis prompt for search results."""
-        return f"""Analyze {len(results)} search results for "{query}" and provide insights."""
-
-    def _build_tool_specific_prompts(
-        self, tool_context: Dict[str, Any]
-    ) -> Dict[str, str]:
-        """Override in subclasses to add tool-specific AI prompts."""
-        return {}
+    def build_prompt(self, prompt_type: str, tool_context: Dict[str, Any]) -> str:
+        """Override in subclasses to build tool-specific AI prompts."""
+        return ""
 
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""
@@ -264,7 +129,7 @@ class BaseTool(ABC):
             suggestions=[],
             context={
                 "query": query,
-                "tool": self.get_tool_name(),
+                "tool": self.tool_name,
                 "status": "error",
             },
         )

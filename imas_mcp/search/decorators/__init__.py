@@ -7,7 +7,6 @@ like caching, validation, sampling, performance monitoring, and error handling.
 
 from .cache import cache_results, clear_cache, get_cache_stats
 from .validation import validate_input, create_validation_schema
-from .sampling import sample, build_search_sample_prompt, build_concept_sample_prompt
 from .tool_recommendations import recommend_tools, generate_tool_recommendations
 from .performance import measure_performance, get_performance_summary
 from .error_handling import (
@@ -19,6 +18,15 @@ from .error_handling import (
     ServiceError,
 )
 
+# SearchResult enhancement decorators
+from .sample import sample
+from .tool_hints import tool_hints
+from .query_hints import query_hints
+from .physics_hints import physics_hints
+
+# MCP tool decorator
+from .mcp_tool import mcp_tool
+
 __all__ = [
     # Cache decorators
     "cache_results",
@@ -27,10 +35,6 @@ __all__ = [
     # Validation decorators
     "validate_input",
     "create_validation_schema",
-    # Sampling decorators
-    "sample",
-    "build_search_sample_prompt",
-    "build_concept_sample_prompt",
     # Tool recommendation decorators
     "recommend_tools",
     "generate_tool_recommendations",
@@ -40,6 +44,14 @@ __all__ = [
     # Error handling decorators
     "handle_errors",
     "create_timeout_handler",
+    # SearchResult decorators
+    "sample",
+    "tool_hints",
+    "query_hints",
+    "physics_hints",
+    # MCP tool decorator
+    "mcp_tool",
+    # Error classes
     "ToolError",
     "ValidationError",
     "SearchError",

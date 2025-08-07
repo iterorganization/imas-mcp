@@ -5,9 +5,24 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, TypeVar
 from pydantic import BaseModel
 
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import (
+    SearchResult,
+    ConceptResult,
+    OverviewResult,
+    StructureResult,
+    IdentifierResult,
+    RelationshipResult,
+    IDSExport,
+    DomainExport,
+    ExportData,
+)
 from imas_mcp.search.search_strategy import SearchMatch
-from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.constants import (
+    SearchMode,
+    DetailLevel,
+    RelationshipType,
+    IdentifierScope,
+)
 from .base import BaseService
 
 try:
@@ -19,7 +34,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class ResponseService(BaseService):
-    """Service for building standardized responses."""
+    """Service for building standardized responses across all tool types."""
 
     def build_search_response(
         self,
@@ -30,9 +45,10 @@ class ResponseService(BaseService):
         max_results: Optional[int] = None,
         ai_response: Optional[Dict[str, Any]] = None,
         ai_prompt: Optional[Dict[str, str]] = None,
+        physics_context: Optional[Any] = None,
+        physics_domains: Optional[List[str]] = None,
     ) -> SearchResult:
         """Build SearchResult from search results with complete context."""
-
         # Convert SearchMatch objects to SearchHit for API response
         hits = [result.to_hit() for result in results]
 
@@ -42,6 +58,207 @@ class ResponseService(BaseService):
             query=query,
             ids_filter=ids_filter,
             max_results=max_results,
+            ai_response=ai_response or {},
+            ai_prompt=ai_prompt or {},
+            physics_context=physics_context,
+            physics_domains=physics_domains or [],
+        )
+
+    def build_concept_response(
+        self,
+        concept: str,
+        explanation: str,
+        detail_level: DetailLevel,
+        related_topics: List[str],
+        nodes: List[Any],
+        physics_domains: List[str],
+        query: str,
+        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+        physics_context: Optional[Any] = None,
+        concept_explanation: Optional[Any] = None,
+    ) -> ConceptResult:
+        """Build ConceptResult for concept explanations."""
+        return ConceptResult(
+            concept=concept,
+            explanation=explanation,
+            detail_level=detail_level,
+            related_topics=related_topics,
+            nodes=nodes,
+            physics_domains=physics_domains,
+            query=query,
+            search_mode=SearchMode.SEMANTIC,
+            max_results=15,
+            ids_filter=None,
+            ai_prompt=ai_prompt or {},
+            ai_response=ai_response or {},
+            physics_context=physics_context,
+            concept_explanation=concept_explanation,
+        )
+
+    def build_overview_response(
+        self,
+        content: str,
+        available_ids: List[str],
+        hits: List[Any],
+        query: Optional[str] = None,
+        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+        physics_context: Optional[Any] = None,
+        physics_domains: Optional[List[str]] = None,
+        ids_statistics: Optional[Dict[str, Any]] = None,
+        usage_guidance: Optional[Dict[str, Any]] = None,
+    ) -> OverviewResult:
+        """Build OverviewResult for system overviews."""
+        return OverviewResult(
+            content=content,
+            available_ids=available_ids,
+            hits=hits,
+            query=query or "",
+            search_mode=SearchMode.AUTO,
+            max_results=None,
+            ids_filter=None,
+            ai_prompt=ai_prompt or {},
+            ai_response=ai_response or {},
+            physics_context=physics_context,
+            physics_domains=physics_domains or [],
+            ids_statistics=ids_statistics or {},
+            usage_guidance=usage_guidance or {},
+        )
+
+    def build_structure_response(
+        self,
+        ids_name: str,
+        description: str,
+        structure: Dict[str, int],
+        sample_paths: List[str],
+        max_depth: int,
+        tool_name: str,
+        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+        physics_context: Optional[Any] = None,
+    ) -> StructureResult:
+        """Build StructureResult for IDS structure analysis."""
+        return StructureResult(
+            ids_name=ids_name,
+            description=description,
+            structure=structure,
+            sample_paths=sample_paths,
+            max_depth=max_depth,
+            tool_name=tool_name,
+            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            version=VERSION,
+            ai_prompt=ai_prompt or {},
+            ai_response=ai_response or {},
+            physics_context=physics_context,
+        )
+
+    def build_identifier_response(
+        self,
+        scope: IdentifierScope,
+        schemas: List[Dict[str, Any]],
+        paths: List[Dict[str, Any]],
+        analytics: Dict[str, Any],
+        tool_name: str,
+        query: Optional[str] = None,
+        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+    ) -> IdentifierResult:
+        """Build IdentifierResult for identifier exploration."""
+        return IdentifierResult(
+            scope=scope,
+            schemas=schemas,
+            paths=paths,
+            analytics=analytics,
+            tool_name=tool_name,
+            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            version=VERSION,
+            query=query or "",
+            search_mode=SearchMode.AUTO,
+            max_results=None,
+            ids_filter=None,
+            ai_prompt=ai_prompt or {},
+            ai_response=ai_response or {},
+        )
+
+    def build_relationship_response(
+        self,
+        path: str,
+        relationship_type: RelationshipType,
+        max_depth: int,
+        connections: Dict[str, List[str]],
+        nodes: List[Any],
+        physics_domains: List[str],
+        query: str,
+        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: Optional[Dict[str, Any]] = None,
+        physics_context: Optional[Any] = None,
+    ) -> RelationshipResult:
+        """Build RelationshipResult for relationship exploration."""
+        return RelationshipResult(
+            path=path,
+            relationship_type=relationship_type,
+            max_depth=max_depth,
+            connections=connections,
+            nodes=nodes,
+            physics_domains=physics_domains,
+            query=query,
+            search_mode=SearchMode.SEMANTIC,
+            max_results=None,
+            ids_filter=None,
+            ai_prompt=ai_prompt or {},
+            ai_response=ai_response or {},
+            physics_context=physics_context,
+        )
+
+    def build_export_response(
+        self,
+        ids_names: List[str],
+        include_physics: bool,
+        include_relationships: bool,
+        export_data: ExportData,
+        metadata: Dict[str, Any],
+        tool_name: str,
+        ai_response: Optional[Dict[str, Any]] = None,
+        ai_prompt: Optional[Dict[str, str]] = None,
+    ) -> IDSExport:
+        """Build IDSExport for IDS exports."""
+        return IDSExport(
+            ids_names=ids_names,
+            include_physics=include_physics,
+            include_relationships=include_relationships,
+            data=export_data,
+            metadata=metadata,
+            tool_name=tool_name,
+            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            version=VERSION,
+            ai_response=ai_response or {},
+            ai_prompt=ai_prompt or {},
+        )
+
+    def build_domain_export_response(
+        self,
+        domain: str,
+        domain_info: Dict[str, Any],
+        include_cross_domain: bool,
+        max_paths: int,
+        export_data: ExportData,
+        metadata: Dict[str, Any],
+        tool_name: str,
+        ai_response: Optional[Dict[str, Any]] = None,
+        ai_prompt: Optional[Dict[str, str]] = None,
+    ) -> DomainExport:
+        """Build DomainExport for physics domain exports."""
+        return DomainExport(
+            domain=domain,
+            domain_info=domain_info,
+            include_cross_domain=include_cross_domain,
+            max_paths=max_paths,
+            data=export_data,
+            metadata=metadata,
+            tool_name=tool_name,
+            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            version=VERSION,
             ai_response=ai_response or {},
             ai_prompt=ai_prompt or {},
         )
