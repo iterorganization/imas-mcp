@@ -61,7 +61,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: asv-results
-          path: .asv
+          path: .
         continue-on-error: true
 
       - name: Setup ASV machine
@@ -85,7 +85,7 @@ jobs:
           asv machine \
             --machine "$MACHINE_NAME" \
             --os "$OS_VERSION" \
-            --arch "$ARCH" \
+            --arch "$ARCH" \ 
             --cpu "$CPU_INFO" \
             --num_cpu "$CPU_COUNT" \
             --ram "${RAM_GB}GB" \
