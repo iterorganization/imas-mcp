@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Union
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.request_models import SearchInput
-from imas_mcp.models.context_models import QueryContext
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
@@ -20,45 +19,34 @@ from imas_mcp.search.decorators import (
     validate_input,
     measure_performance,
     handle_errors,
+    sample,
+    tool_hints,
+    query_hints,
+    physics_hints,
+    mcp_tool,
 )
 
 from .base import BaseTool
-from imas_mcp.services.sampling import SamplingStrategy
-from imas_mcp.services.tool_recommendations import RecommendationStrategy
 
 logger = logging.getLogger(__name__)
-
-
-def mcp_tool(description: str):
-    """Decorator to mark methods as MCP tools with descriptions."""
-
-    def decorator(func):
-        func._mcp_tool = True
-        func._mcp_description = description
-        return func
-
-    return decorator
 
 
 class SearchTool(BaseTool):
     """Tool for searching IMAS data paths using service composition."""
 
-    # Enable both services for search tool
-    enable_sampling: bool = True
-    enable_recommendations: bool = True
-
-    # Use search-appropriate strategies
-    sampling_strategy = SamplingStrategy.SMART
-    recommendation_strategy = RecommendationStrategy.SEARCH_BASED
-    max_recommended_tools: int = 5
-
-    def get_tool_name(self) -> str:
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
         return "search_imas"
 
     @cache_results(ttl=300, key_strategy="semantic")
     @validate_input(schema=SearchInput)
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @handle_errors(fallback="search_suggestions")
+    @tool_hints(max_hints=4)
+    @query_hints(max_hints=5)
+    @physics_hints()
+    @sample(temperature=0.3, max_tokens=800)
     @mcp_tool("Search for IMAS data paths with relevance-ordered results")
     async def search_imas(
         self,
@@ -87,44 +75,82 @@ class SearchTool(BaseTool):
             SearchResult with hits, metadata, and AI insights
         """
 
-        # Create clean query context
-        query_context = QueryContext(
+        # Execute search
+        result = await self.execute_search(
             query=query,
-            search_mode=search_mode
-            if isinstance(search_mode, SearchMode)
-            else SearchMode.AUTO,
+            search_mode=search_mode,
             max_results=max_results,
             ids_filter=ids_filter,
         )
 
-        # Use clean operation context
-        async with self.operation_context("search", query_context) as ctx:
-            # Execute search
-            search_results = await self._orchestrator.search(ctx)
+        logger.info(f"Search completed: {len(result.hits)} results returned")
+        return result
 
-            # Generate AI prompts
-            ctx.ai_context.ai_prompt = self._orchestrator.generate_ai_prompts(ctx)
-
-            # Build and return response
-            response = self._orchestrator.build_search_response(ctx)
-
-            # Store result in context for post-processing
-            ctx.result = response
-
-            logger.info(f"Search completed: {len(search_results)} results returned")
-
-            # Type assertion for return
-            assert isinstance(ctx.result, SearchResult)
-            return ctx.result
-
-    def _build_tool_specific_prompts(
-        self, tool_context: Dict[str, Any]
-    ) -> Dict[str, str]:
+    def build_prompt(self, prompt_type: str, tool_context: Dict[str, Any]) -> str:
         """Build search-specific AI prompts."""
-        prompts = {}
+        if prompt_type == "search_analysis":
+            return self._build_search_analysis_prompt(tool_context)
+        elif prompt_type == "no_results":
+            return self._build_no_results_prompt(tool_context)
+        elif prompt_type == "search_context":
+            return self._build_search_context_prompt(tool_context)
+        return ""
 
-        if tool_context.get("search_mode"):
-            prompts["search_context"] = f"""Search mode: {tool_context["search_mode"]}
+    def _build_search_analysis_prompt(self, tool_context: Dict[str, Any]) -> str:
+        """Build prompt for search result analysis."""
+        query = tool_context.get("query", "")
+        results = tool_context.get("results", [])
+        max_results = tool_context.get("max_results", 3)
+
+        if not results:
+            return self._build_no_results_prompt(tool_context)
+
+        # Limit results for prompt
+        top_results = results[:max_results]
+
+        # Build results summary
+        results_summary = []
+        for i, result in enumerate(top_results, 1):
+            if hasattr(result, "path"):
+                path = result.path
+                doc = getattr(result, "documentation", "")[:100]
+                score = getattr(result, "relevance_score", 0)
+                results_summary.append(f"{i}. {path} (score: {score:.2f})")
+                if doc:
+                    results_summary.append(f"   Documentation: {doc}...")
+            else:
+                results_summary.append(f"{i}. {str(result)[:100]}")
+
+        return f"""Search Results Analysis for: "{query}"
+
+Found {len(results)} relevant paths in IMAS data dictionary.
+
+Top results:
+{chr(10).join(results_summary)}
+
+Please provide enhanced analysis including:
+1. Physics context and significance of these paths
+2. Recommended follow-up searches or related concepts  
+3. Data usage patterns and common workflows
+4. Validation considerations for these measurements
+5. Brief explanation of how these paths relate to the query"""
+
+    def _build_no_results_prompt(self, tool_context: Dict[str, Any]) -> str:
+        """Build prompt for when no search results are found."""
+        query = tool_context.get("query", "")
+
+        return f"""Search Query Analysis: "{query}"
+
+No results were found for this query in the IMAS data dictionary.
+
+Please provide:
+1. Suggestions for alternative search terms or queries
+2. Possible related IMAS concepts or data paths
+3. Common physics contexts where this term might appear
+4. Recommended follow-up searches"""
+
+    def _build_search_context_prompt(self, tool_context: Dict[str, Any]) -> str:
+        """Build prompt for search mode context."""
+        search_mode = tool_context.get("search_mode", "auto")
+        return f"""Search mode: {search_mode}
 Provide mode-specific analysis and recommendations."""
-
-        return prompts

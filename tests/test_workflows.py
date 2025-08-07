@@ -10,17 +10,17 @@ import time
 
 import pytest
 
-from imas_mcp.models.response_models import (
+from imas_mcp.models.result_models import (
     ConceptResult,
     DomainExport,
     IDSExport,
     IdentifierResult,
     OverviewResult,
     RelationshipResult,
-    SearchResponse,
+    SearchResult,
     StructureResult,
 )
-from imas_mcp.models.response_models import ErrorResponse
+from imas_mcp.models.error_models import ToolError
 
 
 class TestUserWorkflows:
@@ -37,7 +37,7 @@ class TestUserWorkflows:
             # Step 2: Search for specific content
             search_query = workflow_test_data["search_query"]
             search_result = await tools.search_imas(query=search_query, max_results=5)
-            assert isinstance(search_result, SearchResponse)
+            assert isinstance(search_result, SearchResult)
 
             if search_result.hits:
                 # Step 3: Explain a concept found in search
@@ -63,7 +63,7 @@ class TestUserWorkflows:
         # Step 1: Search for physics concept
         search_query = workflow_test_data["search_query"]
         search_result = await tools.search_imas(query=search_query, max_results=10)
-        assert isinstance(search_result, SearchResponse)
+        assert isinstance(search_result, SearchResult)
 
         if search_result.hits:
             # Step 2: Explore relationships for found IDS
@@ -98,7 +98,7 @@ class TestUserWorkflows:
         search_result = await tools.search_imas(
             query="temperature profile", max_results=5
         )
-        assert isinstance(search_result, SearchResponse)
+        assert isinstance(search_result, SearchResult)
 
         # Step 2: Export the physics domain based on search
         domain_export = await tools.export_physics_domain(domain=export_domain)
@@ -124,7 +124,7 @@ class TestUserWorkflows:
 
         # Step 2: Search for related content
         search_result = await tools.search_imas(query=concept, max_results=10)
-        assert isinstance(search_result, SearchResponse)
+        assert isinstance(search_result, SearchResult)
 
         # Step 3: Analyze structure of relevant IDS
         if search_result.hits:
@@ -164,7 +164,7 @@ class TestUserWorkflows:
 
         # Step 6: Search within this IDS
         search = await tools.search_imas(query=f"{ids_name} temperature", max_results=5)
-        assert isinstance(search, SearchResponse)
+        assert isinstance(search, SearchResult)
 
 
 class TestWorkflowPerformance:
@@ -187,7 +187,7 @@ class TestWorkflowPerformance:
 
         # All steps should complete successfully
         assert isinstance(overview, OverviewResult)
-        assert isinstance(search, SearchResponse)
+        assert isinstance(search, SearchResult)
         assert isinstance(explanation, ConceptResult)
 
     @pytest.mark.asyncio
@@ -205,7 +205,7 @@ class TestWorkflowPerformance:
         # All tasks should complete successfully
         assert len(results) == 3
         assert isinstance(results[0], OverviewResult)  # overview
-        assert isinstance(results[1], SearchResponse)  # search
+        assert isinstance(results[1], SearchResult)  # search
         assert isinstance(results[2], ConceptResult)  # explanation
 
 
@@ -221,12 +221,12 @@ class TestWorkflowErrorRecovery:
 
         # Step 2: Operation that might fail
         invalid_analysis = await tools.analyze_ids_structure(ids_name="invalid_ids")
-        assert isinstance(invalid_analysis, ErrorResponse)
-        # This should return an ErrorResponse for invalid IDS
+        assert isinstance(invalid_analysis, ToolError)
+        # This should return an ToolError for invalid IDS
 
         # Step 3: Continue with valid operation
         search = await tools.search_imas(query="temperature", max_results=3)
-        assert isinstance(search, SearchResponse)
+        assert isinstance(search, SearchResult)
 
         # Workflow should complete despite the error in step 2
 
@@ -236,7 +236,7 @@ class TestWorkflowErrorRecovery:
         # Try analysis with invalid IDS
         result = await tools.analyze_ids_structure(ids_name="invalid_ids")
 
-        assert isinstance(result, ErrorResponse)
+        assert isinstance(result, ToolError)
         # Error should be informative
         assert isinstance(result.error, str)
         assert len(result.error) > 0

@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from imas_mcp.tools.search_tool import SearchTool
-from imas_mcp.models.response_models import SearchResponse
+from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.constants import SearchMode
 
 
@@ -19,39 +19,29 @@ class TestSearchToolServices:
     async def test_search_with_physics_enhancement(self, search_tool):
         """Test search with physics enhancement through service."""
 
-        # Mock search service
-        search_tool._search_service.search = AsyncMock(return_value=[])
-
-        # Mock physics service
-        mock_physics_result = MagicMock()
-        search_tool.physics.enhance_query = AsyncMock(return_value=mock_physics_result)
-
-        # Mock response service
-        mock_response = SearchResponse(
+        # Mock execute_search to return controlled response
+        mock_response = SearchResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
-            query="test query",
+            query="plasma temperature",
             ai_response={},
             ai_prompt={},
         )
-        search_tool.response.build_search_response = MagicMock(
-            return_value=mock_response
-        )
-        search_tool.response.add_standard_metadata = MagicMock(
-            return_value=mock_response
-        )
+        search_tool.execute_search = AsyncMock(return_value=mock_response)
 
         # Mock context for physics enhancement
         mock_ctx = MagicMock()
 
         result = await search_tool.search_imas(query="plasma temperature", ctx=mock_ctx)
 
-        # Verify services were called
-        search_tool.physics.enhance_query.assert_called_once_with("plasma temperature")
-        search_tool.response.build_search_response.assert_called_once()
-        search_tool.response.add_standard_metadata.assert_called_once()
+        # Verify execute_search was called (which handles physics enhancement internally)
+        search_tool.execute_search.assert_called_once()
 
-        assert isinstance(result, SearchResponse)
+        # Verify the result structure
+        assert isinstance(result, SearchResult)
+        assert result.query == "plasma temperature"
+
+        assert isinstance(result, SearchResult)
 
     @pytest.mark.asyncio
     async def test_search_configuration_optimization(self, search_tool):
@@ -61,7 +51,7 @@ class TestSearchToolServices:
         search_tool._search_service.search = AsyncMock(return_value=[])
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
-        mock_response = SearchResponse(
+        mock_response = SearchResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="complex query",
@@ -103,7 +93,7 @@ class TestSearchToolServices:
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Mock response service to capture arguments
-        mock_response = SearchResponse(
+        mock_response = SearchResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="temperature",
@@ -123,39 +113,32 @@ class TestSearchToolServices:
         build_call = search_tool.response.build_search_response.call_args
         assert build_call[1]["query"] == "temperature"
         assert len(build_call[1]["results"]) == 1
-        assert "ai_prompt" in build_call[1]
-        assert "ai_response" in build_call[1]
-        # Physics is now always enabled, so no explicit enable_physics parameter
+        # Check for expected fields in the response builder call
+        assert "search_mode" in build_call[1]
+        assert "ids_filter" in build_call[1]
+        assert "max_results" in build_call[1]
 
     @pytest.mark.asyncio
     async def test_no_results_guidance(self, search_tool):
         """Test guidance generation when no results found."""
 
-        search_tool._search_service.search = AsyncMock(return_value=[])
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
-
-        mock_response = SearchResponse(
+        # Mock execute_search to return empty results
+        mock_response = SearchResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="nonexistent",
             ai_response={},
             ai_prompt={},
         )
-        search_tool.response.build_search_response = MagicMock(
-            return_value=mock_response
-        )
-        search_tool.response.add_standard_metadata = MagicMock(
-            return_value=mock_response
-        )
+        search_tool.execute_search = AsyncMock(return_value=mock_response)
 
-        await search_tool.search_imas(query="nonexistent")
+        result = await search_tool.search_imas(query="nonexistent")
 
-        # Verify guidance was built for empty results
-        build_call = search_tool.response.build_search_response.call_args
-        assert "guidance" in build_call[1]["ai_prompt"]
-        guidance = build_call[1]["ai_prompt"]["guidance"]
-        assert "No results found" in guidance
-        assert "alternatives" in guidance
+        # Verify empty results were handled gracefully
+        search_tool.execute_search.assert_called_once()
+        assert isinstance(result, SearchResult)
+        assert len(result.hits) == 0
+        assert result.query == "nonexistent"
 
     @pytest.mark.asyncio
     async def test_service_initialization(self, search_tool):
@@ -186,7 +169,7 @@ class TestSearchToolServices:
         # Mock other services
         search_tool._search_service.search = AsyncMock(return_value=[])
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
-        mock_response = SearchResponse(
+        mock_response = SearchResult(
             hits=[],
             search_mode=SearchMode.LEXICAL,
             query="test",

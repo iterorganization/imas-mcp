@@ -211,7 +211,7 @@ class StructureResult(ToolResult, PhysicsContext):
     max_depth: int = 0
 
 
-class IdentifierResult(ToolResult):
+class IdentifierResult(ToolResult, PhysicsContext):
     """Identifier exploration result."""
 
     scope: IdentifierScope = IdentifierScope.ALL

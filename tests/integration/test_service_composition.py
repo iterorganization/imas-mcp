@@ -15,7 +15,7 @@ class TestServiceComposition:
 
     @pytest.mark.asyncio
     async def test_search_tool_with_services(self, search_tool):
-        """Test SearchTool uses both sampling and recommendation services."""
+        """Test SearchTool uses core services for search functionality."""
         # Mock search execution
         with patch.object(search_tool, "_search_service") as mock_search:
             mock_result = MagicMock()
@@ -26,17 +26,7 @@ class TestServiceComposition:
             # Mock response service
             mock_response = MagicMock()
             mock_response.hits = []
-            mock_response.tool_recommendations = []
             search_tool.response.build_search_response = MagicMock(
-                return_value=mock_response
-            )
-            search_tool.response.add_standard_metadata = MagicMock(
-                return_value=mock_response
-            )
-
-            # Mock services
-            search_tool.sampling.apply_sampling = AsyncMock(return_value=mock_response)
-            search_tool.recommendations.apply_recommendations = MagicMock(
                 return_value=mock_response
             )
 
@@ -45,54 +35,39 @@ class TestServiceComposition:
                 query="test query", search_mode="semantic"
             )
 
-            # Verify services were integrated
+            # Verify search service was used
             assert mock_search.search.called
             # Result should contain service-generated content
             assert result is not None
 
-    def test_service_dependency_injection(self, search_tool):
-        """Test all services are properly injected."""
-        # Verify core services are present (Phase 2.5 focus)
-        assert hasattr(search_tool, "sampling")
-        assert hasattr(search_tool, "recommendations")
-
-        # Verify service types for Phase 2.5 services
-        from imas_mcp.services.sampling import SamplingService
-        from imas_mcp.services.tool_recommendations import ToolRecommendationService
-
-        assert isinstance(search_tool.sampling, SamplingService)
-        assert isinstance(search_tool.recommendations, ToolRecommendationService)
-
     def test_template_method_customization(self, search_tool):
         """Test template method pattern allows tool-specific customization."""
-        # Verify SearchTool has appropriate settings
-        assert search_tool.enable_sampling
-        assert search_tool.enable_recommendations
-        assert search_tool.max_recommended_tools == 5
+        # Verify SearchTool has core services available
+        assert hasattr(search_tool, "physics")
+        assert hasattr(search_tool, "response")
+        assert hasattr(search_tool, "documents")
+        assert hasattr(search_tool, "search_config")
 
     @pytest.mark.asyncio
     async def test_apply_services_method(self, search_tool):
-        """Test the apply_services method works correctly."""
+        """Test the service composition works correctly through decorators."""
         from imas_mcp.models.result_models import SearchResult
 
-        # Create a proper SearchResult instance
+        # Mock the search execution to return controlled results
         mock_result = SearchResult(hits=[], query="test")
+        search_tool.execute_search = AsyncMock(return_value=mock_result)
 
-        # Mock the services
-        search_tool.sampling.apply_sampling = AsyncMock(return_value=mock_result)
-        search_tool.recommendations.apply_recommendations = MagicMock(
-            return_value=mock_result
-        )
+        # Mock physics enhancement
+        search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
-        result = await search_tool.apply_services(
-            result=mock_result, query="test", ctx=MagicMock()
-        )
+        # Execute the search which should trigger service composition through decorators
+        result = await search_tool.search_imas(query="test")
 
-        # Verify sampling was called
-        search_tool.sampling.apply_sampling.assert_called_once()
+        # Verify search was executed
+        search_tool.execute_search.assert_called_once()
 
-        # Verify recommendations were called
-        search_tool.recommendations.apply_recommendations.assert_called_once()
+        # Verify physics enhancement was attempted
+        search_tool.physics.enhance_query.assert_called_once()
 
-        # Result should be returned (services modify in place)
-        assert result is mock_result
+        # Result should be the mock result
+        assert result == mock_result
