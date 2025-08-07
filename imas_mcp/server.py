@@ -20,7 +20,8 @@ from typing import Optional
 import nest_asyncio
 from fastmcp import FastMCP
 
-from imas_mcp.resources import Resources
+# Import Resources from the resource provider module
+from imas_mcp.resource_provider import Resources
 from imas_mcp.tools import Tools
 
 # apply nest_asyncio to allow nested event loops
