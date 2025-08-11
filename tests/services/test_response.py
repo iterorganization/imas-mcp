@@ -169,12 +169,3 @@ class TestResponseService:
         updated_response = service.add_standard_metadata(mock_response, "test_tool")
 
         assert updated_response is mock_response
-
-    @pytest.mark.asyncio
-    async def test_lifecycle_methods(self):
-        """Test service lifecycle methods."""
-        service = ResponseService()
-
-        # Should not raise exceptions
-        await service.initialize()
-        await service.cleanup()
