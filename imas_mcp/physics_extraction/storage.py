@@ -11,7 +11,7 @@ import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from imas_mcp.physics_extraction.models import (
     ConflictResolution,
@@ -119,7 +119,7 @@ class PhysicsStorage:
             logger.error(f"Failed to save database: {e}")
             return False
 
-    def load_database(self) -> Optional[PhysicsDatabase]:
+    def load_database(self) -> PhysicsDatabase | None:
         """
         Load physics database from storage.
 
@@ -132,7 +132,7 @@ class PhysicsStorage:
 
         try:
             with file_lock(self.database_file):
-                with open(self.database_file, "r", encoding="utf-8") as f:
+                with open(self.database_file, encoding="utf-8") as f:
                     database_dict = json.load(f)
 
                 database = self._dict_to_database(database_dict)
@@ -174,13 +174,13 @@ class PhysicsStorage:
         except Exception as e:
             logger.error(f"Failed to create backup: {e}")
 
-    def _restore_from_backup(self) -> Optional[PhysicsDatabase]:
+    def _restore_from_backup(self) -> PhysicsDatabase | None:
         """Restore database from most recent backup."""
         backups = sorted(self.backup_dir.glob("physics_database_*.json"), reverse=True)
 
         for backup_file in backups:
             try:
-                with open(backup_file, "r", encoding="utf-8") as f:
+                with open(backup_file, encoding="utf-8") as f:
                     database_dict = json.load(f)
 
                 database = self._dict_to_database(database_dict)
@@ -193,7 +193,7 @@ class PhysicsStorage:
 
         return None
 
-    def _database_to_dict(self, database: PhysicsDatabase) -> Dict[str, Any]:
+    def _database_to_dict(self, database: PhysicsDatabase) -> dict[str, Any]:
         """Convert PhysicsDatabase to JSON-serializable dictionary."""
         quantities_dict = {}
         for qid, quantity in database.quantities.items():
@@ -232,7 +232,7 @@ class PhysicsStorage:
             "conflicts_resolved": database.conflicts_resolved,
         }
 
-    def _dict_to_database(self, data: Dict[str, Any]) -> PhysicsDatabase:
+    def _dict_to_database(self, data: dict[str, Any]) -> PhysicsDatabase:
         """Convert dictionary to PhysicsDatabase."""
         # Reconstruct quantities
         quantities = {}
@@ -317,14 +317,14 @@ class ProgressTracker:
             logger.error(f"Failed to save progress: {e}")
             return False
 
-    def load_progress(self) -> Optional[ExtractionProgress]:
+    def load_progress(self) -> ExtractionProgress | None:
         """Load extraction progress."""
         if not self.progress_file.exists():
             return None
 
         try:
             with file_lock(self.progress_file):
-                with open(self.progress_file, "r", encoding="utf-8") as f:
+                with open(self.progress_file, encoding="utf-8") as f:
                     data = json.load(f)
 
                 # Convert status strings back to enums
@@ -357,7 +357,7 @@ class ProgressTracker:
             logger.error(f"Failed to load progress: {e}")
             return None
 
-    def get_remaining_ids(self, all_ids: List[str]) -> List[str]:
+    def get_remaining_ids(self, all_ids: list[str]) -> list[str]:
         """Get list of IDS that haven't been completed yet."""
         progress = self.load_progress()
         if not progress:
@@ -386,9 +386,9 @@ class ConflictManager:
 
     def detect_conflicts(
         self,
-        existing_quantities: List[PhysicsQuantity],
-        new_quantities: List[PhysicsQuantity],
-    ) -> List[ConflictResolution]:
+        existing_quantities: list[PhysicsQuantity],
+        new_quantities: list[PhysicsQuantity],
+    ) -> list[ConflictResolution]:
         """
         Detect conflicts between existing and new quantities.
 
@@ -429,7 +429,7 @@ class ConflictManager:
 
     def _find_conflicting_fields(
         self, existing: PhysicsQuantity, new: PhysicsQuantity
-    ) -> List[str]:
+    ) -> list[str]:
         """Find fields that differ between quantities."""
         conflicts = []
 
@@ -466,7 +466,7 @@ class ConflictManager:
 
         return conflicts
 
-    def _requires_human_review(self, conflict_fields: List[str]) -> bool:
+    def _requires_human_review(self, conflict_fields: list[str]) -> bool:
         """Determine if conflicts require human review."""
         critical_fields = {"description", "unit", "dimensions"}
         return bool(set(conflict_fields) & critical_fields)
@@ -492,8 +492,8 @@ class ConflictManager:
         return resolved_quantity
 
     def auto_resolve_conflicts(
-        self, conflicts: List[ConflictResolution]
-    ) -> Tuple[List[PhysicsQuantity], List[ConflictResolution]]:
+        self, conflicts: list[ConflictResolution]
+    ) -> tuple[list[PhysicsQuantity], list[ConflictResolution]]:
         """
         Automatically resolve conflicts that don't require human review.
 
@@ -530,7 +530,7 @@ class ConflictManager:
             # Load existing conflicts
             conflicts_data = []
             if self.conflicts_file.exists():
-                with open(self.conflicts_file, "r", encoding="utf-8") as f:
+                with open(self.conflicts_file, encoding="utf-8") as f:
                     conflicts_data = json.load(f)
 
             # Add new conflict
@@ -558,13 +558,13 @@ class ConflictManager:
         except Exception as e:
             logger.error(f"Failed to save conflict resolution: {e}")
 
-    def get_unresolved_conflicts(self) -> List[Dict[str, Any]]:
+    def get_unresolved_conflicts(self) -> list[dict[str, Any]]:
         """Get list of unresolved conflicts requiring human review."""
         if not self.conflicts_file.exists():
             return []
 
         try:
-            with open(self.conflicts_file, "r", encoding="utf-8") as f:
+            with open(self.conflicts_file, encoding="utf-8") as f:
                 conflicts_data = json.load(f)
 
             return [

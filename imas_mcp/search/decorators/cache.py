@@ -8,8 +8,9 @@ import functools
 import hashlib
 import json
 import time
-from typing import Any, Callable, Dict, Optional, TypeVar
 from collections import OrderedDict
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -34,7 +35,7 @@ class SimpleCache:
         self.max_size = max_size
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from cache."""
         if key in self._cache:
             entry = self._cache[key]
@@ -196,7 +197,7 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def get_cache_stats() -> Dict[str, Any]:
+def get_cache_stats() -> dict[str, Any]:
     """Get cache statistics."""
     return {
         "size": _cache.size(),

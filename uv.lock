@@ -598,12 +598,10 @@ wheels = [
 
 [[package]]
 name = "imas-data-dictionary"
-version = "4.0.1.dev182"
-source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=cef07bef1c8f407c0fc533b641cd5d759dd59d18#cef07bef1c8f407c0fc533b641cd5d759dd59d18" }
+version = "4.0.1.dev202"
+source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=c1342e2514ba36d007937425b2df522cd1b213df#c1342e2514ba36d007937425b2df522cd1b213df" }
 dependencies = [
     { name = "packaging" },
-    { name = "saxonche" },
-    { name = "setuptools-scm" },
 ]
 
 [[package]]
@@ -686,7 +684,7 @@ provides-extras = ["bench", "http", "test"]
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=23.0.0" },
-    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=cef07bef1c8f407c0fc533b641cd5d759dd59d18" },
+    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=c1342e2514ba36d007937425b2df522cd1b213df" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },
@@ -1772,18 +1770,6 @@ wheels = [
 ]
 
 [[package]]
-name = "saxonche"
-version = "12.7.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/19/4151e2c88f55c094f69144acba3608dc1e188897fd4e679400844933a835/saxonche-12.7.0-cp312-cp312-macosx_10_11_x86_64.whl", hash = "sha256:e8d255498a49055a950ee999a84dee003e74dc4338f25806b1e274fb63f2a4ba", size = 36162700, upload-time = "2025-05-16T08:56:14.914Z" },
-    { url = "https://files.pythonhosted.org/packages/55/26/98d18ea61e168630272a4fd3f9d350684bcfab8b2f969a1001ad3b7a6e10/saxonche-12.7.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:285a09e39f0bae143b304da55254d18cc5206fd8ef938822cec5947be299adb5", size = 34821331, upload-time = "2025-05-16T08:56:23.37Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/96/78434940683280d0882b53ee7fe9a197f327b05432519d4f25b939c1989a/saxonche-12.7.0-cp312-cp312-manylinux_2_24_aarch64.whl", hash = "sha256:e861dc5eee567a28aafe0a1054585f3e8e9d1bdc9fe72dbddd756e34462c4251", size = 37691891, upload-time = "2025-05-16T08:56:32.203Z" },
-    { url = "https://files.pythonhosted.org/packages/35/fe/688e288befa3e106aae30d2f1d6fc3080b492b9cb22f461a63cf6e05c573/saxonche-12.7.0-cp312-cp312-manylinux_2_24_x86_64.whl", hash = "sha256:fa55ba65344534652498ee6a1de86f32c2a40d273ec48eb996e62be45b9594c2", size = 38728204, upload-time = "2025-05-16T08:56:41.159Z" },
-    { url = "https://files.pythonhosted.org/packages/80/a6/ca4177e7901c25572c6a32c1a5dbf842537745278ba765fb3f43943acbef/saxonche-12.7.0-cp312-cp312-win_amd64.whl", hash = "sha256:b2729d254cf023b08aea5bd693c052b2e67dc8112ec009429ccae6eec0114002", size = 35595343, upload-time = "2025-05-16T08:56:49.556Z" },
-]
-
-[[package]]
 name = "scikit-learn"
 version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1848,19 +1834,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/18/5d/3bf57dcd21979b887f014ea83c24ae194cfcd12b9e0fda66b957c69d1fca/setuptools-80.9.0.tar.gz", hash = "sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c", size = 1319958, upload-time = "2025-05-27T00:56:51.443Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/dc/17031897dae0efacfea57dfd3a82fdd2a2aeb58e0ff71b77b87e44edc772/setuptools-80.9.0-py3-none-any.whl", hash = "sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922", size = 1201486, upload-time = "2025-05-27T00:56:49.664Z" },
-]
-
-[[package]]
-name = "setuptools-scm"
-version = "8.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-    { name = "setuptools" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/19/7ae64b70b2429c48c3a7a4ed36f50f94687d3bfcd0ae2f152367b6410dff/setuptools_scm-8.3.1.tar.gz", hash = "sha256:3d555e92b75dacd037d32bafdf94f97af51ea29ae8c7b234cf94b7a5bd242a63", size = 78088, upload-time = "2025-04-23T11:53:19.739Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/ac/8f96ba9b4cfe3e4ea201f23f4f97165862395e9331a424ed325ae37024a8/setuptools_scm-8.3.1-py3-none-any.whl", hash = "sha256:332ca0d43791b818b841213e76b1971b7711a960761c5bea5fc5cdb5196fbce3", size = 43935, upload-time = "2025-04-23T11:53:17.922Z" },
 ]
 
 [[package]]

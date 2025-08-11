@@ -5,8 +5,9 @@ This module tests the resources component, focusing on schema access,
 MCP registration, and resource management.
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 
 class TestResourcesComponent:

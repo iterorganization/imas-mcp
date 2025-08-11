@@ -1,16 +1,17 @@
 """Physics integration service for IMAS tools."""
 
-from typing import Optional, Dict, Any
+from typing import Any
 
-from imas_mcp.physics_integration import physics_search, explain_physics_concept
 from imas_mcp.models.physics_models import PhysicsSearchResult
+from imas_mcp.physics_integration import explain_physics_concept, physics_search
+
 from .base import BaseService
 
 
 class PhysicsService(BaseService):
     """Service for physics integration and enhancement."""
 
-    async def enhance_query(self, query: str) -> Optional[PhysicsSearchResult]:
+    async def enhance_query(self, query: str) -> PhysicsSearchResult | None:
         """
         Enhance query with physics context.
 
@@ -30,7 +31,7 @@ class PhysicsService(BaseService):
 
     async def get_concept_context(
         self, concept: str, detail_level: str = "intermediate"
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get physics context for a concept."""
         try:
             result = explain_physics_concept(concept, detail_level)

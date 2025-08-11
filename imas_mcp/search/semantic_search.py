@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -49,17 +49,17 @@ class EmbeddingCache:
     """Cache for document embeddings with metadata."""
 
     embeddings: np.ndarray = field(default_factory=lambda: np.array([]))
-    path_ids: List[str] = field(default_factory=list)
+    path_ids: list[str] = field(default_factory=list)
     model_name: str = ""
     created_at: float = field(default_factory=time.time)
     document_count: int = 0
-    ids_set: Optional[set] = None  # IDS set used for this cache
+    ids_set: set | None = None  # IDS set used for this cache
 
     def is_valid(
         self,
         current_doc_count: int,
         current_model: str,
-        current_ids_set: Optional[set] = None,
+        current_ids_set: set | None = None,
     ) -> bool:
         """Check if cache is valid for current state."""
         return (
@@ -77,13 +77,13 @@ class SemanticSearchConfig:
 
     # Model configuration
     model_name: str = "all-MiniLM-L6-v2"  # Fast, good quality model
-    device: Optional[str] = None  # Auto-detect GPU/CPU
+    device: str | None = None  # Auto-detect GPU/CPU
 
     # Search configuration
     default_top_k: int = 10
     similarity_threshold: float = 0.0  # Minimum similarity to return
     batch_size: int = 50  # For embedding generation
-    ids_set: Optional[set] = None  # Limit to specific IDS for testing/performance
+    ids_set: set | None = None  # Limit to specific IDS for testing/performance
 
     # Cache configuration
     enable_cache: bool = True
@@ -114,9 +114,9 @@ class SemanticSearch:
     document_store: DocumentStore = field(default_factory=DocumentStore)
 
     # Internal state
-    _model: Optional[SentenceTransformer] = field(default=None, init=False)
-    _embeddings_cache: Optional[EmbeddingCache] = field(default=None, init=False)
-    _cache_path: Optional[Path] = field(default=None, init=False)
+    _model: SentenceTransformer | None = field(default=None, init=False)
+    _embeddings_cache: EmbeddingCache | None = field(default=None, init=False)
+    _cache_path: Path | None = field(default=None, init=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _initialized: bool = field(default=False, init=False)
 
@@ -166,7 +166,7 @@ class SemanticSearch:
         # Add IDS set to hash computation only if using a subset
         if self.config.ids_set:
             # Sort IDS names for consistent hashing
-            ids_list = sorted(list(self.config.ids_set))
+            ids_list = sorted(self.config.ids_set)
             config_parts.append(f"ids_{'_'.join(ids_list)}")
 
         # Compute short hash from config parts
@@ -398,11 +398,11 @@ class SemanticSearch:
     def search(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        similarity_threshold: Optional[float] = None,
-        ids_filter: Optional[List[str]] = None,
+        top_k: int | None = None,
+        similarity_threshold: float | None = None,
+        ids_filter: list[str] | None = None,
         hybrid_search: bool = True,
-    ) -> List[SemanticSearchResult]:
+    ) -> list[SemanticSearchResult]:
         """
         Perform semantic search with optional hybrid full-text search.
 
@@ -493,8 +493,8 @@ class SemanticSearch:
         similarities: np.ndarray,
         max_candidates: int,
         similarity_threshold: float,
-        ids_filter: Optional[List[str]],
-    ) -> List[int]:
+        ids_filter: list[str] | None,
+    ) -> list[int]:
         """Get candidate document indices based on similarity and filters."""
         if not self._embeddings_cache:
             raise RuntimeError("Embeddings cache not initialized")
@@ -525,8 +525,8 @@ class SemanticSearch:
         return top_indices.tolist()
 
     def _apply_hybrid_boost(
-        self, query: str, results: List[SemanticSearchResult]
-    ) -> List[SemanticSearchResult]:
+        self, query: str, results: list[SemanticSearchResult]
+    ) -> list[SemanticSearchResult]:
         """Apply hybrid boost by combining with full-text search."""
         try:
             # Get full-text search results
@@ -553,7 +553,7 @@ class SemanticSearch:
 
     def search_similar_documents(
         self, path_id: str, top_k: int = 5
-    ) -> List[SemanticSearchResult]:
+    ) -> list[SemanticSearchResult]:
         """Find documents similar to a given document."""
         document = self.document_store.get_document(path_id)
         if not document:
@@ -565,7 +565,7 @@ class SemanticSearch:
             hybrid_search=False,
         )[1:]  # Skip the first result (the document itself)
 
-    def get_embeddings_info(self) -> Dict[str, Any]:
+    def get_embeddings_info(self) -> dict[str, Any]:
         """Get information about the embeddings cache."""
         if not self._embeddings_cache:
             return {"status": "not_initialized"}
@@ -610,8 +610,8 @@ class SemanticSearch:
             self._initialize()
 
     def batch_search(
-        self, queries: List[str], top_k: int = 10
-    ) -> List[List[SemanticSearchResult]]:
+        self, queries: list[str], top_k: int = 10
+    ) -> list[list[SemanticSearchResult]]:
         """Perform batch semantic search for multiple queries."""
         if not self._initialized:
             self._initialize()
@@ -630,7 +630,7 @@ class SemanticSearch:
 
         # Search for each query
         results = []
-        for i, query_embedding in enumerate(query_embeddings):
+        for _i, query_embedding in enumerate(query_embeddings):
             similarities = self._compute_similarities(query_embedding)
             candidate_indices = self._get_candidate_indices(
                 similarities, top_k, self.config.similarity_threshold, None
@@ -655,8 +655,8 @@ class SemanticSearch:
 
     @staticmethod
     def build_embeddings_on_install(
-        ids_set: Optional[set] = None,
-        config: Optional[SemanticSearchConfig] = None,
+        ids_set: set | None = None,
+        config: SemanticSearchConfig | None = None,
         force_rebuild: bool = False,
     ) -> bool:
         """

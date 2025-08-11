@@ -5,12 +5,12 @@ These models represent shared context components that can be composed
 into both service contexts and response models.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.physics_models import PhysicsSearchResult
-
 
 # ============================================================================
 # CONTEXT MODELS (shared components)
@@ -20,13 +20,13 @@ from imas_mcp.models.physics_models import PhysicsSearchResult
 class SearchParameters(BaseModel):
     """Base model for search configuration parameters."""
 
-    search_mode: Optional[SearchMode] = Field(
+    search_mode: SearchMode | None = Field(
         default=SearchMode.AUTO, description="Search mode to use"
     )
-    ids_filter: Optional[List[str]] = Field(
+    ids_filter: list[str] | None = Field(
         default=None, description="IDS filter to apply"
     )
-    max_results: Optional[int] = Field(
+    max_results: int | None = Field(
         default=None, description="Maximum results to return"
     )
 
@@ -34,7 +34,7 @@ class SearchParameters(BaseModel):
 class QueryContext(SearchParameters):
     """Query metadata and parameters."""
 
-    query: Optional[Union[str, List[str]]] = Field(
+    query: str | list[str] | None = Field(
         default=None, description="Original user query"
     )
 
@@ -42,11 +42,11 @@ class QueryContext(SearchParameters):
 class AIContext(BaseModel):
     """AI enhancement context."""
 
-    ai_prompt: Dict[str, str] = Field(
+    ai_prompt: dict[str, str] = Field(
         default_factory=dict,
         description="AI prompts that were used",
     )
-    ai_response: Dict[str, Any] = Field(
+    ai_response: dict[str, Any] = Field(
         default_factory=dict,
         description="AI-generated responses",
     )
@@ -55,8 +55,8 @@ class AIContext(BaseModel):
 class PhysicsContext(BaseModel):
     """Physics enhancement context."""
 
-    physics_domains: List[str] = Field(default_factory=list)
-    physics_context: Optional[PhysicsSearchResult] = None
+    physics_domains: list[str] = Field(default_factory=list)
+    physics_context: PhysicsSearchResult | None = None
 
 
 class ToolMetadata(BaseModel):
@@ -65,7 +65,7 @@ class ToolMetadata(BaseModel):
     tool_name: str
     processing_timestamp: str = Field(default="")
     version: str = Field(default="1.0.0")
-    operation_type: Optional[str] = Field(default=None)
+    operation_type: str | None = Field(default=None)
 
 
 class ExportContext(BaseModel):
@@ -81,7 +81,7 @@ class ExportContext(BaseModel):
 class AnalysisContext(BaseModel):
     """Analysis operation context."""
 
-    ids_name: Optional[str] = None
+    ids_name: str | None = None
     analysis_type: str = "structure"
     max_depth: int = 0
     include_identifiers: bool = True

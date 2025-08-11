@@ -6,21 +6,20 @@ This module contains common functionality shared across all tool implementations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional, Union, List, Dict, Any
+from typing import Any
 
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import SearchResult
-
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.services.search_service import SearchService
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
-from imas_mcp.models.constants import SearchMode
+from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
+from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
+from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.services import (
+    DocumentService,
     PhysicsService,
     ResponseService,
-    DocumentService,
     SearchConfigurationService,
 )
 
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 class BaseTool(ABC):
     """Base class for all IMAS MCP tools with service injection."""
 
-    def __init__(self, document_store: Optional[DocumentStore] = None):
+    def __init__(self, document_store: DocumentStore | None = None):
         self.logger = logger
         self.document_store = document_store or DocumentStore()
 
@@ -56,9 +55,9 @@ class BaseTool(ABC):
     async def execute_search(
         self,
         query: str,
-        search_mode: Union[str, SearchMode] = "auto",
+        search_mode: str | SearchMode = "auto",
         max_results: int = 10,
-        ids_filter: Optional[List[str]] = None,
+        ids_filter: list[str] | None = None,
     ) -> SearchResult:
         """
         Unified search execution that returns a complete SearchResult.
@@ -94,9 +93,13 @@ class BaseTool(ABC):
 
         return response
 
-    def build_prompt(self, prompt_type: str, tool_context: Dict[str, Any]) -> str:
+    def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
         """Override in subclasses to build tool-specific AI prompts."""
         return ""
+
+    def system_prompt(self) -> str:
+        """Override in subclasses to provide tool-specific system prompts."""
+        return "You are an expert assistant analyzing IMAS fusion physics data. Provide detailed, accurate insights."
 
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""

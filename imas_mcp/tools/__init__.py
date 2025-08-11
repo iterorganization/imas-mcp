@@ -6,25 +6,28 @@ Each module handles a specific tool functionality with clean separation of conce
 """
 
 from typing import Optional
+
 from fastmcp import FastMCP
+
 from imas_mcp.providers import MCPProvider
 from imas_mcp.search.document_store import DocumentStore
 
+from .analysis_tool import AnalysisTool
+
 # Import individual tool classes
 from .base import BaseTool
-from .search_tool import SearchTool
 from .explain_tool import ExplainTool
-from .overview_tool import OverviewTool
-from .analysis_tool import AnalysisTool
-from .relationships_tool import RelationshipsTool
-from .identifiers_tool import IdentifiersTool
 from .export_tool import ExportTool
+from .identifiers_tool import IdentifiersTool
+from .overview_tool import OverviewTool
+from .relationships_tool import RelationshipsTool
+from .search_tool import SearchTool
 
 
 class Tools(MCPProvider):
     """Main Tools class that delegates to individual tool implementations."""
 
-    def __init__(self, ids_set: Optional[set[str]] = None):
+    def __init__(self, ids_set: set[str] | None = None):
         """Initialize the IMAS tools provider.
 
         Args:

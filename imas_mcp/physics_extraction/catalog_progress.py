@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from imas_mcp.physics_extraction.models import ExtractionStatus
 
@@ -39,7 +39,7 @@ class CatalogBasedProgressTracker:
     def _load_catalog(self):
         """Load IDS catalog metadata."""
         try:
-            with open(self.catalog_file, "r", encoding="utf-8") as f:
+            with open(self.catalog_file, encoding="utf-8") as f:
                 catalog_data = json.load(f)
 
             self.catalog_metadata = catalog_data.get("metadata", {})
@@ -52,7 +52,7 @@ class CatalogBasedProgressTracker:
             self.catalog_metadata = {}
             self.ids_catalog = {}
 
-    def get_catalog_stats(self) -> Dict[str, Any]:
+    def get_catalog_stats(self) -> dict[str, Any]:
         """Get overall catalog statistics."""
         return {
             "total_ids": self.catalog_metadata.get("total_ids", 0),
@@ -62,7 +62,7 @@ class CatalogBasedProgressTracker:
             "generation_date": self.catalog_metadata.get("generation_date", "unknown"),
         }
 
-    def get_ids_info(self, ids_name: str) -> Optional[Dict[str, Any]]:
+    def get_ids_info(self, ids_name: str) -> dict[str, Any] | None:
         """Get information about a specific IDS from catalog."""
         return self.ids_catalog.get(ids_name)
 
@@ -71,14 +71,14 @@ class CatalogBasedProgressTracker:
         ids_info = self.get_ids_info(ids_name)
         return ids_info.get("path_count", 0) if ids_info else 0
 
-    def get_available_ids_with_counts(self) -> Dict[str, int]:
+    def get_available_ids_with_counts(self) -> dict[str, int]:
         """Get all available IDS with their path counts."""
         return {
             ids_name: info.get("path_count", 0)
             for ids_name, info in self.ids_catalog.items()
         }
 
-    def get_physics_domains(self) -> Dict[str, List[str]]:
+    def get_physics_domains(self) -> dict[str, list[str]]:
         """Group IDS by physics domain."""
         domains = {}
         for ids_name, info in self.ids_catalog.items():
@@ -91,7 +91,7 @@ class CatalogBasedProgressTracker:
     def create_enhanced_progress(
         self,
         session_id: str,
-        ids_list: List[str],
+        ids_list: list[str],
         paths_per_ids: int = 10,
         confidence_threshold: float = 0.5,
     ) -> "EnhancedExtractionProgress":
@@ -192,7 +192,7 @@ class CatalogBasedProgressTracker:
             return None
 
         try:
-            with open(self.progress_file, "r", encoding="utf-8") as f:
+            with open(self.progress_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             # Convert status strings back to enums
@@ -242,7 +242,7 @@ class EnhancedExtractionProgress:
         total_ids: int = 0,
         total_catalog_paths: int = 0,
         total_processing_paths: int = 0,
-        ids_path_info: Optional[Dict[str, Dict[str, Any]]] = None,
+        ids_path_info: dict[str, dict[str, Any]] | None = None,
         confidence_threshold: float = 0.5,
         **kwargs,
     ):
@@ -263,9 +263,9 @@ class EnhancedExtractionProgress:
 
         # Per-IDS detailed information
         self.ids_path_info = ids_path_info or {}
-        self.ids_status: Dict[str, ExtractionStatus] = kwargs.get("ids_status", {})
-        self.ids_progress: Dict[str, float] = kwargs.get("ids_progress", {})
-        self.ids_processed_paths: Dict[str, int] = kwargs.get("ids_processed_paths", {})
+        self.ids_status: dict[str, ExtractionStatus] = kwargs.get("ids_status", {})
+        self.ids_progress: dict[str, float] = kwargs.get("ids_progress", {})
+        self.ids_processed_paths: dict[str, int] = kwargs.get("ids_processed_paths", {})
 
         # Results tracking
         self.total_quantities_found = kwargs.get("total_quantities_found", 0)
@@ -277,7 +277,7 @@ class EnhancedExtractionProgress:
         self.confidence_threshold = confidence_threshold
 
         # Domain statistics
-        self.domain_stats: Dict[str, Dict[str, int]] = kwargs.get("domain_stats", {})
+        self.domain_stats: dict[str, dict[str, int]] = kwargs.get("domain_stats", {})
 
     @property
     def completion_percentage(self) -> float:
@@ -375,7 +375,7 @@ class EnhancedExtractionProgress:
             elif status == ExtractionStatus.FAILED:
                 self.domain_stats[domain]["failed_ids"] += 1
 
-    def get_detailed_status(self) -> Dict[str, Any]:
+    def get_detailed_status(self) -> dict[str, Any]:
         """Get comprehensive status information."""
         return {
             "session_info": {
@@ -414,7 +414,7 @@ class EnhancedExtractionProgress:
             "confidence_threshold": self.confidence_threshold,
         }
 
-    def get_ids_details(self) -> Dict[str, Any]:
+    def get_ids_details(self) -> dict[str, Any]:
         """Get detailed per-IDS information."""
         details = {}
 

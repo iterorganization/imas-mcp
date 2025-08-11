@@ -1,9 +1,8 @@
 """Search configuration service."""
 
-from typing import Union, List, Optional
-
-from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.search.search_strategy import SearchConfig
+
 from .base import BaseService
 
 
@@ -12,9 +11,9 @@ class SearchConfigurationService(BaseService):
 
     def create_config(
         self,
-        search_mode: Union[str, SearchMode] = "auto",
+        search_mode: str | SearchMode = "auto",
         max_results: int = 10,
-        ids_filter: Optional[Union[str, List[str]]] = None,
+        ids_filter: str | list[str] | None = None,
     ) -> SearchConfig:
         """Create optimized search configuration."""
 
@@ -40,7 +39,7 @@ class SearchConfigurationService(BaseService):
         )
 
     def optimize_for_query(
-        self, query: Union[str, List[str]], base_config: SearchConfig
+        self, query: str | list[str], base_config: SearchConfig
     ) -> SearchConfig:
         """Optimize configuration based on query characteristics."""
 

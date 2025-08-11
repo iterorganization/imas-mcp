@@ -5,7 +5,8 @@ This decorator provides a standard way to mark methods as MCP tools
 and attach descriptions that can be used by the MCP framework.
 """
 
-from typing import Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 
 def mcp_tool(description: str):

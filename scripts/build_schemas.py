@@ -7,7 +7,6 @@ This script transforms the XML data dictionary into JSON format and saves it to 
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 
@@ -40,7 +39,7 @@ def build_schemas(
     quiet: bool,
     force: bool,
     ids_filter: str,
-    output_dir: Optional[Path],
+    output_dir: Path | None,
     no_rich: bool,
 ) -> int:
     """Build the schema data structures for the IMAS Data Dictionary.
@@ -74,7 +73,7 @@ def build_schemas(
         logger.info("Starting schema data build process...")
 
         # Parse ids_filter string into a set if provided
-        ids_set: Optional[set] = set(ids_filter.split()) if ids_filter else None
+        ids_set: set | None = set(ids_filter.split()) if ids_filter else None
         if ids_set:
             logger.info(f"Building schema data for specific IDS: {sorted(ids_set)}")
         else:
