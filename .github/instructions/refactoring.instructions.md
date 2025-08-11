@@ -1,5 +1,5 @@
 ---
-applyTo: "**"
+applyTo: "**/*.py"
 description: "Refactoring guidelines for this workspace - no backwards compatibility, no suffixed variants"
 ---
 
