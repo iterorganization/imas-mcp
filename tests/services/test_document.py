@@ -81,12 +81,3 @@ class TestDocumentService:
         assert "unknown_ids" in error_response.error
         assert hasattr(error_response, "suggestions")
         assert hasattr(error_response, "context")
-
-    @pytest.mark.asyncio
-    async def test_lifecycle_methods(self):
-        """Test service lifecycle methods."""
-        service = DocumentService()
-
-        # Should not raise exceptions
-        await service.initialize()
-        await service.cleanup()

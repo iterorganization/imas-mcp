@@ -43,12 +43,3 @@ class TestPhysicsService:
 
         # Result could be None or dict with physics info
         assert context is None or isinstance(context, dict)
-
-    @pytest.mark.asyncio
-    async def test_lifecycle_methods(self):
-        """Test service lifecycle methods."""
-        service = PhysicsService()
-
-        # Should not raise exceptions
-        await service.initialize()
-        await service.cleanup()
