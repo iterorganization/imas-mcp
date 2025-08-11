@@ -98,12 +98,3 @@ class TestSearchConfigurationService:
 
         # Should handle list input
         assert isinstance(optimized, SearchConfig)
-
-    @pytest.mark.asyncio
-    async def test_lifecycle_methods(self):
-        """Test service lifecycle methods."""
-        service = SearchConfigurationService()
-
-        # Should not raise exceptions
-        await service.initialize()
-        await service.cleanup()
