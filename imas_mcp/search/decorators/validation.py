@@ -6,13 +6,15 @@ Provides Pydantic-based input validation with standardized error responses.
 
 import functools
 import inspect
-from typing import Any, Callable, Dict, Type, TypeVar, Optional
+from collections.abc import Callable
+from typing import Any, TypeVar
+
 from pydantic import BaseModel, ValidationError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def validate_input(schema: Type[BaseModel]) -> Callable[[F], F]:
+def validate_input(schema: type[BaseModel]) -> Callable[[F], F]:
     """
     Decorator to validate input parameters using Pydantic schema.
 
@@ -87,10 +89,10 @@ def validate_input(schema: Type[BaseModel]) -> Callable[[F], F]:
 
 
 def create_validation_schema(
-    required_fields: Dict[str, Type],
-    optional_fields: Optional[Dict[str, Any]] = None,
-    validators: Optional[Dict[str, Callable]] = None,
-) -> Type[BaseModel]:
+    required_fields: dict[str, type],
+    optional_fields: dict[str, Any] | None = None,
+    validators: dict[str, Callable] | None = None,
+) -> type[BaseModel]:
     """
     Helper to create validation schemas dynamically.
 

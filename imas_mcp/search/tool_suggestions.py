@@ -6,15 +6,16 @@ Separate from AI enhancement to maintain clear separation of concerns.
 """
 
 import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def suggest_follow_up_tools(
-    results: Dict[str, Any], func_name: str
-) -> List[Dict[str, str]]:
+    results: dict[str, Any], func_name: str
+) -> list[dict[str, str]]:
     """
     Suggest relevant follow-up tools based on current results.
 
@@ -139,7 +140,7 @@ def tool_suggestions(func: Callable) -> Callable:
     """
 
     @wraps(func)
-    async def wrapper(*args, **kwargs) -> Dict[str, Any]:
+    async def wrapper(*args, **kwargs) -> dict[str, Any]:
         # Call the original tool function
         base_response = await func(*args, **kwargs)
 

@@ -10,15 +10,19 @@ import hashlib
 import importlib.resources as resources
 import json
 import logging
+import re
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from imas_mcp.core.data_model import IdsNode, PhysicsContext, IdentifierSchema
+import imas_mcp
+from imas_mcp.core.data_model import IdentifierSchema, IdsNode, PhysicsContext
 from imas_mcp.core.physics_accessors import UnitAccessor
+from imas_mcp.core.unit_loader import get_unit_dimensionality, get_unit_name
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +34,8 @@ class Units:
     unit_str: str
     name: str = ""
     context: str = ""
-    category: Optional[str] = None
-    physics_domains: List[str] = field(default_factory=list)
+    category: str | None = None
+    physics_domains: list[str] = field(default_factory=list)
     dimensionality: str = ""
 
     @classmethod
@@ -45,9 +49,6 @@ class Units:
         context = unit_accessor.get_unit_context(unit_str) or ""
         category = unit_accessor.get_category_for_unit(unit_str)
         physics_domains = unit_accessor.get_domains_for_unit(unit_str)
-
-        # Get unit name and dimensionality using pint (keeping these from unit_loader)
-        from imas_mcp.core.unit_loader import get_unit_name, get_unit_dimensionality
 
         name = get_unit_name(unit_str)
         dimensionality = get_unit_dimensionality(unit_str)
@@ -65,7 +66,7 @@ class Units:
         """Check if this represents meaningful physical units."""
         return bool(self.unit_str and self.unit_str not in ("", "none", "1"))
 
-    def get_embedding_components(self) -> List[str]:
+    def get_embedding_components(self) -> list[str]:
         """Get components for embedding text generation."""
         components = []
 
@@ -111,10 +112,10 @@ class Document:
 
     metadata: DocumentMetadata
     documentation: str = ""
-    physics_context: Dict[str, Any] = field(default_factory=dict)
-    relationships: Dict[str, List[str]] = field(default_factory=dict)
-    raw_data: Dict[str, Any] = field(default_factory=dict)
-    units: Optional[Units] = None
+    physics_context: dict[str, Any] = field(default_factory=dict)
+    relationships: dict[str, list[str]] = field(default_factory=dict)
+    raw_data: dict[str, Any] = field(default_factory=dict)
+    units: Units | None = None
 
     def set_units(self, unit_accessor: UnitAccessor) -> None:
         """Set units information using UnitAccessor."""
@@ -220,17 +221,17 @@ class SearchIndex:
     """In-memory search indices for fast lookups."""
 
     # Primary indices
-    by_path_id: Dict[str, Document] = field(default_factory=dict)
-    by_ids_name: Dict[str, List[str]] = field(default_factory=dict)
+    by_path_id: dict[str, Document] = field(default_factory=dict)
+    by_ids_name: dict[str, list[str]] = field(default_factory=dict)
 
     # Search indices
-    by_physics_domain: Dict[str, Set[str]] = field(default_factory=dict)
-    by_units: Dict[str, Set[str]] = field(default_factory=dict)
-    by_coordinates: Dict[str, Set[str]] = field(default_factory=dict)
+    by_physics_domain: dict[str, set[str]] = field(default_factory=dict)
+    by_units: dict[str, set[str]] = field(default_factory=dict)
+    by_coordinates: dict[str, set[str]] = field(default_factory=dict)
 
     # Full-text indices
-    documentation_words: Dict[str, Set[str]] = field(default_factory=dict)
-    path_segments: Dict[str, Set[str]] = field(default_factory=dict)
+    documentation_words: dict[str, set[str]] = field(default_factory=dict)
+    path_segments: dict[str, set[str]] = field(default_factory=dict)
 
     # Statistics
     total_documents: int = 0
@@ -301,7 +302,7 @@ class DocumentStore:
     """
 
     # Configuration
-    ids_set: Optional[Set[str]] = None  # Specific IDS to load (for testing/performance)
+    ids_set: set[str] | None = None  # Specific IDS to load (for testing/performance)
 
     # Internal state
     _index: SearchIndex = field(default_factory=SearchIndex, init=False)
@@ -309,9 +310,9 @@ class DocumentStore:
     _sqlite_path: Path = field(init=False)
     _loaded: bool = field(default=False, init=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
-    _unit_contexts: Dict[str, str] = field(default_factory=dict, init=False)
-    _unit_categories: Dict[str, List[str]] = field(default_factory=dict, init=False)
-    _physics_domain_hints: Dict[str, List[str]] = field(
+    _unit_contexts: dict[str, str] = field(default_factory=dict, init=False)
+    _unit_categories: dict[str, list[str]] = field(default_factory=dict, init=False)
+    _physics_domain_hints: dict[str, list[str]] = field(
         default_factory=dict, init=False
     )
 
@@ -335,13 +336,13 @@ class DocumentStore:
         )
 
         # Initialize lazy loading state
-        self._loaded_ids: Set[str] = set()  # Track which IDS are loaded
-        self._available_ids: Optional[List[str]] = None  # Cache of available IDS
+        self._loaded_ids: set[str] = set()  # Track which IDS are loaded
+        self._available_ids: list[str] | None = None  # Cache of available IDS
         self._identifier_catalog_loaded = False  # Track identifier catalog loading
 
         # Don't auto-load documents - use on-demand loading per IDS
 
-    def _ensure_ids_loaded(self, ids_names: List[str]) -> None:
+    def _ensure_ids_loaded(self, ids_names: list[str]) -> None:
         """Ensure specific IDS are loaded on-demand."""
         # Check which IDS need to be loaded
         to_load = [
@@ -388,8 +389,6 @@ class DocumentStore:
             return Path(str(resources_dir))
         except (ImportError, FileNotFoundError):
             # Fallback to package relative path
-            import imas_mcp
-
             package_path = Path(imas_mcp.__file__).parent
             return package_path / "resources" / "schemas"
 
@@ -401,8 +400,6 @@ class DocumentStore:
             return Path(str(database_dir))
         except (ImportError, FileNotFoundError):
             # Fallback to package relative path
-            import imas_mcp
-
             package_path = Path(imas_mcp.__file__).parent
             return package_path / "resources" / "database"
 
@@ -421,7 +418,7 @@ class DocumentStore:
         return (self._data_dir / "ids_catalog.json").exists()
 
     def load_all_documents(
-        self, force_rebuild_index: bool = False, ids_filter: Optional[List[str]] = None
+        self, force_rebuild_index: bool = False, ids_filter: list[str] | None = None
     ) -> None:
         """Load JSON documents into memory with indexing.
 
@@ -472,7 +469,7 @@ class DocumentStore:
                 f"{self._index.total_ids} IDS into memory"
             )
 
-    def _get_available_ids(self) -> List[str]:
+    def _get_available_ids(self) -> list[str]:
         """Get list of available IDS names without loading documents, respecting ids_set filter."""
         if self._available_ids is not None:
             # If ids_set is specified, filter the cached available IDS
@@ -501,7 +498,7 @@ class DocumentStore:
             self._available_ids = []
             return self._available_ids
 
-    def get_available_ids(self) -> List[str]:
+    def get_available_ids(self) -> list[str]:
         """Get list of available IDS names (public method)."""
         return self._get_available_ids()
 
@@ -560,7 +557,7 @@ class DocumentStore:
             logger.error(f"Failed to load identifier catalog: {e}")
 
     def _create_identifier_schema_document(
-        self, schema_name: str, schema_data: Dict[str, Any]
+        self, schema_name: str, schema_data: dict[str, Any]
     ) -> Document:
         """Create a Document for an identifier schema."""
         path_id = f"identifier_schema/{schema_name.lower().replace(' ', '_')}"
@@ -630,7 +627,7 @@ Paths using this schema:
         return document
 
     def _create_identifier_path_document(
-        self, ids_name: str, path_data: Dict[str, Any]
+        self, ids_name: str, path_data: dict[str, Any]
     ) -> Document:
         """Create a Document for an identifier path reference."""
         path = path_data.get("path", "")
@@ -687,7 +684,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return document
 
     def _create_document(
-        self, ids_name: str, path_name: str, path_data: Dict[str, Any]
+        self, ids_name: str, path_name: str, path_data: dict[str, Any]
     ) -> Document:
         """Create a Document object from raw path data."""
         # Create unique path ID
@@ -742,7 +739,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return document
 
     # Fast access methods for LLM tools
-    def get_document(self, path_id: str) -> Optional[Document]:
+    def get_document(self, path_id: str) -> Document | None:
         """Get document by path ID, loading on-demand if needed."""
         # Try to get from cache first
         document = self._index.by_path_id.get(path_id)
@@ -757,14 +754,14 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
 
         return None
 
-    def get_documents_by_ids(self, ids_name: str) -> List[Document]:
+    def get_documents_by_ids(self, ids_name: str) -> list[Document]:
         """Get all documents for an IDS, loading on-demand if needed."""
         # Load this specific IDS if not already loaded
         self._ensure_ids_loaded([ids_name])
         path_ids = self._index.by_ids_name.get(ids_name, [])
         return [self._index.by_path_id[pid] for pid in path_ids]
 
-    def get_all_documents(self) -> List[Document]:
+    def get_all_documents(self) -> list[Document]:
         """Get all documents for embedding generation, respecting ids_set filter."""
         self._ensure_loaded()
         return list(self._index.by_path_id.values())
@@ -779,8 +776,8 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return len(self)
 
     def search_by_keywords(
-        self, keywords: List[str], max_results: int = 50
-    ) -> List[Document]:
+        self, keywords: list[str], max_results: int = 50
+    ) -> list[Document]:
         """Fast keyword search using in-memory indices."""
         # For keyword search, we need to load all documents since we don't know which IDS contain the keywords
         self._ensure_loaded()
@@ -806,14 +803,14 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         results = [self._index.by_path_id[pid] for pid in matching_path_ids]
         return results[:max_results]
 
-    def search_by_physics_domain(self, domain: str) -> List[Document]:
+    def search_by_physics_domain(self, domain: str) -> list[Document]:
         """Search by physics domain using index."""
         # For physics domain search, we need all documents loaded
         self._ensure_loaded()
         path_ids = self._index.by_physics_domain.get(domain, set())
         return [self._index.by_path_id[pid] for pid in path_ids]
 
-    def search_by_units(self, units: str) -> List[Document]:
+    def search_by_units(self, units: str) -> list[Document]:
         """Search by units using index."""
         # For units search, we need all documents loaded
         self._ensure_loaded()
@@ -821,7 +818,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return [self._index.by_path_id[pid] for pid in path_ids]
 
     # Identifier-specific access methods
-    def get_identifier_schemas(self) -> List[Document]:
+    def get_identifier_schemas(self) -> list[Document]:
         """Get all identifier schema documents."""
         return [
             doc
@@ -829,7 +826,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             if doc.metadata.data_type == "identifier_schema"
         ]
 
-    def get_identifier_paths(self) -> List[Document]:
+    def get_identifier_paths(self) -> list[Document]:
         """Get all documents that have identifier schemas (branching logic)."""
         return [
             doc
@@ -838,12 +835,12 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             or doc.metadata.data_type == "identifier_path"
         ]
 
-    def get_identifier_schema_by_name(self, schema_name: str) -> Optional[Document]:
+    def get_identifier_schema_by_name(self, schema_name: str) -> Document | None:
         """Get a specific identifier schema by name."""
         schema_path_id = f"identifier_schema/{schema_name.lower().replace(' ', '_')}"
         return self.get_document(schema_path_id)
 
-    def search_identifier_schemas(self, query: str) -> List[Document]:
+    def search_identifier_schemas(self, query: str) -> list[Document]:
         """Search specifically in identifier schemas."""
         all_schemas = self.get_identifier_schemas()
         query_lower = query.lower()
@@ -869,7 +866,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
 
         return matching_schemas
 
-    def get_paths_with_identifiers_by_ids(self, ids_name: str) -> List[Document]:
+    def get_paths_with_identifiers_by_ids(self, ids_name: str) -> list[Document]:
         """Get all paths in an IDS that have identifier schemas."""
         all_docs = self.get_documents_by_ids(ids_name)
         return [
@@ -879,7 +876,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             or doc.raw_data.get("is_identifier")
         ]
 
-    def get_identifier_branching_summary(self) -> Dict[str, Any]:
+    def get_identifier_branching_summary(self) -> dict[str, Any]:
         """Get a summary of identifier branching logic across all IDS."""
         schemas = self.get_identifier_schemas()
 
@@ -939,7 +936,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             },
         }
 
-    def search_by_coordinates(self, coordinate: str) -> List[Document]:
+    def search_by_coordinates(self, coordinate: str) -> list[Document]:
         """Search by coordinate system using index."""
         path_ids = self._index.by_coordinates.get(coordinate, set())
         return [self._index.by_path_id[pid] for pid in path_ids]
@@ -999,8 +996,6 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 )
 
             # Store metadata for cache validation
-            import time
-
             conn.execute(
                 "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
                 ("created_at", str(time.time())),
@@ -1048,8 +1043,6 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         Returns:
             Processed query safe for FTS5
         """
-        import re
-
         # First, find all quoted sections and temporarily replace them to protect from processing
         quoted_sections = []
         quote_pattern = r'"[^"]*"'
@@ -1096,8 +1089,8 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         return processed_query.strip()
 
     def search_full_text(
-        self, query: str, fields: Optional[List[str]] = None, max_results: int = 50
-    ) -> List[Document]:
+        self, query: str, fields: list[str] | None = None, max_results: int = 50
+    ) -> list[Document]:
         """
         Advanced full-text search using SQLite FTS5.
 
@@ -1141,7 +1134,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 cursor = conn.execute(
                     """
                     SELECT path_id, rank
-                    FROM documents 
+                    FROM documents
                     WHERE documents MATCH ?
                     ORDER BY rank
                     LIMIT ?
@@ -1161,7 +1154,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 logger.error(f"FTS query failed: {e}")
                 return []
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get comprehensive statistics about the document store."""
         cache_info = self.get_cache_info()
 
@@ -1177,15 +1170,15 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             "data_directory": str(self._data_dir),
         }
 
-    def get_physics_domains(self) -> List[str]:
+    def get_physics_domains(self) -> list[str]:
         """Get all available physics domains."""
         return list(self._index.by_physics_domain.keys())
 
-    def get_available_units(self) -> List[str]:
+    def get_available_units(self) -> list[str]:
         """Get all available units."""
         return list(self._index.by_units.keys())
 
-    def get_coordinate_systems(self) -> List[str]:
+    def get_coordinate_systems(self) -> list[str]:
         """Get all available coordinate systems."""
         return list(self._index.by_coordinates.keys())
 
@@ -1200,7 +1193,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 conn.row_factory = sqlite3.Row  # Enable dict-like access
                 # Check if required tables exist
                 cursor = conn.execute("""
-                    SELECT name FROM sqlite_master 
+                    SELECT name FROM sqlite_master
                     WHERE type='table' AND name IN ('documents', 'index_metadata')
                 """)
                 tables = {row[0] for row in cursor.fetchall()}
@@ -1316,7 +1309,7 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         # Force rebuild
         self._build_sqlite_fts_index()
 
-    def get_cache_info(self) -> Dict[str, Any]:
+    def get_cache_info(self) -> dict[str, Any]:
         """Get comprehensive information about the SQLite cache."""
         if not self._sqlite_path.exists():
             return {
@@ -1356,8 +1349,6 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 fts_doc_count = cursor.fetchone()[0]
 
                 # Format timestamp
-                import time
-
                 created_time = time.strftime(
                     "%Y-%m-%d %H:%M:%S", time.localtime(created_at)
                 )

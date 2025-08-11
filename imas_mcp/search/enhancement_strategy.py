@@ -8,7 +8,7 @@ Works with the existing MCP sampling decorator to make sampling selective rather
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class EnhancementConfig:
     max_result_count_for_enhancement: int = 50
     min_result_count_for_enhancement: int = 1
     enhancement_probability: float = 0.8
-    tool_specific_settings: Optional[Dict[ToolType, Dict[str, Any]]] = None
+    tool_specific_settings: dict[ToolType, dict[str, Any]] | None = None
 
     def __post_init__(self):
         """Initialize default tool-specific settings."""
@@ -83,7 +83,7 @@ class EnhancementConfig:
 class EnhancementDecisionEngine:
     """Decides when to apply AI enhancement to tool results."""
 
-    def __init__(self, config: Optional[EnhancementConfig] = None):
+    def __init__(self, config: EnhancementConfig | None = None):
         """Initialize enhancement decision engine."""
         self.config = config or EnhancementConfig()
         self.logger = logging.getLogger(__name__)
@@ -91,9 +91,9 @@ class EnhancementDecisionEngine:
     def should_enhance(
         self,
         tool_name: str,
-        query: Union[str, List[str]],
+        query: str | list[str],
         result: Any,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> bool:
         """
         Determine if a tool result should be enhanced with AI sampling.
@@ -167,10 +167,10 @@ class EnhancementDecisionEngine:
     def _conditional_enhancement_decision(
         self,
         tool_type: ToolType,
-        query: Union[str, List[str]],
+        query: str | list[str],
         result: Any,
-        tool_settings: Dict[str, Any],
-        context: Optional[Dict[str, Any]],
+        tool_settings: dict[str, Any],
+        context: dict[str, Any] | None,
     ) -> bool:
         """Make conditional enhancement decision based on simple rules."""
         # Tool-specific conditional logic
@@ -203,10 +203,10 @@ class EnhancementDecisionEngine:
     def _smart_enhancement_decision(
         self,
         tool_type: ToolType,
-        query: Union[str, List[str]],
+        query: str | list[str],
         result: Any,
-        tool_settings: Dict[str, Any],
-        context: Optional[Dict[str, Any]],
+        tool_settings: dict[str, Any],
+        context: dict[str, Any] | None,
     ) -> bool:
         """Make smart enhancement decision using multiple factors."""
         enhancement_score = 0.0
@@ -337,9 +337,9 @@ def configure_enhancement(config: EnhancementConfig) -> None:
 
 def should_enhance_result(
     tool_name: str,
-    query: Union[str, List[str]],
+    query: str | list[str],
     result: Any,
-    context: Optional[Dict[str, Any]] = None,
+    context: dict[str, Any] | None = None,
 ) -> bool:
     """
     Convenience function to check if a result should be enhanced.

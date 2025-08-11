@@ -8,7 +8,6 @@ Uses pint to automatically include long-form unit names in contexts.
 
 import importlib.resources as resources
 import logging
-from typing import Dict, List, Optional
 
 import yaml
 
@@ -17,7 +16,7 @@ from imas_mcp.units import unit_registry
 logger = logging.getLogger(__name__)
 
 
-def load_unit_contexts() -> Dict[str, str]:
+def load_unit_contexts() -> dict[str, str]:
     """
     Load unit context definitions from YAML file with pint long-form unit names.
 
@@ -46,7 +45,7 @@ def load_unit_contexts() -> Dict[str, str]:
         return {}
 
 
-def load_unit_categories() -> Dict[str, List[str]]:
+def load_unit_categories() -> dict[str, list[str]]:
     """
     Load unit category definitions from YAML file.
 
@@ -64,7 +63,7 @@ def load_unit_categories() -> Dict[str, List[str]]:
         return {}
 
 
-def load_physics_domain_hints() -> Dict[str, List[str]]:
+def load_physics_domain_hints() -> dict[str, list[str]]:
     """
     Load physics domain hints based on unit categories.
 
@@ -83,8 +82,8 @@ def load_physics_domain_hints() -> Dict[str, List[str]]:
 
 
 def get_unit_category(
-    unit: str, categories: Optional[Dict[str, List[str]]] = None
-) -> Optional[str]:
+    unit: str, categories: dict[str, list[str]] | None = None
+) -> str | None:
     """
     Determine which category a unit belongs to.
 
@@ -107,9 +106,9 @@ def get_unit_category(
 
 def get_unit_physics_domains(
     unit: str,
-    categories: Optional[Dict[str, List[str]]] = None,
-    domain_hints: Optional[Dict[str, List[str]]] = None,
-) -> List[str]:
+    categories: dict[str, list[str]] | None = None,
+    domain_hints: dict[str, list[str]] | None = None,
+) -> list[str]:
     """
     Get physics domains associated with a unit based on its category.
 

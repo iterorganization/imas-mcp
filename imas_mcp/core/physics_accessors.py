@@ -7,18 +7,19 @@ physics domain definitions. Keeps data access methods close to the data files.
 
 import logging
 from functools import lru_cache
+from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
 
 from .data_model import PhysicsDomain
 from .physics_domains import (
-    PhysicsContext,
     DomainCharacteristics,
     DomainRelationshipsData,
     IDSMappingData,
+    PhysicsContext,
     PhysicsDomainsData,
     UnitContext,
     UnitContextsData,
@@ -30,14 +31,15 @@ logger = logging.getLogger(__name__)
 class DomainAccessor:
     """Accessor for physics domains with caching and validation."""
 
-    def __init__(self, definitions_path: Optional[Path] = None):
+    def __init__(self, definitions_path: Path | None = None):
         """Initialize with optional custom path."""
         if definitions_path is None:
             # Point to definitions structure
-            definitions_path = Path(__file__).parent.parent / "definitions"
+            definitions_resource = resources.files("imas_mcp") / "definitions"
+            definitions_path = Path(str(definitions_resource))
 
         self.definitions_path = definitions_path
-        self._context: Optional[PhysicsContext] = None
+        self._context: PhysicsContext | None = None
 
     @property
     def context(self) -> PhysicsContext:
@@ -103,7 +105,7 @@ class DomainAccessor:
     def _load_yaml_model(self, file_path: Path, model_class):
         """Load and validate YAML file using Pydantic model."""
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
             return model_class.model_validate(data)
@@ -119,7 +121,7 @@ class DomainAccessor:
             raise
 
     # High-level accessor methods
-    def get_all_domains(self) -> Set[PhysicsDomain]:
+    def get_all_domains(self) -> set[PhysicsDomain]:
         """Get all available physics domains."""
         domain_names = self.context.get_domain_names()
         domains = set()
@@ -130,15 +132,15 @@ class DomainAccessor:
                 domains.add(PhysicsDomain.GENERAL)
         return domains
 
-    def get_domain_info(self, domain: PhysicsDomain) -> Optional[DomainCharacteristics]:
+    def get_domain_info(self, domain: PhysicsDomain) -> DomainCharacteristics | None:
         """Get detailed information about a domain."""
         return self.context.get_domain_characteristics(domain.value)
 
-    def get_domain_ids(self, domain: PhysicsDomain) -> List[str]:
+    def get_domain_ids(self, domain: PhysicsDomain) -> list[str]:
         """Get all IDS for a domain."""
         return self.context.get_ids_for_domain(domain.value)
 
-    def get_ids_domain(self, ids_name: str) -> Optional[PhysicsDomain]:
+    def get_ids_domain(self, ids_name: str) -> PhysicsDomain | None:
         """Get domain for an IDS."""
         domain_str = self.context.get_domain_for_ids(ids_name)
         if domain_str:
@@ -148,7 +150,7 @@ class DomainAccessor:
                 return PhysicsDomain.GENERAL
         return None
 
-    def get_related_domains(self, domain: PhysicsDomain) -> List[PhysicsDomain]:
+    def get_related_domains(self, domain: PhysicsDomain) -> list[PhysicsDomain]:
         """Get domains related to the specified domain."""
         related_strs = self.context.get_related_domains(domain.value)
         related_domains = []
@@ -159,7 +161,7 @@ class DomainAccessor:
                 related_domains.append(PhysicsDomain.GENERAL)
         return related_domains
 
-    def search_domains_by_phenomenon(self, phenomenon: str) -> List[PhysicsDomain]:
+    def search_domains_by_phenomenon(self, phenomenon: str) -> list[PhysicsDomain]:
         """Find domains containing a specific phenomenon."""
         domain_strs = self.context.get_domains_by_phenomenon(phenomenon)
         domains = []
@@ -170,7 +172,7 @@ class DomainAccessor:
                 domains.append(PhysicsDomain.GENERAL)
         return domains
 
-    def search_domains_by_unit(self, unit: str) -> List[PhysicsDomain]:
+    def search_domains_by_unit(self, unit: str) -> list[PhysicsDomain]:
         """Find domains that use a specific unit."""
         domain_strs = self.context.get_domains_by_unit(unit)
         domains = []
@@ -181,7 +183,7 @@ class DomainAccessor:
                 domains.append(PhysicsDomain.GENERAL)
         return domains
 
-    def get_domain_summary(self) -> Dict[PhysicsDomain, Dict]:
+    def get_domain_summary(self) -> dict[PhysicsDomain, dict]:
         """Get summary of all domains with key statistics."""
         summary = {}
 
@@ -205,11 +207,11 @@ class DomainAccessor:
 
         return summary
 
-    def get_cross_domain_analysis(self, domain: PhysicsDomain) -> Dict[str, Any]:
+    def get_cross_domain_analysis(self, domain: PhysicsDomain) -> dict[str, Any]:
         """Get comprehensive cross-domain analysis."""
         return self.context.get_cross_domain_analysis(domain.value)
 
-    def validate_definitions(self) -> Dict[str, Any]:
+    def validate_definitions(self) -> dict[str, Any]:
         """Validate the consistency of all definitions."""
         validation_results = {
             "valid": True,
@@ -264,21 +266,21 @@ class DomainAccessor:
 
         return validation_results
 
-    def get_enhanced_unit_contexts(self) -> List[UnitContext]:
+    def get_enhanced_unit_contexts(self) -> list[UnitContext]:
         """Get enhanced unit contexts with physics domain information."""
         return self.context.unit_contexts.get_enhanced_unit_contexts()
 
-    def find_units_for_domain(self, domain: PhysicsDomain) -> List[str]:
+    def find_units_for_domain(self, domain: PhysicsDomain) -> list[str]:
         """Find typical units for a specific domain."""
         characteristics = self.get_domain_info(domain)
         return characteristics.typical_units if characteristics else []
 
-    def find_measurement_methods_for_domain(self, domain: PhysicsDomain) -> List[str]:
+    def find_measurement_methods_for_domain(self, domain: PhysicsDomain) -> list[str]:
         """Find measurement methods for a specific domain."""
         characteristics = self.get_domain_info(domain)
         return characteristics.measurement_methods if characteristics else []
 
-    def get_domain_complexity_distribution(self) -> Dict[str, List[PhysicsDomain]]:
+    def get_domain_complexity_distribution(self) -> dict[str, list[PhysicsDomain]]:
         """Get domains grouped by complexity level."""
         distribution = {"basic": [], "intermediate": [], "advanced": []}
 
@@ -298,28 +300,28 @@ class UnitAccessor:
         """Initialize unit accessor."""
         self._domain_accessor = get_domain_accessor()
 
-    def get_all_unit_contexts(self) -> Dict[str, str]:
+    def get_all_unit_contexts(self) -> dict[str, str]:
         """Get all unit contexts."""
         return self._domain_accessor.context.unit_contexts.unit_contexts
 
-    def get_unit_context(self, unit: str) -> Optional[str]:
+    def get_unit_context(self, unit: str) -> str | None:
         """Get context for a specific unit."""
         return self._domain_accessor.context.unit_contexts.unit_contexts.get(unit)
 
-    def get_unit_categories(self) -> Dict[str, List[str]]:
+    def get_unit_categories(self) -> dict[str, list[str]]:
         """Get unit categories."""
         return self._domain_accessor.context.unit_contexts.unit_categories
 
-    def get_physics_domain_hints(self) -> Dict[str, List[str]]:
+    def get_physics_domain_hints(self) -> dict[str, list[str]]:
         """Get physics domain hints for unit categories."""
         return self._domain_accessor.context.unit_contexts.physics_domain_hints
 
-    def get_units_for_category(self, category: str) -> List[str]:
+    def get_units_for_category(self, category: str) -> list[str]:
         """Get units for a specific category."""
         categories = self.get_unit_categories()
         return categories.get(category, [])
 
-    def get_category_for_unit(self, unit: str) -> Optional[str]:
+    def get_category_for_unit(self, unit: str) -> str | None:
         """Get category for a specific unit."""
         categories = self.get_unit_categories()
         for category, units in categories.items():
@@ -327,7 +329,7 @@ class UnitAccessor:
                 return category
         return None
 
-    def get_domains_for_unit(self, unit: str) -> List[PhysicsDomain]:
+    def get_domains_for_unit(self, unit: str) -> list[PhysicsDomain]:
         """Get physics domains that typically use this unit."""
         category = self.get_category_for_unit(unit)
         if category:
@@ -342,7 +344,7 @@ class UnitAccessor:
             return domains
         return []
 
-    def search_units_by_context(self, search_term: str) -> List[str]:
+    def search_units_by_context(self, search_term: str) -> list[str]:
         """Search units by context description."""
         matching_units = []
         search_lower = search_term.lower()
@@ -356,8 +358,8 @@ class UnitAccessor:
 
 
 # Global accessor instances
-_global_accessor: Optional[DomainAccessor] = None
-_global_unit_accessor: Optional[UnitAccessor] = None
+_global_accessor: DomainAccessor | None = None
+_global_unit_accessor: UnitAccessor | None = None
 
 
 @lru_cache(maxsize=1)
@@ -379,38 +381,38 @@ def get_unit_accessor() -> UnitAccessor:
 
 
 # Convenience functions for easy access
-def get_all_physics_domains() -> Set[PhysicsDomain]:
+def get_all_physics_domains() -> set[PhysicsDomain]:
     """Get all available physics domains."""
     return get_domain_accessor().get_all_domains()
 
 
 def get_domain_characteristics(
     domain: PhysicsDomain,
-) -> Optional[DomainCharacteristics]:
+) -> DomainCharacteristics | None:
     """Get characteristics for a specific domain."""
     return get_domain_accessor().get_domain_info(domain)
 
 
-def get_ids_for_domain(domain: PhysicsDomain) -> List[str]:
+def get_ids_for_domain(domain: PhysicsDomain) -> list[str]:
     """Get IDS names for a domain."""
     return get_domain_accessor().get_domain_ids(domain)
 
 
-def get_domain_for_ids(ids_name: str) -> Optional[PhysicsDomain]:
+def get_domain_for_ids(ids_name: str) -> PhysicsDomain | None:
     """Get domain for an IDS name."""
     return get_domain_accessor().get_ids_domain(ids_name)
 
 
-def search_domains_by_concept(concept: str) -> List[PhysicsDomain]:
+def search_domains_by_concept(concept: str) -> list[PhysicsDomain]:
     """Search domains by phenomenon or concept."""
     return get_domain_accessor().search_domains_by_phenomenon(concept)
 
 
-def get_domain_summary() -> Dict[PhysicsDomain, Dict]:
+def get_domain_summary() -> dict[PhysicsDomain, dict]:
     """Get summary of all domains."""
     return get_domain_accessor().get_domain_summary()
 
 
-def validate_physics_definitions() -> Dict[str, Any]:
+def validate_physics_definitions() -> dict[str, Any]:
     """Validate all physics definitions for consistency."""
     return get_domain_accessor().validate_definitions()

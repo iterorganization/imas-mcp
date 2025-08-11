@@ -6,7 +6,8 @@ Provides standardized error handling, logging, and fallback responses.
 
 import functools
 import logging
-from typing import Any, Callable, Dict, Optional, TypeVar, Union
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from imas_mcp.models.error_models import ToolError
 
@@ -44,11 +45,11 @@ class ServiceError(ToolException):
 
 
 def create_error_response(
-    error: Union[str, Exception],
+    error: str | Exception,
     query: str = "",
     tool_name: str = "",
     include_suggestions: bool = True,
-    fallback_data: Optional[Dict[str, Any]] = None,
+    fallback_data: dict[str, Any] | None = None,
 ) -> ToolError:
     """
     Create standardized error response.
@@ -170,7 +171,7 @@ def generate_error_recovery_suggestions(
 
 def get_fallback_response(
     fallback_type: str, query: str = "", tool_name: str = ""
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate fallback response for specific error types.
 
@@ -232,7 +233,7 @@ def get_fallback_response(
 
 
 def handle_errors(
-    fallback: Optional[str] = None,
+    fallback: str | None = None,
     log_errors: bool = True,
     include_traceback: bool = False,
 ) -> Callable[[F], F]:
@@ -340,7 +341,7 @@ def create_timeout_handler(timeout_seconds: float) -> Callable[[F], F]:
                 return await asyncio.wait_for(
                     func(*args, **kwargs), timeout=timeout_seconds
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError as e:
                 query = kwargs.get("query", "")
                 tool_name = func.__name__ if hasattr(func, "__name__") else "unknown"
 
@@ -348,7 +349,7 @@ def create_timeout_handler(timeout_seconds: float) -> Callable[[F], F]:
                     f"Operation timed out after {timeout_seconds} seconds",
                     query=query,
                     tool_name=tool_name,
-                )
+                ) from e
 
         return wrapper  # type: ignore
 

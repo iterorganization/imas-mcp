@@ -1,12 +1,14 @@
 """Tests for ResponseService."""
 
-import pytest
+from datetime import UTC
 from unittest.mock import Mock
 
-from imas_mcp.services.response import ResponseService
-from imas_mcp.search.search_strategy import SearchHit
+import pytest
+
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import SearchResult
+from imas_mcp.search.search_strategy import SearchHit
+from imas_mcp.services.response import ResponseService
 
 
 class TestResponseService:
@@ -130,12 +132,12 @@ class TestResponseService:
         mock_response.metadata = {}
 
         # Record time before call
-        before_time = datetime.now(timezone.utc)
+        before_time = datetime.now(UTC)
 
         service.add_standard_metadata(mock_response, "test_tool")
 
         # Record time after call
-        after_time = datetime.now(timezone.utc)
+        after_time = datetime.now(UTC)
 
         # Parse the timestamp from metadata
         timestamp_str = mock_response.metadata["processing_timestamp"]

@@ -1,10 +1,12 @@
 """Tests for SearchTool with service composition."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from imas_mcp.tools.search_tool import SearchTool
-from imas_mcp.models.result_models import SearchResult
+
+import pytest
+
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.result_models import SearchResult
+from imas_mcp.tools.search_tool import SearchTool
 
 
 class TestSearchToolServices:
@@ -151,9 +153,9 @@ class TestSearchToolServices:
 
         # Verify service types
         from imas_mcp.services import (
+            DocumentService,
             PhysicsService,
             ResponseService,
-            DocumentService,
             SearchConfigurationService,
         )
 

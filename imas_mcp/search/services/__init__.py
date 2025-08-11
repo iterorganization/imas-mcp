@@ -6,9 +6,9 @@ providing clean interfaces for search execution and result processing.
 """
 
 from .search_service import (
+    SearchRequest,
     SearchService,
     SearchServiceError,
-    SearchRequest,
 )
 
 __all__ = ["SearchService", "SearchServiceError", "SearchRequest"]

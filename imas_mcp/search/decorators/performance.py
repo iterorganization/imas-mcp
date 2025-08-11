@@ -4,11 +4,12 @@ Performance measurement decorator for tracking execution metrics.
 Provides timing, memory usage, and performance analytics for tool functions.
 """
 
-import functools
-import time
 import asyncio
-from typing import Any, Callable, Dict, Optional, TypeVar
+import functools
 import logging
+import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -19,15 +20,15 @@ class PerformanceMetrics:
     """Container for performance metrics."""
 
     def __init__(self):
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-        self.execution_time: Optional[float] = None
+        self.start_time: float | None = None
+        self.end_time: float | None = None
+        self.execution_time: float | None = None
         self.function_name: str = ""
         self.args_count: int = 0
         self.kwargs_count: int = 0
-        self.result_size: Optional[int] = None
+        self.result_size: int | None = None
         self.success: bool = True
-        self.error_type: Optional[str] = None
+        self.error_type: str | None = None
 
     def start(self, func_name: str, args_count: int, kwargs_count: int) -> None:
         """Start performance measurement."""
@@ -36,7 +37,7 @@ class PerformanceMetrics:
         self.args_count = args_count
         self.kwargs_count = kwargs_count
 
-    def end(self, result: Any = None, error: Optional[Exception] = None) -> None:
+    def end(self, result: Any = None, error: Exception | None = None) -> None:
         """End performance measurement."""
         self.end_time = time.perf_counter()
         if self.start_time is not None:
@@ -49,10 +50,10 @@ class PerformanceMetrics:
             self.success = True
             if isinstance(result, dict):
                 self.result_size = len(str(result))
-            elif isinstance(result, (list, tuple)):
+            elif isinstance(result, list | tuple):
                 self.result_size = len(result)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert metrics to dictionary."""
         return {
             "function_name": self.function_name,
@@ -68,7 +69,7 @@ class PerformanceMetrics:
         }
 
 
-def calculate_performance_score(metrics: PerformanceMetrics) -> Dict[str, Any]:
+def calculate_performance_score(metrics: PerformanceMetrics) -> dict[str, Any]:
     """
     Calculate performance score and classification.
 
@@ -191,7 +192,7 @@ def measure_performance(
     return decorator
 
 
-def get_performance_summary(results: list) -> Dict[str, Any]:
+def get_performance_summary(results: list) -> dict[str, Any]:
     """
     Generate performance summary from multiple results.
 

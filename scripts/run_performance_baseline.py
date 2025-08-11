@@ -1,21 +1,31 @@
 #!/usr/bin/env python
 """Script to establish performance baseline for current tools."""
 
-import click
 import os
 import sys
+from importlib import resources
 from pathlib import Path
 
-# Add the project root to the path so we can import from benchmarks
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import click
 
-from benchmarks.benchmark_runner import BenchmarkRunner  # noqa: E402
+# Add the project root to the path so we can import from benchmarks
+# Get project root using importlib.resources
+try:
+    imas_mcp_package = resources.files("imas_mcp")
+    project_root = Path(str(imas_mcp_package)).parent
+    sys.path.insert(0, str(project_root))
+except ImportError:
+    # Fallback for development
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
 )
+
+from benchmarks.benchmark_runner import BenchmarkRunner  # noqa: E402
 
 
 @click.command()

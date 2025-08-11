@@ -5,14 +5,13 @@ This module provides test fixtures for the composition-based server architecture
 focusing on MCP protocol testing and feature validation.
 """
 
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from fastmcp import Client
 
 from imas_mcp.server import Server
-
 
 # Standard test IDS set for consistency across all tests
 # This avoids re-embedding and ensures consistent performance
@@ -54,7 +53,7 @@ def resources(server):
 
 
 @pytest.fixture
-def sample_search_results() -> Dict[str, Any]:
+def sample_search_results() -> dict[str, Any]:
     """Sample search results for testing."""
     return {
         "results": [

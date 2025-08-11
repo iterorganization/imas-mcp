@@ -6,11 +6,10 @@ search engines and handles search requests in a clean, testable way.
 """
 
 import logging
-from typing import Dict, List, Optional, Union
 
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.engines.base_engine import SearchEngine
 from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
-from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class SearchService:
     It follows the service pattern for better separation of concerns.
     """
 
-    def __init__(self, engines: Optional[Dict[SearchMode, SearchEngine]] = None):
+    def __init__(self, engines: dict[SearchMode, SearchEngine] | None = None):
         """Initialize search service with available engines.
 
         Args:
@@ -33,7 +32,7 @@ class SearchService:
         self.engines = engines or self._create_default_engines()
         self.logger = logger
 
-    def _create_default_engines(self) -> Dict[SearchMode, SearchEngine]:
+    def _create_default_engines(self) -> dict[SearchMode, SearchEngine]:
         """Create default engines for testing and development.
 
         Returns:
@@ -50,8 +49,8 @@ class SearchService:
         }
 
     async def search(
-        self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, query: str | list[str], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Execute search request with given configuration.
 
         Args:
@@ -91,7 +90,7 @@ class SearchService:
             raise SearchServiceError(error_msg, query) from e
 
     def _resolve_search_mode(
-        self, query: Union[str, List[str]], config: SearchConfig
+        self, query: str | list[str], config: SearchConfig
     ) -> SearchMode:
         """Resolve AUTO search mode to specific mode based on query analysis.
 
@@ -141,8 +140,8 @@ class SearchService:
         return self.engines[mode]
 
     def _post_process_results(
-        self, results: List[SearchMatch], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, results: list[SearchMatch], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Post-process search results based on configuration.
 
         Args:
@@ -169,7 +168,7 @@ class SearchService:
 
         return processed
 
-    def get_available_modes(self) -> List[SearchMode]:
+    def get_available_modes(self) -> list[SearchMode]:
         """Get list of available search modes.
 
         Returns:
@@ -189,7 +188,7 @@ class SearchService:
             f"Registered {engine.get_engine_type()} engine for {mode.value} mode"
         )
 
-    def health_check(self) -> Dict[str, bool]:
+    def health_check(self) -> dict[str, bool]:
         """Check health status of all registered engines.
 
         Returns:
@@ -212,7 +211,7 @@ class SearchService:
 class SearchServiceError(Exception):
     """Exception raised when search service operations fail."""
 
-    def __init__(self, message: str, query: Union[str, List[str]] = ""):
+    def __init__(self, message: str, query: str | list[str] = ""):
         """Initialize search service error.
 
         Args:
@@ -228,10 +227,10 @@ class SearchRequest:
 
     def __init__(
         self,
-        query: Union[str, List[str]],
+        query: str | list[str],
         mode: SearchMode = SearchMode.AUTO,
         max_results: int = 10,
-        ids_filter: Optional[List[str]] = None,
+        ids_filter: list[str] | None = None,
         similarity_threshold: float = 0.0,
     ):
         """Initialize search request.

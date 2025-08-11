@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from imas_mcp.physics_extraction.models import ExtractionResult, PhysicsQuantity
 
@@ -36,7 +36,7 @@ class AIPhysicsExtractor:
         self.batch_size = batch_size
 
     def extract_from_paths(
-        self, ids_name: str, paths_data: Dict[str, Any], max_paths: Optional[int] = None
+        self, ids_name: str, paths_data: dict[str, Any], max_paths: int | None = None
     ) -> ExtractionResult:
         """
         Extract physics quantities from IMAS paths.
@@ -100,8 +100,8 @@ class AIPhysicsExtractor:
         return result
 
     def _extract_batch(
-        self, ids_name: str, batch_data: Dict[str, Any]
-    ) -> List[PhysicsQuantity]:
+        self, ids_name: str, batch_data: dict[str, Any]
+    ) -> list[PhysicsQuantity]:
         """
         Extract physics quantities from a batch of paths.
 
@@ -135,7 +135,7 @@ class AIPhysicsExtractor:
 
     def _analyze_path_with_ai(
         self, ids_name: str, path: str, data: Any
-    ) -> List[PhysicsQuantity]:
+    ) -> list[PhysicsQuantity]:
         """
         Analyze a single path with AI to extract physics quantities.
 
@@ -203,7 +203,7 @@ class AIPhysicsExtractor:
 
         return quantities
 
-    def _extract_quantity_name(self, path: str, data: Dict) -> str:
+    def _extract_quantity_name(self, path: str, data: dict) -> str:
         """Extract a human-readable name for the quantity."""
         # Try to get name from data
         if isinstance(data, dict):
@@ -220,7 +220,7 @@ class AIPhysicsExtractor:
         path_parts = path.split("/")
         return path_parts[-1].replace("_", " ").title()
 
-    def _infer_physics_context(self, path: str, data: Dict) -> Optional[str]:
+    def _infer_physics_context(self, path: str, data: dict) -> str | None:
         """Infer the physics context from path and data."""
         # Simple context inference
         context_map = {
@@ -242,7 +242,7 @@ class AIPhysicsExtractor:
 
         return "General Plasma Physics"
 
-    def _calculate_confidence(self, path: str, data: Dict, indicator: str) -> float:
+    def _calculate_confidence(self, path: str, data: dict, indicator: str) -> float:
         """Calculate extraction confidence score."""
         confidence = 0.3  # Base confidence
 
@@ -288,7 +288,7 @@ class BatchProcessor:
         self.extractor = extractor
         self.default_paths_per_ids = default_paths_per_ids
 
-    def get_available_ids(self) -> List[str]:
+    def get_available_ids(self) -> list[str]:
         """Get list of available IDS from JSON data directory."""
         ids_list = []
 
@@ -303,7 +303,7 @@ class BatchProcessor:
 
         return sorted(ids_list)
 
-    def load_ids_data(self, ids_name: str) -> Optional[Dict[str, Any]]:
+    def load_ids_data(self, ids_name: str) -> dict[str, Any] | None:
         """Load JSON data for a specific IDS."""
         json_file = self.json_data_dir / f"{ids_name}.json"
 
@@ -312,13 +312,13 @@ class BatchProcessor:
             return None
 
         try:
-            with open(json_file, "r", encoding="utf-8") as f:
+            with open(json_file, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Failed to load JSON for {ids_name}: {e}")
             return None
 
-    def extract_paths_from_ids_data(self, ids_data: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_paths_from_ids_data(self, ids_data: dict[str, Any]) -> dict[str, Any]:
         """
         Extract path data from IDS JSON structure.
 
@@ -349,7 +349,7 @@ class BatchProcessor:
         return paths
 
     def process_ids(
-        self, ids_name: str, max_paths: Optional[int] = None
+        self, ids_name: str, max_paths: int | None = None
     ) -> ExtractionResult:
         """
         Process a single IDS for physics extraction.
@@ -401,8 +401,8 @@ class BatchProcessor:
         return result
 
     def process_multiple_ids(
-        self, ids_list: List[str], paths_per_ids: Optional[int] = None
-    ) -> List[ExtractionResult]:
+        self, ids_list: list[str], paths_per_ids: int | None = None
+    ) -> list[ExtractionResult]:
         """
         Process multiple IDS in sequence.
 
@@ -431,10 +431,10 @@ class BatchProcessor:
 
     async def process_multiple_ids_async(
         self,
-        ids_list: List[str],
-        paths_per_ids: Optional[int] = None,
+        ids_list: list[str],
+        paths_per_ids: int | None = None,
         max_concurrent: int = 3,
-    ) -> List[ExtractionResult]:
+    ) -> list[ExtractionResult]:
         """
         Process multiple IDS concurrently with limited parallelism.
 
@@ -498,7 +498,7 @@ class CatalogBatchProcessor(BatchProcessor):
     def _load_catalog(self):
         """Load IDS catalog for enhanced tracking."""
         try:
-            with open(self.catalog_file, "r", encoding="utf-8") as f:
+            with open(self.catalog_file, encoding="utf-8") as f:
                 catalog_data = json.load(f)
 
             self.catalog_metadata = catalog_data.get("metadata", {})
@@ -513,7 +513,7 @@ class CatalogBatchProcessor(BatchProcessor):
             self.catalog_metadata = {}
             self.ids_catalog = {}
 
-    def get_catalog_stats(self) -> Dict[str, Any]:
+    def get_catalog_stats(self) -> dict[str, Any]:
         """Get catalog statistics."""
         return {
             "total_ids": self.catalog_metadata.get("total_ids", 0),
@@ -522,7 +522,7 @@ class CatalogBatchProcessor(BatchProcessor):
             "catalog_version": self.catalog_metadata.get("version", "unknown"),
         }
 
-    def get_ids_with_metadata(self) -> Dict[str, Dict[str, Any]]:
+    def get_ids_with_metadata(self) -> dict[str, dict[str, Any]]:
         """Get available IDS with their catalog metadata."""
         available_ids = self.get_available_ids()
 
@@ -539,7 +539,7 @@ class CatalogBatchProcessor(BatchProcessor):
 
         return ids_with_metadata
 
-    def get_physics_domain_summary(self) -> Dict[str, Dict[str, Any]]:
+    def get_physics_domain_summary(self) -> dict[str, dict[str, Any]]:
         """Get summary by physics domain."""
         available_ids = self.get_available_ids()
         domains = {}
@@ -562,7 +562,7 @@ class CatalogBatchProcessor(BatchProcessor):
         return domains
 
     def process_ids_with_catalog_info(
-        self, ids_name: str, max_paths: Optional[int] = None
+        self, ids_name: str, max_paths: int | None = None
     ) -> ExtractionResult:
         """
         Process IDS with enhanced catalog-based information.
@@ -608,8 +608,8 @@ class CatalogBatchProcessor(BatchProcessor):
         return result
 
     def estimate_processing_time(
-        self, ids_list: List[str], paths_per_ids: int = 10
-    ) -> Dict[str, Any]:
+        self, ids_list: list[str], paths_per_ids: int = 10
+    ) -> dict[str, Any]:
         """
         Estimate processing time based on catalog metadata.
 

@@ -7,6 +7,7 @@ architecture where the server acts as an integrator.
 """
 
 from abc import ABC, abstractmethod
+
 from fastmcp import FastMCP
 
 

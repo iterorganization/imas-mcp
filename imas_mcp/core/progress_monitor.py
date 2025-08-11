@@ -1,7 +1,7 @@
 """Progress monitoring utilities with rich fallback to logging."""
 
 import logging
-from typing import Any, List, Optional
+from typing import Any
 
 try:
     from rich.console import Console
@@ -29,9 +29,9 @@ class ProgressMonitor:
 
     def __init__(
         self,
-        use_rich: Optional[bool] = None,
-        logger: Optional[logging.Logger] = None,
-        item_names: Optional[List[str]] = None,
+        use_rich: bool | None = None,
+        logger: logging.Logger | None = None,
+        item_names: list[str] | None = None,
     ):
         """Initialize progress monitor.
 
@@ -70,7 +70,7 @@ class ProgressMonitor:
             return False
 
     def start_processing(
-        self, items: List[str], description: str = "Processing"
+        self, items: list[str], description: str = "Processing"
     ) -> None:
         """Start processing a list of items.
 
@@ -119,7 +119,7 @@ class ProgressMonitor:
             # For logging mode, we'll log this when we complete the item
             pass
 
-    def update_progress(self, item_name: str, error: Optional[str] = None) -> None:
+    def update_progress(self, item_name: str, error: str | None = None) -> None:
         """Update progress for a completed item.
 
         Args:
@@ -175,9 +175,9 @@ class ProgressMonitor:
 
 
 def create_progress_monitor(
-    use_rich: Optional[bool] = None,
-    logger: Optional[logging.Logger] = None,
-    item_names: Optional[List[str]] = None,
+    use_rich: bool | None = None,
+    logger: logging.Logger | None = None,
+    item_names: list[str] | None = None,
 ) -> ProgressMonitor:
     """Create a progress monitor with appropriate settings.
 

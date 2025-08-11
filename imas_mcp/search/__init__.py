@@ -5,8 +5,8 @@ This module provides semantic search capabilities using sentence transformers
 and document storage for efficient IMAS data dictionary querying.
 """
 
-from .decorators.sampling import sample
 from .cache import SearchCache
+from .decorators.sample import sample
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_strategy import (
     SearchConfig,

@@ -1,20 +1,21 @@
 """Document store service for IMAS tools."""
 
-from typing import List, Optional, Any
+from typing import Any
 
-from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.error_models import ToolError
+from imas_mcp.search.document_store import DocumentStore
+
 from .base import BaseService
 
 
 class DocumentService(BaseService):
     """Service for document store operations."""
 
-    def __init__(self, document_store: Optional[DocumentStore] = None):
+    def __init__(self, document_store: DocumentStore | None = None):
         super().__init__()
         self.store = document_store or DocumentStore()
 
-    async def validate_ids(self, ids_names: List[str]) -> tuple[List[str], List[str]]:
+    async def validate_ids(self, ids_names: list[str]) -> tuple[list[str], list[str]]:
         """
         Check IDS names against available IDS.
 
@@ -26,7 +27,7 @@ class DocumentService(BaseService):
         invalid_ids = [ids for ids in ids_names if ids not in available_ids]
         return valid_ids, invalid_ids
 
-    async def get_documents_safe(self, ids_name: str) -> List[Any]:
+    async def get_documents_safe(self, ids_name: str) -> list[Any]:
         """Get documents for IDS with error handling."""
         try:
             return self.store.get_documents_by_ids(ids_name)

@@ -8,7 +8,7 @@ with TTL and size limits.
 import hashlib
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from cachetools import TTLCache
 
@@ -31,8 +31,8 @@ class SearchCache:
 
     def _generate_key(
         self,
-        query: Union[str, List[str]],
-        ids_name: Optional[str] = None,
+        query: str | list[str],
+        ids_name: str | None = None,
         max_results: int = 10,
         search_mode: str = "auto",
     ) -> str:
@@ -57,11 +57,11 @@ class SearchCache:
 
     def get(
         self,
-        query: Union[str, List[str]],
-        ids_name: Optional[str] = None,
+        query: str | list[str],
+        ids_name: str | None = None,
         max_results: int = 10,
         search_mode: str = "auto",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get cached search result."""
         key = self._generate_key(query, ids_name, max_results, search_mode)
 
@@ -86,9 +86,9 @@ class SearchCache:
 
     def set(
         self,
-        query: Union[str, List[str]],
-        result: Dict[str, Any],
-        ids_name: Optional[str] = None,
+        query: str | list[str],
+        result: dict[str, Any],
+        ids_name: str | None = None,
         max_results: int = 10,
         search_mode: str = "auto",
     ) -> None:
@@ -115,7 +115,7 @@ class SearchCache:
         self.cache.clear()
         logger.info("Search cache cleared")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
         total_requests = self.stats["hits"] + self.stats["misses"]
         hit_rate = self.stats["hits"] / total_requests if total_requests > 0 else 0.0

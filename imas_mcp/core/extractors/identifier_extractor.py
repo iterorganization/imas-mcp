@@ -2,7 +2,7 @@
 
 import logging
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from imas_mcp.core.data_model import IdentifierOption, IdentifierSchema
 from imas_mcp.core.extractors.base import BaseExtractor
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class IdentifierExtractor(BaseExtractor):
     """Extract identifier schema information from doc_identifier references."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract identifier schema information if element has doc_identifier."""
         result = {}
 
@@ -25,9 +25,7 @@ class IdentifierExtractor(BaseExtractor):
 
         return result
 
-    def _parse_identifier_schema(
-        self, doc_identifier: str
-    ) -> Optional[IdentifierSchema]:
+    def _parse_identifier_schema(self, doc_identifier: str) -> IdentifierSchema | None:
         """Parse an identifier schema from doc_identifier path.
 
         Args:
@@ -88,7 +86,7 @@ class IdentifierExtractor(BaseExtractor):
             metadata=metadata,
         )
 
-    def _extract_identifier_options(self, root: ET.Element) -> List[IdentifierOption]:
+    def _extract_identifier_options(self, root: ET.Element) -> list[IdentifierOption]:
         """Extract identifier options from the schema root.
 
         This method looks for the IMAS identifier pattern with <int> elements
@@ -114,7 +112,7 @@ class IdentifierExtractor(BaseExtractor):
 
         return sorted(options, key=lambda x: x.index)
 
-    def _extract_imas_int_option(self, elem: ET.Element) -> Optional[IdentifierOption]:
+    def _extract_imas_int_option(self, elem: ET.Element) -> IdentifierOption | None:
         """Extract identifier option from IMAS <int> element.
 
         Args:
@@ -164,7 +162,7 @@ class IdentifierExtractor(BaseExtractor):
         required_fields = {"name", "index", "description"}
         return required_fields.issubset(child_names)
 
-    def _extract_single_option(self, elem: ET.Element) -> Optional[IdentifierOption]:
+    def _extract_single_option(self, elem: ET.Element) -> IdentifierOption | None:
         """Extract a single identifier option from an element.
 
         Args:
@@ -202,7 +200,7 @@ class IdentifierExtractor(BaseExtractor):
 
         return None
 
-    def _extract_alternative_patterns(self, root: ET.Element) -> List[IdentifierOption]:
+    def _extract_alternative_patterns(self, root: ET.Element) -> list[IdentifierOption]:
         """Extract identifier options using alternative patterns.
 
         This method handles cases where the schema doesn't follow the standard
@@ -247,7 +245,7 @@ class IdentifierExtractor(BaseExtractor):
 
         return options
 
-    def _parse_documentation_enums(self, documentation: str) -> List[IdentifierOption]:
+    def _parse_documentation_enums(self, documentation: str) -> list[IdentifierOption]:
         """Parse enumeration values from documentation text.
 
         This method looks for common patterns in documentation that indicate

@@ -8,7 +8,6 @@ and extensibility.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -95,10 +94,10 @@ class SearchHit(SearchBase):
     # Flattened API fields from document metadata
     path: str = Field(description="Full IMAS path")
     documentation: str = Field(description="Path documentation")
-    units: Optional[str] = Field(default=None, description="Physical units")
-    data_type: Optional[str] = Field(default=None, description="Data type")
+    units: str | None = Field(default=None, description="Physical units")
+    data_type: str | None = Field(default=None, description="Data type")
     ids_name: str = Field(description="IDS name this path belongs to")
-    physics_domain: Optional[str] = Field(default=None, description="Physics domain")
+    physics_domain: str | None = Field(default=None, description="Physics domain")
 
 
 class SearchMatch(SearchBase):
@@ -142,9 +141,9 @@ class SearchStrategy(ABC):
     @abstractmethod
     def search(
         self,
-        query: Union[str, List[str]],
+        query: str | list[str],
         config: SearchConfig,
-    ) -> List[SearchMatch]:
+    ) -> list[SearchMatch]:
         """Execute search with given query and configuration."""
         pass
 
@@ -159,9 +158,9 @@ class LexicalSearchStrategy(SearchStrategy):
 
     def search(
         self,
-        query: Union[str, List[str]],
+        query: str | list[str],
         config: SearchConfig,
-    ) -> List[SearchMatch]:
+    ) -> list[SearchMatch]:
         """Execute lexical search using full-text search."""
         # Convert query to string format
         query_str = query if isinstance(query, str) else " ".join(query)
@@ -223,9 +222,9 @@ class SemanticSearchStrategy(SearchStrategy):
 
     def search(
         self,
-        query: Union[str, List[str]],
+        query: str | list[str],
         config: SearchConfig,
-    ) -> List[SearchMatch]:
+    ) -> list[SearchMatch]:
         """Execute semantic search using sentence transformers."""
         # Convert query to string format
         query_str = query if isinstance(query, str) else " ".join(query)
@@ -272,9 +271,9 @@ class HybridSearchStrategy(SearchStrategy):
 
     def search(
         self,
-        query: Union[str, List[str]],
+        query: str | list[str],
         config: SearchConfig,
-    ) -> List[SearchMatch]:
+    ) -> list[SearchMatch]:
         """Execute hybrid search combining semantic and lexical results."""
         # Get results from both strategies
         semantic_results = self.semantic_strategy.search(query, config)
@@ -323,7 +322,7 @@ class HybridSearchStrategy(SearchStrategy):
 class SearchModeSelector:
     """Intelligent search mode selection based on query characteristics."""
 
-    def select_mode(self, query: Union[str, List[str]]) -> SearchMode:
+    def select_mode(self, query: str | list[str]) -> SearchMode:
         """Select optimal search mode based on query characteristics."""
         query_str = query if isinstance(query, str) else " ".join(query)
 

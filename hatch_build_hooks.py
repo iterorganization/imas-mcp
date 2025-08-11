@@ -5,7 +5,7 @@ Custom build hooks for hatchling to initialize JSON data during wheel creation.
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # hatchling is a build system for Python projects, and this hook will be used to
 # create JSON data structures for the IMAS MCP server during the wheel build process.
@@ -17,7 +17,7 @@ from hatchling.builders.hooks.plugin.interface import (
 class CustomBuildHook(BuildHookInterface):
     """Custom build hook to create JSON data structures during wheel building."""
 
-    def initialize(self, version: str, build_data: Dict[str, Any]) -> None:
+    def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """
         Initialize the build hook and create JSON data structures.
 

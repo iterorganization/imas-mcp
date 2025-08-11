@@ -9,8 +9,8 @@ on IMAS data dictionary JSON files.
 import argparse
 import logging
 import sys
+from importlib import resources
 from pathlib import Path
-from typing import List, Optional
 
 from .coordination import ExtractionCoordinator
 
@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 def setup_extraction_environment(
-    json_data_dir: Optional[Path] = None,
-    storage_dir: Optional[Path] = None,
-    catalog_file: Optional[Path] = None,
+    json_data_dir: Path | None = None,
+    storage_dir: Path | None = None,
+    catalog_file: Path | None = None,
 ) -> ExtractionCoordinator:
     """
     Set up the extraction environment with default directories.
@@ -42,17 +42,15 @@ def setup_extraction_environment(
         # Look for imas_mcp/resources/schemas/detailed relative to current working directory
         json_data_dir = Path("imas_mcp/resources/schemas/detailed")
         if not json_data_dir.exists():
-            # Try relative to this file
-            current_file = Path(__file__).parent
-            project_root = current_file.parent.parent  # Go up to project root
-            json_data_dir = (
-                project_root / "imas_mcp" / "resources" / "schemas" / "detailed"
-            )
+            # Try using importlib.resources
+            imas_mcp_package = resources.files("imas_mcp")
+            schemas_resource = imas_mcp_package / "resources" / "schemas" / "detailed"
+            json_data_dir = Path(str(schemas_resource))
 
     if storage_dir is None:
         # Use storage directory in project
-        current_file = Path(__file__).parent
-        project_root = current_file.parent.parent
+        imas_mcp_package = resources.files("imas_mcp")
+        project_root = Path(str(imas_mcp_package)).parent
         storage_dir = project_root / "storage" / "physics_extraction"
 
     # Ensure directories exist
@@ -71,11 +69,9 @@ def setup_extraction_environment(
             catalog_file = json_data_dir.parent / "ids_catalog.json"
 
         if not catalog_file or not catalog_file.exists():
-            current_file = Path(__file__).parent
-            project_root = current_file.parent.parent
-            catalog_file = (
-                project_root / "imas_mcp" / "resources" / "schemas" / "ids_catalog.json"
-            )
+            imas_mcp_package = resources.files("imas_mcp")
+            schemas_resource = imas_mcp_package / "resources" / "schemas"
+            catalog_file = Path(str(schemas_resource)) / "ids_catalog.json"
 
     catalog_file = Path(catalog_file)
     if not catalog_file.exists():
@@ -101,9 +97,9 @@ def setup_extraction_environment(
 
 def run_extraction_session(
     coordinator: ExtractionCoordinator,
-    ids_list: Optional[List[str]] = None,
+    ids_list: list[str] | None = None,
     paths_per_ids: int = 10,
-    max_ids: Optional[int] = None,
+    max_ids: int | None = None,
 ) -> str:
     """
     Run a complete extraction session.
@@ -310,13 +306,13 @@ def main():
 Examples:
   # Show current status
   python -m imas_mcp.physics_extraction status
-  
+
   # Extract from 5 IDS with 20 paths each
   python -m imas_mcp.physics_extraction extract --max-ids 5 --paths-per-ids 20
-  
+
   # Extract specific IDS
   python -m imas_mcp.physics_extraction extract --ids equilibrium core_profiles
-  
+
   # Export database
   python -m imas_mcp.physics_extraction export --output physics_quantities.json
         """,

@@ -1,9 +1,9 @@
-import subprocess
 import json
-import time
 import os
+import subprocess
+import time
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any
 
 
 class BenchmarkRunner:
@@ -15,8 +15,8 @@ class BenchmarkRunner:
         self.html_dir = Path(".asv/html")
 
     def run_benchmarks(
-        self, benchmark_names: List[str] | None = None
-    ) -> Dict[str, Any]:
+        self, benchmark_names: list[str] | None = None
+    ) -> dict[str, Any]:
         """Run ASV benchmarks and return results."""
         cmd = ["asv", "run", "--python=3.12"]
 
@@ -43,7 +43,7 @@ class BenchmarkRunner:
             "stderr": result.stderr,
         }
 
-    def generate_html_report(self) -> Dict[str, Any]:
+    def generate_html_report(self) -> dict[str, Any]:
         """Generate HTML benchmark report."""
         cmd = ["asv", "publish"]
 
@@ -59,7 +59,7 @@ class BenchmarkRunner:
             "html_dir": str(self.html_dir.absolute()),
         }
 
-    def compare_benchmarks(self, commit1: str, commit2: str) -> Dict[str, Any]:
+    def compare_benchmarks(self, commit1: str, commit2: str) -> dict[str, Any]:
         """Compare benchmarks between two commits."""
         cmd = ["asv", "compare", commit1, commit2]
 
@@ -74,7 +74,7 @@ class BenchmarkRunner:
             "stderr": result.stderr,
         }
 
-    def get_latest_results(self) -> Dict[str, Any]:
+    def get_latest_results(self) -> dict[str, Any]:
         """Get latest benchmark results with actual timing data."""
         if not self.results_dir.exists():
             return {"error": "No benchmark results found"}
@@ -102,7 +102,7 @@ class BenchmarkRunner:
         latest_file = max(benchmark_files, key=lambda f: f.stat().st_mtime)
 
         try:
-            with open(latest_file, "r") as f:
+            with open(latest_file) as f:
                 data = json.load(f)
             return {
                 "file": str(latest_file),
@@ -112,7 +112,7 @@ class BenchmarkRunner:
         except Exception as e:
             return {"error": f"Failed to read results: {e}"}
 
-    def setup_machine(self) -> Dict[str, Any]:
+    def setup_machine(self) -> dict[str, Any]:
         """Setup ASV machine configuration with fallback for CI environments."""
         import os
 
@@ -150,7 +150,7 @@ class BenchmarkRunner:
             "stderr": result.stderr,
         }
 
-    def list_benchmarks(self) -> Dict[str, Any]:
+    def list_benchmarks(self) -> dict[str, Any]:
         """List all available benchmarks by scanning benchmark files."""
         import ast
 
@@ -162,7 +162,7 @@ class BenchmarkRunner:
                 continue
 
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     content = f.read()
 
                 # Parse the AST to find classes and methods

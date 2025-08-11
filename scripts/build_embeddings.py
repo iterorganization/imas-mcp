@@ -8,7 +8,6 @@ sentence transformer embeddings optimized for semantic search.
 
 import logging
 import sys
-from typing import Optional
 
 import click
 
@@ -89,7 +88,7 @@ def build_embeddings(
     half_precision: bool,
     no_normalize: bool,
     similarity_threshold: float,
-    device: Optional[str],
+    device: str | None,
     check_only: bool,
     profile: bool,
 ) -> int:
@@ -135,7 +134,7 @@ def build_embeddings(
         logger.info("Starting document store and embeddings build process...")
 
         # Parse ids_filter string into a set if provided
-        ids_set: Optional[set] = set(ids_filter.split()) if ids_filter else None
+        ids_set: set | None = set(ids_filter.split()) if ids_filter else None
         if ids_set:
             logger.info(f"Building embeddings for specific IDS: {sorted(ids_set)}")
         else:

@@ -49,7 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Install imas-data-dictionary manually from git (needed for index building)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@develop"
+    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@c1342e2514ba36d007937425b2df522cd1b213df"
 
 # Build schema data
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \

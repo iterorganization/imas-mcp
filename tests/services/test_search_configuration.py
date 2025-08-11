@@ -2,9 +2,9 @@
 
 import pytest
 
-from imas_mcp.services.search_configuration import SearchConfigurationService
-from imas_mcp.search.search_strategy import SearchConfig
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.search.search_strategy import SearchConfig
+from imas_mcp.services.search_configuration import SearchConfigurationService
 
 
 class TestSearchConfigurationService:

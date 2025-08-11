@@ -7,23 +7,25 @@ monitoring, and error handling.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
+
+from fastmcp import Context
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.request_models import SearchInput
+from imas_mcp.models.result_models import SearchResult
 
 # Import only essential decorators
 from imas_mcp.search.decorators import (
     cache_results,
-    validate_input,
-    measure_performance,
     handle_errors,
+    mcp_tool,
+    measure_performance,
+    physics_hints,
+    query_hints,
     sample,
     tool_hints,
-    query_hints,
-    physics_hints,
-    mcp_tool,
+    validate_input,
 )
 
 from .base import BaseTool
@@ -47,32 +49,31 @@ class SearchTool(BaseTool):
     @query_hints(max_hints=5)
     @physics_hints()
     @sample(temperature=0.3, max_tokens=800)
-    @mcp_tool("Search for IMAS data paths with relevance-ordered results")
+    @mcp_tool("Find IMAS data paths using semantic and lexical search")
     async def search_imas(
         self,
         query: str,
-        ids_filter: Optional[List[str]] = None,
+        ids_filter: list[str] | None = None,
         max_results: int = 10,
-        search_mode: Union[str, SearchMode] = "auto",
-        ctx: Optional[Any] = None,
+        search_mode: str | SearchMode = "auto",
+        ctx: Context | None = None,
     ) -> SearchResult:
         """
-        Search for IMAS data paths with relevance-ordered results.
+        Find IMAS data paths using semantic and lexical search capabilities.
 
-        Uses service composition and context manager for consistent orchestration:
-        - Service context manager handles pre/post processing
-        - SearchService: Executes search with optimized configuration
-        - Unified service pipeline for physics enhancement and AI processing
+        Primary discovery tool for locating specific measurements, physics quantities,
+        or diagnostic data within the IMAS data dictionary. Returns ranked results
+        with physics context and documentation.
 
         Args:
-            query: Search term(s), physics concept, symbol, or pattern
-            ids_filter: Optional specific IDS to search within
+            query: Search term, physics concept, measurement name, or data path pattern
+            ids_filter: Limit search to specific IDS (e.g., ['equilibrium', 'transport'])
             max_results: Maximum number of results to return (1-100)
-            search_mode: Search mode - "auto", "semantic", "lexical", or "hybrid"
-            ctx: MCP context for enhancement
+            search_mode: Search strategy - "auto", "semantic", "lexical", or "hybrid"
+            context: FastMCP context for LLM sampling enhancement
 
         Returns:
-            SearchResult with hits, metadata, and AI insights
+            SearchResult with ranked data paths, documentation, and physics insights
         """
 
         # Execute search
@@ -86,7 +87,7 @@ class SearchTool(BaseTool):
         logger.info(f"Search completed: {len(result.hits)} results returned")
         return result
 
-    def build_prompt(self, prompt_type: str, tool_context: Dict[str, Any]) -> str:
+    def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
         """Build search-specific AI prompts."""
         if prompt_type == "search_analysis":
             return self._build_search_analysis_prompt(tool_context)
@@ -96,7 +97,26 @@ class SearchTool(BaseTool):
             return self._build_search_context_prompt(tool_context)
         return ""
 
-    def _build_search_analysis_prompt(self, tool_context: Dict[str, Any]) -> str:
+    def system_prompt(self) -> str:
+        """Get search tool-specific system prompt."""
+        return """You are an expert IMAS (Integrated Modelling and Analysis Suite) data analyst specializing in fusion physics data discovery and interpretation. Your expertise includes:
+
+- Deep knowledge of tokamak physics, plasma diagnostics, and fusion measurements
+- Understanding of IMAS data dictionary structure and data path conventions
+- Experience with plasma parameter relationships and physics contexts
+- Ability to suggest relevant follow-up searches and related measurements
+- Knowledge of common data access patterns and validation considerations
+
+When analyzing search results, provide:
+1. Clear physics context and significance of found data paths
+2. Practical guidance for data interpretation and usage
+3. Relevant cross-references to related measurements or phenomena
+4. Actionable recommendations for follow-up analysis
+5. Insights into data quality considerations and validation approaches
+
+Focus on helping researchers efficiently navigate and understand IMAS data for their specific physics investigations."""
+
+    def _build_search_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for search result analysis."""
         query = tool_context.get("query", "")
         results = tool_context.get("results", [])
@@ -130,12 +150,12 @@ Top results:
 
 Please provide enhanced analysis including:
 1. Physics context and significance of these paths
-2. Recommended follow-up searches or related concepts  
+2. Recommended follow-up searches or related concepts
 3. Data usage patterns and common workflows
 4. Validation considerations for these measurements
 5. Brief explanation of how these paths relate to the query"""
 
-    def _build_no_results_prompt(self, tool_context: Dict[str, Any]) -> str:
+    def _build_no_results_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for when no search results are found."""
         query = tool_context.get("query", "")
 
@@ -149,7 +169,7 @@ Please provide:
 3. Common physics contexts where this term might appear
 4. Recommended follow-up searches"""
 
-    def _build_search_context_prompt(self, tool_context: Dict[str, Any]) -> str:
+    def _build_search_context_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for search mode context."""
         search_mode = tool_context.get("search_mode", "auto")
         return f"""Search mode: {search_mode}

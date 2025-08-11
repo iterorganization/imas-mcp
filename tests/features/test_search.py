@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from imas_mcp.models.result_models import SearchResult
 from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.result_models import SearchResult
 
 
 class TestSearchFeatures:
@@ -33,7 +33,7 @@ class TestSearchFeatures:
             first_hit = result.hits[0]
             assert hasattr(first_hit, "path")
             assert hasattr(first_hit, "score")
-            assert isinstance(first_hit.score, (int, float))
+            assert isinstance(first_hit.score, int | float)
 
     @pytest.mark.asyncio
     async def test_filtered_search_by_physics_domain(self, tools):
@@ -141,7 +141,7 @@ class TestSearchResultStructure:
             assert hasattr(search_result, "score")
 
             # Score should be numeric
-            assert isinstance(search_result.score, (int, float))
+            assert isinstance(search_result.score, int | float)
             assert 0 <= search_result.score <= 1
 
     @pytest.mark.asyncio
@@ -161,7 +161,7 @@ class TestSearchResultStructure:
                     assert hasattr(search_result, field)
 
                 # Score should be numeric
-                assert isinstance(search_result.score, (int, float))
+                assert isinstance(search_result.score, int | float)
                 assert 0 <= search_result.score <= 1
 
 
@@ -175,7 +175,7 @@ class TestSearchErrorHandling:
         result = await tools.search_imas(query="test", max_results=-1)
 
         # Should return ToolError due to validation failure
-        assert isinstance(result, (SearchResult, ToolError))
+        assert isinstance(result, SearchResult | ToolError)
 
     @pytest.mark.asyncio
     async def test_search_very_long_query(self, tools):

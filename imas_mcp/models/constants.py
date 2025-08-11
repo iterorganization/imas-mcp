@@ -5,7 +5,6 @@ This module contains all constant definitions used across search, response, and 
 
 from enum import Enum
 
-
 # ============================================================================
 # SEARCH CONSTANTS
 # ============================================================================

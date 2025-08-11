@@ -5,8 +5,6 @@ This module contains Pydantic models that represent documents that can be indexe
 in the search engine and the search results returned from the search engine.
 """
 
-from typing import Optional
-
 import pint
 import pydantic
 from pydantic import ConfigDict
@@ -30,22 +28,22 @@ class DataDictionaryEntry(IndexableDocument):
     path: str
     documentation: str
     units: str = ""
-    ids_name: Optional[str] = None
+    ids_name: str | None = None
 
     # Extended fields from JSON data
-    coordinates: Optional[str] = None
-    lifecycle: Optional[str] = None
-    data_type: Optional[str] = None
-    physics_context: Optional[str] = None
-    related_paths: Optional[str] = None
-    usage_examples: Optional[str] = None
-    validation_rules: Optional[str] = None
-    relationships: Optional[str] = None
-    introduced_after: Optional[str] = None
-    coordinate1: Optional[str] = None
-    coordinate2: Optional[str] = None
-    timebase: Optional[str] = None
-    type: Optional[str] = None
+    coordinates: str | None = None
+    lifecycle: str | None = None
+    data_type: str | None = None
+    physics_context: str | None = None
+    related_paths: str | None = None
+    usage_examples: str | None = None
+    validation_rules: str | None = None
+    relationships: str | None = None
+    introduced_after: str | None = None
+    coordinate1: str | None = None
+    coordinate2: str | None = None
+    timebase: str | None = None
+    type: str | None = None
 
     @pydantic.field_validator("units", mode="after")
     @classmethod
@@ -68,7 +66,7 @@ class DataDictionaryEntry(IndexableDocument):
         try:
             return f"{unit_registry.Unit(units):~U}"
         except pint.errors.UndefinedUnitError as e:
-            raise ValueError(f"Invalid units '{units}': {e}")
+            raise ValueError(f"Invalid units '{units}': {e}") from e
 
     @pydantic.model_validator(mode="after")
     def update_fields(self) -> "DataDictionaryEntry":

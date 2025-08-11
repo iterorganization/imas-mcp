@@ -1,7 +1,7 @@
 """Lifecycle and physics context extractors."""
 
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, Optional
+from typing import Any
 
 from imas_mcp.core.extractors.base import BaseExtractor
 
@@ -9,7 +9,7 @@ from imas_mcp.core.extractors.base import BaseExtractor
 class LifecycleExtractor(BaseExtractor):
     """Extract lifecycle and version information."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract lifecycle metadata."""
         lifecycle_data = {}
 
@@ -29,7 +29,7 @@ class LifecycleExtractor(BaseExtractor):
 class PhysicsExtractor(BaseExtractor):
     """Extract physics context and domain information."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract physics context from element."""
         physics_data = {}
 
@@ -49,7 +49,7 @@ class PhysicsExtractor(BaseExtractor):
 
         return physics_data
 
-    def _infer_element_physics_context(self, elem: ET.Element) -> Optional[str]:
+    def _infer_element_physics_context(self, elem: ET.Element) -> str | None:
         """Infer physics context from element name and path."""
         elem_name = elem.get("name", "").lower()
         path = elem.get("path", "").lower()

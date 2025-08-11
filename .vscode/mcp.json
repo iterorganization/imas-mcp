@@ -3,7 +3,7 @@
     "imas": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server", "--log-level", "DEBUG"] // note: first initialize will take ~10 minutes to build DD embeddings
+      "args": ["run", "run-server", "--log-level", "DEBUG"] // note: first initialize will take ~10 minutes to build the DD embeddings
     },
     "github": {
       "type": "http",
@@ -12,7 +12,7 @@
         "Authorization": "Bearer ${input:github_mcp_pat}"
       }
     },
-    // "imas-dd": {
+    // "imas": {
     //   "url": "https://imas-dd.iter.org/mcp/",
     //   "type": "http"
     // }

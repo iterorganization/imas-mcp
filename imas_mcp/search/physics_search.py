@@ -13,7 +13,6 @@ import time
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import List, Optional, Set
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -35,8 +34,8 @@ class PhysicsEmbeddingCache:
     """Cache for physics concept embeddings."""
 
     embeddings: np.ndarray = field(default_factory=lambda: np.array([]))
-    documents: List[EmbeddingDocument] = field(default_factory=list)
-    concept_ids: List[str] = field(default_factory=list)
+    documents: list[EmbeddingDocument] = field(default_factory=list)
+    concept_ids: list[str] = field(default_factory=list)
     model_name: str = ""
     cache_version: str = "1.0"
     created_at: float = 0.0
@@ -65,15 +64,15 @@ class PhysicsSemanticSearch:
         model_name: str = "all-MiniLM-L6-v2",
         device: str = "cpu",
         enable_cache: bool = True,
-        cache_dir: Optional[Path] = None,
+        cache_dir: Path | None = None,
     ):
         self.model_name = model_name
         self.device = device
         self.enable_cache = enable_cache
         self.cache_dir = cache_dir or self._get_default_cache_dir()
 
-        self._model: Optional[SentenceTransformer] = None
-        self._cache: Optional[PhysicsEmbeddingCache] = None
+        self._model: SentenceTransformer | None = None
+        self._cache: PhysicsEmbeddingCache | None = None
         self._domain_accessor = DomainAccessor()
 
     def _get_default_cache_dir(self) -> Path:
@@ -93,7 +92,7 @@ class PhysicsSemanticSearch:
         cache_filename = f"physics_embeddings_{self.model_name}_{content_hash[:8]}.pkl"
         return self.cache_dir / cache_filename
 
-    def _compute_content_hash(self, domain_names: Set[PhysicsDomain]) -> str:
+    def _compute_content_hash(self, domain_names: set[PhysicsDomain]) -> str:
         """Compute hash of domain data content for cache invalidation."""
         content_str = ""
         for domain_name in sorted(domain_names, key=lambda d: d.value):
@@ -188,7 +187,7 @@ class PhysicsSemanticSearch:
             )
             logger.info(f"Downloaded and loaded model {self.model_name}")
 
-    def _create_physics_documents(self) -> List[EmbeddingDocument]:
+    def _create_physics_documents(self) -> list[EmbeddingDocument]:
         """Create embedding documents from physics domain data."""
         documents = []
         domain_names = self._domain_accessor.get_all_domains()
@@ -366,8 +365,8 @@ class PhysicsSemanticSearch:
         self,
         unit_symbol: str,
         context_description: str,
-        category: Optional[str],
-        physics_domains: List[str],
+        category: str | None,
+        physics_domains: list[str],
         full_unit_name: str,
     ) -> str:
         """Create rich content text for unit embedding."""
@@ -425,9 +424,9 @@ class PhysicsSemanticSearch:
         query: str,
         max_results: int = 10,
         min_similarity: float = 0.1,
-        concept_types: Optional[List[str]] = None,
-        domains: Optional[List[str]] = None,
-    ) -> List[SemanticResult]:
+        concept_types: list[str] | None = None,
+        domains: list[str] | None = None,
+    ) -> list[SemanticResult]:
         """
         Search physics concepts using semantic similarity.
 
@@ -485,7 +484,7 @@ class PhysicsSemanticSearch:
 
     def find_similar_concepts(
         self, concept_id: str, max_results: int = 5, min_similarity: float = 0.3
-    ) -> List[SemanticResult]:
+    ) -> list[SemanticResult]:
         """Find concepts similar to a given concept ID."""
         if self._cache is None:
             self.build_embeddings()
@@ -523,7 +522,7 @@ class PhysicsSemanticSearch:
 
         return results
 
-    def get_concept_by_id(self, concept_id: str) -> Optional[EmbeddingDocument]:
+    def get_concept_by_id(self, concept_id: str) -> EmbeddingDocument | None:
         """Get a physics concept document by ID."""
         if self._cache is None:
             self.build_embeddings()
@@ -552,7 +551,7 @@ def get_physics_search() -> PhysicsSemanticSearch:
 
 def search_physics_concepts(
     query: str, max_results: int = 10, **kwargs
-) -> List[SemanticResult]:
+) -> list[SemanticResult]:
     """Search physics concepts using semantic similarity."""
     physics_search = get_physics_search()
     return physics_search.search(query, max_results=max_results, **kwargs)

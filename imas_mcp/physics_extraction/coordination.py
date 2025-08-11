@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from imas_mcp.physics_extraction.catalog_progress import CatalogBasedProgressTracker
 from imas_mcp.physics_extraction.extractors import (
@@ -131,7 +131,7 @@ class ExtractionCoordinator:
         self,
         json_data_dir: Path,
         storage_dir: Path,
-        catalog_file: Optional[Path] = None,
+        catalog_file: Path | None = None,
         ai_model: str = "gpt-4",
         confidence_threshold: float = 0.5,
     ):
@@ -178,7 +178,7 @@ class ExtractionCoordinator:
             else PhysicsDatabase(version="1.0.0")
         )
 
-    def get_extraction_status(self) -> Dict[str, Any]:
+    def get_extraction_status(self) -> dict[str, Any]:
         """
         Get current extraction status and statistics.
 
@@ -221,7 +221,7 @@ class ExtractionCoordinator:
 
     def start_extraction(
         self,
-        ids_list: Optional[List[str]] = None,
+        ids_list: list[str] | None = None,
         paths_per_ids: int = 10,
         auto_resolve_conflicts: bool = True,
     ) -> str:
@@ -272,7 +272,7 @@ class ExtractionCoordinator:
             self.lock_manager.release_lock(session_id)
             raise e
 
-    def process_next_ids(self, session_id: str) -> Optional[ExtractionResult]:
+    def process_next_ids(self, session_id: str) -> ExtractionResult | None:
         """
         Process the next IDS in the extraction queue.
 
@@ -390,7 +390,7 @@ class ExtractionCoordinator:
         # Save updated database
         self.physics_storage.save_database(self.database)
 
-    def complete_extraction(self, session_id: str) -> Dict[str, Any]:
+    def complete_extraction(self, session_id: str) -> dict[str, Any]:
         """
         Complete extraction session and release resources.
 
@@ -429,7 +429,7 @@ class ExtractionCoordinator:
         logger.info(f"Completed extraction session {session_id}")
         return summary
 
-    def get_conflicts_for_review(self) -> List[Dict[str, Any]]:
+    def get_conflicts_for_review(self) -> list[dict[str, Any]]:
         """Get conflicts that require human review."""
         return self.conflict_manager.get_unresolved_conflicts()
 
@@ -437,7 +437,7 @@ class ExtractionCoordinator:
         self,
         conflict_id: str,
         resolution: ConflictResolutionStrategy,
-        notes: Optional[str] = None,
+        notes: str | None = None,
     ) -> bool:
         """
         Manually resolve a specific conflict.
@@ -509,7 +509,7 @@ class ExtractionCoordinator:
             logger.error(f"Failed to export database: {e}")
             return False
 
-    def get_extraction_status_with_catalog(self) -> Dict[str, Any]:
+    def get_extraction_status_with_catalog(self) -> dict[str, Any]:
         """
         Get extraction status with catalog-based information.
 
@@ -546,10 +546,10 @@ class ExtractionCoordinator:
 
     def start_catalog_extraction(
         self,
-        ids_list: Optional[List[str]] = None,
+        ids_list: list[str] | None = None,
         paths_per_ids: int = 10,
         auto_resolve_conflicts: bool = True,
-        physics_domain_filter: Optional[str] = None,
+        physics_domain_filter: str | None = None,
     ) -> str:
         """
         Start extraction with catalog-based progress tracking.
@@ -627,9 +627,7 @@ class ExtractionCoordinator:
             self.lock_manager.release_lock(session_id)
             raise e
 
-    def process_next_ids_with_catalog(
-        self, session_id: str
-    ) -> Optional[Dict[str, Any]]:
+    def process_next_ids_with_catalog(self, session_id: str) -> dict[str, Any] | None:
         """
         Process the next IDS with catalog tracking.
 
@@ -797,7 +795,7 @@ class ExtractionCoordinator:
         # Save updated database
         self.physics_storage.save_database(self.database)
 
-    def get_domain_progress(self) -> Dict[str, Any]:
+    def get_domain_progress(self) -> dict[str, Any]:
         """Get progress breakdown by physics domain."""
         if not self.catalog_progress_tracker:
             return {}
@@ -808,7 +806,7 @@ class ExtractionCoordinator:
 
         return enhanced_progress.domain_stats
 
-    def get_ids_details(self) -> Dict[str, Any]:
+    def get_ids_details(self) -> dict[str, Any]:
         """Get detailed per-IDS information."""
         if not self.catalog_progress_tracker:
             return {}

@@ -5,16 +5,15 @@ This module consolidates all input validation schemas that were previously
 scattered across search/schemas/ directory.
 """
 
-from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import (
-    SearchMode,
+    AnalysisDepth,
     DetailLevel,
-    RelationshipType,
     IdentifierScope,
     OutputFormat,
-    AnalysisDepth,
+    RelationshipType,
+    SearchMode,
 )
 
 
@@ -42,7 +41,7 @@ class SearchInput(BaseInputSchema):
         le=100,
         description="Maximum number of results to return",
     )
-    ids_filter: Optional[List[str]] = Field(
+    ids_filter: list[str] | None = Field(
         default=None,
         description="Optional list of IDS names to filter search results",
     )
@@ -147,7 +146,7 @@ class IdentifiersInput(BaseInputSchema):
         default=IdentifierScope.ALL,
         description="Scope of identifier exploration",
     )
-    query: Optional[str] = Field(
+    query: str | None = Field(
         default=None,
         max_length=200,
         description="Optional query to filter identifiers",
@@ -167,7 +166,7 @@ class IdentifiersInput(BaseInputSchema):
 class OverviewInput(BaseInputSchema):
     """Input validation schema for get_overview tool."""
 
-    query: Optional[str] = Field(
+    query: str | None = Field(
         default=None,
         max_length=200,
         description="Optional query for focused overview",
@@ -187,7 +186,7 @@ class OverviewInput(BaseInputSchema):
 class ExportIdsInput(BaseInputSchema):
     """Input validation schema for export_ids tool."""
 
-    ids_list: List[str] = Field(
+    ids_list: list[str] = Field(
         min_length=1,
         description="List of IDS names to export",
     )

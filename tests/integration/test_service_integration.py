@@ -1,12 +1,13 @@
 """Integration tests for multi-tool service usage."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
-from imas_mcp.tools.explain_tool import ExplainTool
-from imas_mcp.tools.search_tool import SearchTool
+import pytest
+
 from imas_mcp.models.constants import DetailLevel, SearchMode
 from imas_mcp.models.result_models import ConceptResult, SearchResult
+from imas_mcp.tools.explain_tool import ExplainTool
+from imas_mcp.tools.search_tool import SearchTool
 
 
 class TestServiceIntegration:
