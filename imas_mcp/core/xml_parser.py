@@ -1,21 +1,24 @@
 """Refactored XML parser using composable extractors."""
 
+import json
 import logging
+import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from imas_mcp.core.data_model import (
     CatalogMetadata,
     CoordinateSystem,
     CrossIdsRelationship,
-    IdsNode,
     IdentifierCatalog,
     IdentifierCatalogSchema,
     IdentifierPath,
     IdsDetailed,
     IdsInfo,
+    IdsNode,
     PhysicsConcept,
     Relationships,
     TransformationOutputs,
@@ -44,17 +47,17 @@ from imas_mcp.graph_analyzer import analyze_imas_graphs
 class DataDictionaryTransformer:
     """Refactored transformer using composable extractors with performance optimizations."""
 
-    output_dir: Optional[Path] = None
-    dd_accessor: Optional[ImasDataDictionaryAccessor] = None
-    ids_set: Optional[Set[str]] = None
+    output_dir: Path | None = None
+    dd_accessor: ImasDataDictionaryAccessor | None = None
+    ids_set: set[str] | None = None
 
     # Processing configuration
-    excluded_patterns: Set[str] = field(
+    excluded_patterns: set[str] = field(
         default_factory=lambda: {"ids_properties", "code"}
     )
-    skip_ggd: bool = True
-    skip_error_fields: bool = True
-    use_rich: Optional[bool] = None  # Auto-detect if None
+    skip_ggd: bool = False
+    skip_error_fields: bool = False
+    use_rich: bool | None = None  # Auto-detect if None
 
     def __post_init__(self):
         """Initialize the transformer with performance optimizations."""
@@ -62,9 +65,8 @@ class DataDictionaryTransformer:
             self.dd_accessor = ImasDataDictionaryAccessor()
 
         if self.output_dir is None:
-            self.output_dir = (
-                Path(__file__).resolve().parent.parent / "resources" / "schemas"
-            )
+            schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
+            self.output_dir = Path(str(schema_resource))
 
         if not isinstance(self.output_dir, Path):
             self.output_dir = Path(self.output_dir)
@@ -82,7 +84,7 @@ class DataDictionaryTransformer:
         self._element_cache = {}
         self._path_cache = {}
 
-    def _build_global_parent_map(self) -> Dict[ET.Element, ET.Element]:
+    def _build_global_parent_map(self) -> dict[ET.Element, ET.Element]:
         """Build parent map for entire XML tree once for performance."""
         if self._root is None:
             return {}
@@ -90,7 +92,7 @@ class DataDictionaryTransformer:
 
     def _get_cached_elements_by_name(
         self, ids_elem: ET.Element, ids_name: str
-    ) -> List[ET.Element]:
+    ) -> list[ET.Element]:
         """Get all named elements for an IDS with caching."""
         cache_key = f"{ids_name}_named_elements"
         if cache_key not in self._element_cache:
@@ -101,7 +103,7 @@ class DataDictionaryTransformer:
 
     def _get_cached_elements_by_attribute(
         self, ids_elem: ET.Element, ids_name: str, attr: str
-    ) -> List[ET.Element]:
+    ) -> list[ET.Element]:
         """Get all elements with specific attribute for an IDS with caching."""
         cache_key = f"{ids_name}_{attr}_elements"
         if cache_key not in self._element_cache:
@@ -142,7 +144,7 @@ class DataDictionaryTransformer:
             identifier_catalog=identifier_catalog_path,
         )
 
-    def _extract_ids_data(self, root: ET.Element) -> Dict[str, Dict[str, Any]]:
+    def _extract_ids_data(self, root: ET.Element) -> dict[str, dict[str, Any]]:
         """Extract IDS data using composable extractors with performance optimizations."""
         ids_data = {}
 
@@ -210,7 +212,7 @@ class DataDictionaryTransformer:
 
     def _extract_ids_info(
         self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extract IDS-level information with optimized element access."""
         # Get cached elements instead of multiple findall() calls
         named_elements = self._get_cached_elements_by_name(ids_elem, ids_name)
@@ -236,14 +238,14 @@ class DataDictionaryTransformer:
 
     def _extract_coordinate_systems(
         self, ids_elem: ET.Element, context: ExtractorContext
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Extract coordinate systems using CoordinateExtractor."""
         extractor = CoordinateExtractor(context)
         return extractor.extract_coordinate_systems(ids_elem)
 
     def _extract_paths(
         self, ids_elem: ET.Element, ids_name: str, context: ExtractorContext
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Extract paths using composable extractors with performance optimizations."""
         paths = {}
 
@@ -293,8 +295,8 @@ class DataDictionaryTransformer:
         return paths
 
     def _extract_semantic_groups(
-        self, paths: Dict[str, Dict[str, Any]], context: ExtractorContext
-    ) -> Dict[str, List[str]]:
+        self, paths: dict[str, dict[str, Any]], context: ExtractorContext
+    ) -> dict[str, list[str]]:
         """Extract semantic groups using SemanticExtractor."""
         extractor = SemanticExtractor(context)
         return extractor.extract_semantic_groups(paths)
@@ -303,7 +305,7 @@ class DataDictionaryTransformer:
         self,
         elem: ET.Element,
         ids_elem: ET.Element,
-        parent_map: Dict[ET.Element, ET.Element],
+        parent_map: dict[ET.Element, ET.Element],
     ) -> bool:
         """Comprehensive element filtering to exclude unwanted entries."""
         name = elem.get("name", "")
@@ -350,8 +352,8 @@ class DataDictionaryTransformer:
         elem: ET.Element,
         ids_elem: ET.Element,
         ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Optional[str]:
+        parent_map: dict[ET.Element, ET.Element],
+    ) -> str | None:
         """Build full path for element with caching."""
         # Use element ID as cache key for path building
         elem_id = id(elem)
@@ -396,7 +398,7 @@ class DataDictionaryTransformer:
         calculate_depth(ids_elem)
         return max_depth
 
-    def _get_leaf_nodes(self, ids_elem: ET.Element) -> List[ET.Element]:
+    def _get_leaf_nodes(self, ids_elem: ET.Element) -> list[ET.Element]:
         """Get all leaf nodes using optimized traversal."""
         leaves = []
         for elem in ids_elem.iter():  # Use iter() instead of findall()
@@ -422,8 +424,8 @@ class DataDictionaryTransformer:
 
     # Keep existing graph analysis and output generation methods
     def _analyze_graph_structure(
-        self, ids_data: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, ids_data: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         """Perform graph analysis on extracted data."""
         data_dict = {
             "ids_catalog": {
@@ -438,7 +440,7 @@ class DataDictionaryTransformer:
         return analyze_imas_graphs(data_dict)
 
     def _generate_catalog(
-        self, ids_data: Dict[str, Dict[str, Any]], graph_data: Dict[str, Any]
+        self, ids_data: dict[str, dict[str, Any]], graph_data: dict[str, Any]
     ) -> Path:
         """Generate catalog file."""
         catalog_path = self.resolved_output_dir / "ids_catalog.json"
@@ -451,7 +453,7 @@ class DataDictionaryTransformer:
             total_paths += len(paths)  # Add the path count for this IDS
             for path_data in paths.values():
                 relationships = path_data.get("relationships", {})
-                for category, rel_list in relationships.items():
+                for _category, rel_list in relationships.items():
                     if isinstance(rel_list, list):
                         total_relationships += len(rel_list)
 
@@ -483,15 +485,13 @@ class DataDictionaryTransformer:
         catalog_dict.update(graph_data)
 
         with open(catalog_path, "w", encoding="utf-8") as f:
-            import json
-
             json.dump(catalog_dict, f, indent=2)
 
         return catalog_path
 
     def _generate_detailed_files(
-        self, ids_data: Dict[str, Dict[str, Any]]
-    ) -> List[Path]:
+        self, ids_data: dict[str, dict[str, Any]]
+    ) -> list[Path]:
         """Generate detailed IDS files."""
         detailed_dir = self.resolved_output_dir / "detailed"
         detailed_dir.mkdir(exist_ok=True)
@@ -542,7 +542,7 @@ class DataDictionaryTransformer:
 
         return paths
 
-    def _generate_relationships(self, ids_data: Dict[str, Dict[str, Any]]) -> Path:
+    def _generate_relationships(self, ids_data: dict[str, dict[str, Any]]) -> Path:
         """Generate relationships file with aggregated relationship data."""
         rel_path = self.resolved_output_dir / "relationships.json"
 
@@ -552,13 +552,13 @@ class DataDictionaryTransformer:
         unit_families = {}
         total_relationships = 0
 
-        for ids_name, data in ids_data.items():
+        for _ids_name, data in ids_data.items():
             paths = data.get("paths", {})
 
             for path, path_data in paths.items():
                 # Count relationships
                 relationships = path_data.get("relationships", {})
-                for category, rel_list in relationships.items():
+                for _category, rel_list in relationships.items():
                     if isinstance(rel_list, list):
                         total_relationships += len(rel_list)
 
@@ -616,10 +616,8 @@ class DataDictionaryTransformer:
 
         return rel_path
 
-    def _generate_identifier_catalog(self, ids_data: Dict[str, Dict[str, Any]]) -> Path:
+    def _generate_identifier_catalog(self, ids_data: dict[str, dict[str, Any]]) -> Path:
         """Generate identifier catalog from extracted IDS data."""
-        import math
-
         identifier_paths = []
         schema_groups = {}
 
@@ -667,11 +665,11 @@ class DataDictionaryTransformer:
 
             # Collect physics domains
             physics_domains = list(
-                set(
+                {
                     path.physics_domain
                     for path, _ in path_schema_list
                     if path.physics_domain
-                )
+                }
             )
 
             # Calculate branching complexity (entropy)
@@ -815,8 +813,6 @@ class DataDictionaryTransformer:
         """Extract clean schema name from path."""
         if not schema_path:
             return "unknown"
-        from pathlib import Path
-
         return (
             Path(schema_path).stem.replace("_identifier", "").replace("_", " ").title()
         )

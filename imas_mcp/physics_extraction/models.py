@@ -8,7 +8,7 @@ and system state management.
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from pydantic import BaseModel, Field, validator
 
@@ -52,29 +52,29 @@ class PhysicsQuantity(BaseModel):
     # Core identification
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(..., description="Human-readable name of the quantity")
-    symbol: Optional[str] = Field(None, description="Mathematical symbol")
+    symbol: str | None = Field(None, description="Mathematical symbol")
 
     # Physics properties
-    unit: Optional[str] = Field(None, description="Physical unit")
-    dimensions: Optional[str] = Field(None, description="Physical dimensions")
-    typical_range: Optional[str] = Field(None, description="Typical value range")
+    unit: str | None = Field(None, description="Physical unit")
+    dimensions: str | None = Field(None, description="Physical dimensions")
+    typical_range: str | None = Field(None, description="Typical value range")
 
     # Documentation
     description: str = Field(..., description="Detailed description")
-    physics_context: Optional[str] = Field(None, description="Physics domain/context")
-    related_quantities: List[str] = Field(
+    physics_context: str | None = Field(None, description="Physics domain/context")
+    related_quantities: list[str] = Field(
         default_factory=list, description="Related quantity IDs"
     )
 
     # IMAS-specific
-    imas_paths: List[str] = Field(default_factory=list, description="IMAS data paths")
-    ids_sources: Set[str] = Field(default_factory=set, description="Source IDS names")
+    imas_paths: list[str] = Field(default_factory=list, description="IMAS data paths")
+    ids_sources: set[str] = Field(default_factory=set, description="Source IDS names")
 
     # Extraction metadata
     extraction_confidence: float = Field(
         0.0, ge=0.0, le=1.0, description="AI confidence score"
     )
-    ai_source: Optional[str] = Field(None, description="AI model used for extraction")
+    ai_source: str | None = Field(None, description="AI model used for extraction")
     human_verified: bool = Field(False, description="Human verification status")
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
@@ -154,32 +154,32 @@ class ExtractionResult(BaseModel):
 
     # Processing info
     ids_name: str = Field(..., description="IDS being processed")
-    paths_processed: List[str] = Field(default_factory=list)
+    paths_processed: list[str] = Field(default_factory=list)
     processing_time: float = Field(
         default=0.0, description="Processing time in seconds"
     )
 
     # Results
-    quantities_found: List[PhysicsQuantity] = Field(default_factory=list)
-    quantities_updated: List[str] = Field(
+    quantities_found: list[PhysicsQuantity] = Field(default_factory=list)
+    quantities_updated: list[str] = Field(
         default_factory=list, description="IDs of updated quantities"
     )
 
     # Status and errors
     status: ExtractionStatus = Field(default=ExtractionStatus.PENDING)
-    error_message: Optional[str] = Field(default=None)
-    warnings: List[str] = Field(default_factory=list)
+    error_message: str | None = Field(default=None)
+    warnings: list[str] = Field(default_factory=list)
 
     # AI metadata
-    ai_model: Optional[str] = Field(default=None)
+    ai_model: str | None = Field(default=None)
     confidence_threshold: float = Field(default=0.5)
 
     # Timestamps
     started_at: datetime = Field(default_factory=datetime.utcnow)
-    completed_at: Optional[datetime] = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
 
     # Catalog metadata (for enhanced tracking)
-    catalog_metadata: Optional[Dict[str, Any]] = Field(
+    catalog_metadata: dict[str, Any] | None = Field(
         default=None, description="Catalog-based metadata"
     )
 
@@ -206,16 +206,16 @@ class ConflictResolution(BaseModel):
     new_quantity: PhysicsQuantity
 
     # Conflict details
-    conflict_fields: List[str] = Field(
+    conflict_fields: list[str] = Field(
         default_factory=list, description="Fields that differ"
     )
     severity: ProcessingPriority = Field(default=ProcessingPriority.MEDIUM)
 
     # Resolution
-    resolution_strategy: Optional[ConflictResolutionStrategy] = Field(default=None)
-    resolved_quantity: Optional[PhysicsQuantity] = Field(default=None)
-    resolved_at: Optional[datetime] = Field(default=None)
-    resolved_by: Optional[str] = Field(default=None)
+    resolution_strategy: ConflictResolutionStrategy | None = Field(default=None)
+    resolved_quantity: PhysicsQuantity | None = Field(default=None)
+    resolved_at: datetime | None = Field(default=None)
+    resolved_by: str | None = Field(default=None)
 
     # Status
     is_resolved: bool = Field(default=False)
@@ -265,8 +265,8 @@ class ExtractionProgress(BaseModel):
     failed_ids: int = Field(default=0, description="Number of failed IDS")
 
     # Detailed tracking
-    ids_status: Dict[str, ExtractionStatus] = Field(default_factory=dict)
-    ids_progress: Dict[str, float] = Field(
+    ids_status: dict[str, ExtractionStatus] = Field(default_factory=dict)
+    ids_progress: dict[str, float] = Field(
         default_factory=dict, description="Per-IDS progress (0-1)"
     )
 
@@ -328,30 +328,30 @@ class PhysicsDatabase(BaseModel):
     last_updated: datetime = Field(default_factory=datetime.utcnow)
 
     # Content
-    quantities: Dict[str, PhysicsQuantity] = Field(
+    quantities: dict[str, PhysicsQuantity] = Field(
         default_factory=dict, description="Quantity ID -> Quantity"
     )
 
     # Organization
-    quantities_by_name: Dict[str, str] = Field(
+    quantities_by_name: dict[str, str] = Field(
         default_factory=dict, description="Name -> Quantity ID"
     )
-    quantities_by_ids: Dict[str, List[str]] = Field(
+    quantities_by_ids: dict[str, list[str]] = Field(
         default_factory=dict, description="IDS -> Quantity IDs"
     )
-    quantities_by_context: Dict[str, List[str]] = Field(
+    quantities_by_context: dict[str, list[str]] = Field(
         default_factory=dict, description="Context -> Quantity IDs"
     )
 
     # Statistics
     total_quantities: int = Field(default=0)
     verified_quantities: int = Field(default=0)
-    coverage_by_ids: Dict[str, int] = Field(
+    coverage_by_ids: dict[str, int] = Field(
         default_factory=dict, description="IDS -> quantity count"
     )
 
     # Extraction history
-    extraction_sessions: List[str] = Field(
+    extraction_sessions: list[str] = Field(
         default_factory=list, description="Session IDs"
     )
     conflicts_resolved: int = Field(default=0)
@@ -394,14 +394,14 @@ class PhysicsDatabase(BaseModel):
         self.last_updated = datetime.utcnow()
         return True
 
-    def get_quantity_by_name(self, name: str) -> Optional[PhysicsQuantity]:
+    def get_quantity_by_name(self, name: str) -> PhysicsQuantity | None:
         """Get quantity by name."""
         quantity_id = self.quantities_by_name.get(name)
         if quantity_id:
             return self.quantities.get(quantity_id)
         return None
 
-    def get_quantities_for_ids(self, ids_name: str) -> List[PhysicsQuantity]:
+    def get_quantities_for_ids(self, ids_name: str) -> list[PhysicsQuantity]:
         """Get all quantities associated with an IDS."""
         quantity_ids = self.quantities_by_ids.get(ids_name, [])
         return [self.quantities[qid] for qid in quantity_ids if qid in self.quantities]
@@ -420,7 +420,7 @@ class PhysicsDatabase(BaseModel):
 
             self.last_updated = datetime.utcnow()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get database statistics."""
         return {
             "total_quantities": self.total_quantities,

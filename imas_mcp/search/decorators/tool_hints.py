@@ -6,7 +6,8 @@ Provides intelligent tool recommendations based on search results.
 
 import functools
 import logging
-from typing import Any, Callable, List, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from ...models.result_models import SearchResult
 from ...models.suggestion_models import ToolSuggestion
@@ -16,7 +17,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 logger = logging.getLogger(__name__)
 
 
-def generate_search_tool_hints(search_result: SearchResult) -> List[ToolSuggestion]:
+def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggestion]:
     """
     Generate tool hints based on SearchResult content.
 

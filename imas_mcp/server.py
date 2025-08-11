@@ -15,7 +15,6 @@ Each component is accessible via server.tools and server.resources properties.
 import importlib.metadata
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import nest_asyncio
 from fastmcp import FastMCP
@@ -54,7 +53,7 @@ class Server:
     """IMAS MCP Server - Composable integrator using composition pattern."""
 
     # Configuration parameters
-    ids_set: Optional[set[str]] = None
+    ids_set: set[str] | None = None
 
     # Internal fields
     mcp: FastMCP = field(init=False, repr=False)

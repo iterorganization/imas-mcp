@@ -33,7 +33,7 @@ docker run -d \
 
 ## GitHub Container Registry
 
-The container is automatically built and pushed to GitHub Container Registry on every push to `main` and on tagged releases.
+The container is automatically built and pushed to GitHub Container Registry on tagged releases.
 
 ### Pull from GitHub Container Registry
 

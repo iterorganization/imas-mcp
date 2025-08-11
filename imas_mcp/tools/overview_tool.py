@@ -1,27 +1,25 @@
 """
-Overview tool implementation with service composition.
+Overview tool implementation with catalog-based architecture.
 
-This module contains the get_overview tool logic using service-based architecture
-for physics integration, response building, and standardized metadata.
+This module provides an intelligent interface to the IMAS catalog files,
+serving as the primary entry point for users to discover and navigate
+the IMAS data dictionary structure.
 """
 
+import importlib.resources
+import json
 import logging
-from typing import Optional, Union
+
 from fastmcp import Context
 
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.result_models import OverviewResult
-from imas_mcp.models.error_models import ToolError
-
-
 from imas_mcp.search.decorators import (
     cache_results,
-    validate_input,
-    measure_performance,
     handle_errors,
-    sample,
-    tool_hints,
     mcp_tool,
+    validate_input,
 )
 
 from .base import BaseTool
@@ -30,343 +28,343 @@ logger = logging.getLogger(__name__)
 
 
 class OverviewTool(BaseTool):
-    """Tool for getting IMAS overview."""
+    """
+    IDS catalog-based overview tool for IMAS data discovery.
+
+    Provides intelligent access to the IDS catalog (ids_catalog.json),
+    serving as the primary interface for users to discover relevant
+    IDS structures and physics domains.
+
+    Other specialized tools handle:
+    - explore_relationships() -> relationships.json
+    - explore_identifiers() -> identifier_catalog.json
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with IDS catalog data loading."""
+        super().__init__(*args, **kwargs)
+        self._ids_catalog = {}
+        self._load_ids_catalog()
+
+    def _load_ids_catalog(self):
+        """Load the IDS catalog file specifically."""
+        try:
+            try:
+                catalog_file = (
+                    importlib.resources.files("imas_mcp.resources.schemas")
+                    / "ids_catalog.json"
+                )
+                with catalog_file.open("r", encoding="utf-8") as f:
+                    self._ids_catalog = json.load(f)
+                    logger.info("Loaded IDS catalog for overview tool")
+            except FileNotFoundError:
+                logger.warning(
+                    "IDS catalog (ids_catalog.json) not found in resources/schemas/"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to load IDS catalog: {e}")
+            self._ids_catalog = {}
 
     @property
     def tool_name(self) -> str:
         """Return the name of this tool."""
         return "get_overview"
 
-    def _build_overview_analysis_prompt(self, query: Optional[str] = None) -> str:
-        """Build AI analysis prompt for overview generation."""
+    def _get_physics_domains(self) -> dict[str, list[str]]:
+        """Get all physics domains and their associated IDS."""
+        if not self._ids_catalog:
+            return {}
+
+        domains = {}
+        ids_catalog = self._ids_catalog.get("ids_catalog", {})
+
+        for ids_name, ids_info in ids_catalog.items():
+            physics_domain = ids_info.get("physics_domain", "unclassified")
+            if physics_domain not in domains:
+                domains[physics_domain] = []
+            domains[physics_domain].append(ids_name)
+
+        return domains
+
+    def _filter_ids_by_query(self, query: str) -> list[str]:
+        """Filter IDS based on query terms."""
+        if not self._ids_catalog:
+            return []
+
+        query_lower = query.lower()
+        relevant_ids = []
+        ids_catalog = self._ids_catalog.get("ids_catalog", {})
+
+        for ids_name, ids_info in ids_catalog.items():
+            # Check name match
+            if query_lower in ids_name.lower():
+                relevant_ids.append(ids_name)
+                continue
+
+            # Check description match
+            description = ids_info.get("description", "").lower()
+            if query_lower in description:
+                relevant_ids.append(ids_name)
+                continue
+
+            # Check physics domain match
+            physics_domain = ids_info.get("physics_domain", "").lower()
+            if query_lower in physics_domain:
+                relevant_ids.append(ids_name)
+                continue
+
+        return relevant_ids
+
+    def _get_complexity_rankings(self) -> list[tuple]:
+        """Get IDS ranked by complexity (path count)."""
+        if not self._ids_catalog:
+            return []
+
+        ids_catalog = self._ids_catalog.get("ids_catalog", {})
+        rankings = []
+
+        for ids_name, ids_info in ids_catalog.items():
+            path_count = ids_info.get("path_count", 0)
+            rankings.append((ids_name, path_count))
+
+        return sorted(rankings, key=lambda x: x[1], reverse=True)
+
+    def _generate_recommendations(
+        self, query: str | None, relevant_ids: list[str]
+    ) -> list[str]:
+        """Generate tool usage recommendations based on context."""
+        recommendations = []
+
         if query:
-            return f"""IMAS Data Dictionary Overview Request: "{query}"
+            recommendations.append(
+                f"🔍 Use search_imas('{query}') to find specific data paths"
+            )
 
-Please provide a comprehensive overview that addresses the specific query while covering:
+            # Domain-specific recommendations
+            if any(
+                term in query.lower() for term in ["magnetic", "field", "equilibrium"]
+            ):
+                recommendations.append(
+                    "⚡ Try explore_relationships('equilibrium/time_slice/profiles_2d') for magnetic field data"
+                )
 
-1. **Relevant IMAS Context**: How the query relates to IMAS data structures
-2. **Data Availability**: What data is available related to the query
-3. **Physics Context**: Relevant physics domains and phenomena
-4. **Usage Guidance**: Practical recommendations for data access and analysis
-5. **Related Tools**: Which IMAS MCP tools would be most helpful for this query
+            if any(
+                term in query.lower() for term in ["temperature", "density", "pressure"]
+            ):
+                recommendations.append(
+                    "🌡️ Use export_physics_domain('transport') for temperature and density profiles"
+                )
 
-Focus on being helpful and informative while maintaining accuracy about IMAS capabilities.
-"""
-        else:
-            return """IMAS Data Dictionary General Overview
+            if any(term in query.lower() for term in ["diagnostic", "measurement"]):
+                recommendations.append(
+                    "📊 Try analyze_ids_structure() on diagnostic IDS like 'thomson_scattering'"
+                )
 
-Please provide a comprehensive overview of the IMAS (Integrated Modelling & Analysis Suite) data dictionary covering:
+            if any(
+                term in query.lower() for term in ["identifier", "enum", "enumeration"]
+            ):
+                recommendations.append(
+                    "🔢 Use explore_identifiers() to browse identifier schemas and enumerations"
+                )
 
-1. **Structure Overview**: General organization of IMAS data
-2. **Key Physics Domains**: Main areas covered (core plasma, transport, equilibrium, etc.)
-3. **Data Types Available**: Common measurement types and calculated quantities
-4. **Getting Started**: How new users should approach IMAS data access
-5. **Tool Ecosystem**: Overview of available MCP tools for data exploration
+        if relevant_ids:
+            # Recommend tools based on number of relevant IDS
+            match len(relevant_ids):
+                case 1:
+                    recommendations.append(
+                        f"� Use export_ids(['{relevant_ids[0]}']) to extract this IDS data"
+                    )
+                case 2:
+                    recommendations.append(
+                        f"� Use analyze_ids_structure('{relevant_ids[0]}') for detailed structure analysis"
+                    )
+                case 3:
+                    recommendations.append(
+                        "🌐 Use explore_relationships() to find connections between these IDS"
+                    )
 
-Provide practical guidance for fusion researchers and IMAS users.
-"""
+        # Always include general recommendations
+        recommendations.extend(
+            [
+                "💡 Use explain_concept() to understand physics concepts",
+                "🔗 Use explore_identifiers() to browse available enumerations",
+                "🌐 Use explore_relationships() to find data connections",
+                "📈 Use export_physics_domain() for domain-specific data exports",
+            ]
+        )
 
-    @cache_results(ttl=1800, key_strategy="semantic")
+        return recommendations[:6]  # Limit to 6 recommendations
+
+    @cache_results(ttl=3600, key_strategy="semantic")
     @validate_input(schema=OverviewInput)
-    @measure_performance(include_metrics=True, slow_threshold=3.0)
     @handle_errors(fallback="overview_suggestions")
-    @tool_hints(max_hints=3)
-    @sample(temperature=0.4, max_tokens=800)
-    @mcp_tool("Get IMAS overview or answer analytical queries")
+    @mcp_tool("Get high-level overview of IMAS data dictionary structure and contents")
     async def get_overview(
         self,
-        query: Optional[str] = None,
-        ctx: Optional[Context] = None,
-    ) -> Union[OverviewResult, ToolError]:
+        query: str | None = None,
+        ctx: Context | None = None,
+    ) -> OverviewResult | ToolError:
         """
-        Get IMAS overview or answer analytical queries using service composition.
+        Get high-level overview of IMAS data dictionary structure and contents.
+
+        Primary orientation tool for understanding available IDS, physics domains,
+        and data organization. Use this tool first to explore what data is available
+        and get recommendations for specific analysis workflows.
 
         Args:
-            query: Optional specific query about the data dictionary
-            ctx: MCP context for AI enhancement
+            query: Optional focus area (physics domain, measurement type, or IDS name)
+            ctx: MCP context for potential AI enhancement
 
         Returns:
-            Dictionary with overview information, analytics, and optional domain-specific data
+            OverviewResult with available IDS, physics domains, and usage guidance
         """
         try:
-            # Get all available IDS first
-            all_available_ids = self.document_store.get_available_ids()
+            # Check if IDS catalog is loaded
+            if not self._ids_catalog:
+                return ToolError(
+                    error="IDS catalog data not available",
+                    suggestions=[
+                        "Check if ids_catalog.json exists in resources/schemas/",
+                        "Try restarting the MCP server",
+                        "Use search_imas() for direct data access",
+                    ],
+                    context={"tool": "get_overview", "operation": "catalog_access"},
+                )
+
+            # Get basic metadata
+            metadata = self._ids_catalog.get("metadata", {})
+            ids_info = self._ids_catalog.get("ids_catalog", {})
+
+            total_ids = metadata.get("total_ids", len(ids_info))
+            total_paths = metadata.get("total_paths", 0)
 
             # Determine relevant IDS based on query
             if query:
-                # Use search to find most relevant IDS for the query
-                try:
-                    config = self.search_config.create_config(
-                        search_mode="semantic",
-                        max_results=50,  # Cast wider net for overview
+                relevant_ids = self._filter_ids_by_query(query)
+                if not relevant_ids:
+                    # Fallback to showing all if no matches
+                    relevant_ids = list(ids_info.keys())
+                    query_feedback = (
+                        f"No direct matches for '{query}' - showing general overview"
                     )
-                    config = self.search_config.optimize_for_query(query, config)
-                    search_results = await self._search_service.search(query, config)
-
-                    # Extract unique IDS names from search results
-                    relevant_ids_set = set()
-                    for result in search_results:
-                        if hasattr(result.document.metadata, "ids_name"):
-                            relevant_ids_set.add(result.document.metadata.ids_name)
-
-                    # Use relevant IDS if found, otherwise fall back to all
-                    relevant_ids = (
-                        list(relevant_ids_set)
-                        if relevant_ids_set
-                        else all_available_ids
-                    )
-
-                except Exception as e:
-                    logger.warning(f"Query-based IDS filtering failed: {e}")
-                    relevant_ids = all_available_ids
+                else:
+                    query_feedback = f"Found {len(relevant_ids)} IDS matching '{query}'"
             else:
-                relevant_ids = all_available_ids
+                relevant_ids = list(ids_info.keys())
+                query_feedback = "General IMAS overview"
 
-            # Gather dynamic statistics from document store
-            physics_domains = set()
-            data_types = set()
-            units_found = set()
-            query_results = []
+            # Sort relevant_ids by complexity (path count) in descending order
+            # This helps with LLM primacy bias - larger/more important IDS appear first
+            relevant_ids.sort(
+                key=lambda ids_name: ids_info.get(ids_name, {}).get("path_count", 0),
+                reverse=True,
+            )
 
-            for ids_name in relevant_ids[:10]:  # Limit analysis for performance
-                try:
-                    # Get documents for this IDS
-                    ids_documents = await self.documents.get_documents_safe(ids_name)
-
-                    for doc in ids_documents[:20]:  # Sample documents per IDS
-                        # Collect physics domains
-                        if (
-                            hasattr(doc.metadata, "physics_domain")
-                            and doc.metadata.physics_domain
-                        ):
-                            physics_domains.add(doc.metadata.physics_domain)
-
-                        # Collect data types
-                        if (
-                            hasattr(doc.metadata, "data_type")
-                            and doc.metadata.data_type
-                        ):
-                            data_types.add(doc.metadata.data_type)
-
-                        # Collect units
-                        if (
-                            hasattr(doc, "units")
-                            and doc.units
-                            and hasattr(doc.units, "unit_str")
-                        ):
-                            if doc.units.unit_str:
-                                units_found.add(doc.units.unit_str)
-
-                except Exception as e:
-                    logger.warning(f"Failed to analyze IDS {ids_name}: {e}")
-
-            # If we have a specific query, get search results for display
-            if query:
-                try:
-                    config = self.search_config.create_config(
-                        search_mode="semantic",
-                        max_results=10,
-                    )
-                    config = self.search_config.optimize_for_query(query, config)
-                    search_results = await self._search_service.search(query, config)
-                    query_results = [result.to_hit() for result in search_results[:5]]
-                except Exception as e:
-                    logger.warning(f"Query search failed: {e}")
-
-            # Validate the relevant IDS exist
-            valid_ids, invalid_ids = await self.documents.validate_ids(relevant_ids)
-
-            # Generate dynamic usage guidance using services and context
-            usage_guidance = {
-                "tools_available": [
-                    "search_imas - Find specific data paths",
-                    "explain_concept - Get physics explanations",
-                    "analyze_ids_structure - Detailed IDS analysis",
-                    "explore_relationships - Find data connections",
-                    "explore_identifiers - Identifier schema analysis",
-                    "export_ids - Multi-IDS data export",
-                    "export_physics_domain - Domain-specific export",
-                ],
-                "getting_started": [],
+            # Get physics domain breakdown
+            physics_domains = self._get_physics_domains()
+            domain_summary = {
+                domain: len(ids_list) for domain, ids_list in physics_domains.items()
             }
 
-            # Use physics and context to generate intelligent suggestions
-            suggestions_added = 0
-            max_suggestions = 4
+            # Get complexity rankings for context
+            complexity_rankings = self._get_complexity_rankings()
 
-            # Physics domain-based suggestions
-            if physics_domains and suggestions_added < max_suggestions:
-                first_domain = next(iter(physics_domains))
-                # Use PhysicsService to get better context if available
-                try:
-                    physics_context = await self.physics.get_concept_context(
-                        first_domain
-                    )
-                    if physics_context:
-                        domain_desc = physics_context.get("description", first_domain)
-                        usage_guidance["getting_started"].append(
-                            f"Try explain_concept('{first_domain}') - {domain_desc[:50]}..."
-                        )
-                    else:
-                        usage_guidance["getting_started"].append(
-                            f"Try explain_concept('{first_domain}') to understand this physics domain"
-                        )
-                    suggestions_added += 1
-                except Exception as e:
-                    logger.warning(f"Physics context lookup failed: {e}")
-                    usage_guidance["getting_started"].append(
-                        f"Try explain_concept('{first_domain}') to understand this physics domain"
-                    )
-                    suggestions_added += 1
-
-            # Data type-based suggestions
-            if data_types and suggestions_added < max_suggestions:
-                usage_guidance["getting_started"].append(
-                    f"Search for specific data types like: {', '.join(list(data_types)[:3])}"
-                )
-                suggestions_added += 1
-
-            # IDS structure suggestions
-            if valid_ids and suggestions_added < max_suggestions:
-                first_ids = valid_ids[0]
-                usage_guidance["getting_started"].append(
-                    f"Use analyze_ids_structure('{first_ids}') for detailed structural analysis"
-                )
-                suggestions_added += 1
-
-            # Query-specific suggestions
-            if query and suggestions_added < max_suggestions:
-                usage_guidance["getting_started"].append(
-                    f"Use search_imas('{query}') to find more specific data paths"
-                )
-                suggestions_added += 1
-
-            # Fallback suggestions if no dynamic content
-            if not usage_guidance["getting_started"]:
-                usage_guidance["getting_started"] = [
-                    "Use search_imas('temperature') to find temperature-related data",
-                    "Try explain_concept('plasma') for physics context",
-                    "Use get_overview('magnetic field') for domain-specific queries",
-                ]
-
-            # Generate dynamic per-IDS statistics
+            # Build IDS statistics for relevant IDS
             ids_statistics = {}
-            for ids_name in valid_ids:
-                try:
-                    # Get actual document count for this IDS
-                    ids_documents = await self.documents.get_documents_safe(ids_name)
-                    path_count = len(ids_documents)
+            physics_domains_found = set()
 
-                    # Count identifiers (simplified - could be enhanced)
-                    identifier_count = sum(
-                        1
-                        for doc in ids_documents
-                        if hasattr(doc, "raw_data")
-                        and doc.raw_data.get("identifier_schema") is not None
+            for ids_name in relevant_ids:
+                if ids_name in ids_info:
+                    ids_data = ids_info[ids_name]
+                    ids_statistics[ids_name] = {
+                        "path_count": ids_data.get("path_count", 0),
+                        "description": ids_data.get("description", f"{ids_name} IDS"),
+                        "physics_domain": ids_data.get(
+                            "physics_domain", "unclassified"
+                        ),
+                    }
+                    physics_domains_found.add(
+                        ids_data.get("physics_domain", "unclassified")
                     )
 
-                    # Generate description based on physics domains found
-                    doc_domains = {
-                        doc.metadata.physics_domain
-                        for doc in ids_documents[:5]
-                        if hasattr(doc.metadata, "physics_domain")
-                        and doc.metadata.physics_domain
-                    }
+            # Generate usage recommendations
+            recommendations = self._generate_recommendations(query, relevant_ids)
 
-                    if doc_domains:
-                        domain_desc = f" ({', '.join(list(doc_domains)[:2])})"
-                    else:
-                        domain_desc = ""
-
-                    ids_statistics[ids_name] = {
-                        "path_count": path_count,
-                        "identifier_count": identifier_count,
-                        "description": f"{ids_name.replace('_', ' ').title()} IDS{domain_desc}",
-                        "sample_domains": list(doc_domains)[:3] if doc_domains else [],
-                    }
-
-                except Exception as e:
-                    logger.warning(f"Failed to generate statistics for {ids_name}: {e}")
-                    # Fallback to basic info
-                    ids_statistics[ids_name] = {
-                        "path_count": 0,
-                        "identifier_count": 0,
-                        "description": f"{ids_name.replace('_', ' ').title()} IDS",
-                        "sample_domains": [],
-                    }
-
-            # Build dynamic overview response content
-            content_parts = []
+            # Build content summary
+            content_parts = [
+                f"🔬 **{query_feedback}**",
+                f"📊 **Dataset Statistics**: {total_ids} IDS with {total_paths:,} total data paths",
+            ]
 
             if query:
-                content_parts.append(f"IMAS Data Dictionary Overview for: '{query}'")
                 content_parts.append(
-                    f"Analysis focused on {len(valid_ids)} relevant IDS"
-                )
-            else:
-                content_parts.append("IMAS Data Dictionary Overview")
-                content_parts.append(f"Total available IDS: {len(all_available_ids)}")
-
-            # Add dynamic statistics
-            if physics_domains:
-                domain_list = ", ".join(list(physics_domains)[:5])
-                if len(physics_domains) > 5:
-                    domain_list += f" and {len(physics_domains) - 5} more"
-                content_parts.append(f"Physics domains found: {domain_list}")
-
-            if data_types:
-                type_list = ", ".join(list(data_types)[:6])
-                if len(data_types) > 6:
-                    type_list += f" and {len(data_types) - 6} more"
-                content_parts.append(f"Data types available: {type_list}")
-
-            if units_found:
-                unit_list = ", ".join(list(units_found)[:8])
-                if len(units_found) > 8:
-                    unit_list += f" and {len(units_found) - 8} more"
-                content_parts.append(f"Common units: {unit_list}")
-
-            if query and query_results:
-                content_parts.append(
-                    f"Found {len(query_results)} specific paths matching your query"
-                )
-            elif query and not query_results:
-                content_parts.append(
-                    "No specific paths found for your query - consider broader terms"
+                    f"🎯 **Relevant IDS**: {len(relevant_ids)} structures match your query"
                 )
 
-            content_parts.append("\nRecommended next steps:")
-            content_parts.extend(
-                [f"  • {item}" for item in usage_guidance["getting_started"]]
-            )
+            if physics_domains_found:
+                domain_list = ", ".join(sorted(physics_domains_found))
+                content_parts.append(f"🧪 **Physics Domains**: {domain_list}")
 
-            overview_response = OverviewResult(
+            # Add top domains summary for general overview
+            if not query and domain_summary:
+                top_domains = sorted(
+                    domain_summary.items(), key=lambda x: x[1], reverse=True
+                )[:5]
+                domain_text = ", ".join(
+                    [f"{domain} ({count})" for domain, count in top_domains]
+                )
+                content_parts.append(f"📈 **Top Physics Domains**: {domain_text}")
+
+            # Add complexity insights
+            if complexity_rankings:
+                most_complex = complexity_rankings[0]
+                least_complex = complexity_rankings[-1]
+                content_parts.append(
+                    f"🏗️ **Complexity Range**: {least_complex[0]} ({least_complex[1]} paths) → "
+                    f"{most_complex[0]} ({most_complex[1]} paths)"
+                )
+
+            content_parts.extend(["", "**🚀 Recommended Next Steps:**"])
+            content_parts.extend([f"  {rec}" for rec in recommendations])
+
+            # Build usage guidance
+            usage_guidance = {
+                "tools_available": [
+                    "search_imas - Find specific data paths with semantic search",
+                    "analyze_ids_structure - Get detailed structural analysis of any IDS",
+                    "explain_concept - Understand physics concepts and terminology",
+                    "explore_relationships - Discover data connections and cross-references (uses relationships.json)",
+                    "explore_identifiers - Browse identifier schemas and enumerations (uses identifier_catalog.json)",
+                    "export_ids - Extract data from multiple IDS simultaneously",
+                    "export_physics_domain - Get domain-specific data exports",
+                ],
+                "getting_started": recommendations,
+                "catalog_focus": "This tool serves the IDS catalog - use explore_relationships() and explore_identifiers() for other catalog data",
+            }
+
+            return OverviewResult(
                 content="\n".join(content_parts),
-                available_ids=valid_ids,
+                available_ids=relevant_ids,
                 query=query,
-                physics_domains=list(physics_domains),
-                physics_context=None,
-                hits=query_results if query else [],
+                physics_domains=list(physics_domains_found),
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
-                ai_response={},  # Reserved for LLM sampling only
             )
 
-            logger.info("IMAS overview generation completed")
-            return overview_response
-
         except Exception as e:
-            logger.error(f"Overview generation failed: {e}")
+            logger.error(f"Catalog-based overview generation failed: {e}")
             return ToolError(
                 error=str(e),
                 suggestions=[
-                    "Try simpler queries",
-                    "Use search_imas() to explore specific topics",
-                    "Check for system availability",
+                    "Try a simpler query or general overview",
+                    "Use search_imas() for direct data exploration",
+                    "Check catalog file availability",
                 ],
                 context={
                     "query": query,
                     "tool": "get_overview",
-                    "operation": "overview_generation",
+                    "operation": "catalog_overview",
+                    "ids_catalog_loaded": bool(self._ids_catalog),
                 },
             )

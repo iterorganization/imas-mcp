@@ -7,7 +7,6 @@ search engines (semantic, lexical, hybrid) in a clean, composable way.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Union
 
 from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 
@@ -29,8 +28,8 @@ class SearchEngine(ABC):
 
     @abstractmethod
     async def search(
-        self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, query: str | list[str], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Execute search with given query and configuration.
 
         Args:
@@ -54,7 +53,7 @@ class SearchEngine(ABC):
         """
         pass
 
-    def validate_query(self, query: Union[str, List[str]]) -> bool:
+    def validate_query(self, query: str | list[str]) -> bool:
         """Validate if the query is suitable for this engine.
 
         Args:
@@ -69,7 +68,7 @@ class SearchEngine(ABC):
             return len(query) > 0 and any(len(q.strip()) > 0 for q in query)
         return False
 
-    def normalize_query(self, query: Union[str, List[str]]) -> str:
+    def normalize_query(self, query: str | list[str]) -> str:
         """Normalize query to standard string format.
 
         Args:
@@ -85,7 +84,7 @@ class SearchEngine(ABC):
         return ""
 
     def log_search_execution(
-        self, query: Union[str, List[str]], config: SearchConfig, result_count: int
+        self, query: str | list[str], config: SearchConfig, result_count: int
     ) -> None:
         """Log search execution for monitoring and debugging.
 
@@ -129,11 +128,11 @@ class MockSearchEngine(SearchEngine):
         super().__init__("mock")
 
     async def search(
-        self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, query: str | list[str], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Return mock search results for testing."""
-        from imas_mcp.search.document_store import Document, DocumentMetadata
         from imas_mcp.models.constants import SearchMode
+        from imas_mcp.search.document_store import Document, DocumentMetadata
 
         # Create mock document for testing
         mock_metadata = DocumentMetadata(

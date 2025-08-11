@@ -1,28 +1,30 @@
 """Response building service for consistent Pydantic model construction."""
 
 import importlib.metadata
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, TypeVar
+from datetime import UTC, datetime
+from typing import Any, TypeVar
+
 from pydantic import BaseModel
 
+from imas_mcp.models.constants import (
+    DetailLevel,
+    IdentifierScope,
+    RelationshipType,
+    SearchMode,
+)
 from imas_mcp.models.result_models import (
-    SearchResult,
     ConceptResult,
-    OverviewResult,
-    StructureResult,
-    IdentifierResult,
-    RelationshipResult,
-    IDSExport,
     DomainExport,
     ExportData,
+    IdentifierResult,
+    IDSExport,
+    OverviewResult,
+    RelationshipResult,
+    SearchResult,
+    StructureResult,
 )
 from imas_mcp.search.search_strategy import SearchMatch
-from imas_mcp.models.constants import (
-    SearchMode,
-    DetailLevel,
-    RelationshipType,
-    IdentifierScope,
-)
+
 from .base import BaseService
 
 try:
@@ -38,15 +40,15 @@ class ResponseService(BaseService):
 
     def build_search_response(
         self,
-        results: List[SearchMatch],
+        results: list[SearchMatch],
         query: str,
         search_mode: SearchMode,
-        ids_filter: Optional[List[str]] = None,
-        max_results: Optional[int] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        physics_context: Optional[Any] = None,
-        physics_domains: Optional[List[str]] = None,
+        ids_filter: list[str] | None = None,
+        max_results: int | None = None,
+        ai_response: dict[str, Any] | None = None,
+        ai_prompt: dict[str, str] | None = None,
+        physics_context: Any | None = None,
+        physics_domains: list[str] | None = None,
     ) -> SearchResult:
         """Build SearchResult from search results with complete context."""
         # Convert SearchMatch objects to SearchHit for API response
@@ -69,14 +71,14 @@ class ResponseService(BaseService):
         concept: str,
         explanation: str,
         detail_level: DetailLevel,
-        related_topics: List[str],
-        nodes: List[Any],
-        physics_domains: List[str],
+        related_topics: list[str],
+        nodes: list[Any],
+        physics_domains: list[str],
         query: str,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
-        physics_context: Optional[Any] = None,
-        concept_explanation: Optional[Any] = None,
+        ai_prompt: dict[str, str] | None = None,
+        ai_response: dict[str, Any] | None = None,
+        physics_context: Any | None = None,
+        concept_explanation: Any | None = None,
     ) -> ConceptResult:
         """Build ConceptResult for concept explanations."""
         return ConceptResult(
@@ -99,15 +101,15 @@ class ResponseService(BaseService):
     def build_overview_response(
         self,
         content: str,
-        available_ids: List[str],
-        hits: List[Any],
-        query: Optional[str] = None,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
-        physics_context: Optional[Any] = None,
-        physics_domains: Optional[List[str]] = None,
-        ids_statistics: Optional[Dict[str, Any]] = None,
-        usage_guidance: Optional[Dict[str, Any]] = None,
+        available_ids: list[str],
+        hits: list[Any],
+        query: str | None = None,
+        ai_prompt: dict[str, str] | None = None,
+        ai_response: dict[str, Any] | None = None,
+        physics_context: Any | None = None,
+        physics_domains: list[str] | None = None,
+        ids_statistics: dict[str, Any] | None = None,
+        usage_guidance: dict[str, Any] | None = None,
     ) -> OverviewResult:
         """Build OverviewResult for system overviews."""
         return OverviewResult(
@@ -130,13 +132,13 @@ class ResponseService(BaseService):
         self,
         ids_name: str,
         description: str,
-        structure: Dict[str, int],
-        sample_paths: List[str],
+        structure: dict[str, int],
+        sample_paths: list[str],
         max_depth: int,
         tool_name: str,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
-        physics_context: Optional[Any] = None,
+        ai_prompt: dict[str, str] | None = None,
+        ai_response: dict[str, Any] | None = None,
+        physics_context: Any | None = None,
     ) -> StructureResult:
         """Build StructureResult for IDS structure analysis."""
         return StructureResult(
@@ -146,7 +148,7 @@ class ResponseService(BaseService):
             sample_paths=sample_paths,
             max_depth=max_depth,
             tool_name=tool_name,
-            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
             ai_prompt=ai_prompt or {},
             ai_response=ai_response or {},
@@ -156,13 +158,13 @@ class ResponseService(BaseService):
     def build_identifier_response(
         self,
         scope: IdentifierScope,
-        schemas: List[Dict[str, Any]],
-        paths: List[Dict[str, Any]],
-        analytics: Dict[str, Any],
+        schemas: list[dict[str, Any]],
+        paths: list[dict[str, Any]],
+        analytics: dict[str, Any],
         tool_name: str,
-        query: Optional[str] = None,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
+        query: str | None = None,
+        ai_prompt: dict[str, str] | None = None,
+        ai_response: dict[str, Any] | None = None,
     ) -> IdentifierResult:
         """Build IdentifierResult for identifier exploration."""
         return IdentifierResult(
@@ -171,7 +173,7 @@ class ResponseService(BaseService):
             paths=paths,
             analytics=analytics,
             tool_name=tool_name,
-            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
             query=query or "",
             search_mode=SearchMode.AUTO,
@@ -186,13 +188,13 @@ class ResponseService(BaseService):
         path: str,
         relationship_type: RelationshipType,
         max_depth: int,
-        connections: Dict[str, List[str]],
-        nodes: List[Any],
-        physics_domains: List[str],
+        connections: dict[str, list[str]],
+        nodes: list[Any],
+        physics_domains: list[str],
         query: str,
-        ai_prompt: Optional[Dict[str, str]] = None,
-        ai_response: Optional[Dict[str, Any]] = None,
-        physics_context: Optional[Any] = None,
+        ai_prompt: dict[str, str] | None = None,
+        ai_response: dict[str, Any] | None = None,
+        physics_context: Any | None = None,
     ) -> RelationshipResult:
         """Build RelationshipResult for relationship exploration."""
         return RelationshipResult(
@@ -213,14 +215,14 @@ class ResponseService(BaseService):
 
     def build_export_response(
         self,
-        ids_names: List[str],
+        ids_names: list[str],
         include_physics: bool,
         include_relationships: bool,
         export_data: ExportData,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         tool_name: str,
-        ai_response: Optional[Dict[str, Any]] = None,
-        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: dict[str, Any] | None = None,
+        ai_prompt: dict[str, str] | None = None,
     ) -> IDSExport:
         """Build IDSExport for IDS exports."""
         return IDSExport(
@@ -230,7 +232,7 @@ class ResponseService(BaseService):
             data=export_data,
             metadata=metadata,
             tool_name=tool_name,
-            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
             ai_response=ai_response or {},
             ai_prompt=ai_prompt or {},
@@ -239,14 +241,14 @@ class ResponseService(BaseService):
     def build_domain_export_response(
         self,
         domain: str,
-        domain_info: Dict[str, Any],
+        domain_info: dict[str, Any],
         include_cross_domain: bool,
         max_paths: int,
         export_data: ExportData,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         tool_name: str,
-        ai_response: Optional[Dict[str, Any]] = None,
-        ai_prompt: Optional[Dict[str, str]] = None,
+        ai_response: dict[str, Any] | None = None,
+        ai_prompt: dict[str, str] | None = None,
     ) -> DomainExport:
         """Build DomainExport for physics domain exports."""
         return DomainExport(
@@ -257,7 +259,7 @@ class ResponseService(BaseService):
             data=export_data,
             metadata=metadata,
             tool_name=tool_name,
-            processing_timestamp=datetime.now(timezone.utc).isoformat(),
+            processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
             ai_response=ai_response or {},
             ai_prompt=ai_prompt or {},
@@ -272,10 +274,10 @@ class ResponseService(BaseService):
             metadata.update(
                 {
                     "tool": tool_name,
-                    "processing_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "processing_timestamp": datetime.now(UTC).isoformat(),
                     "version": VERSION,
                 }
             )
             # Use setattr to update the metadata field
-            setattr(response, "metadata", metadata)
+            response.metadata = metadata
         return response

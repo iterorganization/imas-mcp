@@ -10,12 +10,11 @@ for exact matching and keyword-based search in the IMAS data dictionary.
 """
 
 import logging
-from typing import List, Union
 
+from imas_mcp.models.constants import SearchMode
+from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
 from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.models.constants import SearchMode
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,8 @@ class LexicalSearchEngine(SearchEngine):
         self.document_store = document_store
 
     async def search(
-        self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, query: str | list[str], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Execute lexical search using full-text search.
 
         Args:
@@ -103,7 +102,7 @@ class LexicalSearchEngine(SearchEngine):
         """Get the type identifier for this engine."""
         return "lexical"
 
-    def is_suitable_for_query(self, query: Union[str, List[str]]) -> bool:
+    def is_suitable_for_query(self, query: str | list[str]) -> bool:
         """Check if this engine is suitable for the given query.
 
         Lexical search is particularly good for:

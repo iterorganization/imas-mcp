@@ -7,30 +7,30 @@ performance monitoring, and error handling.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
+
 from fastmcp import Context
 
+from imas_mcp.models.constants import OutputFormat, SearchMode
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import (
     ExportIdsInput,
     ExportPhysicsDomainInput,
 )
-from imas_mcp.models.constants import SearchMode, OutputFormat
 from imas_mcp.models.result_models import (
-    IDSExport,
     DomainExport,
     ExportData,
+    IDSExport,
 )
-from imas_mcp.models.error_models import ToolError
 
 # Import export-appropriate decorators
 from imas_mcp.search.decorators import (
     cache_results,
-    validate_input,
-    measure_performance,
     handle_errors,
-    sample,
-    tool_hints,
     mcp_tool,
+    measure_performance,
+    tool_hints,
+    validate_input,
 )
 
 from .base import BaseTool
@@ -46,7 +46,7 @@ class ExportTool(BaseTool):
         """Return the name of this tool."""
         return "export_tools"
 
-    def _extract_identifier_info(self, doc) -> Dict[str, Any]:
+    def _extract_identifier_info(self, doc) -> dict[str, Any]:
         """Extract identifier information from document."""
         identifier_schema = doc.raw_data.get("identifier_schema", {})
         if identifier_schema:
@@ -60,83 +60,38 @@ class ExportTool(BaseTool):
             }
         return {}
 
-    def _build_export_sample_prompt(
-        self, ids_list: List[str], output_format: str = "structured"
-    ) -> str:
-        """Build sampling prompt for bulk export."""
-        return f"""IMAS Bulk Export Analysis Request:
-IDS Requested: {ids_list}
-Export Format: {output_format}
-
-Please provide comprehensive export guidance that includes:
-
-1. **Data Usage Recommendations**: Best practices for this specific IDS combination
-2. **Physics Insights**: Relationships between exported IDS and physics phenomena
-3. **Analysis Workflows**: Suggested workflows utilizing the exported data
-4. **Integration Patterns**: How these IDS work together in fusion research
-5. **Quality Considerations**: Data validation and consistency checks
-6. **Measurement Dependencies**: How different measurements relate
-7. **Research Applications**: Common use cases for this data combination
-
-Focus on providing actionable guidance for researchers working with this specific data combination.
-"""
-
-    def _build_domain_export_sample_prompt(
-        self, domain: str, analysis_depth: str = "focused"
-    ) -> str:
-        """Build sampling prompt for domain export."""
-        return f"""IMAS Physics Domain Export Request: "{domain}"
-Analysis Depth: {analysis_depth}
-
-Please provide comprehensive domain export analysis that includes:
-
-1. **Domain Overview**: Key characteristics of this physics domain
-2. **Data Hierarchy**: How domain data is organized in IMAS
-3. **Measurement Types**: Key measurements and calculated quantities
-4. **Cross-Domain Connections**: Links to other physics domains
-5. **Analysis Patterns**: Common analysis workflows for this domain
-6. **Research Context**: How this domain fits into fusion research
-7. **Data Quality**: Important validation considerations
-8. **Recommendations**: Best practices for domain-specific analysis
-
-Focus on providing actionable insights for researchers working in this physics domain.
-"""
-
     @cache_results(ttl=600, key_strategy="content_based")
     @validate_input(schema=ExportIdsInput)
     @measure_performance(include_metrics=True, slow_threshold=5.0)
     @handle_errors(fallback="export_suggestions")
     @tool_hints(max_hints=2)
-    @sample(temperature=0.3, max_tokens=750)
-    @mcp_tool("Export bulk IMAS data for multiple IDS")
+    @mcp_tool(
+        "Extract comprehensive data from multiple IDS for analysis and comparison"
+    )
     async def export_ids(
         self,
-        ids_list: List[str],
+        ids_list: list[str],
         include_relationships: bool = True,
         include_physics: bool = True,
         output_format: str = "structured",
-        ctx: Optional[Context] = None,
-    ) -> Union[IDSExport, ToolError]:
+        ctx: Context | None = None,
+    ) -> IDSExport | ToolError:
         """
-        Export bulk IMAS data for multiple IDS using service composition.
+        Extract comprehensive data from multiple IDS for analysis and comparison.
 
-        Uses service composition for business logic:
-        - DocumentService: Validates IDS and retrieves documents
-        - PhysicsService: Enhances export with physics context
-        - ResponseService: Builds standardized Pydantic responses
-
-        Advanced bulk export tool that extracts comprehensive data for multiple IDS,
-        including cross-IDS relationships, physics context, and structural analysis.
+        Bulk data extraction tool that retrieves all data paths, documentation,
+        and metadata from specified IDS. Useful for comparative analysis,
+        cross-IDS workflows, and comprehensive data exploration.
 
         Args:
-            ids_list: List of IDS names to export
-            include_relationships: Whether to include cross-IDS relationship analysis
-            include_physics: Whether to include physics domain context
-            output_format: Export format (structured, json, yaml, markdown)
+            ids_list: List of IDS names to export (e.g., ['equilibrium', 'transport'])
+            include_relationships: Include cross-IDS relationship analysis
+            include_physics: Include physics domain context and insights
+            output_format: Export format - structured, json, yaml, or markdown
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with bulk export data, relationships, and AI insights
+            IDSExport with comprehensive data, relationships, and analysis guidance
         """
         try:
             if not ids_list:
@@ -246,7 +201,6 @@ Focus on providing actionable insights for researchers working in this physics d
                 include_physics=include_physics,
                 include_relationships=include_relationships,
                 data=export_data_obj,
-                ai_response={},  # Reserved for LLM sampling only
                 metadata={
                     "export_timestamp": "2024-01-01T00:00:00Z",
                 },
@@ -266,32 +220,33 @@ Focus on providing actionable insights for researchers working in this physics d
     @measure_performance(include_metrics=True, slow_threshold=3.0)
     @handle_errors(fallback="domain_export_suggestions")
     @tool_hints(max_hints=2)
-    @sample(temperature=0.2, max_tokens=650)
-    @mcp_tool("Export physics domain-specific data")
+    @mcp_tool(
+        "Extract all data related to a specific physics domain across multiple IDS"
+    )
     async def export_physics_domain(
         self,
         domain: str,
         include_cross_domain: bool = False,
         analysis_depth: str = "focused",
         max_paths: int = 10,
-        ctx: Optional[Context] = None,
-    ) -> Union[DomainExport, ToolError]:
+        ctx: Context | None = None,
+    ) -> DomainExport | ToolError:
         """
-        Export physics domain-specific data with sophisticated relationship analysis.
+        Extract all data related to a specific physics domain across multiple IDS.
 
-        Advanced domain export tool that extracts comprehensive data for a specific
-        physics domain, including cross-domain relationships, measurement dependencies,
-        and structural analysis.
+        Domain-focused extraction tool that gathers measurements, calculations,
+        and diagnostics from a particular physics area (e.g., 'equilibrium',
+        'transport', 'heating'). Ideal for domain-specific research workflows.
 
         Args:
-            domain: Physics domain name to export
-            include_cross_domain: Whether to include cross-domain relationship analysis
-            analysis_depth: Analysis depth (comprehensive, focused, overview)
-            max_paths: Maximum number of paths to include in export (limit: 50)
+            domain: Physics domain name (e.g., 'transport', 'equilibrium', 'heating')
+            include_cross_domain: Include connections to related physics domains
+            analysis_depth: Detail level - comprehensive, focused, or overview
+            max_paths: Maximum data paths to include (limit: 50)
             ctx: MCP context for AI enhancement
 
         Returns:
-            Dictionary with domain export data, relationships, and AI insights
+            DomainExport with domain-specific data, relationships, and research guidance
         """
         try:
             if not domain:
@@ -316,7 +271,7 @@ Focus on providing actionable insights for researchers working in this physics d
 
             # Process results based on analysis depth
             domain_paths = []
-            related_ids: Set[str] = set()
+            related_ids: set[str] = set()
 
             for result in search_results:
                 path_info = {
@@ -348,7 +303,6 @@ Focus on providing actionable insights for researchers working in this physics d
                 },
                 include_cross_domain=include_cross_domain,
                 max_paths=max_paths,
-                ai_response={},  # Reserved for LLM sampling only
                 metadata={
                     "total_found": len(domain_paths),
                 },
@@ -360,44 +314,3 @@ Focus on providing actionable insights for researchers working in this physics d
         except Exception as e:
             logger.error(f"Domain export failed: {e}")
             return self._create_error_response(f"Domain export failed: {e}", domain)
-
-    def _build_export_guidance(
-        self, valid_ids: List[str], output_format: str, include_relationships: bool
-    ) -> str:
-        """Build comprehensive export guidance for AI enhancement."""
-        return f"""IMAS Bulk Export Analysis: {valid_ids}
-
-Export Configuration:
-- Format: {output_format}
-- Relationships: {"Included" if include_relationships else "Excluded"}
-- IDS Count: {len(valid_ids)}
-
-Key insights for researchers:
-1. **Data Usage Recommendations**: Best practices for this specific IDS combination
-2. **Physics Insights**: Relationships between exported IDS and physics phenomena
-3. **Analysis Workflows**: Suggested workflows utilizing the exported data
-4. **Integration Patterns**: How these IDS work together in fusion research
-5. **Quality Considerations**: Data validation and consistency checks
-6. **Measurement Dependencies**: How different measurements relate
-
-Provide detailed analysis including workflow recommendations and data integration strategies."""
-
-    def _build_domain_guidance(
-        self, domain: str, analysis_depth: str, path_count: int
-    ) -> str:
-        """Build comprehensive domain guidance for AI enhancement."""
-        return f"""IMAS Physics Domain Export: "{domain}"
-
-Analysis Configuration:
-- Depth: {analysis_depth}
-- Paths Found: {path_count}
-
-Key insights for researchers:
-1. **Domain Overview**: Key characteristics of this physics domain
-2. **Data Hierarchy**: How domain data is organized in IMAS
-3. **Measurement Types**: Key measurements and calculated quantities
-4. **Cross-Domain Connections**: Links to other physics domains
-5. **Analysis Patterns**: Common analysis workflows for this domain
-6. **Research Context**: How this domain fits into fusion research
-
-Provide detailed analysis including best practices for domain-specific research workflows."""

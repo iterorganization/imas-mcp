@@ -10,17 +10,17 @@ import time
 
 import pytest
 
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
     ConceptResult,
     DomainExport,
-    IDSExport,
     IdentifierResult,
+    IDSExport,
     OverviewResult,
     RelationshipResult,
     SearchResult,
     StructureResult,
 )
-from imas_mcp.models.error_models import ToolError
 
 
 class TestUserWorkflows:
@@ -34,8 +34,8 @@ class TestUserWorkflows:
         assert isinstance(overview, OverviewResult)
 
         if overview.available_ids:
-            # Step 2: Search for specific content
-            search_query = workflow_test_data["search_query"]
+            # Step 2: Search for specific content from test dataset IDS
+            search_query = "core_profiles temperature"  # Target our test dataset
             search_result = await tools.search_imas(query=search_query, max_results=5)
             assert isinstance(search_result, SearchResult)
 
@@ -43,7 +43,7 @@ class TestUserWorkflows:
                 # Step 3: Explain a concept found in search
                 first_result = search_result.hits[0]
                 if hasattr(first_result, "path"):
-                    # Extract concept from path for explanation
+                    # Extract IDS name from the search result path
                     path_parts = first_result.path.split("/")
                     concept = path_parts[0] if path_parts else "core_profiles"
 

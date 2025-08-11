@@ -3,7 +3,7 @@
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from imas_mcp.core.extractors.base import BaseExtractor
 
@@ -14,9 +14,9 @@ class RelationshipAnalyzer:
     def __init__(self, context):
         self.context = context
         # Initialize indexes for efficient lookups
-        self._path_index: Dict[str, ET.Element] = {}
-        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._path_index: dict[str, ET.Element] = {}
+        self._coordinate_index: dict[str, list[ET.Element]] = defaultdict(list)
+        self._units_index: dict[str, list[ET.Element]] = defaultdict(list)
         self._built_indexes = False
 
     def _build_indexes(self):
@@ -50,7 +50,7 @@ class RelationshipAnalyzer:
 
         self._built_indexes = True
 
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
+    def find_relationships(self, elem: ET.Element, current_path: str) -> list[str]:
         """Find relationships for an element."""
         self._build_indexes()
         raise NotImplementedError
@@ -59,7 +59,7 @@ class RelationshipAnalyzer:
 class CrossIdsAnalyzer(RelationshipAnalyzer):
     """Analyze cross-IDS references."""
 
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
+    def find_relationships(self, elem: ET.Element, current_path: str) -> list[str]:
         """Extract cross-IDS references."""
         cross_refs = []
 
@@ -88,7 +88,7 @@ class CrossIdsAnalyzer(RelationshipAnalyzer):
 class HierarchicalAnalyzer(RelationshipAnalyzer):
     """Analyze hierarchical (parent-child-sibling) relationships."""
 
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
+    def find_relationships(self, elem: ET.Element, current_path: str) -> list[str]:
         """Extract hierarchical relationships using indexes."""
         self._build_indexes()
         relationships = []
@@ -114,7 +114,7 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
 
         return relationships
 
-    def _find_siblings(self, parent_path: str, current_path: str) -> List[str]:
+    def _find_siblings(self, parent_path: str, current_path: str) -> list[str]:
         """Find sibling paths using index - O(n) single pass instead of O(n²)."""
         siblings = []
         parent_depth = len(parent_path.split("/"))
@@ -131,7 +131,7 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
 
         return siblings
 
-    def _find_children(self, parent_path: str) -> List[str]:
+    def _find_children(self, parent_path: str) -> list[str]:
         """Find direct child paths using index."""
         children = []
         parent_depth = len(parent_path.split("/"))
@@ -148,7 +148,7 @@ class HierarchicalAnalyzer(RelationshipAnalyzer):
 class PhysicsAnalyzer(RelationshipAnalyzer):
     """Analyze physics-domain relationships."""
 
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
+    def find_relationships(self, elem: ET.Element, current_path: str) -> list[str]:
         """Extract physics-based relationships using indexes."""
         self._build_indexes()
         relationships = []
@@ -188,8 +188,8 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
         return relationships
 
     def _classify_physics_domain(
-        self, elem_name: str, current_path: str, groups: Dict[str, List[str]]
-    ) -> Optional[str]:
+        self, elem_name: str, current_path: str, groups: dict[str, list[str]]
+    ) -> str | None:
         """Classify element into physics domain."""
         elem_name_lower = elem_name.lower()
         path_lower = current_path.lower()
@@ -204,8 +204,8 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
         return None
 
     def _find_physics_domain_paths(
-        self, domain: str, keywords: List[str], current_path: str
-    ) -> List[str]:
+        self, domain: str, keywords: list[str], current_path: str
+    ) -> list[str]:
         """Find paths in same physics domain using index."""
         domain_paths = []
 
@@ -223,7 +223,7 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
 
         return list(set(domain_paths))
 
-    def _find_same_unit_paths(self, units: str, current_path: str) -> List[str]:
+    def _find_same_unit_paths(self, units: str, current_path: str) -> list[str]:
         """Find paths with same units using index."""
         same_unit_paths = []
 
@@ -240,7 +240,7 @@ class PhysicsAnalyzer(RelationshipAnalyzer):
 class CoordinateAnalyzer(RelationshipAnalyzer):
     """Analyze coordinate-based relationships."""
 
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
+    def find_relationships(self, elem: ET.Element, current_path: str) -> list[str]:
         """Extract coordinate-based relationships using indexes."""
         self._build_indexes()
         relationships = []
@@ -262,7 +262,7 @@ class CoordinateAnalyzer(RelationshipAnalyzer):
 
         return relationships
 
-    def _should_skip_coordinate(self, coord: Optional[str]) -> bool:
+    def _should_skip_coordinate(self, coord: str | None) -> bool:
         """Check if coordinate should be skipped."""
         if not coord:
             return False
@@ -276,9 +276,9 @@ class RelationshipExtractor(BaseExtractor):
         super().__init__(context)
 
         # Build indexes once for efficient lookups
-        self._path_index: Dict[str, ET.Element] = {}
-        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
+        self._path_index: dict[str, ET.Element] = {}
+        self._coordinate_index: dict[str, list[ET.Element]] = defaultdict(list)
+        self._units_index: dict[str, list[ET.Element]] = defaultdict(list)
         self._built_indexes = False
 
         # Initialize analyzers
@@ -327,7 +327,7 @@ class RelationshipExtractor(BaseExtractor):
             analyzer._units_index = self._units_index
             analyzer._built_indexes = True
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract relationships using all analyzers with performance optimizations."""
         self._build_indexes()
 
@@ -346,7 +346,7 @@ class RelationshipExtractor(BaseExtractor):
             "coordinates": [],
         }
 
-        for i, analyzer in enumerate(self.analyzers):
+        for _i, analyzer in enumerate(self.analyzers):
             try:
                 relationships = analyzer.find_relationships(elem, current_path)
 
@@ -393,8 +393,8 @@ class RelationshipExtractor(BaseExtractor):
         return relationship_data
 
     def _clean_and_prioritize(
-        self, relationships: List[str], current_path: str
-    ) -> List[str]:
+        self, relationships: list[str], current_path: str
+    ) -> list[str]:
         """Clean and prioritize relationships with filtering."""
         if not relationships:
             return []
@@ -457,7 +457,7 @@ class RelationshipExtractor(BaseExtractor):
 
         return False
 
-    def _generate_usage_examples(self, elem: ET.Element) -> List[Dict[str, str]]:
+    def _generate_usage_examples(self, elem: ET.Element) -> list[dict[str, str]]:
         """Generate basic usage examples."""
         examples = []
 

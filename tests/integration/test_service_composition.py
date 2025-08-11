@@ -1,7 +1,9 @@
 """Integration tests for service composition in tools."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+
 from imas_mcp.tools.search_tool import SearchTool
 
 

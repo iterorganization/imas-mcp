@@ -1,7 +1,7 @@
 """Metadata extractor for basic element information."""
 
 import xml.etree.ElementTree as ET
-from typing import Any, Dict
+from typing import Any
 
 from imas_mcp.core.extractors.base import BaseExtractor
 from imas_mcp.core.xml_utils import DocumentationBuilder
@@ -10,7 +10,7 @@ from imas_mcp.core.xml_utils import DocumentationBuilder
 class MetadataExtractor(BaseExtractor):
     """Extract basic metadata like documentation, units, coordinates."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract basic metadata from element."""
         metadata = {}
 
@@ -87,7 +87,7 @@ class MetadataExtractor(BaseExtractor):
 
         return self._clean_metadata(metadata)
 
-    def _clean_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
         """Clean up None values but keep required fields."""
         cleaned = {}
         required_fields = {

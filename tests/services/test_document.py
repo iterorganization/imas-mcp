@@ -1,7 +1,8 @@
 """Tests for DocumentService."""
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from imas_mcp.services.document import DocumentService
 

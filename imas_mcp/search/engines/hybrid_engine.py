@@ -6,14 +6,13 @@ and lexical search for optimal results in the IMAS data dictionary.
 """
 
 import logging
-from typing import List, Union
 
-from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
-from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.models.constants import SearchMode
+from imas_mcp.search.document_store import DocumentStore
+from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
+from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
+from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,8 @@ class HybridSearchEngine(SearchEngine):
         self.lexical_engine = LexicalSearchEngine(document_store)
 
     async def search(
-        self, query: Union[str, List[str]], config: SearchConfig
-    ) -> List[SearchMatch]:
+        self, query: str | list[str], config: SearchConfig
+    ) -> list[SearchMatch]:
         """Execute hybrid search combining semantic and lexical results.
 
         Args:
@@ -111,7 +110,7 @@ class HybridSearchEngine(SearchEngine):
         """Get the type identifier for this engine."""
         return "hybrid"
 
-    def is_suitable_for_query(self, query: Union[str, List[str]]) -> bool:
+    def is_suitable_for_query(self, query: str | list[str]) -> bool:
         """Check if this engine is suitable for the given query.
 
         Hybrid search is suitable for most queries, especially:
@@ -147,7 +146,7 @@ class HybridSearchEngine(SearchEngine):
         # Default fallback - hybrid can handle any query
         return True
 
-    def get_combination_strategy(self, query: Union[str, List[str]]) -> str:
+    def get_combination_strategy(self, query: str | list[str]) -> str:
         """Determine the best combination strategy for the query.
 
         Args:

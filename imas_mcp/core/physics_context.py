@@ -5,7 +5,8 @@ This module provides physics context enrichment using YAML domain definitions
 and unit contexts to enhance MCP tool responses with domain-specific information.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from imas_mcp.core.physics_accessors import get_domain_accessor, get_unit_accessor
@@ -16,10 +17,10 @@ class DomainContext(BaseModel):
 
     domain_name: str
     description: str
-    primary_phenomena: List[str] = Field(default_factory=list)
-    typical_units: List[str] = Field(default_factory=list)
-    measurement_methods: List[str] = Field(default_factory=list)
-    related_domains: List[str] = Field(default_factory=list)
+    primary_phenomena: list[str] = Field(default_factory=list)
+    typical_units: list[str] = Field(default_factory=list)
+    measurement_methods: list[str] = Field(default_factory=list)
+    related_domains: list[str] = Field(default_factory=list)
     complexity_level: str = "unknown"
     match_type: str = "direct"
 
@@ -28,9 +29,9 @@ class UnitContext(BaseModel):
     """Rich unit context from YAML definitions."""
 
     unit: str
-    context_description: Optional[str] = None
-    category: Optional[str] = None
-    physics_domains: List[str] = Field(default_factory=list)
+    context_description: str | None = None
+    category: str | None = None
+    physics_domains: list[str] = Field(default_factory=list)
     measurement_significance: str = "Physical unit"
 
 
@@ -41,7 +42,7 @@ class PhysicsContextProvider:
         self.domain_accessor = get_domain_accessor()
         self.unit_accessor = get_unit_accessor()
 
-    def get_domain_context(self, concept: str) -> Optional[DomainContext]:
+    def get_domain_context(self, concept: str) -> DomainContext | None:
         """Get domain context for a concept."""
         concept_lower = concept.lower()
 
@@ -88,7 +89,7 @@ class PhysicsContextProvider:
 
         return None
 
-    def get_unit_context(self, concept: str) -> Optional[UnitContext]:
+    def get_unit_context(self, concept: str) -> UnitContext | None:
         """Get unit context for a concept."""
         unit_context = self.unit_accessor.get_unit_context(concept)
         if unit_context:
@@ -107,7 +108,7 @@ class PhysicsContextProvider:
 
     def enhance_explanation(
         self, concept: str, detail_level: str = "intermediate"
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Generate enhanced explanation content based on physics context."""
         domain_context = self.get_domain_context(concept)
         unit_context = self.get_unit_context(concept)
@@ -164,7 +165,7 @@ class PhysicsContextProvider:
 
         return explanation
 
-    def get_domain_definition(self, domain: str) -> Optional[Dict[str, Any]]:
+    def get_domain_definition(self, domain: str) -> dict[str, Any] | None:
         """Get domain definition for export enhancement."""
         domain_info = self.domain_accessor.get_domain_info(domain.lower())
         if not domain_info:
@@ -199,7 +200,7 @@ class PhysicsContextProvider:
 
         return result
 
-    def get_cross_domain_analysis(self, domain: str) -> Dict[str, Any]:
+    def get_cross_domain_analysis(self, domain: str) -> dict[str, Any]:
         """Get cross-domain analysis using definition relationships."""
         domain_info = self.domain_accessor.get_domain_info(domain.lower())
         if not domain_info or not domain_info.related_domains:
@@ -227,7 +228,7 @@ class PhysicsContextProvider:
 
         return cross_analysis
 
-    def enhance_search_suggestions(self, query: str, result_count: int) -> List[str]:
+    def enhance_search_suggestions(self, query: str, result_count: int) -> list[str]:
         """Generate enhanced search suggestions based on physics context."""
         suggestions = []
 
@@ -270,7 +271,7 @@ class PhysicsContextProvider:
         return suggestions
 
 
-_physics_context_provider: Optional[PhysicsContextProvider] = None
+_physics_context_provider: PhysicsContextProvider | None = None
 
 
 def get_physics_context_provider() -> PhysicsContextProvider:

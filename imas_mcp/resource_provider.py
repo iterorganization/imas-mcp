@@ -8,6 +8,7 @@ Resources provide static JSON schema files and reference data.
 
 import json
 import logging
+from importlib import resources
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -33,7 +34,8 @@ class Resources(MCPProvider):
     """MCP resources serving existing JSON schema files with LLM-friendly descriptions."""
 
     def __init__(self):
-        self.schema_dir = Path(__file__).parent / "resources" / "schemas"
+        schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
+        self.schema_dir = Path(str(schema_resource))
 
     @property
     def name(self) -> str:
@@ -46,8 +48,8 @@ class Resources(MCPProvider):
             attr = getattr(self, attr_name)
             if hasattr(attr, "_mcp_resource") and attr._mcp_resource:
                 # Resources need URI and description
-                uri = getattr(attr, "_mcp_resource_uri")
-                description = getattr(attr, "_mcp_resource_description")
+                uri = attr._mcp_resource_uri
+                description = attr._mcp_resource_description
                 mcp.resource(uri=uri, description=description)(attr)
 
     @mcp_resource(
@@ -58,7 +60,7 @@ class Resources(MCPProvider):
         """IMAS IDS Catalog - Complete overview of all Interface Data Structures.
 
         Use this resource to:
-        - Get a quick overview of all available IDS (82 total)
+        - Get a quick overview of all available IDS
         - Check document counts and physics domains for each IDS
         - Understand the scope before using search_imas tool
         - Find which IDS contain the most data

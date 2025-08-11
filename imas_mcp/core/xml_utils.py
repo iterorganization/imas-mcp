@@ -5,7 +5,6 @@ files, including hierarchical documentation building and tree traversal utilitie
 """
 
 import xml.etree.ElementTree as ET
-from typing import Dict, Optional
 
 
 class DocumentationBuilder:
@@ -27,7 +26,7 @@ class DocumentationBuilder:
         return text
 
     @staticmethod
-    def build_hierarchical_documentation(documentation_parts: Dict[str, str]) -> str:
+    def build_hierarchical_documentation(documentation_parts: dict[str, str]) -> str:
         """Build semantic documentation optimized for sentence transformers.
 
         Creates natural language documentation by combining the primary field
@@ -97,8 +96,8 @@ class DocumentationBuilder:
         elem: ET.Element,
         ids_elem: ET.Element,
         ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Dict[str, str]:
+        parent_map: dict[ET.Element, ET.Element],
+    ) -> dict[str, str]:
         """Collect documentation from element hierarchy up to IDS root.
 
         Walks up the XML tree from the given element to collect documentation
@@ -154,7 +153,7 @@ class XmlTreeUtils:
     """Common XML tree traversal utilities."""
 
     @staticmethod
-    def build_parent_map(root: ET.Element) -> Dict[ET.Element, ET.Element]:
+    def build_parent_map(root: ET.Element) -> dict[ET.Element, ET.Element]:
         """Build parent map for efficient tree traversal.
 
         Creates a mapping from child elements to their parent elements,
@@ -173,8 +172,8 @@ class XmlTreeUtils:
         elem: ET.Element,
         ids_elem: ET.Element,
         ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Optional[str]:
+        parent_map: dict[ET.Element, ET.Element],
+    ) -> str | None:
         """Build full IMAS path for XML element.
 
         Constructs the full hierarchical path for an XML element by walking

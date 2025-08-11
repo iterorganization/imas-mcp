@@ -1,7 +1,7 @@
 """Path building and semantic analysis extractors."""
 
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List
+from typing import Any
 
 from imas_mcp.core.extractors.base import BaseExtractor
 
@@ -9,7 +9,7 @@ from imas_mcp.core.extractors.base import BaseExtractor
 class PathExtractor(BaseExtractor):
     """Extract and build element paths."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract path information."""
         path_data = {}
 
@@ -41,15 +41,15 @@ class PathExtractor(BaseExtractor):
 class SemanticExtractor(BaseExtractor):
     """Extract semantic groupings and similarity analysis."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract semantic information for the element."""
         # This extractor works on collections of paths, not individual elements
         # Implementation would be called at a higher level
         return {}
 
     def extract_semantic_groups(
-        self, paths: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, List[str]]:
+        self, paths: dict[str, dict[str, Any]]
+    ) -> dict[str, list[str]]:
         """Group paths by semantic similarity."""
         semantic_groups = {}
 
@@ -64,7 +64,7 @@ class SemanticExtractor(BaseExtractor):
         # Filter out single-item groups
         return {k: v for k, v in semantic_groups.items() if len(v) > 1}
 
-    def _determine_semantic_group(self, path: str, metadata: Dict[str, Any]) -> str:
+    def _determine_semantic_group(self, path: str, metadata: dict[str, Any]) -> str:
         """Determine semantic group for a path."""
         # Extract physics context
         physics_context = metadata.get("physics_context", {})

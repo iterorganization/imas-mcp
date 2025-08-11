@@ -5,12 +5,13 @@ Provides intelligent recommendations for follow-up tools based on results.
 """
 
 import functools
-from typing import Any, Callable, Dict, List, TypeVar
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def analyze_search_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_search_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Analyze search results to determine recommendation context.
 
@@ -54,8 +55,8 @@ def analyze_search_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def generate_search_suggestions(
-    query: str, context: Dict[str, Any]
-) -> List[Dict[str, str]]:
+    query: str, context: dict[str, Any]
+) -> list[dict[str, str]]:
     """
     Generate search-based tool suggestions.
 
@@ -141,7 +142,7 @@ def generate_search_suggestions(
     return suggestions
 
 
-def generate_concept_suggestions(concept: str) -> List[Dict[str, str]]:
+def generate_concept_suggestions(concept: str) -> list[dict[str, str]]:
     """
     Generate suggestions for concept explanation results.
 
@@ -198,8 +199,8 @@ def generate_concept_suggestions(concept: str) -> List[Dict[str, str]]:
 
 
 def generate_tool_recommendations(
-    result: Dict[str, Any], strategy: str = "search_based"
-) -> List[Dict[str, str]]:
+    result: dict[str, Any], strategy: str = "search_based"
+) -> list[dict[str, str]]:
     """
     Generate tool recommendations based on function results.
 

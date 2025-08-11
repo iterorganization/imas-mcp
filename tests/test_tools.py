@@ -9,17 +9,17 @@ import inspect
 
 import pytest
 
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
     ConceptResult,
+    DomainExport,
+    IdentifierResult,
+    IDSExport,
     OverviewResult,
     RelationshipResult,
     SearchResult,
     StructureResult,
-    IdentifierResult,
-    IDSExport,
-    DomainExport,
 )
-from imas_mcp.models.error_models import ToolError
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 

@@ -1,6 +1,6 @@
 import asyncio
-from typing import List
 from functools import cached_property
+
 from fastmcp import Client
 
 # Standard test IDS set for consistency across all tests and benchmarks
@@ -25,7 +25,7 @@ class BenchmarkFixture:
         return Client(self.server.mcp)
 
     @cached_property
-    def sample_queries(self) -> List[str]:
+    def sample_queries(self) -> list[str]:
         """Sample queries for benchmarking."""
         return [
             "plasma temperature",
@@ -41,7 +41,7 @@ class BenchmarkFixture:
         return "core_profiles"
 
     @cached_property
-    def ids_pair(self) -> List[str]:
+    def ids_pair(self) -> list[str]:
         """IDS pair for benchmarking - from the consistent IDS set."""
         return ["core_profiles", "equilibrium"]
 

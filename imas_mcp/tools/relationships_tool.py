@@ -1,31 +1,27 @@
 """
-Relationships tool implementation.
+Relationships tool implementation with catalog-based architecture.
 
-This module contains the explore_relationships tool logic with decorators
-for caching, validation, AI enhancement, tool recommendations, performance
-monitoring, and error handling.
+This module provides an intelligent interface to the relationships catalog,
+serving as the primary entry point for users to discover and navigate
+data relationships and cross-references in the IMAS data dictionary.
 """
 
+import importlib.resources
+import json
 import logging
-from typing import Optional, Set, Union
+
 from fastmcp import Context
 
-from imas_mcp.models.request_models import RelationshipsInput
-from imas_mcp.models.constants import SearchMode, RelationshipType
-from imas_mcp.models.result_models import RelationshipResult
-from imas_mcp.models.error_models import ToolError
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
-
-# Import relationship-appropriate decorators
+from imas_mcp.models.constants import RelationshipType
+from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.request_models import RelationshipsInput
+from imas_mcp.models.result_models import RelationshipResult
 from imas_mcp.search.decorators import (
     cache_results,
-    validate_input,
-    measure_performance,
     handle_errors,
-    sample,
-    tool_hints,
-    physics_hints,
     mcp_tool,
+    validate_input,
 )
 
 from .base import BaseTool
@@ -34,148 +30,382 @@ logger = logging.getLogger(__name__)
 
 
 class RelationshipsTool(BaseTool):
-    """Tool for exploring relationships using service composition."""
+    """
+    Relationships catalog-based tool for IMAS data relationship discovery.
+
+    Provides intelligent access to the relationships catalog (relationships.json),
+    serving as the primary interface for users to discover data connections
+    and cross-references in the IMAS data dictionary.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with relationships catalog data loading."""
+        super().__init__(*args, **kwargs)
+        self._relationships_catalog = {}
+        self._load_relationships_catalog()
+
+    def _load_relationships_catalog(self):
+        """Load the relationships catalog file specifically."""
+        try:
+            try:
+                catalog_file = (
+                    importlib.resources.files("imas_mcp.resources.schemas")
+                    / "relationships.json"
+                )
+                with catalog_file.open("r", encoding="utf-8") as f:
+                    self._relationships_catalog = json.load(f)
+                    logger.info("Loaded relationships catalog for relationships tool")
+            except FileNotFoundError:
+                logger.warning(
+                    "Relationships catalog (relationships.json) not found in resources/schemas/"
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to load relationships catalog: {e}")
+            self._relationships_catalog = {}
 
     @property
     def tool_name(self) -> str:
         """Return the name of this tool."""
         return "explore_relationships"
 
-    def _build_relationships_sample_prompt(
-        self, path: str, relationship_type: str = "all"
-    ) -> str:
-        """Build sampling prompt for relationship exploration."""
-        return f"""IMAS Relationship Exploration Request: "{path}"
+    def _find_related_paths(
+        self, path: str, relationship_type: RelationshipType, max_depth: int
+    ) -> list[dict]:
+        """Find related paths from the catalog based on the input path."""
+        if not self._relationships_catalog:
+            return []
 
-Please provide comprehensive relationship analysis that includes:
+        cross_references = self._relationships_catalog.get("cross_references", {})
+        physics_concepts = self._relationships_catalog.get("physics_concepts", {})
+        unit_families = self._relationships_catalog.get("unit_families", {})
+        related_paths = []
 
-1. **Connected Data Paths**: Related measurements and calculated quantities
-2. **Physics Relationships**: How this data connects to physics phenomena
-3. **Cross-IDS Connections**: Links between different data structures
-4. **Measurement Dependencies**: What this data depends on or influences
-5. **Data Flow Context**: How this fits into typical fusion data workflows
-6. **Usage Patterns**: Common analysis patterns involving this data
-7. **Recommendations**: Suggested follow-up analyses or related data to explore
+        # Direct match in cross_references
+        if path in cross_references:
+            relationships = cross_references[path].get("relationships", [])
+            for rel in relationships[: max_depth * 5]:  # Limit results
+                related_paths.append(
+                    {
+                        "path": rel.get("path", ""),
+                        "type": rel.get("type", ""),
+                        "distance": 1,
+                    }
+                )
 
-Relationship type focus: {relationship_type}
+        # Direct match in physics_concepts
+        if path in physics_concepts:
+            physics_data = physics_concepts[path]
+            # Extract relationships from relevant_paths and key_relationships
+            relevant_paths = physics_data.get("relevant_paths", [])
+            key_relationships = physics_data.get("key_relationships", [])
 
-Provide actionable insights for researchers exploring data relationships.
-"""
+            for rel_path in relevant_paths[: max_depth * 3]:  # Limit results
+                related_paths.append(
+                    {
+                        "path": rel_path,
+                        "type": "physics_concept",
+                        "distance": 1,
+                    }
+                )
+
+            for rel_path in key_relationships[: max_depth * 2]:  # Limit results
+                if rel_path not in [r["path"] for r in related_paths]:
+                    related_paths.append(
+                        {
+                            "path": rel_path,
+                            "type": "key_relationship",
+                            "distance": 1,
+                        }
+                    )
+
+        # Check unit_families for paths that share the same units
+        for unit_name, unit_data in unit_families.items():
+            paths_with_unit = unit_data.get("paths_using", [])
+            if path in paths_with_unit:
+                # Add other paths that use the same unit
+                for related_path in paths_with_unit[: max_depth * 2]:  # Limit results
+                    if related_path != path and related_path not in [
+                        r["path"] for r in related_paths
+                    ]:
+                        related_paths.append(
+                            {
+                                "path": related_path,
+                                "type": "unit_relationship",
+                                "distance": 1,
+                                "unit": unit_name,
+                            }
+                        )
+
+        # Partial path matching for broader search
+        if len(related_paths) < 3:  # If we don't have many direct matches
+            path_lower = path.lower()
+
+            # Search in cross_references
+            for ref_path, ref_data in cross_references.items():
+                if path_lower in ref_path.lower() or any(
+                    path_lower in rel.get("path", "").lower()
+                    for rel in ref_data.get("relationships", [])
+                ):
+                    for rel in ref_data.get("relationships", [])[
+                        :3
+                    ]:  # Limit per reference
+                        if rel.get("path") not in [r["path"] for r in related_paths]:
+                            related_paths.append(
+                                {
+                                    "path": rel.get("path", ""),
+                                    "type": rel.get("type", ""),
+                                    "distance": 2,
+                                }
+                            )
+
+                if len(related_paths) >= max_depth * 8:  # Overall limit
+                    break
+
+            # Search in physics_concepts if still need more results
+            if len(related_paths) < 5:
+                for ref_path, ref_data in physics_concepts.items():
+                    if path_lower in ref_path.lower():
+                        relevant_paths = ref_data.get("relevant_paths", [])
+                        for rel_path in relevant_paths[:3]:  # Limit per reference
+                            if rel_path not in [r["path"] for r in related_paths]:
+                                related_paths.append(
+                                    {
+                                        "path": rel_path,
+                                        "type": "physics_partial",
+                                        "distance": 2,
+                                    }
+                                )
+
+                    if len(related_paths) >= max_depth * 8:  # Overall limit
+                        break
+
+            # Search in unit_families for partial matches if still need more results
+            if len(related_paths) < 7:
+                for unit_name, unit_data in unit_families.items():
+                    paths_with_unit = unit_data.get("paths_using", [])
+                    for unit_path in paths_with_unit:
+                        if path_lower in unit_path.lower() and unit_path not in [
+                            r["path"] for r in related_paths
+                        ]:
+                            related_paths.append(
+                                {
+                                    "path": unit_path,
+                                    "type": "unit_partial",
+                                    "distance": 2,
+                                    "unit": unit_name,
+                                }
+                            )
+
+                    if len(related_paths) >= max_depth * 8:  # Overall limit
+                        break
+
+        # Filter by relationship type if not ALL
+        if relationship_type != RelationshipType.ALL:
+            type_filter = relationship_type.value.lower()
+            if type_filter == "cross_ids":
+                related_paths = [r for r in related_paths if "IDS:" in r["path"]]
+            elif type_filter == "structural":
+                related_paths = [
+                    r
+                    for r in related_paths
+                    if r["type"]
+                    in ["cross_reference", "structure", "unit_relationship"]
+                ]
+            elif type_filter == "physics":
+                # For physics relationships, we'd need additional metadata
+                # For now, include all as physics connections are implicit
+                pass
+
+        return related_paths[: max_depth * 6]  # Final limit
+
+    def _build_nodes_from_relationships(
+        self, related_paths: list[dict]
+    ) -> list[IdsNode]:
+        """Build IdsNode objects from relationship data."""
+        nodes = []
+
+        for rel_info in related_paths:
+            path = rel_info["path"]
+
+            # Extract IDS name and create basic documentation
+            if path.startswith("IDS:"):
+                path = path[4:]  # Remove 'IDS:' prefix
+
+            documentation = f"Related to input path via {rel_info['type']} relationship (distance: {rel_info['distance']})"
+
+            # Create basic physics context if available
+            physics_context = None
+            if "equilibrium" in path.lower():
+                physics_context = PhysicsContext(
+                    domain="equilibrium",
+                    phenomena=[],
+                    typical_values={},
+                )
+            elif "transport" in path.lower():
+                physics_context = PhysicsContext(
+                    domain="transport",
+                    phenomena=[],
+                    typical_values={},
+                )
+            elif any(term in path.lower() for term in ["diagnostic", "measurement"]):
+                physics_context = PhysicsContext(
+                    domain="diagnostics",
+                    phenomena=[],
+                    typical_values={},
+                )
+
+            node = IdsNode(
+                path=path,
+                documentation=documentation,
+                units="",  # Not available in relationships catalog
+                data_type="",  # Not available in relationships catalog
+                physics_context=physics_context,
+            )
+            nodes.append(node)
+
+        return nodes
+
+    def _generate_relationship_recommendations(
+        self, path: str, related_paths: list[dict]
+    ) -> list[str]:
+        """Generate usage recommendations based on relationship context."""
+        recommendations = []
+
+        recommendations.append(
+            f"🔍 Use search_imas('{path}') to find specific data paths"
+        )
+
+        # Path-specific recommendations
+        if "equilibrium" in path.lower():
+            recommendations.append(
+                "⚡ Use analyze_ids_structure('equilibrium') for detailed equilibrium data structure"
+            )
+
+        if any("diagnostic" in rel["path"].lower() for rel in related_paths):
+            recommendations.append(
+                "📊 Use export_physics_domain('diagnostics') for measurement data"
+            )
+
+        if len(related_paths) > 5:
+            cross_ids = {
+                rel["path"].split("/")[0] for rel in related_paths if "/" in rel["path"]
+            }
+            recommendations.append(
+                f"🔗 Use export_ids({list(cross_ids)[:3]}) to compare related IDS"
+            )
+
+        # Always include general recommendations
+        recommendations.extend(
+            [
+                "💡 Use get_overview() to understand overall IMAS structure",
+                "🌐 Use explore_identifiers() to browse available enumerations",
+                "📈 Use analyze_ids_structure() for detailed structural analysis",
+            ]
+        )
+
+        return recommendations[:6]  # Limit to 6 recommendations
 
     @cache_results(ttl=600, key_strategy="path_based")
     @validate_input(schema=RelationshipsInput)
-    @measure_performance(include_metrics=True, slow_threshold=2.5)
     @handle_errors(fallback="relationships_suggestions")
-    @tool_hints(max_hints=3)
-    @physics_hints()
-    @sample(temperature=0.3, max_tokens=700)
-    @mcp_tool("Explore relationships between IMAS data paths")
+    @mcp_tool("Discover connections and cross-references between IMAS data paths")
     async def explore_relationships(
         self,
         path: str,
         relationship_type: RelationshipType = RelationshipType.ALL,
         max_depth: int = 2,
-        ctx: Optional[Context] = None,
-    ) -> Union[RelationshipResult, ToolError]:
+        ctx: Context | None = None,
+    ) -> RelationshipResult | ToolError:
         """
-        Explore relationships between IMAS data paths using service composition.
+        Discover connections and cross-references between IMAS data paths.
 
-        Uses service composition for business logic:
-        - DocumentService: Validates paths and retrieves related documents
-        - PhysicsService: Enhances relationships with physics context
-        - ResponseService: Builds standardized Pydantic responses
-
-        Advanced tool that discovers connections, physics concepts, and measurement
-        relationships between different parts of the IMAS data dictionary.
+        Network analysis tool that reveals how different measurements and calculations
+        relate to each other across IDS. Use to understand data dependencies,
+        find related measurements, and plan multi-IDS analysis workflows.
 
         Args:
-            path: Starting path (format: "ids_name/path" or just "ids_name")
-            relationship_type: Type of relationships to explore
-            max_depth: Maximum depth of relationship traversal (1-3, limited for performance)
-            ctx: MCP context for AI enhancement
+            path: Starting data path or IDS name (e.g., 'equilibrium/time_slice/profiles_2d')
+            relationship_type: Connection type - all, semantic, structural, physics, or measurement
+            max_depth: Relationship traversal depth (1-3, limited for performance)
+            ctx: MCP context for potential AI enhancement
 
         Returns:
-            RelationshipResult with relationship network and AI insights
+            RelationshipResult with connected data paths and relationship insights
         """
         try:
+            # Check if relationships catalog is loaded
+            if not self._relationships_catalog:
+                return ToolError(
+                    error="Relationships catalog data not available",
+                    suggestions=[
+                        "Check if relationships.json exists in resources/schemas/",
+                        "Try restarting the MCP server",
+                        "Use search_imas() for direct data access",
+                    ],
+                    context={
+                        "tool": "explore_relationships",
+                        "operation": "catalog_access",
+                    },
+                )
+
             # Validate and limit max_depth for performance
             max_depth = min(max_depth, 3)  # Hard limit to prevent excessive traversal
             if max_depth < 1:
                 max_depth = 1
 
-            # Parse the path to extract IDS name
+            # Parse the path to extract IDS name (for validation)
             if "/" in path:
-                ids_name = path.split("/")[0]
                 specific_path = path
             else:
-                ids_name = path
-                specific_path = None
+                specific_path = path
 
-            # Validate IDS exists using document service
-            valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
-            if not valid_ids:
-                return self.documents.create_ids_not_found_error(path, self.tool_name)
-
-            # Enhance query with physics context using service
-            if specific_path:
-                search_query = f"{ids_name} {specific_path} relationships"
-            else:
-                search_query = f"{ids_name} relationships physics concepts"
-
-            physics_context = await self.physics.enhance_query(search_query)
-
-            # Get relationship data through semantic search with improved config
-            search_config = self.search_config.create_config(
-                search_mode=SearchMode.SEMANTIC,
-                max_results=min(15, max_depth * 8),  # Scale with depth
+            # Find related paths from catalog
+            related_paths = self._find_related_paths(
+                specific_path, relationship_type, max_depth
             )
 
-            try:
-                search_results = await self._search_service.search(
-                    query=search_query, config=search_config
+            if not related_paths:
+                return ToolError(
+                    error=f"No relationships found for path: {path}",
+                    suggestions=[
+                        f"Try search_imas('{path}') for direct path exploration",
+                        "Use get_overview() to explore available IDS",
+                        "Check if the path exists using analyze_ids_structure()",
+                    ],
+                    context={"tool": "explore_relationships", "path": path},
                 )
-            except Exception as e:
-                return self._create_error_response(
-                    f"Failed to search relationships: {e}", path
+
+            # Build nodes from relationships
+            nodes = self._build_nodes_from_relationships(related_paths)
+
+            # Extract connection information
+            total_relationships = [rel["path"] for rel in related_paths]
+            physics_connections = [
+                rel["path"]
+                for rel in related_paths
+                if any(
+                    domain in rel["path"].lower()
+                    for domain in ["equilibrium", "transport", "heating"]
                 )
+            ]
+            cross_ids_connections = list(
+                {
+                    rel["path"].split("/")[0]
+                    for rel in related_paths
+                    if "/" in rel["path"] and not rel["path"].startswith("IDS:")
+                }
+            )
 
-            # Process search results for relationships
-            related_paths = []
-            seen_paths: Set[str] = set()
+            # Extract physics domains from nodes
+            physics_domains = [
+                node.physics_context.domain
+                for node in nodes
+                if node.physics_context and node.physics_context.domain
+            ]
 
-            for search_result in search_results:
-                result_path = search_result.document.metadata.path_name
-                if result_path not in seen_paths and result_path != path:
-                    seen_paths.add(result_path)
-
-                    # Build physics context if available
-                    local_physics_context = None
-                    if search_result.document.metadata.physics_domain:
-                        local_physics_context = PhysicsContext(
-                            domain=search_result.document.metadata.physics_domain,
-                            phenomena=[],
-                            typical_values={},
-                        )
-
-                    related_paths.append(
-                        IdsNode(
-                            path=result_path,
-                            documentation=search_result.document.documentation[:200]
-                            + "..."
-                            if len(search_result.document.documentation) > 200
-                            else search_result.document.documentation,
-                            units=search_result.document.units.unit_str
-                            if search_result.document.units
-                            else "",
-                            data_type=search_result.document.metadata.data_type or "",
-                            physics_context=local_physics_context,
-                        )
-                    )
-
-                    if (
-                        len(related_paths) >= max_depth * 5
-                    ):  # Increase limit for better results
-                        break
+            # Generate recommendations - used in future enhancements
+            # recommendations = self._generate_relationship_recommendations(path, related_paths)
 
             # Build response using Pydantic
             response = RelationshipResult(
@@ -183,55 +413,33 @@ Provide actionable insights for researchers exploring data relationships.
                 relationship_type=relationship_type,
                 max_depth=max_depth,
                 connections={
-                    "total_relationships": [p.path for p in related_paths],
-                    "physics_connections": [
-                        p.path
-                        for p in related_paths
-                        if p.physics_context and p.physics_context.domain
-                    ],
-                    "cross_ids_connections": list(
-                        set(
-                            p.path.split("/")[0] for p in related_paths if "/" in p.path
-                        )
-                    ),
+                    "total_relationships": total_relationships,
+                    "physics_connections": physics_connections,
+                    "cross_ids_connections": cross_ids_connections,
                 },
-                nodes=related_paths[:8],
-                physics_domains=[
-                    p.physics_context.domain
-                    for p in related_paths
-                    if p.physics_context and p.physics_context.domain
-                ],
-                physics_context=physics_context,
-                ai_response={},  # Reserved for LLM sampling only
+                nodes=nodes[:8],  # Limit nodes for response size
+                physics_domains=list(set(physics_domains)),
+                physics_context=None,  # Simplified for catalog-based data
+                ai_response={},  # No AI processing needed for catalog data
             )
 
             logger.info(f"Relationship exploration completed for path: {path}")
             return response
 
         except Exception as e:
-            logger.error(f"Relationship exploration failed: {e}")
-            return self._create_error_response(
-                f"Relationship exploration failed: {e}", path
+            logger.error(f"Catalog-based relationship exploration failed: {e}")
+            return ToolError(
+                error=str(e),
+                suggestions=[
+                    "Try a simpler path or different relationship type",
+                    "Use get_overview() for general IMAS exploration",
+                    "Check relationships catalog file availability",
+                ],
+                context={
+                    "path": path,
+                    "relationship_type": relationship_type.value,
+                    "tool": "explore_relationships",
+                    "operation": "catalog_relationships",
+                    "relationships_catalog_loaded": bool(self._relationships_catalog),
+                },
             )
-
-    def _build_relationship_guidance(
-        self, path: str, relationship_type: RelationshipType, related_paths: list
-    ) -> str:
-        """Build comprehensive relationship guidance for AI enhancement."""
-        return f"""IMAS Relationship Exploration: "{path}"
-
-Found {len(related_paths)} related data paths with relationship type: {relationship_type.value}
-
-Key relationship insights:
-1. **Connected Data Paths**: Direct measurements and calculated quantities related to this path
-2. **Physics Relationships**: How this data connects to underlying physics phenomena  
-3. **Cross-IDS Connections**: Links between different IMAS data structures
-4. **Measurement Dependencies**: What this data depends on or influences
-5. **Data Flow Context**: How this fits into typical fusion data workflows
-6. **Usage Patterns**: Common analysis patterns involving this data
-
-Provide detailed analysis including:
-- Physics significance of the identified relationships
-- Recommended follow-up analyses or related data to explore
-- Cross-IDS workflow patterns and data dependencies
-- Validation considerations for related measurements"""

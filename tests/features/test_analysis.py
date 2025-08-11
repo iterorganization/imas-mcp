@@ -6,15 +6,16 @@ focusing on concept explanation, structure analysis, and relationship exploratio
 """
 
 import time
+
 import pytest
 
+from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
     ConceptResult,
-    StructureResult,
     IdentifierResult,
     RelationshipResult,
+    StructureResult,
 )
-from imas_mcp.models.error_models import ToolError
 
 
 class TestAnalysisFeatures:
@@ -132,7 +133,7 @@ class TestAnalysisFeatures:
         if hasattr(result, "schemas"):
             schemas = result.schemas
             # Should provide identifier structure information
-            assert isinstance(schemas, (dict, list))
+            assert isinstance(schemas, dict | list)
 
 
 class TestAnalysisErrorHandling:
@@ -166,7 +167,7 @@ class TestAnalysisErrorHandling:
 
         result = await tools.explore_identifiers(query=invalid_ids)
         # May return either success with empty results or error - both valid
-        assert isinstance(result, (IdentifierResult, ToolError))
+        assert isinstance(result, IdentifierResult | ToolError)
 
     @pytest.mark.asyncio
     async def test_explain_empty_concept(self, tools):
@@ -248,7 +249,7 @@ class TestAnalysisPerformance:
 
         execution_time = end_time - start_time
         assert execution_time < 15.0, f"Analysis took {execution_time:.2f}s, too slow"
-        assert isinstance(result, (StructureResult, ToolError))
+        assert isinstance(result, StructureResult | ToolError)
 
     @pytest.mark.asyncio
     async def test_explanation_response_time(self, tools):
@@ -261,7 +262,7 @@ class TestAnalysisPerformance:
         assert execution_time < 10.0, (
             f"Explanation took {execution_time:.2f}s, too slow"
         )
-        assert isinstance(result, (ConceptResult, ToolError))
+        assert isinstance(result, ConceptResult | ToolError)
 
 
 if __name__ == "__main__":
