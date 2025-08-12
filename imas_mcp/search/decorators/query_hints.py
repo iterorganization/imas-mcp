@@ -159,45 +159,123 @@ def generate_search_query_hints(search_result: SearchResult) -> list[SearchSugge
     return hints
 
 
-def apply_query_hints(search_result: SearchResult, max_hints: int = 5) -> SearchResult:
+def generate_generic_query_hints(result: Any) -> list[SearchSuggestion]:
     """
-    Apply query hints to a SearchResult.
+    Generate generic query hints for non-search ToolResult objects.
 
     Args:
-        search_result: The SearchResult to enhance
+        result: Any ToolResult object
+
+    Returns:
+        List of query suggestions appropriate for the result type
+    """
+    hints = []
+    result_type = type(result).__name__
+
+    if result_type == "ConceptResult":
+        concept = getattr(result, "concept", "")
+        if concept:
+            hints.extend(
+                [
+                    SearchSuggestion(
+                        suggestion=f"{concept} measurements",
+                        reason="Search for measurement data related to this concept",
+                        confidence=0.8,
+                    ),
+                    SearchSuggestion(
+                        suggestion=f"{concept} profile",
+                        reason="Find profile data for this concept",
+                        confidence=0.7,
+                    ),
+                ]
+            )
+
+    elif result_type == "StructureResult":
+        ids_name = getattr(result, "ids_name", "")
+        if ids_name:
+            hints.extend(
+                [
+                    SearchSuggestion(
+                        suggestion=f"{ids_name} time",
+                        reason="Search for time-dependent data in this IDS",
+                        confidence=0.7,
+                    ),
+                    SearchSuggestion(
+                        suggestion=f"{ids_name} profiles",
+                        reason="Find profile data in this IDS",
+                        confidence=0.6,
+                    ),
+                ]
+            )
+
+    else:
+        # Generic suggestions for any result
+        hints.extend(
+            [
+                SearchSuggestion(
+                    suggestion="related measurements",
+                    reason="Search for related measurement data",
+                    confidence=0.5,
+                ),
+                SearchSuggestion(
+                    suggestion="*profile*",
+                    reason="Use wildcards to find profile data",
+                    confidence=0.4,
+                ),
+            ]
+        )
+
+    return hints
+
+
+def apply_query_hints(result: Any, max_hints: int = 5) -> Any:
+    """
+    Apply query hints to any ToolResult object.
+
+    Args:
+        result: The result to enhance (must have query_hints attribute)
         max_hints: Maximum number of hints to include
 
     Returns:
-        Enhanced SearchResult with query suggestions
+        Enhanced result with query suggestions
     """
     try:
-        hints = generate_search_query_hints(search_result)
+        # Check if result has query_hints attribute (any ToolResult subclass)
+        if not hasattr(result, "query_hints"):
+            logger.warning(
+                f"Result type {type(result)} does not have query_hints field"
+            )
+            return result
+
+        # Generate hints - only SearchResult has the specific generator for now
+        if hasattr(result, "hits") and hasattr(result, "query"):
+            hints = generate_search_query_hints(result)
+        else:
+            # For other ToolResult types, generate basic query suggestions
+            hints = generate_generic_query_hints(result)
 
         # Sort by confidence and limit
         sorted_hints = sorted(hints, key=lambda h: h.confidence or 0, reverse=True)
-
-        # Add hints to search result (using base dict access)
-        if hasattr(search_result, "__dict__"):
-            search_result.__dict__["query_suggestions"] = sorted_hints[:max_hints]
+        result.query_hints = sorted_hints[:max_hints]
 
     except Exception as e:
         logger.warning(f"Query hints generation failed: {e}")
-        # Ensure query_suggestions exists even if generation fails
-        if hasattr(search_result, "__dict__"):
-            search_result.__dict__["query_suggestions"] = []
+        # Ensure query_hints exists even if generation fails
+        if hasattr(result, "query_hints"):
+            result.query_hints = []
 
-    return search_result
+    return result
 
 
 def query_hints(max_hints: int = 5) -> Callable[[F], F]:
     """
-    Decorator to add query hints to SearchResult.
+    Decorator to add query hints to any ToolResult object.
 
     Args:
         max_hints: Maximum number of query hints to include
 
     Returns:
-        Decorated function with query hints applied to SearchResult
+        Decorated function with query hints applied to result
     """
 
     def decorator(func: F) -> F:
@@ -206,8 +284,8 @@ def query_hints(max_hints: int = 5) -> Callable[[F], F]:
             # Execute original function
             result = await func(*args, **kwargs)
 
-            # Apply query hints if result is SearchResult
-            if isinstance(result, SearchResult):
+            # Apply query hints if result has query_hints attribute (any ToolResult)
+            if hasattr(result, "query_hints"):
                 result = apply_query_hints(result, max_hints)
 
             return result

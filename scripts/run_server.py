@@ -8,7 +8,6 @@ import click
 from imas_mcp.server import Server
 
 # Configure logging
-logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +64,15 @@ def run_server(
             "Adjusted log level to WARNING for stdio transport to prevent client warnings"
         )
 
-    logging.basicConfig(level=getattr(logging, log_level))
+    # Force reconfigure logging by getting the root logger and setting its level
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level))
+
+    # Also update all existing handlers
+    for handler in root_logger.handlers:
+        handler.setLevel(getattr(logging, log_level))
+
+    logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
 
     match transport:

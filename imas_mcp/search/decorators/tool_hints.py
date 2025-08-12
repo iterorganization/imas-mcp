@@ -112,45 +112,140 @@ def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggesti
     return hints
 
 
-def apply_tool_hints(search_result: SearchResult, max_hints: int = 4) -> SearchResult:
+def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
     """
-    Apply tool hints to a SearchResult.
+    Generate tool hints for non-search ToolResult objects.
 
     Args:
-        search_result: The SearchResult to enhance
+        result: Any ToolResult object
+
+    Returns:
+        List of tool suggestions appropriate for the result type
+    """
+    hints = []
+
+    # Determine result type and suggest appropriate tools
+    result_type = type(result).__name__
+
+    if result_type == "ConceptResult":
+        # For concept explanations, suggest related tools
+        hints.extend(
+            [
+                ToolSuggestion(
+                    tool_name="search_imas",
+                    description="Search for IMAS data paths related to this concept",
+                    relevance=f"Find data paths for concept: {getattr(result, 'concept', '')}",
+                ),
+                ToolSuggestion(
+                    tool_name="explore_relationships",
+                    description="Explore how this concept relates to other IMAS structures",
+                    relevance="Discover related physics concepts and measurements",
+                ),
+            ]
+        )
+
+    elif result_type == "StructureResult":
+        # For structure analysis, suggest data exploration tools
+        ids_name = getattr(result, "ids_name", "")
+        hints.extend(
+            [
+                ToolSuggestion(
+                    tool_name="export_ids",
+                    description=f"Export comprehensive data from {ids_name}",
+                    relevance=f"Get all data from {ids_name} for analysis",
+                ),
+                ToolSuggestion(
+                    tool_name="search_imas",
+                    description=f"Search for specific data within {ids_name}",
+                    relevance=f"Find specific measurements in {ids_name}",
+                ),
+            ]
+        )
+
+    elif result_type in ["IDSExport", "DomainExport"]:
+        # For export results, suggest analysis tools
+        hints.extend(
+            [
+                ToolSuggestion(
+                    tool_name="analyze_ids_structure",
+                    description="Analyze the structure of exported data",
+                    relevance="Understand the organization of exported data",
+                ),
+                ToolSuggestion(
+                    tool_name="explore_relationships",
+                    description="Explore relationships within exported data",
+                    relevance="Find connections between exported data elements",
+                ),
+            ]
+        )
+
+    else:
+        # Generic suggestions for any tool result
+        hints.extend(
+            [
+                ToolSuggestion(
+                    tool_name="search_imas",
+                    description="Search for related IMAS data paths",
+                    relevance="Find additional related data",
+                ),
+                ToolSuggestion(
+                    tool_name="get_overview",
+                    description="Get overview of IMAS data structure",
+                    relevance="Explore the broader IMAS data context",
+                ),
+            ]
+        )
+
+    return hints
+
+
+def apply_tool_hints(result: Any, max_hints: int = 4) -> Any:
+    """
+    Apply tool hints to any ToolResult object.
+
+    Args:
+        result: The result to enhance (must have tool_hints attribute)
         max_hints: Maximum number of hints to include
 
     Returns:
-        Enhanced SearchResult with tool suggestions
+        Enhanced result with tool suggestions
     """
     try:
-        hints = generate_search_tool_hints(search_result)
+        # Check if result has tool_hints attribute (any ToolResult subclass)
+        if not hasattr(result, "tool_hints"):
+            logger.warning(f"Result type {type(result)} does not have tool_hints field")
+            return result
 
-        # Just use the first max_hints suggestions
+        # Generate hints based on result type
+        if hasattr(result, "hits") and hasattr(result, "query"):
+            # SearchResult - use existing search hint generator
+            hints = generate_search_tool_hints(result)
+        else:
+            # Other ToolResult types - generate generic tool hints
+            hints = generate_generic_tool_hints(result)
+
+        # Limit and assign hints
         limited_hints = hints[:max_hints]
-
-        # Add hints to search result (using base dict access)
-        if hasattr(search_result, "__dict__"):
-            search_result.__dict__["tool_suggestions"] = limited_hints
+        result.tool_hints = limited_hints
 
     except Exception as e:
         logger.warning(f"Tool hints generation failed: {e}")
-        # Ensure tool_suggestions exists even if generation fails
-        if hasattr(search_result, "__dict__"):
-            search_result.__dict__["tool_suggestions"] = []
+        # Ensure tool_hints exists even if generation fails
+        if hasattr(result, "tool_hints"):
+            result.tool_hints = []
 
-    return search_result
+    return result
 
 
 def tool_hints(max_hints: int = 4) -> Callable[[F], F]:
     """
-    Decorator to add tool hints to SearchResult.
+    Decorator to add tool hints to any ToolResult object.
 
     Args:
         max_hints: Maximum number of tool hints to include
 
     Returns:
-        Decorated function with tool hints applied to SearchResult
+        Decorated function with tool hints applied to result
     """
 
     def decorator(func: F) -> F:
@@ -159,8 +254,8 @@ def tool_hints(max_hints: int = 4) -> Callable[[F], F]:
             # Execute original function
             result = await func(*args, **kwargs)
 
-            # Apply tool hints if result is SearchResult
-            if isinstance(result, SearchResult):
+            # Apply tool hints if result has tool_hints attribute (any ToolResult)
+            if hasattr(result, "tool_hints"):
                 result = apply_tool_hints(result, max_hints)
 
             return result
