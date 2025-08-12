@@ -30,6 +30,7 @@ from imas_mcp.tools import Tools
 nest_asyncio.apply()
 
 # Configure logging with specific control over different components
+# Note: Default to WARNING but allow CLI to override this
 logging.basicConfig(
     level=logging.WARNING, format="%(name)s - %(levelname)s - %(message)s"
 )

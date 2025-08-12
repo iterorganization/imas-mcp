@@ -36,9 +36,8 @@
   },
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: imas": {
-      "allowedDuringChat": true,
-      "allowedModels": ["copilot/claude-sonnet-4"]
+    "imas-mcp/.vscode/mcp.json: imas-debug": {
+      "allowedDuringChat": true
     }
   },
   // Formatting settings

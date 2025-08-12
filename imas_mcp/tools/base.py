@@ -101,6 +101,36 @@ class BaseTool(ABC):
         """Override in subclasses to provide tool-specific system prompts."""
         return "You are an expert assistant analyzing IMAS fusion physics data. Provide detailed, accurate insights."
 
+    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
+        """Build sampling tasks for sampling tool result content.
+
+        Default implementation provides base sampling tasks for common fields.
+        Override in subclasses to add tool-specific sampling tasks.
+
+        Args:
+            tool_result: The tool result to build sampling tasks for
+
+        Returns:
+            List of sampling tasks with field, prompt_type, and context
+        """
+        tasks = []
+
+        # Base sampling for any tool with nodes
+        if hasattr(tool_result, "nodes") and tool_result.nodes:
+            tasks.append(
+                {
+                    "field": "nodes_documentation",
+                    "prompt_type": "sample_documentation",
+                    "context": {
+                        "nodes": tool_result.nodes[:5],  # Limit context size
+                        "query": getattr(tool_result, "query", ""),
+                        "tool_type": type(self).__name__,
+                    },
+                }
+            )
+
+        return tasks
+
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""
         # Create engines for each mode

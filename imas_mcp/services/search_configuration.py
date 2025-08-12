@@ -41,16 +41,40 @@ class SearchConfigurationService(BaseService):
     def optimize_for_query(
         self, query: str | list[str], base_config: SearchConfig
     ) -> SearchConfig:
-        """Optimize configuration based on query characteristics."""
+        """Optimize configuration based on query characteristics.
+
+        Only optimizes AUTO mode - explicit user choices are always respected.
+        """
+
+        # Never override explicit user choices - only optimize AUTO mode
+        if base_config.search_mode != SearchMode.AUTO:
+            self.logger.debug(
+                f"Preserving explicit search mode: {base_config.search_mode.value}"
+            )
+            return base_config
 
         query_str = query if isinstance(query, str) else " ".join(query)
 
-        # Adjust search mode based on query complexity
+        # Only optimize when mode is AUTO - adjust search mode based on query characteristics
         if len(query_str.split()) > 5:
             # Complex queries benefit from semantic search
             base_config.search_mode = SearchMode.SEMANTIC
-        elif any(op in query_str.upper() for op in ["AND", "OR", "NOT"]):
+            self.logger.debug("AUTO mode: Selected SEMANTIC for complex query")
+        elif self._has_boolean_operators(query_str):
             # Boolean queries work better with lexical search
             base_config.search_mode = SearchMode.LEXICAL
+            self.logger.debug("AUTO mode: Selected LEXICAL for boolean query")
+        else:
+            # Default to hybrid for balanced results
+            base_config.search_mode = SearchMode.HYBRID
+            self.logger.debug("AUTO mode: Selected HYBRID as default")
 
         return base_config
+
+    def _has_boolean_operators(self, query: str) -> bool:
+        """Check if query contains boolean operators as whole words."""
+        import re
+
+        # Match boolean operators as whole words (case insensitive)
+        boolean_pattern = r"\b(?:AND|OR|NOT)\b"
+        return bool(re.search(boolean_pattern, query, re.IGNORECASE))

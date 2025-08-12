@@ -13,6 +13,7 @@ from fastmcp import Context
 from imas_mcp.core.data_model import IdsNode, PhysicsContext
 from imas_mcp.models.constants import DetailLevel, SearchMode
 from imas_mcp.models.error_models import ToolError
+from imas_mcp.models.physics_models import ConceptExplanation
 from imas_mcp.models.request_models import ExplainInput
 from imas_mcp.models.result_models import ConceptResult
 from imas_mcp.search.decorators import (
@@ -55,6 +56,12 @@ class ExplainTool(BaseTool):
             )
         elif prompt_type == "no_results":
             return self._build_no_results_prompt(tool_context)
+        elif prompt_type == "concept_explanation_sampling":
+            return self._build_explanation_sampling_prompt(tool_context)
+        elif prompt_type == "related_topics_sampling":
+            return self._build_topics_sampling_prompt(tool_context)
+        elif prompt_type == "sample_documentation":
+            return self._build_documentation_sampling_prompt(tool_context)
         return ""
 
     def system_prompt(self) -> str:
@@ -81,6 +88,61 @@ Adapt your explanations to the specified detail level:
 - Advanced: Provide comprehensive physics derivations and implementation details
 
 Always connect abstract concepts to concrete IMAS data paths and real-world measurements."""
+
+    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
+        """Build sampling tasks specific to ConceptResult."""
+        from imas_mcp.models.result_models import ConceptResult
+
+        tasks = super().build_sample_tasks(tool_result)  # Get base tasks
+
+        if isinstance(tool_result, ConceptResult):
+            # Sample concept-specific fields
+            if tool_result.explanation:
+                tasks.append(
+                    {
+                        "field": "explanation",
+                        "prompt_type": "concept_explanation_sampling",
+                        "context": {
+                            "concept": tool_result.concept,
+                            "current_explanation": tool_result.explanation,
+                            "detail_level": tool_result.detail_level.value,
+                            "nodes": tool_result.nodes[:3] if tool_result.nodes else [],
+                        },
+                    }
+                )
+
+            tasks.append(
+                {
+                    "field": "related_topics",
+                    "prompt_type": "related_topics_sampling",
+                    "context": {
+                        "concept": tool_result.concept,
+                        "current_topics": tool_result.related_topics,
+                        "physics_domains": getattr(tool_result, "physics_domains", []),
+                        "explanation_summary": tool_result.explanation[:200]
+                        if tool_result.explanation
+                        else "",
+                    },
+                }
+            )
+
+        return tasks
+
+    def _apply_explanation_sampling(self, tool_result, sampled_content: str) -> None:
+        """Apply custom sampling for explanation field."""
+        from imas_mcp.models.result_models import ConceptResult
+
+        if isinstance(tool_result, ConceptResult):
+            tool_result.explanation = sampled_content
+
+    def _apply_related_topics_sampling(self, tool_result, sampled_content: str) -> None:
+        """Apply custom sampling for related_topics field."""
+        from imas_mcp.models.result_models import ConceptResult
+
+        if isinstance(tool_result, ConceptResult):
+            # Parse response into topics list
+            topics = [t.strip() for t in sampled_content.split("\n") if t.strip()]
+            tool_result.related_topics = topics[:10]  # Limit to reasonable number
 
     def _build_no_results_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for when no concept results are found."""
@@ -156,7 +218,7 @@ Top related paths found:
     @handle_errors(fallback="concept_suggestions")
     @tool_hints(max_hints=3)
     @physics_hints()
-    @sample(temperature=0.1, max_tokens=700)
+    @sample(temperature=0.3, max_tokens=800)
     @mcp_tool(
         "Provide detailed explanations of fusion physics concepts and IMAS terminology"
     )
@@ -205,6 +267,33 @@ Top related paths found:
                     max_results=15,
                 )
 
+            # Get physics context from physics service
+            physics_search_result = None
+            concept_explanation = None
+            try:
+                physics_context_data = await self.physics.get_concept_context(
+                    concept, detail_level.value
+                )
+                if physics_context_data:
+                    # Create a ConceptExplanation object from physics service data
+                    concept_explanation = ConceptExplanation(
+                        concept=concept,
+                        domain=physics_context_data["domain"],
+                        description=physics_context_data["description"],
+                        phenomena=physics_context_data["phenomena"],
+                        typical_units=physics_context_data["typical_units"],
+                        complexity_level=physics_context_data["complexity_level"],
+                    )
+
+                    # Also try to get physics search result
+                    physics_enhancement = await self.physics.enhance_query(concept)
+                    if physics_enhancement:
+                        physics_search_result = physics_enhancement
+
+                    logger.info(f"Physics context enhanced concept '{concept}'")
+            except Exception as e:
+                logger.warning(f"Physics enhancement failed for '{concept}': {e}")
+
             # Process search results for concept explanation
             related_paths_data = []
             physics_domains = set()
@@ -224,7 +313,7 @@ Top related paths found:
                         }
                     )
 
-                # Build PhysicsContext if available
+                # Use physics domain if available
                 local_physics_context = None
                 if search_result.physics_domain:
                     local_physics_context = PhysicsContext(
@@ -243,10 +332,24 @@ Top related paths found:
                     )
                 )
 
-            # Build concept result
+            # Enhanced explanation with physics integration
+            base_explanation = (
+                f"Analysis of '{concept}' within IMAS data dictionary context. "
+                f"Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. "
+                f"Found {len(related_paths_data)} related data paths."
+            )
+
+            # Combine with physics explanation if available
+            final_explanation = (
+                f"{concept_explanation.description} {base_explanation}"
+                if concept_explanation
+                else base_explanation
+            )
+
+            # Build concept result with physics integration
             concept_result = ConceptResult(
                 concept=concept,
-                explanation=f"Analysis of '{concept}' within IMAS data dictionary context. Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. Found {len(related_paths_data)} related data paths.",
+                explanation=final_explanation,
                 detail_level=detail_level,
                 related_topics=[
                     f"Explore {search_results[0].ids_name} for detailed data"
@@ -259,13 +362,14 @@ Top related paths found:
                     if search_results
                     else "Try related terminology",
                 ],
-                concept_explanation=None,  # Will be populated by AI sampling service
+                concept_explanation=concept_explanation,  # Now properly populated
                 # QueryContext fields
                 query=concept,
                 search_mode=SearchMode.SEMANTIC,
                 max_results=15,
                 nodes=related_paths_data,
                 physics_domains=list(physics_domains),
+                physics_context=physics_search_result,  # Use PhysicsSearchResult
             )
 
             logger.info(f"Concept explanation completed for {concept}")
@@ -291,3 +395,80 @@ Top related paths found:
                     },
                 )
             )
+
+    def _build_explanation_sampling_prompt(self, context: dict[str, Any]) -> str:
+        """Build prompt for sampling concept explanation."""
+        concept = context.get("concept", "")
+        current_explanation = context.get("current_explanation", "")
+        detail_level = context.get("detail_level", "intermediate")
+        nodes = context.get("nodes", [])
+
+        prompt = f"""Current explanation for "{concept}" ({detail_level} level):
+{current_explanation}
+
+Sample and improve this explanation by:
+1. Adding more physics depth appropriate for {detail_level} level
+2. Including relevant IMAS data paths and measurement contexts
+3. Connecting to broader fusion physics concepts
+4. Adding practical guidance for data access and interpretation
+5. Ensuring accuracy and educational value
+
+Focus on clarity, accuracy, and practical utility for researchers working with IMAS data."""
+
+        if nodes:
+            prompt += f"\n\nRelevant IMAS paths found: {[node.get('path', '') for node in nodes[:3]]}"
+
+        return prompt
+
+    def _build_topics_sampling_prompt(self, context: dict[str, Any]) -> str:
+        """Build prompt for sampling related topics."""
+        concept = context.get("concept", "")
+        current_topics = context.get("current_topics", [])
+        physics_domains = context.get("physics_domains", [])
+
+        prompt = f"""Current related topics for "{concept}":
+{chr(10).join([f"- {topic}" for topic in current_topics])}
+
+Sample and improve this list of related topics by:
+1. Adding relevant fusion physics concepts and phenomena
+2. Including related IMAS measurement techniques and diagnostics
+3. Suggesting complementary analysis tools and methods
+4. Connecting to broader tokamak physics domains
+5. Providing educational learning pathways
+
+Return a newline-separated list of topics (one per line)."""
+
+        if physics_domains:
+            prompt += f"\n\nPhysics domains context: {physics_domains}"
+
+        return prompt
+
+    def _build_documentation_sampling_prompt(self, context: dict[str, Any]) -> str:
+        """Build prompt for sampling node documentation."""
+        nodes = context.get("nodes", [])
+        query = context.get("query", "")
+
+        if not nodes:
+            return ""
+
+        prompt = f"""Sample and improve documentation for IMAS data paths related to "{query}":
+
+Current paths and documentation:"""
+
+        for node in nodes[:3]:
+            path = node.get("path", "")
+            doc = node.get("documentation", "")[:200]
+            prompt += f"\n\nPath: {path}\nCurrent doc: {doc}"
+
+        prompt += """
+
+Provide enhanced documentation that:
+1. Clarifies the physics meaning and measurement context
+2. Explains practical usage in fusion research
+3. Connects to related IMAS data structures
+4. Includes typical units and value ranges
+5. Suggests analysis workflows and tools
+
+Focus on practical utility for researchers accessing this data."""
+
+        return prompt
