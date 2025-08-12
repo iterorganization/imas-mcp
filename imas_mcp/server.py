@@ -21,6 +21,7 @@ from fastmcp import FastMCP
 
 # Import Resources from the resource_provider module
 from imas_mcp.resource_provider import Resources
+from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 from imas_mcp.tools import Tools
 
 # apply nest_asyncio to allow nested event loops
@@ -68,6 +69,10 @@ class Server:
         self.tools = Tools(ids_set=self.ids_set)
         self.resources = Resources()
 
+        # Pre-build embeddings during server initialization to avoid delays on
+        # first request
+        self._initialize_embeddings()
+
         # Register components with MCP server
         self._register_components()
 
@@ -82,6 +87,22 @@ class Server:
         self.resources.register(self.mcp)
 
         logger.debug("Successfully registered all components")
+
+    def _initialize_embeddings(self):
+        """Pre-build embeddings during server initialization to avoid delays."""
+        try:
+            # Create semantic search configuration matching the server's ids_set
+            config = SemanticSearchConfig(ids_set=self.ids_set)
+            semantic_search = SemanticSearch(
+                config=config, document_store=self.tools.document_store
+            )
+
+            # Force initialization which will build/load embeddings
+            semantic_search._initialize()
+
+        except Exception as e:
+            logger.warning(f"Could not pre-build embeddings during startup: {e}")
+            logger.warning("Embeddings will be built on first semantic search request")
 
     def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
         """Run the server with the specified transport."""
