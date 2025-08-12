@@ -36,7 +36,8 @@ class ProgressMonitor:
         """Initialize progress monitor.
 
         Args:
-            use_rich: Force use of rich (True) or logging (False). If None, auto-detect.
+            use_rich: Force use of rich (True) or logging (False).
+                If None, auto-detect.
             logger: Logger instance to use for fallback. If None, creates one.
             item_names: List of item names for calculating padding.
         """
@@ -100,6 +101,7 @@ class ProgressMonitor:
                 description, total=self._current_total
             )
         else:
+            # Use INFO level for normal progress information
             self.logger.info(f"{description} {self._current_total} items...")
 
     def set_current_item(self, item_name: str) -> None:
@@ -137,8 +139,10 @@ class ProgressMonitor:
             if error:
                 self.logger.error(f"Error processing IDS {item_name}: {error}")
             else:
-                self.logger.info(
-                    f"Completed IDS: {item_name} ({self._current_completed}/{self._current_total})"
+                # Use WARNING level so progress shows in MCP logs
+                self.logger.warning(
+                    f"IMAS-MCP: Completed batch: {item_name} "
+                    f"({self._current_completed}/{self._current_total})"
                 )
 
     def finish_processing(self) -> None:
@@ -148,8 +152,10 @@ class ProgressMonitor:
             self._progress = None
             self._task_id = None
         else:
+            # Use INFO level for normal completion information
             self.logger.info(
-                f"Completed processing {self._current_completed}/{self._current_total} items"
+                f"IMAS-MCP: Completed processing "
+                f"{self._current_completed}/{self._current_total} items"
             )
 
     def log_info(self, message: str) -> None:
@@ -182,7 +188,8 @@ def create_progress_monitor(
     """Create a progress monitor with appropriate settings.
 
     Args:
-        use_rich: Force use of rich (True) or logging (False). If None, auto-detect.
+        use_rich: Force use of rich (True) or logging (False).
+            If None, auto-detect.
         logger: Logger instance to use for fallback.
         item_names: List of item names for calculating padding.
 

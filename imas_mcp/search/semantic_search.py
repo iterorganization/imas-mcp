@@ -157,7 +157,8 @@ class SemanticSearch:
         # Extract clean model name (remove path and normalize)
         model_name = self.config.model_name.split("/")[-1].replace("-", "_")
 
-        # Build configuration parts for hashing (excluding model name, batch_size, and threshold)
+        # Build configuration parts for hashing (excluding model name,
+        # batch_size, and threshold)
         config_parts = [
             f"norm_{self.config.normalize_embeddings}",
             f"half_{self.config.use_half_precision}",
@@ -173,7 +174,8 @@ class SemanticSearch:
         config_str = "_".join(config_parts)
         config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
 
-        # Generate clean filename: .{model_name}_{hash}.pkl for ids_set, .{model_name}.pkl for full
+        # Generate clean filename: .{model_name}_{hash}.pkl for ids_set,
+        # .{model_name}.pkl for full
         if self.config.ids_set:
             filename = f".{model_name}_{config_hash}.pkl"
         else:
@@ -191,17 +193,26 @@ class SemanticSearch:
                 return
 
             logger.info(
-                f"Initializing semantic search with model: {self.config.model_name}"
+                f"⚡ IMAS-MCP: Initializing semantic search with model: "
+                f"{self.config.model_name}"
             )
+            if self.config.ids_set:
+                logger.info(
+                    f"⚡ IMAS-MCP: Limited to IDS: {sorted(self.config.ids_set)}"
+                )
+            else:
+                logger.info("⚡ IMAS-MCP: Processing all available IDS")
 
             # Load sentence transformer model
+            logger.info("⚡ IMAS-MCP: Loading sentence transformer model...")
             self._load_model()
 
             # Load or generate embeddings
+            logger.info("⚡ IMAS-MCP: Preparing document embeddings...")
             self._load_or_generate_embeddings()
 
             self._initialized = True
-            logger.info("Semantic search initialization complete")
+            logger.info("⚡ IMAS-MCP: Semantic search initialization complete! 🚀")
 
     def _load_model(self) -> None:
         """Load the sentence transformer model."""
@@ -211,6 +222,7 @@ class SemanticSearch:
 
             # Try to load with local_files_only first for speed
             try:
+                logger.info("⚡ IMAS-MCP: Loading cached sentence transformer model...")
                 self._model = SentenceTransformer(
                     self.config.model_name,
                     device=self.config.device,
@@ -218,12 +230,14 @@ class SemanticSearch:
                     local_files_only=True,  # Prevent internet downloads
                 )
                 logger.info(
-                    f"Loaded model {self.config.model_name} from cache on device: {self._model.device}"
+                    f"⚡ IMAS-MCP: Model {self.config.model_name} loaded from "
+                    f"cache on device: {self._model.device}"
                 )
             except Exception:
                 # If local loading fails, try downloading
                 logger.info(
-                    f"Model not in cache, downloading {self.config.model_name}..."
+                    f"⚡ IMAS-MCP: Model not in cache, downloading "
+                    f"{self.config.model_name}..."
                 )
                 self._model = SentenceTransformer(
                     self.config.model_name,
@@ -232,24 +246,28 @@ class SemanticSearch:
                     local_files_only=False,  # Allow downloads
                 )
                 logger.info(
-                    f"Downloaded and loaded model {self.config.model_name} on device: {self._model.device}"
+                    f"⚡ IMAS-MCP: Downloaded and loaded model "
+                    f"{self.config.model_name} on device: {self._model.device}"
                 )
 
         except Exception as e:
             logger.error(f"Failed to load model {self.config.model_name}: {e}")
             # Fallback to a known working model
             fallback_model = "all-MiniLM-L6-v2"
-            logger.info(f"Trying fallback model: {fallback_model}")
+            logger.info(f"⚡ IMAS-MCP: Trying fallback model: {fallback_model}")
             self._model = SentenceTransformer(fallback_model, device=self.config.device)
             self.config.model_name = fallback_model
 
     def _load_or_generate_embeddings(self) -> None:
         """Load cached embeddings or generate new ones."""
         if self.config.enable_cache and self._try_load_cache():
-            logger.info("Loaded embeddings from cache")
+            logger.info("IMAS-MCP: Loaded embeddings from cache")
             return
 
-        logger.info("Generating embeddings for all documents...")
+        logger.warning(
+            "IMAS-MCP: Generating embeddings for all documents... "
+            "(initial build may take up to 30 minutes)"
+        )
         self._generate_embeddings()
 
         if self.config.enable_cache:
@@ -277,9 +295,12 @@ class SemanticSearch:
                 current_doc_count, self.config.model_name, self.config.ids_set
             ):
                 logger.info(
-                    f"Cache invalid - cached: {cache.document_count} docs, current: {current_doc_count} docs, "
-                    f"cached model: {cache.model_name}, current model: {self.config.model_name}, "
-                    f"cached IDS set: {cache.ids_set}, current IDS set: {self.config.ids_set}"
+                    f"Cache invalid - cached: {cache.document_count} docs, "
+                    f"current: {current_doc_count} docs, "
+                    f"cached model: {cache.model_name}, "
+                    f"current model: {self.config.model_name}, "
+                    f"cached IDS set: {cache.ids_set}, "
+                    f"current IDS set: {self.config.ids_set}"
                 )
                 return False
 
@@ -299,11 +320,11 @@ class SemanticSearch:
         doc_count = self.document_store.get_document_count()
 
         if doc_count == 0:
-            logger.warning("No documents found for embedding generation")
+            logger.info("No documents found for embedding generation")
             self._embeddings_cache = EmbeddingCache()
             return
 
-        logger.info(f"Generating embeddings for {doc_count} documents...")
+        logger.warning(f"IMAS-MCP: Generating embeddings for {doc_count} documents...")
 
         # Calculate batch information for progress monitoring
         total_batches = (
@@ -311,15 +332,16 @@ class SemanticSearch:
         ) // self.config.batch_size
         batch_names = [f"Batch {i + 1}/{total_batches}" for i in range(total_batches)]
 
-        # Create progress monitor for batch processing
+        # Create progress monitor for batch processing - force use of logging for
+        # MCP compatibility
         progress = create_progress_monitor(
-            use_rich=None,  # Auto-detect
+            use_rich=False,  # Force logging mode for MCP clients
             logger=logger,
             item_names=batch_names,
         )
 
         # Start progress monitoring
-        progress.start_processing(batch_names, "Generating embeddings")
+        progress.start_processing(batch_names, "IMAS-MCP: Generating embeddings")
 
         try:
             embeddings_list = []
@@ -376,8 +398,9 @@ class SemanticSearch:
             ids_set=self.config.ids_set,
         )
 
-        logger.info(
-            f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
+        logger.warning(
+            f"IMAS-MCP: Generated embeddings: shape={embeddings.shape}, "
+            f"dtype={embeddings.dtype}"
         )
 
     def _save_cache(self) -> None:
@@ -683,7 +706,8 @@ class SemanticSearch:
                 config.ids_set = ids_set
 
             logger.info(
-                f"Building embeddings during installation with model: {config.model_name}"
+                f"Building embeddings during installation with model: "
+                f"{config.model_name}"
             )
             if ids_set:
                 logger.info(f"Limited to IDS set: {sorted(ids_set)}")
