@@ -1,9 +1,13 @@
 """Clean, focused Pydantic models for IMAS MCP tool responses."""
 
+from abc import ABC, abstractmethod
+from datetime import UTC, datetime
+from functools import cached_property
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from imas_mcp import __version__
 from imas_mcp.core.data_model import IdsNode
 from imas_mcp.models.constants import (
     DetailLevel,
@@ -25,24 +29,39 @@ from imas_mcp.search.search_strategy import SearchHit
 # ============================================================================
 
 
-class ToolResult(AIContext, QueryContext, BaseModel):
+class ToolResult(AIContext, QueryContext, BaseModel, ABC):
     """
-    Common base class for all IMAS MCP tool results.
+    Abstract base class for all IMAS MCP tool results.
 
     Provides standard context that all tools can benefit from:
     - Query tracking (query, search_mode, ids_filter, max_results)
     - AI enhancement capabilities (ai_response, ai_prompt)
-    - Standard metadata fields
+    - Standard metadata fields (tool_name must be implemented by subclasses)
     """
 
-    # Standard tool metadata
-    tool_name: str = Field(
-        default="", description="Name of the tool that generated this result"
+    @property
+    @abstractmethod
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result - must be implemented by subclasses."""
+        pass
+
+    @cached_property
+    def processing_timestamp(self) -> str:
+        """When this result was generated."""
+        return datetime.now(UTC).isoformat()
+
+    @property
+    def version(self) -> str:
+        """Result format version."""
+        return __version__
+
+    # Hint fields for follow-up suggestions (populated by decorators)
+    query_hints: list[SearchSuggestion] = Field(
+        default_factory=list, description="Query suggestions for follow-up searches"
     )
-    processing_timestamp: str = Field(
-        default="", description="When this result was generated"
+    tool_hints: list[ToolSuggestion] = Field(
+        default_factory=list, description="Tool suggestions for follow-up analysis"
     )
-    version: str = Field(default="1.0.0", description="Result format version")
 
 
 class IdsResult(BaseModel):
@@ -149,23 +168,27 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResult(IdsResult, PhysicsContext, QueryContext, AIContext, SearchHits):
+class SearchResult(ToolResult, IdsResult, PhysicsContext, SearchHits):
     """Search tool result."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "search_imas"
 
     # Search-specific fields
     search_mode: SearchMode = Field(
         default=SearchMode.AUTO, description="Search mode used"
     )
-    query_hints: list[SearchSuggestion] = Field(
-        default_factory=list, description="Query suggestions for follow-up searches"
-    )
-    tool_hints: list[ToolSuggestion] = Field(
-        default_factory=list, description="Tool suggestions for follow-up analysis"
-    )
 
 
-class OverviewResult(PhysicsContext, QueryContext, AIContext, SearchHits):
+class OverviewResult(ToolResult, PhysicsContext, SearchHits):
     """Overview tool response."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "get_overview"
 
     content: str
     available_ids: list[str] = Field(default_factory=list)
@@ -185,8 +208,13 @@ class OverviewResult(PhysicsContext, QueryContext, AIContext, SearchHits):
 # ============================================================================
 
 
-class ConceptResult(IdsResult, PhysicsContext, QueryContext, AIContext):
+class ConceptResult(ToolResult, IdsResult, PhysicsContext):
     """Concept explanation result."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "explain_concept"
 
     concept: str
     explanation: str
@@ -198,6 +226,11 @@ class ConceptResult(IdsResult, PhysicsContext, QueryContext, AIContext):
 class StructureResult(ToolResult, PhysicsContext):
     """IDS structure analysis result."""
 
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "analyze_ids_structure"
+
     ids_name: str
     description: str
     structure: dict[str, int] = Field(default_factory=dict)
@@ -208,14 +241,24 @@ class StructureResult(ToolResult, PhysicsContext):
 class IdentifierResult(ToolResult, PhysicsContext):
     """Identifier exploration result."""
 
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "explore_identifiers"
+
     scope: IdentifierScope = IdentifierScope.ALL
     schemas: list[dict[str, Any]] = Field(default_factory=list)
     paths: list[dict[str, Any]] = Field(default_factory=list)
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipResult(IdsResult, PhysicsContext, QueryContext, AIContext):
+class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
     """Relationship exploration result."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "explore_relationships"
 
     path: str
     relationship_type: RelationshipType = RelationshipType.ALL
@@ -231,6 +274,11 @@ class RelationshipResult(IdsResult, PhysicsContext, QueryContext, AIContext):
 class IDSExport(ToolResult, ExportResult):
     """IDS export result."""
 
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "export_ids"
+
     ids_names: list[str]
     include_physics: bool = True
     include_relationships: bool = True
@@ -238,6 +286,11 @@ class IDSExport(ToolResult, ExportResult):
 
 class DomainExport(ToolResult, ExportResult):
     """Physics domain export result."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "export_physics_domain"
 
     domain: str
     domain_info: dict[str, Any] | None = None
