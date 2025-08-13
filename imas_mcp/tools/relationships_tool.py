@@ -339,18 +339,128 @@ class RelationshipsTool(BaseTool):
         """
         Discover connections and cross-references between IMAS data paths.
 
-        Network analysis tool that reveals how different measurements and calculations
-        relate to each other across IDS. Use to understand data dependencies,
-        find related measurements, and plan multi-IDS analysis workflows.
+        **CRITICAL: This tool ONLY accepts IMAS data paths, not queries or descriptions.**
+        Use search_imas() first to find valid paths if you don't have exact path strings.
+
+        This tool provides sophisticated relationship discovery with multi-layered analysis,
+        semantic understanding, and physics domain integration. It reveals how different
+        measurements and calculations relate across IDS structures using advanced algorithms.
+
+        **Core Capabilities:**
+        - Multi-layered relationship discovery (semantic, structural, physics, measurement)
+        - 5-tier strength classification with quantitative scoring
+        - Physics domain integration with cross-domain bridging analysis
+        - Comprehensive metadata and contextual insights
+
+        **Strength Classification System:**
+        - very_strong (0.9): Direct physics coupling (e.g., density ↔ density_fit)
+        - strong (0.7): Same measurement type (e.g., electron_density ↔ ion_density)
+        - moderate (0.5): Related physics domain (e.g., transport ↔ heating)
+        - weak (0.3): Structural similarity (e.g., same coordinate system)
+        - very_weak (0.1): Unit similarity only
+
+        **INPUT REQUIREMENTS - CRITICAL:**
+        ✅ VALID: IMAS data paths only: "core_profiles/profiles_1d/electrons/density"
+        ❌ INVALID: Queries like "electron density" or "find temperature data"
+        ❌ INVALID: Natural language descriptions or partial paths
+
+        **Usage Examples:**
+
+        1. Comprehensive relationship analysis (recommended):
+        ```python
+        result = await explore_relationships(
+            path="core_profiles/profiles_1d/electrons/density",
+            relationship_type="all",  # Gets all 4 relationship types
+            max_depth=2               # Standard depth for comprehensive results
+        )
+        # Returns: ~15-20 relationships across semantic, structural, physics, measurement types
+        # Includes: strength scores, physics domains, cross-IDS connections
+        ```
+
+        2. Focus on physics relationships only:
+        ```python
+        result = await explore_relationships(
+            path="equilibrium/time_slice/profiles_2d/b_field_r",
+            relationship_type="semantic",  # Physics concepts and domain relationships
+            max_depth=1                    # Immediate relationships only
+        )
+        # Returns: ~3-8 semantically related paths with physics context
+        # Includes: domain bridging (e.g., mhd ↔ transport connections)
+        ```
+
+        3. Structural analysis for data organization:
+        ```python
+        result = await explore_relationships(
+            path="transport/model/profiles_1d/conductivity_parallel",
+            relationship_type="structural", # Hierarchical and organizational
+            max_depth=1                     # Close structural relatives only
+        )
+        # Returns: ~2-6 structurally similar paths within same IDS
+        ```
+
+        4. Cross-domain physics analysis:
+        ```python
+        result = await explore_relationships(
+            path="heating/nbi/unit/power_launched",
+            relationship_type="physics",    # Physics domain relationships
+            max_depth=2                     # Extended physics connections
+        )
+        # Returns: ~5-12 physics-related paths with domain mapping
+        ```
+
+        **Typical Results by Physics Domain:**
+        - Transport paths: 15-20 relationships (high connectivity)
+        - Equilibrium paths: 8-15 relationships (magnetic field coupling)
+        - Heating paths: 6-12 relationships (power and energy flow)
+        - Diagnostic paths: 5-10 relationships (measurement chains)
 
         Args:
-            path: Starting data path or IDS name (e.g., 'equilibrium/time_slice/profiles_2d')
-            relationship_type: Connection type - all, semantic, structural, physics, or measurement
-            max_depth: Relationship traversal depth (1-3, limited for performance)
-            ctx: MCP context for potential AI enhancement
+            path: **IMAS data path ONLY** - exact path string from IMAS data dictionary
+                  Examples: "core_profiles/profiles_1d/electrons/density"
+                           "equilibrium/time_slice/global_quantities/psi_boundary"
+                           "thomson_scattering/channel/position/r"
+                  Must be valid IMAS path - use search_imas() to find valid paths
+            relationship_type: Filter for specific relationship types:
+                - "all": All relationship types (semantic + structural + physics + measurement)
+                - "semantic": Physics concepts, domain relationships, phenomena connections
+                - "structural": Hierarchical organization, IDS structure, coordinate sharing
+                - "physics": Physics domain coupling, cross-domain analysis, measurement chains
+                - "measurement": Diagnostic chains, measurement dependencies, error propagation
+            max_depth: Relationship traversal depth (1-3):
+                - 1: Immediate relationships only (fast, focused)
+                - 2: Standard depth (recommended, balanced performance/coverage)
+                - 3: Extended analysis (comprehensive but slower)
+            ctx: MCP context for potential future AI enhancement
 
         Returns:
-            RelationshipResult with connected data paths and relationship insights
+            RelationshipResult containing:
+            - **nodes**: List of related IdsNode objects with documentation and metadata
+            - **connections**: Categorized relationship lists (total, physics, cross-IDS)
+            - **physics_domains**: Identified physics domains (transport, mhd, thermal, etc.)
+            - **relationship_insights**: Discovery summary, strength analysis, semantic insights
+            - **physics_analysis**: Domain connections, phenomena, measurement chains
+            - **Standard metadata**: Query context, tool hints, processing timestamps
+
+        Raises:
+            ToolError: When path not found, invalid format, or no relationships discovered
+                      Includes helpful suggestions for alternative approaches
+
+        **Integration Patterns:**
+        1. **Discovery → Relationship → Analysis**: search_imas() → explore_relationships() → analyze_ids_structure()
+        2. **Relationship → Export**: explore_relationships() → export_physics_domain()
+        3. **Cross-domain mapping**: Use relationship_type="physics" for domain bridging
+
+        **Performance Notes:**
+        - Typical execution: 0.5-2.0 seconds depending on path complexity
+        - Results limited to prevent overwhelming responses (nodes<15, connections<20)
+        - Caching enabled for repeated queries (TTL: 600 seconds)
+
+        **Path Discovery Workflow:**
+        If you don't have exact IMAS paths:
+        1. Use search_imas("your concept") to find relevant paths
+        2. Use get_overview() to browse available IDS structures
+        3. Use explore_identifiers() to understand enumeration options
+        4. Then use explore_relationships() with discovered paths
         """
         try:
             # Check if enhanced engine is available
@@ -466,18 +576,15 @@ class RelationshipsTool(BaseTool):
                 },
                 nodes=nodes[:12],  # Increased limit for enhanced nodes
                 physics_domains=list(set(filter(None, physics_domains))),
-                ai_response={
-                    "relationship_insights": self._generate_relationship_insights(
-                        relationship_data
-                    ),
-                    "physics_analysis": self._generate_physics_analysis(
-                        path, relationship_data, physics_context
-                    ),
-                },
+                relationship_insights=self._generate_relationship_insights(
+                    relationship_data
+                ),
+                physics_analysis=self._generate_physics_analysis(
+                    path, relationship_data, physics_context
+                ),
             )
 
             logger.info(f"Enhanced relationship exploration completed for path: {path}")
-            return response
             return response
 
         except Exception as e:

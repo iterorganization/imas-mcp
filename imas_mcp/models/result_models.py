@@ -265,6 +265,16 @@ class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
     max_depth: int = 2
     connections: dict[str, list[str]] = Field(default_factory=dict)
 
+    # Relationship-specific analysis fields
+    relationship_insights: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Discovery summary, strength analysis, and semantic insights",
+    )
+    physics_analysis: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Physics domain analysis, domain connections, and phenomena",
+    )
+
 
 # ============================================================================
 # EXPORT
