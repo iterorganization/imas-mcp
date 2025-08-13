@@ -30,11 +30,30 @@ logger = logging.getLogger(__name__)
 
 class IdentifiersTool(BaseTool):
     """
-    Identifier catalog-based tool for IMAS identifier discovery.
+    IMAS identifier discovery tool for finding valid enumeration values and schemas.
 
-    Provides intelligent access to the identifier catalog (identifier_catalog.json),
-    serving as the primary interface for users to discover identifier schemas
-    and enumeration options.
+    This tool provides access to the identifier catalog containing all valid enumeration
+    values, coordinate systems, and classification schemes used throughout IMAS data.
+    Critical for understanding data access patterns and valid parameter values.
+
+    Primary Use Cases:
+    - Discover valid values for identifier fields (materials, coordinate systems, etc.)
+    - Find enumeration options for array indexing and data selection
+    - Understand measurement configuration parameters
+    - Explore data classification schemes
+
+    Key Features:
+    - 58 identifier schemas covering all IMAS domains
+    - 584 total enumeration options across all schemas
+    - Scope-based filtering (all, enums, coordinates, etc.)
+    - Query-based schema discovery
+    - Usage path mapping to show where identifiers are used
+
+    Best Practices for LLMs:
+    - Use broad search terms rather than very specific phrases
+    - Start with scope="all" for exploration, then narrow with specific scopes
+    - Check analytics.enumeration_space to understand data complexity
+    - Use returned identifier values in subsequent search_imas() calls
     """
 
     def __init__(self, *args, **kwargs):
@@ -203,7 +222,7 @@ class IdentifiersTool(BaseTool):
     @validate_input(schema=IdentifiersInput)
     @handle_errors(fallback="identifiers_suggestions")
     @mcp_tool(
-        "Browse available identifier schemas and enumeration options in IMAS data"
+        "Browse IMAS identifier schemas and enumeration options - discover valid values for array indices, coordinate systems, and measurement configurations"
     )
     async def explore_identifiers(
         self,
@@ -214,17 +233,71 @@ class IdentifiersTool(BaseTool):
         """
         Browse available identifier schemas and enumeration options in IMAS data.
 
-        Discovery tool for finding valid identifier values, coordinate systems,
-        and enumeration options that control data access. Essential for understanding
-        how to properly specify array indices and measurement configurations.
+        This tool discovers valid identifier values, coordinate systems, and enumeration
+        options that control IMAS data access. Essential for understanding how to properly
+        specify array indices, measurement configurations, and data selection criteria.
+
+        Identifier schemas define the valid values for fields that act as discriminators
+        or selectors in IMAS data structures. These are critical for accessing the correct
+        data arrays and understanding measurement contexts.
 
         Args:
-            query: Search for specific identifier schemas or enumeration types
-            scope: Focus area - all, enums, identifiers, coordinates, or constants
+            query: Search term to filter schemas (e.g., "materials", "coordinates", "plasma")
+                  Use broad terms for best results. Overly specific queries may return empty results.
+            scope: Focus the search on specific identifier types:
+                  - "all": All identifier schemas (default, recommended for exploration)
+                  - "enums": Only schemas with enumeration options (for discrete choices)
+                  - "identifiers": Type and category identifiers (for classification)
+                  - "coordinates": Coordinate system and grid identifiers
+                  - "constants": Constant and parameter identifiers
             ctx: MCP context for potential AI enhancement
 
         Returns:
-            IdentifierResult with schemas, enumeration options, and usage guidance
+            IdentifierResult containing:
+            - schemas: List of identifier schemas with enumeration options
+            - paths: IMAS data paths that use these identifiers
+            - analytics: Statistics about enumeration spaces and usage
+
+        Examples:
+            # Discover all available identifier schemas
+            explore_identifiers()
+            → Returns 58 schemas, 146 paths, enumeration space of 584
+
+            # Find material-related identifiers
+            explore_identifiers(query="materials", scope="enums")
+            → Returns materials schema with 31 enumeration options (C, W, SS, etc.)
+
+            # Find coordinate system identifiers
+            explore_identifiers(query="coordinate", scope="coordinates")
+            → Returns coordinate schemas for grid types and coordinate systems
+
+            # Find plasma-related identifiers
+            explore_identifiers(query="plasma")
+            → Returns 12 schemas related to plasma physics measurements
+
+            # Find all enumeration schemas
+            explore_identifiers(scope="enums")
+            → Returns only schemas that have discrete enumeration options
+
+        Usage Tips for LLMs:
+            - Use broad search terms: "material", "plasma", "transport", "equilibrium"
+            - Avoid overly specific queries like "plasma state" (may return empty)
+            - Start with scope="all" to explore available options
+            - Use scope="enums" to find discrete choice options
+            - Check the analytics.enumeration_space to understand data complexity
+            - Use returned paths to understand where identifiers are used in IMAS
+
+        Common Query Patterns:
+            - Physics domains: "plasma", "transport", "equilibrium", "sources"
+            - Materials: "material", "wall", "divertor"
+            - Coordinates: "coordinate", "grid", "geometry"
+            - Measurements: "diagnostic", "detector", "sensor"
+            - Configuration: "type", "mode", "status"
+
+        Follow-up Actions:
+            - Use search_imas() with specific identifier values found here
+            - Use analyze_ids_structure() to see identifier usage in specific IDS
+            - Use explore_relationships() to find connections between identifiers
         """
         try:
             # Check if identifier catalog is loaded
