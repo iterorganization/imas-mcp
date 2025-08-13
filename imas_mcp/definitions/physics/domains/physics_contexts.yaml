@@ -1,0 +1,191 @@
+# Physics Context Definitions for Domain Analysis
+# This file defines theoretical contexts, equations, scales, and parameters for physics domains
+
+metadata:
+  version: "1.0.0"
+  created: "2025-08-13"
+  description: "Physics context definitions for comprehensive domain analysis"
+  source: "Extracted from domain_analyzer.py hardcoded definitions"
+
+theoretical_contexts:
+  equilibrium:
+    description: "Magnetohydrodynamic equilibrium theory and force balance"
+    fundamental_equations:
+      - "Grad-Shafranov equation"
+      - "force balance equation"
+    physics_scales:
+      spatial: "minor radius"
+      temporal: "resistive diffusion"
+    governing_parameters:
+      - "beta"
+      - "safety factor"
+      - "pressure gradient"
+    typical_regimes:
+      - "low beta"
+      - "high beta"
+      - "advanced scenarios"
+      
+  transport:
+    description: "Classical and neoclassical transport theory"
+    fundamental_equations:
+      - "diffusion equation"
+      - "heat transport equation"
+    physics_scales:
+      spatial: "gradient scale length"
+      temporal: "confinement time"
+    governing_parameters:
+      - "collisionality"
+      - "beta"
+      - "normalized gradient"
+    typical_regimes:
+      - "L-mode"
+      - "H-mode"
+      - "ITB scenarios"
+      
+  mhd:
+    description: "Magnetohydrodynamic stability and instability theory"
+    fundamental_equations:
+      - "MHD equations"
+      - "Ohms law"
+    physics_scales:
+      spatial: "mode structure"
+      temporal: "Alfven time"
+    governing_parameters:
+      - "beta"
+      - "safety factor"
+      - "magnetic shear"
+    typical_regimes:
+      - "stable"
+      - "marginally stable"
+      - "unstable"
+      
+  turbulence:
+    description: "Gyrokinetic theory and microturbulence physics"
+    fundamental_equations:
+      - "gyrokinetic equation"
+      - "Boltzmann equation"
+    physics_scales:
+      spatial: "ion gyroradius"
+      temporal: "turbulence correlation"
+    governing_parameters:
+      - "ITG parameter"
+      - "beta"
+      - "collisionality"
+    typical_regimes:
+      - "ITG dominated"
+      - "TEM dominated"
+      - "ETG dominated"
+      
+  heating:
+    description: "Wave-particle interaction and heating mechanisms"
+    fundamental_equations:
+      - "wave equation"
+      - "kinetic equations"
+    physics_scales:
+      spatial: "wavelength"
+      temporal: "heating time"
+    governing_parameters:
+      - "resonance conditions"
+      - "power density"
+      - "wave frequency"
+    typical_regimes:
+      - "resonant heating"
+      - "off-resonance"
+      - "current drive"
+      
+  edge_physics:
+    description: "Edge transport and plasma-neutral interactions"
+    fundamental_equations:
+      - "transport equations"
+      - "atomic physics"
+    physics_scales:
+      spatial: "pedestal width"
+      temporal: "edge time scales"
+    governing_parameters:
+      - "pedestal parameters"
+      - "neutrals density"
+      - "recycling coefficient"
+    typical_regimes:
+      - "L-mode edge"
+      - "H-mode pedestal"
+      - "ELMy regime"
+      
+  divertor:
+    description: "Heat and particle exhaust physics"
+    fundamental_equations:
+      - "fluid equations"
+      - "atomic physics"
+    physics_scales:
+      spatial: "divertor geometry"
+      temporal: "exhaust time"
+    governing_parameters:
+      - "heat flux"
+      - "detachment parameter"
+      - "impurity concentration"
+    typical_regimes:
+      - "attached"
+      - "detached"
+      - "partial detachment"
+
+# Domain relationship types and descriptions
+domain_relationship_types:
+  causal:
+    description: "One domain directly causes changes in another"
+    examples:
+      - equilibrium_profiles_drive_transport_gradients
+      - heating_modifies_transport_coefficients
+      
+  stability:
+    description: "One domain determines stability properties of another"
+    examples:
+      - mhd_stability_depends_on_equilibrium_configuration
+      
+  spatial:
+    description: "Domains are spatially connected or adjacent"
+    examples:
+      - edge_conditions_determine_divertor_performance
+      
+  mechanism:
+    description: "One domain provides the mechanism for another"
+    examples:
+      - turbulence_drives_anomalous_transport
+      
+  correlative:
+    description: "General correlation or coupling between domains"
+    examples:
+      - general_physics_coupling
+
+# Physics connections between specific domain pairs
+physics_connections:
+  equilibrium_transport:
+    relationship_type: "causal"
+    description: "Equilibrium profiles drive transport gradients"
+    
+  transport_heating:
+    relationship_type: "causal"
+    description: "Heating modifies transport coefficients"
+    
+  mhd_equilibrium:
+    relationship_type: "stability"
+    description: "MHD stability depends on equilibrium configuration"
+    
+  edge_physics_divertor:
+    relationship_type: "spatial"
+    description: "Edge conditions determine divertor performance"
+    
+  turbulence_transport:
+    relationship_type: "mechanism"
+    description: "Turbulence drives anomalous transport"
+
+# Default physics context template
+default_context:
+  description_template: "Fundamental physics principles governing {domain}"
+  fundamental_equations:
+    - "domain-specific equations"
+  physics_scales:
+    spatial: "characteristic length"
+    temporal: "characteristic time"
+  governing_parameters:
+    - "dimensionless parameters"
+  typical_regimes:
+    - "standard operation"

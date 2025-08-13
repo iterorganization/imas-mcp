@@ -22,6 +22,7 @@ from imas_mcp.models.result_models import (
     ExportData,
     IDSExport,
 )
+from imas_mcp.physics.domain_analyzer import PhysicsDomainAnalyzer
 
 # Import export-appropriate decorators
 from imas_mcp.search.decorators import (
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
 
 class ExportTool(BaseTool):
     """Tool for exporting IDS and physics domain data using service composition."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize export tool with domain analyzer."""
+        super().__init__(*args, **kwargs)
+        self._domain_analyzer = PhysicsDomainAnalyzer()
 
     @property
     def tool_name(self) -> str:
@@ -236,7 +242,8 @@ class ExportTool(BaseTool):
 
         Domain-focused extraction tool that gathers measurements, calculations,
         and diagnostics from a particular physics area (e.g., 'equilibrium',
-        'transport', 'heating'). Ideal for domain-specific research workflows.
+        'transport', 'heating'). Provides comprehensive analysis including
+        theoretical foundations, experimental methods, and cross-domain relationships.
 
         Args:
             domain: Physics domain name (e.g., 'transport', 'equilibrium', 'heating')
@@ -246,7 +253,7 @@ class ExportTool(BaseTool):
             ctx: MCP context for AI enhancement
 
         Returns:
-            DomainExport with domain-specific data, relationships, and research guidance
+            DomainExport with comprehensive domain analysis, measurements, workflows, and guidance
         """
         try:
             if not domain:
@@ -262,18 +269,23 @@ class ExportTool(BaseTool):
                 query=domain, search_mode=SearchMode.SEMANTIC, max_results=max_paths
             )
 
-            search_results = search_result.hits
+            search_results_list = search_result.hits
 
-            if not search_results:
+            if not search_results_list:
                 return self._create_error_response(
                     f"No data found for domain '{domain}'", domain
                 )
 
-            # Process results based on analysis depth
+            # Use enhanced domain analyzer for comprehensive analysis
+            domain_analysis = self._domain_analyzer.analyze_domain(
+                domain=domain, search_results=search_results_list, depth=analysis_depth
+            )
+
+            # Process results with enhanced path extraction
             domain_paths = []
             related_ids: set[str] = set()
 
-            for result in search_results:
+            for result in search_results_list:
                 path_info = {
                     "path": result.path,
                     "documentation": result.documentation[:300]
@@ -282,6 +294,7 @@ class ExportTool(BaseTool):
                     "physics_domain": result.physics_domain or "",
                     "data_type": result.data_type or "",
                     "units": result.units or "",
+                    "measurement_type": self._classify_measurement_type(result),
                 }
 
                 # Extract IDS name from path or use the ids_name field
@@ -293,24 +306,101 @@ class ExportTool(BaseTool):
 
                 domain_paths.append(path_info)
 
-            # Build final response
+            # Build enhanced domain information
+            domain_info = {
+                "analysis_depth": analysis_depth,
+                "paths": domain_paths,
+                "related_ids": list(related_ids),
+                # Enhanced analysis components
+                "key_measurements": domain_analysis.get("key_measurements", []),
+                "theoretical_foundations": domain_analysis.get(
+                    "theoretical_foundations", {}
+                ),
+                "experimental_methods": domain_analysis.get("experimental_methods", []),
+                "typical_workflows": domain_analysis.get("typical_workflows", []),
+                "data_characteristics": domain_analysis.get("data_characteristics", {}),
+                "complexity_assessment": domain_analysis.get(
+                    "complexity_assessment", {}
+                ),
+            }
+
+            # Add cross-domain analysis if requested
+            if include_cross_domain:
+                domain_info["cross_domain_links"] = domain_analysis.get(
+                    "cross_domain_links", []
+                )
+                domain_info["measurement_integration"] = domain_analysis.get(
+                    "measurement_integration", {}
+                )
+
+            # Add comprehensive features for detailed analysis
+            if analysis_depth == "comprehensive":
+                domain_info.update(
+                    {
+                        "detailed_physics_context": domain_analysis.get(
+                            "detailed_physics_context", {}
+                        ),
+                        "research_applications": domain_analysis.get(
+                            "research_applications", []
+                        ),
+                        "data_quality_assessment": domain_analysis.get(
+                            "data_quality_assessment", {}
+                        ),
+                    }
+                )
+
+            # Build final response with enhanced metadata
             response = DomainExport(
                 domain=domain,
-                domain_info={
-                    "analysis_depth": analysis_depth,
-                    "paths": domain_paths,
-                    "related_ids": list(related_ids),
-                },
+                domain_info=domain_info,
                 include_cross_domain=include_cross_domain,
                 max_paths=max_paths,
                 metadata={
                     "total_found": len(domain_paths),
+                    "analysis_timestamp": "2024-01-01T00:00:00Z",
+                    "analysis_engine": "PhysicsDomainAnalyzer_v1.0",
+                    "enhancement_features": [
+                        "theoretical_foundations",
+                        "experimental_methods",
+                        "measurement_classification",
+                        "workflow_analysis",
+                        "complexity_assessment",
+                    ]
+                    + (["cross_domain_analysis"] if include_cross_domain else []),
                 },
             )
 
-            logger.info(f"Domain export completed for: {domain}")
+            logger.info(
+                f"Enhanced domain export completed for: {domain} ({analysis_depth} depth)"
+            )
             return response
 
         except Exception as e:
-            logger.error(f"Domain export failed: {e}")
+            logger.error(f"Enhanced domain export failed: {e}")
             return self._create_error_response(f"Domain export failed: {e}", domain)
+
+    def _classify_measurement_type(self, result: Any) -> str:
+        """Classify measurement type for enhanced path information."""
+        path = result.path.lower()
+
+        # Physics-based measurement classification
+        if "density" in path:
+            return "density_measurement"
+        elif "temperature" in path:
+            return "temperature_measurement"
+        elif "pressure" in path:
+            return "pressure_measurement"
+        elif "magnetic" in path or "field" in path:
+            return "magnetic_field_measurement"
+        elif "current" in path:
+            return "current_measurement"
+        elif "velocity" in path or "flow" in path:
+            return "velocity_measurement"
+        elif "radiation" in path or "emission" in path:
+            return "radiation_measurement"
+        elif "position" in path or "geometry" in path:
+            return "geometric_measurement"
+        else:
+            return (
+                "general_measurement"  # Always return measurement type, not data_type
+            )

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from imas_mcp.physics_extraction.models import ExtractionStatus
+from imas_mcp.physics.models import ExtractionStatus
 
 logger = logging.getLogger(__name__)
 

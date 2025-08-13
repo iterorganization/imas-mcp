@@ -19,7 +19,7 @@ from imas_mcp.models.constants import RelationshipType
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import RelationshipsInput
 from imas_mcp.models.result_models import RelationshipResult
-from imas_mcp.physics_extraction.relationship_engine import (
+from imas_mcp.physics.relationship_engine import (
     EnhancedRelationshipEngine,
     create_enhanced_relationship_nodes,
 )
