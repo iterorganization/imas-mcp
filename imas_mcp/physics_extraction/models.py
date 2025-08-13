@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProcessingPriority(str, Enum):
@@ -82,7 +82,8 @@ class PhysicsQuantity(BaseModel):
     version: int = Field(1, description="Version number")
     created_by: str = Field("ai_extraction", description="Creation source")
 
-    @validator("imas_paths")
+    @field_validator("imas_paths")
+    @classmethod
     def validate_imas_paths(cls, v):
         """Ensure IMAS paths are valid."""
         for path in v:
@@ -90,7 +91,8 @@ class PhysicsQuantity(BaseModel):
                 raise ValueError(f"Invalid IMAS path: {path}")
         return v
 
-    @validator("extraction_confidence")
+    @field_validator("extraction_confidence")
+    @classmethod
     def validate_confidence(cls, v):
         """Ensure confidence is reasonable."""
         if not 0.0 <= v <= 1.0:
