@@ -22,7 +22,7 @@ class DomainDefinitionLoader:
         """Initialize the loader with the definitions directory."""
         if definitions_dir is None:
             definitions_package = resources.files(
-                "imas_mcp.definitions.physics_domains"
+                "imas_mcp.definitions.physics.domains"
             )
             definitions_dir = Path(str(definitions_package))
 
@@ -39,7 +39,7 @@ class DomainDefinitionLoader:
         try:
             # Try using importlib.resources first (works for installed packages)
             definitions_package = resources.files(
-                "imas_mcp.definitions.physics_domains"
+                "imas_mcp.definitions.physics.domains"
             )
             file_ref = definitions_package / filename
 
