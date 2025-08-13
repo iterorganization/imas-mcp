@@ -15,7 +15,7 @@ import pytest
 
 from imas_mcp.core.domain_loader import DomainDefinitionLoader
 from imas_mcp.models.constants import RelationshipType
-from imas_mcp.physics_extraction.relationship_engine import (
+from imas_mcp.physics.relationship_engine import (
     RelationshipStrength,
     SemanticRelationshipAnalyzer,
 )

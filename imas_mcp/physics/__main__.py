@@ -51,7 +51,7 @@ def setup_extraction_environment(
         # Use storage directory in project
         imas_mcp_package = resources.files("imas_mcp")
         project_root = Path(str(imas_mcp_package)).parent
-        storage_dir = project_root / "storage" / "physics_extraction"
+        storage_dir = project_root / "storage" / "physics"
 
     # Ensure directories exist
     json_data_dir = Path(json_data_dir)
@@ -305,16 +305,16 @@ def main():
         epilog="""
 Examples:
   # Show current status
-  python -m imas_mcp.physics_extraction status
+  python -m imas_mcp.physics status
 
   # Extract from 5 IDS with 20 paths each
-  python -m imas_mcp.physics_extraction extract --max-ids 5 --paths-per-ids 20
+  python -m imas_mcp.physics extract --max-ids 5 --paths-per-ids 20
 
   # Extract specific IDS
-  python -m imas_mcp.physics_extraction extract --ids equilibrium core_profiles
+  python -m imas_mcp.physics extract --ids equilibrium core_profiles
 
   # Export database
-  python -m imas_mcp.physics_extraction export --output physics_quantities.json
+  python -m imas_mcp.physics export --output physics_quantities.json
         """,
     )
 

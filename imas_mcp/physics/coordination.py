@@ -11,20 +11,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from imas_mcp.physics_extraction.catalog_progress import CatalogBasedProgressTracker
-from imas_mcp.physics_extraction.extractors import (
+from imas_mcp.physics.catalog_progress import CatalogBasedProgressTracker
+from imas_mcp.physics.extractors import (
     AIPhysicsExtractor,
     BatchProcessor,
     CatalogBatchProcessor,
 )
-from imas_mcp.physics_extraction.models import (
+from imas_mcp.physics.models import (
     ConflictResolutionStrategy,
     ExtractionProgress,
     ExtractionResult,
     ExtractionStatus,
     PhysicsDatabase,
 )
-from imas_mcp.physics_extraction.storage import (
+from imas_mcp.physics.storage import (
     ConflictManager,
     PhysicsStorage,
     ProgressTracker,

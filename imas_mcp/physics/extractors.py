@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from imas_mcp.physics_extraction.models import ExtractionResult, PhysicsQuantity
+from imas_mcp.physics.models import ExtractionResult, PhysicsQuantity
 
 logger = logging.getLogger(__name__)
 
