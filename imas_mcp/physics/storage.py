@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from imas_mcp.physics_extraction.models import (
+from imas_mcp.physics.models import (
     ConflictResolution,
     ConflictResolutionStrategy,
     ExtractionProgress,

@@ -1,0 +1,145 @@
+# Diagnostic Method Definitions for Physics Domain Analysis
+# This file defines diagnostic methods, their descriptions, outputs, and applicability
+
+metadata:
+  version: "1.0.0"
+  created: "2025-08-13"
+  description: "Diagnostic method definitions and characteristics for domain analysis"
+  source: "Extracted from domain_analyzer.py hardcoded definitions"
+
+diagnostic_methods:
+  "Thomson scattering":
+    description: "Laser scattering for density and temperature profiles"
+    typical_outputs:
+      - "density_profile"
+      - "temperature_profile"
+    high_applicability_domains:
+      - "transport"
+    physics_context: "Elastic scattering of laser light from electrons provides local measurements"
+    
+  "magnetic diagnostics":
+    description: "Magnetic coil measurements for equilibrium reconstruction"
+    typical_outputs:
+      - "magnetic_field"
+      - "plasma_current"
+      - "equilibrium"
+    high_applicability_domains:
+      - "equilibrium"
+      - "mhd"
+    physics_context: "Magnetic field measurements for plasma shape and current distribution"
+    
+  "ECE":
+    description: "Electron cyclotron emission for temperature measurements"
+    typical_outputs:
+      - "temperature_profile"
+      - "temperature_fluctuations"
+    high_applicability_domains:
+      - "transport"
+      - "turbulence"
+    physics_context: "Electron cyclotron radiation provides electron temperature measurements"
+    
+  "interferometry":
+    description: "Density line integral measurements"
+    typical_outputs:
+      - "line_density"
+      - "density_fluctuations"
+    high_applicability_domains:
+      - "transport"
+      - "turbulence"
+    physics_context: "Electromagnetic wave phase shift through plasma for density measurements"
+    
+  "reflectometry":
+    description: "Density profile measurements using reflected waves"
+    typical_outputs:
+      - "density_profile"
+      - "density_fluctuations"
+    high_applicability_domains:
+      - "transport"
+      - "edge_physics"
+    physics_context: "Reflection of electromagnetic waves from density cutoff layers"
+    
+  "spectroscopy":
+    description: "Emission line analysis for impurity and temperature"
+    typical_outputs:
+      - "impurity_density"
+      - "ion_temperature"
+      - "rotation"
+    high_applicability_domains:
+      - "transport"
+      - "edge_physics"
+      - "radiation_diagnostics"
+    physics_context: "Analysis of atomic emission lines for plasma parameters"
+    
+  "MSE":
+    description: "Motional Stark effect for current and magnetic field"
+    typical_outputs:
+      - "current_profile"
+      - "safety_factor"
+    high_applicability_domains:
+      - "equilibrium"
+    physics_context: "Stark splitting of neutral beam emission lines in magnetic field"
+    
+  "bolometry":
+    description: "Total radiated power measurements"
+    typical_outputs:
+      - "radiated_power"
+      - "power_balance"
+    high_applicability_domains:
+      - "radiation_diagnostics"
+      - "edge_physics"
+    physics_context: "Total radiation power measurement for energy balance studies"
+    
+  "Langmuir probes":
+    description: "Local plasma parameters in edge regions"
+    typical_outputs:
+      - "local_density"
+      - "local_temperature"
+      - "potential"
+    high_applicability_domains:
+      - "edge_physics"
+      - "divertor"
+    physics_context: "Direct measurement of plasma parameters using conducting probes"
+
+# Applicability assessment rules
+applicability_rules:
+  essential:
+    description: "Critical diagnostic for domain physics"
+    criteria: "Method is fundamental to understanding domain phenomena"
+    
+  high:
+    description: "Important diagnostic with strong relevance"
+    criteria: "Method provides key measurements for domain analysis"
+    
+  moderate:
+    description: "Useful diagnostic with some relevance"
+    criteria: "Method provides supporting measurements for domain"
+    
+  low:
+    description: "Limited relevance to domain"
+    criteria: "Method has minimal application to domain physics"
+
+# Domain-specific applicability defaults
+domain_applicability_defaults:
+  transport:
+    default_level: "high"
+    reason: "Transport studies require comprehensive diagnostics"
+    
+  equilibrium:
+    default_level: "high" 
+    reason: "Equilibrium reconstruction needs multiple measurements"
+    
+  heating:
+    default_level: "high"
+    reason: "Heating studies require power and profile measurements"
+    
+  edge_physics:
+    default_level: "moderate"
+    reason: "Edge diagnostics often specialized and localized"
+    
+  divertor:
+    default_level: "moderate"
+    reason: "Divertor diagnostics specialized for high heat flux regions"
+    
+  default:
+    default_level: "low"
+    reason: "General applicability assumed low unless specified"
