@@ -15,6 +15,7 @@ Each component is accessible via server.tools and server.resources properties.
 import importlib.metadata
 import logging
 from dataclasses import dataclass, field
+from typing import Literal
 
 import nest_asyncio
 from fastmcp import FastMCP
@@ -105,7 +106,12 @@ class Server:
             logger.warning(f"Could not pre-build embeddings during startup: {e}")
             logger.warning("Embeddings will be built on first semantic search request")
 
-    def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+    def run(
+        self,
+        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ):
         """Run the server with the specified transport."""
         # Adjust logging level based on transport
         # For stdio transport, suppress INFO logs to prevent them appearing as warnings in MCP clients
@@ -113,31 +119,18 @@ class Server:
         if transport == "stdio":
             logger.setLevel(logging.WARNING)
             logger.debug("Starting IMAS MCP server with stdio transport")
-            self.mcp.run()
-        elif transport == "http":
+            self.mcp.run(transport=transport)
+        elif transport in ["sse", "streamable-http"]:
             logger.setLevel(logging.INFO)
             logger.info(
-                f"Starting IMAS MCP server with HTTP transport on {host}:{port}"
+                f"Starting IMAS MCP server with {transport} transport on {host}:{port}"
             )
-            self._run_http(host, port)
+            self.mcp.run(transport=transport, host=host, port=port)
         else:
-            raise ValueError(f"Unsupported transport: {transport}")
-
-    def _run_http(self, host: str, port: int):
-        """Run the server with HTTP transport."""
-        try:
-            import uvicorn
-
-            # Note: HTTP transport import path may need adjustment based on FastMCP version
-            from fastmcp.transports.http import create_app
-        except ImportError as e:
-            raise ImportError(
-                "HTTP transport requires additional dependencies. "
-                "Install with: pip install imas-mcp[http]"
-            ) from e
-
-        app = create_app(self.mcp)
-        uvicorn.run(app, host=host, port=port, log_level="info")
+            raise ValueError(
+                f"Unsupported transport: {transport}. "
+                f"Supported transports: stdio, sse, streamable-http"
+            )
 
     def _get_version(self) -> str:
         """Get the package version."""
@@ -153,12 +146,16 @@ def main():
     server.run(transport="stdio")
 
 
-def run_server(transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+def run_server(
+    transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+):
     """
     Entry point for running the server with specified transport.
 
     Args:
-        transport: Either 'stdio' or 'http'
+        transport: Either 'stdio', 'sse', or 'streamable-http'
         host: Host for HTTP transport
         port: Port for HTTP transport
     """
