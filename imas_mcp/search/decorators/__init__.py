@@ -18,12 +18,9 @@ from .error_handling import (
 # MCP tool decorator
 from .mcp_tool import mcp_tool
 from .performance import get_performance_summary, measure_performance
-from .physics_hints import physics_hints
-from .query_hints import query_hints
 
-# SearchResult enhancement decorators
-from .sample import sample
-from .tool_hints import tool_hints
+# Note: physics_hints, query_hints, sample, and tool_hints are not imported here
+# to avoid circular dependencies. Import them directly when needed.
 from .tool_recommendations import generate_tool_recommendations, recommend_tools
 from .validation import create_validation_schema, validate_input
 
@@ -44,11 +41,6 @@ __all__ = [
     # Error handling decorators
     "handle_errors",
     "create_timeout_handler",
-    # SearchResult decorators
-    "sample",
-    "tool_hints",
-    "query_hints",
-    "physics_hints",
     # MCP tool decorator
     "mcp_tool",
     # Error classes
@@ -56,4 +48,6 @@ __all__ = [
     "ValidationError",
     "SearchError",
     "ServiceError",
+    # Note: physics_hints, query_hints, sample, and tool_hints are not exported
+    # to avoid circular dependencies. Import them directly when needed.
 ]

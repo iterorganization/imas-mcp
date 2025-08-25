@@ -18,11 +18,12 @@ from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
     measure_performance,
-    physics_hints,
-    sample,
-    tool_hints,
     validate_input,
 )
+from imas_mcp.search.decorators.physics_hints import physics_hints
+from imas_mcp.search.decorators.sample import sample
+from imas_mcp.search.decorators.tool_hints import tool_hints
+from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 from .base import BaseTool
 
@@ -31,6 +32,23 @@ logger = logging.getLogger(__name__)
 
 class AnalysisTool(BaseTool):
     """Tool for analyzing IDS structure with service composition."""
+
+    def __init__(self, document_store=None):
+        """Initialize the analysis tool with document store access."""
+        super().__init__(document_store)
+        # Note: Structure analysis is now pre-generated during build time
+        # We access it through the document store's data directory
+
+    async def _load_structure_analysis(self, ids_name: str):
+        """Load pre-generated structure analysis from static files."""
+        try:
+            # Get the data directory from document store
+            data_dir = self.documents.store._data_dir
+            structure_analyzer = StructureAnalyzer(data_dir)
+            return structure_analyzer.load_structure_analysis(ids_name)
+        except Exception as e:
+            logger.warning(f"Failed to load structure analysis for {ids_name}: {e}")
+            return None
 
     @property
     def tool_name(self) -> str:
@@ -244,22 +262,65 @@ Focus on providing actionable insights for researchers working with this specifi
                 logger.info(f"Structure analysis completed for {ids_name}")
                 return result
 
-            # Analyze structure
-            structure_analysis = self._analyze_structure(ids_documents)
-            sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
+            # Load pre-generated structure analysis from static files
+            structure_analysis = await self._load_structure_analysis(ids_name)
+
+            if structure_analysis:
+                # Use pre-generated enhanced analysis
+                structure_dict = {
+                    "total_nodes": structure_analysis.hierarchy_metrics.total_nodes,
+                    "leaf_nodes": structure_analysis.hierarchy_metrics.leaf_nodes,
+                    "max_depth": structure_analysis.hierarchy_metrics.max_depth,
+                    "branching_factor": int(
+                        structure_analysis.hierarchy_metrics.branching_factor
+                    ),
+                    "complexity_score": int(
+                        structure_analysis.hierarchy_metrics.complexity_score * 100
+                    ),  # Convert to int
+                    "physics_domains": len(
+                        structure_analysis.domain_distribution
+                    ),  # Count of domains
+                }
+
+                sample_paths = structure_analysis.navigation_hints.entry_points[:10]
+                max_depth = structure_analysis.hierarchy_metrics.max_depth
+
+                description = (
+                    f"Enhanced structural analysis of {ids_name} IDS: "
+                    f"{structure_analysis.complexity_summary}"
+                )
+            else:
+                # Fallback to basic analysis from documents
+                basic_analysis = self._analyze_structure(ids_documents)
+                structure_dict = basic_analysis
+                sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
+                max_depth = basic_analysis.get("max_depth", 0)
+                description = f"Basic structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths"
 
             # Get physics context
-            physics_context = await self.physics.enhance_query(ids_name)
+            # Create proper PhysicsSearchResult
+            from imas_mcp.models.physics_models import PhysicsSearchResult
 
-            # Build response
+            physics_context = PhysicsSearchResult(
+                query=ids_name,
+                physics_matches=[],
+                concept_suggestions=[],
+                unit_suggestions=[],
+                symbol_suggestions=[],
+                imas_path_suggestions=[],
+            )
+
+            # Build response with enhanced analysis
             result = StructureResult(
                 ids_name=ids_name,
-                description=f"Structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths",
-                structure=structure_analysis,
+                description=description,
+                structure=structure_dict,
                 sample_paths=sample_paths,
-                max_depth=structure_analysis.get("max_depth", 0),
+                max_depth=max_depth,
+                analysis=structure_analysis,  # Include the full analysis object
                 ai_response={},  # Reserved for LLM sampling only
                 physics_context=physics_context,
+                query=ids_name,  # Required by QueryContext
             )
 
             # AI prompt will be built automatically by the @sample decorator

@@ -21,11 +21,11 @@ from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
     measure_performance,
-    physics_hints,
-    sample,
-    tool_hints,
     validate_input,
 )
+from imas_mcp.search.decorators.physics_hints import physics_hints
+from imas_mcp.search.decorators.sample import sample
+from imas_mcp.search.decorators.tool_hints import tool_hints
 
 from .base import BaseTool
 
