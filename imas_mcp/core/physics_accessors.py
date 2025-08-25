@@ -71,9 +71,6 @@ class DomainAccessor:
                 unit_contexts=unit_contexts_data,
             )
 
-            logger.info(
-                f"Loaded physics context with {len(context.get_domain_names())} domains"
-            )
             return context
 
         except Exception as e:

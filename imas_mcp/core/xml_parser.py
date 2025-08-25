@@ -55,8 +55,8 @@ class DataDictionaryTransformer:
     excluded_patterns: set[str] = field(
         default_factory=lambda: {"ids_properties", "code"}
     )
-    skip_ggd: bool = False
-    skip_error_fields: bool = False
+    skip_ggd: bool = True
+    skip_error_fields: bool = True
     use_rich: bool | None = None  # Auto-detect if None
 
     def __post_init__(self):

@@ -34,6 +34,16 @@ from imas_mcp.core.xml_parser import DataDictionaryTransformer
     is_flag=True,
     help="Disable rich progress display and use plain logging",
 )
+@click.option(
+    "--include-ggd",
+    is_flag=True,
+    help="Include GGD (Grid Geometry Data) nodes in the schema (default: excluded)",
+)
+@click.option(
+    "--include-error-fields",
+    is_flag=True,
+    help="Include error fields in the schema (default: excluded)",
+)
 def build_schemas(
     verbose: bool,
     quiet: bool,
@@ -41,6 +51,8 @@ def build_schemas(
     ids_filter: str,
     output_dir: Path | None,
     no_rich: bool,
+    include_ggd: bool,
+    include_error_fields: bool,
 ) -> int:
     """Build the schema data structures for the IMAS Data Dictionary.
 
@@ -54,6 +66,8 @@ def build_schemas(
         build-schemas --ids-filter "core_profiles equilibrium"  # Build specific IDS only
         build-schemas --output-dir /path/to/custom/dir  # Use custom output directory
         build-schemas --no-rich          # Disable rich progress and use plain logging
+        build-schemas --include-ggd      # Include GGD nodes (excluded by default)
+        build-schemas --include-error-fields  # Include error fields (excluded by default)
     """
     # Set up logging level
     if quiet:
@@ -84,6 +98,8 @@ def build_schemas(
             output_dir=output_dir,
             ids_set=ids_set,
             use_rich=not no_rich,  # Invert no_rich flag
+            skip_ggd=not include_ggd,  # Invert include_ggd flag
+            skip_error_fields=not include_error_fields,  # Invert include_error_fields flag
         )
 
         # Check if we need to build

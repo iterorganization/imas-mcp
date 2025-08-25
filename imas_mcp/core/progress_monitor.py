@@ -7,21 +7,20 @@ try:
     from rich.console import Console
     from rich.progress import (
         BarColumn,
-        MofNCompleteColumn,
         Progress,
         SpinnerColumn,
         TaskID,
         TextColumn,
-        TimeElapsedColumn,
+        TimeRemainingColumn,
     )
 
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     # Define dummy types for type hints when rich is not available
-    BarColumn = MofNCompleteColumn = Progress = SpinnerColumn = TaskID = TextColumn = (
-        TimeElapsedColumn
-    ) = Console = Any
+    BarColumn = Progress = SpinnerColumn = TaskID = TextColumn = TimeRemainingColumn = (
+        Console
+    ) = Any
 
 
 class ProgressMonitor:
@@ -32,6 +31,7 @@ class ProgressMonitor:
         use_rich: bool | None = None,
         logger: logging.Logger | None = None,
         item_names: list[str] | None = None,
+        description_template: str = "Processing IDS: {item}",
     ):
         """Initialize progress monitor.
 
@@ -40,8 +40,11 @@ class ProgressMonitor:
                 If None, auto-detect.
             logger: Logger instance to use for fallback. If None, creates one.
             item_names: List of item names for calculating padding.
+            description_template: Template for progress description.
+                Should contain {item} placeholder.
         """
         self.logger = logger or logging.getLogger(__name__)
+        self.description_template = description_template
 
         # Determine if we should use rich
         if use_rich is None:
@@ -54,6 +57,7 @@ class ProgressMonitor:
         self._task_id = None
         self._current_total: int = 0
         self._current_completed: int = 0
+        self._current_description: str = ""  # Store current processing description
 
         # Calculate maximum name length for space-padding
         if item_names:
@@ -81,6 +85,7 @@ class ProgressMonitor:
         """
         self._current_total = len(items)
         self._current_completed = 0
+        self._current_description = description  # Store description for logging
 
         # Use pre-calculated max length or calculate it now
         if self._max_name_length == 0 and items:
@@ -92,8 +97,7 @@ class ProgressMonitor:
                 SpinnerColumn(),  # type: ignore
                 TextColumn("[progress.description]{task.description}"),  # type: ignore
                 BarColumn(),  # type: ignore
-                MofNCompleteColumn(),  # type: ignore
-                TimeElapsedColumn(),  # type: ignore
+                TimeRemainingColumn(),  # type: ignore
                 console=self._console,
             )
             self._progress.start()
@@ -115,7 +119,7 @@ class ProgressMonitor:
             padded_name = item_name.ljust(self._max_name_length)
             self._progress.update(
                 self._task_id,
-                description=f"Processing IDS: {padded_name}",
+                description=self.description_template.format(item=padded_name),
             )
         else:
             # For logging mode, we'll log this when we complete the item
@@ -139,9 +143,9 @@ class ProgressMonitor:
             if error:
                 self.logger.error(f"Error processing IDS {item_name}: {error}")
             else:
-                # Use WARNING level so progress shows in MCP logs
-                self.logger.warning(
-                    f"IMAS-MCP: Completed batch: {item_name} "
+                # Use INFO level for consistency with rich mode
+                self.logger.info(
+                    f"{self._current_description}: {item_name} "
                     f"({self._current_completed}/{self._current_total})"
                 )
 
@@ -184,6 +188,7 @@ def create_progress_monitor(
     use_rich: bool | None = None,
     logger: logging.Logger | None = None,
     item_names: list[str] | None = None,
+    description_template: str = "Processing IDS: {item}",
 ) -> ProgressMonitor:
     """Create a progress monitor with appropriate settings.
 
@@ -192,8 +197,15 @@ def create_progress_monitor(
             If None, auto-detect.
         logger: Logger instance to use for fallback.
         item_names: List of item names for calculating padding.
+        description_template: Template for progress description.
+            Should contain {item} placeholder.
 
     Returns:
         Configured ProgressMonitor instance
     """
-    return ProgressMonitor(use_rich=use_rich, logger=logger, item_names=item_names)
+    return ProgressMonitor(
+        use_rich=use_rich,
+        logger=logger,
+        item_names=item_names,
+        description_template=description_template,
+    )
