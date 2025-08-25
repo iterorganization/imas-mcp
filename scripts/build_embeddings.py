@@ -38,8 +38,8 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 @click.option(
     "--batch-size",
     type=int,
-    default=500,
-    help="Batch size for embedding generation (default: 500)",
+    default=250,
+    help="Batch size for embedding generation (default: 250)",
 )
 @click.option(
     "--no-cache",
@@ -240,7 +240,15 @@ def build_embeddings(
                 click.echo(f"Created: {status_info['created_at']}")
                 return 0
             elif status in ["no_cache_file", "invalid_cache", "invalid_cache_file"]:
-                click.echo("Embeddings do not exist or are invalid")
+                if status == "no_cache_file":
+                    click.echo("Embeddings do not exist: No cache file found")
+                elif status == "invalid_cache_file":
+                    click.echo(
+                        "Embeddings are invalid: Cache file is corrupted or incompatible"
+                    )
+                elif status == "invalid_cache":
+                    reason = status_info.get("reason", "Unknown reason")
+                    click.echo(f"Embeddings are invalid: {reason}")
                 return 1
             elif status == "cache_disabled":
                 click.echo("Embeddings cache is disabled")

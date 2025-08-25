@@ -14,6 +14,7 @@ from pathlib import Path
 from fastmcp import FastMCP
 
 from imas_mcp.providers import MCPProvider
+from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,8 @@ class Resources(MCPProvider):
     def __init__(self):
         schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
         self.schema_dir = Path(str(schema_resource))
+        resources_dir = resources.files("imas_mcp") / "resources"
+        self.mermaid_generator = MermaidGraphGenerator(Path(str(resources_dir)))
 
     @property
     def name(self) -> str:
@@ -155,6 +158,94 @@ class Resources(MCPProvider):
             )
 
     @mcp_resource(
+        "Mermaid Hierarchy Graph - Visual representation of IDS hierarchical structure.",
+        "mermaid://hierarchy/{ids_name}",
+    )
+    async def get_mermaid_hierarchy(self, ids_name: str) -> str:
+        """Mermaid Hierarchy Graph - Visual representation of IDS hierarchical structure.
+
+        Use this resource to:
+        - Visualize the complete hierarchical structure of an IDS
+        - Understand data organization and nesting patterns
+        - Navigate complex IDS structures visually
+        - Identify key structural nodes and branching points
+
+        Contains: Complete Mermaid flowchart showing all nodes, relationships, and hierarchy levels.
+        Perfect for: Understanding IDS structure, visual navigation, structural analysis.
+        """
+        graph_content = self.mermaid_generator.load_mermaid_graph(ids_name, "hierarchy")
+        if graph_content is None:
+            return f"# Hierarchy Graph Not Available\n\nNo hierarchy graph found for '{ids_name}' IDS. The graph may not have been generated yet or the IDS name may be invalid.\n\nAvailable graph types: {', '.join(self.mermaid_generator.get_available_graphs(ids_name))}"
+        return graph_content
+
+    @mcp_resource(
+        "Mermaid Physics Domains Graph - Visual organization of IDS by physics domains.",
+        "mermaid://physics/{ids_name}",
+    )
+    async def get_mermaid_physics(self, ids_name: str) -> str:
+        """Mermaid Physics Domains Graph - Visual organization of IDS by physics domains.
+
+        Use this resource to:
+        - Understand physics domain organization within an IDS
+        - See how measurement types are grouped by physics context
+        - Identify domain-specific data paths and relationships
+        - Navigate IDS content by physics domain
+
+        Contains: Mermaid diagram showing physics domain groupings and representative paths.
+        Perfect for: Physics-based navigation, domain analysis, measurement categorization.
+        """
+        graph_content = self.mermaid_generator.load_mermaid_graph(
+            ids_name, "physics_domains"
+        )
+        if graph_content is None:
+            return f"# Physics Domains Graph Not Available\n\nNo physics domains graph found for '{ids_name}' IDS. This graph is only generated for IDS with multiple physics domains.\n\nAvailable graph types: {', '.join(self.mermaid_generator.get_available_graphs(ids_name))}"
+        return graph_content
+
+    @mcp_resource(
+        "Mermaid Complexity Graph - Visual complexity analysis of IDS structure.",
+        "mermaid://complexity/{ids_name}",
+    )
+    async def get_mermaid_complexity(self, ids_name: str) -> str:
+        """Mermaid Complexity Graph - Visual complexity analysis of IDS structure.
+
+        Use this resource to:
+        - Visualize complexity distribution across IDS structure
+        - Identify high-complexity nodes and simple leaf structures
+        - Understand complexity patterns and organizational principles
+        - Plan navigation strategies based on complexity levels
+
+        Contains: Mermaid mindmap showing complexity indicators and organizational patterns.
+        Perfect for: Complexity analysis, navigation planning, structural understanding.
+        """
+        graph_content = self.mermaid_generator.load_mermaid_graph(
+            ids_name, "complexity"
+        )
+        if graph_content is None:
+            return f"# Complexity Graph Not Available\n\nNo complexity graph found for '{ids_name}' IDS. The graph may not have been generated yet or the IDS name may be invalid.\n\nAvailable graph types: {', '.join(self.mermaid_generator.get_available_graphs(ids_name))}"
+        return graph_content
+
+    @mcp_resource(
+        "Mermaid IDS Overview - Complete overview of all IMAS IDS relationships.",
+        "mermaid://overview",
+    )
+    async def get_mermaid_overview(self) -> str:
+        """Mermaid IDS Overview - Complete overview of all IMAS IDS relationships.
+
+        Use this resource to:
+        - Get a high-level view of all available IDS
+        - Understand IDS categorization by complexity
+        - See relationships between different IDS types
+        - Navigate the complete IMAS data dictionary structure
+
+        Contains: Mermaid diagram showing all IDS organized by complexity and type.
+        Perfect for: IMAS overview, IDS selection, high-level navigation.
+        """
+        graph_content = self.mermaid_generator.get_overview_graph()
+        if graph_content is None:
+            return "# IDS Overview Graph Not Available\n\nNo overview graph found. The graph may not have been generated yet. Try running the build-mermaid script to generate all graphs."
+        return graph_content
+
+    @mcp_resource(
         "Resource Usage Examples - How to effectively use IMAS MCP resources.",
         "examples://resource-usage",
     )
@@ -177,8 +268,17 @@ class Resources(MCPProvider):
                     "steps": [
                         "1. Check ids://catalog for IDS overview and domain mapping",
                         "2. Use ids://structure/{ids_name} for specific IDS structure",
-                        "3. Then use search_imas tool for dynamic queries",
-                        "4. Follow with analyze_ids_structure tool for detailed analysis",
+                        "3. View mermaid://hierarchy/{ids_name} for visual structure",
+                        "4. Use tools for detailed analysis and relationships",
+                    ],
+                },
+                "visual_exploration": {
+                    "description": "Use mermaid graphs for visual understanding of IDS structure",
+                    "steps": [
+                        "1. Start with mermaid://overview for complete IDS landscape",
+                        "2. Use mermaid://hierarchy/{ids_name} for detailed structure",
+                        "3. Check mermaid://physics/{ids_name} for domain organization",
+                        "4. Use mermaid://complexity/{ids_name} for complexity analysis",
                     ],
                 },
                 "domain_exploration": {

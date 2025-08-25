@@ -4,11 +4,11 @@
     //   "url": "https://imas-dd.iter.org/mcp/",
     //   "type": "http"
     // }
-    // note: first initialize of imas-debug will take ~30 minutes to build the DD embeddings
+    // note: first initialize of imas-debug will take ~10 minutes to build the DD embeddings
     "imas-debug": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server", "--log-level", "DEBUG"] 
+      "args": ["run", "run-server", "--no-rich", "--log-level", "DEBUG"] 
     },
     "github": {
       "type": "http",

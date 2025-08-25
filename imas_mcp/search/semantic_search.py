@@ -7,6 +7,7 @@ vector storage and retrieval.
 """
 
 import hashlib
+import json
 import logging
 import pickle
 import threading
@@ -56,6 +57,7 @@ class EmbeddingCache:
     ids_set: set | None = None  # IDS set used for this cache
     source_content_hash: str = ""  # Hash of source data directory content
     source_max_mtime: float = 0.0  # Maximum modification time of source files
+    dd_version: str | None = None  # Data Dictionary version
 
     def is_valid(
         self,
@@ -65,57 +67,95 @@ class EmbeddingCache:
         source_data_dir: Path | None = None,
     ) -> bool:
         """Check if cache is valid for current state."""
-        # Basic validation
-        basic_valid = (
-            self.document_count == current_doc_count
-            and self.model_name == current_model
-            and len(self.embeddings) > 0
-            and len(self.path_ids) > 0
-            and self.ids_set == current_ids_set
-        )
+        return self.validate_with_reason(
+            current_doc_count, current_model, current_ids_set, source_data_dir
+        )[0]
 
-        if not basic_valid:
-            return False
+    def validate_with_reason(
+        self,
+        current_doc_count: int,
+        current_model: str,
+        current_ids_set: set | None = None,
+        source_data_dir: Path | None = None,
+    ) -> tuple[bool, str]:
+        """Check if cache is valid and return detailed reason if invalid."""
+        # Basic validation checks
+        if self.document_count != current_doc_count:
+            return (
+                False,
+                f"Document count mismatch: cached={self.document_count}, current={current_doc_count}",
+            )
 
-        # Enhanced validation with source file checking
+        if self.model_name != current_model:
+            return (
+                False,
+                f"Model name mismatch: cached='{self.model_name}', current='{current_model}'",
+            )
+
+        if len(self.embeddings) == 0:
+            return False, "Cache has no embeddings data"
+
+        if len(self.path_ids) == 0:
+            return False, "Cache has no path IDs"
+
+        if self.ids_set != current_ids_set:
+            return (
+                False,
+                f"IDS set mismatch: cached={self.ids_set}, current={current_ids_set}",
+            )
+
+        # Enhanced validation with DD version checking
         if source_data_dir is not None:
-            # Check if any source files are newer than cache creation
-            if self._has_newer_source_files(source_data_dir):
-                return False
+            # Check DD version instead of file modification times
+            current_dd_version = self._get_current_dd_version(source_data_dir)
+            if self.dd_version and current_dd_version:
+                if current_dd_version != self.dd_version:
+                    return (
+                        False,
+                        f"Data Dictionary version changed: cached='{self.dd_version}', current='{current_dd_version}'",
+                    )
+            elif not self.dd_version:
+                # Cache without DD version - rebuild required
+                return False, "Cache requires rebuild"
 
-            # Check source content hash if available
+            # Check source content hash if available (fallback validation)
             if self.source_content_hash:
                 current_hash = self._compute_source_content_hash(source_data_dir)
                 if current_hash != self.source_content_hash:
-                    return False
+                    return False, "Source content has changed (hash mismatch)"
 
-        return True
+        return True, "Cache is valid"
 
-    def _has_newer_source_files(self, source_data_dir: Path) -> bool:
-        """Check if any source JSON files are newer than cache creation."""
+    def _has_modified_source_files(self, source_data_dir: Path) -> bool:
+        """Check if any source JSON files have been modified after cache creation."""
+        return len(self._get_modified_source_files(source_data_dir)) > 0
+
+    def _get_modified_source_files(self, source_data_dir: Path) -> list[str]:
+        """Get list of source files that have been modified after cache creation.
+
+        Returns a list of relative file paths for source files whose modification
+        time is newer than the cache creation time, indicating they have been
+        changed since the cache was built.
+        """
+        modified_files = []
         try:
             # Check catalog file
             catalog_path = source_data_dir / "ids_catalog.json"
             if catalog_path.exists() and catalog_path.stat().st_mtime > self.created_at:
-                return True
+                modified_files.append("ids_catalog.json")
 
             # Check detailed files
             detailed_dir = source_data_dir / "detailed"
             if detailed_dir.exists():
                 for json_file in detailed_dir.glob("*.json"):
                     if json_file.stat().st_mtime > self.created_at:
-                        return True
+                        modified_files.append(f"detailed/{json_file.name}")
 
-            # Check if maximum mtime has changed (additional validation)
-            if self.source_max_mtime > 0:
-                current_max_mtime = self._get_max_source_mtime(source_data_dir)
-                if current_max_mtime > self.source_max_mtime:
-                    return True
-
-            return False
         except Exception:
-            # If we can't check, assume files are newer (safer to rebuild)
-            return True
+            # If we can't check files, assume they might have been modified
+            pass
+
+        return modified_files
 
     def _compute_source_content_hash(self, source_data_dir: Path) -> str:
         """Compute hash of source data directory content."""
@@ -154,6 +194,19 @@ class EmbeddingCache:
         """Update source file metadata for cache validation."""
         self.source_content_hash = self._compute_source_content_hash(source_data_dir)
         self.source_max_mtime = self._get_max_source_mtime(source_data_dir)
+        self.dd_version = self._get_current_dd_version(source_data_dir)
+
+    def _get_current_dd_version(self, source_data_dir: Path) -> str | None:
+        """Get the current Data Dictionary version from catalog."""
+        try:
+            catalog_path = source_data_dir / "ids_catalog.json"
+            if catalog_path.exists():
+                with open(catalog_path, encoding="utf-8") as f:
+                    catalog_data = json.load(f)
+                return catalog_data.get("metadata", {}).get("version")
+        except Exception:
+            pass
+        return None
 
 
 @dataclass
@@ -167,7 +220,7 @@ class SemanticSearchConfig:
     # Search configuration
     default_top_k: int = 10
     similarity_threshold: float = 0.0  # Minimum similarity to return
-    batch_size: int = 50  # For embedding generation
+    batch_size: int = 250  # For embedding generation
     ids_set: set | None = None  # Limit to specific IDS for testing/performance
 
     # Cache configuration
@@ -431,21 +484,33 @@ class SemanticSearch:
         total_batches = (
             doc_count + self.config.batch_size - 1
         ) // self.config.batch_size
-        batch_names = [
-            f"{min((i + 1) * self.config.batch_size, doc_count)}/{doc_count}"
-            for i in range(total_batches)
-        ]
+
+        # For Rich mode, show detailed batch progress; for logging mode, just show document counts
+        if self.config.use_rich:
+            batch_names = [
+                f"{min((i + 1) * self.config.batch_size, doc_count)}/{doc_count} ({i + 1}/{total_batches})"
+                for i in range(total_batches)
+            ]
+            description_template = "Embedding documents: {item}"
+            start_description = "IMAS-MCP: Embedding documents"
+        else:
+            batch_names = [
+                f"{min((i + 1) * self.config.batch_size, doc_count)}/{doc_count}"
+                for i in range(total_batches)
+            ]
+            description_template = "IMAS-MCP: Embedding documents: {item}"
+            start_description = f"IMAS-MCP: Embedding {doc_count} documents"
 
         # Create progress monitor for batch processing
         progress = create_progress_monitor(
             use_rich=self.config.use_rich,  # Use config setting
             logger=logger,
             item_names=batch_names,
-            description_template="Embedding documents: {item}",
+            description_template=description_template,
         )
 
         # Start progress monitoring
-        progress.start_processing(batch_names, "IMAS-MCP: Embedding documents")
+        progress.start_processing(batch_names, start_description)
 
         try:
             embeddings_list = []
@@ -743,9 +808,9 @@ class SemanticSearch:
             if not isinstance(cache, EmbeddingCache):
                 return {"status": "invalid_cache_file"}
 
-            # Check basic validity
+            # Check basic validity with detailed reason
             document_count = len(self.document_store.get_all_documents())
-            is_valid = cache.is_valid(
+            is_valid, reason = cache.validate_with_reason(
                 current_doc_count=document_count,
                 current_model=self.config.model_name,
                 current_ids_set=self.config.ids_set,
@@ -765,7 +830,7 @@ class SemanticSearch:
                     ),
                 }
             else:
-                return {"status": "invalid_cache"}
+                return {"status": "invalid_cache", "reason": reason}
 
         except Exception as e:
             return {"status": "cache_error", "error": str(e)}

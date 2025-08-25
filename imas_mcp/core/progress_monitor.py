@@ -144,10 +144,16 @@ class ProgressMonitor:
                 self.logger.error(f"Error processing IDS {item_name}: {error}")
             else:
                 # Use INFO level for consistency with rich mode
-                self.logger.info(
-                    f"{self._current_description}: {item_name} "
-                    f"({self._current_completed}/{self._current_total})"
-                )
+                # Skip the repetitive count if item_name already contains progress info
+                if "/" in item_name and item_name.count("/") == 1:
+                    # Item name already contains progress (e.g., "250/13457")
+                    self.logger.info(f"{self._current_description}: {item_name}")
+                else:
+                    # Item name doesn't contain progress, add it
+                    self.logger.info(
+                        f"{self._current_description}: {item_name} "
+                        f"({self._current_completed}/{self._current_total})"
+                    )
 
     def finish_processing(self) -> None:
         """Finish processing and clean up."""

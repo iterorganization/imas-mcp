@@ -57,6 +57,7 @@ class Server:
 
     # Configuration parameters
     ids_set: set[str] | None = None
+    use_rich: bool = True
 
     # Internal fields
     mcp: FastMCP = field(init=False, repr=False)
@@ -94,7 +95,8 @@ class Server:
         """Pre-build embeddings during server initialization to avoid delays."""
         try:
             # Create semantic search configuration matching the server's ids_set
-            config = SemanticSearchConfig(ids_set=self.ids_set)
+            # Use configured Rich setting (default disabled for MCP clients)
+            config = SemanticSearchConfig(ids_set=self.ids_set, use_rich=self.use_rich)
             semantic_search = SemanticSearch(
                 config=config, document_store=self.tools.document_store
             )

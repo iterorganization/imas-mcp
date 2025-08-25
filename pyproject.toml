@@ -15,7 +15,7 @@ build-backend = "hatchling.build"
 [project]
 name = "imas-mcp"
 dynamic = ["version"]
-description = "An AI-Enhanced MCP Server for accessing the IMAS Data Dictionary"
+description = "An IMAS Data Dictionary MCP server"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Simon McIntosh", email = "simon.mcintosh@iter.org" }]
@@ -100,6 +100,7 @@ run-server = "scripts.run_server:run_server"
 run-context = "scripts.run_context:run_context"
 build-schemas = "scripts.build_schemas:build_schemas"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
+build-mermaid = "scripts.build_mermaid:build_mermaid"
 
 [tool.hatch.version]
 source = "vcs"
