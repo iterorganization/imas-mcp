@@ -38,8 +38,8 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 @click.option(
     "--batch-size",
     type=int,
-    default=1000,
-    help="Batch size for embedding generation (default: 1000)",
+    default=10,
+    help="Batch size for embedding generation (default: 10)",
 )
 @click.option(
     "--no-cache",
@@ -77,6 +77,22 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
     is_flag=True,
     help="Enable memory and time profiling",
 )
+@click.option(
+    "--list-caches",
+    is_flag=True,
+    help="List all cache files and exit",
+)
+@click.option(
+    "--cleanup-caches",
+    type=int,
+    metavar="KEEP_COUNT",
+    help="Remove old cache files, keeping only KEEP_COUNT most recent",
+)
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    help="Disable rich progress display and use plain logging",
+)
 def build_embeddings(
     verbose: bool,
     quiet: bool,
@@ -91,6 +107,9 @@ def build_embeddings(
     device: str | None,
     check_only: bool,
     profile: bool,
+    list_caches: bool,
+    cleanup_caches: int | None,
+    no_rich: bool,
 ) -> int:
     """Build the document store and semantic search embeddings.
 
@@ -98,7 +117,7 @@ def build_embeddings(
     generates sentence transformer embeddings for semantic search capabilities.
 
     The embeddings are cached for fast subsequent loads. Use --force to rebuild
-    the cache even if it exists.
+    the cache by overwriting the existing file (safe for cancellation).
 
     Examples:
         build-embeddings                          # Build with default settings
@@ -112,10 +131,10 @@ def build_embeddings(
         build-embeddings --check-only             # Check if embeddings exist
         build-embeddings --profile                # Enable performance profiling
         build-embeddings --device cuda            # Force GPU usage
+        build-embeddings --list-caches            # List all cache files
+        build-embeddings --cleanup-caches 3       # Keep only 3 most recent caches
+        build-embeddings --no-rich                # Disable rich progress and use plain logging
     """
-    # TODO: Add profiling support if needed
-    # TODO: implement force rebuild logic if needed
-
     # Set up logging level
     if quiet:
         log_level = logging.ERROR
@@ -132,6 +151,32 @@ def build_embeddings(
 
     try:
         logger.info("Starting document store and embeddings build process...")
+
+        # Handle cache management operations FIRST - before any heavy initialization
+        if list_caches or cleanup_caches is not None:
+            if list_caches:
+                cache_files = SemanticSearch.list_all_cache_files()
+                if not cache_files:
+                    click.echo("No cache files found")
+                    return 0
+
+                click.echo(f"Found {len(cache_files)} cache files:")
+                for cache_info in cache_files:
+                    click.echo(
+                        f"  {cache_info['filename']}: {cache_info['size_mb']:.1f} MB, "
+                        f"modified {cache_info['modified']}"
+                    )
+                return 0
+
+            if cleanup_caches is not None:
+                removed_count = SemanticSearch.cleanup_all_old_caches(
+                    keep_count=cleanup_caches
+                )
+                if removed_count > 0:
+                    click.echo(f"Removed {removed_count} old cache files")
+                else:
+                    click.echo("No old cache files to remove")
+                return 0
 
         # Parse ids_filter string into a set if provided
         ids_set: set | None = set(ids_filter.split()) if ids_filter else None
@@ -150,6 +195,10 @@ def build_embeddings(
             normalize_embeddings=not no_normalize,  # Default True, inverted flag
             similarity_threshold=similarity_threshold,
             ids_set=ids_set,
+            auto_initialize=not (
+                check_only or force
+            ),  # Defer initialization for check-only or force mode
+            use_rich=not no_rich,  # Use rich display unless disabled
         )
 
         logger.info("Configuration:")
@@ -160,6 +209,7 @@ def build_embeddings(
         logger.info(f"  - Half precision: {config.use_half_precision}")
         logger.info(f"  - Normalize embeddings: {config.normalize_embeddings}")
         logger.info(f"  - Similarity threshold: {config.similarity_threshold}")
+        logger.info(f"  - Rich progress: {'disabled' if no_rich else 'enabled'}")
 
         # Build document store from JSON data
         logger.info("Building document store from JSON data...")
@@ -178,29 +228,40 @@ def build_embeddings(
 
         # If check-only mode, just report status and exit
         if check_only:
-            info = semantic_search.get_embeddings_info()
-            if info.get("status") == "not_initialized":
-                click.echo("Embeddings do not exist")
+            status_info = semantic_search.cache_status()
+            status = status_info.get("status")
+
+            if status == "valid_cache":
+                click.echo(
+                    f"Embeddings exist: {status_info['document_count']} documents"
+                )
+                click.echo(f"Model: {status_info['model_name']}")
+                click.echo(f"Cache size: {status_info['cache_file_size_mb']:.1f} MB")
+                click.echo(f"Created: {status_info['created_at']}")
+                return 0
+            elif status in ["no_cache_file", "invalid_cache", "invalid_cache_file"]:
+                click.echo("Embeddings do not exist or are invalid")
+                return 1
+            elif status == "cache_disabled":
+                click.echo("Embeddings cache is disabled")
                 return 1
             else:
-                click.echo(f"Embeddings exist: {info['document_count']} documents")
-                click.echo(f"Model: {info['model_name']}")
-                click.echo(f"Memory usage: {info['memory_usage_mb']:.1f} MB")
-                if "cache_file_size_mb" in info:
-                    click.echo(f"Cache size: {info['cache_file_size_mb']:.1f} MB")
-                return 0
+                click.echo(f"Cache status: {status}")
+                if "error" in status_info:
+                    click.echo(f"Error: {status_info['error']}")
+                return 1
 
-        # TODO fix
-        # If force rebuild, clear cache first
-        # if force:
-        #     logger.info("Force rebuild requested, clearing existing cache...")
-        #     semantic_search.clear_cache()
-        #     # Force rebuild by reinitializing
-        #     semantic_search._initialized = False
-        #     semantic_search._initialize()
-        # else:
-        #     # Normal initialization (will use cache if valid)
-        #     pass  # Already initialized in constructor
+        # If force rebuild, regenerate embeddings by overwriting cache
+        if force:
+            logger.info("Force rebuild requested, regenerating embeddings...")
+            # Ensure embeddings are initialized before rebuilding
+            if not semantic_search._initialized:
+                semantic_search._initialize()
+            semantic_search.rebuild_embeddings()
+        else:
+            # Normal initialization (will use cache if valid)
+            if not semantic_search._initialized:
+                semantic_search._initialize()
 
         # Get embeddings info
         info = semantic_search.get_embeddings_info()
