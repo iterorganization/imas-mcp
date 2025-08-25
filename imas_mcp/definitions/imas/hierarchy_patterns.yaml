@@ -1,0 +1,143 @@
+# Hierarchy pattern definitions for IMAS IDS structure analysis.
+#
+# This file defines common structural patterns found in IMAS IDS hierarchies
+# to aid in automated structure analysis and navigation optimization.
+
+# Common hierarchical patterns found across IMAS IDS structures
+common_patterns:
+  time_slice:
+    pattern: "time_slice"
+    description: "Time-dependent data structure with indexed time slices"
+    indicators: ["time_slice", "time", "temporal"]
+    typical_children: ["time", "data", "validity"]
+    usage: "Iterate through time indices to access time-dependent measurements"
+    
+  profiles_1d:
+    pattern: "profiles_1d"
+    description: "1D profile data typically as function of radius or flux coordinates"
+    indicators: ["profiles_1d", "profile", "1d"]
+    typical_children: ["coordinate", "data", "grid"]
+    usage: "Access radial or other 1D profiles for plasma parameter analysis"
+    
+  profiles_2d:
+    pattern: "profiles_2d"
+    description: "2D profile data with spatial distribution information"
+    indicators: ["profiles_2d", "2d", "spatial"]
+    typical_children: ["coordinate1", "coordinate2", "data", "grid"]
+    usage: "Extract 2D spatial distributions and profile data"
+    
+  global_quantities:
+    pattern: "global"
+    description: "Global scalar quantities and integrated plasma parameters"
+    indicators: ["global", "scalar", "integrated"]
+    typical_children: ["value", "time", "validity"]
+    usage: "Retrieve scalar plasma parameters and global quantities"
+    
+  channels:
+    pattern: "channel"
+    description: "Diagnostic channel data with individual measurement channels"
+    indicators: ["channel", "diagnostic", "detector"]
+    typical_children: ["signal", "calibration", "position", "validity"]
+    usage: "Access diagnostic measurements from specific channels"
+    
+  coordinates:
+    pattern: "coordinate"
+    description: "Coordinate system definitions and grid structures"
+    indicators: ["coordinate", "grid", "basis", "mesh"]
+    typical_children: ["values", "labels", "units"]
+    usage: "Define coordinate systems for data interpretation"
+
+# Physics domain indicators within path structures
+physics_indicators:
+  equilibrium:
+    keywords: ["psi", "q", "safety_factor", "flux", "equilibrium", "magnetic", "field"]
+    description: "Plasma equilibrium and magnetic configuration data"
+    typical_measurements: ["magnetic_flux", "safety_factor", "pressure", "current"]
+    
+  transport:
+    keywords: ["diffusivity", "conductivity", "pinch", "transport", "flux", "heat", "particle"]
+    description: "Particle and energy transport phenomena"
+    typical_measurements: ["diffusion_coefficient", "heat_flux", "particle_flux", "conductivity"]
+    
+  heating:
+    keywords: ["power", "efficiency", "absorption", "nbi", "ecrh", "icrh", "heating", "auxiliary"]
+    description: "Auxiliary heating systems and power deposition"
+    typical_measurements: ["power_density", "absorption_profile", "efficiency", "energy"]
+    
+  mhd:
+    keywords: ["mode", "amplitude", "frequency", "instability", "sawteeth", "tearing", "disruption"]
+    description: "Magnetohydrodynamic phenomena and instabilities"
+    typical_measurements: ["mode_amplitude", "frequency", "growth_rate", "magnetic_perturbation"]
+    
+  diagnostics:
+    keywords: ["signal", "calibration", "validity", "thomson", "interferometry", "reflectometry"]
+    description: "Diagnostic measurement systems and data quality"
+    typical_measurements: ["signal_amplitude", "calibration_factor", "measurement_uncertainty"]
+    
+  thermal:
+    keywords: ["temperature", "temp", "thermal", "heat", "energy"]
+    description: "Temperature and thermal energy measurements"
+    typical_measurements: ["electron_temperature", "ion_temperature", "thermal_energy"]
+    
+  electromagnetic:
+    keywords: ["magnetic", "electric", "current", "field", "b_", "e_", "j_"]
+    description: "Electromagnetic field and current measurements"
+    typical_measurements: ["magnetic_field", "electric_field", "current_density", "voltage"]
+
+# Structural complexity indicators
+complexity_indicators:
+  depth_patterns:
+    shallow: 
+      max_depth: 3
+      description: "Simple hierarchy with basic organization"
+      navigation: "direct_access"
+    medium:
+      max_depth: 6
+      description: "Moderate hierarchy requiring structured navigation"
+      navigation: "hierarchical_browsing"
+    deep:
+      max_depth: 10
+      description: "Complex hierarchy requiring optimization strategies"
+      navigation: "entry_point_based"
+      
+  branching_patterns:
+    linear:
+      avg_branching: 2
+      description: "Linear structure with minimal branching"
+      optimization: "sequential_access"
+    moderate:
+      avg_branching: 5
+      description: "Moderate branching with some choice points"
+      optimization: "selective_access"
+    highly_branched:
+      avg_branching: 15
+      description: "Highly branched structure requiring filtering"
+      optimization: "filtered_navigation"
+
+# Navigation optimization patterns
+navigation_patterns:
+  entry_point_identification:
+    criteria:
+      - "High frequency occurrence in data paths"
+      - "Physics domain relevance"
+      - "Structural importance (parent of many children)"
+      - "Common usage patterns in research workflows"
+    scoring_weights:
+      frequency: 0.3
+      physics_relevance: 0.3
+      structural_importance: 0.2
+      usage_commonality: 0.2
+      
+  drill_down_strategies:
+    by_physics_domain:
+      description: "Navigate based on physics phenomena of interest"
+      implementation: "filter_by_physics_keywords"
+    by_measurement_type:
+      description: "Navigate based on type of measurement needed"
+      implementation: "filter_by_measurement_classification"
+    by_data_structure:
+      description: "Navigate based on data organization (1D, 2D, temporal, etc.)"
+      implementation: "filter_by_structural_pattern"
+    by_coordinate_system:
+      description: "Navigate based on coordinate system requirements"
+      implementation: "filter_by_coordinate_type"
