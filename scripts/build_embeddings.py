@@ -38,8 +38,8 @@ from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 @click.option(
     "--batch-size",
     type=int,
-    default=10,
-    help="Batch size for embedding generation (default: 10)",
+    default=500,
+    help="Batch size for embedding generation (default: 500)",
 )
 @click.option(
     "--no-cache",

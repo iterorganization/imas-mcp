@@ -47,14 +47,14 @@ def run_server(
         # Run with default STDIO transport
         python -m scripts.run_server
 
-        # Run with SSE transport on custom host/port
-        python -m scripts.run_server --transport sse --host 0.0.0.0 --port 9000
+        # Run with HTTP transport on custom host/port
+        python -m scripts.run_server --transport http --host 0.0.0.0 --port 9000
 
         # Run with debug logging
         python -m scripts.run_server --log-level DEBUG
 
-        # Run with streamable-http transport
-        python -m scripts.run_server --transport streamable-http --port 8080
+        # Run with HTTP transport on specific port
+        python -m scripts.run_server --transport http --port 8080
     """
     # Configure logging based on the provided level
     # For stdio transport, default to WARNING to prevent INFO logs appearing as warnings in MCP clients
@@ -78,6 +78,8 @@ def run_server(
     match transport:
         case "stdio":
             logger.debug("Using STDIO transport")
+        case "http":
+            logger.info(f"Using HTTP transport on {host}:{port}")
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 

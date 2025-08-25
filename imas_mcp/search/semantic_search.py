@@ -362,11 +362,6 @@ class SemanticSearch:
 
         if force_rebuild:
             logger.info("IMAS-MCP: Force rebuild requested, regenerating embeddings...")
-        else:
-            logger.warning(
-                "IMAS-MCP: Generating embeddings for all documents... "
-                "(initial build may take up to 30 minutes)"
-            )
 
         self._generate_embeddings()
 
