@@ -30,9 +30,9 @@ from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
     measure_performance,
-    tool_hints,
     validate_input,
 )
+from imas_mcp.search.decorators.tool_hints import tool_hints
 
 from .base import BaseTool
 

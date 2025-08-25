@@ -6,7 +6,6 @@ and document storage for efficient IMAS data dictionary querying.
 """
 
 from .cache import SearchCache
-from .decorators.sample import sample
 from .document_store import Document, DocumentMetadata, DocumentStore
 from .search_strategy import (
     SearchConfig,
@@ -15,7 +14,6 @@ from .search_strategy import (
 from .tool_suggestions import tool_suggestions
 
 __all__ = [
-    "sample",
     "tool_suggestions",
     "SearchCache",
     "DocumentStore",

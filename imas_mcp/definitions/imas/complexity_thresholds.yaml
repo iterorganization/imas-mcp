@@ -1,0 +1,215 @@
+# Complexity threshold definitions for IMAS IDS structure analysis.
+#
+# This file defines thresholds and criteria for assessing the complexity
+# of IMAS IDS structures to provide appropriate navigation and optimization guidance.
+
+# Complexity assessment thresholds
+thresholds:
+  depth:
+    low: 3
+    medium: 6
+    high: 10
+    extreme: 15
+    descriptions:
+      low: "Simple hierarchy with basic organization - direct access recommended"
+      medium: "Moderate hierarchy requiring structured navigation"
+      high: "Complex hierarchy requiring optimization strategies"
+      extreme: "Very deep hierarchy requiring specialized navigation tools"
+      
+  branching:
+    low: 5
+    medium: 15
+    high: 30
+    extreme: 50
+    descriptions:
+      low: "Linear structure with minimal branching - sequential access efficient"
+      medium: "Moderate branching with some choice points - selective access recommended"
+      high: "Highly branched structure requiring filtering and navigation aids"
+      extreme: "Extremely branched structure requiring advanced filtering strategies"
+      
+  nodes:
+    small: 50
+    medium: 200
+    large: 500
+    huge: 1000
+    descriptions:
+      small: "Small dataset - full exploration feasible"
+      medium: "Medium dataset - structured exploration recommended"
+      large: "Large dataset - targeted access strategies needed"
+      huge: "Huge dataset - optimization and filtering essential"
+      
+  arrays:
+    few: 0.1
+    some: 0.3
+    many: 0.6
+    overwhelming: 0.8
+    descriptions:
+      few: "Few array structures - direct access suitable"
+      some: "Some array structures - coordinate awareness helpful"
+      many: "Many array structures - coordinate system optimization needed"
+      overwhelming: "Overwhelming array complexity - specialized tools required"
+
+# Complexity scoring methodology
+scoring:
+  weights:
+    depth_weight: 0.25
+    branching_weight: 0.25
+    size_weight: 0.25
+    array_weight: 0.25
+    
+  normalization:
+    depth_normalizer: 15  # Maximum realistic depth
+    branching_normalizer: 50  # Maximum realistic branching factor
+    size_normalizer: 1000  # Maximum realistic node count
+    array_normalizer: 1.0  # Array ratio is already normalized
+
+  score_interpretation:
+    very_low: 0.0
+    low: 0.2
+    medium: 0.5
+    high: 0.8
+    very_high: 1.0
+
+# Complexity-based recommendations
+recommendations:
+  low_complexity:
+    navigation_strategy: "direct_access"
+    recommended_tools: ["basic_exploration", "simple_browsing"]
+    optimization_priority: "none"
+    user_guidance:
+      - "Structure is simple and easy to navigate"
+      - "Direct path access is recommended"
+      - "Full exploration is feasible"
+    performance_expectations:
+      access_time: "immediate"
+      memory_usage: "minimal"
+      processing_overhead: "negligible"
+      
+  medium_complexity:
+    navigation_strategy: "structured_navigation"
+    recommended_tools: ["hierarchical_browsing", "entry_point_navigation"]
+    optimization_priority: "optional"
+    user_guidance:
+      - "Use entry points for efficient navigation"
+      - "Consider path filtering for focused analysis"
+      - "Hierarchical browsing recommended"
+    performance_expectations:
+      access_time: "fast"
+      memory_usage: "low"
+      processing_overhead: "minimal"
+      
+  high_complexity:
+    navigation_strategy: "optimized_access"
+    recommended_tools: ["advanced_filtering", "pattern_navigation", "drill_down_maps"]
+    optimization_priority: "recommended"
+    user_guidance:
+      - "Use recommended navigation patterns"
+      - "Leverage entry points and drill-down maps"
+      - "Consider selective data access strategies"
+      - "Apply domain-specific filtering"
+    performance_expectations:
+      access_time: "moderate"
+      memory_usage: "moderate"
+      processing_overhead: "noticeable"
+      
+  very_high_complexity:
+    navigation_strategy: "specialized_tools"
+    recommended_tools: ["advanced_optimization", "automated_navigation", "ai_assistance"]
+    optimization_priority: "essential"
+    user_guidance:
+      - "Use specialized navigation tools"
+      - "Implement automated access patterns"
+      - "Consider AI-assisted exploration"
+      - "Apply aggressive filtering and optimization"
+    performance_expectations:
+      access_time: "slow_without_optimization"
+      memory_usage: "high"
+      processing_overhead: "significant"
+
+# Performance impact assessment
+performance_impact:
+  memory_usage:
+    factors:
+      node_count_factor: 0.4
+      depth_factor: 0.2
+      branching_factor: 0.2
+      array_factor: 0.2
+    thresholds:
+      low_memory: 100    # MB
+      medium_memory: 500  # MB
+      high_memory: 1000   # MB
+      
+  processing_time:
+    factors:
+      complexity_score: 0.5
+      optimization_applied: 0.3
+      caching_enabled: 0.2
+    estimates:
+      simple_structure: "< 1 second"
+      moderate_structure: "1-5 seconds"
+      complex_structure: "5-15 seconds"
+      very_complex_structure: "> 15 seconds"
+      
+  user_experience:
+    cognitive_load:
+      low_complexity: "minimal mental effort required"
+      medium_complexity: "some structure understanding needed"
+      high_complexity: "significant navigation planning required"
+      very_high_complexity: "expert knowledge or tool assistance needed"
+    navigation_efficiency:
+      direct_access: "immediate goal achievement"
+      structured_navigation: "efficient goal-directed exploration"
+      optimized_access: "requires planning but achieves goals"
+      specialized_tools: "tools essential for effective use"
+
+# Adaptive threshold adjustment
+adaptive_thresholds:
+  user_experience_level:
+    beginner:
+      threshold_adjustment: -0.2  # Lower thresholds for beginners
+      additional_guidance: true
+      simplified_recommendations: true
+    intermediate:
+      threshold_adjustment: 0.0   # Standard thresholds
+      additional_guidance: false
+      simplified_recommendations: false
+    expert:
+      threshold_adjustment: 0.2   # Higher thresholds for experts
+      additional_guidance: false
+      simplified_recommendations: false
+      
+  domain_familiarity:
+    unfamiliar_domain:
+      complexity_penalty: 0.2     # Increase perceived complexity
+      extra_context: true
+    familiar_domain:
+      complexity_bonus: -0.1      # Decrease perceived complexity
+      extra_context: false
+      
+  task_complexity:
+    simple_query:
+      tolerance_increase: 0.2
+    complex_analysis:
+      tolerance_decrease: 0.1
+    research_exploration:
+      tolerance_neutral: 0.0
+
+# Quality assessment integration
+quality_factors:
+  data_completeness:
+    complete_data: 0.0          # No complexity penalty
+    mostly_complete: 0.1        # Small complexity increase
+    incomplete_data: 0.2        # Moderate complexity increase
+    sparse_data: 0.3           # Higher complexity increase
+    
+  documentation_quality:
+    well_documented: -0.1       # Complexity reduction
+    adequately_documented: 0.0  # No change
+    poorly_documented: 0.2      # Complexity increase
+    undocumented: 0.3          # Significant complexity increase
+    
+  structural_consistency:
+    highly_consistent: -0.1     # Complexity reduction
+    mostly_consistent: 0.0      # No change
+    inconsistent: 0.2          # Complexity increase
+    highly_inconsistent: 0.3    # Significant complexity increase

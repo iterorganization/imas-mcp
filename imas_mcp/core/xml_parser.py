@@ -33,7 +33,6 @@ from imas_mcp.core.extractors import (
     MetadataExtractor,
     PathExtractor,
     PhysicsExtractor,
-    RelationshipExtractor,
     SemanticExtractor,
     ValidationExtractor,
 )
@@ -41,6 +40,7 @@ from imas_mcp.core.physics_categorization import physics_categorizer
 from imas_mcp.core.progress_monitor import create_progress_monitor
 from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 from imas_mcp.graph_analyzer import analyze_imas_graphs
+from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 
 @dataclass
@@ -136,6 +136,9 @@ class DataDictionaryTransformer:
 
         # Generate identifier catalog
         identifier_catalog_path = self._generate_identifier_catalog(ids_data)
+
+        # Generate enhanced structure analysis
+        self._generate_structure_analysis(ids_data)
 
         return TransformationOutputs(
             catalog=catalog_path,
@@ -256,7 +259,6 @@ class DataDictionaryTransformer:
             PhysicsExtractor(context),
             ValidationExtractor(context),
             PathExtractor(context),
-            RelationshipExtractor(context),
             IdentifierExtractor(context),
         ]
 
@@ -816,3 +818,14 @@ class DataDictionaryTransformer:
         return (
             Path(schema_path).stem.replace("_identifier", "").replace("_", " ").title()
         )
+
+    def _generate_structure_analysis(self, ids_data: dict[str, dict[str, Any]]) -> None:
+        """Generate enhanced structure analysis for all IDS."""
+        try:
+            structure_analyzer = StructureAnalyzer(self.resolved_output_dir)
+            structure_analyzer.analyze_all_ids(ids_data)
+            logger = logging.getLogger(__name__)
+            logger.info("Enhanced structure analysis completed")
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to generate structure analysis: {e}")
