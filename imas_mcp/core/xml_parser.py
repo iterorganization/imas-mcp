@@ -118,8 +118,8 @@ class DataDictionaryTransformer:
         assert self.output_dir is not None
         return self.output_dir
 
-    def transform_complete(self) -> TransformationOutputs:
-        """Transform XML to complete JSON structure using composable extractors."""
+    def build(self) -> TransformationOutputs:
+        """Build complete JSON structure using composable extractors."""
         if self._root is None:
             raise ValueError("XML root is None")
 
