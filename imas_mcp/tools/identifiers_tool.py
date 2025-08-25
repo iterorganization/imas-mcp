@@ -242,8 +242,11 @@ class IdentifiersTool(BaseTool):
         data arrays and understanding measurement contexts.
 
         Args:
-            query: Search term to filter schemas (e.g., "materials", "coordinates", "plasma")
-                  Use broad terms for best results. Overly specific queries may return empty results.
+            query: Search term to filter schemas by schema names/paths (NOT content/descriptions).
+                  Filters identifier schemas by matching against schema file names and paths.
+                  Use single broad keywords rather than multi-word phrases for best results.
+                  Examples: "coordinate", "material", "transport" (not "grid coordinate systems")
+                  Leave empty to see all schemas in the specified scope.
             scope: Focus the search on specific identifier types:
                   - "all": All identifier schemas (default, recommended for exploration)
                   - "enums": Only schemas with enumeration options (for discrete choices)
@@ -258,31 +261,114 @@ class IdentifiersTool(BaseTool):
             - paths: IMAS data paths that use these identifiers
             - analytics: Statistics about enumeration spaces and usage
 
+        ## Parameter Interaction Examples
+
+        ### ❌ Common LLM Mistakes:
+            # Too specific - will return empty results
+            explore_identifiers(query="grid coordinate systems", scope="coordinates")
+
+            # Multi-word technical phrases - may not match schema names
+            explore_identifiers(query="plasma equilibrium types")
+
+            # Expecting query to search descriptions - it only filters schema names
+            explore_identifiers(query="magnetic flux coordinates")
+
+        ### ✅ Correct Usage Patterns:
+            # Broad keyword matching schema names
+            explore_identifiers(query="coordinate", scope="coordinates")
+
+            # No query - see all schemas in scope first
+            explore_identifiers(scope="coordinates")
+
+            # Single keyword that appears in schema file names
+            explore_identifiers(query="material")
+
+        ## Query Parameter Behavior
+
+        The `query` parameter filters identifier schemas by:
+        - Schema file names (e.g., "coordinate" matches "coordinate_identifier.xml")
+        - Schema paths (e.g., "poloidal" matches "poloidal_plane_coordinates_identifier.xml")
+
+        **NOT by schema content or descriptions**
+
+        ### Best Practices:
+        - Use single keywords rather than phrases
+        - Use broader terms rather than specific technical phrases
+        - Omit query parameter to see all schemas in a scope first
+        - Use schema names from results for subsequent filtering
+
+        ## Recommended Usage Pattern for LLMs
+
+        1. **Start broad**: Use scope without query to see available schemas
+        2. **Filter by category**: Use scope with broad keywords
+        3. **Examine specific schemas**: Use results to understand available options
+
+        ### Example Workflow:
+            # Step 1: See all coordinate-related schemas
+            explore_identifiers(scope="coordinates")
+            → Returns: coordinate_identifier.xml, poloidal_plane_coordinates_identifier.xml
+
+            # Step 2: Filter to specific coordinate types
+            explore_identifiers(query="poloidal", scope="coordinates")
+            → Returns: poloidal_plane_coordinates_identifier.xml
+
+            # Step 3: Use schema information to configure data paths
+            # Now you know valid coordinate options for data access
+
+        ## Scope-Specific Examples
+
+        ### "coordinates" scope:
+        - Returns: coordinate_identifier.xml, poloidal_plane_coordinates_identifier.xml
+        - Use cases: Finding valid coordinate system options for 2D grids
+        - Common options: rectangular, inverse_psi_polar, flux surface types
+
+        ### "enums" scope:
+        - Returns: All enumeration schemas (same as "all" - shows enumeration counts)
+        - Use cases: Browsing all available identifier options
+        - Shows total enumeration space across all schemas
+
+        ### "all" scope:
+        - Returns: All 57+ identifier schemas
+        - Use cases: General exploration, finding schema categories
+        - Shows complete identifier landscape
+
         Examples:
             # Discover all available identifier schemas
             explore_identifiers()
             → Returns 58 schemas, 146 paths, enumeration space of 584
 
             # Find material-related identifiers
-            explore_identifiers(query="materials", scope="enums")
+            explore_identifiers(query="material", scope="enums")
             → Returns materials schema with 31 enumeration options (C, W, SS, etc.)
 
             # Find coordinate system identifiers
-            explore_identifiers(query="coordinate", scope="coordinates")
-            → Returns coordinate schemas for grid types and coordinate systems
+            explore_identifiers(scope="coordinates")
+            → Returns 2 coordinate schemas with 68 enumeration options
 
             # Find plasma-related identifiers
             explore_identifiers(query="plasma")
-            → Returns 12 schemas related to plasma physics measurements
+            → Returns schemas containing "plasma" in their names/paths
 
             # Find all enumeration schemas
             explore_identifiers(scope="enums")
-            → Returns only schemas that have discrete enumeration options
+            → Returns all schemas showing their enumeration option counts
+
+        ## Common LLM Usage Errors to Avoid
+
+        ❌ **Don't**: Use multi-word technical phrases in query
+        ❌ **Don't**: Expect query to search schema descriptions
+        ❌ **Don't**: Use very specific terminology as query
+        ❌ **Don't**: Assume query works like semantic search
+
+        ✅ **Do**: Use single broad keywords
+        ✅ **Do**: Start with scope-only calls for exploration
+        ✅ **Do**: Use schema names from results for filtering
+        ✅ **Do**: Check analytics.enumeration_space to understand complexity
 
         Usage Tips for LLMs:
             - Use broad search terms: "material", "plasma", "transport", "equilibrium"
-            - Avoid overly specific queries like "plasma state" (may return empty)
-            - Start with scope="all" to explore available options
+            - Avoid overly specific queries like "plasma equilibrium state"
+            - Start with scope="all" or scope-only calls to explore available options
             - Use scope="enums" to find discrete choice options
             - Check the analytics.enumeration_space to understand data complexity
             - Use returned paths to understand where identifiers are used in IMAS
