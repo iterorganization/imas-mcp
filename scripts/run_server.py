@@ -35,11 +35,17 @@ logger = logging.getLogger(__name__)
     type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]),
     help="Set the logging level",
 )
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    help="Disable rich progress output during server initialization",
+)
 def run_server(
     transport: str,
     host: str,
     port: int,
     log_level: str,
+    no_rich: bool,
 ) -> None:
     """Run the AI-enhanced MCP server with configurable transport options.
 
@@ -55,6 +61,9 @@ def run_server(
 
         # Run with HTTP transport on specific port
         python -m scripts.run_server --transport http --port 8080
+
+        # Run without rich progress output
+        python -m scripts.run_server --no-rich
     """
     # Configure logging based on the provided level
     # For stdio transport, default to WARNING to prevent INFO logs appearing as warnings in MCP clients
@@ -84,7 +93,7 @@ def run_server(
             logger.info(f"Using {transport} transport on {host}:{port}")
 
     # Create and run the AI-enhanced server
-    server = Server()
+    server = Server(use_rich=not no_rich)
     server.run(transport=transport, host=host, port=port)
 
 

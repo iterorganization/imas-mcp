@@ -114,7 +114,7 @@ def build_schemas(
 
             # Transform the data
             logger.info("Starting XML to JSON transformation...")
-            outputs = transformer.transform_complete()
+            outputs = transformer.build()
 
             # Log the results
             logger.info("Schema data built successfully:")

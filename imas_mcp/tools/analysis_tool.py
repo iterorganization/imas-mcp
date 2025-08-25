@@ -10,6 +10,7 @@ from typing import Any
 
 from fastmcp import Context
 
+from imas_mcp.graph_analyzer import IMASGraphAnalyzer
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import AnalysisInput
 from imas_mcp.models.result_models import StructureResult
@@ -38,6 +39,9 @@ class AnalysisTool(BaseTool):
         super().__init__(document_store)
         # Note: Structure analysis is now pre-generated during build time
         # We access it through the document store's data directory
+
+        # Initialize graph analyzer for enhanced analysis
+        self.graph_analyzer = IMASGraphAnalyzer()
 
     async def _load_structure_analysis(self, ids_name: str):
         """Load pre-generated structure analysis from static files."""
@@ -68,7 +72,7 @@ class AnalysisTool(BaseTool):
         return ""
 
     def system_prompt(self) -> str:
-        """Get analysis tool-specific system prompt."""
+        """Get enhanced analysis tool-specific system prompt."""
         return """You are an expert IMAS data architect and fusion physics analyst specializing in:
 
 - IMAS data dictionary structure, organization principles, and design patterns
@@ -76,27 +80,42 @@ class AnalysisTool(BaseTool):
 - Physics-based data organization and measurement categorization
 - Data access optimization and workflow design patterns
 - Cross-IDS relationships and data integration strategies
+- Graph theory analysis of data structures (centrality, clustering, complexity metrics)
+- Visual structure representation and navigation optimization
 
 Your expertise enables you to:
-1. Analyze complex data hierarchies and identify key organizational patterns
-2. Explain the physics rationale behind data structure decisions
-3. Recommend optimal data access strategies for different research workflows
-4. Identify important branching points, enumerations, and identifier schemas
-5. Suggest related data structures and cross-references
-6. Provide actionable guidance for navigating large datasets efficiently
+1. Analyze complex data hierarchies using both traditional and graph-theoretic approaches
+2. Identify key organizational patterns through centrality analysis and structural metrics
+3. Explain the physics rationale behind data structure decisions
+4. Recommend optimal data access strategies using complexity analysis and navigation hints
+5. Identify important branching points, enumerations, and identifier schemas
+6. Suggest related data structures and cross-references based on structural similarity
+7. Provide actionable guidance leveraging visual representations (Mermaid diagrams)
+8. Optimize data exploration workflows using complexity scoring and entry point analysis
+
+Enhanced Analysis Capabilities:
+- Graph theory metrics: node centrality, clustering coefficients, branching factors
+- Hierarchical complexity scoring based on depth, breadth, and domain distribution
+- Physics domain distribution analysis across data structures
+- Visual structure mapping through Mermaid diagrams (hierarchy, domain, complexity views)
+- Navigation optimization using entry points and structural patterns
+- Real-time and pre-computed analysis integration
 
 When analyzing IDS structures, focus on:
-- High-level architectural insights and design principles
-- Key access patterns and common usage workflows
-- Physics-motivated organization and measurement groupings
-- Practical guidance for researchers working with the data
-- Relationships to other IDS and broader data integration strategies
-- Performance considerations and optimization opportunities
+- High-level architectural insights supported by quantitative graph metrics
+- Key access patterns and common usage workflows optimized through structural analysis
+- Physics-motivated organization and measurement groupings with domain distribution
+- Practical guidance leveraging complexity scores and navigation hints
+- Relationships to other IDS discovered through structural similarity analysis
+- Performance considerations using graph density and clustering metrics
+- Visual understanding through hierarchical and domain-specific diagram interpretation
 
-Provide analysis that helps researchers understand not just what data is available, but how to work with it effectively in their specific research contexts."""
+Provide analysis that helps researchers understand not just what data is available, but how to work
+with it effectively using both structural insights and visual navigation aids for their specific
+research contexts."""
 
     def _build_structure_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
-        """Build prompt for IDS structure analysis."""
+        """Build prompt for IDS structure analysis with enhanced capabilities."""
         ids_name = tool_context.get("ids_name", "")
         structure_analysis = tool_context.get("structure_analysis", {})
         sample_paths = tool_context.get("sample_paths", [])
@@ -111,6 +130,13 @@ Structural Data:
 - Maximum depth: {structure_analysis.get("max_depth", 0)}
 - Identifier nodes: {structure_analysis.get("identifier_nodes", 0)}
 - Branching complexity: {structure_analysis.get("branching_complexity", 0)}
+
+Enhanced Analysis Available:
+- Graph theory metrics (node centrality, clustering coefficients)
+- Physics domain distribution analysis
+- Hierarchical complexity scoring
+- Visual structure representations (Mermaid diagrams)
+- Navigation optimization hints
 
 Sample data paths:
 """
@@ -135,16 +161,19 @@ Sample data paths:
         prompt += """
 Please provide a comprehensive structural analysis that includes:
 
-1. **Architecture Overview**: High-level organization of the IDS and its design patterns
-2. **Data Hierarchy**: How data is structured, nested, and organized
-3. **Key Components**: Major data groups, their purposes, and relationships
-4. **Identifier Schemas**: Important branching points, enumerations, and access patterns
-5. **Physics Context**: What physics phenomena this IDS represents and measures
-6. **Usage Patterns**: Common ways this IDS is used in fusion research workflows
-7. **Data Access Guidance**: Best practices for accessing and interpreting this data
-8. **Relationships**: How this IDS connects to other IMAS data structures
+1. **Architecture Overview**: High-level organization and design patterns leveraging graph theory insights
+2. **Data Hierarchy**: Multi-level structure analysis with depth and branching factor considerations
+3. **Key Components**: Major data groups identified through centrality analysis and clustering
+4. **Identifier Schemas**: Branching points, enumerations, and access patterns optimization
+5. **Physics Context**: Domain distribution and measurement organization patterns
+6. **Usage Patterns**: Research workflow optimization based on structural insights
+7. **Data Access Guidance**: Navigation strategies using entry points and complexity metrics
+8. **Relationships**: Cross-IDS connections and data integration opportunities
+9. **Visual Structure**: Leverage Mermaid diagrams for hierarchy, domain distribution, and complexity visualization
 
-Focus on providing actionable insights for researchers working with this specific IDS.
+Focus on providing actionable insights that help researchers understand both the logical organization
+and the optimal access patterns for this specific IDS. Include recommendations for efficient data
+exploration strategies based on the structural complexity analysis.
 """
         return prompt
 
@@ -266,7 +295,7 @@ Focus on providing actionable insights for researchers working with this specifi
             structure_analysis = await self._load_structure_analysis(ids_name)
 
             if structure_analysis:
-                # Use pre-generated enhanced analysis
+                # Use pre-generated enhanced analysis with Mermaid graphs
                 structure_dict = {
                     "total_nodes": structure_analysis.hierarchy_metrics.total_nodes,
                     "leaf_nodes": structure_analysis.hierarchy_metrics.leaf_nodes,
@@ -280,6 +309,7 @@ Focus on providing actionable insights for researchers working with this specifi
                     "physics_domains": len(
                         structure_analysis.domain_distribution
                     ),  # Count of domains
+                    # organization_pattern removed from metrics as it's a string
                 }
 
                 sample_paths = structure_analysis.navigation_hints.entry_points[:10]
@@ -289,13 +319,65 @@ Focus on providing actionable insights for researchers working with this specifi
                     f"Enhanced structural analysis of {ids_name} IDS: "
                     f"{structure_analysis.complexity_summary}"
                 )
+
+                # Add graph analysis insights if we have document data
+                if ids_documents:
+                    graph_insights = self._perform_graph_analysis(
+                        ids_name, ids_documents
+                    )
+                    if graph_insights:
+                        description += f" Graph analysis reveals {graph_insights.get('summary', 'additional structural patterns')}."
+                        # Merge graph insights into structure_dict with proper type conversion
+                        graph_metrics = graph_insights.get("metrics", {})
+                        for key, value in graph_metrics.items():
+                            if isinstance(value, int | bool):
+                                structure_dict[key] = value
+                            elif isinstance(value, float):
+                                # Convert float to int for structure metrics
+                                structure_dict[key] = int(
+                                    value * 1000
+                                )  # Scale and convert to int
+                            # Skip string and other types as they don't belong in structure metrics
+
             else:
-                # Fallback to basic analysis from documents
-                basic_analysis = self._analyze_structure(ids_documents)
-                structure_dict = basic_analysis
-                sample_paths = [doc.metadata.path_name for doc in ids_documents[:10]]
-                max_depth = basic_analysis.get("max_depth", 0)
-                description = f"Basic structural analysis of {ids_name} IDS containing {len(ids_documents)} data paths"
+                # Fallback to real-time analysis using graph analyzer and basic analysis
+                logger.info(
+                    f"No pre-generated analysis found for {ids_name}, performing real-time analysis"
+                )
+
+                if ids_documents:
+                    # Perform graph analysis using the existing graph analyzer
+                    graph_analysis = self._perform_graph_analysis(
+                        ids_name, ids_documents
+                    )
+                    basic_analysis = self._analyze_structure(ids_documents)
+
+                    # Combine analyses
+                    structure_dict = {
+                        **basic_analysis,
+                        **graph_analysis.get("metrics", {}),
+                    }
+                    sample_paths = graph_analysis.get(
+                        "key_paths",
+                        [doc.metadata.path_name for doc in ids_documents[:10]],
+                    )
+                    max_depth = graph_analysis.get(
+                        "max_depth", basic_analysis.get("max_depth", 0)
+                    )
+
+                    description = (
+                        f"Real-time structural analysis of {ids_name} IDS: "
+                        f"{graph_analysis.get('summary', f'Contains {len(ids_documents)} data paths with complex hierarchical organization')}"
+                    )
+                else:
+                    # Last resort - basic fallback
+                    structure_dict = {
+                        "total_paths": 0,
+                        "message": "No analysis data available",
+                    }
+                    sample_paths = []
+                    max_depth = 0
+                    description = f"Limited analysis available for {ids_name} IDS"
 
             # Get physics context
             # Create proper PhysicsSearchResult
@@ -311,6 +393,17 @@ Focus on providing actionable insights for researchers working with this specifi
             )
 
             # Build response with enhanced analysis
+            # Add mermaid graph references to the description
+            mermaid_info = (
+                f"\n\n## Visual Structure Analysis\n"
+                f"For visual exploration of this IDS structure, use these mermaid resources:\n"
+                f"- **Hierarchy**: `mermaid://hierarchy/{ids_name}` - Complete structural hierarchy\n"
+                f"- **Physics Domains**: `mermaid://physics/{ids_name}` - Domain organization\n"
+                f"- **Complexity**: `mermaid://complexity/{ids_name}` - Complexity analysis\n"
+                f"- **Overview**: `mermaid://overview` - All IDS relationships"
+            )
+            description += mermaid_info
+
             result = StructureResult(
                 ids_name=ids_name,
                 description=description,
@@ -363,3 +456,98 @@ Focus on providing actionable insights for researchers working with this specifi
         }
 
         return structure_data
+
+    def _perform_graph_analysis(self, ids_name: str, ids_documents) -> dict[str, Any]:
+        """Perform enhanced graph analysis using the graph analyzer."""
+        try:
+            # Convert documents to the format expected by graph analyzer
+            paths = {}
+            for doc in ids_documents:
+                path_data = {
+                    "data_type": getattr(doc.raw_data, "data_type", ""),
+                    "units": getattr(doc.raw_data, "units", ""),
+                    "physics_context": {
+                        "domain": getattr(doc.metadata, "physics_domain", "unspecified")
+                    },
+                }
+
+                # Add coordinate information if available
+                if hasattr(doc.raw_data, "coordinates"):
+                    path_data["coordinates"] = doc.raw_data.coordinates
+                if hasattr(doc.raw_data, "coordinate1"):
+                    path_data["coordinate1"] = doc.raw_data.coordinate1
+                if hasattr(doc.raw_data, "coordinate2"):
+                    path_data["coordinate2"] = doc.raw_data.coordinate2
+
+                paths[doc.metadata.path_name] = path_data
+
+            # Perform graph analysis
+            graph_stats = self.graph_analyzer.analyze_ids_structure(ids_name, paths)
+
+            # Extract key insights
+            basic_metrics = graph_stats.get("basic_metrics", {})
+            hierarchy_metrics = graph_stats.get("hierarchy_metrics", {})
+            branching_metrics = graph_stats.get("branching_metrics", {})
+            complexity_indicators = graph_stats.get("complexity_indicators", {})
+            key_nodes = graph_stats.get("key_nodes", {})
+
+            # Build summary
+            total_nodes = basic_metrics.get("total_nodes", 0)
+            max_depth = hierarchy_metrics.get("max_depth", 0)
+            avg_branching = branching_metrics.get("avg_branching_factor", 0)
+            array_ratio = complexity_indicators.get("array_ratio", 0)
+
+            if total_nodes < 50:
+                complexity_desc = "simple structure"
+            elif total_nodes < 200:
+                complexity_desc = "moderate complexity"
+            else:
+                complexity_desc = "high complexity"
+
+            summary = (
+                f"{complexity_desc} with {total_nodes} nodes, "
+                f"{max_depth} levels deep, "
+                f"average branching factor {avg_branching:.1f}"
+            )
+
+            if array_ratio > 0.3:
+                summary += ", significant array structures"
+
+            # Get key paths from most connected nodes
+            key_paths = []
+            for node_info in key_nodes.get("most_connected", []):
+                key_paths.append(node_info.get("node", ""))
+
+            # Add deepest paths
+            deepest_paths = key_nodes.get("deepest_paths", [])
+            key_paths.extend(deepest_paths[:5])
+
+            return {
+                "summary": summary,
+                "metrics": {
+                    "total_nodes": total_nodes,
+                    "graph_density": basic_metrics.get("density", 0),
+                    "avg_clustering": basic_metrics.get("avg_clustering", 0),
+                    "max_depth": max_depth,
+                    "avg_depth": hierarchy_metrics.get("avg_depth", 0),
+                    "avg_branching_factor": avg_branching,
+                    "max_branching_factor": branching_metrics.get(
+                        "max_branching_factor", 0
+                    ),
+                    "array_ratio": array_ratio,
+                    "time_dependent_ratio": complexity_indicators.get(
+                        "time_dependent_ratio", 0
+                    ),
+                },
+                "key_paths": key_paths[:10],
+                "max_depth": max_depth,
+            }
+
+        except Exception as e:
+            logger.error(f"Graph analysis failed for {ids_name}: {e}")
+            return {
+                "summary": "graph analysis unavailable",
+                "metrics": {},
+                "key_paths": [],
+                "max_depth": 0,
+            }
