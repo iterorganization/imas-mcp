@@ -1,10 +1,12 @@
 {
   "cSpell.words": [
     "chromadb",
+    "dbscan",
     "fastmcp",
     "IMAS",
     "limitmb",
     "multisegment",
+    "ndarray",
     "pagelen",
     "pagenum",
     "procs",

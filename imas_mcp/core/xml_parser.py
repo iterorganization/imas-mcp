@@ -12,17 +12,13 @@ from typing import Any
 from imas_mcp.core.data_model import (
     CatalogMetadata,
     CoordinateSystem,
-    CrossIdsRelationship,
     IdentifierCatalog,
     IdentifierCatalogSchema,
     IdentifierPath,
     IdsDetailed,
     IdsInfo,
     IdsNode,
-    PhysicsConcept,
-    Relationships,
     TransformationOutputs,
-    UnitFamily,
     UsageExample,
 )
 from imas_mcp.core.extractors import (
@@ -132,7 +128,6 @@ class DataDictionaryTransformer:
         # Generate outputs
         catalog_path = self._generate_catalog(ids_data, graph_data)
         detailed_paths = self._generate_detailed_files(ids_data)
-        relationships_path = self._generate_relationships(ids_data)
 
         # Generate identifier catalog
         identifier_catalog_path = self._generate_identifier_catalog(ids_data)
@@ -143,7 +138,6 @@ class DataDictionaryTransformer:
         return TransformationOutputs(
             catalog=catalog_path,
             detailed=detailed_paths,
-            relationships=relationships_path,
             identifier_catalog=identifier_catalog_path,
         )
 
@@ -543,80 +537,6 @@ class DataDictionaryTransformer:
             paths.append(detailed_path)
 
         return paths
-
-    def _generate_relationships(self, ids_data: dict[str, dict[str, Any]]) -> Path:
-        """Generate relationships file with aggregated relationship data."""
-        rel_path = self.resolved_output_dir / "relationships.json"
-
-        # Aggregate relationships from all IDS
-        cross_references = {}
-        physics_concepts = {}
-        unit_families = {}
-        total_relationships = 0
-
-        for _ids_name, data in ids_data.items():
-            paths = data.get("paths", {})
-
-            for path, path_data in paths.items():
-                # Count relationships
-                relationships = path_data.get("relationships", {})
-                for _category, rel_list in relationships.items():
-                    if isinstance(rel_list, list):
-                        total_relationships += len(rel_list)
-
-                # Collect cross-references
-                cross_ids = relationships.get("cross_ids", [])
-                if cross_ids:
-                    cross_references[path] = CrossIdsRelationship(
-                        type="cross_ids",
-                        relationships=[
-                            {"path": ref, "type": "cross_reference"}
-                            for ref in cross_ids
-                        ],
-                    )
-
-                # Collect physics concepts
-                physics_related = relationships.get("physics_related", [])
-                if physics_related:
-                    physics_concepts[path] = PhysicsConcept(
-                        description=f"Physics concepts related to {path}",
-                        relevant_paths=physics_related,
-                        key_relationships=physics_related[
-                            :3
-                        ],  # Take first 3 as key relationships
-                    )
-
-                # Collect unit families
-                units = path_data.get("units")
-                if units and units not in ["", "1", "mixed"]:
-                    if units not in unit_families:
-                        unit_families[units] = UnitFamily(
-                            base_unit=units, paths_using=[], conversion_factors={}
-                        )
-                    unit_families[units].paths_using.append(path)
-
-        metadata = CatalogMetadata(
-            version=self.dd_accessor.get_version().public
-            if self.dd_accessor
-            else "unknown",
-            total_ids=len(ids_data),
-            total_leaf_nodes=sum(
-                data["ids_info"]["leaf_count"] for data in ids_data.values()
-            ),
-            total_relationships=total_relationships,
-        )
-
-        relationships = Relationships(
-            metadata=metadata,
-            cross_references=cross_references,
-            physics_concepts=physics_concepts,
-            unit_families=unit_families,
-        )
-
-        with open(rel_path, "w", encoding="utf-8") as f:
-            f.write(relationships.model_dump_json(indent=2))
-
-        return rel_path
 
     def _generate_identifier_catalog(self, ids_data: dict[str, dict[str, Any]]) -> Path:
         """Generate identifier catalog from extracted IDS data."""
