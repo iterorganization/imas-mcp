@@ -119,14 +119,13 @@ def build_schemas(
             # Log the results
             logger.info("Schema data built successfully:")
             logger.info(f"  - Catalog: {outputs.catalog}")
-            logger.info(f"  - Relationships: {outputs.relationships}")
             logger.info(f"  - Identifier Catalog: {outputs.identifier_catalog}")
             logger.info(f"  - Detailed files: {len(outputs.detailed)} files")
 
             # Print summary for scripts/CI
-            total_files = 3 + len(
+            total_files = 2 + len(
                 outputs.detailed
-            )  # catalog + relationships + identifier_catalog + detailed files
+            )  # catalog + identifier_catalog + detailed files
             click.echo(
                 f"Built {total_files} schema files in {transformer.resolved_output_dir}"
             )

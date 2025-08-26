@@ -7,9 +7,7 @@ vector storage and retrieval.
 """
 
 import hashlib
-import json
 import logging
-import pickle
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,9 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
-from imas_mcp.core.progress_monitor import create_progress_monitor
+from imas_mcp.embeddings import EmbeddingCache, EmbeddingConfig, EmbeddingManager
 from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
@@ -43,170 +40,6 @@ class SemanticSearchResult:
     def ids_name(self) -> str:
         """Get the IDS name."""
         return self.document.metadata.ids_name
-
-
-@dataclass
-class EmbeddingCache:
-    """Cache for document embeddings with metadata."""
-
-    embeddings: np.ndarray = field(default_factory=lambda: np.array([]))
-    path_ids: list[str] = field(default_factory=list)
-    model_name: str = ""
-    created_at: float = field(default_factory=time.time)
-    document_count: int = 0
-    ids_set: set | None = None  # IDS set used for this cache
-    source_content_hash: str = ""  # Hash of source data directory content
-    source_max_mtime: float = 0.0  # Maximum modification time of source files
-    dd_version: str | None = None  # Data Dictionary version
-
-    def is_valid(
-        self,
-        current_doc_count: int,
-        current_model: str,
-        current_ids_set: set | None = None,
-        source_data_dir: Path | None = None,
-    ) -> bool:
-        """Check if cache is valid for current state."""
-        return self.validate_with_reason(
-            current_doc_count, current_model, current_ids_set, source_data_dir
-        )[0]
-
-    def validate_with_reason(
-        self,
-        current_doc_count: int,
-        current_model: str,
-        current_ids_set: set | None = None,
-        source_data_dir: Path | None = None,
-    ) -> tuple[bool, str]:
-        """Check if cache is valid and return detailed reason if invalid."""
-        # Basic validation checks
-        if self.document_count != current_doc_count:
-            return (
-                False,
-                f"Document count mismatch: cached={self.document_count}, current={current_doc_count}",
-            )
-
-        if self.model_name != current_model:
-            return (
-                False,
-                f"Model name mismatch: cached='{self.model_name}', current='{current_model}'",
-            )
-
-        if len(self.embeddings) == 0:
-            return False, "Cache has no embeddings data"
-
-        if len(self.path_ids) == 0:
-            return False, "Cache has no path IDs"
-
-        if self.ids_set != current_ids_set:
-            return (
-                False,
-                f"IDS set mismatch: cached={self.ids_set}, current={current_ids_set}",
-            )
-
-        # Enhanced validation with DD version checking
-        if source_data_dir is not None:
-            # Check DD version instead of file modification times
-            current_dd_version = self._get_current_dd_version(source_data_dir)
-            if self.dd_version and current_dd_version:
-                if current_dd_version != self.dd_version:
-                    return (
-                        False,
-                        f"Data Dictionary version changed: cached='{self.dd_version}', current='{current_dd_version}'",
-                    )
-            elif not self.dd_version:
-                # Cache without DD version - rebuild required
-                return False, "Cache requires rebuild"
-
-            # Check source content hash if available (fallback validation)
-            if self.source_content_hash:
-                current_hash = self._compute_source_content_hash(source_data_dir)
-                if current_hash != self.source_content_hash:
-                    return False, "Source content has changed (hash mismatch)"
-
-        return True, "Cache is valid"
-
-    def _has_modified_source_files(self, source_data_dir: Path) -> bool:
-        """Check if any source JSON files have been modified after cache creation."""
-        return len(self._get_modified_source_files(source_data_dir)) > 0
-
-    def _get_modified_source_files(self, source_data_dir: Path) -> list[str]:
-        """Get list of source files that have been modified after cache creation.
-
-        Returns a list of relative file paths for source files whose modification
-        time is newer than the cache creation time, indicating they have been
-        changed since the cache was built.
-        """
-        modified_files = []
-        try:
-            # Check catalog file
-            catalog_path = source_data_dir / "ids_catalog.json"
-            if catalog_path.exists() and catalog_path.stat().st_mtime > self.created_at:
-                modified_files.append("ids_catalog.json")
-
-            # Check detailed files
-            detailed_dir = source_data_dir / "detailed"
-            if detailed_dir.exists():
-                for json_file in detailed_dir.glob("*.json"):
-                    if json_file.stat().st_mtime > self.created_at:
-                        modified_files.append(f"detailed/{json_file.name}")
-
-        except Exception:
-            # If we can't check files, assume they might have been modified
-            pass
-
-        return modified_files
-
-    def _compute_source_content_hash(self, source_data_dir: Path) -> str:
-        """Compute hash of source data directory content."""
-        import hashlib
-
-        hash_data = str(source_data_dir.resolve())
-
-        # Include IDS set in hash for proper cache isolation
-        if self.ids_set:
-            ids_str = "|".join(sorted(self.ids_set))
-            hash_data += f"|ids:{ids_str}"
-
-        return hashlib.md5(hash_data.encode()).hexdigest()
-
-    def _get_max_source_mtime(self, source_data_dir: Path) -> float:
-        """Get the maximum modification time of all source files."""
-        max_mtime = 0.0
-
-        try:
-            # Check catalog file
-            catalog_path = source_data_dir / "ids_catalog.json"
-            if catalog_path.exists():
-                max_mtime = max(max_mtime, catalog_path.stat().st_mtime)
-
-            # Check detailed files
-            detailed_dir = source_data_dir / "detailed"
-            if detailed_dir.exists():
-                for json_file in detailed_dir.glob("*.json"):
-                    max_mtime = max(max_mtime, json_file.stat().st_mtime)
-        except Exception:
-            pass
-
-        return max_mtime
-
-    def update_source_metadata(self, source_data_dir: Path) -> None:
-        """Update source file metadata for cache validation."""
-        self.source_content_hash = self._compute_source_content_hash(source_data_dir)
-        self.source_max_mtime = self._get_max_source_mtime(source_data_dir)
-        self.dd_version = self._get_current_dd_version(source_data_dir)
-
-    def _get_current_dd_version(self, source_data_dir: Path) -> str | None:
-        """Get the current Data Dictionary version from catalog."""
-        try:
-            catalog_path = source_data_dir / "ids_catalog.json"
-            if catalog_path.exists():
-                with open(catalog_path, encoding="utf-8") as f:
-                    catalog_data = json.load(f)
-                return catalog_data.get("metadata", {}).get("version")
-        except Exception:
-            pass
-        return None
 
 
 @dataclass
@@ -254,9 +87,8 @@ class SemanticSearch:
     document_store: DocumentStore = field(default_factory=DocumentStore)
 
     # Internal state
-    _model: SentenceTransformer | None = field(default=None, init=False)
+    _embedding_manager: EmbeddingManager | None = field(default=None, init=False)
     _embeddings_cache: EmbeddingCache | None = field(default=None, init=False)
-    _cache_path: Path | None = field(default=None, init=False)
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False)
     _initialized: bool = field(default=False, init=False)
 
@@ -273,10 +105,25 @@ class SemanticSearch:
                     f"does not match SemanticSearchConfig ids_set {self.config.ids_set}"
                 )
 
-        # Set cache path in embeddings directory within resources
-        if self.config.enable_cache:
-            cache_filename = self._generate_cache_filename()
-            self._cache_path = self._get_embeddings_dir() / cache_filename
+        # Create embedding manager
+        embedding_config = EmbeddingConfig(
+            model_name=self.config.model_name,
+            device=self.config.device,
+            batch_size=self.config.batch_size,
+            normalize_embeddings=self.config.normalize_embeddings,
+            use_half_precision=self.config.use_half_precision,
+            enable_cache=self.config.enable_cache,
+            ids_set=self.config.ids_set,
+            use_rich=self.config.use_rich,
+        )
+
+        from imas_mcp.embeddings.manager import get_embedding_manager
+
+        # Create manager_id based on model configuration for sharing
+        manager_id = f"{embedding_config.model_name}_{embedding_config.device}"
+        self._embedding_manager = get_embedding_manager(
+            config=embedding_config, manager_id=manager_id
+        )
 
         # Initialize the embeddings only if auto_initialize is True
         if self.config.auto_initialize:
@@ -348,220 +195,43 @@ class SemanticSearch:
             else:
                 logger.info("⚡ IMAS-MCP: Processing all available IDS")
 
-            # Load sentence transformer model
-            logger.info("⚡ IMAS-MCP: Loading sentence transformer model...")
-            self._load_model()
-
-            # Load or generate embeddings
+            # Load or generate embeddings using embedding manager
             logger.info("⚡ IMAS-MCP: Preparing document embeddings...")
             self._load_or_generate_embeddings(force_rebuild=force_rebuild)
 
             self._initialized = True
             logger.info("⚡ IMAS-MCP: Semantic search initialization complete! 🚀")
 
-    def _load_model(self) -> None:
-        """Load the sentence transformer model."""
-        try:
-            # Set cache folder to embeddings directory
-            cache_folder = str(self._get_embeddings_dir() / "models")
-
-            # Try to load with local_files_only first for speed
-            try:
-                logger.info("⚡ IMAS-MCP: Loading cached sentence transformer model...")
-                self._model = SentenceTransformer(
-                    self.config.model_name,
-                    device=self.config.device,
-                    cache_folder=cache_folder,
-                    local_files_only=True,  # Prevent internet downloads
-                )
-                logger.info(
-                    f"⚡ IMAS-MCP: Model {self.config.model_name} loaded from "
-                    f"cache on device: {self._model.device}"
-                )
-            except Exception:
-                # If local loading fails, try downloading
-                logger.info(
-                    f"⚡ IMAS-MCP: Model not in cache, downloading "
-                    f"{self.config.model_name}..."
-                )
-                self._model = SentenceTransformer(
-                    self.config.model_name,
-                    device=self.config.device,
-                    cache_folder=cache_folder,
-                    local_files_only=False,  # Allow downloads
-                )
-                logger.info(
-                    f"⚡ IMAS-MCP: Downloaded and loaded model "
-                    f"{self.config.model_name} on device: {self._model.device}"
-                )
-
-        except Exception as e:
-            logger.error(f"Failed to load model {self.config.model_name}: {e}")
-            # Fallback to a known working model
-            fallback_model = "all-MiniLM-L6-v2"
-            logger.info(f"⚡ IMAS-MCP: Trying fallback model: {fallback_model}")
-            self._model = SentenceTransformer(fallback_model, device=self.config.device)
-            self.config.model_name = fallback_model
-
     def _load_or_generate_embeddings(self, force_rebuild: bool = False) -> None:
-        """Load cached embeddings or generate new ones.
+        """Load cached embeddings or generate new ones using EmbeddingManager.
 
         Args:
             force_rebuild: If True, regenerate embeddings even if valid cache exists
         """
-        if not force_rebuild and self.config.enable_cache and self._try_load_cache():
-            logger.info("IMAS-MCP: Loaded embeddings from cache")
-            return
+        # Get all documents and their embedding texts
+        documents = self.document_store.get_all_documents()
 
-        if force_rebuild:
-            logger.info("IMAS-MCP: Force rebuild requested, regenerating embeddings...")
-
-        self._generate_embeddings()
-
-        if self.config.enable_cache:
-            self._save_cache()
-
-    def get_document_count(self) -> int:
-        """Get the count of documents in the document store."""
-        return self.document_store.get_document_count()
-
-    def _try_load_cache(self) -> bool:
-        """Try to load embeddings from cache."""
-        if not self._cache_path or not self._cache_path.exists():
-            return False
-
-        try:
-            with open(self._cache_path, "rb") as f:
-                cache = pickle.load(f)
-
-            if not isinstance(cache, EmbeddingCache):
-                logger.warning("Invalid cache format")
-                return False
-
-            current_doc_count = self.get_document_count()
-            # Get source data directory for enhanced validation
-            source_data_dir = self.document_store._data_dir
-
-            if not cache.is_valid(
-                current_doc_count,
-                self.config.model_name,
-                self.config.ids_set,
-                source_data_dir,
-            ):
-                logger.info(
-                    f"Cache invalid - cached: {cache.document_count} docs, "
-                    f"current: {current_doc_count} docs, "
-                    f"cached model: {cache.model_name}, "
-                    f"current model: {self.config.model_name}, "
-                    f"cached IDS set: {cache.ids_set}, "
-                    f"current IDS set: {self.config.ids_set}"
-                )
-                return False
-
-            self._embeddings_cache = cache
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to load embeddings cache: {e}")
-            return False
-
-    def _generate_embeddings(self) -> None:
-        """Generate embeddings for all documents with memory-efficient processing."""
-        if not self._model:
-            raise RuntimeError("Model not loaded")
-
-        # Get document count first to avoid loading all documents into memory
-        doc_count = self.document_store.get_document_count()
-
-        if doc_count == 0:
+        if not documents:
             logger.info("No documents found for embedding generation")
             self._embeddings_cache = EmbeddingCache()
             return
 
-        logger.info(f"IMAS-MCP: Generating embeddings for {doc_count} documents...")
+        texts = [doc.embedding_text for doc in documents]
+        identifiers = [doc.metadata.path_id for doc in documents]
 
-        # Calculate batch information for progress monitoring
-        total_batches = (
-            doc_count + self.config.batch_size - 1
-        ) // self.config.batch_size
+        # Use embedding manager to get embeddings
+        if self._embedding_manager is None:
+            raise RuntimeError("Embedding manager not initialized")
 
-        # For Rich mode, show detailed batch progress; for logging mode, just show document counts
-        if self.config.use_rich:
-            batch_names = [
-                f"{min((i + 1) * self.config.batch_size, doc_count)}/{doc_count} ({i + 1}/{total_batches})"
-                for i in range(total_batches)
-            ]
-            description_template = "Embedding documents: {item}"
-            start_description = "IMAS-MCP: Embedding documents"
-        else:
-            batch_names = [
-                f"{min((i + 1) * self.config.batch_size, doc_count)}/{doc_count}"
-                for i in range(total_batches)
-            ]
-            description_template = "IMAS-MCP: Embedding documents: {item}"
-            start_description = f"IMAS-MCP: Embedding {doc_count} documents"
-
-        # Create progress monitor for batch processing
-        progress = create_progress_monitor(
-            use_rich=self.config.use_rich,  # Use config setting
-            logger=logger,
-            item_names=batch_names,
-            description_template=description_template,
+        embeddings, path_ids = self._embedding_manager.get_embeddings(
+            texts=texts,
+            identifiers=identifiers,
+            cache_key="semantic_search",
+            force_rebuild=force_rebuild,
+            source_data_dir=self.document_store._data_dir,
         )
 
-        # Start progress monitoring
-        progress.start_processing(batch_names, start_description)
-
-        try:
-            embeddings_list = []
-            path_ids = []
-
-            # Get all documents once for iteration
-            documents = self.document_store.get_all_documents()
-
-            # Process documents in batches to reduce memory usage
-            for i in range(0, len(documents), self.config.batch_size):
-                docs_processed = min(
-                    (i // self.config.batch_size + 1) * self.config.batch_size,
-                    len(documents),
-                )
-                batch_name = f"{docs_processed}/{len(documents)}"
-                progress.set_current_item(batch_name)
-
-                # Extract batch documents
-                batch_docs = documents[i : i + self.config.batch_size]
-
-                # Extract texts and path_ids for this batch only
-                batch_texts = [doc.embedding_text for doc in batch_docs]
-                batch_path_ids = [doc.metadata.path_id for doc in batch_docs]
-
-                # Generate embeddings for this batch
-                batch_embeddings = self._model.encode(
-                    batch_texts,
-                    convert_to_numpy=True,
-                    normalize_embeddings=self.config.normalize_embeddings,
-                    show_progress_bar=False,  # Disable individual progress, use our own
-                )
-
-                embeddings_list.append(batch_embeddings)
-                path_ids.extend(batch_path_ids)
-                progress.update_progress(batch_name)
-
-            # Combine all batch embeddings
-            embeddings = np.vstack(embeddings_list)
-
-        except Exception as e:
-            progress.finish_processing()
-            logger.error(f"Error during embedding generation: {e}")
-            raise
-        finally:
-            progress.finish_processing()
-
-        # Convert to half precision if requested
-        if self.config.use_half_precision:
-            embeddings = embeddings.astype(np.float16)
-
-        # Create cache with enhanced metadata
+        # Store in our format for compatibility
         self._embeddings_cache = EmbeddingCache(
             embeddings=embeddings,
             path_ids=path_ids,
@@ -570,29 +240,15 @@ class SemanticSearch:
             ids_set=self.config.ids_set,
         )
 
-        # Update source metadata for validation
+        # Update source metadata
         source_data_dir = self.document_store._data_dir
         self._embeddings_cache.update_source_metadata(source_data_dir)
 
-        logger.info(
-            f"IMAS-MCP: Generated embeddings: shape={embeddings.shape}, "
-            f"dtype={embeddings.dtype}"
-        )
+        logger.info("IMAS-MCP: Loaded embeddings using EmbeddingManager")
 
-    def _save_cache(self) -> None:
-        """Save embeddings to cache."""
-        if not self._cache_path or not self._embeddings_cache:
-            return
-
-        try:
-            with open(self._cache_path, "wb") as f:
-                pickle.dump(self._embeddings_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-            cache_size_mb = self._cache_path.stat().st_size / (1024 * 1024)
-            logger.info(f"Saved embeddings cache: {cache_size_mb:.1f} MB")
-
-        except Exception as e:
-            logger.error(f"Failed to save embeddings cache: {e}")
+    def get_document_count(self) -> int:
+        """Get the count of documents in the document store."""
+        return self.document_store.get_document_count()
 
     def search(
         self,
@@ -619,19 +275,19 @@ class SemanticSearch:
         if not self._initialized:
             self._initialize()
 
-        if not self._model or not self._embeddings_cache:
+        if not self._embedding_manager or not self._embeddings_cache:
             raise RuntimeError("Search not properly initialized")
 
         top_k = top_k or self.config.default_top_k
         similarity_threshold = similarity_threshold or self.config.similarity_threshold
 
-        # Generate query embedding
-        query_embedding = self._model.encode(
-            [query],
-            convert_to_numpy=True,
-            normalize_embeddings=self.config.normalize_embeddings,
-            show_progress_bar=False,
-        )[0]
+        # Generate query embedding using embedding manager
+        query_embeddings, _ = self._embedding_manager.get_embeddings(
+            texts=[query],
+            cache_key="query_temp",
+            force_rebuild=True,  # Always regenerate query embeddings
+        )
+        query_embedding = query_embeddings[0]
 
         # Compute similarities
         similarities = self._compute_similarities(query_embedding)
@@ -769,6 +425,10 @@ class SemanticSearch:
         if not self._embeddings_cache:
             return {"status": "not_initialized"}
 
+        if self._embedding_manager:
+            return self._embedding_manager.get_cache_info()
+
+        # Fallback to basic info if no embedding manager
         cache_info = {
             "model_name": self._embeddings_cache.model_name,
             "document_count": self._embeddings_cache.document_count,
@@ -780,12 +440,6 @@ class SemanticSearch:
             "memory_usage_mb": self._embeddings_cache.embeddings.nbytes / (1024 * 1024),
         }
 
-        if self._cache_path and self._cache_path.exists():
-            cache_info["cache_file_size_mb"] = self._cache_path.stat().st_size / (
-                1024 * 1024
-            )
-            cache_info["cache_file_path"] = str(self._cache_path)
-
         return cache_info
 
     def cache_status(self) -> dict[str, Any]:
@@ -794,46 +448,13 @@ class SemanticSearch:
         Returns information about cache file existence and validity
         without loading model or generating embeddings.
         """
-        if not self.config.enable_cache or not self._cache_path:
+        if not self.config.enable_cache:
             return {"status": "cache_disabled"}
 
-        if not self._cache_path.exists():
-            return {"status": "no_cache_file"}
+        if self._embedding_manager:
+            return self._embedding_manager.get_cache_info()
 
-        try:
-            # Try to load cache metadata without full initialization
-            with open(self._cache_path, "rb") as f:
-                cache = pickle.load(f)
-
-            if not isinstance(cache, EmbeddingCache):
-                return {"status": "invalid_cache_file"}
-
-            # Check basic validity with detailed reason
-            document_count = len(self.document_store.get_all_documents())
-            is_valid, reason = cache.validate_with_reason(
-                current_doc_count=document_count,
-                current_model=self.config.model_name,
-                current_ids_set=self.config.ids_set,
-                source_data_dir=self.document_store._data_dir,
-            )
-
-            if is_valid:
-                return {
-                    "status": "valid_cache",
-                    "model_name": cache.model_name,
-                    "document_count": cache.document_count,
-                    "cache_file_size_mb": self._cache_path.stat().st_size
-                    / (1024 * 1024),
-                    "cache_file_path": str(self._cache_path),
-                    "created_at": time.strftime(
-                        "%Y-%m-%d %H:%M:%S", time.localtime(cache.created_at)
-                    ),
-                }
-            else:
-                return {"status": "invalid_cache", "reason": reason}
-
-        except Exception as e:
-            return {"status": "cache_error", "error": str(e)}
+        return {"status": "not_initialized"}
 
     def list_cache_files(self) -> list[dict[str, Any]]:
         """List all cache files in the embeddings directory.
@@ -841,32 +462,10 @@ class SemanticSearch:
         Returns a list of cache file information including size and modification time.
         Useful for cache management and cleanup.
         """
-        embeddings_dir = self._get_embeddings_dir()
-        cache_files = []
+        if self._embedding_manager:
+            return self._embedding_manager.list_cache_files()
 
-        try:
-            for cache_file in embeddings_dir.glob("*.pkl"):
-                if cache_file.name.startswith("."):  # Our cache files start with .
-                    stat = cache_file.stat()
-                    cache_files.append(
-                        {
-                            "filename": cache_file.name,
-                            "path": str(cache_file),
-                            "size_mb": stat.st_size / (1024 * 1024),
-                            "modified": time.strftime(
-                                "%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)
-                            ),
-                            "current": cache_file == self._cache_path,
-                        }
-                    )
-
-            # Sort by modification time (newest first)
-            cache_files.sort(key=lambda x: x["modified"], reverse=True)
-            return cache_files
-
-        except Exception as e:
-            logger.error(f"Failed to list cache files: {e}")
-            return []
+        return []
 
     def cleanup_old_caches(self, keep_count: int = 3) -> int:
         """Remove old cache files, keeping only the most recent ones.
@@ -877,30 +476,10 @@ class SemanticSearch:
         Returns:
             Number of files removed
         """
-        cache_files = self.list_cache_files()
-        removed_count = 0
+        if self._embedding_manager:
+            return self._embedding_manager.cleanup_old_caches(keep_count)
 
-        try:
-            # Keep current cache file and most recent ones
-            files_to_remove = []
-            current_cache = str(self._cache_path) if self._cache_path else None
-
-            for cache_info in cache_files[keep_count:]:
-                # Never remove the current cache file
-                if cache_info["path"] != current_cache:
-                    files_to_remove.append(cache_info)
-
-            for cache_info in files_to_remove:
-                cache_path = Path(cache_info["path"])
-                cache_path.unlink()
-                logger.info(f"Removed old cache: {cache_info['filename']}")
-                removed_count += 1
-
-            return removed_count
-
-        except Exception as e:
-            logger.error(f"Failed to cleanup old caches: {e}")
-            return removed_count
+        return 0
 
     @staticmethod
     def list_all_cache_files() -> list[dict[str, Any]]:
@@ -994,16 +573,14 @@ class SemanticSearch:
         if not self._initialized:
             self._initialize()
 
-        if not self._model or not self._embeddings_cache:
+        if not self._embedding_manager or not self._embeddings_cache:
             raise RuntimeError("Search not properly initialized")
 
-        # Generate query embeddings in batch
-        query_embeddings = self._model.encode(
-            queries,
-            batch_size=self.config.batch_size,
-            convert_to_numpy=True,
-            normalize_embeddings=self.config.normalize_embeddings,
-            show_progress_bar=False,  # Disable individual progress, use our own
+        # Generate query embeddings in batch using embedding manager
+        query_embeddings, _ = self._embedding_manager.get_embeddings(
+            texts=queries,
+            cache_key="query_batch_temp",
+            force_rebuild=True,  # Always regenerate query embeddings
         )
 
         # Search for each query
@@ -1082,9 +659,10 @@ class SemanticSearch:
 
                 if cache_path.exists():
                     logger.info(f"Embeddings cache already exists: {cache_path}")
-                    # Verify cache is valid
+                    # Verify cache is valid by checking status
                     try:
-                        if semantic_search._try_load_cache():
+                        cache_status = semantic_search.cache_status()
+                        if cache_status.get("status") == "valid_cache":
                             logger.info("Existing cache is valid, skipping rebuild")
                             return True
                     except Exception as e:

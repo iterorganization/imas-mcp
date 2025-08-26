@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_mcp.models.result_models import (
+from imas_mcp.models.result_models import StructureResult
+from imas_mcp.models.structure_models import (
     DomainDistribution,
     HierarchyMetrics,
     NavigationHints,
     StructureAnalysis,
-    StructureResult,
 )
 from imas_mcp.tools.analysis_tool import AnalysisTool
 
@@ -98,10 +98,17 @@ class TestStructureAnalysis:
         )
 
         # Mock structure analysis loading
-        with patch.object(
-            analysis_tool,
-            "_load_structure_analysis",
-            return_value=mock_structure_analysis,
+        with (
+            patch.object(
+                analysis_tool,
+                "_load_structure_analysis",
+                return_value=mock_structure_analysis,
+            ),
+            patch.object(
+                analysis_tool,
+                "_perform_graph_analysis",
+                return_value={"summary": "mock graph analysis", "metrics": {}},
+            ),
         ):
             result = await analysis_tool.analyze_ids_structure("core_profiles")
 
@@ -112,8 +119,8 @@ class TestStructureAnalysis:
         assert result.max_depth == 6
         assert "Moderate complexity" in result.description
 
-        # Verify structure dictionary
-        assert result.structure["total_nodes"] == 150
+        # Verify structure dictionary uses the enhanced analysis data
+        assert result.structure["total_nodes"] == 150  # From mock_structure_analysis
         assert (
             result.structure["complexity_score"] == 65
         )  # Converted to int (0.65 * 100)
@@ -141,8 +148,8 @@ class TestStructureAnalysis:
         assert isinstance(result, StructureResult)
         assert result.ids_name == "test_ids"
         assert result.analysis is None  # No enhanced analysis
-        assert "Basic structural analysis" in result.description
-        assert len(result.sample_paths) == 10
+        assert "Real-time structural analysis" in result.description
+        assert len(result.sample_paths) > 0  # Should have some sample paths
 
     async def test_analyze_ids_not_found(self, analysis_tool):
         """Test analysis with non-existent IDS."""

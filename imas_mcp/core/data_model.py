@@ -244,7 +244,6 @@ class TransformationOutputs(BaseModel):
 
     catalog: Path
     detailed: list[Path] = Field(default_factory=list)
-    relationships: Path
     identifier_catalog: Path
 
 
