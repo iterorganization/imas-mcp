@@ -88,35 +88,69 @@ class IdentifiersTool(BaseTool):
         return "explore_identifiers"
 
     def _filter_schemas_by_query(self, query: str) -> list[str]:
-        """Filter identifier schemas based on query terms."""
+        """Filter identifier schemas based on query terms using OR logic for multiple keywords."""
         if not self._identifier_catalog:
             return []
 
-        query_lower = query.lower()
+        # Split query into keywords and clean them
+        import re
+
+        keywords = [
+            keyword.strip().lower()
+            for keyword in re.split(r"[,\s]+", query)
+            if keyword.strip()
+        ]
+
+        if not keywords:
+            return []
+
         relevant_schemas = []
         schemas = self._identifier_catalog.get("schemas", {})
 
         for schema_name, schema_info in schemas.items():
-            # Check name match
-            if query_lower in schema_name.lower():
-                relevant_schemas.append(schema_name)
-                continue
+            score = 0
+            matched_keywords = []
 
-            # Check description match
-            description = schema_info.get("description", "").lower()
-            if query_lower in description:
-                relevant_schemas.append(schema_name)
-                continue
+            # Check each keyword against schema name, description, and options
+            for keyword in keywords:
+                keyword_matched = False
 
-            # Check options match
-            for option in schema_info.get("options", []):
-                option_name = option.get("name", "").lower()
-                option_desc = option.get("description", "").lower()
-                if query_lower in option_name or query_lower in option_desc:
-                    relevant_schemas.append(schema_name)
-                    break
+                # Check name match
+                if keyword in schema_name.lower():
+                    score += 3  # Higher weight for name matches
+                    matched_keywords.append(keyword)
+                    keyword_matched = True
 
-        return relevant_schemas
+                # Check description match
+                description = schema_info.get("description", "").lower()
+                if keyword in description:
+                    score += 2  # Medium weight for description matches
+                    if keyword not in matched_keywords:
+                        matched_keywords.append(keyword)
+                    keyword_matched = True
+
+                # Check options match
+                if not keyword_matched:  # Only check options if not already matched
+                    for option in schema_info.get("options", []):
+                        option_name = option.get("name", "").lower()
+                        option_desc = option.get("description", "").lower()
+                        if keyword in option_name or keyword in option_desc:
+                            score += 1  # Lower weight for option matches
+                            if keyword not in matched_keywords:
+                                matched_keywords.append(keyword)
+                            break
+
+            # Include schema if ANY keyword matched (OR logic)
+            if matched_keywords:
+                relevant_schemas.append((schema_name, score, matched_keywords))
+
+        # Sort by score (descending) to put best matches first
+        relevant_schemas.sort(key=lambda x: x[1], reverse=True)
+
+        # Return just the schema names
+        return [
+            schema_name for schema_name, score, matched_keywords in relevant_schemas
+        ]
 
     def _get_scope_filtered_data(
         self, scope: IdentifierScope, query: str | None = None
@@ -242,10 +276,12 @@ class IdentifiersTool(BaseTool):
         data arrays and understanding measurement contexts.
 
         Args:
-            query: Search term to filter schemas by schema names/paths (NOT content/descriptions).
-                  Filters identifier schemas by matching against schema file names and paths.
-                  Use single broad keywords rather than multi-word phrases for best results.
-                  Examples: "coordinate", "material", "transport" (not "grid coordinate systems")
+            query: Search terms to filter schemas using OR logic for multiple keywords.
+                  Supports multiple keywords separated by spaces or commas, finding schemas
+                  that match ANY of the provided keywords (broadens search results).
+                  Keywords are matched against schema names, descriptions, and option values.
+                  Examples: "coordinate material", "transport,diffusion", "plasma equilibrium"
+                  Use single broad keywords for best results: "coordinate", "material", "transport"
                   Leave empty to see all schemas in the specified scope.
             scope: Focus the search on specific identifier types:
                   - "all": All identifier schemas (default, recommended for exploration)
@@ -274,28 +310,36 @@ class IdentifiersTool(BaseTool):
             explore_identifiers(query="magnetic flux coordinates")
 
         ### ✅ Correct Usage Patterns:
-            # Broad keyword matching schema names
-            explore_identifiers(query="coordinate", scope="coordinates")
+            # Multiple keywords using OR logic (matches ANY keyword)
+            explore_identifiers(query="coordinate material transport")
+
+            # Comma-separated keywords for broader search
+            explore_identifiers(query="plasma, equilibrium, transport")
+
+            # Single keyword matching schema names
+            explore_identifiers(query="material")
 
             # No query - see all schemas in scope first
             explore_identifiers(scope="coordinates")
 
-            # Single keyword that appears in schema file names
-            explore_identifiers(query="material")
-
         ## Query Parameter Behavior
 
-        The `query` parameter filters identifier schemas by:
-        - Schema file names (e.g., "coordinate" matches "coordinate_identifier.xml")
-        - Schema paths (e.g., "poloidal" matches "poloidal_plane_coordinates_identifier.xml")
+        The `query` parameter now uses **OR logic** for multiple keywords:
+        - **Split on spaces/commas**: "coordinate material" → ["coordinate", "material"]
+        - **Match ANY keyword**: Returns schemas matching "coordinate" OR "material"
+        - **Scored results**: Better matches (name matches) ranked higher than option matches
+        - **Broader coverage**: More useful for discovery and exploration
 
-        **NOT by schema content or descriptions**
+        **Searches across**:
+        - Schema names (highest weight)
+        - Schema descriptions (medium weight)
+        - Option names and descriptions (lowest weight)
 
         ### Best Practices:
-        - Use single keywords rather than phrases
-        - Use broader terms rather than specific technical phrases
-        - Omit query parameter to see all schemas in a scope first
-        - Use schema names from results for subsequent filtering
+        - Use multiple related keywords for broader discovery: "transport diffusion convection"
+        - Mix general and specific terms: "plasma core edge"
+        - Use both spaces and commas as separators: "material, coordinate, physics"
+        - Single keywords still work perfectly: "material"
 
         ## Recommended Usage Pattern for LLMs
 
@@ -341,13 +385,17 @@ class IdentifiersTool(BaseTool):
             explore_identifiers(query="material", scope="enums")
             → Returns materials schema with 31 enumeration options (C, W, SS, etc.)
 
+            # Find transport-related identifiers (using OR logic)
+            explore_identifiers(query="transport core edge plasma")
+            → Returns all schemas matching any of: transport, core, edge, or plasma
+
             # Find coordinate system identifiers
             explore_identifiers(scope="coordinates")
             → Returns 2 coordinate schemas with 68 enumeration options
 
-            # Find plasma-related identifiers
-            explore_identifiers(query="plasma")
-            → Returns schemas containing "plasma" in their names/paths
+            # Find multiple related concepts
+            explore_identifiers(query="material type element")
+            → Returns schemas matching material OR type OR element
 
             # Find all enumeration schemas
             explore_identifiers(scope="enums")
@@ -355,18 +403,19 @@ class IdentifiersTool(BaseTool):
 
         ## Common LLM Usage Errors to Avoid
 
-        ❌ **Don't**: Use multi-word technical phrases in query
-        ❌ **Don't**: Expect query to search schema descriptions
-        ❌ **Don't**: Use very specific terminology as query
-        ❌ **Don't**: Assume query works like semantic search
+        ❌ **Don't**: Expect exact phrase matching (tool uses OR logic)
+        ❌ **Don't**: Use overly specific terminology
+        ❌ **Don't**: Assume query searches schema descriptions deeply
 
-        ✅ **Do**: Use single broad keywords
+        ✅ **Do**: Use multiple relevant keywords for broader search
         ✅ **Do**: Start with scope-only calls for exploration
         ✅ **Do**: Use schema names from results for filtering
         ✅ **Do**: Check analytics.enumeration_space to understand complexity
 
         Usage Tips for LLMs:
-            - Use broad search terms: "material", "plasma", "transport", "equilibrium"
+            - Use multiple keywords: "transport core edge plasma", "material type element"
+            - Tool uses OR logic - any keyword match returns the schema
+            - Results ranked by relevance (name matches ranked highest)
             - Avoid overly specific queries like "plasma equilibrium state"
             - Start with scope="all" or scope-only calls to explore available options
             - Use scope="enums" to find discrete choice options

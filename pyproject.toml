@@ -99,6 +99,7 @@ Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
 run-server = "scripts.run_server:run_server"
 run-context = "scripts.run_context:run_context"
 build-schemas = "scripts.build_schemas:build_schemas"
+build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
 
