@@ -443,15 +443,17 @@ class DocumentStore:
 
             # Filter IDS if specified
             if target_ids:
-                available_ids = [ids for ids in available_ids if ids in target_ids]
+                available_ids = sorted(
+                    [ids for ids in available_ids if ids in target_ids]
+                )
                 logger.info(f"Filtering to {len(available_ids)} IDS: {available_ids}")
                 # Force rebuild when using IDS filter since cache won't match
                 force_rebuild_index = True
 
             self._index.total_ids = len(available_ids)
 
-            # Load each IDS detailed file
-            for ids_name in available_ids:
+            # Load each IDS detailed file (in sorted order for deterministic results)
+            for ids_name in sorted(available_ids):
                 self._load_ids_documents(ids_name)
 
             # Load identifier catalog documents
@@ -532,18 +534,27 @@ class DocumentStore:
             with open(identifier_catalog_file, encoding="utf-8") as f:
                 catalog_data = json.load(f)
 
-            # Load schema documents
+            # Load schema documents (sorted for deterministic order)
             schemas = catalog_data.get("schemas", {})
-            for schema_name, schema_data in schemas.items():
+            for schema_name in sorted(schemas.keys()):
+                schema_data = schemas[schema_name]
                 document = self._create_identifier_schema_document(
                     schema_name, schema_data
                 )
                 self._index.add_document(document)
 
-            # Load path documents that reference identifier schemas
+            # Load path documents that reference identifier schemas (sorted for deterministic order)
             paths_by_ids = catalog_data.get("paths_by_ids", {})
-            for ids_name, identifier_paths in paths_by_ids.items():
-                for path_data in identifier_paths:
+            for ids_name in sorted(paths_by_ids.keys()):
+                identifier_paths = paths_by_ids[ids_name]
+                # Apply IDS filter for identifier paths
+                if self.ids_set is not None and ids_name not in self.ids_set:
+                    continue
+
+                # Sort identifier paths for deterministic order
+                for path_data in sorted(
+                    identifier_paths, key=lambda x: x.get("path", "")
+                ):
                     document = self._create_identifier_path_document(
                         ids_name, path_data
                     )

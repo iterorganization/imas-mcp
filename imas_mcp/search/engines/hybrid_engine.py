@@ -12,7 +12,7 @@ from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
 from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
+from imas_mcp.search.search_strategy import SearchConfig, SearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class HybridSearchEngine(SearchEngine):
 
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Execute hybrid search combining semantic and lexical results.
 
         Args:
@@ -45,7 +45,7 @@ class HybridSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchMatch objects ordered by combined relevance
+            SearchResponse with limited hits and all matching paths
 
         Raises:
             SearchEngineError: When hybrid search execution fails
@@ -65,14 +65,14 @@ class HybridSearchEngine(SearchEngine):
             combined_results = {}
 
             # Add semantic results with boosted scores
-            for result in semantic_results:
+            for result in semantic_results.hits:
                 path_id = result.document.metadata.path_id
                 result.score *= 1.2  # Boost semantic scores
                 result.search_mode = SearchMode.HYBRID  # Mark as hybrid
                 combined_results[path_id] = result
 
             # Add lexical results, boosting if they match semantic results
-            for result in lexical_results:
+            for result in lexical_results.hits:
                 path_id = result.document.metadata.path_id
                 if path_id in combined_results:
                     # Boost score for documents found in both searches
@@ -99,7 +99,7 @@ class HybridSearchEngine(SearchEngine):
             # Log search execution
             self.log_search_execution(query, config, len(final_results))
 
-            return final_results
+            return SearchResponse(hits=final_results)
 
         except Exception as e:
             error_msg = f"Hybrid search failed: {str(e)}"

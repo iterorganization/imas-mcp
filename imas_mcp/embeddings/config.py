@@ -27,6 +27,25 @@ class EmbeddingConfig:
     # Progress display
     use_rich: bool = True
 
+    def generate_cache_key(self) -> str | None:
+        """
+        Generate consistent cache key for embeddings based on dataset characteristics.
+
+        Document count validation is handled during cache loading, so we only
+        need to identify the dataset subset (full vs filtered).
+
+        Returns:
+            Cache key string for filtered datasets, None for full dataset
+            (None results in simpler cache filename without hash)
+        """
+        if self.ids_set:
+            # For filtered datasets, use sorted IDS names
+            ids_part = "_".join(sorted(self.ids_set))
+            return f"filtered_{ids_part}"
+        else:
+            # For full dataset, return None to get simple filename
+            return None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {

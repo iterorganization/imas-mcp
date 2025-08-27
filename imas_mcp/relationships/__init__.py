@@ -7,11 +7,11 @@ IMAS data paths using advanced clustering and embedding techniques.
 
 from .config import RelationshipExtractionConfig
 from .extractor import RelationshipExtractor
-from .models import RelationshipResult, RelationshipSet
+from .models import ClusterInfo, RelationshipSet
 
 __all__ = [
     "RelationshipExtractionConfig",
     "RelationshipExtractor",
-    "RelationshipResult",
+    "ClusterInfo",
     "RelationshipSet",
 ]

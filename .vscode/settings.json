@@ -1,6 +1,7 @@
 {
   "cSpell.words": [
     "chromadb",
+    "Clusterer",
     "dbscan",
     "fastmcp",
     "IMAS",
@@ -39,7 +40,8 @@
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
     "imas-mcp/.vscode/mcp.json: imas-debug": {
-      "allowedDuringChat": true
+      "allowedDuringChat": true,
+      "allowedOutsideChat": true
     }
   },
   // Formatting settings

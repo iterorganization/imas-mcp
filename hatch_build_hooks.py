@@ -33,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
-            from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
+            # from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
         finally:
             # Restore original sys.path
@@ -51,11 +51,11 @@ class CustomBuildHook(BuildHookInterface):
             # Support both space-separated and comma-separated formats
             ids_set = set(ids_filter.replace(",", " ").split())
 
-        # Build JSON data structures with Rich progress monitoring
+        # Build only JSON schemas (avoiding heavy relationship extraction)
         json_transformer = DataDictionaryTransformer(ids_set=ids_set, use_rich=True)
         json_transformer.build()
 
-        # Build Mermaid graphs after schemas are generated
-        resources_dir = package_root / "imas_mcp" / "resources"
-        mermaid_generator = MermaidGraphGenerator(resources_dir)
-        mermaid_generator.build(ids_set)
+        # Skip Mermaid graph generation (requires relationships)
+        # resources_dir = package_root / "imas_mcp" / "resources"
+        # mermaid_generator = MermaidGraphGenerator(resources_dir)
+        # mermaid_generator.build(ids_set)

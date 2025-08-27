@@ -10,11 +10,12 @@ for exact matching and keyword-based search in the IMAS data dictionary.
 """
 
 import logging
+import re
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch, SearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ class LexicalSearchEngine(SearchEngine):
 
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Execute lexical search using full-text search.
 
         Args:
@@ -45,7 +46,7 @@ class LexicalSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchMatch objects ordered by relevance
+            SearchResponse with limited hits and all matching paths
 
         Raises:
             SearchEngineError: When lexical search execution fails
@@ -60,17 +61,22 @@ class LexicalSearchEngine(SearchEngine):
             # Convert query to string format
             query_str = self.normalize_query(query)
 
-            # Apply IDS filtering if specified
-            if config.ids_filter:
+            # Apply intelligent path parsing for automatic IDS filtering
+            enhanced_config = self._enhance_config_with_path_intelligence(
+                query_str, config
+            )
+
+            # Apply IDS filtering if specified (including auto-detected)
+            if enhanced_config.ids_filter:
                 # Add IDS filter to query
                 ids_filter = " OR ".join(
-                    [f"ids_name:{ids}" for ids in config.ids_filter]
+                    [f"ids_name:{ids}" for ids in enhanced_config.ids_filter]
                 )
                 query_str = f"({query_str}) AND ({ids_filter})"
 
             # Execute full-text search
             documents = self.document_store.search_full_text(
-                query_str, max_results=config.max_results
+                query_str, max_results=enhanced_config.max_results
             )
 
             # Convert to SearchMatch objects
@@ -89,14 +95,92 @@ class LexicalSearchEngine(SearchEngine):
                 results.append(result)
 
             # Log search execution
-            self.log_search_execution(query, config, len(results))
+            self.log_search_execution(query, enhanced_config, len(results))
 
-            return results
+            return SearchResponse(hits=results)
 
         except Exception as e:
             error_msg = f"Lexical search failed: {str(e)}"
             self.logger.error(error_msg)
             raise SearchEngineError(self.name, error_msg, str(query)) from e
+
+    def _extract_ids_from_path(self, query: str) -> str | None:
+        """Extract IDS name from path-like query for intelligent filtering.
+
+        This method recognizes path-like queries and extracts the IDS name
+        from the first component, enabling automatic IDS filtering for more
+        efficient lexical search. Validates against actual IDS catalog.
+
+        Args:
+            query: Search query string that might be a path
+
+        Returns:
+            IDS name if path-like query detected and valid, None otherwise
+        """
+        # Check if query looks like a path (contains forward slashes)
+        if "/" not in query:
+            return None
+
+        # Extract first component before the first slash
+        parts = query.strip().split("/")
+        if len(parts) < 2:
+            return None
+
+        potential_ids = parts[0].strip()
+
+        # Validate that it looks like a valid IDS name
+        # IDS names typically contain lowercase letters, numbers, and underscores
+        if not re.match(r"^[a-z][a-z0-9_]*$", potential_ids):
+            return None
+
+        # Validate against actual IDS catalog using document store
+        try:
+            available_ids = self.document_store.get_available_ids()
+            if potential_ids not in available_ids:
+                self.logger.debug(
+                    f"Path intelligence: '{potential_ids}' not found in IDS catalog "
+                    f"(available: {len(available_ids)} IDS)"
+                )
+                return None
+
+            self.logger.debug(
+                f"Path intelligence: extracted IDS '{potential_ids}' from query '{query}'"
+            )
+            return potential_ids
+
+        except Exception as e:
+            self.logger.warning(f"Failed to validate IDS against catalog: {e}")
+            return None
+
+    def _enhance_config_with_path_intelligence(
+        self, query_str: str, config: SearchConfig
+    ) -> SearchConfig:
+        """Enhance search config with intelligent path parsing.
+
+        Automatically extracts IDS names from path-like queries and applies
+        them as filters for more efficient lexical search.
+
+        Args:
+            query_str: Search query string to analyze
+            config: Original search configuration
+
+        Returns:
+            Enhanced SearchConfig with intelligent IDS filtering
+        """
+        # If user already provided IDS filter, respect it
+        if config.ids_filter:
+            return config
+
+        # Try to extract IDS from path-like query
+        extracted_ids = self._extract_ids_from_path(query_str)
+
+        if extracted_ids:
+            # Create new config with extracted IDS filter
+            enhanced_config = config.model_copy()
+            enhanced_config.ids_filter = [extracted_ids]
+            return enhanced_config
+
+        return config
 
     def get_engine_type(self) -> str:
         """Get the type identifier for this engine."""

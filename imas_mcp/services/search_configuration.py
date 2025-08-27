@@ -12,7 +12,7 @@ class SearchConfigurationService(BaseService):
     def create_config(
         self,
         search_mode: str | SearchMode = "auto",
-        max_results: int = 10,
+        max_results: int = 50,
         ids_filter: str | list[str] | None = None,
     ) -> SearchConfig:
         """Create optimized search configuration."""
@@ -25,11 +25,7 @@ class SearchConfigurationService(BaseService):
         if isinstance(ids_filter, str):
             ids_filter = [ids_filter]
 
-        # Optimize max_results based on mode
-        if search_mode == SearchMode.SEMANTIC and max_results > 20:
-            self.logger.warning(
-                f"Large result set ({max_results}) may impact semantic search performance"
-            )
+        # No max_results limits for LLM optimization - removed performance warning
 
         return SearchConfig(
             search_mode=search_mode,

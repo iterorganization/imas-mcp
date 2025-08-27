@@ -54,8 +54,9 @@ class SearchTool(BaseTool):
         self,
         query: str,
         ids_filter: list[str] | None = None,
-        max_results: int = 10,
+        max_results: int = 50,
         search_mode: str | SearchMode = "auto",
+        output_mode: str = "full",
         ctx: Context | None = None,
     ) -> SearchResult:
         """
@@ -68,15 +69,16 @@ class SearchTool(BaseTool):
         Args:
             query: Search term, physics concept, measurement name, or data path pattern
             ids_filter: Limit search to specific IDS (e.g., ['equilibrium', 'transport'])
-            max_results: Maximum number of results to return (1-100)
+            max_results: Maximum number of hits to return (summary contains all matches)
             search_mode: Search strategy - "auto", "semantic", "lexical", or "hybrid"
+            output_mode: Output format - "full" or "compact"
             context: FastMCP context for LLM sampling enhancement
 
         Returns:
             SearchResult with ranked data paths, documentation, and physics insights
         """
 
-        # Execute search
+        # Execute search - base.py now handles SearchResult conversion and summary
         result = await self.execute_search(
             query=query,
             search_mode=search_mode,
@@ -84,7 +86,17 @@ class SearchTool(BaseTool):
             ids_filter=ids_filter,
         )
 
-        logger.info(f"Search completed: {len(result.hits)} results returned")
+        # Add query and search_mode to summary if not already present
+        if hasattr(result, "summary") and result.summary:
+            result.summary.update({"query": query, "search_mode": str(search_mode)})
+
+        # Apply output mode formatting if requested
+        if output_mode == "compact":
+            result = self._format_compact(result)
+
+        logger.info(
+            f"Search completed: {len(result.hits)} hits returned (of {result.summary.get('total_paths', 0)} total) in {output_mode} mode"
+        )
         return result
 
     def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
@@ -174,3 +186,31 @@ Please provide:
         search_mode = tool_context.get("search_mode", "auto")
         return f"""Search mode: {search_mode}
 Provide mode-specific analysis and recommendations."""
+
+    def _format_compact(self, result: SearchResult) -> SearchResult:
+        """Format result with minimal documentation for efficiency."""
+        # Keep paths and basic info but trim documentation
+        for hit in result.hits:
+            if hasattr(hit, "documentation") and hit.documentation:
+                # Truncate documentation to first 100 characters
+                hit.documentation = (
+                    hit.documentation[:100] + "..."
+                    if len(hit.documentation) > 100
+                    else hit.documentation
+                )
+
+        # Reduce hints to save space
+        result.query_hints = result.query_hints[:3] if result.query_hints else []
+        result.tool_hints = result.tool_hints[:3] if result.tool_hints else []
+
+        # Keep physics context but reduce physics_matches to top 3
+        if (
+            hasattr(result, "physics_context")
+            and result.physics_context
+            and hasattr(result.physics_context, "physics_matches")
+        ):
+            result.physics_context.physics_matches = (
+                result.physics_context.physics_matches[:3]
+            )
+
+        return result

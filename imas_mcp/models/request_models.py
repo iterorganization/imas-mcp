@@ -5,6 +5,8 @@ This module consolidates all input validation schemas that were previously
 scattered across search/schemas/ directory.
 """
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .constants import (
@@ -15,6 +17,13 @@ from .constants import (
     RelationshipType,
     SearchMode,
 )
+
+
+class OutputMode(str, Enum):
+    """Output mode for search results."""
+
+    FULL = "full"
+    COMPACT = "compact"
 
 
 class BaseInputSchema(BaseModel):
@@ -36,10 +45,13 @@ class SearchInput(BaseInputSchema):
         description="Search mode to use",
     )
     max_results: int = Field(
-        default=10,
+        default=50,
         ge=1,
-        le=100,
-        description="Maximum number of results to return",
+        description="Maximum number of hits to return (summary contains all matches)",
+    )
+    output_mode: OutputMode = Field(
+        default=OutputMode.FULL,
+        description="Output format: full (complete data) or compact (minimal data)",
     )
     ids_filter: list[str] | None = Field(
         default=None,

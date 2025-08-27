@@ -14,7 +14,19 @@ class RelationshipExtractionConfig:
     model_name: str = "all-MiniLM-L6-v2"
     device: str | None = None  # Auto-detect GPU/CPU
 
-    # Clustering configuration
+    # Cross-IDS clustering configuration (optimized via Latin Hypercube)
+    cross_ids_eps: float = (
+        0.0751  # Optimized epsilon for cross-IDS clustering (LHC Round 2)
+    )
+    cross_ids_min_samples: int = 2  # Minimum samples for cross-IDS clusters
+
+    # Intra-IDS clustering configuration (optimized via Latin Hypercube)
+    intra_ids_eps: float = (
+        0.0319  # Optimized epsilon for intra-IDS clustering (LHC Round 2)
+    )
+    intra_ids_min_samples: int = 2  # Optimized minimum samples for intra-IDS clusters
+
+    # Legacy clustering configuration (for backward compatibility)
     eps: float = 0.25  # DBSCAN epsilon parameter
     min_samples: int = 3  # DBSCAN minimum samples
     similarity_threshold: float = 0.7  # Threshold for relationship creation
@@ -49,7 +61,11 @@ class RelationshipExtractionConfig:
     enable_cache: bool = True
     batch_size: int = 250
     normalize_embeddings: bool = True
+    use_half_precision: bool = False  # Match semantic search default
     use_rich: bool = True
+
+    # Filtering configuration
+    ids_set: set[str] | None = None  # Specific IDS names to include
 
     # Paths and directories
     input_dir: Path = Path("imas_mcp/resources/schemas/detailed")

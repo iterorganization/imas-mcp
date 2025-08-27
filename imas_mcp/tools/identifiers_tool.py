@@ -457,9 +457,7 @@ class IdentifiersTool(BaseTool):
             schemas = []
             total_usage_paths = 0
 
-            for schema_name, schema_info in list(filtered_schemas.items())[
-                :20
-            ]:  # Limit for performance
+            for schema_name, schema_info in filtered_schemas.items():
                 schema_item = {
                     "path": schema_info.get("schema_path", schema_name),
                     "schema_path": schema_info.get("schema_path", ""),
@@ -489,9 +487,7 @@ class IdentifiersTool(BaseTool):
 
             # Build identifier paths from usage information
             identifier_paths = []
-            for schema_name, schema_info in list(filtered_schemas.items())[
-                :10
-            ]:  # Limit for performance
+            for schema_name, schema_info in filtered_schemas.items():
                 for usage_path in schema_info.get("usage_paths", []):
                     identifier_paths.append(
                         {
@@ -516,9 +512,6 @@ class IdentifiersTool(BaseTool):
                 "query_context": query,
                 "scope_applied": scope.value,
             }
-
-            # Generate recommendations - used in future enhancements
-            # recommendations = self._generate_identifier_recommendations(query, filtered_schemas)
 
             # Build response using Pydantic
             response = IdentifierResult(

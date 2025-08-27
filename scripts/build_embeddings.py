@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-Build the document store and semantic search embeddings for the IMAS Data Dictionary.
+Build the document store and embeddings for the IMAS Data Dictionary.
 
 This script creates the in-memory document store from JSON data and generates
-sentence transformer embeddings optimized for semantic search.
+sentence transformer embeddings using the core embedding management system.
 """
 
 import logging
 import sys
+from pathlib import Path
 
 import click
 
+from imas_mcp.embeddings.config import EmbeddingConfig
+from imas_mcp.embeddings.manager import get_embedding_manager
 from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.search.semantic_search import SemanticSearch, SemanticSearchConfig
 
 
 @click.command()
@@ -111,7 +113,7 @@ def build_embeddings(
     cleanup_caches: int | None,
     no_rich: bool,
 ) -> int:
-    """Build the document store and semantic search embeddings.
+    """Build the document store and embeddings.
 
     This command creates an in-memory document store from the JSON data and
     generates sentence transformer embeddings for semantic search capabilities.
@@ -152,10 +154,32 @@ def build_embeddings(
     try:
         logger.info("Starting document store and embeddings build process...")
 
+        # Parse ids_filter string into a set if provided
+        ids_set: set | None = set(ids_filter.split()) if ids_filter else None
+        if ids_set:
+            logger.info(f"Building embeddings for specific IDS: {sorted(ids_set)}")
+        else:
+            logger.info("Building embeddings for all available IDS")
+
+        # Create embedding configuration
+        config = EmbeddingConfig(
+            model_name=model_name,
+            device=device,
+            batch_size=batch_size,
+            enable_cache=not no_cache,
+            use_half_precision=half_precision,
+            normalize_embeddings=not no_normalize,  # Default True, inverted flag
+            ids_set=ids_set,
+            use_rich=not no_rich,  # Use rich display unless disabled
+        )
+
+        # Get shared embedding manager
+        manager = get_embedding_manager(config)
+
         # Handle cache management operations FIRST - before any heavy initialization
         if list_caches or cleanup_caches is not None:
             if list_caches:
-                cache_files = SemanticSearch.list_all_cache_files()
+                cache_files = manager.list_cache_files()
                 if not cache_files:
                     click.echo("No cache files found")
                     return 0
@@ -169,37 +193,12 @@ def build_embeddings(
                 return 0
 
             if cleanup_caches is not None:
-                removed_count = SemanticSearch.cleanup_all_old_caches(
-                    keep_count=cleanup_caches
-                )
+                removed_count = manager.cleanup_old_caches(keep_count=cleanup_caches)
                 if removed_count > 0:
                     click.echo(f"Removed {removed_count} old cache files")
                 else:
                     click.echo("No old cache files to remove")
                 return 0
-
-        # Parse ids_filter string into a set if provided
-        ids_set: set | None = set(ids_filter.split()) if ids_filter else None
-        if ids_set:
-            logger.info(f"Building embeddings for specific IDS: {sorted(ids_set)}")
-        else:
-            logger.info("Building embeddings for all available IDS")
-
-        # Create semantic search configuration
-        config = SemanticSearchConfig(
-            model_name=model_name,
-            device=device,
-            batch_size=batch_size,
-            enable_cache=not no_cache,
-            use_half_precision=half_precision,
-            normalize_embeddings=not no_normalize,  # Default True, inverted flag
-            similarity_threshold=similarity_threshold,
-            ids_set=ids_set,
-            auto_initialize=not (
-                check_only or force
-            ),  # Defer initialization for check-only or force mode
-            use_rich=not no_rich,  # Use rich display unless disabled
-        )
 
         logger.info("Configuration:")
         logger.info(f"  - Model: {config.model_name}")
@@ -208,7 +207,6 @@ def build_embeddings(
         logger.info(f"  - Caching: {'disabled' if no_cache else 'enabled'}")
         logger.info(f"  - Half precision: {config.use_half_precision}")
         logger.info(f"  - Normalize embeddings: {config.normalize_embeddings}")
-        logger.info(f"  - Similarity threshold: {config.similarity_threshold}")
         logger.info(f"  - Rich progress: {'disabled' if no_rich else 'enabled'}")
 
         # Build document store from JSON data
@@ -223,83 +221,115 @@ def build_embeddings(
         document_count = len(document_store.get_all_documents())
         logger.info(f"Document store built with {document_count} documents")
 
-        # Check if embeddings already exist
-        semantic_search = SemanticSearch(config=config, document_store=document_store)
+        # Get all documents and prepare texts for embedding
+        documents = document_store.get_all_documents()
+        texts = [doc.embedding_text for doc in documents]
+        identifiers = [doc.metadata.path_id for doc in documents]
+
+        # Generate cache key using centralized config method
+        cache_key = config.generate_cache_key()
+
+        # Get source data directory for validation
+        source_data_dir = None
+        try:
+            import importlib.resources as resources
+
+            resources_dir = Path(str(resources.files("imas_mcp") / "resources"))
+            source_data_dir = resources_dir / "schemas"
+        except Exception:
+            pass
 
         # If check-only mode, just report status and exit
         if check_only:
-            status_info = semantic_search.cache_status()
-            status = status_info.get("status")
+            # Try to check if embeddings already exist using the same manager and cache key
+            try:
+                # Set the cache path for the manager
+                manager._set_cache_path(cache_key)
 
-            if status == "valid_cache":
-                click.echo(
-                    f"Embeddings exist: {status_info['document_count']} documents"
-                )
-                click.echo(f"Model: {status_info['model_name']}")
-                click.echo(f"Cache size: {status_info['cache_file_size_mb']:.1f} MB")
-                click.echo(f"Created: {status_info['created_at']}")
-                return 0
-            elif status in ["no_cache_file", "invalid_cache", "invalid_cache_file"]:
-                if status == "no_cache_file":
-                    click.echo("Embeddings do not exist: No cache file found")
-                elif status == "invalid_cache_file":
+                # Try to load existing cache
+                if manager._try_load_cache(texts, identifiers, source_data_dir):
+                    # Cache was successfully loaded
+                    cache_info = manager.get_cache_info()
                     click.echo(
-                        "Embeddings are invalid: Cache file is corrupted or incompatible"
+                        f"Embeddings exist: {cache_info.get('document_count', 0)} documents"
                     )
-                elif status == "invalid_cache":
-                    reason = status_info.get("reason", "Unknown reason")
-                    click.echo(f"Embeddings are invalid: {reason}")
-                return 1
-            elif status == "cache_disabled":
-                click.echo("Embeddings cache is disabled")
-                return 1
-            else:
-                click.echo(f"Cache status: {status}")
-                if "error" in status_info:
-                    click.echo(f"Error: {status_info['error']}")
+                    click.echo(f"Model: {cache_info['model_name']}")
+                    if "cache_file_size_mb" in cache_info:
+                        click.echo(
+                            f"Cache size: {cache_info['cache_file_size_mb']:.1f} MB"
+                        )
+                    if "created_at" in cache_info:
+                        click.echo(f"Created: {cache_info['created_at']}")
+                    return 0
+                else:
+                    # Check if cache file exists but is invalid
+                    cache_path = manager._cache_path
+                    if cache_path and cache_path.exists():
+                        click.echo(
+                            "Embeddings exist but are invalid: Cache validation failed"
+                        )
+                        return 1
+                    else:
+                        click.echo("Embeddings do not exist: No cache file found")
+                        return 1
+
+            except Exception as e:
+                if verbose:
+                    logger.exception("Error checking cache:")
+                click.echo(f"Error checking cache: {e}")
                 return 1
 
-        # If force rebuild, regenerate embeddings by overwriting cache
-        if force:
-            logger.info("Force rebuild requested, regenerating embeddings...")
-            # Ensure embeddings are initialized before rebuilding
-            if not semantic_search._initialized:
-                semantic_search._initialize()
-            semantic_search.rebuild_embeddings()
-        else:
-            # Normal initialization (will use cache if valid)
-            if not semantic_search._initialized:
-                semantic_search._initialize()
+        # Generate embeddings
+        logger.info(f"Generating embeddings for {len(texts)} documents...")
 
-        # Get embeddings info
-        info = semantic_search.get_embeddings_info()
+        try:
+            embeddings, result_identifiers, was_cached = manager.get_embeddings(
+                texts=texts,
+                identifiers=identifiers,
+                cache_key=cache_key,
+                force_rebuild=force,
+                source_data_dir=source_data_dir,
+            )
 
-        if info.get("status") == "not_initialized":
-            logger.error("Failed to initialize embeddings")
+            # Get embeddings info
+            info = manager.get_cache_info()
+
+            # Log success information
+            cache_status = "loaded from cache" if was_cached else "built successfully"
+            logger.info(f"Embeddings {cache_status}:")
+            logger.info(f"  - Model: {info.get('model_name', 'unknown')}")
+            logger.info(f"  - Documents: {info.get('document_count', len(embeddings))}")
+            logger.info(
+                f"  - Dimensions: {info.get('embedding_dimension', embeddings.shape[1] if len(embeddings.shape) > 1 else 0)}"
+            )
+            logger.info(f"  - Data type: {info.get('dtype', str(embeddings.dtype))}")
+            logger.info(
+                f"  - Memory usage: {info.get('memory_usage_mb', embeddings.nbytes / (1024 * 1024)):.1f} MB"
+            )
+
+            if "cache_file_path" in info:
+                logger.info(f"  - Cache file: {info['cache_file_path']}")
+                logger.info(f"  - Cache size: {info['cache_file_size_mb']:.1f} MB")
+            elif config.enable_cache:
+                logger.warning(
+                    "  - Cache file not found (embeddings may not be cached)"
+                )
+
+            # Print summary for scripts/CI with accurate messaging
+            action = "Loaded" if was_cached else "Built"
+            click.echo(
+                f"{action} embeddings for {document_count} documents using {model_name}"
+            )
+            if "cache_file_size_mb" in info:
+                click.echo(f"Cache size: {info['cache_file_size_mb']:.1f} MB")
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings: {e}")
+            if verbose:
+                logger.exception("Full traceback:")
             return 1
-
-        # Log success information
-        logger.info("Embeddings built successfully:")
-        logger.info(f"  - Model: {info['model_name']}")
-        logger.info(f"  - Documents: {info['document_count']}")
-        logger.info(f"  - Dimensions: {info['embedding_dimension']}")
-        logger.info(f"  - Data type: {info['dtype']}")
-        logger.info(f"  - Memory usage: {info['memory_usage_mb']:.1f} MB")
-
-        if "cache_file_path" in info:
-            logger.info(f"  - Cache file: {info['cache_file_path']}")
-            logger.info(f"  - Cache size: {info['cache_file_size_mb']:.1f} MB")
-        elif config.enable_cache:
-            logger.warning("  - Cache file not found (embeddings may not be cached)")
-
-        # Print summary for scripts/CI
-        click.echo(
-            f"Built embeddings for {document_count} documents using {model_name}"
-        )
-        if "cache_file_size_mb" in info:
-            click.echo(f"Cache size: {info['cache_file_size_mb']:.1f} MB")
-
-        return 0
 
     except Exception as e:
         logger.error(f"Error building embeddings: {e}")

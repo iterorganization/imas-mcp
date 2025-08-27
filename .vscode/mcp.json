@@ -8,7 +8,14 @@
     "imas-debug": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "run-server", "--no-rich", "--log-level", "DEBUG"] 
+      "args": [
+        "run",
+        "--active",
+        "run-server",
+        "--no-rich",
+        "--log-level",
+        "DEBUG"
+      ]
     },
     "github": {
       "type": "http",
@@ -16,7 +23,7 @@
       "headers": {
         "Authorization": "Bearer ${input:github_mcp_pat}"
       }
-    },
+    }
   },
   "inputs": [
     {

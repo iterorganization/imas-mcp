@@ -223,10 +223,13 @@ class SemanticSearch:
         if self._embedding_manager is None:
             raise RuntimeError("Embedding manager not initialized")
 
-        embeddings, path_ids = self._embedding_manager.get_embeddings(
+        # Generate cache key using centralized config method
+        cache_key = self._embedding_manager.config.generate_cache_key()
+
+        embeddings, path_ids, was_cached = self._embedding_manager.get_embeddings(
             texts=texts,
             identifiers=identifiers,
-            cache_key="semantic_search",
+            cache_key=cache_key,
             force_rebuild=force_rebuild,
             source_data_dir=self.document_store._data_dir,
         )
@@ -281,13 +284,8 @@ class SemanticSearch:
         top_k = top_k or self.config.default_top_k
         similarity_threshold = similarity_threshold or self.config.similarity_threshold
 
-        # Generate query embedding using embedding manager
-        query_embeddings, _ = self._embedding_manager.get_embeddings(
-            texts=[query],
-            cache_key="query_temp",
-            force_rebuild=True,  # Always regenerate query embeddings
-        )
-        query_embedding = query_embeddings[0]
+        # Generate query embedding using direct encoding (no caching)
+        query_embedding = self._embedding_manager.encode_texts([query])[0]
 
         # Compute similarities
         similarities = self._compute_similarities(query_embedding)
@@ -576,12 +574,8 @@ class SemanticSearch:
         if not self._embedding_manager or not self._embeddings_cache:
             raise RuntimeError("Search not properly initialized")
 
-        # Generate query embeddings in batch using embedding manager
-        query_embeddings, _ = self._embedding_manager.get_embeddings(
-            texts=queries,
-            cache_key="query_batch_temp",
-            force_rebuild=True,  # Always regenerate query embeddings
-        )
+        # Generate query embeddings in batch using direct encoding (no caching)
+        query_embeddings = self._embedding_manager.encode_texts(queries)
 
         # Search for each query
         results = []

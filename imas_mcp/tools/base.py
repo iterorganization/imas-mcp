@@ -79,17 +79,34 @@ class BaseTool(ABC):
         )
         config = self.search_config.optimize_for_query(query, config)
 
-        # Execute search
-        search_results = await self._search_service.search(query, config)
+        # Execute search - now returns SearchResponse with hits and all_paths
+        search_result = await self._search_service.search(query, config)
 
         # Build response using search response service
         response = self.response.build_search_response(
-            results=search_results,
+            results=search_result.hits,  # Extract hits from SearchResponse
             query=query,
             search_mode=config.search_mode,
             ids_filter=ids_filter,
             max_results=max_results,
         )
+
+        # Build summary from returned hits
+        if hasattr(response, "summary"):
+            # Update existing summary with path information from hits
+            path_list = [hit.document.metadata.path_name for hit in search_result.hits]
+            response.summary.update({"path_list": path_list})
+        else:
+            # Create new summary from hits
+            path_list = [hit.document.metadata.path_name for hit in search_result.hits]
+            ids_coverage = {
+                hit.document.metadata.ids_name for hit in search_result.hits
+            }
+            response.summary = {
+                "hits_returned": len(search_result.hits),
+                "path_list": path_list,
+                "ids_coverage": sorted(ids_coverage),
+            }
 
         return response
 

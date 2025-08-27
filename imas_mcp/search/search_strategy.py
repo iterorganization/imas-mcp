@@ -23,7 +23,7 @@ class SearchConfig(SearchParameters):
 
     # Override base class fields to make them required and set proper defaults
     search_mode: SearchMode = SearchMode.AUTO
-    max_results: int = 10
+    max_results: int = 50
 
     # Additional search-specific configuration
     similarity_threshold: float = 0.0
@@ -438,3 +438,9 @@ class SearchModeSelector:
             "magnetic field",
         ]
         return any(indicator in query.lower() for indicator in conceptual_indicators)
+
+
+class SearchResponse(BaseModel):
+    """Response from search engine containing search hits."""
+
+    hits: list[SearchMatch] = Field(description="Search results limited to max_results")

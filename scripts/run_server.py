@@ -40,12 +40,18 @@ logger = logging.getLogger(__name__)
     is_flag=True,
     help="Disable rich progress output during server initialization",
 )
+@click.option(
+    "--ids-filter",
+    type=str,
+    help="Specific IDS names to include as a space-separated string (e.g., 'core_profiles equilibrium')",
+)
 def run_server(
     transport: str,
     host: str,
     port: int,
     log_level: str,
     no_rich: bool,
+    ids_filter: str,
 ) -> None:
     """Run the AI-enhanced MCP server with configurable transport options.
 
@@ -84,6 +90,13 @@ def run_server(
     logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
 
+    # Parse ids_filter string into a set if provided
+    ids_set: set | None = set(ids_filter.split()) if ids_filter else None
+    if ids_set:
+        logger.info(f"Starting server with IDS filter: {sorted(ids_set)}")
+    else:
+        logger.info("Starting server with all available IDS")
+
     match transport:
         case "stdio":
             logger.debug("Using STDIO transport")
@@ -93,7 +106,7 @@ def run_server(
             logger.info(f"Using {transport} transport on {host}:{port}")
 
     # Create and run the AI-enhanced server
-    server = Server(use_rich=not no_rich)
+    server = Server(use_rich=not no_rich, ids_set=ids_set)
     server.run(transport=transport, host=host, port=port)
 
 

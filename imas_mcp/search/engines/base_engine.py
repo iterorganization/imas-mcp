@@ -8,7 +8,7 @@ search engines (semantic, lexical, hybrid) in a clean, composable way.
 import logging
 from abc import ABC, abstractmethod
 
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch, SearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class SearchEngine(ABC):
     @abstractmethod
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Execute search with given query and configuration.
 
         Args:
@@ -37,7 +37,7 @@ class SearchEngine(ABC):
             config: Search configuration with parameters like max_results, filters
 
         Returns:
-            List of SearchMatch objects ordered by relevance
+            SearchResponse containing limited hits and all matching paths
 
         Raises:
             SearchEngineError: When search execution fails
@@ -129,7 +129,7 @@ class MockSearchEngine(SearchEngine):
 
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Return mock search results for testing."""
         from imas_mcp.models.constants import SearchMode
         from imas_mcp.search.document_store import Document, DocumentMetadata
@@ -158,7 +158,9 @@ class MockSearchEngine(SearchEngine):
             highlights="temperature",
         )
 
-        return [mock_result]
+        mock_hits = [mock_result]
+
+        return SearchResponse(hits=mock_hits)
 
     def get_engine_type(self) -> str:
         """Get engine type identifier."""

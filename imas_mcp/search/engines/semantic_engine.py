@@ -15,7 +15,7 @@ import logging
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch, SearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class SemanticSearchEngine(SearchEngine):
 
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Execute semantic search using sentence transformers.
 
         Args:
@@ -64,7 +64,7 @@ class SemanticSearchEngine(SearchEngine):
             config: Search configuration with parameters
 
         Returns:
-            List of SearchMatch objects ordered by semantic similarity
+            SearchResponse with search hits limited to max_results
 
         Raises:
             SearchEngineError: When semantic search execution fails
@@ -102,7 +102,7 @@ class SemanticSearchEngine(SearchEngine):
             # Log search execution
             self.log_search_execution(query, config, len(results))
 
-            return results
+            return SearchResponse(hits=results)
 
         except Exception as e:
             error_msg = f"Semantic search failed: {str(e)}"
