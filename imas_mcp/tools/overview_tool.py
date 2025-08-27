@@ -40,11 +40,18 @@ class OverviewTool(BaseTool):
     - explore_identifiers() -> identifier_catalog.json
     """
 
+    @property
+    def tool_name(self) -> str:
+        """Return the name of this tool."""
+        return "overview_tool"
+
     def __init__(self, *args, **kwargs):
         """Initialize with IDS catalog data loading."""
         super().__init__(*args, **kwargs)
         self._ids_catalog = {}
+        self._identifier_catalog = {}
         self._load_ids_catalog()
+        self._load_identifier_catalog()
 
     def _load_ids_catalog(self):
         """Load the IDS catalog file specifically."""
@@ -66,10 +73,32 @@ class OverviewTool(BaseTool):
             logger.error(f"Failed to load IDS catalog: {e}")
             self._ids_catalog = {}
 
-    @property
-    def tool_name(self) -> str:
-        """Return the name of this tool."""
-        return "get_overview"
+    def _load_identifier_catalog(self):
+        """Load the identifier catalog file."""
+        try:
+            catalog_file = (
+                importlib.resources.files("imas_mcp.resources.schemas")
+                / "identifier_catalog.json"
+            )
+            with catalog_file.open("r", encoding="utf-8") as f:
+                self._identifier_catalog = json.load(f)
+                logger.info("Loaded identifier catalog for overview tool")
+        except Exception as e:
+            logger.warning(f"Failed to load identifier catalog: {e}")
+            self._identifier_catalog = {}
+
+    def _get_mcp_tools(self) -> list[str]:
+        """Get list of available MCP tools on this server."""
+        return [
+            "search_imas",
+            "explain_concept",
+            "get_overview",
+            "analyze_ids_structure",
+            "explore_relationships",
+            "explore_identifiers",
+            "export_ids",
+            "export_physics_domain",
+        ]
 
     def _get_physics_domains(self) -> dict[str, list[str]]:
         """Get all physics domains and their associated IDS."""
@@ -235,9 +264,15 @@ class OverviewTool(BaseTool):
             # Get basic metadata
             metadata = self._ids_catalog.get("metadata", {})
             ids_info = self._ids_catalog.get("ids_catalog", {})
+            identifier_metadata = self._identifier_catalog.get("metadata", {})
 
             total_ids = metadata.get("total_ids", len(ids_info))
             total_paths = metadata.get("total_paths", 0)
+            total_leaf_nodes = metadata.get("total_leaf_nodes")
+            dd_version = metadata.get("version")
+            generation_date = metadata.get("generation_date")
+            identifier_schemas_count = identifier_metadata.get("total_ids", 0)
+            mcp_tools = self._get_mcp_tools()
 
             # Determine relevant IDS based on query
             if query:
@@ -297,6 +332,26 @@ class OverviewTool(BaseTool):
                 f"📊 **Dataset Statistics**: {total_ids} IDS with {total_paths:,} total data paths",
             ]
 
+            # Add version information if available
+            if dd_version:
+                content_parts.append(f"🏷️ **DD Version**: {dd_version}")
+
+            # Add additional metadata
+            if total_leaf_nodes:
+                content_parts.append(
+                    f"🔢 **Data Elements**: {total_leaf_nodes:,} individual data elements"
+                )
+
+            if identifier_schemas_count and identifier_schemas_count > 0:
+                content_parts.append(
+                    f"🔣 **Identifier Schemas**: {identifier_schemas_count} available types"
+                )
+
+            if mcp_tools:
+                content_parts.append(
+                    f"🛠️ **MCP Tools**: {len(mcp_tools)} tools available"
+                )
+
             if query:
                 content_parts.append(
                     f"🎯 **Relevant IDS**: {len(relevant_ids)} structures match your query"
@@ -350,6 +405,11 @@ class OverviewTool(BaseTool):
                 physics_domains=list(physics_domains_found),
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
+                dd_version=dd_version,
+                generation_date=generation_date,
+                total_leaf_nodes=total_leaf_nodes,
+                identifier_schemas_count=identifier_schemas_count,
+                mcp_tools=mcp_tools,
             )
 
         except Exception as e:

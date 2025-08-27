@@ -199,6 +199,25 @@ class OverviewResult(ToolResult, PhysicsContext, SearchHits):
     content: str
     available_ids: list[str] = Field(default_factory=list)
 
+    # DD version information
+    dd_version: str | None = Field(
+        default=None, description="IMAS Data Dictionary version"
+    )
+    generation_date: str | None = Field(
+        default=None, description="When the data dictionary was generated"
+    )
+
+    # Additional metadata
+    total_leaf_nodes: int | None = Field(
+        default=None, description="Total number of individual data elements"
+    )
+    identifier_schemas_count: int | None = Field(
+        default=None, description="Number of available identifier schemas"
+    )
+    mcp_tools: list[str] = Field(
+        default_factory=list, description="Available MCP tools on this server"
+    )
+
     # System analytics and statistics
     ids_statistics: dict[str, Any] = Field(
         default_factory=dict, description="IDS usage and availability statistics"
