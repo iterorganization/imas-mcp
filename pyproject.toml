@@ -87,6 +87,8 @@ dev = [
     # Build dependencies
     "rich>=13.7.0,<14.0.0",
     "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@c1342e2514ba36d007937425b2df522cd1b213df",
+    "matplotlib>=3.10.5",
+    "seaborn>=0.13.2",
 ]
 
 [project.urls]

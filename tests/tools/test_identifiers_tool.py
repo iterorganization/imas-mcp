@@ -104,7 +104,7 @@ class TestExploreIdentifiersTool:
         assert isinstance(result, IdentifierResult)
 
         # Should discover multiple schemas
-        assert len(result.schemas) > 10, "Should discover many schemas"
+        assert len(result.schemas) > 50, "Should discover many schemas"
 
         # Each schema should have required fields
         for schema in result.schemas[:5]:  # Test first 5 schemas
@@ -269,7 +269,7 @@ class TestIdentifiersToolValidation:
 
         # Validate schema discovery
         result = await identifiers_tool.explore_identifiers()
-        assert len(result.schemas) > 10, "Should discover multiple schemas"
+        assert len(result.schemas) > 50, "Should discover multiple schemas"
         print("✅ Schema discovery working")
 
         print("\n🎉 IDENTIFIERS TOOL VALIDATION COMPLETE!")

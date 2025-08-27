@@ -44,7 +44,8 @@ class EmbeddingManager:
         cache_key: str | None = None,
         force_rebuild: bool = False,
         source_data_dir: Path | None = None,
-    ) -> tuple[np.ndarray, list[str]]:
+        enable_caching: bool = True,
+    ) -> tuple[np.ndarray, list[str], bool]:
         """
         Get embeddings for the given texts with automatic caching.
 
@@ -54,9 +55,10 @@ class EmbeddingManager:
             cache_key: Optional cache key for this specific embedding set
             force_rebuild: Force regeneration even if cache exists
             source_data_dir: Source data directory for validation
+            enable_caching: Whether to enable caching for these embeddings (default: True)
 
         Returns:
-            Tuple of (embeddings, identifiers)
+            Tuple of (embeddings, identifiers, was_loaded_from_cache)
         """
         with self._lock:
             identifiers = identifiers or [f"text_{i}" for i in range(len(texts))]
@@ -64,24 +66,28 @@ class EmbeddingManager:
             if len(texts) != len(identifiers):
                 raise ValueError("Texts and identifiers must have the same length")
 
-            # Set cache path
-            self._set_cache_path(cache_key)
+            # Set cache path only if caching is enabled
+            if enable_caching:
+                self._set_cache_path(cache_key)
 
             # Try to load from cache
-            if not force_rebuild and self._try_load_cache(
-                texts, identifiers, source_data_dir
+            if (
+                enable_caching
+                and not force_rebuild
+                and self._try_load_cache(texts, identifiers, source_data_dir)
             ):
                 self.logger.info("Loaded embeddings from cache")
-                return self._cache.embeddings, self._cache.path_ids
+                return self._cache.embeddings, self._cache.path_ids, True
 
             # Generate fresh embeddings
             self.logger.info(f"Generating embeddings for {len(texts)} texts...")
             embeddings = self._generate_embeddings(texts)
 
-            # Create and save cache
-            self._create_cache(embeddings, identifiers, source_data_dir)
+            # Create and save cache only if caching is enabled
+            if enable_caching:
+                self._create_cache(embeddings, identifiers, source_data_dir)
 
-            return embeddings, identifiers
+            return embeddings, identifiers, False
 
     def get_model(self) -> SentenceTransformer:
         """Get the sentence transformer model."""
@@ -308,10 +314,24 @@ class EmbeddingManager:
         return cache_dir
 
     def _set_cache_path(self, cache_key: str | None = None) -> None:
-        """Set the cache file path."""
+        """Set the cache file path with informative logging."""
         if self._cache_path is None:
             cache_filename = self._generate_cache_filename(cache_key)
             self._cache_path = self._get_cache_directory() / cache_filename
+
+            # Log cache information
+            if cache_key:
+                self.logger.info(f"Using cache key: '{cache_key}'")
+            else:
+                self.logger.info("Using full dataset cache (no cache key)")
+
+            self.logger.info(f"Cache filename: {cache_filename}")
+
+            if self._cache_path.exists():
+                cache_size_mb = self._cache_path.stat().st_size / (1024 * 1024)
+                self.logger.info(f"Cache file found: {cache_size_mb:.1f} MB")
+            else:
+                self.logger.info("Cache file not found - rebuild is required")
 
     def _generate_cache_filename(self, cache_key: str | None = None) -> str:
         """Generate cache filename based on configuration."""
@@ -345,40 +365,54 @@ class EmbeddingManager:
         identifiers: list[str],
         source_data_dir: Path | None = None,
     ) -> bool:
-        """Try to load embeddings from cache."""
-        if (
-            not self.config.enable_cache
-            or not self._cache_path
-            or not self._cache_path.exists()
-        ):
+        """Try to load embeddings from cache with detailed validation logging."""
+        if not self.config.enable_cache:
+            self.logger.info("Cache disabled in configuration")
+            return False
+
+        if not self._cache_path:
+            self.logger.warning("No cache path set")
+            return False
+
+        if not self._cache_path.exists():
+            self.logger.info(f"Cache file does not exist: {self._cache_path.name}")
+            self.logger.info("Rebuild required: Cache file not found")
             return False
 
         try:
+            self.logger.info(f"Attempting to load cache: {self._cache_path.name}")
             with open(self._cache_path, "rb") as f:
                 cache = pickle.load(f)
 
             if not isinstance(cache, EmbeddingCache):
-                self.logger.warning("Invalid cache format")
+                self.logger.warning("Rebuild required: Invalid cache format")
                 return False
 
-            # Validate cache
-            if not cache.is_valid(
+            # Validate cache with detailed reason
+            is_valid, reason = cache.validate_with_reason(
                 len(texts),
                 self.config.model_name,
                 self.config.ids_set,
                 source_data_dir,
-            ):
+            )
+
+            if not is_valid:
+                self.logger.info(f"Rebuild required: {reason}")
                 return False
 
             # Check if identifiers match
-            if set(cache.path_ids) != set(identifiers):
+            cached_set = set(cache.path_ids)
+            current_set = set(identifiers)
+            if cached_set != current_set:
+                self.logger.info("Rebuild required: Path identifiers have changed")
                 return False
 
             self._cache = cache
+            self.logger.info("Cache validation successful - using existing embeddings")
             return True
 
         except Exception as e:
-            self.logger.error(f"Failed to load embeddings cache: {e}")
+            self.logger.error(f"Rebuild required: Failed to load cache - {e}")
             return False
 
     def _create_cache(

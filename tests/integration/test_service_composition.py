@@ -18,12 +18,15 @@ class TestServiceComposition:
     @pytest.mark.asyncio
     async def test_search_tool_with_services(self, search_tool):
         """Test SearchTool uses core services for search functionality."""
+        # Import SearchResponse for proper mocking
+        from imas_mcp.search.search_strategy import SearchResponse
+
         # Mock search execution
         with patch.object(search_tool, "_search_service") as mock_search:
-            mock_result = MagicMock()
-            mock_result.hits = []
-            mock_result.total_hits = 0
-            mock_search.search = AsyncMock(return_value=[])
+            # Mock SearchResponse return from search service
+            mock_search.search = AsyncMock(
+                return_value=SearchResponse(hits=[], all_paths=[])
+            )
 
             # Mock response service
             mock_response = MagicMock()

@@ -258,60 +258,163 @@ class EnhancedRelationshipEngine:
     def _get_catalog_relationships(
         self, path: str, max_depth: int
     ) -> list[dict[str, Any]]:
-        """Get basic relationships from catalog."""
+        """Get enhanced relationships from catalog including clustering data."""
         if not self.relationships_catalog:
             return []
 
         cross_references = self.relationships_catalog.get("cross_references", {})
         physics_concepts = self.relationships_catalog.get("physics_concepts", {})
         unit_families = self.relationships_catalog.get("unit_families", {})
+        clusters = self.relationships_catalog.get("clusters", [])
 
         relationships = []
 
-        # Direct cross-references
+        # Enhanced cluster-based relationships
+        path_clusters = []
+        for cluster in clusters:
+            if path in cluster.get("paths", []):
+                path_clusters.append(cluster)
+
+        for cluster in path_clusters:
+            cluster_id = cluster["id"]
+            similarity_score = cluster.get("similarity_score", 0.0)
+            is_cross_ids = cluster.get("is_cross_ids", False)
+            cluster_size = cluster.get("size", 0)
+            ids_names = cluster.get("ids_names", [])
+
+            # Add other paths from the same cluster
+            for cluster_path in cluster.get("paths", []):
+                if cluster_path != path:  # Don't include the source path
+                    # Enhanced strength calculation based on cluster properties
+                    base_strength = min(similarity_score, 0.9)  # Cap at very strong
+                    if is_cross_ids:
+                        base_strength *= 1.1  # Boost cross-IDS relationships
+                    if cluster_size < 5:
+                        base_strength *= 1.05  # Boost smaller, more focused clusters
+
+                    relationships.append(
+                        {
+                            "path": cluster_path,
+                            "type": "cluster_cross_ids"
+                            if is_cross_ids
+                            else "cluster_intra_ids",
+                            "distance": 1,
+                            "strength": min(base_strength, 0.95),
+                            "source": "clustering",
+                            "cluster_id": cluster_id,
+                            "cluster_size": cluster_size,
+                            "similarity_score": similarity_score,
+                            "ids_names": ids_names,
+                            "cluster_type": "cross-IDS"
+                            if is_cross_ids
+                            else "intra-IDS",
+                        }
+                    )
+
+        # Traditional direct cross-references (enhanced with cluster context)
         if path in cross_references:
             for rel in cross_references[path].get("relationships", []):
+                rel_path = rel.get("path", "")
+                # Check if this relationship is also in a cluster for enhanced strength
+                enhanced_strength = RelationshipStrength.STRONG
+                for cluster in path_clusters:
+                    if rel_path in cluster.get("paths", []):
+                        enhanced_strength = min(
+                            RelationshipStrength.VERY_STRONG,
+                            cluster.get("similarity_score", 0.7) + 0.1,
+                        )
+                        break
+
                 relationships.append(
                     {
-                        "path": rel.get("path", ""),
+                        "path": rel_path,
                         "type": "cross_reference",
                         "distance": 1,
-                        "strength": RelationshipStrength.STRONG,
+                        "strength": enhanced_strength,
                         "source": "catalog_direct",
                     }
                 )
 
-        # Physics concepts
+        # Enhanced physics concepts with cluster validation
         if path in physics_concepts:
-            for rel_path in physics_concepts[path].get("relevant_paths", []):
-                relationships.append(
-                    {
-                        "path": rel_path,
-                        "type": "physics_concept",
-                        "distance": 1,
-                        "strength": RelationshipStrength.MODERATE,
-                        "source": "catalog_physics",
-                    }
-                )
+            physics_data = physics_concepts[path]
+            relevant_paths = physics_data.get("relevant_paths", [])
+            key_relationships = physics_data.get("key_relationships", [])
 
-        # Unit relationships
+            # Prioritize key relationships
+            for rel_path in key_relationships:
+                if rel_path not in [r["path"] for r in relationships]:
+                    # Check cluster membership for enhanced strength
+                    cluster_validated = any(
+                        rel_path in cluster.get("paths", [])
+                        for cluster in path_clusters
+                    )
+                    strength = (
+                        RelationshipStrength.STRONG
+                        if cluster_validated
+                        else RelationshipStrength.MODERATE
+                    )
+
+                    relationships.append(
+                        {
+                            "path": rel_path,
+                            "type": "physics_key_concept",
+                            "distance": 1,
+                            "strength": strength,
+                            "source": "catalog_physics_key",
+                            "cluster_validated": cluster_validated,
+                        }
+                    )
+
+            # Add relevant paths with lower priority
+            for rel_path in relevant_paths:
+                if rel_path not in [r["path"] for r in relationships]:
+                    relationships.append(
+                        {
+                            "path": rel_path,
+                            "type": "physics_concept",
+                            "distance": 1,
+                            "strength": RelationshipStrength.MODERATE,
+                            "source": "catalog_physics",
+                        }
+                    )
+
+        # Enhanced unit relationships with clustering context
         for unit_name, unit_data in unit_families.items():
             paths_with_unit = unit_data.get("paths_using", [])
             if path in paths_with_unit:
                 for related_path in paths_with_unit:
-                    if related_path != path:
+                    if related_path != path and related_path not in [
+                        r["path"] for r in relationships
+                    ]:
+                        # Check if unit relationship is validated by clustering
+                        cluster_validated = any(
+                            related_path in cluster.get("paths", [])
+                            for cluster in path_clusters
+                        )
+                        strength = (
+                            RelationshipStrength.MODERATE
+                            if cluster_validated
+                            else RelationshipStrength.WEAK
+                        )
+
                         relationships.append(
                             {
                                 "path": related_path,
                                 "type": "unit_relationship",
                                 "distance": 1,
-                                "strength": RelationshipStrength.WEAK,
+                                "strength": strength,
                                 "source": "catalog_units",
                                 "unit": unit_name,
+                                "cluster_validated": cluster_validated,
                             }
                         )
 
-        return relationships[: max_depth * 8]  # Limit for performance
+        # Sort by strength and limit results
+        relationships.sort(key=lambda x: (-x.get("strength", 0), x.get("distance", 1)))
+        return relationships[
+            : max_depth * 12
+        ]  # Increased limit for enhanced clustering data
 
     def _analyze_semantic_relationships(
         self, path: str, catalog_relationships: list[dict[str, Any]]

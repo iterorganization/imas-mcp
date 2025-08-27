@@ -417,10 +417,14 @@ class StructureAnalyzer:
 
     def _generate_structure_catalog(self, ids_data: dict[str, dict[str, Any]]) -> None:
         """Generate cross-IDS structure catalog."""
+        from datetime import UTC, datetime
+
         catalog = {
             "metadata": {
                 "total_ids": len(ids_data),
-                "analysis_timestamp": "2025-08-13T12:00:00Z",  # Could be dynamic
+                "analysis_timestamp": datetime.now(UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "analysis_version": "1.0",
             },
             "structure_summary": {},

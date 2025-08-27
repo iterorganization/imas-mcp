@@ -35,13 +35,165 @@ class AnalysisTool(BaseTool):
     """Tool for analyzing IDS structure with service composition."""
 
     def __init__(self, document_store=None):
-        """Initialize the analysis tool with document store access."""
+        """Initialize the analysis tool with document store access and relationships data."""
         super().__init__(document_store)
         # Note: Structure analysis is now pre-generated during build time
         # We access it through the document store's data directory
 
         # Initialize graph analyzer for enhanced analysis
         self.graph_analyzer = IMASGraphAnalyzer()
+
+        # Load relationships data for clustering insights
+        self._relationships_data = {}
+        self._load_relationships_data()
+
+    def _load_relationships_data(self):
+        """Load relationships data for clustering-enhanced analysis."""
+        try:
+            import importlib.resources
+            import json
+
+            relationships_file = (
+                importlib.resources.files("imas_mcp.resources.schemas")
+                / "relationships.json"
+            )
+            with relationships_file.open("r", encoding="utf-8") as f:
+                self._relationships_data = json.load(f)
+                logger.info(
+                    "Loaded relationships data for enhanced structural analysis"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load relationships data for analysis tool: {e}")
+            self._relationships_data = {}
+
+    def _enhance_structure_with_clustering(
+        self, ids_name: str, ids_documents: list
+    ) -> dict:
+        """Enhance structural analysis with clustering insights."""
+        if not self._relationships_data:
+            return {}
+
+        clusters = self._relationships_data.get("clusters", [])
+        unit_families = self._relationships_data.get("unit_families", {})
+
+        # Extract paths for this IDS
+        ids_paths = [doc.metadata.path_name for doc in ids_documents]
+
+        clustering_insights = {
+            "cluster_participation": {
+                "participating_clusters": [],
+                "cross_ids_clusters": 0,
+                "intra_ids_clusters": 0,
+                "avg_similarity_score": 0.0,
+            },
+            "unit_family_analysis": {
+                "covered_families": [],
+                "total_family_coverage": 0,
+            },
+            "structural_patterns": {
+                "clustered_paths_ratio": 0.0,
+                "highest_similarity_cluster": None,
+                "structural_coherence": "low",
+            },
+        }
+
+        participating_clusters = []
+        similarity_scores = []
+
+        # Find clusters containing paths from this IDS
+        for cluster in clusters:
+            cluster_paths = cluster.get("paths", [])
+            matching_paths = [p for p in ids_paths if p in cluster_paths]
+
+            if matching_paths:
+                cluster_info = {
+                    "cluster_id": cluster["id"],
+                    "similarity_score": cluster.get("similarity_score", 0.0),
+                    "is_cross_ids": cluster.get("is_cross_ids", False),
+                    "cluster_size": cluster.get("size", 0),
+                    "matching_paths_count": len(matching_paths),
+                    "coverage_ratio": len(matching_paths) / len(cluster_paths)
+                    if cluster_paths
+                    else 0,
+                }
+                participating_clusters.append(cluster_info)
+                similarity_scores.append(cluster.get("similarity_score", 0.0))
+
+                if cluster.get("is_cross_ids", False):
+                    clustering_insights["cluster_participation"][
+                        "cross_ids_clusters"
+                    ] += 1
+                else:
+                    clustering_insights["cluster_participation"][
+                        "intra_ids_clusters"
+                    ] += 1
+
+        clustering_insights["cluster_participation"]["participating_clusters"] = (
+            participating_clusters
+        )
+        if similarity_scores:
+            clustering_insights["cluster_participation"]["avg_similarity_score"] = sum(
+                similarity_scores
+            ) / len(similarity_scores)
+            clustering_insights["structural_patterns"]["highest_similarity_cluster"] = (
+                max(similarity_scores)
+            )
+
+        # Analyze unit family coverage
+        covered_families = []
+        total_coverage = 0
+
+        for unit_name, unit_data in unit_families.items():
+            unit_paths = unit_data.get("paths_using", [])
+            matching_unit_paths = [p for p in ids_paths if p in unit_paths]
+
+            if matching_unit_paths:
+                family_info = {
+                    "unit_name": unit_name,
+                    "matching_paths_count": len(matching_unit_paths),
+                    "total_family_size": len(unit_paths),
+                    "coverage_ratio": len(matching_unit_paths) / len(unit_paths)
+                    if unit_paths
+                    else 0,
+                }
+                covered_families.append(family_info)
+                total_coverage += len(matching_unit_paths)
+
+        clustering_insights["unit_family_analysis"]["covered_families"] = (
+            covered_families
+        )
+        clustering_insights["unit_family_analysis"]["total_family_coverage"] = (
+            total_coverage
+        )
+
+        # Calculate structural patterns
+        clustered_paths_count = sum(
+            len(cluster.get("paths", []))
+            for cluster in participating_clusters
+            if cluster
+        )
+        clustering_insights["structural_patterns"]["clustered_paths_ratio"] = (
+            clustered_paths_count / len(ids_paths) if ids_paths else 0.0
+        )
+
+        # Determine structural coherence
+        avg_similarity = clustering_insights["cluster_participation"][
+            "avg_similarity_score"
+        ]
+        if avg_similarity > 0.8:
+            clustering_insights["structural_patterns"]["structural_coherence"] = (
+                "very_high"
+            )
+        elif avg_similarity > 0.6:
+            clustering_insights["structural_patterns"]["structural_coherence"] = "high"
+        elif avg_similarity > 0.4:
+            clustering_insights["structural_patterns"]["structural_coherence"] = (
+                "moderate"
+            )
+        else:
+            clustering_insights["structural_patterns"]["structural_coherence"] = "low"
+
+        return {"clustering_insights": clustering_insights}
 
     async def _load_structure_analysis(self, ids_name: str):
         """Load pre-generated structure analysis from static files."""
@@ -404,10 +556,32 @@ Focus on providing actionable insights for researchers working with this specifi
             )
             description += mermaid_info
 
+            # Add clustering insights to the analysis
+            clustering_enhancement = {}
+            if ids_documents:
+                clustering_enhancement = self._enhance_structure_with_clustering(
+                    ids_name, ids_documents
+                )
+                if clustering_enhancement:
+                    # Add clustering summary to description
+                    cluster_insights = clustering_enhancement.get(
+                        "clustering_insights", {}
+                    )
+                    cluster_summary = cluster_insights.get("cluster_participation", {})
+                    total_clusters = len(
+                        cluster_summary.get("participating_clusters", [])
+                    )
+                    avg_similarity = cluster_summary.get("avg_similarity_score", 0.0)
+
+                    if total_clusters > 0:
+                        description += "\n\n## Clustering Analysis\n"
+                        description += f"This IDS participates in {total_clusters} similarity clusters with average similarity {avg_similarity:.3f}. "
+                        description += f"Structural coherence: {cluster_insights.get('structural_patterns', {}).get('structural_coherence', 'unknown')}."
+
             result = StructureResult(
                 ids_name=ids_name,
                 description=description,
-                structure=structure_dict,
+                structure={**structure_dict, **clustering_enhancement},
                 sample_paths=sample_paths,
                 max_depth=max_depth,
                 analysis=structure_analysis,  # Include the full analysis object

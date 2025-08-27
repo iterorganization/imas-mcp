@@ -411,7 +411,7 @@ class TestExportPhysicsDomain:
         assert "total_found" in metadata
         assert "analysis_timestamp" in metadata
         assert "analysis_engine" in metadata
-        assert metadata["analysis_engine"] == "PhysicsDomainAnalyzer_v1.0"
+        assert metadata["analysis_engine"] == "PhysicsDomainAnalyzer"
 
         # Verify enhancement features
         enhancement_features = metadata["enhancement_features"]

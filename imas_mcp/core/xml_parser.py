@@ -490,6 +490,14 @@ class DataDictionaryTransformer:
     ) -> list[Path]:
         """Generate detailed IDS files."""
         detailed_dir = self.resolved_output_dir / "detailed"
+
+        # Clear the detailed directory first to remove any orphaned files
+        # This prevents files from previous builds (e.g., removed IDS) from remaining
+        if detailed_dir.exists():
+            import shutil
+
+            shutil.rmtree(detailed_dir)
+
         detailed_dir.mkdir(exist_ok=True)
 
         paths = []

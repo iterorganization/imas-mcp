@@ -9,7 +9,7 @@ import logging
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.engines.base_engine import SearchEngine
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch
+from imas_mcp.search.search_strategy import SearchConfig, SearchMatch, SearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class SearchService:
 
     async def search(
         self, query: str | list[str], config: SearchConfig
-    ) -> list[SearchMatch]:
+    ) -> SearchResponse:
         """Execute search request with given configuration.
 
         Args:
@@ -58,7 +58,7 @@ class SearchService:
             config: Search configuration including mode, filters, limits
 
         Returns:
-            List of SearchMatch objects ordered by relevance
+            SearchResponse with search hits limited to max_results
 
         Raises:
             SearchServiceError: When search execution fails
@@ -70,19 +70,19 @@ class SearchService:
             # Get appropriate engine
             engine = self._get_engine(resolved_mode)
 
-            # Execute search
-            results = await engine.search(query, config)
+            # Execute search - engines now return SearchResponse
+            search_result = await engine.search(query, config)
 
-            # Post-process results if needed
-            processed_results = self._post_process_results(results, config)
+            # Post-process hits if needed
+            processed_hits = self._post_process_results(search_result.hits, config)
 
             # Log search execution
             self.logger.info(
                 f"Search completed: mode={resolved_mode.value} "
-                f"query_len={len(str(query))} results={len(processed_results)}"
+                f"query_len={len(str(query))} hits={len(processed_hits)}"
             )
 
-            return processed_results
+            return SearchResponse(hits=processed_hits)
 
         except Exception as e:
             error_msg = f"Search failed: {str(e)}"
