@@ -6,6 +6,7 @@ import pytest
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import SearchResult
+from imas_mcp.search.search_strategy import SearchResponse
 from imas_mcp.tools.search_tool import SearchTool
 
 
@@ -50,7 +51,9 @@ class TestSearchToolServices:
         """Test search configuration optimization based on query."""
 
         # Mock services
-        search_tool._search_service.search = AsyncMock(return_value=[])
+        search_tool._search_service.search = AsyncMock(
+            return_value=SearchResponse(hits=[], all_paths=[])
+        )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         mock_response = SearchResult(
@@ -85,13 +88,37 @@ class TestSearchToolServices:
     async def test_response_building_with_results(self, search_tool):
         """Test response building when search returns results."""
 
-        # Mock search results
-        mock_result = MagicMock()
-        mock_result.document.metadata.path_name = "core_profiles/temperature"
-        mock_result.document.documentation = "Plasma temperature measurement"
-        mock_result.score = 0.95
+        # Import needed classes for proper mock objects
+        from imas_mcp.models.constants import SearchMode
+        from imas_mcp.search.document_store import Document, DocumentMetadata
+        from imas_mcp.search.search_strategy import SearchMatch
 
-        search_tool._search_service.search = AsyncMock(return_value=[mock_result])
+        # Create proper SearchMatch object
+        mock_metadata = DocumentMetadata(
+            path_name="core_profiles/temperature",
+            path_id="test_path_1",
+            ids_name="core_profiles",
+            data_type="temperature",
+            physics_domain="plasma_core",
+        )
+        mock_document = Document(
+            metadata=mock_metadata,
+            documentation="Plasma temperature measurement",
+            units=None,
+        )
+        mock_result = SearchMatch(
+            document=mock_document,
+            score=0.95,
+            rank=0,
+            search_mode=SearchMode.SEMANTIC,
+            highlights="temperature",
+        )
+
+        search_tool._search_service.search = AsyncMock(
+            return_value=SearchResponse(
+                hits=[mock_result], all_paths=["core_profiles/temperature"]
+            )
+        )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Mock response service to capture arguments
@@ -111,10 +138,10 @@ class TestSearchToolServices:
 
         await search_tool.search_imas(query="temperature")
 
-        # Verify response service received correct arguments
+        # Verify response service received correct arguments from SearchResponse.hits
         build_call = search_tool.response.build_search_response.call_args
         assert build_call[1]["query"] == "temperature"
-        assert len(build_call[1]["results"]) == 1
+        assert len(build_call[1]["results"]) == 1  # Should get hits from SearchResponse
         # Check for expected fields in the response builder call
         assert "search_mode" in build_call[1]
         assert "ids_filter" in build_call[1]
@@ -169,7 +196,9 @@ class TestSearchToolServices:
         """Test search configuration service creates proper config."""
 
         # Mock other services
-        search_tool._search_service.search = AsyncMock(return_value=[])
+        search_tool._search_service.search = AsyncMock(
+            return_value=SearchResponse(hits=[], all_paths=[])
+        )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
         mock_response = SearchResult(
             hits=[],

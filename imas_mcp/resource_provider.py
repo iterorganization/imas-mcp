@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from imas_mcp.core.relationships import Relationships
 from imas_mcp.providers import MCPProvider
 from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
@@ -150,12 +151,30 @@ class Resources(MCPProvider):
         Perfect for: Multi-IDS analysis, physics correlation, dependency mapping.
         """
         try:
-            return (self.schema_dir / "relationships.json").read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            # Fall back to latin-1 if utf-8 fails
-            return (self.schema_dir / "relationships.json").read_text(
-                encoding="latin-1"
-            )
+            # Use the relationships manager for better cache management
+            relationships = Relationships()
+
+            # Check if rebuild is needed and add warning to output
+            if relationships.needs_rebuild():
+                logger.warning(
+                    "Relationships data may be outdated - consider rebuilding"
+                )
+
+            relationships_data = relationships.get_data()
+            return json.dumps(relationships_data, indent=2, ensure_ascii=False)
+
+        except Exception as e:
+            logger.error(f"Failed to load relationships data: {e}")
+            # Fallback to direct file access
+            try:
+                return (self.schema_dir / "relationships.json").read_text(
+                    encoding="utf-8"
+                )
+            except UnicodeDecodeError:
+                # Fall back to latin-1 if utf-8 fails
+                return (self.schema_dir / "relationships.json").read_text(
+                    encoding="latin-1"
+                )
 
     @mcp_resource(
         "Mermaid Hierarchy Graph - Visual representation of IDS hierarchical structure.",

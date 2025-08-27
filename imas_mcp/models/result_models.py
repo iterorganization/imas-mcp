@@ -161,6 +161,11 @@ class ExportResult(BaseModel):
 class SearchHits(BaseModel):
     """Base class for responses that contain search hits."""
 
+    # Summary at the very top for immediate visibility
+    summary: dict[str, Any] = Field(
+        default_factory=dict, description="Summary of all matching paths"
+    )
+
     hits: list["SearchHit"] = Field(default_factory=list, description="Search hits")
 
     @property
@@ -269,7 +274,12 @@ class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
     path: str
     relationship_type: RelationshipType = RelationshipType.ALL
     max_depth: int = 2
-    connections: dict[str, list[str]] = Field(default_factory=dict)
+    connections: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Categorized relationship paths with intra-IDS and cross-IDS separation",
+    )
+
+    # Remove nodes field entirely - connections contain all the path information
 
     # Relationship-specific analysis fields
     relationship_insights: dict[str, Any] = Field(

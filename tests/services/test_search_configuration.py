@@ -23,7 +23,7 @@ class TestSearchConfigurationService:
 
         assert isinstance(config, SearchConfig)
         assert config.search_mode == SearchMode.AUTO
-        assert config.max_results == 10
+        assert config.max_results == 50  # Service default, not class default
         assert config.ids_filter is None
         # Physics is now always enabled at the core level, no longer a config parameter
 

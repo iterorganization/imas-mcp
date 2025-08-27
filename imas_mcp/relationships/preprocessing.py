@@ -131,7 +131,6 @@ class UnitFamilyBuilder:
                 unit_families[unit] = {
                     "base_unit": unit,
                     "paths_using": paths,
-                    "conversion_factors": {},
                 }
 
         return unit_families
