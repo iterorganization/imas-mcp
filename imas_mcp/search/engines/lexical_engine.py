@@ -66,6 +66,11 @@ class LexicalSearchEngine(SearchEngine):
                 query_str, config
             )
 
+            # Check if this is an exact path query and handle specially
+            exact_path_results = self._try_exact_path_search(query_str, enhanced_config)
+            if exact_path_results is not None:
+                return exact_path_results
+
             # Apply IDS filtering if specified (including auto-detected)
             if enhanced_config.ids_filter:
                 # Add IDS filter to query
@@ -151,6 +156,110 @@ class LexicalSearchEngine(SearchEngine):
         except Exception as e:
             self.logger.warning(f"Failed to validate IDS against catalog: {e}")
             return None
+
+    def _try_exact_path_search(
+        self, query_str: str, config: SearchConfig
+    ) -> SearchResponse | None:
+        """Try exact path search for full IMAS path queries.
+
+        This method detects full IMAS paths and performs direct lookup
+        for exact matches, ensuring single results for valid paths.
+
+        Args:
+            query_str: Search query string
+            config: Search configuration
+
+        Returns:
+            SearchResponse if exact path found, None otherwise
+        """
+        # Check if this looks like a full IMAS path
+        if not self._is_full_imas_path(query_str):
+            return None
+
+        # Try direct document lookup first
+        document = self.document_store.get_document(query_str)
+        if document:
+            # Found exact match
+            result = SearchMatch(
+                document=document,
+                score=1.0,  # Perfect match
+                rank=0,
+                search_mode=SearchMode.LEXICAL,
+                highlights="",
+            )
+            self.log_search_execution(query_str, config, 1)
+            return SearchResponse(hits=[result])
+
+        # Try FTS5 with quoted exact match
+        try:
+            # Escape the path for FTS5 and use quotes for exact matching
+            escaped_query = self._escape_path_for_fts(query_str)
+            documents = self.document_store.search_full_text(
+                escaped_query, max_results=config.max_results
+            )
+
+            if documents:
+                results = []
+                for rank, doc in enumerate(documents):
+                    # Prioritize exact path matches
+                    score = (
+                        1.0 if doc.metadata.path_id == query_str else 0.8 - (rank * 0.1)
+                    )
+
+                    result = SearchMatch(
+                        document=doc,
+                        score=max(score, 0.1),  # Minimum score
+                        rank=rank,
+                        search_mode=SearchMode.LEXICAL,
+                        highlights="",
+                    )
+                    results.append(result)
+
+                # Sort by score (exact matches first)
+                results.sort(key=lambda x: x.score, reverse=True)
+                self.log_search_execution(query_str, config, len(results))
+                return SearchResponse(hits=results)
+
+        except Exception as e:
+            self.logger.debug(f"Exact path FTS search failed: {e}")
+
+        return None
+
+    def _is_full_imas_path(self, query_str: str) -> bool:
+        """Check if query looks like a full IMAS path.
+
+        Args:
+            query_str: Query string to check
+
+        Returns:
+            True if it looks like a full IMAS path
+        """
+        # Must contain slashes
+        if "/" not in query_str:
+            return False
+
+        # Must have at least 2 path components
+        parts = query_str.split("/")
+        if len(parts) < 2:
+            return False
+
+        # First part should be a valid IDS name - use the existing validation logic
+        potential_ids = self._extract_ids_from_path(query_str)
+        return potential_ids is not None
+
+    def _escape_path_for_fts(self, path: str) -> str:
+        """Escape IMAS path for FTS5 exact matching.
+
+        Args:
+            path: IMAS path to escape
+
+        Returns:
+            FTS5-safe escaped path query
+        """
+        # Use double quotes for exact phrase matching
+        # Replace slashes with spaces for better FTS5 matching
+        escaped = path.replace("/", " ")
+        return f'"{escaped}"'
 
     def _enhance_config_with_path_intelligence(
         self, query_str: str, config: SearchConfig

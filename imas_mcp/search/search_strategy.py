@@ -7,6 +7,7 @@ and extensibility.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 from pydantic import BaseModel, Field, field_validator
@@ -367,21 +368,32 @@ class SearchModeSelector:
         """Check if query is technical and benefits from exact matching."""
         # Check for path-like queries (contains / and looks like IMAS paths)
         if "/" in query:
-            # Additional checks to ensure it's a path-like query
-            path_indicators = [
-                "profiles_1d",
-                "profiles_2d",
-                "time_slice",
-                "global_quantities",
-                "core_profiles",
-                "equilibrium",
-                "transport",
-                "mhd",
-                "wall",
-            ]
-            # If it contains a slash and any common IMAS path component, treat as path query
-            if any(indicator in query.lower() for indicator in path_indicators):
-                return True
+            # Check if it looks like a full IMAS path with proper structure
+            parts = query.split("/")
+            if len(parts) >= 2:
+                # First part should look like an IDS name
+                potential_ids = parts[0].strip()
+                if re.match(r"^[a-z][a-z0-9_]*$", potential_ids):
+                    # Contains common IMAS path indicators
+                    path_indicators = [
+                        "profiles_1d",
+                        "profiles_2d",
+                        "time_slice",
+                        "global_quantities",
+                        "core_profiles",
+                        "equilibrium",
+                        "transport",
+                        "mhd",
+                        "wall",
+                        "electrons",
+                        "ions",
+                        "temperature",
+                        "density",
+                        "validity",
+                    ]
+                    # If it contains a slash and any common IMAS path component, treat as path query
+                    if any(indicator in query.lower() for indicator in path_indicators):
+                        return True
 
         # Check for IMAS-specific technical terms
         imas_technical_terms = [
