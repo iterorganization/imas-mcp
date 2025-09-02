@@ -86,7 +86,7 @@ jobs:
           print('ASV configured for main branch context - tracking main and HEAD')
           "
 
-      - name: Download previous benchmark results
+      - name: Identify previous benchmark results
         uses: actions/github-script@v7
         with:
           script: |
