@@ -6,6 +6,7 @@ serving as the primary entry point for users to discover and navigate
 the IMAS data dictionary structure.
 """
 
+import importlib.metadata
 import importlib.resources
 import json
 import logging
@@ -274,6 +275,12 @@ class OverviewTool(BaseTool):
             identifier_schemas_count = identifier_metadata.get("total_ids", 0)
             mcp_tools = self._get_mcp_tools()
 
+            # Get MCP server version
+            try:
+                version = importlib.metadata.version("imas-mcp")
+            except importlib.metadata.PackageNotFoundError:
+                version = "0.0.0"
+
             # Determine relevant IDS based on query
             if query:
                 relevant_ids = self._filter_ids_by_query(query)
@@ -333,6 +340,8 @@ class OverviewTool(BaseTool):
             ]
 
             # Add version information if available
+            if version:
+                content_parts.append(f"🚀 **MCP Server Version**: {version}")
             if dd_version:
                 content_parts.append(f"🏷️ **DD Version**: {dd_version}")
 
@@ -405,6 +414,7 @@ class OverviewTool(BaseTool):
                 physics_domains=list(physics_domains_found),
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
+                version=version,
                 dd_version=dd_version,
                 generation_date=generation_date,
                 total_leaf_nodes=total_leaf_nodes,
