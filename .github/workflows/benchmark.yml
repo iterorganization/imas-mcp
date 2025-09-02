@@ -36,6 +36,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      actions: read  # Required to download artifacts from previous runs
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -86,10 +87,11 @@ jobs:
           "
 
       - name: Download previous benchmark results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: asv-results
           path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
       - name: Setup ASV machine
@@ -156,6 +158,7 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
           include-hidden-files: true
+          overwrite: true
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'
@@ -181,35 +184,6 @@ jobs:
         if: github.ref == 'refs/heads/main'
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Comment PR with benchmark results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = '.asv/html/index.json';
-
-            if (fs.existsSync(path)) {
-              const results = JSON.parse(fs.readFileSync(path, 'utf8'));
-              const benchmarkUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/benchmarks/`;
-              
-              const body = `## 📊 Benchmark Results
-              
-              Performance benchmarks have been run for this PR.
-              
-              🔗 **[View full benchmark report](${benchmarkUrl})**
-              
-              > Results are compared against the main branch. Significant changes will be highlighted in the full report.
-              `;
-              
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: body
-              });
-            }
 
   clear-benchmarks:
     if: github.event.inputs.action == 'clear'
