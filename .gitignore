@@ -56,3 +56,5 @@ poetry.lock
 # Log files
 *.log
 .env
+.asv/
+imas_mcp/database/imas_fts.db

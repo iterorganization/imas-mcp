@@ -8,14 +8,14 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
 ]
 build-backend = "hatchling.build"
 
 [project]
 name = "imas-mcp"
 dynamic = ["version"]
-description = "An AI-Enhanced MCP Server for accessing the IMAS Data Dictionary"
+description = "An IMAS Data Dictionary MCP server"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Simon McIntosh", email = "simon.mcintosh@iter.org" }]
@@ -42,20 +42,35 @@ classifiers = [
     "Topic :: Database :: Database Engines/Servers",
 ]
 dependencies = [
-    "fastmcp>=2.2.8,<3.0.0",
+    "fastmcp>=2.10.6,<3.0.0",
     "pydantic>=2.11.4,<3.0.0",
     "pint>=0.24.4,<0.25.0",
     "nest-asyncio>=1.5.0,<2.0.0",
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
+    "numpy>=2.3.1",
+    "sentence-transformers>=5.0.0",
+    "huggingface-hub[hf_xet]>=0.33.4",
+    "cachetools>=5.3.0,<6.0.0",
 ]
 
 [project.optional-dependencies]
-http = ["starlette>=0.37.0,<1.0.0", "uvicorn>=0.30.0,<1.0.0"]
-test = ["pytest>=8.3.5,<9.0.0", "pytest-cov>=6.1.1,<7.0.0", "coverage>=7.0.0"]
-# Legacy lexicographic modules (deprecated)
-legacy = ["packaging>=25.0,<26.0", "whoosh>=2.7.4,<3.0.0"]
+http = [
+    "fastapi>=0.100.0,<1.0.0",
+    "starlette>=0.37.0,<1.0.0",
+    "uvicorn>=0.30.0,<1.0.0",
+]
+test = [
+    "pytest>=8.3.5,<9.0.0",
+    "pytest-cov>=6.1.1,<7.0.0",
+    "pytest-asyncio>=0.21.0,<1.0.0",
+    "pytest-xdist>=3.0.0,<4.0.0",
+    "pytest-benchmark>=4.0.0,<5.0.0",
+    "pytest-timeout>=2.1.0,<3.0.0",
+    "coverage>=7.0.0",
+]
+bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
 
 [dependency-groups]
 dev = [
@@ -71,7 +86,9 @@ dev = [
     "ipywidgets>=8.1.7",
     # Build dependencies
     "rich>=13.7.0,<14.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@35f54e8b6ff041f37fe7257abcede06d19704d89",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
+    "matplotlib>=3.10.5",
+    "seaborn>=0.13.2",
 ]
 
 [project.urls]
@@ -83,23 +100,22 @@ Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
 [project.scripts]
 run-server = "scripts.run_server:run_server"
 run-context = "scripts.run_context:run_context"
-build-json-data = "scripts.build_json_data:build_json_data"
+build-schemas = "scripts.build_schemas:build_schemas"
+build-relationships = "scripts.build_relationships:build_relationships"
+build-embeddings = "scripts.build_embeddings:build_embeddings"
+build-mermaid = "scripts.build_mermaid:build_mermaid"
 
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["imas_mcp"]
-include = ["README.md", "LICENSE"]
-exclude = ["*.pyc", "__pycache__/*", "imas_mcp/resources/.gitkeep"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"imas_mcp/resources" = "imas_mcp/resources"
-"imas_mcp/definitions" = "imas_mcp/definitions"
+exclude = ["imas_mcp/resources/.gitkeep"]
+artifacts = ["imas_mcp/resources/**"]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
-verbose = false
+verbose = true
 ids-filter = ""
 
 [tool.hatch.envs.test]
@@ -136,7 +152,7 @@ disallow_incomplete_defs = true
 
 # Optional dependency overrides (only when installed)
 [[tool.mypy.overrides]]
-module = ["whoosh.*", "packaging.*"]
+module = ["packaging.*"]
 ignore_missing_imports = true
 
 [tool.hatch.metadata]
@@ -144,7 +160,32 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--strict-config", "--verbose"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--durations=10",
+    "--cache-clear",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+markers = [
+    "asyncio: marks tests as async",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "fast: marks tests as fast-running unit tests",
+    "performance: marks tests that focus on performance",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+# Performance optimizations
+cache_dir = ".pytest_cache"
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 [tool.coverage.run]
 source = ["imas_mcp"]
@@ -167,3 +208,39 @@ precision = 2
 [tool.coverage.html]
 directory = "htmlcov"
 precision = 2
+
+# Ruff configuration
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+indent-width = 4
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "C901",  # too complex
+    "E501",  # long lines 
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"tests/**/*" = ["B011", "F401", "F811"]  # Allow assert False and unused imports in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["imas_mcp"]
+force-single-line = false
+combine-as-imports = true

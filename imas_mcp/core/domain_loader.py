@@ -6,10 +6,11 @@ replacing the hardcoded Python-based categorization system.
 """
 
 import logging
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-import yaml
 from importlib import resources
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -17,19 +18,13 @@ logger = logging.getLogger(__name__)
 class DomainDefinitionLoader:
     """Loads physics domain definitions from YAML files."""
 
-    def __init__(self, definitions_dir: Optional[Path] = None):
+    def __init__(self, definitions_dir: Path | None = None):
         """Initialize the loader with the definitions directory."""
         if definitions_dir is None:
-            try:
-                definitions_package = resources.files(
-                    "imas_mcp.definitions.physics_domains"
-                )
-                definitions_dir = Path(str(definitions_package))
-            except (ImportError, FileNotFoundError):
-                # Fallback to relative path for development
-                current_file = Path(__file__).parent
-                package_root = current_file.parent  # imas_mcp package directory
-                definitions_dir = package_root / "definitions" / "physics_domains"
+            definitions_package = resources.files(
+                "imas_mcp.definitions.physics.domains"
+            )
+            definitions_dir = Path(str(definitions_package))
 
         self.definitions_dir = Path(definitions_dir)
         self._domain_characteristics = None
@@ -39,12 +34,12 @@ class DomainDefinitionLoader:
         if not self.definitions_dir.exists():
             logger.warning(f"Definitions directory not found: {self.definitions_dir}")
 
-    def _load_yaml_file(self, filename: str) -> Dict[str, Any]:
+    def _load_yaml_file(self, filename: str) -> dict[str, Any]:
         """Load a YAML file from the definitions directory using PyYAML."""
         try:
             # Try using importlib.resources first (works for installed packages)
             definitions_package = resources.files(
-                "imas_mcp.definitions.physics_domains"
+                "imas_mcp.definitions.physics.domains"
             )
             file_ref = definitions_package / filename
 
@@ -66,7 +61,7 @@ class DomainDefinitionLoader:
             return {}
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
             logger.debug(
@@ -77,14 +72,14 @@ class DomainDefinitionLoader:
             logger.error(f"Failed to load {filename}: {e}")
             return {}
 
-    def load_domain_characteristics(self) -> Dict[str, Dict[str, Any]]:
+    def load_domain_characteristics(self) -> dict[str, dict[str, Any]]:
         """Load domain characteristics from YAML."""
         if self._domain_characteristics is None:
             data = self._load_yaml_file("domain_characteristics.yaml")
             self._domain_characteristics = data.get("domains", {})
         return self._domain_characteristics
 
-    def load_ids_mapping(self) -> Dict[str, str]:
+    def load_ids_mapping(self) -> dict[str, str]:
         """Load IDS to domain mapping from YAML."""
         if self._ids_mapping is None:
             data = self._load_yaml_file("ids_mapping.yaml")
@@ -101,14 +96,14 @@ class DomainDefinitionLoader:
             self._ids_mapping = mapping
         return self._ids_mapping
 
-    def load_domain_relationships(self) -> Dict[str, List[str]]:
+    def load_domain_relationships(self) -> dict[str, list[str]]:
         """Load domain relationships from YAML."""
         if self._domain_relationships is None:
             data = self._load_yaml_file("domain_relationships.yaml")
             self._domain_relationships = data.get("relationships", {})
         return self._domain_relationships
 
-    def get_metadata(self, definition_type: str) -> Dict[str, Any]:
+    def get_metadata(self, definition_type: str) -> dict[str, Any]:
         """Get metadata for a specific definition type."""
         filename_map = {
             "characteristics": "domain_characteristics.yaml",
@@ -123,7 +118,7 @@ class DomainDefinitionLoader:
         data = self._load_yaml_file(filename)
         return data.get("metadata", {})
 
-    def validate_definitions(self) -> Dict[str, Any]:
+    def validate_definitions(self) -> dict[str, Any]:
         """Validate the loaded definitions for consistency."""
         validation_results = {
             "valid": True,
@@ -150,7 +145,7 @@ class DomainDefinitionLoader:
 
             # Check if all domains in relationships exist in characteristics
             relationship_domains = set(relationships.keys())
-            for domain, related in relationships.items():
+            for _domain, related in relationships.items():
                 relationship_domains.update(related)
 
             missing_from_relationships = relationship_domains - defined_domains
@@ -191,7 +186,7 @@ def get_domain_loader() -> DomainDefinitionLoader:
     return _domain_loader
 
 
-def load_physics_domains_from_yaml() -> Dict[str, Any]:
+def load_physics_domains_from_yaml() -> dict[str, Any]:
     """Load complete physics domain definitions from YAML files."""
     loader = get_domain_loader()
 

@@ -5,35 +5,46 @@ files, including hierarchical documentation building and tree traversal utilitie
 """
 
 import xml.etree.ElementTree as ET
-from typing import Dict, Optional
 
 
 class DocumentationBuilder:
     """Utilities for building hierarchical documentation from XML elements."""
 
     @staticmethod
-    def build_hierarchical_documentation(documentation_parts: Dict[str, str]) -> str:
-        """Build LLM-optimized hierarchical documentation from path-based parts.
+    def _normalize_sentence_punctuation(text: str) -> str:
+        """Add missing punctuation to ensure proper sentence structure.
 
-        Creates documentation optimized for Large Language Model comprehension by:
-        1. Leading with structured metadata for quick parsing
-        2. Providing clear semantic relationships
-        3. Using explicit labels rather than implicit markdown structure
-        4. Placing most relevant context first
-        5. Including relationship and type information
+        Args:
+            text: Raw documentation text
+
+        Returns:
+            Text with proper sentence-ending punctuation
+        """
+        text = text.strip()
+        if text and text[-1] not in ".!?":
+            text += "."
+        return text
+
+    @staticmethod
+    def build_hierarchical_documentation(documentation_parts: dict[str, str]) -> str:
+        """Build semantic documentation optimized for sentence transformers.
+
+        Creates natural language documentation by combining the primary field
+        description with hierarchical context from parent elements. Optimized
+        for semantic embedding generation rather than structured parsing.
 
         Args:
             documentation_parts: Dictionary where keys are hierarchical paths
                 and values are the documentation strings for each node.
 
         Returns:
-            A structured string optimized for LLM understanding with explicit
-            semantic relationships and clear information hierarchy.
+            Natural language documentation combining primary description with
+            hierarchical context for optimal semantic understanding.
         """
         if not documentation_parts:
             return ""
 
-        # Find the deepest (leaf) path
+        # Find the deepest (leaf) path - this is the primary element
         paths_by_depth = sorted(documentation_parts.keys(), key=lambda x: x.count("/"))
         if not paths_by_depth:
             return ""
@@ -41,61 +52,52 @@ class DocumentationBuilder:
         deepest_path = paths_by_depth[-1]
         leaf_doc = documentation_parts.get(deepest_path, "")
 
-        # Build LLM-optimized structure
-        doc_sections = []
+        # Build natural language description
+        doc_parts = []
 
-        # 1. STRUCTURED METADATA BLOCK (Easy for LLMs to parse)
-        path_parts = deepest_path.split("/")
-        ids_name = path_parts[0] if path_parts else ""
-
-        metadata_block = [
-            "=== IMAS DATA DICTIONARY ENTRY ===",
-            f"FULL_PATH: {deepest_path}",
-            f"IDS: {ids_name}",
-            f"HIERARCHY_DEPTH: {len(path_parts) - 1}",
-            f"TOTAL_CONTEXT_LEVELS: {len(documentation_parts)}",
-        ]
-
-        if len(path_parts) > 1:
-            metadata_block.append(f"PARENT_CONTAINER: {'/'.join(path_parts[:-1])}")
-            metadata_block.append(f"FIELD_NAME: {path_parts[-1]}")
-            metadata_block.append("IS_LEAF_FIELD: True")
-        else:
-            metadata_block.append("IS_ROOT_IDS: True")
-
-        # Add path components for easy parsing
-        if len(path_parts) > 1:
-            metadata_block.append(f"PATH_COMPONENTS: {' -> '.join(path_parts)}")
-
-        doc_sections.append("\n".join(metadata_block))
-
-        # 2. PRIMARY DESCRIPTION (Most important info first)
+        # Primary description first (most important for embeddings)
         if leaf_doc:
-            doc_sections.append(f"PRIMARY_DESCRIPTION: {leaf_doc}")
+            doc_parts.append(
+                DocumentationBuilder._normalize_sentence_punctuation(leaf_doc)
+            )
 
-        # 3. CONTEXTUAL HIERARCHY (Explicit semantic relationships)
-        remaining_paths = paths_by_depth[:-1]
+        # Add hierarchical context as natural language
+        remaining_paths = paths_by_depth[:-1]  # Exclude the leaf path
         if remaining_paths:
-            hierarchy_lines = ["=== CONTEXTUAL HIERARCHY ==="]
+            context_descriptions = []
 
             for path_key in remaining_paths:
-                doc = documentation_parts[path_key]
-                if doc:
-                    path_parts_ctx = path_key.split("/")
-                    level_name = "ROOT_IDS" if len(path_parts_ctx) == 1 else "CONTAINER"
-                    hierarchy_lines.append(f"{level_name}[{path_key}]: {doc}")
+                parent_doc = documentation_parts.get(path_key)
+                if parent_doc:
+                    normalized_doc = (
+                        DocumentationBuilder._normalize_sentence_punctuation(parent_doc)
+                    )
 
-            doc_sections.append("\n".join(hierarchy_lines))
+                    # Determine context level naturally
+                    if "/" not in path_key:
+                        # Root IDS level
+                        context_descriptions.append(
+                            f"Within {path_key} IDS: {normalized_doc}"
+                        )
+                    else:
+                        # Container level
+                        container_name = path_key.split("/")[-1]
+                        context_descriptions.append(
+                            f"Within {container_name} container: {normalized_doc}"
+                        )
 
-        return "\n\n".join(doc_sections)
+            # Add context descriptions
+            doc_parts.extend(context_descriptions)
+
+        return " ".join(doc_parts)
 
     @staticmethod
     def collect_documentation_hierarchy(
         elem: ET.Element,
         ids_elem: ET.Element,
         ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Dict[str, str]:
+        parent_map: dict[ET.Element, ET.Element],
+    ) -> dict[str, str]:
         """Collect documentation from element hierarchy up to IDS root.
 
         Walks up the XML tree from the given element to collect documentation
@@ -151,7 +153,7 @@ class XmlTreeUtils:
     """Common XML tree traversal utilities."""
 
     @staticmethod
-    def build_parent_map(root: ET.Element) -> Dict[ET.Element, ET.Element]:
+    def build_parent_map(root: ET.Element) -> dict[ET.Element, ET.Element]:
         """Build parent map for efficient tree traversal.
 
         Creates a mapping from child elements to their parent elements,
@@ -170,8 +172,8 @@ class XmlTreeUtils:
         elem: ET.Element,
         ids_elem: ET.Element,
         ids_name: str,
-        parent_map: Dict[ET.Element, ET.Element],
-    ) -> Optional[str]:
+        parent_map: dict[ET.Element, ET.Element],
+    ) -> str | None:
         """Build full IMAS path for XML element.
 
         Constructs the full hierarchical path for an XML element by walking

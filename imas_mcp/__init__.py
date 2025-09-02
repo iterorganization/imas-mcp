@@ -3,18 +3,6 @@ IMAS MCP Server - A server providing Model Context Protocol (MCP) access to IMAS
 """
 
 import importlib.metadata
-import warnings
-
-
-# Filter whoosh SyntaxError warnings
-warnings.filterwarnings(
-    "ignore", category=SyntaxWarning, message="invalid escape sequence"
-)
-warnings.filterwarnings(
-    "ignore",
-    category=SyntaxWarning,
-    message='"is" with \'int\' literal. Did you mean "=="?',
-)
 
 # import version from project metadata
 try:

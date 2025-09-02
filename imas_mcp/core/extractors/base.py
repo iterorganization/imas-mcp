@@ -3,9 +3,9 @@
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
-from ...dd_accessor import ImasDataDictionaryAccessor
+from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 
 
 @dataclass
@@ -16,10 +16,10 @@ class ExtractorContext:
     root: ET.Element
     ids_elem: ET.Element
     ids_name: str
-    parent_map: Dict[ET.Element, ET.Element]
+    parent_map: dict[ET.Element, ET.Element]
 
     # Configuration
-    excluded_patterns: Set[str]
+    excluded_patterns: set[str]
     skip_ggd: bool = True
 
     def __post_init__(self):
@@ -36,15 +36,15 @@ class BaseExtractor(ABC):
         self.context = context
 
     @abstractmethod
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract data from an XML element."""
         pass
 
     def should_filter_element_or_path(
         self,
-        elem: Optional[ET.Element] = None,
-        path: Optional[str] = None,
-        elem_name: Optional[str] = None,
+        elem: ET.Element | None = None,
+        path: str | None = None,
+        elem_name: str | None = None,
         filter_type: str = "element",
     ) -> bool:
         """Unified filtering logic for elements and paths."""
@@ -79,9 +79,7 @@ class BaseExtractor(ABC):
 
         return False
 
-    def _filter_coordinate_noise(
-        self, path: Optional[str], elem_name: Optional[str]
-    ) -> bool:
+    def _filter_coordinate_noise(self, path: str | None, elem_name: str | None) -> bool:
         """Filter coordinate-specific noise."""
         if not path:
             return True
@@ -93,7 +91,7 @@ class BaseExtractor(ABC):
         return False
 
     def _filter_relationship_noise(
-        self, path: Optional[str], elem_name: Optional[str]
+        self, path: str | None, elem_name: str | None
     ) -> bool:
         """Filter relationship-specific noise."""
         if not elem_name:
@@ -129,9 +127,7 @@ class BaseExtractor(ABC):
 
         return False
 
-    def _filter_element_noise(
-        self, path: Optional[str], elem_name: Optional[str]
-    ) -> bool:
+    def _filter_element_noise(self, path: str | None, elem_name: str | None) -> bool:
         """Filter element-specific noise."""
         # Basic element filtering can be added here
         return False
@@ -140,10 +136,10 @@ class BaseExtractor(ABC):
 class ComposableExtractor:
     """Composer that coordinates multiple extractors."""
 
-    def __init__(self, extractors: List[BaseExtractor]):
+    def __init__(self, extractors: list[BaseExtractor]):
         self.extractors = extractors
 
-    def extract_all(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract_all(self, elem: ET.Element) -> dict[str, Any]:
         """Run all extractors and merge results."""
         result = {}
 

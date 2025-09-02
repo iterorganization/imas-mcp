@@ -1,19 +1,35 @@
-# Physics Domain Definitions
+# IMAS MCP Definitions
 
-This folder contains YAML-based definitions for the IMAS Data Dictionary physics domain categorization system. These definitions were generated with AI assistance and are designed to be version-controlled, maintainable, and reusable.
+This directory contains data definitions and configurations used by the IMAS MCP server.
 
 ## Structure
 
-### `physics_domains/`
+### Physics Definitions (`physics/`)
 
-Contains physics domain categorization definitions:
+- `domains/` - Physics domain definitions with characteristics, relationships, and IDS mappings
+- `units/` - Unit contexts, categories, and domain hints
+- `constants/` - Physics constants (future expansion)
 
-- **`domain_characteristics.yaml`** - Comprehensive characteristics for each physics domain including:
-  - Description and primary phenomena
-  - Typical units and measurement methods
-  - Related domains and complexity levels
-- **`ids_mapping.yaml`** - Mapping of IMAS IDS names to their primary physics domains
-- **`domain_relationships.yaml`** - Relationships and connections between different physics domains
+### IMAS Definitions (`imas/`)
+
+- `data_dictionary/` - IMAS data dictionary schema mappings and validation rules
+- `workflows/` - Standard IMAS workflows
+- `metadata/` - IMAS metadata definitions
+
+### Validation (`validation/`)
+
+- JSON schemas for validating YAML definitions
+- Separate schemas for physics and IMAS definitions
+
+### Templates (`templates/`)
+
+- Template files for creating new definitions
+- Documentation for definition formats
+
+## Data Format
+
+All definition files use YAML format for human readability and maintainability.
+JSON schemas in the `validation/` directory ensure data integrity.
 
 ## Design Principles
 
@@ -64,7 +80,9 @@ Contains physics domain categorization definitions:
 
 ## Usage
 
-The definitions are loaded automatically by the `domain_loader.py` module in `imas_mcp/core/`. To use:
+The definitions are loaded automatically by the respective loader modules in `imas_mcp/core/`.
+
+### Physics Domains
 
 ```python
 from imas_mcp.core.domain_loader import load_physics_domains_from_yaml
@@ -77,6 +95,20 @@ characteristics = definitions["characteristics"]
 ids_mapping = definitions["ids_mapping"]
 relationships = definitions["relationships"]
 validation = definitions["validation"]
+```
+
+### Unit Contexts
+
+```python
+from imas_mcp.core.unit_loader import load_unit_contexts, get_enhanced_unit_context
+
+# Load unit contexts
+unit_contexts = load_unit_contexts()
+
+# Get enhanced context for a specific unit
+enhanced_context = get_enhanced_unit_context("T")  # Returns: "magnetic_field_strength magnetic_flux_density electromagnetic magnetics current_drive heating"
+
+# Unit contexts are automatically loaded by DocumentStore for semantic search
 ```
 
 ## Validation

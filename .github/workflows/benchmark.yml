@@ -1,0 +1,299 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run benchmarks daily at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      benchmark_filter:
+        description: "Benchmark filter (e.g., SearchBenchmarks)"
+        required: false
+        default: ""
+      action:
+        description: "Action to perform (run or clear)"
+        required: false
+        default: "run"
+        type: choice
+        options:
+          - run
+          - clear
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-benchmark:
+    if: github.event.inputs.action != 'clear'
+    # Use specific runner for consistent benchmark results
+    runs-on: ubuntu-22.04 # 4 cores, 16GB RAM, consistent specs
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+      actions: read  # Required to download artifacts from previous runs
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for ASV
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v2
+
+      - name: Install ASV
+        run: uv tool install asv
+
+      - name: Configure ASV for PR context
+        if: github.event_name == 'pull_request'
+        run: |
+          # For PRs, only track the current HEAD to avoid 'main' branch not found errors
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for PR context - tracking only HEAD')
+          "
+
+      - name: Configure ASV for main branch
+        if: github.event_name != 'pull_request'
+        run: |
+          # For main branch and other contexts, track main and HEAD
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['main', 'HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for main branch context - tracking main and HEAD')
+          "
+
+      - name: Identify previous benchmark results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              // Get the most recent successful workflow run (excluding current)
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'benchmark.yml',
+                status: 'completed',
+                conclusion: 'success',
+                per_page: 5
+              });
+              
+              const previousRun = runs.data.workflow_runs.find(run => run.id !== context.runId);
+              if (previousRun) {
+                console.log(`Found previous successful run: ${previousRun.id}`);
+                
+                // Check if it has the artifact we need
+                const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: previousRun.id
+                });
+                
+                const asvArtifact = artifacts.data.artifacts.find(a => a.name === 'asv-results' && !a.expired);
+                if (asvArtifact) {
+                  console.log('Found asv-results artifact, setting up for download...');
+                  core.setOutput('previous_run_id', previousRun.id);
+                  core.setOutput('found_artifact', 'true');
+                } else {
+                  console.log('No valid asv-results artifact found in previous run');
+                  core.setOutput('found_artifact', 'false');
+                }
+              } else {
+                console.log('No previous successful runs found');
+                core.setOutput('found_artifact', 'false');
+              }
+            } catch (error) {
+              console.log(`Error finding previous run: ${error.message}`);
+              core.setOutput('found_artifact', 'false');
+            }
+        id: find_previous_run
+
+      - name: Download previous benchmark results
+        if: steps.find_previous_run.outputs.found_artifact == 'true'
+        uses: actions/download-artifact@v5
+        with:
+          name: asv-results
+          path: .
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.find_previous_run.outputs.previous_run_id }}
+        continue-on-error: true
+
+      - name: Setup ASV machine
+        run: |
+          # Get actual system specifications from the runner
+          CPU_INFO=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
+          CPU_COUNT=$(nproc)
+          RAM_MB=$(free -m | grep "Mem:" | awk '{print $2}')
+          RAM_GB=$((RAM_MB / 1024))
+          ARCH=$(uname -m)
+
+          # Get OS details
+          OS_VERSION=$(lsb_release -ds 2>/dev/null | tr -d '"' || echo "Unknown")
+
+          # Create machine name from key specs to detect hardware changes
+          # Format: {arch}-{cores}c-{ram}gb
+          MACHINE_NAME="${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
+          echo "Machine name: $MACHINE_NAME"
+
+          # Configure machine with detected specs
+          asv machine \
+            --machine "$MACHINE_NAME" \
+            --os "$OS_VERSION" \
+            --arch "$ARCH" \
+            --cpu "$CPU_INFO" \
+            --num_cpu "$CPU_COUNT" \
+            --ram "${RAM_GB}GB" \
+            --yes
+
+          # Store machine name for benchmark run
+          echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
+
+      - name: Run benchmarks
+        run: |
+          # Run benchmarks
+          if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
+            asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose
+          else
+            asv run --python=3.12 --machine "$MACHINE_NAME" HEAD^! --verbose
+          fi
+
+      - name: Show benchmark results on failure
+        if: failure()
+        run: |
+          echo "Benchmark run failed. Checking for logs..."
+          find .asv -name "*.log" -exec echo "=== {} ===" \; -exec cat {} \; || true
+          echo "Checking ASV results directory..."
+          ls -la .asv/ || true
+          echo "Checking if schema files exist..."
+          ls -la imas_mcp/resources/schemas/ || true
+
+      - name: Generate HTML report
+        run: asv publish
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: asv-results
+          path: |
+            .asv/results/
+            .asv/html/
+            .asv/machine.json
+          retention-days: 30
+          if-no-files-found: warn
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Setup Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      - name: Prepare benchmarks for deployment
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Create benchmark-specific subdirectory that won't conflict with docs
+          mkdir -p deploy/benchmarks
+          cp -r .asv/html/* deploy/benchmarks/
+
+          # Create a simple landing page for benchmarks only
+          echo '<!DOCTYPE html><html><head><title>IMAS MCP Benchmarks</title></head><body><h1>Performance Benchmarks</h1><p><a href="./benchmarks/">View Benchmark Reports</a></p></body></html>' > deploy/index.html
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: deploy
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  clear-benchmarks:
+    if: github.event.inputs.action == 'clear'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Configure ASV for clear operation
+        run: |
+          # Use minimal configuration for clear operation
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for clear operation')
+          "
+
+      - name: Upload empty benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: asv-results
+          path: |
+            # Empty path to clear the artifact
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 30
+
+      - name: Setup Pages
+        if: github.ref == 'refs/heads/main'
+        uses: actions/configure-pages@v5
+
+      - name: Prepare empty deployment
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Create empty deploy directory (this will effectively clear benchmarks)
+          mkdir -p deploy
+          echo '<!DOCTYPE html><html><head><title>Benchmarks Cleared</title></head><body><h1>Benchmarks have been cleared</h1><p>The benchmark reports have been removed from this site.</p></body></html>' > deploy/index.html
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: deploy
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,22 +1,22 @@
 """Coordinate system extractor."""
 
 import xml.etree.ElementTree as ET
-from typing import Any, Dict
+from typing import Any
 
-from .base import BaseExtractor
+from imas_mcp.core.extractors.base import BaseExtractor
 
 
 class CoordinateExtractor(BaseExtractor):
     """Extract coordinate system information."""
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
         """Extract coordinate systems from IDS element."""
         # This operates on IDS level, not individual elements
         return {}
 
     def extract_coordinate_systems(
         self, ids_elem: ET.Element
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Extract coordinate systems for an entire IDS."""
         coordinate_systems = {}
 

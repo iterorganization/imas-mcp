@@ -1,0 +1,234 @@
+# Navigation template definitions for IMAS IDS exploration workflows.
+#
+# This file defines common navigation patterns and workflows for exploring
+# IMAS IDS structures efficiently based on research objectives.
+
+# Common research workflows for IDS exploration
+common_workflows:
+  basic_exploration:
+    description: "Standard IDS exploration workflow for general understanding"
+    steps:
+      - "overview"
+      - "key_branches" 
+      - "sample_paths"
+      - "structure_validation"
+    step_descriptions:
+      overview: "Get high-level structure and organization"
+      key_branches: "Identify main data categories and entry points"
+      sample_paths: "Examine representative data paths and their characteristics"
+      structure_validation: "Verify data consistency and completeness"
+    recommended_for:
+      - "First-time IDS exploration"
+      - "Structure documentation"
+      - "Data availability assessment"
+    tools_required: ["analyze_ids_structure", "get_overview"]
+    
+  physics_analysis:
+    description: "Physics-focused analysis workflow for domain-specific research"
+    steps:
+      - "domain_identification"
+      - "measurement_paths"
+      - "coordinate_systems"
+      - "physics_validation"
+    step_descriptions:
+      domain_identification: "Identify relevant physics domains within the IDS"
+      measurement_paths: "Locate specific measurement types and quantities"
+      coordinate_systems: "Understand coordinate grids and spatial organization"
+      physics_validation: "Validate physics consistency and relationships"
+    recommended_for:
+      - "Physics domain analysis"
+      - "Measurement extraction"
+      - "Cross-domain studies"
+    tools_required: ["export_physics_domain", "explore_relationships", "analyze_ids_structure"]
+    
+  data_access:
+    description: "Data access optimization workflow for efficient data retrieval"
+    steps:
+      - "entry_points"
+      - "array_structures"
+      - "time_dependencies"
+      - "access_optimization"
+    step_descriptions:
+      entry_points: "Identify optimal data access entry points"
+      array_structures: "Understand array organization and coordinate systems"
+      time_dependencies: "Map temporal data organization and time slicing"
+      access_optimization: "Develop efficient data access strategies"
+    recommended_for:
+      - "Performance optimization"
+      - "Large dataset access"
+      - "Automated data processing"
+    tools_required: ["analyze_ids_structure", "explore_identifiers"]
+    
+  diagnostic_analysis:
+    description: "Diagnostic-focused workflow for measurement system analysis"
+    steps:
+      - "channel_identification"
+      - "calibration_data"
+      - "signal_characteristics"
+      - "quality_assessment"
+    step_descriptions:
+      channel_identification: "Locate diagnostic channels and detector information"
+      calibration_data: "Access calibration factors and correction procedures"
+      signal_characteristics: "Understand signal types and measurement methods"
+      quality_assessment: "Evaluate data quality indicators and validity flags"
+    recommended_for:
+      - "Diagnostic system analysis"
+      - "Measurement validation"
+      - "Calibration procedures"
+    tools_required: ["analyze_ids_structure", "explore_identifiers", "search_imas"]
+
+# Interactive navigation features
+interactive_features:
+  hierarchical_browsing:
+    description: "Level-by-level navigation through IDS hierarchy"
+    implementation:
+      type: "breadcrumb_navigation"
+      features:
+        - "Level-based filtering"
+        - "Parent-child relationship display"
+        - "Sibling node navigation"
+        - "Depth indicator"
+    use_cases:
+      - "Systematic structure exploration"
+      - "Educational and training purposes"
+      - "Documentation generation"
+      
+  domain_filtering:
+    description: "Filter and navigate by physics domain"
+    implementation:
+      type: "dynamic_filtering"
+      features:
+        - "Physics domain classification"
+        - "Cross-domain relationship display"
+        - "Domain-specific entry points"
+        - "Measurement type grouping"
+    use_cases:
+      - "Domain-specific research"
+      - "Cross-physics studies"
+      - "Specialized analysis workflows"
+      
+  pattern_recognition:
+    description: "Navigate based on structural patterns"
+    implementation:
+      type: "pattern_matching"
+      features:
+        - "Pattern-based grouping"
+        - "Similar structure highlighting"
+        - "Template matching"
+        - "Structure comparison"
+    use_cases:
+      - "Comparative analysis"
+      - "Structure standardization"
+      - "Pattern-based automation"
+      
+  search_integration:
+    description: "Integrated search within structure navigation"
+    implementation:
+      type: "incremental_search"
+      features:
+        - "Real-time filtering"
+        - "Multi-criteria search"
+        - "Contextual suggestions"
+        - "Search result highlighting"
+    use_cases:
+      - "Rapid data location"
+      - "Keyword-based exploration"
+      - "Content discovery"
+
+# Navigation optimization strategies
+optimization_strategies:
+  entry_point_optimization:
+    description: "Optimize navigation starting points based on common usage"
+    strategies:
+      frequency_based:
+        description: "Prioritize most commonly accessed paths"
+        implementation: "statistical_analysis"
+        weight: 0.3
+      physics_relevance:
+        description: "Prioritize physics-relevant entry points"
+        implementation: "domain_mapping"
+        weight: 0.3
+      structural_importance:
+        description: "Prioritize structurally important nodes"
+        implementation: "graph_centrality"
+        weight: 0.2
+      user_workflow:
+        description: "Prioritize based on typical user workflows"
+        implementation: "workflow_analysis"
+        weight: 0.2
+        
+  path_filtering:
+    description: "Intelligent filtering to reduce cognitive load"
+    filters:
+      relevance_filtering:
+        description: "Filter by relevance to current research context"
+        implementation: "contextual_ranking"
+      complexity_filtering:
+        description: "Hide or simplify overly complex structures"
+        implementation: "complexity_threshold"
+      domain_filtering:
+        description: "Focus on specific physics domains"
+        implementation: "domain_classification"
+      quality_filtering:
+        description: "Filter by data quality and completeness"
+        implementation: "quality_metrics"
+        
+  progressive_disclosure:
+    description: "Reveal information progressively to avoid overwhelming users"
+    levels:
+      overview_level:
+        description: "High-level structure and main categories"
+        details_shown: ["major_branches", "entry_points", "data_counts"]
+      intermediate_level:
+        description: "Detailed structure with key measurements"
+        details_shown: ["measurement_types", "coordinate_systems", "physics_domains"]
+      detailed_level:
+        description: "Full structural detail with all paths"
+        details_shown: ["all_paths", "relationships", "metadata"]
+
+# Workflow templates for specific research areas
+research_workflows:
+  equilibrium_analysis:
+    description: "Workflow for plasma equilibrium reconstruction analysis"
+    target_domains: ["equilibrium", "magnetic_field"]
+    typical_paths:
+      - "equilibrium/time_slice/*/profiles_1d/psi"
+      - "equilibrium/time_slice/*/profiles_1d/q"
+      - "equilibrium/time_slice/*/global_quantities"
+    navigation_hints:
+      - "Start with global quantities for overview"
+      - "Access psi profiles for flux surface information"
+      - "Use q profiles for magnetic safety factor analysis"
+    optimization_suggestions:
+      - "Cache coordinate grids for efficiency"
+      - "Use time slice indexing for temporal analysis"
+      
+  transport_analysis:
+    description: "Workflow for transport coefficient analysis"
+    target_domains: ["transport", "thermal"]
+    typical_paths:
+      - "core_transport/model/*/profiles_1d/*/diffusivity"
+      - "core_transport/model/*/profiles_1d/*/conductivity"
+      - "core_profiles/profiles_1d/*/temperature"
+    navigation_hints:
+      - "Compare multiple transport models"
+      - "Correlate with temperature and density profiles"
+      - "Check coordinate grid consistency"
+    optimization_suggestions:
+      - "Use model comparison tools"
+      - "Implement profile interpolation"
+      
+  diagnostic_validation:
+    description: "Workflow for diagnostic measurement validation"
+    target_domains: ["diagnostics", "measurement"]
+    typical_paths:
+      - "*/channel/*/signal"
+      - "*/channel/*/calibration"
+      - "*/channel/*/validity"
+    navigation_hints:
+      - "Always check validity flags first"
+      - "Verify calibration data availability"
+      - "Cross-validate between diagnostic systems"
+    optimization_suggestions:
+      - "Implement automated quality checks"
+      - "Use batch channel processing"

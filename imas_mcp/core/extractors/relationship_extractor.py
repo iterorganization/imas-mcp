@@ -1,487 +1,496 @@
-"""Relationship extraction with composable analyzers and performance optimizations."""
+"""Relationship extractor for finding connections between IMAS data paths."""
 
 import re
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
-from collections import defaultdict
+from typing import Any
 
-from .base import BaseExtractor
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
-
-class RelationshipAnalyzer:
-    """Base class for relationship analysis strategies."""
-
-    def __init__(self, context):
-        self.context = context
-        # Initialize indexes for efficient lookups
-        self._path_index: Dict[str, ET.Element] = {}
-        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._built_indexes = False
-
-    def _build_indexes(self):
-        """Build indexes once for efficient relationship lookups."""
-        if self._built_indexes:
-            return
-
-        self._path_index = {}
-        self._coordinate_index = defaultdict(list)
-        self._units_index = defaultdict(list)
-
-        # Single traversal to build all indexes
-        for elem in self.context.ids_elem.iter():
-            # Path index
-            path = elem.get("path")
-            if path:
-                self._path_index[path] = elem
-
-            # Coordinate indexes
-            coord1 = elem.get("coordinate1")
-            coord2 = elem.get("coordinate2")
-            if coord1:
-                self._coordinate_index[coord1].append(elem)
-            if coord2:
-                self._coordinate_index[coord2].append(elem)
-
-            # Units index
-            units = elem.get("units")
-            if units:
-                self._units_index[units].append(elem)
-
-        self._built_indexes = True
-
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Find relationships for an element."""
-        self._build_indexes()
-        raise NotImplementedError
-
-
-class CrossIdsAnalyzer(RelationshipAnalyzer):
-    """Analyze cross-IDS references."""
-
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract cross-IDS references."""
-        cross_refs = []
-
-        # Check coordinates for IDS references
-        coord1 = elem.get("coordinate1")
-        coord2 = elem.get("coordinate2")
-
-        for coord in [coord1, coord2]:
-            if coord and coord.startswith("IDS:"):
-                cross_refs.append(coord)
-
-        # Check structure references
-        structure_ref = elem.get("structure_reference")
-        if structure_ref and ":" in structure_ref:
-            cross_refs.append(f"structure:{structure_ref}")
-
-        # Extract from documentation
-        documentation = elem.get("documentation", "") or elem.text or ""
-        if "IDS:" in documentation:
-            ids_patterns = re.findall(r"IDS:[\w/]+", documentation)
-            cross_refs.extend(ids_patterns)
-
-        return cross_refs
-
-
-class HierarchicalAnalyzer(RelationshipAnalyzer):
-    """Analyze hierarchical (parent-child-sibling) relationships."""
-
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract hierarchical relationships using indexes."""
-        self._build_indexes()
-        relationships = []
-
-        if not current_path:
-            return relationships
-
-        path_parts = current_path.split("/")
-
-        # Parent relationship
-        if len(path_parts) > 1:
-            parent_path = "/".join(path_parts[:-1])
-            if parent_path in self._path_index:
-                relationships.append(parent_path)
-
-            # Sibling relationships
-            siblings = self._find_siblings(parent_path, current_path)
-            relationships.extend(siblings[:5])
-
-        # Child relationships
-        children = self._find_children(current_path)
-        relationships.extend(children[:5])
-
-        return relationships
-
-    def _find_siblings(self, parent_path: str, current_path: str) -> List[str]:
-        """Find sibling paths using index - O(n) single pass instead of O(n²)."""
-        siblings = []
-        parent_depth = len(parent_path.split("/"))
-
-        for path in self._path_index.keys():
-            if path == current_path:
-                continue
-
-            path_parts = path.split("/")
-            if len(path_parts) == parent_depth + 1:  # Same depth as current
-                path_parent = "/".join(path_parts[:-1])
-                if path_parent == parent_path:
-                    siblings.append(path)
-
-        return siblings
-
-    def _find_children(self, parent_path: str) -> List[str]:
-        """Find direct child paths using index."""
-        children = []
-        parent_depth = len(parent_path.split("/"))
-
-        for path in self._path_index.keys():
-            if path.startswith(parent_path + "/"):
-                path_parts = path.split("/")
-                if len(path_parts) == parent_depth + 1:  # Direct child
-                    children.append(path)
-
-        return children
-
-
-class PhysicsAnalyzer(RelationshipAnalyzer):
-    """Analyze physics-domain relationships."""
-
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract physics-based relationships using indexes."""
-        self._build_indexes()
-        relationships = []
-
-        elem_name = elem.get("name", "")
-        units = elem.get("units", "")
-
-        # Skip error fields to reduce noise
-        if "error" in elem_name.lower():
-            return relationships
-
-        # Group by physics concepts
-        physics_groups = {
-            "magnetic_field": ["b_field", "magnetic", "flux", "psi"],
-            "geometry": ["r", "z", "radius", "height", "position"],
-            "pressure": ["pressure", "temperature", "density"],
-            "current": ["current", "j_", "conductivity"],
-            "profiles": ["profile", "rho_", "norm"],
-        }
-
-        # Find physics domain
-        current_domain = self._classify_physics_domain(
-            elem_name, current_path, physics_groups
-        )
-
-        if current_domain:
-            domain_paths = self._find_physics_domain_paths(
-                current_domain, physics_groups[current_domain], current_path
-            )
-            relationships.extend(domain_paths[:5])
-
-        # Unit-based relationships using index
-        if units and units not in ["1", "", "mixed"]:
-            unit_paths = self._find_same_unit_paths(units, current_path)
-            relationships.extend(unit_paths[:3])
-
-        return relationships
-
-    def _classify_physics_domain(
-        self, elem_name: str, current_path: str, groups: Dict[str, List[str]]
-    ) -> Optional[str]:
-        """Classify element into physics domain."""
-        elem_name_lower = elem_name.lower()
-        path_lower = current_path.lower()
-
-        for domain, keywords in groups.items():
-            if any(
-                keyword in elem_name_lower or keyword in path_lower
-                for keyword in keywords
-            ):
-                return domain
-
-        return None
-
-    def _find_physics_domain_paths(
-        self, domain: str, keywords: List[str], current_path: str
-    ) -> List[str]:
-        """Find paths in same physics domain using index."""
-        domain_paths = []
-
-        for path, elem in self._path_index.items():
-            if path == current_path:
-                continue
-
-            name = elem.get("name", "").lower()
-            path_lower = path.lower()
-
-            for keyword in keywords:
-                if keyword in name or keyword in path_lower:
-                    domain_paths.append(path)
-                    break
-
-        return list(set(domain_paths))
-
-    def _find_same_unit_paths(self, units: str, current_path: str) -> List[str]:
-        """Find paths with same units using index."""
-        same_unit_paths = []
-
-        if units in self._units_index:
-            related_elements = self._units_index[units]
-            for elem in related_elements:
-                path = elem.get("path", "")
-                if path and path != current_path:
-                    same_unit_paths.append(path)
-
-        return same_unit_paths
-
-
-class CoordinateAnalyzer(RelationshipAnalyzer):
-    """Analyze coordinate-based relationships."""
-
-    def find_relationships(self, elem: ET.Element, current_path: str) -> List[str]:
-        """Extract coordinate-based relationships using indexes."""
-        self._build_indexes()
-        relationships = []
-
-        coord1 = elem.get("coordinate1")
-        coord2 = elem.get("coordinate2")
-
-        # Skip noisy coordinates
-        if self._should_skip_coordinate(coord1) or self._should_skip_coordinate(coord2):
-            return relationships
-
-        for coord in [coord1, coord2]:
-            if coord and coord in self._coordinate_index:
-                related_elements = self._coordinate_index[coord]
-                for related_elem in related_elements[:5]:  # Limit results
-                    related_path = related_elem.get("path")
-                    if related_path and related_path != current_path:
-                        relationships.append(related_path)
-
-        return relationships
-
-    def _should_skip_coordinate(self, coord: Optional[str]) -> bool:
-        """Check if coordinate should be skipped."""
-        if not coord:
-            return False
-        return coord.startswith("ids_properties")
+from imas_mcp.core.extractors.base import BaseExtractor
 
 
 class RelationshipExtractor(BaseExtractor):
-    """Composable relationship extractor using multiple analyzers with performance optimizations."""
+    """Extract relationships between data paths and across IDS."""
 
-    def __init__(self, context):
-        super().__init__(context)
+    def extract(self, elem: ET.Element) -> dict[str, Any]:
+        """Extract relationship information for this element."""
+        relationships = {}
 
-        # Build indexes once for efficient lookups
-        self._path_index: Dict[str, ET.Element] = {}
-        self._coordinate_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._units_index: Dict[str, List[ET.Element]] = defaultdict(list)
-        self._built_indexes = False
+        # Extract relationships from documentation
+        doc_relationships = self._extract_relationships_from_documentation(elem)
+        if doc_relationships:
+            relationships.update(doc_relationships)
 
-        # Initialize analyzers
-        self.analyzers = [
-            CrossIdsAnalyzer(context),
-            HierarchicalAnalyzer(context),
-            PhysicsAnalyzer(context),
-            CoordinateAnalyzer(context),
+        # Extract cross-IDS references
+        cross_ids_refs = self._extract_cross_ids_references(elem)
+        if cross_ids_refs:
+            relationships["cross_ids"] = cross_ids_refs
+
+        # Extract physics relationships
+        physics_related = self._extract_physics_relationships(elem)
+        if physics_related:
+            relationships["physics_related"] = physics_related
+
+        # Extract coordinate relationships
+        coord_relationships = self._extract_coordinate_relationships(elem)
+        if coord_relationships:
+            relationships["coordinate_related"] = coord_relationships
+
+        # Extract unit relationships (same units = related)
+        unit_relationships = self._extract_unit_relationships(elem)
+        if unit_relationships:
+            relationships["unit_related"] = unit_relationships
+
+        return {"relationships": relationships} if relationships else {}
+
+    def _extract_relationships_from_documentation(
+        self, elem: ET.Element
+    ) -> dict[str, list[str]]:
+        """Extract relationships mentioned in documentation text."""
+        documentation = elem.get("documentation", "")
+        if not documentation:
+            return {}
+
+        relationships = {}
+
+        # Look for explicit IDS references in documentation
+        ids_pattern = r"\b([a-z_]+)(?:\s+IDS|_ids)\b"
+        ids_matches = re.findall(ids_pattern, documentation.lower())
+        if ids_matches:
+            # Filter out self-references and common words
+            filtered_matches = [
+                match
+                for match in ids_matches
+                if match != self.context.ids_name.lower()
+                and match not in ["this", "the", "an", "a", "and", "or", "for"]
+                and len(match) > 2
+            ]
+            if filtered_matches:
+                relationships["documentation_refs"] = list(set(filtered_matches))
+
+        # Look for path references (words ending in specific patterns)
+        path_pattern = r"\b([a-z_]+(?:_[a-z_]+)*)/([a-z_]+(?:[/_][a-z_]+)*)\b"
+        path_matches = re.findall(path_pattern, documentation.lower())
+        if path_matches:
+            full_paths = [f"{ids}/{path}" for ids, path in path_matches]
+            relationships["path_refs"] = full_paths
+
+        # Look for quantity references (common physics quantities)
+        quantity_patterns = [
+            r"\bdensity\b",
+            r"\btemperature\b",
+            r"\bpressure\b",
+            r"\bmagnetic\s+field\b",
+            r"\bcurrent\b",
+            r"\bflux\b",
+            r"\bprofile\b",
+            r"\bvelocity\b",
+            r"\benergy\b",
         ]
+        found_quantities = []
+        for pattern in quantity_patterns:
+            if re.search(pattern, documentation.lower()):
+                found_quantities.append(pattern.strip("\\b"))
+        if found_quantities:
+            relationships["quantity_refs"] = found_quantities
 
-    def _build_indexes(self):
-        """Build indexes once for efficient relationship lookups."""
-        if self._built_indexes:
-            return
+        return relationships
 
-        self._path_index = {}
-        self._coordinate_index = defaultdict(list)
-        self._units_index = defaultdict(list)
+    def _extract_cross_ids_references(self, elem: ET.Element) -> list[str]:
+        """Extract references to other IDS from various XML attributes."""
+        cross_refs = []
 
-        # Single traversal to build all indexes
-        for elem in self.context.ids_elem.iter():
-            # Path index
-            path = elem.get("path")
-            if path:
-                self._path_index[path] = elem
+        # Check for explicit IDS references in XML attributes
+        for _attr_name, attr_value in elem.attrib.items():
+            if attr_value and isinstance(attr_value, str):
+                # Look for IDS names in attribute values
+                ids_pattern = r"\b([a-z_]+)(?:\s*/|\s+|$)"
+                matches = re.findall(ids_pattern, attr_value.lower())
+                for match in matches:
+                    if (
+                        match != self.context.ids_name.lower()
+                        and len(match) > 3
+                        and "_" in match  # Likely IDS names have underscores
+                        and match not in cross_refs
+                    ):
+                        cross_refs.append(match)
 
-            # Coordinate indexes
-            coord1 = elem.get("coordinate1")
-            coord2 = elem.get("coordinate2")
-            if coord1:
-                self._coordinate_index[coord1].append(elem)
-            if coord2:
-                self._coordinate_index[coord2].append(elem)
+        # Check for timebasepath references (points to other IDS)
+        timebase = elem.get("timebasepath", "")
+        if timebase and "/" in timebase:
+            timebase_ids = timebase.split("/")[0]
+            if timebase_ids != self.context.ids_name and timebase_ids not in cross_refs:
+                cross_refs.append(timebase_ids)
 
-            # Units index
-            units = elem.get("units")
-            if units:
-                self._units_index[units].append(elem)
+        return cross_refs
 
-        self._built_indexes = True
+    def _extract_physics_relationships(self, elem: ET.Element) -> list[str]:
+        """Extract physics-based relationships."""
+        physics_related = []
 
-        # Share indexes with analyzers
-        for analyzer in self.analyzers:
-            analyzer._path_index = self._path_index
-            analyzer._coordinate_index = self._coordinate_index
-            analyzer._units_index = self._units_index
-            analyzer._built_indexes = True
+        elem_name = elem.get("name", "").lower()
+        documentation = elem.get("documentation", "").lower()
 
-    def extract(self, elem: ET.Element) -> Dict[str, Any]:
-        """Extract relationships using all analyzers with performance optimizations."""
-        self._build_indexes()
-
-        relationship_data = {}
-
-        current_path = elem.get("path", "")
-        if not current_path:
-            return relationship_data
-
-        # Collect relationships from all analyzers
-        all_relationships = []
-        categorized_relationships = {
-            "cross_ids": [],
-            "hierarchical": [],
-            "physics_related": [],
-            "coordinates": [],
+        # Define physics relationship patterns
+        physics_patterns = {
+            "kinetic_profiles": [
+                "density",
+                "temperature",
+                "pressure",
+                "n_e",
+                "t_e",
+                "t_i",
+            ],
+            "magnetic_quantities": [
+                "b_field",
+                "b_tor",
+                "b_pol",
+                "psi",
+                "flux",
+                "current",
+            ],
+            "transport": ["diffusivity", "conductivity", "flux", "gradient"],
+            "geometry": ["r", "z", "rho", "phi", "radius", "outline", "boundary"],
+            "temporal": ["time", "frequency", "period", "evolution"],
         }
 
-        for i, analyzer in enumerate(self.analyzers):
-            try:
-                relationships = analyzer.find_relationships(elem, current_path)
+        # Find which physics category this element belongs to
+        element_categories = []
+        for category, patterns in physics_patterns.items():
+            if any(
+                pattern in elem_name or pattern in documentation for pattern in patterns
+            ):
+                element_categories.append(category)
 
-                # Categorize by analyzer type
-                if isinstance(analyzer, CrossIdsAnalyzer):
-                    categorized_relationships["cross_ids"].extend(relationships)
-                elif isinstance(analyzer, HierarchicalAnalyzer):
-                    categorized_relationships["hierarchical"].extend(relationships)
-                elif isinstance(analyzer, PhysicsAnalyzer):
-                    categorized_relationships["physics_related"].extend(relationships)
-                elif isinstance(analyzer, CoordinateAnalyzer):
-                    categorized_relationships["coordinates"].extend(relationships)
+        # Elements in the same physics category are related
+        if element_categories:
+            physics_related.extend(element_categories)
 
-                all_relationships.extend(relationships)
+        return physics_related
 
-            except Exception as e:
-                print(f"Warning: {analyzer.__class__.__name__} failed: {e}")
+    def _extract_coordinate_relationships(self, elem: ET.Element) -> list[str]:
+        """Extract relationships based on coordinate systems."""
+        coord_related = []
 
-        # Clean and prioritize relationships
-        cleaned_relationships = self._clean_and_prioritize(
-            all_relationships, current_path
-        )
+        # Check coordinate attributes
+        coord1 = elem.get("coordinate1", "")
+        coord2 = elem.get("coordinate2", "")
 
-        if cleaned_relationships:
-            relationship_data["related_paths"] = cleaned_relationships[:15]
+        if coord1:
+            coord_related.append(f"coord1:{coord1}")
+        if coord2:
+            coord_related.append(f"coord2:{coord2}")
 
-        # Add categorized relationships if any category has content (with filtering)
-        filtered_categorized = {}
-        for category, paths in categorized_relationships.items():
-            filtered_paths = [
-                p for p in paths if not self._should_filter_relationship(p)
-            ]
-            if filtered_paths:
-                filtered_categorized[category] = filtered_paths
+        # Parse coordinate descriptions
+        coordinates = elem.get("coordinates", "")
+        if coordinates and isinstance(coordinates, str):
+            # Extract coordinate patterns
+            coord_patterns = re.findall(r"([a-z_]+(?:\([^)]+\))?)", coordinates.lower())
+            for pattern in coord_patterns:
+                if pattern not in coord_related:
+                    coord_related.append(f"coord:{pattern}")
 
-        if any(filtered_categorized.values()):
-            relationship_data["relationships"] = filtered_categorized
+        return coord_related
 
-        # Generate usage examples
-        usage_examples = self._generate_usage_examples(elem)
-        if usage_examples:
-            relationship_data["usage_examples"] = usage_examples
-
-        return relationship_data
-
-    def _clean_and_prioritize(
-        self, relationships: List[str], current_path: str
-    ) -> List[str]:
-        """Clean and prioritize relationships with filtering."""
-        if not relationships:
+    def _extract_unit_relationships(self, elem: ET.Element) -> list[str]:
+        """Extract relationships based on units."""
+        units = elem.get("units", "")
+        if not units or units in ["", "1", "-"]:
             return []
 
-        # Remove duplicates and self-references
-        seen = set()
-        unique_relationships = []
+        # Elements with the same units are related
+        return [f"units:{units}"]
 
-        for rel in relationships:
-            if rel not in seen and rel != current_path:
-                # Apply filtering to exclude unwanted paths
-                if not self._should_filter_relationship(rel):
-                    seen.add(rel)
-                    unique_relationships.append(rel)
+    def extract_all_relationships(
+        self, ids_data: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Extract cross-IDS relationships from all paths with performance optimization."""
+        all_relationships = {
+            "cross_ids_map": {},
+            "physics_concept_map": {},
+            "unit_families": {},
+            "coordinate_families": {},
+        }
 
-        # Sort by priority
-        def priority(rel_path: str) -> int:
-            if rel_path.startswith("IDS:"):
-                return 1  # Cross-IDS highest priority
-            elif "/" in rel_path and len(rel_path.split("/")) == len(
-                current_path.split("/")
-            ):
-                return 2  # Siblings
-            elif rel_path in current_path or current_path in rel_path:
-                return 3  # Hierarchical
-            else:
-                return 4  # Others
+        # Collect paths efficiently
+        all_paths = []
+        paths_by_ids = {}
 
-        unique_relationships.sort(key=priority)
-        return unique_relationships
+        for ids_name, ids_info in ids_data.items():
+            paths = list(ids_info.get("paths", {}).keys())
+            paths_by_ids[ids_name] = paths
+            all_paths.extend(paths)
 
-    def _should_filter_relationship(self, path: str) -> bool:
-        """Filter out unwanted relationship paths."""
-        # Filter excluded patterns (ids_properties, code)
-        for pattern in ["ids_properties", "code"]:
-            if pattern in path:
-                return True
+        print(f"Processing {len(all_paths)} total paths from {len(ids_data)} IDS")
 
-        # Filter GGD entries
-        if (
-            "ggd" in path.lower()
-            or "/ggd/" in path.lower()
-            or "grids_ggd" in path.lower()
-            or path.lower().startswith("grids_ggd")
-            or "/grids_ggd/" in path.lower()
-        ):
-            return True
+        # Group by units with better logic
+        unit_groups = {}
 
-        # Filter error fields
-        if (
-            "_error_" in path
-            or path.endswith("_error_upper")
-            or path.endswith("_error_lower")
-            or path.endswith("_error_index")
-            or "error_upper" in path
-            or "error_lower" in path
-            or "error_index" in path
-        ):
-            return True
+        for _ids_name, ids_info in ids_data.items():
+            paths_dict = ids_info.get("paths", {})
 
-        return False
+            for path, path_data in paths_dict.items():
+                # Group by units
+                units = path_data.get("units", "")
+                if units and units not in ["", "1", "-"]:
+                    if units not in unit_groups:
+                        unit_groups[units] = []
+                    unit_groups[units].append(path)
 
-    def _generate_usage_examples(self, elem: ET.Element) -> List[Dict[str, str]]:
-        """Generate basic usage examples."""
-        examples = []
+        # Build unit families
+        print(f"Unit groups found: {len(unit_groups)}")
 
-        elem_name = elem.get("name", "")
-        data_type = elem.get("data_type", "")
-        coord1 = elem.get("coordinate1", "")
-        path = elem.get("path", elem_name)
-
-        # Generate examples based on element characteristics
-        if coord1 == "time" and "FLT_1D" in data_type:
-            examples.append(
-                {
-                    "scenario": "Time evolution access",
-                    "code": f"time_trace = ids.{path}[:]",
-                    "notes": "Access time evolution of quantity",
+        all_relationships["unit_families"] = {}
+        for unit, paths in unit_groups.items():
+            if len(paths) >= 2:  # At least 2 paths share this unit
+                all_relationships["unit_families"][unit] = {
+                    "base_unit": unit,
+                    "paths_using": paths,  # Include all paths
+                    "conversion_factors": {},
                 }
-            )
-        elif coord1 == "rho_tor_norm":
-            examples.append(
-                {
-                    "scenario": "Profile access",
-                    "code": f"profile = ids.{path}[time_idx, :]",
-                    "notes": "Access radial profile at specific time",
-                }
-            )
 
-        return examples
+        # Build cross-IDS relationships using embedding-based semantic analysis
+        cross_ids_relationships = {}
+
+        # Initialize sentence transformer for semantic similarity
+        model = SentenceTransformer("all-MiniLM-L6-v2")  # Use same model as search
+
+        # Collect path descriptions for embedding
+        path_descriptions = {}
+        path_metadata = {}
+
+        for ids_name, ids_info in ids_data.items():
+            paths_dict = ids_info.get("paths", {})
+
+            for path, path_data in paths_dict.items():
+                if "/" not in path or len(path.split("/")) < 3:
+                    continue
+
+                # Skip generic structural/metadata fields that have standardized documentation
+                # These don't represent actual semantic content for relationships
+                path_parts = path.split("/")
+                last_component = path_parts[-1]
+
+                # Skip common metadata fields that have generic documentation
+                if last_component in ["name", "index", "description", "identifier"]:
+                    continue
+
+                # Skip other generic structural fields
+                if any(
+                    generic in last_component
+                    for generic in [
+                        "_index",
+                        "_name",
+                        "_description",
+                        "_identifier",
+                        "grid_index",
+                        "species_index",
+                        "element_index",
+                    ]
+                ):
+                    continue
+
+                # Build semantic description using complete documentation, excluding units/metadata
+                documentation = path_data.get("documentation", "")
+                physics_context = path_data.get("physics_context", "")
+
+                # Use complete documentation string, excluding only cross-reference sections
+                complete_doc = ""
+                if documentation:
+                    # Remove "Within X IDS:" sections which are cross-references, not semantic content
+                    within_pattern = re.compile(
+                        r"\.\s*Within\s+\w+\s+(IDS|container)\s*:.*?(?=\.|$)",
+                        re.IGNORECASE | re.DOTALL,
+                    )
+
+                    # Remove cross-reference sections but keep all other documentation
+                    cleaned_doc = within_pattern.sub("", documentation).strip()
+                    complete_doc = re.sub(r"\s+", " ", cleaned_doc).strip()
+
+                # Extract meaningful path components (excluding generic IDS prefix and metadata fields)
+                path_parts = path.split("/")
+                if len(path_parts) >= 2:
+                    # Skip the IDS name (first part) and focus on meaningful path components
+                    meaningful_parts = path_parts[1:]  # Skip IDS name
+
+                    # Filter out generic structural terms but keep domain-specific terms
+                    filtered_parts = []
+                    for part in meaningful_parts:
+                        # Skip very generic terms but keep physics/domain terms
+                        if part not in [
+                            "time_slice",
+                            "profiles_1d",
+                            "profiles_2d",
+                            "global_quantities",
+                        ]:
+                            filtered_parts.append(part)
+
+                    # Create semantic path context
+                    path_context = " ".join(filtered_parts).replace("_", " ")
+                else:
+                    path_context = ""
+
+                # Create semantic description combining documentation and meaningful path context
+                description_parts = []
+                if complete_doc:
+                    description_parts.append(complete_doc)
+                if path_context:
+                    description_parts.append(f"Context: {path_context}")
+
+                semantic_description = (
+                    ". ".join(description_parts)
+                    if description_parts
+                    else "Generic data field"
+                )
+
+                path_descriptions[path] = semantic_description
+                path_metadata[path] = {
+                    "ids": ids_name,
+                    "documentation": documentation,
+                    "physics_context": physics_context,
+                    "related_paths": path_data.get("related_paths", []),
+                }
+
+        print(f"Generating embeddings for {len(path_descriptions)} paths...")
+
+        # Generate embeddings for all path descriptions
+        descriptions_list = list(path_descriptions.values())
+        paths_list = list(path_descriptions.keys())
+
+        embeddings = model.encode(
+            descriptions_list,
+            convert_to_numpy=True,
+            normalize_embeddings=True,  # For cosine similarity via dot product
+            show_progress_bar=False,
+        )
+
+        print("Computing semantic similarities...")
+
+        # Compute semantic similarity matrix
+        similarity_matrix = np.dot(embeddings, embeddings.T)
+
+        # Extract cross-IDS relationships based on semantic similarity
+        semantic_threshold = 0.7  # Adjusted threshold for complete documentation
+        max_relationships_per_ids = 15  # Reduced to focus on strongest relationships
+
+        # Store detailed relationship information including source paths and scores
+        detailed_relationships = {}
+
+        for i, source_path in enumerate(paths_list):
+            source_ids = path_metadata[source_path]["ids"]
+
+            # Find semantically similar paths from other IDS
+            similarities = similarity_matrix[i]
+
+            # Get indices sorted by similarity (excluding self)
+            similar_indices = np.argsort(similarities)[::-1]
+
+            for j in similar_indices:
+                if i == j:  # Skip self-similarity
+                    continue
+
+                target_path = paths_list[j]
+                target_ids = path_metadata[target_path]["ids"]
+                similarity_score = similarities[j]
+
+                # Only include cross-IDS relationships above threshold
+                if target_ids != source_ids and similarity_score >= semantic_threshold:
+                    # Skip if semantic descriptions are too short or generic
+                    source_desc = path_descriptions[source_path]
+                    target_desc = path_descriptions[target_path]
+
+                    if (
+                        len(source_desc) < 20
+                        or len(target_desc) < 20
+                        or source_desc == "Generic data field"
+                        or target_desc == "Generic data field"
+                    ):
+                        continue
+
+                    # Initialize the source IDS entry if needed
+                    if source_ids not in detailed_relationships:
+                        detailed_relationships[source_ids] = []
+
+                    # Store detailed relationship information
+                    detailed_relationships[source_ids].append(
+                        {
+                            "target_path": target_path,
+                            "source_path": source_path,
+                            "similarity_score": float(similarity_score),
+                            "relationship_type": "semantic",
+                            "source_description": source_desc[:100] + "..."
+                            if len(source_desc) > 100
+                            else source_desc,
+                            "target_description": target_desc[:100] + "..."
+                            if len(target_desc) > 100
+                            else target_desc,
+                        }
+                    )
+
+                    # Limit to prevent explosion
+                    if (
+                        len(detailed_relationships[source_ids])
+                        >= max_relationships_per_ids
+                    ):
+                        break
+
+            # Also include explicitly related paths from documentation
+            explicit_related = path_metadata[source_path].get("related_paths", [])
+            for related_path in explicit_related:
+                if (
+                    related_path in path_metadata
+                    and path_metadata[related_path]["ids"] != source_ids
+                ):
+                    if source_ids not in detailed_relationships:
+                        detailed_relationships[source_ids] = []
+
+                    # Add explicit relationships
+                    detailed_relationships[source_ids].append(
+                        {
+                            "target_path": related_path,
+                            "source_path": source_path,
+                            "similarity_score": 1.0,  # Explicit relationships get max score
+                            "relationship_type": "explicit",
+                        }
+                    )
+
+        # Convert detailed relationships back to simple format for backward compatibility
+        # but also store the detailed version
+        cross_ids_relationships = {}
+        for ids_name, relationships in detailed_relationships.items():
+            # Remove duplicates by target path, keeping highest scoring
+            unique_relationships = {}
+            for rel in relationships:
+                target = rel["target_path"]
+                if (
+                    target not in unique_relationships
+                    or rel["similarity_score"]
+                    > unique_relationships[target]["similarity_score"]
+                ):
+                    unique_relationships[target] = rel
+
+            # Limit and sort by similarity score
+            sorted_relationships = sorted(
+                unique_relationships.values(),
+                key=lambda x: x["similarity_score"],
+                reverse=True,
+            )
+            cross_ids_relationships[ids_name] = [
+                rel["target_path"]
+                for rel in sorted_relationships[:max_relationships_per_ids]
+            ]
+
+        # Store both formats in the results
+        all_relationships["cross_ids_map"] = cross_ids_relationships
+        all_relationships["detailed_cross_ids_map"] = detailed_relationships
+
+        total_relationships = sum(
+            len(paths) for paths in cross_ids_relationships.values()
+        )
+        print(
+            f"Generated cross-IDS relationships: {len(cross_ids_relationships)} IDS pairs, {total_relationships} total connections"
+        )
+        print(f"Generated {len(unit_groups)} unit families")
+
+        return all_relationships
