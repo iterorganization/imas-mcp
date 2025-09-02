@@ -3,10 +3,11 @@ Graph analysis module for IMAS data dictionary structure.
 Uses NetworkX to analyze hierarchical relationships and extract insights.
 """
 
-import networkx as nx
-from typing import Dict, List, Any
-from collections import defaultdict
 import statistics
+from collections import defaultdict
+from typing import Any
+
+import networkx as nx
 
 
 class IMASGraphAnalyzer:
@@ -15,7 +16,7 @@ class IMASGraphAnalyzer:
     def __init__(self):
         self.graphs = {}  # Store graphs per IDS
 
-    def build_ids_graph(self, ids_name: str, paths: Dict[str, Any]) -> nx.DiGraph:
+    def build_ids_graph(self, ids_name: str, paths: dict[str, Any]) -> nx.DiGraph:
         """Build a directed graph representing the hierarchical structure of an IDS."""
         G = nx.DiGraph()
 
@@ -46,8 +47,8 @@ class IMASGraphAnalyzer:
         return G
 
     def analyze_ids_structure(
-        self, ids_name: str, paths: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, ids_name: str, paths: dict[str, Any]
+    ) -> dict[str, Any]:
         """Comprehensive structural analysis of an IDS."""
         G = self.build_ids_graph(ids_name, paths)
         self.graphs[ids_name] = G
@@ -152,7 +153,7 @@ class IMASGraphAnalyzer:
 
     def _get_most_connected_nodes(
         self, G: nx.DiGraph, top_n: int = 3
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get nodes with highest degree centrality."""
         centrality = nx.degree_centrality(G)
         top_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:top_n]
@@ -171,8 +172,8 @@ class IMASGraphAnalyzer:
         ]
 
     def analyze_cross_ids_patterns(
-        self, all_ids_data: Dict[str, Dict]
-    ) -> Dict[str, Any]:
+        self, all_ids_data: dict[str, dict]
+    ) -> dict[str, Any]:
         """Analyze patterns across all IDS structures."""
         all_stats = {}
         complexity_scores = {}
@@ -254,7 +255,7 @@ class IMASGraphAnalyzer:
         }
 
 
-def analyze_imas_graphs(data_dict: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_imas_graphs(data_dict: dict[str, Any]) -> dict[str, Any]:
     """Main function to analyze all IMAS structures and return graph statistics."""
     analyzer = IMASGraphAnalyzer()
 

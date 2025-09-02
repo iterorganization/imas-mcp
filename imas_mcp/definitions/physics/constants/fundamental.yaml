@@ -1,0 +1,14 @@
+# Fundamental Physics Constants
+#
+# This file will contain definitions of fundamental physics constants
+# relevant to plasma physics and fusion research.
+#
+# Future expansion: Include constants like:
+# - Fundamental constants (c, h, k_B, etc.)
+# - Plasma-specific constants
+# - IMAS-relevant derived constants
+
+# Placeholder for future development
+constants:
+  # TODO: Add fundamental physics constants
+  placeholder: "Future physics constants definitions"

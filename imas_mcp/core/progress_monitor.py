@@ -1,27 +1,26 @@
 """Progress monitoring utilities with rich fallback to logging."""
 
 import logging
-from typing import Any, List, Optional
+from typing import Any
 
 try:
     from rich.console import Console
     from rich.progress import (
         BarColumn,
-        MofNCompleteColumn,
         Progress,
         SpinnerColumn,
         TaskID,
         TextColumn,
-        TimeElapsedColumn,
+        TimeRemainingColumn,
     )
 
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     # Define dummy types for type hints when rich is not available
-    BarColumn = MofNCompleteColumn = Progress = SpinnerColumn = TaskID = TextColumn = (
-        TimeElapsedColumn
-    ) = Console = Any
+    BarColumn = Progress = SpinnerColumn = TaskID = TextColumn = TimeRemainingColumn = (
+        Console
+    ) = Any
 
 
 class ProgressMonitor:
@@ -29,18 +28,23 @@ class ProgressMonitor:
 
     def __init__(
         self,
-        use_rich: Optional[bool] = None,
-        logger: Optional[logging.Logger] = None,
-        item_names: Optional[List[str]] = None,
+        use_rich: bool | None = None,
+        logger: logging.Logger | None = None,
+        item_names: list[str] | None = None,
+        description_template: str = "Processing IDS: {item}",
     ):
         """Initialize progress monitor.
 
         Args:
-            use_rich: Force use of rich (True) or logging (False). If None, auto-detect.
+            use_rich: Force use of rich (True) or logging (False).
+                If None, auto-detect.
             logger: Logger instance to use for fallback. If None, creates one.
             item_names: List of item names for calculating padding.
+            description_template: Template for progress description.
+                Should contain {item} placeholder.
         """
         self.logger = logger or logging.getLogger(__name__)
+        self.description_template = description_template
 
         # Determine if we should use rich
         if use_rich is None:
@@ -53,6 +57,7 @@ class ProgressMonitor:
         self._task_id = None
         self._current_total: int = 0
         self._current_completed: int = 0
+        self._current_description: str = ""  # Store current processing description
 
         # Calculate maximum name length for space-padding
         if item_names:
@@ -70,7 +75,7 @@ class ProgressMonitor:
             return False
 
     def start_processing(
-        self, items: List[str], description: str = "Processing"
+        self, items: list[str], description: str = "Processing"
     ) -> None:
         """Start processing a list of items.
 
@@ -80,6 +85,7 @@ class ProgressMonitor:
         """
         self._current_total = len(items)
         self._current_completed = 0
+        self._current_description = description  # Store description for logging
 
         # Use pre-calculated max length or calculate it now
         if self._max_name_length == 0 and items:
@@ -91,8 +97,7 @@ class ProgressMonitor:
                 SpinnerColumn(),  # type: ignore
                 TextColumn("[progress.description]{task.description}"),  # type: ignore
                 BarColumn(),  # type: ignore
-                MofNCompleteColumn(),  # type: ignore
-                TimeElapsedColumn(),  # type: ignore
+                TimeRemainingColumn(),  # type: ignore
                 console=self._console,
             )
             self._progress.start()
@@ -100,6 +105,7 @@ class ProgressMonitor:
                 description, total=self._current_total
             )
         else:
+            # Use INFO level for normal progress information
             self.logger.info(f"{description} {self._current_total} items...")
 
     def set_current_item(self, item_name: str) -> None:
@@ -113,13 +119,13 @@ class ProgressMonitor:
             padded_name = item_name.ljust(self._max_name_length)
             self._progress.update(
                 self._task_id,
-                description=f"Processing IDS: {padded_name}",
+                description=self.description_template.format(item=padded_name),
             )
         else:
             # For logging mode, we'll log this when we complete the item
             pass
 
-    def update_progress(self, item_name: str, error: Optional[str] = None) -> None:
+    def update_progress(self, item_name: str, error: str | None = None) -> None:
         """Update progress for a completed item.
 
         Args:
@@ -137,9 +143,17 @@ class ProgressMonitor:
             if error:
                 self.logger.error(f"Error processing IDS {item_name}: {error}")
             else:
-                self.logger.info(
-                    f"Completed IDS: {item_name} ({self._current_completed}/{self._current_total})"
-                )
+                # Use INFO level for consistency with rich mode
+                # Skip the repetitive count if item_name already contains progress info
+                if "/" in item_name and item_name.count("/") == 1:
+                    # Item name already contains progress (e.g., "250/13457")
+                    self.logger.info(f"{self._current_description}: {item_name}")
+                else:
+                    # Item name doesn't contain progress, add it
+                    self.logger.info(
+                        f"{self._current_description}: {item_name} "
+                        f"({self._current_completed}/{self._current_total})"
+                    )
 
     def finish_processing(self) -> None:
         """Finish processing and clean up."""
@@ -148,8 +162,10 @@ class ProgressMonitor:
             self._progress = None
             self._task_id = None
         else:
+            # Use INFO level for normal completion information
             self.logger.info(
-                f"Completed processing {self._current_completed}/{self._current_total} items"
+                f"IMAS-MCP: Completed processing "
+                f"{self._current_completed}/{self._current_total} items"
             )
 
     def log_info(self, message: str) -> None:
@@ -175,18 +191,27 @@ class ProgressMonitor:
 
 
 def create_progress_monitor(
-    use_rich: Optional[bool] = None,
-    logger: Optional[logging.Logger] = None,
-    item_names: Optional[List[str]] = None,
+    use_rich: bool | None = None,
+    logger: logging.Logger | None = None,
+    item_names: list[str] | None = None,
+    description_template: str = "Processing IDS: {item}",
 ) -> ProgressMonitor:
     """Create a progress monitor with appropriate settings.
 
     Args:
-        use_rich: Force use of rich (True) or logging (False). If None, auto-detect.
+        use_rich: Force use of rich (True) or logging (False).
+            If None, auto-detect.
         logger: Logger instance to use for fallback.
         item_names: List of item names for calculating padding.
+        description_template: Template for progress description.
+            Should contain {item} placeholder.
 
     Returns:
         Configured ProgressMonitor instance
     """
-    return ProgressMonitor(use_rich=use_rich, logger=logger, item_names=item_names)
+    return ProgressMonitor(
+        use_rich=use_rich,
+        logger=logger,
+        item_names=item_names,
+        description_template=description_template,
+    )

@@ -1,0 +1,195 @@
+# Research Applications and Workflows for Physics Domains
+# This file defines research applications, standard workflows, and analysis approaches
+
+metadata:
+  version: "1.0.0"
+  created: "2025-08-13"
+  description: "Research applications and workflows for physics domain analysis"
+  source: "Extracted from domain_analyzer.py hardcoded definitions"
+
+research_applications:
+  equilibrium:
+    - application: "disruption_prediction"
+      description: "Predict plasma disruptions"
+      data_requirements:
+        - "magnetic_field"
+        - "pressure_profile"
+        - "current_density"
+      typical_methods:
+        - "machine_learning"
+        - "physics_models"
+        
+    - application: "scenario_optimization"
+      description: "Optimize plasma scenarios"
+      data_requirements:
+        - "equilibrium_profiles"
+        - "control_parameters"
+        - "performance_metrics"
+      typical_methods:
+        - "optimization_algorithms"
+        - "control_theory"
+        
+  transport:
+    - application: "confinement_studies"
+      description: "Study energy confinement"
+      data_requirements:
+        - "temperature_profiles"
+        - "density_profiles"
+        - "heating_power"
+      typical_methods:
+        - "scaling_laws"
+        - "transport_modeling"
+        
+    - application: "turbulence_validation"
+      description: "Validate turbulence models"
+      data_requirements:
+        - "fluctuation_measurements"
+        - "transport_coefficients"
+        - "background_profiles"
+      typical_methods:
+        - "gyrokinetic_simulations"
+        - "model_validation"
+        
+  heating:
+    - application: "heating_optimization"
+      description: "Optimize heating efficiency"
+      data_requirements:
+        - "power_profiles"
+        - "temperature_response"
+        - "wave_absorption"
+      typical_methods:
+        - "wave_modeling"
+        - "power_balance"
+        
+    - application: "current_drive_analysis"
+      description: "Analyze current drive efficiency"
+      data_requirements:
+        - "current_profiles"
+        - "wave_power"
+        - "plasma_parameters"
+      typical_methods:
+        - "fokker_planck_modeling"
+        - "efficiency_analysis"
+
+# Standard physics workflows
+standard_workflows:
+  equilibrium_reconstruction:
+    domain: "equilibrium"
+    description: "Reconstruct MHD equilibrium from magnetic measurements"
+    typical_steps:
+      - "magnetic_diagnostics_analysis"
+      - "pressure_profile_fitting"
+      - "current_profile_optimization"
+      - "equilibrium_validation"
+    data_requirements:
+      - "magnetic_field"
+      - "pressure_profile"
+      - "current_density"
+    output_products:
+      - "equilibrium_reconstruction"
+      - "safety_factor_profile"
+      - "flux_surface_geometry"
+      
+  transport_analysis:
+    domain: "transport"
+    description: "Analyze particle and energy transport"
+    typical_steps:
+      - "profile_measurement"
+      - "flux_calculation"
+      - "transport_coefficient_fitting"
+      - "model_validation"
+    data_requirements:
+      - "density_profile"
+      - "temperature_profile"
+      - "flux_measurements"
+    output_products:
+      - "transport_coefficients"
+      - "confinement_time"
+      - "transport_model_validation"
+
+# Generic workflow template
+generic_workflow_template:
+  description_template: "Standard data analysis workflow for {domain}"
+  typical_steps:
+    - "data_validation"
+    - "preprocessing" 
+    - "analysis"
+    - "interpretation"
+  output_products:
+    - "processed_data"
+    - "analysis_results"
+    - "interpretation_report"
+
+# Analysis approach recommendations
+analysis_approaches:
+  complexity_matrix:
+    advanced_theoretical_advanced_data:
+      approach: "systematic_expert_analysis"
+      description: "Requires expert knowledge and systematic methodology"
+      recommended_tools:
+        - "specialized_analysis_codes"
+        - "expert_interpretation"
+        - "multi-physics_modeling"
+        
+    advanced_theoretical_intermediate_data:
+      approach: "guided_analysis_workflow"
+      description: "Structured workflow with expert guidance"
+      recommended_tools:
+        - "validated_analysis_workflows"
+        - "quality_checks"
+        - "expert_review"
+        
+    intermediate_theoretical_advanced_data:
+      approach: "guided_analysis_workflow"
+      description: "Data-driven analysis with physics guidance"
+      recommended_tools:
+        - "automated_processing"
+        - "physics_validation"
+        - "uncertainty_quantification"
+        
+    basic_theoretical_basic_data:
+      approach: "standard_analysis_tools"
+      description: "Standard tools and procedures sufficient"
+      recommended_tools:
+        - "standard_analysis_software"
+        - "automated_processing"
+        - "basic_visualization"
+        
+    default:
+      approach: "guided_analysis_workflow"
+      description: "Default approach for undefined combinations"
+      recommended_tools:
+        - "standard_tools_with_guidance"
+        - "quality_assurance"
+
+# Data quality recommendations
+data_quality_recommendations:
+  high_quality:
+    recommendations:
+      - "Data suitable for detailed analysis"
+      - "Consider advanced workflows"
+      - "Enable comprehensive physics studies"
+    next_steps:
+      - "Advanced analysis workflows"
+      - "Multi-physics integration"
+      - "Model validation studies"
+      
+  moderate_quality:
+    recommendations:
+      - "Supplement with additional data sources"
+      - "Validate key measurements"
+      - "Consider uncertainty analysis"
+    next_steps:
+      - "Data quality improvement"
+      - "Cross-validation with other measurements"
+      - "Limited physics analysis"
+      
+  limited_quality:
+    recommendations:
+      - "Improve data documentation"
+      - "Add measurement metadata"
+      - "Consider alternative data sources"
+    next_steps:
+      - "Data collection improvement"
+      - "Metadata enhancement"
+      - "Basic feasibility studies only"

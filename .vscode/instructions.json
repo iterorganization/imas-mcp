@@ -1,0 +1,9 @@
+{
+  "patterns": [
+    {
+      "pattern": "**/*.md",
+      "instructions": ".github/instructions/refactoring.instructions.md", 
+      "description": "Apply refactoring guidelines when discussing code changes"
+    }
+  ]
+}
