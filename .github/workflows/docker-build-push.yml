@@ -95,6 +95,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
             type=semver,pattern={{major}}-${{ matrix.transport }}
             type=raw,value=latest-${{ matrix.transport }}
+            type=raw,value=prod-${{ matrix.transport }}
           flavor: |
             latest=auto
 
