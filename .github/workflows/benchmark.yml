@@ -57,6 +57,34 @@ jobs:
       - name: Install ASV
         run: uv tool install asv
 
+      - name: Configure ASV for PR context
+        if: github.event_name == 'pull_request'
+        run: |
+          # For PRs, only track the current HEAD to avoid 'main' branch not found errors
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for PR context - tracking only HEAD')
+          "
+
+      - name: Configure ASV for main branch
+        if: github.event_name != 'pull_request'
+        run: |
+          # For main branch and other contexts, track main and HEAD
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['main', 'HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for main branch context - tracking main and HEAD')
+          "
+
       - name: Download previous benchmark results
         uses: actions/download-artifact@v4
         with:
@@ -197,6 +225,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Configure ASV for clear operation
+        run: |
+          # Use minimal configuration for clear operation
+          python -c "
+          import json
+          with open('asv.conf.json', 'r') as f:
+              config = json.load(f)
+          config['branches'] = ['HEAD']
+          with open('asv.conf.json', 'w') as f:
+              json.dump(config, f, indent=4)
+          print('ASV configured for clear operation')
+          "
 
       - name: Upload empty benchmark results
         uses: actions/upload-artifact@v4
