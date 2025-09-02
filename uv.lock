@@ -642,8 +642,8 @@ wheels = [
 
 [[package]]
 name = "imas-data-dictionary"
-version = "4.0.1.dev202"
-source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=c1342e2514ba36d007937425b2df522cd1b213df#c1342e2514ba36d007937425b2df522cd1b213df" }
+version = "4.0.1.dev277"
+source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=8b28b0d89f053b511f9e6153af3305d2fd180e1c#8b28b0d89f053b511f9e6153af3305d2fd180e1c" }
 dependencies = [
     { name = "packaging" },
 ]
@@ -730,7 +730,7 @@ provides-extras = ["bench", "http", "test"]
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=23.0.0" },
-    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=c1342e2514ba36d007937425b2df522cd1b213df" },
+    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=8b28b0d89f053b511f9e6153af3305d2fd180e1c" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },
