@@ -1,5 +1,9 @@
 {
   "servers": {
+		"imas": {
+			"url": "https://imas-dd.iter.org/mcp/",
+			"type": "http"
+		},
     // "imas": {
     //   "url": "https://imas-dd.iter.org/mcp/",
     //   "type": "http"
