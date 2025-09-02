@@ -8,7 +8,7 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@c1342e2514ba36d007937425b2df522cd1b213df",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
 ]
 build-backend = "hatchling.build"
 
@@ -86,7 +86,7 @@ dev = [
     "ipywidgets>=8.1.7",
     # Build dependencies
     "rich>=13.7.0,<14.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@c1342e2514ba36d007937425b2df522cd1b213df",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
     "matplotlib>=3.10.5",
     "seaborn>=0.13.2",
 ]
