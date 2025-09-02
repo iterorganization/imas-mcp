@@ -87,11 +87,59 @@ jobs:
           "
 
       - name: Download previous benchmark results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              // Get the most recent successful workflow run (excluding current)
+              const runs = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'benchmark.yml',
+                status: 'completed',
+                conclusion: 'success',
+                per_page: 5
+              });
+              
+              const previousRun = runs.data.workflow_runs.find(run => run.id !== context.runId);
+              if (previousRun) {
+                console.log(`Found previous successful run: ${previousRun.id}`);
+                
+                // Check if it has the artifact we need
+                const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: previousRun.id
+                });
+                
+                const asvArtifact = artifacts.data.artifacts.find(a => a.name === 'asv-results' && !a.expired);
+                if (asvArtifact) {
+                  console.log('Found asv-results artifact, setting up for download...');
+                  core.setOutput('previous_run_id', previousRun.id);
+                  core.setOutput('found_artifact', 'true');
+                } else {
+                  console.log('No valid asv-results artifact found in previous run');
+                  core.setOutput('found_artifact', 'false');
+                }
+              } else {
+                console.log('No previous successful runs found');
+                core.setOutput('found_artifact', 'false');
+              }
+            } catch (error) {
+              console.log(`Error finding previous run: ${error.message}`);
+              core.setOutput('found_artifact', 'false');
+            }
+        id: find_previous_run
+
+      - name: Download previous benchmark results
+        if: steps.find_previous_run.outputs.found_artifact == 'true'
         uses: actions/download-artifact@v5
         with:
           name: asv-results
           path: .
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.find_previous_run.outputs.previous_run_id }}
         continue-on-error: true
 
       - name: Setup ASV machine
@@ -155,7 +203,7 @@ jobs:
             .asv/results/
             .asv/html/
             .asv/machine.json
-          retention-days: 90
+          retention-days: 30
           if-no-files-found: warn
           include-hidden-files: true
           overwrite: true
@@ -226,6 +274,7 @@ jobs:
             # Empty path to clear the artifact
           if-no-files-found: ignore
           overwrite: true
+          retention-days: 30
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'
