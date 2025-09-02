@@ -1,0 +1,29 @@
+{
+    "version": 1,
+    "project": "imas-mcp",
+    "repo": ".",
+    "branches": ["main", "HEAD"],
+    "dvcs": "git",
+    "environment_type": "virtualenv",
+    "pythons": ["3.12"],
+    "build_command": [
+        "python -m pip install build",
+        "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
+    ],
+    "install_command": [
+        "in-dir={env_dir} python -m pip install {wheel_file}"
+    ],
+    "uninstall_command": [
+        "return-code=any python -m pip uninstall -y {project}"
+    ],
+    "benchmark_dir": "benchmarks",
+    "env_dir": ".asv/env",
+    "results_dir": ".asv/results",
+    "html_dir": ".asv/html",
+    "build_cache_size": 8,
+    "regressions_first_commits": {},
+    "regressions_thresholds": {
+        "regress": 1.5,
+        "improve": 0.8
+    }
+}

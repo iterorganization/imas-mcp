@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -66,7 +66,7 @@ class CoordinateSystem(BaseModel):
 
     description: str
     units: str
-    range: Optional[List[float]] = None
+    range: list[float] | None = None
     usage: str
 
 
@@ -74,17 +74,17 @@ class PhysicsContext(BaseModel):
     """Physics context for a data field."""
 
     domain: str
-    phenomena: List[str] = Field(default_factory=list)
-    typical_values: Dict[str, str] = Field(default_factory=dict)
+    phenomena: list[str] = Field(default_factory=list)
+    typical_values: dict[str, str] = Field(default_factory=dict)
 
 
 class ValidationRules(BaseModel):
     """Validation rules for data fields."""
 
-    min_value: Optional[float] = None
-    max_value: Optional[float] = None
+    min_value: float | None = None
+    max_value: float | None = None
     units_required: bool = True
-    coordinate_check: Optional[str] = None
+    coordinate_check: str | None = None
 
 
 class UsageExample(BaseModel):
@@ -95,29 +95,53 @@ class UsageExample(BaseModel):
     notes: str
 
 
-class DataPath(BaseModel):
+class IdentifierOption(BaseModel):
+    """Single identifier enumeration option."""
+
+    name: str
+    index: int
+    description: str
+
+
+class IdentifierSchema(BaseModel):
+    """Complete identifier schema from XML file."""
+
+    schema_path: str  # The path used to access the schema (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+    documentation: str | None = None  # Documentation from the schema file
+    options: list[IdentifierOption] = Field(
+        default_factory=list
+    )  # Available enumeration values
+    metadata: dict[str, Any] = Field(
+        default_factory=dict
+    )  # Additional metadata from schema
+
+
+class IdsNode(BaseModel):
     """Complete data path information extracted from XML."""
 
-    path: str  # The full path (added for consistency)
+    path: str
     documentation: str
-    units: Optional[str] = None  # Make units optional
-    coordinates: List[str] = Field(default_factory=list)
+    units: str | None = None  # Make units optional
+    coordinates: list[str] = Field(default_factory=list)
     lifecycle: str = "active"
-    data_type: Optional[str] = None
-    introduced_after: Optional[str] = None
-    physics_context: Optional[PhysicsContext] = None
-    related_paths: List[str] = Field(default_factory=list)
-    usage_examples: List[UsageExample] = Field(default_factory=list)
-    validation_rules: Optional[ValidationRules] = None
-    relationships: Optional["RelationshipCategories"] = (
-        None  # Categorized relationships
+    data_type: str | None = None
+    introduced_after_version: str | None = None  # Renamed from introduced_after
+    lifecycle_status: str | None = None  # Added lifecycle status field
+    lifecycle_version: str | None = None  # Added lifecycle version field
+    physics_context: PhysicsContext | None = None
+    related_paths: list[str] = Field(default_factory=list)
+    usage_examples: list[UsageExample] = Field(default_factory=list)
+    validation_rules: ValidationRules | None = None
+    identifier_schema: IdentifierSchema | None = (
+        None  # Schema information for identifier fields
     )
 
     # Additional XML attributes
-    coordinate1: Optional[str] = None
-    coordinate2: Optional[str] = None
-    timebase: Optional[str] = None
-    type: Optional[str] = None
+    coordinate1: str | None = None
+    coordinate2: str | None = None
+    timebase: str | None = None
+    type: str | None = None
+    structure_reference: str | None = None  # Reference to structure definition
 
     model_config = ConfigDict(extra="allow")  # Allow additional fields from XML
 
@@ -127,13 +151,13 @@ class IdsInfo(BaseModel):
 
     name: str
     description: str
-    version: Optional[str] = None
+    version: str | None = None
     max_depth: int = 0
     leaf_count: int = 0
     physics_domain: PhysicsDomain = PhysicsDomain.GENERAL
     documentation_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
-    related_ids: List[str] = Field(default_factory=list)
-    common_use_cases: List[str] = Field(default_factory=list)
+    related_ids: list[str] = Field(default_factory=list)
+    common_use_cases: list[str] = Field(default_factory=list)
 
     @field_validator("documentation_coverage")
     @classmethod
@@ -146,9 +170,9 @@ class IdsDetailed(BaseModel):
     """Detailed IDS information."""
 
     ids_info: IdsInfo
-    coordinate_systems: Dict[str, CoordinateSystem] = Field(default_factory=dict)
-    paths: Dict[str, DataPath] = Field(default_factory=dict)
-    semantic_groups: Dict[str, List[str]] = Field(default_factory=dict)
+    coordinate_systems: dict[str, CoordinateSystem] = Field(default_factory=dict)
+    paths: dict[str, IdsNode] = Field(default_factory=dict)
+    semantic_groups: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class CatalogMetadata(BaseModel):
@@ -156,7 +180,7 @@ class CatalogMetadata(BaseModel):
 
     version: str
     generation_date: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat() + "Z"
+        default_factory=lambda: datetime.now(UTC).isoformat() + "Z"
     )
     total_ids: int
     total_leaf_nodes: int
@@ -168,7 +192,7 @@ class IdsCatalog(BaseModel):
     """High-level IDS catalog structure."""
 
     metadata: CatalogMetadata
-    ids_catalog: Dict[str, IdsInfo]
+    ids_catalog: dict[str, IdsInfo]
 
 
 class RelationshipInfo(BaseModel):
@@ -176,30 +200,30 @@ class RelationshipInfo(BaseModel):
 
     type: str
     description: str
-    paths: List[str] = Field(default_factory=list)
+    paths: list[str] = Field(default_factory=list)
 
 
 class CrossIdsRelationship(BaseModel):
     """Cross-IDS relationship information."""
 
     type: str
-    relationships: List[Dict[str, Any]] = Field(default_factory=list)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PhysicsConcept(BaseModel):
     """Physics concept with related paths."""
 
     description: str
-    relevant_paths: List[str] = Field(default_factory=list)
-    key_relationships: List[str] = Field(default_factory=list)
+    relevant_paths: list[str] = Field(default_factory=list)
+    key_relationships: list[str] = Field(default_factory=list)
 
 
 class UnitFamily(BaseModel):
     """Unit family definition."""
 
     base_unit: str
-    paths_using: List[str] = Field(default_factory=list)
-    conversion_factors: Dict[str, float] = Field(default_factory=dict)
+    paths_using: list[str] = Field(default_factory=list)
+    conversion_factors: dict[str, float] = Field(default_factory=dict)
 
 
 class Relationships(BaseModel):
@@ -210,29 +234,51 @@ class Relationships(BaseModel):
             version="unknown", total_ids=0, total_leaf_nodes=0
         )
     )
-    cross_references: Dict[str, CrossIdsRelationship] = Field(default_factory=dict)
-    physics_concepts: Dict[str, PhysicsConcept] = Field(default_factory=dict)
-    unit_families: Dict[str, UnitFamily] = Field(default_factory=dict)
+    cross_references: dict[str, CrossIdsRelationship] = Field(default_factory=dict)
+    physics_concepts: dict[str, PhysicsConcept] = Field(default_factory=dict)
+    unit_families: dict[str, UnitFamily] = Field(default_factory=dict)
 
 
 class TransformationOutputs(BaseModel):
     """Output paths from data dictionary transformation."""
 
     catalog: Path
-    detailed: List[Path] = Field(default_factory=list)
-    relationships: Path
+    detailed: list[Path] = Field(default_factory=list)
+    identifier_catalog: Path
 
 
-class RelationshipCategories(BaseModel):
-    """Categorized relationships for semantic understanding."""
+class IdentifierPath(BaseModel):
+    """Represents a single path with identifier schema."""
 
-    coordinates: List[str] = Field(default_factory=list)  # Coordinate dependencies
-    physics_related: List[str] = Field(default_factory=list)  # Same physics domain
-    cross_ids: List[str] = Field(default_factory=list)  # Cross-IDS references
-    validation: List[str] = Field(default_factory=list)  # Validation/control fields
-    hierarchical: List[str] = Field(default_factory=list)  # Parent/child/sibling
-    units_compatible: List[str] = Field(default_factory=list)  # Same units
-    semantic_similarity: List[str] = Field(default_factory=list)  # Name similarity
-    documentation_refs: List[str] = Field(
-        default_factory=list
-    )  # Documentation references
+    path: str
+    ids_name: str
+    schema_name: str
+    description: str
+    option_count: int
+    physics_domain: str | None = None
+    usage_frequency: int = 1
+
+
+class IdentifierCatalogSchema(BaseModel):
+    """Complete identifier schema information for catalog."""
+
+    schema_name: str
+    schema_path: str
+    description: str
+    total_options: int
+    options: list[IdentifierOption]
+    usage_count: int
+    usage_paths: list[str]
+    physics_domains: list[str]
+    branching_complexity: float  # Entropy measure
+
+
+class IdentifierCatalog(BaseModel):
+    """Complete identifier catalog structure."""
+
+    metadata: CatalogMetadata
+    schemas: dict[str, IdentifierCatalogSchema]
+    paths_by_ids: dict[str, list[IdentifierPath]]
+    cross_references: dict[str, list[str]]
+    physics_mapping: dict[str, list[str]]
+    branching_analytics: dict[str, Any]

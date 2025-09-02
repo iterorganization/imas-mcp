@@ -1,9 +1,25 @@
 {
   "servers": {
-    "imas-dd": {
+		"imas": {
+			"url": "https://imas-dd.iter.org/mcp/",
+			"type": "http"
+		},
+    // "imas": {
+    //   "url": "https://imas-dd.iter.org/mcp/",
+    //   "type": "http"
+    // }
+    // note: first initialize of imas-debug will take ~10 minutes to build the DD embeddings
+    "imas-debug": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "python", "-m", "imas_mcp.server"],
+      "args": [
+        "run",
+        "--active",
+        "run-server",
+        "--no-rich",
+        "--log-level",
+        "DEBUG"
+      ]
     },
     "github": {
       "type": "http",

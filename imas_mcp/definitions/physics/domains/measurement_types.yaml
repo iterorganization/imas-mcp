@@ -1,0 +1,81 @@
+# Measurement Type Definitions for Physics Domain Analysis
+# This file defines measurement types, their descriptions, and typical outputs
+
+metadata:
+  version: "1.0.0" 
+  created: "2025-08-13"
+  description: "Measurement type definitions and characteristics for domain analysis"
+  source: "Extracted from domain_analyzer.py hardcoded definitions"
+
+measurement_types:
+  density_measurement:
+    description_template: "Particle density measurements in {domain} physics context"
+    identification_keywords:
+      - "density"
+    typical_units:
+      - "m^-3"
+    
+  temperature_measurement:
+    description_template: "Temperature measurements for {domain} analysis"
+    identification_keywords:
+      - "temperature"
+    typical_units:
+      - "eV"
+      - "K"
+      
+  pressure_measurement:
+    description_template: "Pressure and kinetic measurements in {domain}"
+    identification_keywords:
+      - "pressure"
+    typical_units:
+      - "Pa"
+      
+  magnetic_field_measurement:
+    description_template: "Magnetic field measurements relevant to {domain}"
+    identification_keywords:
+      - "magnetic"
+      - "field"
+    typical_units:
+      - "T"
+      - "Wb"
+      - "T.m"
+      
+  current_measurement:
+    description_template: "Current density and plasma current in {domain}"
+    identification_keywords:
+      - "current"
+    typical_units:
+      - "A"
+      - "A.m^-2"
+      
+  velocity_measurement:
+    description_template: "Flow and velocity measurements for {domain}"
+    identification_keywords:
+      - "velocity"
+      - "flow"
+    typical_units:
+      - "m.s^-1"
+      
+  radiation_measurement:
+    description_template: "Radiation and emission measurements in {domain}"
+    identification_keywords:
+      - "radiation"
+      - "emission"
+    typical_units:
+      - "W.m^-3"
+      - "W.m^-2"
+      
+  geometric_measurement:
+    description_template: "Geometric and structural measurements for {domain}"
+    identification_keywords:
+      - "position"
+      - "geometry"
+    typical_units:
+      - "m"
+      - "rad"
+
+# Default fallback for unidentified measurements
+default_measurement:
+  description_template: "Measurements related to {domain} physics"
+  typical_units:
+    - "1"

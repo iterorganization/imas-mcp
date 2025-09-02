@@ -10,10 +10,10 @@ import json
 import logging
 import os
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import xml.etree.ElementTree as ET
+from typing import Any
 
 from packaging.version import Version
 
@@ -63,7 +63,7 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
         if not self._imas_dd:
             raise RuntimeError("imas-data-dictionary not available")
 
-        xml_path = self._imas_dd.get_xml_resource("IDSDef.xml")
+        xml_path = self._imas_dd.get_schema("data_dictionary.xml")
         with xml_path.open("rb") as f:
             return ET.parse(f)
 
@@ -80,6 +80,34 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
 
         return Version(version_elem.text)
 
+    def get_schema(self, schema_path: str):
+        """Get a schema XML file using the new get_schema method.
+
+        Args:
+            schema_path: The schema path (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+
+        Returns:
+            ElementTree of the schema file, or None if not available
+        """
+        if not self._imas_dd:
+            raise RuntimeError("imas-data-dictionary not available")
+
+        try:
+            # Use the new get_schema method if available
+            if hasattr(self._imas_dd, "get_schema"):
+                schema_file_path = self._imas_dd.get_schema(schema_path)
+                with schema_file_path.open("rb") as f:
+                    tree = ET.parse(f)
+                    return tree
+            else:
+                logger.debug(
+                    f"get_schema method not available, cannot access {schema_path}"
+                )
+                return None
+        except Exception as e:
+            logger.debug(f"Could not load schema {schema_path}: {e}")
+            return None
+
     def is_available(self) -> bool:
         """Check if the data dictionary is available."""
         return self._imas_dd is not None
@@ -90,9 +118,9 @@ class MetadataDataDictionaryAccessor(DataDictionaryAccessor):
 
     def __init__(self, metadata_dir: Path):
         self.metadata_dir = metadata_dir
-        self._cached_metadata: Optional[Dict[str, Any]] = None
+        self._cached_metadata: dict[str, Any] | None = None
 
-    def _load_metadata(self) -> Dict[str, Any]:
+    def _load_metadata(self) -> dict[str, Any]:
         """Load metadata from the most recent metadata file."""
         if self._cached_metadata is not None:
             return self._cached_metadata
@@ -195,9 +223,9 @@ class EnvironmentDataDictionaryAccessor(DataDictionaryAccessor):
 class CompositeDataDictionaryAccessor(DataDictionaryAccessor):
     """Composite accessor that tries multiple accessors in order."""
 
-    def __init__(self, accessors: List[DataDictionaryAccessor]):
+    def __init__(self, accessors: list[DataDictionaryAccessor]):
         self.accessors = accessors
-        self._primary_accessor: Optional[DataDictionaryAccessor] = None
+        self._primary_accessor: DataDictionaryAccessor | None = None
 
     def _get_available_accessor(self) -> DataDictionaryAccessor:
         """Get the first available accessor."""
@@ -233,12 +261,12 @@ class CompositeDataDictionaryAccessor(DataDictionaryAccessor):
 
 
 def create_dd_accessor(
-    metadata_dir: Optional[Path] = None,
-    index_name: Optional[str] = None,
-    index_prefix: Optional[str] = None,
+    metadata_dir: Path | None = None,
+    index_name: str | None = None,
+    index_prefix: str | None = None,
 ) -> DataDictionaryAccessor:
     """Create a composite data dictionary accessor with fallback chain."""
-    accessors: List[DataDictionaryAccessor] = []
+    accessors: list[DataDictionaryAccessor] = []
 
     # 1. Environment variable (highest priority)
     accessors.append(EnvironmentDataDictionaryAccessor())
@@ -264,10 +292,10 @@ def save_index_metadata(
     metadata_dir: Path,
     index_name: str,
     dd_version: Version,
-    ids_names: List[str],
+    ids_names: list[str],
     total_documents: int,
     index_type: str,
-    build_metadata: Optional[Dict[str, Any]] = None,
+    build_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Save index metadata to a JSON file."""
     metadata_dir.mkdir(parents=True, exist_ok=True)
