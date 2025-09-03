@@ -4,7 +4,7 @@ Data models for cluster-based relationship extraction results.
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ClusterInfo(BaseModel):
@@ -132,10 +132,7 @@ class RelationshipSet(BaseModel):
     # Optional additional groupings for tool compatibility
     _unit_families: dict[str, dict[str, Any]] | None = None
 
-    class Config:
-        """Pydantic configuration."""
-
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def get_cluster_for_path(self, path: str) -> ClusterInfo | None:
         """Get the cluster containing the given path."""
