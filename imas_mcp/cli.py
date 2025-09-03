@@ -60,25 +60,21 @@ def main(
         python -m imas_mcp.cli
 
         # Run with HTTP transport on custom host/port
-        python -m imas_mcp.cli --transport http --host 0.0.0.0 --port 9000
+        python -m imas_mcp.cli --transport streamable-http --host 0.0.0.0 --port 9000
 
         # Run with debug logging
         python -m imas_mcp.cli --log-level DEBUG
 
         # Run with HTTP transport on specific port
-        python -m imas_mcp.cli --transport http --port 8080
+        python -m imas_mcp.cli --transport streamable-http --port 8080
 
         # Run without rich progress output
         python -m imas_mcp.cli --no-rich
+
+    Note: streamable-http transport uses stateful mode to support
+    MCP sampling functionality for enhanced AI interactions.
     """
     # Configure logging based on the provided level
-    # For stdio transport, default to WARNING to prevent INFO logs appearing as warnings in MCP clients
-    if transport == "stdio" and log_level == "INFO":
-        log_level = "WARNING"
-        logger.debug(
-            "Adjusted log level to WARNING for stdio transport to prevent client warnings"
-        )
-
     # Force reconfigure logging by getting the root logger and setting its level
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level))
@@ -100,13 +96,21 @@ def main(
     match transport:
         case "stdio":
             logger.debug("Using STDIO transport")
-        case "http":
-            logger.info(f"Using HTTP transport on {host}:{port}")
+        case "streamable-http":
+            logger.info(f"Using streamable-http transport on {host}:{port}")
+            logger.info("Stateful HTTP mode enabled to support MCP sampling")
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 
-    # Create and run the AI-enhanced server
-    server = Server(use_rich=not no_rich, ids_set=ids_set)
+    # Create and run the mcp server
+    # For stdio transport, always disable rich output to prevent protocol interference
+    use_rich = not no_rich and transport != "stdio"
+    if transport == "stdio" and not no_rich:
+        logger.debug(
+            "Disabled rich output for stdio transport to prevent protocol interference"
+        )
+
+    server = Server(use_rich=use_rich, ids_set=ids_set)
     server.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),
         host=host,
