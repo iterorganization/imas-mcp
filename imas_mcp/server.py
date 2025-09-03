@@ -70,7 +70,7 @@ class Server:
 
         # Initialize components
         self.tools = Tools(ids_set=self.ids_set)
-        self.resources = Resources()
+        self.resources = Resources(ids_set=self.ids_set)
 
         # Pre-build embeddings during server initialization to avoid delays on
         # first request
@@ -114,7 +114,13 @@ class Server:
         host: str = "127.0.0.1",
         port: int = 8000,
     ):
-        """Run the server with the specified transport."""
+        """Run the server with the specified transport.
+
+        Args:
+            transport: Transport protocol to use
+            host: Host to bind to (for HTTP transports)
+            port: Port to bind to (for HTTP transports)
+        """
         # Adjust logging level based on transport
         # For stdio transport, suppress INFO logs to prevent them appearing as warnings in MCP clients
         # For HTTP transport, allow INFO logs for useful debugging information
@@ -127,7 +133,11 @@ class Server:
             logger.info(
                 f"Starting IMAS MCP server with {transport} transport on {host}:{port}"
             )
-            self.mcp.run(transport=transport, host=host, port=port)
+            # Use stateful HTTP mode to support sampling functionality
+            logger.info("Using stateful HTTP mode to support MCP sampling")
+            self.mcp.run(
+                transport=transport, host=host, port=port, stateless_http=False
+            )
         else:
             raise ValueError(
                 f"Unsupported transport: {transport}. "

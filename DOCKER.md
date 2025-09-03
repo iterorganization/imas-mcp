@@ -74,7 +74,7 @@ docker run -d \
 
 ## Health Check
 
-The container includes a health check that verifies the server is responding correctly. When using the `streamable-http` transport, the server exposes a dedicated health endpoint that checks both server availability and search index functionality:
+The container includes a health check that verifies the server is responding correctly. When using the `streamable-http` transport, the server exposes a dedicated health endpoint that checks both server availability and search index functionality. The server now runs in stateful mode to support MCP sampling functionality:
 
 ```bash
 # Check container health status
@@ -86,7 +86,7 @@ curl -f http://localhost:8000/health
 # Example health response
 {
   "status": "healthy",
-  "service": "imas-mcp-server", 
+  "service": "imas-mcp-server",
   "version": "4.0.1.dev164",
   "index_stats": {
     "total_paths": 15420,
@@ -102,11 +102,17 @@ The health check is configured in `docker-compose.yml`:
 
 ```yaml
 healthcheck:
-  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-  interval: 30s      # Check every 30 seconds
-  timeout: 10s       # 10 second timeout per check
-  retries: 3         # Mark unhealthy after 3 consecutive failures
-  start_period: 40s  # Wait 40 seconds before starting checks
+  test:
+    [
+      "CMD",
+      "python",
+      "-c",
+      "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+    ]
+  interval: 30s # Check every 30 seconds
+  timeout: 10s # 10 second timeout per check
+  retries: 3 # Mark unhealthy after 3 consecutive failures
+  start_period: 40s # Wait 40 seconds before starting checks
 ```
 
 **Note**: The health endpoint is only available when using `streamable-http` transport. For other transports (`stdio`, `sse`), the health check will verify port connectivity only.

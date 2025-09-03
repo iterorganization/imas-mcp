@@ -32,6 +32,7 @@ class Relationships:
     """
 
     relationships_file: Path | None = None
+    ids_set: set[str] | None = None
     embeddings_dir: Path = field(init=False)
     schemas_dir: Path = field(init=False)
 
@@ -211,6 +212,11 @@ class Relationships:
         logger.info("Building relationships with optimal parameters...")
 
         try:
+            # Debug: Log the ids_set value
+            logger.info(
+                f"DEBUG: Relationships.build() called with ids_set: {self.ids_set}"
+            )
+
             # Create configuration with optimal parameters
             default_config = {
                 "cross_ids_eps": 0.0751,  # Optimal from Latin Hypercube optimization
@@ -218,8 +224,11 @@ class Relationships:
                 "intra_ids_eps": 0.0319,  # Optimal from Latin Hypercube optimization
                 "intra_ids_min_samples": 2,
                 "use_rich": False,  # Disable rich output for automatic rebuild
+                "ids_set": self.ids_set,  # Pass through the IDS filter
             }
             default_config.update(config_overrides)
+
+            logger.info(f"DEBUG: Final config ids_set: {default_config.get('ids_set')}")
 
             config = RelationshipExtractionConfig(**default_config)
 
