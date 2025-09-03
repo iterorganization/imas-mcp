@@ -486,7 +486,7 @@ See [DOCKER.md](DOCKER.md) for detailed container usage, deployment options, and
 [pre-commit-badge]: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white
 [pre-commit-link]: https://github.com/pre-commit/pre-commit
 [build-deploy-badge]: https://img.shields.io/github/actions/workflow/status/simon-mcintosh/imas-mcp/test.yml?branch=main&color=brightgreen&label=CI%2FCD
-[build-deploy-link]: https://github.com/simon-mcintosh/imas-mcp/actions/workflows/test.yml
+[build-deploy-link]: https://github.com/iterorganization/imas-mcp/actions/workflows/test.yml
 [codecov-badge]: https://codecov.io/gh/simon-mcintosh/imas-mcp/graph/badge.svg
 [codecov-link]: https://codecov.io/gh/simon-mcintosh/imas-mcp
 [docs-badge]: https://img.shields.io/badge/docs-online-brightgreen

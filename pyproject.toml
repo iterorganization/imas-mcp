@@ -92,10 +92,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/simon-mcintosh/imas-mcp"
-Repository = "https://github.com/simon-mcintosh/imas-mcp"
-Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
-"Bug Tracker" = "https://github.com/simon-mcintosh/imas-mcp/issues"
+Homepage = "https://github.com/iterorganization/imas-mcp"
+Repository = "https://github.com/iterorganization/imas-mcp"
+Documentation = "https://github.com/iterorganization/imas-mcp#readme"
+"Bug Tracker" = "https://github.com/iterorganization/imas-mcp/issues"
 
 [project.scripts]
 imas-mcp = "imas_mcp.cli:main"
