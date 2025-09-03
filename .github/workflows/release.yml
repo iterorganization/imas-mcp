@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     # Only run on the main repository, not forks
-    if: github.repository == 'simon-mcintosh/imas-mcp'
+    if: github.repository == 'iterorganization/imas-mcp'
 
     steps:
       - name: Checkout
