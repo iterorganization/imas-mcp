@@ -534,9 +534,34 @@ class DocumentStore:
             with open(identifier_catalog_file, encoding="utf-8") as f:
                 catalog_data = json.load(f)
 
-            # Load schema documents (sorted for deterministic order)
+            # Prepare to limit schemas to only those referenced by allowed IDS when ids_set is active
             schemas = catalog_data.get("schemas", {})
+            paths_by_ids = catalog_data.get("paths_by_ids", {})
+
+            # Determine which IDS are allowed
+            allowed_ids = (
+                set(self.ids_set)
+                if self.ids_set is not None
+                else set(paths_by_ids.keys())
+            )
+
+            # Build set of referenced schema names from allowed IDS only
+            referenced_schema_names: set[str] = set()
+            for ids_name in sorted(paths_by_ids.keys()):
+                if ids_name not in allowed_ids:
+                    continue
+                for path_data in paths_by_ids[ids_name]:
+                    schema_name = path_data.get("schema_name")
+                    if schema_name:
+                        referenced_schema_names.add(schema_name)
+
+            # Load schema documents: if filtered, only index referenced schemas to avoid leaking unrelated schemas
             for schema_name in sorted(schemas.keys()):
+                if (
+                    self.ids_set is not None
+                    and schema_name not in referenced_schema_names
+                ):
+                    continue
                 schema_data = schemas[schema_name]
                 document = self._create_identifier_schema_document(
                     schema_name, schema_data
@@ -544,11 +569,10 @@ class DocumentStore:
                 self._index.add_document(document)
 
             # Load path documents that reference identifier schemas (sorted for deterministic order)
-            paths_by_ids = catalog_data.get("paths_by_ids", {})
             for ids_name in sorted(paths_by_ids.keys()):
                 identifier_paths = paths_by_ids[ids_name]
                 # Apply IDS filter for identifier paths
-                if self.ids_set is not None and ids_name not in self.ids_set:
+                if self.ids_set is not None and ids_name not in allowed_ids:
                     continue
 
                 # Sort identifier paths for deterministic order

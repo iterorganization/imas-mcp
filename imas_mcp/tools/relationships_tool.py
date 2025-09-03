@@ -50,7 +50,13 @@ class RelationshipsTool(BaseTool):
     def __init__(self, *args, **kwargs):
         """Initialize with relationships manager."""
         super().__init__(*args, **kwargs)
-        self._relationships = Relationships()
+        # Pass ids_set from document store to Relationships manager
+        ids_set = (
+            self.document_store.ids_set
+            if hasattr(self.document_store, "ids_set")
+            else None
+        )
+        self._relationships = Relationships(ids_set=ids_set)
         self._load_relationships_catalog()
 
     def _load_relationships_catalog(self):

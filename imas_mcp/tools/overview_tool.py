@@ -267,6 +267,7 @@ class OverviewTool(BaseTool):
             ids_info = self._ids_catalog.get("ids_catalog", {})
             identifier_metadata = self._identifier_catalog.get("metadata", {})
 
+            # Use catalog metadata as defaults
             total_ids = metadata.get("total_ids", len(ids_info))
             total_paths = metadata.get("total_paths", 0)
             total_leaf_nodes = metadata.get("total_leaf_nodes")
@@ -281,20 +282,43 @@ class OverviewTool(BaseTool):
             except importlib.metadata.PackageNotFoundError:
                 version = "0.0.0"
 
+            # Get filtered IDS list from DocumentStore (respects ids_set filter)
+            available_ids = self.document_store._get_available_ids()
+
+            # If the server is running with an IDS filter, adjust the stats to reflect the filtered view
+            if available_ids and len(available_ids) < len(ids_info):
+                # Recompute totals for the filtered set
+                total_ids = len(available_ids)
+                try:
+                    total_paths = sum(
+                        ids_info.get(ids_name, {}).get("path_count", 0)
+                        for ids_name in available_ids
+                    )
+                except Exception:
+                    # Fall back to catalog total if anything goes wrong
+                    total_paths = metadata.get("total_paths", 0)
+
             # Determine relevant IDS based on query
             if query:
                 relevant_ids = self._filter_ids_by_query(query)
+                # Filter query results to only include available IDS
+                relevant_ids = [ids for ids in relevant_ids if ids in available_ids]
                 if not relevant_ids:
-                    # Fallback to showing all if no matches
-                    relevant_ids = list(ids_info.keys())
+                    # Fallback to showing available IDS if no matches
+                    relevant_ids = available_ids
                     query_feedback = (
-                        f"No direct matches for '{query}' - showing general overview"
+                        f"No direct matches for '{query}' - showing available overview"
                     )
                 else:
                     query_feedback = f"Found {len(relevant_ids)} IDS matching '{query}'"
             else:
-                relevant_ids = list(ids_info.keys())
-                query_feedback = "General IMAS overview"
+                relevant_ids = available_ids
+                if len(available_ids) < len(ids_info):
+                    query_feedback = (
+                        f"Filtered IMAS overview ({len(available_ids)} IDS)"
+                    )
+                else:
+                    query_feedback = "General IMAS overview"
 
             # Sort relevant_ids by complexity (path count) in descending order
             # This helps with LLM primacy bias - larger/more important IDS appear first
