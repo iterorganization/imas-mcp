@@ -8,7 +8,7 @@ and other MCP clients to search, explore, and query IMAS data structures.
 Command Line Interface:
     The server exposes a full CLI with options for transport, host, port, and logging.    Usage:
       python -m imas_mcp [OPTIONS]   # Module execution (recommended)
-      run-server [OPTIONS]           # Console script (after pip install)
+      imas-mcp [OPTIONS]             # Console script (after pip install)
 
     Options:
       --transport [stdio|sse|streamable-http]
@@ -26,8 +26,8 @@ Usage Examples:
     # Module execution (recommended)    python -m imas_mcp                          # Default stdio transport
     python -m imas_mcp --help                   # Show help
     python -m imas_mcp --log-level DEBUG        # Debug logging    # After installation with pip, use console scripts
-    run-server                                   # Default stdio transport
-    run-server --transport sse --port 8080      # Server-Sent Events
+    imas-mcp                                     # Default stdio transport
+    imas-mcp --transport sse --port 8080        # Server-Sent Events
 
     # Different transport protocols    python -m imas_mcp --transport stdio                    # Default: stdio for MCP clients
     python -m imas_mcp --transport sse --port 8080          # Server-Sent Events
@@ -75,7 +75,7 @@ Installation & CLI:
     # Install from source
     pip install -e .    # Install from Git repository
     pip install git+https://github.com/your-repo/imas-mcp.git    # After installation, console scripts are available:
-    run-server --help
+    imas-mcp --help
 
     # Module execution works without installation:
     python -m imas_mcp --help
@@ -102,7 +102,7 @@ More Information:
 """
 
 if __name__ == "__main__":
-    from scripts.run_server import run_server
+    from imas_mcp.cli import main
 
     # Expose the Click CLI interface directly
-    run_server()
+    main()
