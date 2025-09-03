@@ -5,6 +5,7 @@
     "dbscan",
     "fastmcp",
     "IMAS",
+    "iterorganization",
     "limitmb",
     "multisegment",
     "ndarray",
