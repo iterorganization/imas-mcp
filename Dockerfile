@@ -102,4 +102,6 @@ CMD ["sh", "-c", "\
     --transport ${TRANSPORT} \
     --host 0.0.0.0 \
     --port 8000 \
+    --ids-filter \"${IDS_FILTER}\" \
+    --no-rich \
     "] 

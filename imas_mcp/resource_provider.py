@@ -35,7 +35,8 @@ def mcp_resource(description: str, uri: str):
 class Resources(MCPProvider):
     """MCP resources serving existing JSON schema files with LLM-friendly descriptions."""
 
-    def __init__(self):
+    def __init__(self, ids_set: set[str] | None = None):
+        self.ids_set = ids_set
         schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
         self.schema_dir = Path(str(schema_resource))
         resources_dir = resources.files("imas_mcp") / "resources"
@@ -152,7 +153,7 @@ class Resources(MCPProvider):
         """
         try:
             # Use the relationships manager for better cache management
-            relationships = Relationships()
+            relationships = Relationships(ids_set=self.ids_set)
 
             # Check if rebuild is needed and add warning to output
             if relationships.needs_rebuild():
