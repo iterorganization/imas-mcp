@@ -92,14 +92,13 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/simon-mcintosh/imas-mcp"
-Repository = "https://github.com/simon-mcintosh/imas-mcp"
-Documentation = "https://github.com/simon-mcintosh/imas-mcp#readme"
-"Bug Tracker" = "https://github.com/simon-mcintosh/imas-mcp/issues"
+Homepage = "https://github.com/iterorganization/imas-mcp"
+Repository = "https://github.com/iterorganization/imas-mcp"
+Documentation = "https://github.com/iterorganization/imas-mcp#readme"
+"Bug Tracker" = "https://github.com/iterorganization/imas-mcp/issues"
 
 [project.scripts]
-run-server = "scripts.run_server:run_server"
-run-context = "scripts.run_context:run_context"
+imas-mcp = "imas_mcp.cli:main"
 build-schemas = "scripts.build_schemas:build_schemas"
 build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
