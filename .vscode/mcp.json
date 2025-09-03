@@ -14,7 +14,9 @@
         "imas-mcp",
         "--no-rich",
         "--log-level",
-        "DEBUG"
+        "INFO",
+        "--ids-filter",
+        "pf_active pf_passive"
       ]
     },
     "github": {
