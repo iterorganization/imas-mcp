@@ -78,15 +78,15 @@ test-fast:
 
 # Run the server (default STDIO transport)
 run:
-	uv run run-server
+	uv run imas-mcp
 
 # Run the server with SSE transport
 run-sse:
-	uv run run-server --transport sse --host 0.0.0.0 --port 8000
+	uv run imas-mcp --transport sse --host 0.0.0.0 --port 8000
 
 # Run the server with streamable-http transport
 run-http:
-	uv run run-server --transport streamable-http --host 0.0.0.0 --port 8000
+	uv run imas-mcp --transport streamable-http --host 0.0.0.0 --port 8000
 
 # Build the package
 package:

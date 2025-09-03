@@ -98,7 +98,7 @@ EXPOSE 8000
 
 # Run the application (host and port only needed for streamable-http transport)
 CMD ["sh", "-c", "\
-    uv run --no-dev run-server \
+    uv run --no-dev imas-mcp \
     --transport ${TRANSPORT} \
     --host 0.0.0.0 \
     --port 8000 \
