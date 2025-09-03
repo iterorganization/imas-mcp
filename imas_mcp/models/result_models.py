@@ -199,8 +199,6 @@ class OverviewResult(ToolResult, PhysicsContext, SearchHits):
     content: str
     available_ids: list[str] = Field(default_factory=list)
 
-    # Version information
-    version: str | None = Field(default=None, description="IMAS MCP Server version")
     dd_version: str | None = Field(
         default=None, description="IMAS Data Dictionary version"
     )
