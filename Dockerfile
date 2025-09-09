@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-embeddings --ids-filter "${IDS_FILTER}" --no-rich; \
     else \
     echo "Building embeddings for all IDS" && \
-    uv run --no-dev build-embeddings --no-rich; \ 
+    uv run --no-dev build-embeddings --no-rich; \
     fi && \
     echo "✓ Embeddings ready"
 
@@ -96,12 +96,5 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
-# Run the application (host and port only needed for streamable-http transport)
-CMD ["sh", "-c", "\
-    uv run --no-dev imas-mcp \
-    --transport ${TRANSPORT} \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --ids-filter \"${IDS_FILTER}\" \
-    --no-rich \
-    "] 
+ENTRYPOINT ["python", "-m", "imas_mcp.cli"]
+CMD ["--no-rich", "--host", "0.0.0.0", "--port", "8000"]
