@@ -14,20 +14,23 @@ logger = logging.getLogger(__name__)
 @click.command()
 @click.option(
     "--transport",
+    envvar="TRANSPORT",
     default="stdio",
     type=click.Choice(["stdio", "sse", "streamable-http"]),
-    help="Transport protocol to use (stdio, sse, or streamable-http)",
+    help="Transport protocol (env: TRANSPORT) (stdio, sse, or streamable-http)",
 )
 @click.option(
     "--host",
+    envvar="HOST",
     default="127.0.0.1",
-    help="Host to bind to (for sse and streamable-http transports)",
+    help="Host to bind (env: HOST) for sse and streamable-http transports",
 )
 @click.option(
     "--port",
+    envvar="PORT",
     default=8000,
     type=int,
-    help="Port to bind to (for sse and streamable-http transports)",
+    help="Port to bind (env: PORT) for sse and streamable-http transports",
 )
 @click.option(
     "--log-level",
@@ -42,8 +45,12 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--ids-filter",
+    envvar="IDS_FILTER",
     type=str,
-    help="Specific IDS names to include as a space-separated string (e.g., 'core_profiles equilibrium')",
+    help=(
+        "Specific IDS names to include as a space-separated string (env: IDS_FILTER) "
+        "e.g., 'core_profiles equilibrium'"
+    ),
 )
 def main(
     transport: str,
