@@ -153,6 +153,66 @@ uv add imas-mcp
 }
 ```
 
+  ## Running Over Slurm (STDIO Transport)
+
+  For HPC environments where direct TCP access from a login node to compute nodes is restricted or you prefer ephemeral allocations, you can run the server via Slurm using STDIO. A helper script is provided: `scripts/imas_mcp_sdcc.sh`.
+
+  ### Add to VS Code
+
+  Update (or create) `.vscode/mcp.json` (JSONC supported) with:
+
+  ```jsonc
+  {
+    "servers": {
+      "imas-slurm-stdio": {
+        "type": "stdio",
+        "command": "scripts/imas_mcp_slurm_stdio.sh",
+      }
+    }
+  }
+  ```
+
+  When the MCP client starts this server it will:
+
+  1. Detect if already inside an allocation (`SLURM_JOB_ID`). If yes, it starts immediately.
+  2. Otherwise, it runs `srun --pty` to request a node and then launches the server with unbuffered STDIO.
+
+  ### Customizing the Allocation
+
+  Control Slurm resources via environment variables before the client spawns the server:
+
+  | Variable | Purpose | Default |
+  |----------|---------|---------|
+  | `IMAS_MCP_SLURM_TIME` | Walltime | `08:00:00` |
+  | `IMAS_MCP_SLURM_CPUS` | CPUs per task | `1` |
+  | `IMAS_MCP_SLURM_MEM` | Memory (e.g. `4G`) | Slurm default |
+  | `IMAS_MCP_SLURM_PARTITION` | Partition/queue | Cluster default |
+  | `IMAS_MCP_SLURM_ACCOUNT` | Account/project | User default |
+  | `IMAS_MCP_SLURM_EXTRA` | Extra raw `srun` flags | (empty) |
+  | `IMAS_MCP_USE_ENTRYPOINT` | Use `imas-mcp` entrypoint instead of `python -m` | `0` |
+
+  Example (from your shell before launching VS Code):
+
+  ```bash
+  export IMAS_MCP_SLURM_TIME=02:00:00
+  export IMAS_MCP_SLURM_CPUS=4
+  export IMAS_MCP_SLURM_MEM=8G
+  export IMAS_MCP_SLURM_PARTITION=compute
+  ```
+
+  ### Direct CLI Usage
+
+  You can also invoke the script directly:
+
+  ```bash
+  scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
+  ```
+
+  ### Why STDIO for Slurm?
+
+  Using STDIO avoids opening network ports, simplifying security on clusters that block ephemeral sockets or require extra approvals for services. Tools and responses stream through the existing `srun` pseudo-TTY.
+
+
 ## Example IMAS Queries
 
 Once you have the IMAS MCP server configured, you can interact with it using natural language queries. Use the `@imas` prefix to direct queries to the IMAS server:
