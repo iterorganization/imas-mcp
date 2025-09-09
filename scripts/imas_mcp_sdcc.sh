@@ -19,14 +19,13 @@
 #     }
 #   }
 #
-# Environment variable overrides (optional):
-#   IMAS_MCP_SLURM_TIME        (default 01:00:00)
-#   IMAS_MCP_SLURM_CPUS        (default 1)
-#   IMAS_MCP_SLURM_MEM         (e.g. 4G) (unset => Slurm default)
-#   IMAS_MCP_SLURM_PARTITION   (unset => scheduler default)
-#   IMAS_MCP_SLURM_ACCOUNT     (unset => user default)
-#   IMAS_MCP_SLURM_EXTRA       (any extra raw srun flags)
-#   IMAS_MCP_USE_ENTRYPOINT    (if set to 1 use "imas-mcp" instead of python -m)
+# Optional environment variables (all unset => rely on cluster defaults):
+#   IMAS_MCP_SLURM_TIME        (e.g. 02:00:00)
+#   IMAS_MCP_SLURM_CPUS        (cpus per task)
+#   IMAS_MCP_SLURM_MEM         (e.g. 4G)
+#   IMAS_MCP_SLURM_PARTITION   (partition/queue)
+#   IMAS_MCP_SLURM_ACCOUNT     (account)
+#   IMAS_MCP_SLURM_EXTRA       (raw additional srun flags)
 #
 # Inside an existing allocation (SLURM_JOB_ID defined) the server starts directly.
 # Outside an allocation it invokes srun --pty to obtain one.
@@ -38,28 +37,13 @@
 
 set -euo pipefail
 
-# Defaults
-: "${IMAS_MCP_SLURM_TIME:=08:00:00}"
-: "${IMAS_MCP_SLURM_CPUS:=1}"
-: "${IMAS_MCP_SLURM_MEM:=}"
-: "${IMAS_MCP_SLURM_PARTITION:=}"
-: "${IMAS_MCP_SLURM_ACCOUNT:=}"
-: "${IMAS_MCP_SLURM_EXTRA:=}"
-: "${IMAS_MCP_USE_ENTRYPOINT:=0}"
-
 ARGS=("$@")
-
-# Build the base command to run the MCP server via stdio
-if [[ "${IMAS_MCP_USE_ENTRYPOINT}" == "1" ]] && command -v imas-mcp >/dev/null 2>&1; then
-  BASE_CMD=(imas-mcp --transport stdio --no-rich --log-level INFO)
-else
-  # Use uv if available for environment management; else fallback to python directly.
-  if command -v uv >/dev/null 2>&1; then
-    BASE_CMD=(uv run python -u -m imas_mcp.cli --transport stdio --no-rich --log-level INFO)
-  else
-    BASE_CMD=(python -u -m imas_mcp.cli --transport stdio --no-rich --log-level INFO)
-  fi
+# Build the base command to run the MCP server via stdio (uv is mandatory)
+if ! command -v uv >/dev/null 2>&1; then
+  echo "[imas-mcp-slurm] 'uv' is required but not found in PATH. Install https://github.com/astral-sh/uv and retry." >&2
+  exit 1
 fi
+BASE_CMD=(uv run python -u -m imas_mcp.cli --transport stdio --no-rich --log-level INFO)
 
 CMD=("${BASE_CMD[@]}" "${ARGS[@]}")
 
@@ -70,13 +54,15 @@ fi
 
 echo "[imas-mcp-slurm] Requesting Slurm allocation..." >&2
 
-SRUN_OPTS=(--ntasks=1 --cpus-per-task="${IMAS_MCP_SLURM_CPUS}" --time="${IMAS_MCP_SLURM_TIME}" --pty)
+SRUN_OPTS=(--ntasks=1)
 
-[[ -n "${IMAS_MCP_SLURM_MEM}" ]] && SRUN_OPTS+=(--mem="${IMAS_MCP_SLURM_MEM}")
-[[ -n "${IMAS_MCP_SLURM_PARTITION}" ]] && SRUN_OPTS+=(--partition="${IMAS_MCP_SLURM_PARTITION}")
-[[ -n "${IMAS_MCP_SLURM_ACCOUNT}" ]] && SRUN_OPTS+=(--account="${IMAS_MCP_SLURM_ACCOUNT}")
+[[ -n "${IMAS_MCP_SLURM_CPUS:-}" ]] && SRUN_OPTS+=(--cpus-per-task="${IMAS_MCP_SLURM_CPUS}")
+[[ -n "${IMAS_MCP_SLURM_TIME:-}" ]] && SRUN_OPTS+=(--time="${IMAS_MCP_SLURM_TIME}")
+[[ -n "${IMAS_MCP_SLURM_MEM:-}" ]] && SRUN_OPTS+=(--mem="${IMAS_MCP_SLURM_MEM}")
+[[ -n "${IMAS_MCP_SLURM_PARTITION:-}" ]] && SRUN_OPTS+=(--partition="${IMAS_MCP_SLURM_PARTITION}")
+[[ -n "${IMAS_MCP_SLURM_ACCOUNT:-}" ]] && SRUN_OPTS+=(--account="${IMAS_MCP_SLURM_ACCOUNT}")
 
-if [[ -n "${IMAS_MCP_SLURM_EXTRA}" ]]; then
+if [[ -n "${IMAS_MCP_SLURM_EXTRA:-}" ]]; then
   # shellcheck disable=SC2206
   EXTRA_ARR=(${IMAS_MCP_SLURM_EXTRA})
   SRUN_OPTS+=("${EXTRA_ARR[@]}")
