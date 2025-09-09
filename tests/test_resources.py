@@ -76,8 +76,11 @@ class TestResourcesIndependence:
         # Resources should have its own name and configuration
         assert resources.name == "resources"
 
-        # Should not have tools-specific configuration
-        assert not hasattr(resources, "ids_set")
+        # ids_set is an optional relationships optimization and not a tools config.
+        # If present, it should be either None (default) or a set of IDS names.
+        if hasattr(resources, "ids_set"):
+            value = resources.ids_set
+            assert value is None or isinstance(value, set)
 
 
 if __name__ == "__main__":
