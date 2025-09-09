@@ -438,6 +438,7 @@ class OverviewTool(BaseTool):
                 physics_domains=list(physics_domains_found),
                 ids_statistics=ids_statistics,
                 usage_guidance=usage_guidance,
+                mcp_version=version,
                 dd_version=dd_version,
                 generation_date=generation_date,
                 total_leaf_nodes=total_leaf_nodes,
