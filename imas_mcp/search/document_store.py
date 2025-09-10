@@ -368,6 +368,10 @@ class DocumentStore:
         if self._index.total_documents > 0:
             self._loaded = True
 
+        # Always refresh total_ids to reflect currently loaded IDS (even for partial loads)
+        # Keys of by_ids_name represent each distinct IDS loaded so far.
+        self._index.total_ids = len(self._index.by_ids_name)
+
     def _ensure_loaded(self) -> None:
         """Ensure all available documents are loaded (fallback for full loading)."""
         if not self._loaded:
@@ -402,6 +406,41 @@ class DocumentStore:
             # Fallback to package relative path
             package_path = Path(imas_mcp.__file__).parent
             return package_path / "resources" / "database"
+
+    def _get_dd_version(self) -> str:
+        """Extract IMAS data dictionary version from ids_catalog.json metadata.
+
+        Returns:
+            Version string if present, else "unknown".
+        """
+        catalog_path = self._data_dir / "ids_catalog.json"
+        if not catalog_path.exists():  # pragma: no cover - defensive
+            return "unknown"
+        try:
+            with open(catalog_path, encoding="utf-8") as f:
+                data = json.load(f)
+            meta = data.get("metadata", {}) if isinstance(data, dict) else {}
+            version = meta.get("version")
+            return version or "unknown"
+        except Exception:  # pragma: no cover - defensive
+            return "unknown"
+
+    # Public accessor for data dictionary version
+    def get_dd_version(self) -> str:
+        """Return the IMAS data dictionary version (fallback to package version).
+
+        This provides an external, stable API rather than relying on the
+        private ``_get_dd_version`` helper.
+        """
+        version = self._get_dd_version()
+        if not version or version == "unknown":  # defensive fallback
+            try:
+                import importlib.metadata
+
+                version = importlib.metadata.version("imas-mcp")
+            except Exception:  # pragma: no cover - defensive
+                version = "unknown"
+        return version
 
     def _generate_db_filename(self) -> str:
         """Generate consistent database filename based on configuration."""
@@ -1053,6 +1092,12 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
                 ("ids_set", ids_set_str),
             )
+            # Persist data dictionary version (dd_version) for health endpoint visibility
+            dd_version = self._get_dd_version()
+            conn.execute(
+                "INSERT INTO index_metadata (key, value) VALUES (?, ?)",
+                ("version", dd_version),
+            )
 
             conn.commit()
 
@@ -1423,6 +1468,34 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
                 "error": str(e),
                 "message": "Error reading cache file",
             }
+
+    def get_index_metadata(self) -> dict[str, Any]:
+        """Return lightweight index metadata for health/status endpoints.
+
+        Provides a stable, minimal subset without forcing callers to parse the
+        full cache info structure. Falls back to in-memory counters if cache
+        metadata is unavailable.
+        """
+        info = {}
+        try:
+            info = self.get_cache_info()
+        except Exception:  # pragma: no cover - defensive
+            info = {}
+
+        version = info.get("version") if isinstance(info, dict) else None
+        # Fallbacks rely on in-memory index if cache missing
+        document_count = info.get("document_count") if isinstance(info, dict) else None
+        if not document_count:
+            document_count = getattr(self._index, "total_documents", None)
+        ids_count = info.get("ids_count") if isinstance(info, dict) else None
+        if not ids_count:
+            ids_count = getattr(self._index, "total_ids", None)
+
+        return {
+            "version": version,
+            "document_count": document_count,
+            "ids_count": ids_count,
+        }
 
     def close(self) -> None:
         """Close any open database connections."""
