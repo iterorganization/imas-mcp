@@ -24,7 +24,7 @@ class HybridSearchEngine(SearchEngine):
     understanding with exact keyword matching for comprehensive search results.
     """
 
-    def __init__(self, document_store: DocumentStore):
+    def __init__(self, document_store: DocumentStore, use_rich: bool = True):
         """Initialize hybrid search engine.
 
         Args:
@@ -32,7 +32,7 @@ class HybridSearchEngine(SearchEngine):
         """
         super().__init__("hybrid")
         self.document_store = document_store
-        self.semantic_engine = SemanticSearchEngine(document_store)
+        self.semantic_engine = SemanticSearchEngine(document_store, use_rich=use_rich)
         self.lexical_engine = LexicalSearchEngine(document_store)
 
     async def search(

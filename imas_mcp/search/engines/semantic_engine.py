@@ -15,7 +15,11 @@ import logging
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.base_engine import SearchEngine, SearchEngineError
-from imas_mcp.search.search_strategy import SearchConfig, SearchMatch, SearchResponse
+from imas_mcp.search.search_strategy import (
+    SearchConfig,
+    SearchMatch,
+    SearchResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,7 @@ class SemanticSearchEngine(SearchEngine):
     the IMAS data dictionary.
     """
 
-    def __init__(self, document_store: DocumentStore):
+    def __init__(self, document_store: DocumentStore, use_rich: bool = True):
         """Initialize semantic search engine.
 
         Args:
@@ -36,12 +40,15 @@ class SemanticSearchEngine(SearchEngine):
         """
         super().__init__("semantic")
         self.document_store = document_store
+        self._use_rich = use_rich
         self._semantic_search = None
 
     @property
     def semantic_search(self):
         """Lazy initialization of semantic search."""
         if self._semantic_search is None:
+            # Local imports defer heavy model/embedding dependencies until needed
+            from imas_mcp.embeddings.embeddings import Embeddings
             from imas_mcp.search.semantic_search import (
                 SemanticSearch,
                 SemanticSearchConfig,
@@ -49,8 +56,13 @@ class SemanticSearchEngine(SearchEngine):
 
             # Create config that matches document store's ids_set
             config = SemanticSearchConfig(ids_set=self.document_store.ids_set)
+            embeddings = Embeddings(
+                document_store=self.document_store,
+                ids_set=self.document_store.ids_set,
+                use_rich=self._use_rich,
+            )  # Synchronous initialization now
             self._semantic_search = SemanticSearch(
-                config=config, document_store=self.document_store
+                config=config, document_store=self.document_store, embeddings=embeddings
             )
         return self._semantic_search
 
