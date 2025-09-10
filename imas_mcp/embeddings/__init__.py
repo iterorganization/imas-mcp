@@ -1,12 +1,8 @@
 """Embedding management module for IMAS MCP."""
 
 from .cache import EmbeddingCache
-from .config import EmbeddingConfig
-from .manager import EmbeddingManager, get_embedding_manager
+from .config import EncoderConfig
+from .embeddings import Embeddings
+from .encoder import Encoder
 
-__all__ = [
-    "EmbeddingCache",
-    "EmbeddingManager",
-    "EmbeddingConfig",
-    "get_embedding_manager",
-]
+__all__ = ["EmbeddingCache", "EncoderConfig", "Embeddings", "Encoder"]
