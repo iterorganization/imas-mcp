@@ -11,8 +11,8 @@ from typing import Any
 import numpy as np
 
 from imas_mcp.embeddings import EmbeddingCache
-from imas_mcp.embeddings.config import EmbeddingConfig
-from imas_mcp.embeddings.manager import get_embedding_manager
+from imas_mcp.embeddings.config import EncoderConfig
+from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import DocumentStore
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
@@ -37,8 +37,14 @@ class RelationshipExtractor:
     """
 
     def __init__(self, config: RelationshipExtractionConfig | None = None):
-        """Initialize the relationship extractor."""
+        """Initialize the relationship extractor.
+
+        The rich output configuration is now taken directly from the provided
+        RelationshipExtractionConfig (config.use_rich). A separate use_rich
+        argument is no longer supported.
+        """
         self.config = config or RelationshipExtractionConfig()
+        self._use_rich = getattr(self.config, "use_rich", True)
         self.logger = logging.getLogger(__name__)
 
         # Initialize components
@@ -255,9 +261,11 @@ class RelationshipExtractor:
     def _generate_embeddings(
         self, filtered_paths: dict[str, dict[str, Any]]
     ) -> tuple[np.ndarray, list[str]]:
-        """Generate embeddings for filtered paths by reusing existing embeddings from EmbeddingManager."""
-        # Strategy: Use the same EmbeddingManager approach as build_embeddings.py
-        # This ensures we share the same cache and avoid duplicate embedding generation
+        """Generate embeddings for filtered paths using shared encoder cache.
+
+        Reuses the same cache filename logic as the build_embeddings script so we
+        don't regenerate embeddings unnecessarily.
+        """
 
         # Create DocumentStore with same configuration as build_embeddings.py
         if self.config.ids_set:
@@ -278,8 +286,8 @@ class RelationshipExtractor:
             f"Found {len(all_documents)} total documents in document store"
         )
 
-        # Create EmbeddingManager with same configuration as build_embeddings.py
-        embedding_config = EmbeddingConfig(
+        # Create Encoder with same configuration as build_embeddings.py
+        encoder_config = EncoderConfig(
             model_name=self.config.model_name,
             device=self.config.device,
             batch_size=self.config.batch_size,
@@ -288,17 +296,12 @@ class RelationshipExtractor:
             enable_cache=True,
             cache_dir="embeddings",
             ids_set=self.config.ids_set,
-            use_rich=True,
+            use_rich=self._use_rich,
         )
-
-        # Use shared embedding manager with same ID strategy
-        manager_id = f"{embedding_config.model_name}_{embedding_config.device}"
-        embedding_manager = get_embedding_manager(
-            config=embedding_config, manager_id=manager_id
-        )
+        encoder = Encoder(encoder_config)
 
         # Generate cache key using same method as build_embeddings.py and SemanticSearch
-        cache_key = embedding_config.generate_cache_key()
+        cache_key = encoder_config.generate_cache_key()
 
         # Get source data directory for validation (same as build_embeddings.py)
         source_data_dir = None
@@ -314,7 +317,7 @@ class RelationshipExtractor:
         # This will reuse the cache if it exists
         try:
             all_embeddings, all_result_identifiers, was_cached = (
-                embedding_manager.get_embeddings(
+                encoder.build_document_embeddings(
                     texts=all_texts,
                     identifiers=all_identifiers,
                     cache_key=cache_key,
