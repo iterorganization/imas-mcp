@@ -5,7 +5,7 @@ from typing import Any
 
 
 @dataclass
-class EmbeddingConfig:
+class EncoderConfig:
     """Configuration for embedding generation and management."""
 
     # Model configuration
@@ -61,7 +61,7 @@ class EmbeddingConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EmbeddingConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "EncoderConfig":
         """Create from dictionary."""
         config = cls()
         for key, value in data.items():

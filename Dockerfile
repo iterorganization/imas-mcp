@@ -96,5 +96,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
-ENTRYPOINT ["python", "-m", "imas_mcp.cli"]
+## Run via uv to ensure the synced environment is activated; additional args appended after CMD
+ENTRYPOINT ["uv", "run", "--no-dev", "imas-mcp"]
 CMD ["--no-rich", "--host", "0.0.0.0", "--port", "8000"]

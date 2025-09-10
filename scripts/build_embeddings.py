@@ -12,8 +12,8 @@ from pathlib import Path
 
 import click
 
-from imas_mcp.embeddings.config import EmbeddingConfig
-from imas_mcp.embeddings.manager import get_embedding_manager
+from imas_mcp.embeddings.config import EncoderConfig
+from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import DocumentStore
 
 
@@ -162,7 +162,7 @@ def build_embeddings(
             logger.info("Building embeddings for all available IDS")
 
         # Create embedding configuration
-        config = EmbeddingConfig(
+        config = EncoderConfig(
             model_name=model_name,
             device=device,
             batch_size=batch_size,
@@ -172,14 +172,13 @@ def build_embeddings(
             ids_set=ids_set,
             use_rich=not no_rich,  # Use rich display unless disabled
         )
-
-        # Get shared embedding manager
-        manager = get_embedding_manager(config)
+        # Create encoder directly (no global registry)
+        encoder = Encoder(config)
 
         # Handle cache management operations FIRST - before any heavy initialization
         if list_caches or cleanup_caches is not None:
             if list_caches:
-                cache_files = manager.list_cache_files()
+                cache_files = encoder.list_cache_files()
                 if not cache_files:
                     click.echo("No cache files found")
                     return 0
@@ -193,7 +192,7 @@ def build_embeddings(
                 return 0
 
             if cleanup_caches is not None:
-                removed_count = manager.cleanup_old_caches(keep_count=cleanup_caches)
+                removed_count = encoder.cleanup_old_caches(keep_count=cleanup_caches)
                 if removed_count > 0:
                     click.echo(f"Removed {removed_count} old cache files")
                 else:
@@ -244,12 +243,12 @@ def build_embeddings(
             # Try to check if embeddings already exist using the same manager and cache key
             try:
                 # Set the cache path for the manager
-                manager._set_cache_path(cache_key)
+                encoder._set_cache_path(cache_key)  # noqa: SLF001 (intentional internal use)
 
                 # Try to load existing cache
-                if manager._try_load_cache(texts, identifiers, source_data_dir):
+                if encoder._try_load_cache(texts, identifiers, source_data_dir):  # noqa: SLF001
                     # Cache was successfully loaded
-                    cache_info = manager.get_cache_info()
+                    cache_info = encoder.get_cache_info()
                     click.echo(
                         f"Embeddings exist: {cache_info.get('document_count', 0)} documents"
                     )
@@ -263,7 +262,7 @@ def build_embeddings(
                     return 0
                 else:
                     # Check if cache file exists but is invalid
-                    cache_path = manager._cache_path
+                    cache_path = encoder._cache_path  # noqa: SLF001
                     if cache_path and cache_path.exists():
                         click.echo(
                             "Embeddings exist but are invalid: Cache validation failed"
@@ -283,16 +282,18 @@ def build_embeddings(
         logger.info(f"Generating embeddings for {len(texts)} documents...")
 
         try:
-            embeddings, result_identifiers, was_cached = manager.get_embeddings(
-                texts=texts,
-                identifiers=identifiers,
-                cache_key=cache_key,
-                force_rebuild=force,
-                source_data_dir=source_data_dir,
+            embeddings, result_identifiers, was_cached = (
+                encoder.build_document_embeddings(
+                    texts=texts,
+                    identifiers=identifiers,
+                    cache_key=cache_key,
+                    force_rebuild=force,
+                    source_data_dir=source_data_dir,
+                )
             )
 
             # Get embeddings info
-            info = manager.get_cache_info()
+            info = encoder.get_cache_info()
 
             # Log success information
             cache_status = "loaded from cache" if was_cached else "built successfully"
