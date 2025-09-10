@@ -17,5 +17,10 @@
         "INFO",
       ]
     },
-  },
+    // Slurm-backed stdio server (allocates a compute node via srun --pty)
+    "imas-sdcc": {
+      "type": "stdio",
+      "command": "scripts/imas_mcp_sdcc.sh",
+    },
+  }
 }
