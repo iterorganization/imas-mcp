@@ -18,13 +18,26 @@ WORKDIR /app
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
 
+# Additional build-time metadata for cache busting & traceability
+ARG GIT_SHA=""
+ARG GIT_TAG=""
+ARG GIT_REF=""
+
 # Set environment variables
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     TRANSPORT=${TRANSPORT} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HATCH_BUILD_NO_HOOKS=true
+    HATCH_BUILD_NO_HOOKS=true \
+    IMAS_MCP_COMMIT=${GIT_SHA} \
+    IMAS_MCP_TAG=${GIT_TAG} \
+    IMAS_MCP_REF=${GIT_REF}
+
+# Labels for image provenance
+LABEL imas_mcp.git_sha=${GIT_SHA} \
+      imas_mcp.git_tag=${GIT_TAG} \
+      imas_mcp.git_ref=${GIT_REF}
 
 # Copy dependency files and git metadata 
 COPY .git/ ./.git/
@@ -43,9 +56,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
 
+# Cache-busting sentinel to force project reinstall when ref/tag changes.
+# Derive it directly from the provided git metadata to avoid extra build args.
+RUN echo "${GIT_REF}-${GIT_SHA}-${GIT_TAG}" > /version-sentinel.txt
+
 # Install project with HTTP and build support for container deployment
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --extra http --extra build
+    uv sync --no-dev --reinstall-package imas-mcp --extra http --extra build
 
 # Install imas-data-dictionary manually from git (needed for index building)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
