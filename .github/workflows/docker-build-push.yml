@@ -115,8 +115,21 @@ jobs:
           build-args: |
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
+            GIT_SHA=${{ github.sha }}
+            GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+            GIT_REF=${{ github.ref }}
           cache-from: type=gha,scope=build-${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
+
+      - name: Verify version inside image (tag builds)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          EXPECTED=${GITHUB_REF_NAME#v}
+          # Pick one tag to test (first GHCR tag)
+          IMAGE=$(echo "${{ steps.meta-ghcr.outputs.tags }}" | head -n1)
+          echo "Testing image: $IMAGE expecting version: $EXPECTED"
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" python -c "import importlib.metadata as m; v=m.version('imas-mcp'); print('Version in image:', v); assert v=='$EXPECTED', f'Expected $EXPECTED got {v}'"
 
       - name: Generate artifact attestation for GHCR
         if: github.event_name != 'pull_request'
