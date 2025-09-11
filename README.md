@@ -22,7 +22,7 @@ The easiest way to get started is connecting to our hosted IMAS MCP server. No i
 2. Type "MCP: Add Server" and select it
 3. Choose "HTTP Server"
 4. Enter server name: `imas`
-5. Enter server URL: `https://imas-dd.iter.org/mcp/`
+5. Enter server URL: `https://imas-dd.iter.org/mcp`
 
 #### Option 2: Manual Configuration
 
@@ -38,7 +38,7 @@ Then add this configuration:
   "servers": {
     "imas": {
       "type": "http",
-      "url": "https://imas-dd.iter.org/mcp/"
+      "url": "https://imas-dd.iter.org/mcp"
     }
   }
 }
@@ -59,7 +59,7 @@ Add to your Claude Desktop config file:
   "mcpServers": {
     "imas-mcp-hosted": {
       "command": "npx",
-      "args": ["mcp-remote", "https://imas-dd.iter.org/mcp/"]
+      "args": ["mcp-remote", "https://imas-dd.iter.org/mcp"]
     }
   }
 }
@@ -91,7 +91,7 @@ docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
   "servers": {
     "imas-mcp-docker": {
       "type": "http",
-      "url": "http://localhost:8000/mcp/"
+      "url": "http://localhost:8000/mcp"
     }
   }
 }
@@ -104,7 +104,7 @@ docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
   "mcpServers": {
     "imas-mcp-docker": {
       "command": "npx",
-      "args": ["mcp-remote", "http://localhost:8000/mcp/"]
+      "args": ["mcp-remote", "http://localhost:8000/mcp"]
     }
   }
 }
@@ -134,7 +134,7 @@ uv add imas-mcp
     "imas-mcp-uv": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "python", "-m", "imas_mcp.server"]
+      "args": ["run", "--active", "imas-mcp", "--no-rich"]
     }
   }
 }
@@ -147,71 +147,70 @@ uv add imas-mcp
   "mcpServers": {
     "imas-mcp-uv": {
       "command": "uv",
-      "args": ["run", "python", "-m", "imas_mcp.server"]
+      "args": ["run", "--active", "imas-mcp", "--no-rich"]
     }
   }
 }
 ```
 
-  ## Running Over Slurm (STDIO Transport)
+## Running Over Slurm (STDIO Transport)
 
-  For HPC environments where direct TCP access from a login node to compute nodes is restricted or you prefer ephemeral allocations, you can run the server via Slurm using STDIO. A helper script is provided: `scripts/imas_mcp_sdcc.sh`.
+For HPC environments where direct TCP access from a login node to compute nodes is restricted or you prefer ephemeral allocations, you can run the server via Slurm using STDIO. A helper script is provided: `scripts/imas_mcp_sdcc.sh`.
 
-  ### Add to VS Code
+### Add to VS Code
 
-  Update (or create) `.vscode/mcp.json` (JSONC supported) with:
+Update (or create) `.vscode/mcp.json` (JSONC supported) with:
 
-  ```jsonc
-  {
-    "servers": {
-      "imas-slurm-stdio": {
-        "type": "stdio",
-        "command": "scripts/imas_mcp_slurm_stdio.sh",
-      }
+```jsonc
+{
+  "servers": {
+    "imas-slurm-stdio": {
+      "type": "stdio",
+      "command": "scripts/imas_mcp_slurm_stdio.sh"
     }
   }
-  ```
+}
+```
 
-  When the MCP client starts this server it will:
+When the MCP client starts this server it will:
 
-  1. Detect if already inside an allocation (`SLURM_JOB_ID`). If yes, it starts immediately.
-  2. Otherwise, it runs `srun --pty` to request a node and then launches the server with unbuffered STDIO.
+1. Detect if already inside an allocation (`SLURM_JOB_ID`). If yes, it starts immediately.
+2. Otherwise, it runs `srun --pty` to request a node and then launches the server with unbuffered STDIO.
 
-  ### Customizing the Allocation
+### Customizing the Allocation
 
-  Control Slurm resources via environment variables before the client spawns the server:
+Control Slurm resources via environment variables before the client spawns the server:
 
-  | Variable | Purpose | Default |
-  |----------|---------|---------|
-  | `IMAS_MCP_SLURM_TIME` | Walltime | `08:00:00` |
-  | `IMAS_MCP_SLURM_CPUS` | CPUs per task | `1` |
-  | `IMAS_MCP_SLURM_MEM` | Memory (e.g. `4G`) | Slurm default |
-  | `IMAS_MCP_SLURM_PARTITION` | Partition/queue | Cluster default |
-  | `IMAS_MCP_SLURM_ACCOUNT` | Account/project | User default |
-  | `IMAS_MCP_SLURM_EXTRA` | Extra raw `srun` flags | (empty) |
-  | `IMAS_MCP_USE_ENTRYPOINT` | Use `imas-mcp` entrypoint instead of `python -m` | `0` |
+| Variable                   | Purpose                                          | Default         |
+| -------------------------- | ------------------------------------------------ | --------------- |
+| `IMAS_MCP_SLURM_TIME`      | Walltime                                         | `08:00:00`      |
+| `IMAS_MCP_SLURM_CPUS`      | CPUs per task                                    | `1`             |
+| `IMAS_MCP_SLURM_MEM`       | Memory (e.g. `4G`)                               | Slurm default   |
+| `IMAS_MCP_SLURM_PARTITION` | Partition/queue                                  | Cluster default |
+| `IMAS_MCP_SLURM_ACCOUNT`   | Account/project                                  | User default    |
+| `IMAS_MCP_SLURM_EXTRA`     | Extra raw `srun` flags                           | (empty)         |
+| `IMAS_MCP_USE_ENTRYPOINT`  | Use `imas-mcp` entrypoint instead of `python -m` | `0`             |
 
-  Example (from your shell before launching VS Code):
+Example (from your shell before launching VS Code):
 
-  ```bash
-  export IMAS_MCP_SLURM_TIME=02:00:00
-  export IMAS_MCP_SLURM_CPUS=4
-  export IMAS_MCP_SLURM_MEM=8G
-  export IMAS_MCP_SLURM_PARTITION=compute
-  ```
+```bash
+export IMAS_MCP_SLURM_TIME=02:00:00
+export IMAS_MCP_SLURM_CPUS=4
+export IMAS_MCP_SLURM_MEM=8G
+export IMAS_MCP_SLURM_PARTITION=compute
+```
 
-  ### Direct CLI Usage
+### Direct CLI Usage
 
-  You can also invoke the script directly:
+You can also invoke the script directly:
 
-  ```bash
-  scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
-  ```
+```bash
+scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
+```
 
-  ### Why STDIO for Slurm?
+### Why STDIO for Slurm?
 
-  Using STDIO avoids opening network ports, simplifying security on clusters that block ephemeral sockets or require extra approvals for services. Tools and responses stream through the existing `srun` pseudo-TTY.
-
+Using STDIO avoids opening network ports, simplifying security on clusters that block ephemeral sockets or require extra approvals for services. Tools and responses stream through the existing `srun` pseudo-TTY.
 
 ## Example IMAS Queries
 
@@ -325,10 +324,10 @@ uv run build-schemas
 uv run build-embeddings
 
 # Run the server locally
-uv run python -m imas_mcp --transport streamable-http --port 8000
+uv run --active imas-mcp --no-rich --transport streamable-http --port 8000
 
 # Run with stdio transport for MCP development
-uv run python -m imas_mcp --transport stdio --auto-build
+uv run --active imas-mcp --no-rich --transport stdio --auto-build
 ```
 
 ### Build Scripts
@@ -366,7 +365,7 @@ The project includes two separate build scripts for creating the required data s
   "mcpServers": {
     "imas-local-dev": {
       "command": "uv",
-      "args": ["run", "python", "-m", "imas_mcp", "--auto-build"],
+      "args": ["run", "--active", "imas-mcp", "--no-rich", "--auto-build"],
       "cwd": "/path/to/imas-mcp"
     }
   }
