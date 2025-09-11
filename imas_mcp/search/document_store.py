@@ -369,8 +369,11 @@ class DocumentStore:
             self._loaded = True
 
         # Always refresh total_ids to reflect currently loaded IDS (even for partial loads)
-        # Keys of by_ids_name represent each distinct IDS loaded so far.
-        self._index.total_ids = len(self._index.by_ids_name)
+        # Keys of by_ids_name represent each distinct real IDS loaded so far.
+        # Exclude synthetic grouping used for identifier schemas to avoid off-by-one in /health.
+        self._index.total_ids = len(
+            [k for k in self._index.by_ids_name.keys() if k != "identifier_schema"]
+        )
 
     def _ensure_loaded(self) -> None:
         """Ensure all available documents are loaded (fallback for full loading)."""
