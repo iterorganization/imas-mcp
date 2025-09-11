@@ -12,8 +12,25 @@ from imas_mcp.server import Server
 logger = logging.getLogger(__name__)
 
 
+def _print_version(
+    ctx: click.Context, param: click.Parameter, value: bool
+) -> None:  # pragma: no cover - simple utility
+    """Callback to print only the raw version and exit early."""
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo(__version__)
+    ctx.exit()
+
+
 @click.command()
-@click.version_option(version=__version__, prog_name="imas-mcp")
+@click.option(
+    "--version",
+    is_flag=True,
+    callback=_print_version,
+    expose_value=False,
+    is_eager=True,
+    help="Show the imas-mcp version and exit (raw version only).",
+)
 @click.option(
     "--transport",
     envvar="TRANSPORT",
