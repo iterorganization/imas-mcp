@@ -40,7 +40,8 @@
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
     "imas-mcp/.vscode/mcp.json: imas": {
-      "allowedModels": ["copilot/gpt-5"]
+      "allowedModels": ["copilot/gpt-5"],
+      "allowedDuringChat": true
     }
   },
   // Formatting settings
