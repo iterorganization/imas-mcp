@@ -1,4 +1,3 @@
-# Single stage build - simplified Dockerfile
 ## Stage 1: acquire uv binary (kept minimal). Using ARG here is supported in FROM.
 ARG UV_VERSION=0.7.13
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
@@ -55,7 +54,7 @@ COPY uv.lock ./
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --no-install-project --extra http --extra build --frozen || \
+    uv sync --no-dev --no-install-project --extra http --frozen || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
@@ -66,7 +65,7 @@ COPY scripts/ ./scripts/
 ## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install git status (should be clean):" && git status --porcelain && \
-    uv sync --no-dev --reinstall-package imas-mcp --extra http --extra build --frozen && \
+    uv sync --no-dev --reinstall-package imas-mcp --extra http --frozen && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
