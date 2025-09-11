@@ -1,8 +1,10 @@
 # Single stage build - simplified Dockerfile
-FROM python:3.12-slim
-
-# Pin uv to a version that understands lock revision 2 format generated locally (older 0.4.x rejects editable entries without version)
+## Stage 1: acquire uv binary (kept minimal). Using ARG here is supported in FROM.
 ARG UV_VERSION=0.7.13
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
+## Final stage: runtime image
+FROM python:3.12-slim
 
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -11,8 +13,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager (must match version that produced uv.lock)
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
+# Install uv package manager (copied from first stage; version pinned by ARG above)
+COPY --from=uv /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
