@@ -47,10 +47,16 @@ LABEL imas_mcp.git_sha=${GIT_SHA} \
 COPY .git/ ./.git/
 RUN git config --global --add safe.directory /app
 
-## Copy project metadata (tracked files)
-COPY pyproject.toml ./
-COPY README.md ./
-COPY uv.lock ./
+# Sparse checkout phase 1: only dependency definition artifacts for maximum cache reuse
+# We intentionally exclude source so code changes do not invalidate dependency layer.
+RUN git config core.sparseCheckout true \
+    && git sparse-checkout init --cone \
+    && git sparse-checkout set \
+        pyproject.toml \
+        uv.lock \
+    && git reset --hard HEAD \
+    && echo "Sparse checkout (phase 1) paths:" \
+    && git sparse-checkout list
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
@@ -58,13 +64,22 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
-# Copy source code (separate layer for better caching)
-COPY imas_mcp/ ./imas_mcp/
-COPY scripts/ ./scripts/
+## Expand sparse checkout to include project sources and scripts (phase 2)
+RUN git sparse-checkout set \
+        pyproject.toml \
+        uv.lock \
+        README.md \
+        imas_mcp \
+        scripts \
+    && git reset --hard HEAD \
+    && echo "Sparse checkout (phase 2) paths:" \
+    && git sparse-checkout list \
+    && echo "Git status after expanding sparse set (should be clean):" \
+    && git status --porcelain
 
 ## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Pre-install git status (should be clean):" && git status --porcelain && \
+    echo "Pre-install (project) git status (should be clean):" && git status --porcelain && \
     uv sync --no-dev --reinstall-package imas-mcp --extra http --no-editable --frozen && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
