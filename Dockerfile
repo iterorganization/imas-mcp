@@ -65,7 +65,7 @@ COPY scripts/ ./scripts/
 ## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install git status (should be clean):" && git status --porcelain && \
-    uv sync --no-dev --reinstall-package imas-mcp --extra http --frozen && \
+    uv sync --no-dev --reinstall-package imas-mcp --extra http --no-editable --frozen && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
