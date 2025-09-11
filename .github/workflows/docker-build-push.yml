@@ -124,12 +124,20 @@ jobs:
       - name: Verify version inside image (tag builds)
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          set -euo pipefail
           EXPECTED=${GITHUB_REF_NAME#v}
           # Pick one tag to test (first GHCR tag)
           IMAGE=$(echo "${{ steps.meta-ghcr.outputs.tags }}" | head -n1)
           echo "Testing image: $IMAGE expecting version: $EXPECTED"
           docker pull "$IMAGE"
-          docker run --rm "$IMAGE" python -c "import importlib.metadata as m; v=m.version('imas-mcp'); print('Version in image:', v); assert v=='$EXPECTED', f'Expected $EXPECTED got {v}'"
+          # Override the image entrypoint to run python directly (ENTRYPOINT currently points to imas-mcp CLI)
+          ACTUAL=$(docker run --rm --entrypoint python "$IMAGE" -c "import importlib.metadata as m; print(m.version('imas-mcp'))")
+          echo "Version in image: $ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: Expected $EXPECTED got $ACTUAL" >&2
+            exit 1
+          fi
+          echo "Version check passed"
 
       - name: Generate artifact attestation for GHCR
         if: github.event_name != 'pull_request'
