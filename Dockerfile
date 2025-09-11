@@ -56,9 +56,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
 
-# Cache-busting sentinel to force project reinstall when ref/tag changes.
-# Derive it directly from the provided git metadata to avoid extra build args.
-RUN echo "${GIT_REF}-${GIT_SHA}-${GIT_TAG}" > /version-sentinel.txt
+## Removed sentinel file that caused dirty git tree (hatch-vcs dev versions)
+## Rely on ARG/ENV changes and source COPY for cache invalidation instead.
 
 # Install project with HTTP and build support for container deployment
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
