@@ -47,13 +47,11 @@ LABEL imas_mcp.git_sha=${GIT_SHA} \
 COPY .git/ ./.git/
 RUN git config --global --add safe.directory /app
 
-# Sparse checkout phase 1: only dependency definition artifacts for maximum cache reuse
+# Sparse checkout phase 1: only dependency definition artifacts (non-cone to allow root files)
 # We intentionally exclude source so code changes do not invalidate dependency layer.
 RUN git config core.sparseCheckout true \
-    && git sparse-checkout init --cone \
-    && git sparse-checkout set \
-        pyproject.toml \
-        uv.lock \
+    && git sparse-checkout init --no-cone \
+    && git sparse-checkout set pyproject.toml uv.lock \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 1) paths:" \
     && git sparse-checkout list
@@ -65,12 +63,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
 ## Expand sparse checkout to include project sources and scripts (phase 2)
-RUN git sparse-checkout set \
-        pyproject.toml \
-        uv.lock \
-        README.md \
-        imas_mcp \
-        scripts \
+RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
     && git sparse-checkout list \
