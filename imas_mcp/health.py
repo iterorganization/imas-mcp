@@ -68,16 +68,46 @@ class HealthEndpoint:
             ids_count = meta.get("ids_count") or 0
             emb = self.server.embeddings
             # Status without forcing build if deferred
+
+            def _format_uptime(seconds: float) -> str:
+                """Return a compact human-readable uptime string.
+
+                Format: '<Xd> <Xh> <Xm> <Xs>' omitting leading zero units.
+                Examples:
+                    65 -> '1m 5s'
+                    3661 -> '1h 1m 1s'
+                    90061 -> '1d 1h 1m 1s'
+                """
+                try:
+                    if seconds < 0:  # pragma: no cover - defensive
+                        seconds = 0
+                    remainder = int(seconds)
+                    days, remainder = divmod(remainder, 86400)
+                    hours, remainder = divmod(remainder, 3600)
+                    minutes, secs = divmod(remainder, 60)
+                    parts: list[str] = []
+                    if days:
+                        parts.append(f"{days}d")
+                    if hours or days:
+                        parts.append(f"{hours}h")
+                    if minutes or hours or days:
+                        parts.append(f"{minutes}m")
+                    parts.append(f"{secs}s")
+                    return " ".join(parts)
+                except Exception:  # pragma: no cover - defensive
+                    return f"{round(seconds, 3)}s"
+
+            uptime_seconds = round(self.server.uptime_seconds(), 3)
             return JSONResponse(
                 {
                     "status": "ok",
-                    "version": self._get_version(),
+                    "mcp_server_version": self._get_version(),
                     "dd_version": dd_version,
                     "documents": documents,
                     "ids_count": ids_count,
                     "embedding_model_name": emb.model_name,
                     "started_at": self.server.started_at.isoformat(),
-                    "uptime_seconds": round(self.server.uptime_seconds(), 3),
+                    "uptime": _format_uptime(uptime_seconds),
                 }
             )
 

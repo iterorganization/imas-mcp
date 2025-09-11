@@ -33,6 +33,15 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --no-dev
 
+      - name: Verify hatch version matches tag
+        run: |
+          EXPECTED=${GITHUB_REF_NAME#v}
+            ACTUAL=$(uv run python -c "import importlib.metadata as m; print(m.version('imas-mcp'))")
+          echo "Expected: $EXPECTED  Actual: $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "Version mismatch; aborting release."; exit 1;
+          fi
+
       - name: Build package
         run: uv build
 
