@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# imas_mcp_sdcc.sh
+# imas_mcp_slurm.sh
 #
 # Launch the IMAS MCP server over STDIO via Slurm. This lets MCP clients (VS Code,
 # Claude, etc.) allocate a compute node transparently and communicate over
@@ -12,9 +12,9 @@
 # In VS Code .vscode/mcp.json (JSONC):
 #   {
 #     "servers": {
-#       "imas-sdcc": {
+#       "imas-slurm": {
 #         "type": "stdio",
-#         "command": "scripts/imas_mcp_sdcc.sh",
+#         "command": "scripts/imas_mcp_slurm.sh",
 #       }
 #     }
 #   }
