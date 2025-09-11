@@ -5,6 +5,7 @@ from typing import Literal, cast
 
 import click
 
+from imas_mcp import __version__
 from imas_mcp.server import Server
 
 # Configure logging
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 @click.command()
+@click.version_option(version=__version__, prog_name="imas-mcp")
 @click.option(
     "--transport",
     envvar="TRANSPORT",
