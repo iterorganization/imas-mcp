@@ -39,18 +39,19 @@ LABEL imas_mcp.git_sha=${GIT_SHA} \
       imas_mcp.git_tag=${GIT_TAG} \
       imas_mcp.git_ref=${GIT_REF}
 
-# Copy dependency files and git metadata 
+## Copy git metadata first so hatch-vcs sees repository state exactly as on tag
 COPY .git/ ./.git/
+RUN git config --global --add safe.directory /app
+
+## Copy project metadata & build hooks (tracked files)
 COPY pyproject.toml ./
 COPY README.md ./
 COPY hatch_build_hooks.py ./
 
-# Ensure git repository is properly initialized for version detection
-RUN git config --global --add safe.directory /app
-
-# Install only dependencies without the local project to avoid build hooks
+## Install only dependencies WITHOUT installing the local project. Use --frozen so uv.lock isn't modified.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --no-install-project --extra http --extra build
+    uv sync --no-dev --no-install-project --extra http --extra build --frozen || \
+    (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1)
 
 # Copy source code (separate layer for better caching)
 COPY imas_mcp/ ./imas_mcp/
@@ -59,9 +60,16 @@ COPY scripts/ ./scripts/
 ## Removed sentinel file that caused dirty git tree (hatch-vcs dev versions)
 ## Rely on ARG/ENV changes and source COPY for cache invalidation instead.
 
-# Install project with HTTP and build support for container deployment
+## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --reinstall-package imas-mcp --extra http --extra build
+    echo "Pre-install git status (should be clean):" && git status --porcelain && \
+    uv sync --no-dev --reinstall-package imas-mcp --extra http --extra build --frozen && \
+    echo "Post-install git status (should still be clean):" && git status --porcelain && \
+    if [ -n "$(git status --porcelain)" ]; then \
+        echo "Git tree became dirty during project install (will cause dev version)" >&2; exit 1; \
+    else \
+        echo "Repository clean; hatch-vcs should emit tag version"; \
+    fi
 
 # Install imas-data-dictionary manually from git (needed for index building)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
