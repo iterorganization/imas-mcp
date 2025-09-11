@@ -43,12 +43,12 @@ LABEL imas_mcp.git_sha=${GIT_SHA} \
 COPY .git/ ./.git/
 RUN git config --global --add safe.directory /app
 
-## Copy project metadata & build hooks (tracked files)
+## Copy project metadata (tracked files)
 COPY pyproject.toml ./
 COPY README.md ./
-COPY hatch_build_hooks.py ./
+COPY uv.lock ./
 
-## Install only dependencies WITHOUT installing the local project. Use --frozen so uv.lock isn't modified.
+## Install only dependencies without installing the local project. Use --frozen so uv.lock isn't modified.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project --extra http --extra build --frozen || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1)
@@ -56,9 +56,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # Copy source code (separate layer for better caching)
 COPY imas_mcp/ ./imas_mcp/
 COPY scripts/ ./scripts/
-
-## Removed sentinel file that caused dirty git tree (hatch-vcs dev versions)
-## Rely on ARG/ENV changes and source COPY for cache invalidation instead.
 
 ## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
