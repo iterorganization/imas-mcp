@@ -1,6 +1,9 @@
 # Single stage build - simplified Dockerfile
 FROM python:3.12-slim
 
+# Pin uv to a version that understands lock revision 2 format generated locally (older 0.4.x rejects editable entries without version)
+ARG UV_VERSION=0.7.13
+
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -8,8 +11,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager
-COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /bin/
+# Install uv package manager (must match version that produced uv.lock)
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
@@ -48,10 +51,11 @@ COPY pyproject.toml ./
 COPY README.md ./
 COPY uv.lock ./
 
-## Install only dependencies without installing the local project. Use --frozen so uv.lock isn't modified.
+## Install only dependencies without installing the local project (frozen = must match committed lock)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project --extra http --extra build --frozen || \
-    (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1)
+    (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
+    if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
 # Copy source code (separate layer for better caching)
 COPY imas_mcp/ ./imas_mcp/
@@ -61,6 +65,7 @@ COPY scripts/ ./scripts/
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install git status (should be clean):" && git status --porcelain && \
     uv sync --no-dev --reinstall-package imas-mcp --extra http --extra build --frozen && \
+    if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
         echo "Git tree became dirty during project install (will cause dev version)" >&2; exit 1; \
