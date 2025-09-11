@@ -56,7 +56,9 @@ def test_health_basic(transport):
                     # New embedding metadata fields
                     assert "embedding_model_name" in data
                     assert "started_at" in data
-                    assert "uptime_seconds" in data
+                    # Updated fields: uptime_seconds removed, ids_count + uptime added
+                    assert "ids_count" in data
+                    assert "uptime" in data
                     break
             except Exception:
                 time.sleep(0.1)
@@ -83,7 +85,7 @@ def test_health_idempotent_wrapping():
                 assert "mcp_server_version" in data
                 assert "embedding_model_name" in data
                 assert "started_at" in data
-                assert "uptime_seconds" in data
+                assert "ids_count" in data
                 assert "uptime" in data
                 break
         except Exception:
