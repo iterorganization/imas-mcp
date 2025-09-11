@@ -130,16 +130,13 @@ jobs:
           IMAGE=$(echo "${{ steps.meta-ghcr.outputs.tags }}" | head -n1)
           echo "Testing image: $IMAGE expecting version: $EXPECTED"
           docker pull "$IMAGE"
-          # Ask the CLI for its version (entrypoint already invokes imas-mcp)
-          RAW=$(docker run --rm "$IMAGE" --version || true)
-          echo "Raw --version output: $RAW"
-          # click's version_option emits: 'imas-mcp, version X.Y.Z' or 'imas-mcp, version 0.0.0' when fallback
-          ACTUAL=$(echo "$RAW" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)
+          # Ask the CLI for its raw version (CLI prints only version string)
+          ACTUAL=$(docker run --rm "$IMAGE" --version || true)
+          echo "Version reported by image: $ACTUAL"
           if [ -z "$ACTUAL" ]; then
-            echo "ERROR: Could not parse version from output" >&2
+            echo "ERROR: No version output from CLI" >&2
             exit 1
           fi
-          echo "Parsed version: $ACTUAL"
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "ERROR: Expected $EXPECTED got $ACTUAL" >&2
             exit 1
