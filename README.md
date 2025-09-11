@@ -181,15 +181,15 @@ When the MCP client starts this server it will:
 
 Control Slurm resources via environment variables before the client spawns the server:
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `IMAS_MCP_SLURM_TIME` | Walltime | `08:00:00` |
-| `IMAS_MCP_SLURM_CPUS` | CPUs per task | `1` |
-| `IMAS_MCP_SLURM_MEM` | Memory (e.g. `4G`) | Slurm default |
-| `IMAS_MCP_SLURM_PARTITION` | Partition/queue | Cluster default |
-| `IMAS_MCP_SLURM_ACCOUNT` | Account/project | User default |
-| `IMAS_MCP_SLURM_EXTRA` | Extra raw `srun` flags | (empty) |
-| `IMAS_MCP_USE_ENTRYPOINT` | Use `imas-mcp` entrypoint instead of `python -m` | `0` |
+| Variable                   | Purpose                                          | Default         |
+| -------------------------- | ------------------------------------------------ | --------------- |
+| `IMAS_MCP_SLURM_TIME`      | Walltime                                         | `08:00:00`      |
+| `IMAS_MCP_SLURM_CPUS`      | CPUs per task                                    | `1`             |
+| `IMAS_MCP_SLURM_MEM`       | Memory (e.g. `4G`)                               | Slurm default   |
+| `IMAS_MCP_SLURM_PARTITION` | Partition/queue                                  | Cluster default |
+| `IMAS_MCP_SLURM_ACCOUNT`   | Account/project                                  | User default    |
+| `IMAS_MCP_SLURM_EXTRA`     | Extra raw `srun` flags                           | (empty)         |
+| `IMAS_MCP_USE_ENTRYPOINT`  | Use `imas-mcp` entrypoint instead of `python -m` | `0`             |
 
 Example (from your shell before launching VS Code):
 
@@ -211,7 +211,6 @@ scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
 ### Why STDIO for Slurm?
 
 Using STDIO avoids opening network ports, simplifying security on clusters that block ephemeral sockets or require extra approvals for services. Tools and responses stream through the existing `srun` pseudo-TTY.
-
 
 ## Example IMAS Queries
 
