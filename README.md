@@ -10,49 +10,39 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
-## Quick Start - Connect to Hosted Server
+docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
+## Quick Start
 
-The easiest way to get started is connecting to our hosted IMAS MCP server. No installation required!
+Choose the setup path that fits your environment. The remote public HTTP endpoint enables interaction with an MCP server hosted by the ITER Organization; others give you local control.
 
-### VS Code Setup
+[HTTP](#http-remote-public-endpoint) | [UV](#uv-local-install) | [Docker](#docker-setup) | [Slurm / HPC](#slurm--hpc-stdio)
 
-#### Option 1: Interactive Setup (Recommended)
+### HTTP (Remote Public Endpoint)
 
-1. Open VS Code and press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-2. Type "MCP: Add Server" and select it
-3. Choose "HTTP Server"
-4. Enter server name: `imas`
-5. Enter server URL: `https://imas-dd.iter.org/mcp`
+Connect to the managed public server—no local install.
 
-#### Option 2: Manual Configuration
+**VS Code (Interactive)**
 
-Choose one of these file locations:
+1. `Ctrl+Shift+P` → "MCP: Add Server"
+2. Select "HTTP Server"
+3. Name: `imas`
+4. URL: `https://imas-dd.iter.org/mcp`
 
-- **Workspace Settings (Recommended)**: `.vscode/mcp.json` in your workspace (`Ctrl+Shift+P` → "Preferences: Open Workspace Settings (JSON)")
-- **User Settings**: VS Code `settings.json` (`Ctrl+Shift+P` → "Preferences: Open User Settings (JSON)")
-
-Then add this configuration:
+**VS Code (Manual JSON)** – workspace `.vscode/mcp.json` (or inside `"mcp"` in user settings):
 
 ```json
 {
   "servers": {
-    "imas": {
-      "type": "http",
-      "url": "https://imas-dd.iter.org/mcp"
-    }
+    "imas": { "type": "http", "url": "https://imas-dd.iter.org/mcp" }
   }
 }
 ```
 
-_Note: For user settings.json, wrap the above in `"mcp": { ... }`_
+**Claude Desktop config** (pick path for your OS):
 
-### Claude Desktop Setup
-
-Add to your Claude Desktop config file:
-
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`  
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`  
-**Linux:** `~/.config/claude/claude_desktop_config.json`
+Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`  
+macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+Linux: `~/.config/claude/claude_desktop_config.json`
 
 ```json
 {
@@ -65,39 +55,72 @@ Add to your Claude Desktop config file:
 }
 ```
 
-## Quick Start - Local Docker Server
+#### OP Client (Pending Clarification)
 
-If you have Docker available, you can run a local IMAS MCP server:
+Placeholder: clarify what "op" refers to (e.g. OpenAI, Operator) to add tailored instructions.
 
-### Start the Docker Server
+### UV Local Install
+
+Install with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# Pull and run the server
-docker run -d \
-  --name imas-mcp \
-  -p 8000:8000 \
-  ghcr.io/iterorganization/imas-mcp:latest-streamable-http
-
-# Verify it's running
-docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
+uv tool install imas-mcp
+# or add to a project env
+uv add imas-mcp
 ```
 
-### Configure Your Client
-
-**VS Code** - Add to `.vscode/mcp.json`:
+VS Code:
 
 ```json
 {
   "servers": {
-    "imas-mcp-docker": {
-      "type": "http",
-      "url": "http://localhost:8000/mcp"
+    "imas-mcp-uv": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--active", "imas-mcp", "--no-rich"]
     }
   }
 }
 ```
 
-**Claude Desktop** - Add to your config file:
+Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "imas-mcp-uv": {
+      "command": "uv",
+      "args": ["run", "--active", "imas-mcp", "--no-rich"]
+    }
+  }
+}
+```
+
+### Docker Setup
+
+Run locally in a container (pre-built indexes included):
+
+```bash
+docker run -d \
+  --name imas-mcp \
+  -p 8000:8000 \
+  ghcr.io/iterorganization/imas-mcp:latest-streamable-http
+
+# Optional: verify
+docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
+```
+
+VS Code (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "imas-mcp-docker": { "type": "http", "url": "http://localhost:8000/mcp" }
+  }
+}
+```
+
+Claude Desktop:
 
 ```json
 {
@@ -110,56 +133,11 @@ docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
 }
 ```
 
-## Quick Start - Local UV Installation
+### Slurm / HPC (STDIO)
 
-If you have [uv](https://docs.astral.sh/uv/) installed, you can run the server directly:
+Helper script: `scripts/imas_mcp_slurm_stdio.sh`
 
-### Install and Configure
-
-```bash
-# Install imas-mcp with uv
-uv tool install imas-mcp
-
-# Or add to a project
-uv add imas-mcp
-```
-
-### UV Client Configuration
-
-**VS Code** - Add to `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "imas-mcp-uv": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "--active", "imas-mcp", "--no-rich"]
-    }
-  }
-}
-```
-
-**Claude Desktop** - Add to your config file:
-
-```json
-{
-  "mcpServers": {
-    "imas-mcp-uv": {
-      "command": "uv",
-      "args": ["run", "--active", "imas-mcp", "--no-rich"]
-    }
-  }
-}
-```
-
-## Running Over Slurm (STDIO Transport)
-
-For HPC environments where direct TCP access from a login node to compute nodes is restricted or you prefer ephemeral allocations, you can run the server via Slurm using STDIO. A helper script is provided: `scripts/imas_mcp_sdcc.sh`.
-
-### Add to VS Code
-
-Update (or create) `.vscode/mcp.json` (JSONC supported) with:
+VS Code (`.vscode/mcp.json`, JSONC ok):
 
 ```jsonc
 {
@@ -172,26 +150,24 @@ Update (or create) `.vscode/mcp.json` (JSONC supported) with:
 }
 ```
 
-When the MCP client starts this server it will:
+Launch behavior:
 
-1. Detect if already inside an allocation (`SLURM_JOB_ID`). If yes, it starts immediately.
-2. Otherwise, it runs `srun --pty` to request a node and then launches the server with unbuffered STDIO.
+1. If `SLURM_JOB_ID` present → start inside current allocation.
+2. Else requests node with `srun --pty` then starts server (unbuffered stdio).
 
-### Customizing the Allocation
+Resource tuning (export before client starts):
 
-Control Slurm resources via environment variables before the client spawns the server:
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `IMAS_MCP_SLURM_TIME` | Walltime | `08:00:00` |
+| `IMAS_MCP_SLURM_CPUS` | CPUs per task | `1` |
+| `IMAS_MCP_SLURM_MEM` | Memory (e.g. `4G`) | Slurm default |
+| `IMAS_MCP_SLURM_PARTITION` | Partition | Cluster default |
+| `IMAS_MCP_SLURM_ACCOUNT` | Account/project | User default |
+| `IMAS_MCP_SLURM_EXTRA` | Extra raw `srun` flags | (empty) |
+| `IMAS_MCP_USE_ENTRYPOINT` | Use `imas-mcp` entrypoint vs `python -m` | `0` |
 
-| Variable                   | Purpose                                          | Default         |
-| -------------------------- | ------------------------------------------------ | --------------- |
-| `IMAS_MCP_SLURM_TIME`      | Walltime                                         | `08:00:00`      |
-| `IMAS_MCP_SLURM_CPUS`      | CPUs per task                                    | `1`             |
-| `IMAS_MCP_SLURM_MEM`       | Memory (e.g. `4G`)                               | Slurm default   |
-| `IMAS_MCP_SLURM_PARTITION` | Partition/queue                                  | Cluster default |
-| `IMAS_MCP_SLURM_ACCOUNT`   | Account/project                                  | User default    |
-| `IMAS_MCP_SLURM_EXTRA`     | Extra raw `srun` flags                           | (empty)         |
-| `IMAS_MCP_USE_ENTRYPOINT`  | Use `imas-mcp` entrypoint instead of `python -m` | `0`             |
-
-Example (from your shell before launching VS Code):
+Example:
 
 ```bash
 export IMAS_MCP_SLURM_TIME=02:00:00
@@ -200,17 +176,15 @@ export IMAS_MCP_SLURM_MEM=8G
 export IMAS_MCP_SLURM_PARTITION=compute
 ```
 
-### Direct CLI Usage
-
-You can also invoke the script directly:
+Direct CLI:
 
 ```bash
 scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
 ```
 
-### Why STDIO for Slurm?
+Why STDIO? Avoids opening network ports; all traffic rides the existing `srun` pseudo-TTY.
 
-Using STDIO avoids opening network ports, simplifying security on clusters that block ephemeral sockets or require extra approvals for services. Tools and responses stream through the existing `srun` pseudo-TTY.
+---
 
 ## Example IMAS Queries
 
