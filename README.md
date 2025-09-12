@@ -10,16 +10,19 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
+ 
 ## Quick Start
 
 Select the setup method that matches your environment:
 
-- [HTTP](#http-remote-public-endpoint) (Hosted): Zero install. Connect to the public endpoint running the latest tagged MCP server from the ITER Organization.
-- [UV](#uv-local-install) (Local): Install and run in your own Python environment for editable development.
-- [Docker](#docker-setup): Run an isolated container with pre-built indexes.
-- [Slurm / HPC](#slurm--hpc-stdio) (STDIO): Launch inside a cluster allocation without opening network ports.
+- HTTP (Hosted): Zero install. Connect to the public endpoint running the latest tagged MCP server from the ITER Organization.
+- UV (Local): Install and run in your own Python environment for editable development.
+- Docker : Run an isolated container with pre-built indexes.
+- Slurm / HPC (STDIO): Launch inside a cluster allocation without opening network ports.
 
 Choose hosted for instant access; choose a local option for customization or controlled resources.
+
+[HTTP](#http-remote-public-endpoint) | [UV](#uv-local-install) | [Docker](#docker-setup) | [Slurm / HPC](#slurm--hpc-stdio)
 
 ### HTTP (Remote Public Endpoint)
 
