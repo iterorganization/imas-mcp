@@ -102,9 +102,9 @@ class HealthEndpoint:
                 {
                     "status": "ok",
                     "mcp_server_version": self._get_version(),
-                    "dd_version": dd_version,
-                    "documents": documents,
+                    "imas_dd_version": dd_version,
                     "ids_count": ids_count,
+                    "document_count": documents,
                     "embedding_model_name": emb.model_name,
                     "started_at": self.server.started_at.isoformat(),
                     "uptime": _format_uptime(uptime_seconds),

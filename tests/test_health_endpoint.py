@@ -51,12 +51,10 @@ def test_health_basic(transport):
                     data = resp.json()
                     assert data["status"] == "ok"
                     assert "mcp_server_version" in data
-                    assert "dd_version" in data
-                    assert "documents" in data
-                    # New embedding metadata fields
+                    assert "imas_dd_version" in data
+                    assert "document_count" in data
                     assert "embedding_model_name" in data
                     assert "started_at" in data
-                    # Updated fields: uptime_seconds removed, ids_count + uptime added
                     assert "ids_count" in data
                     assert "uptime" in data
                     break
