@@ -10,25 +10,32 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
-docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
+ 
 ## Quick Start
 
-Choose the setup path that fits your environment. The remote public HTTP endpoint enables interaction with an MCP server hosted by the ITER Organization; others give you local control.
+Select the setup method that matches your environment:
 
-[HTTP](#http-remote-public-endpoint) | [UV](#uv-local-install) | [Docker](#docker-setup) | [Slurm / HPC](#slurm--hpc-stdio)
+- [HTTP](#http-remote-public-endpoint) (Hosted): Zero install. Connect to the public endpoint running the latest tagged MCP server from the ITER Organization.
+- [UV](#uv-local-install) (Local): Install and run in your own Python environment for editable development.
+- [Docker](#docker-setup): Run an isolated container with pre-built indexes.
+- [Slurm / HPC](#slurm--hpc-stdio) (STDIO): Launch inside a cluster allocation without opening network ports.
+
+Choose hosted for instant access; choose a local option for customization or controlled resources.
 
 ### HTTP (Remote Public Endpoint)
 
 Connect to the managed public server—no local install.
 
-**VS Code (Interactive)**
+#### VS Code (Interactive)
 
 1. `Ctrl+Shift+P` → "MCP: Add Server"
 2. Select "HTTP Server"
 3. Name: `imas`
 4. URL: `https://imas-dd.iter.org/mcp`
 
-**VS Code (Manual JSON)** – workspace `.vscode/mcp.json` (or inside `"mcp"` in user settings):
+#### VS Code (Manual JSON)
+
+Workspace `.vscode/mcp.json` (or inside `"mcp"` in user settings):
 
 ```json
 {
@@ -38,7 +45,9 @@ Connect to the managed public server—no local install.
 }
 ```
 
-**Claude Desktop config** (pick path for your OS):
+#### Claude Desktop config
+
+Pick path for your OS:
 
 Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`  
 macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
@@ -157,15 +166,15 @@ Launch behavior:
 
 Resource tuning (export before client starts):
 
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `IMAS_MCP_SLURM_TIME` | Walltime | `08:00:00` |
-| `IMAS_MCP_SLURM_CPUS` | CPUs per task | `1` |
-| `IMAS_MCP_SLURM_MEM` | Memory (e.g. `4G`) | Slurm default |
-| `IMAS_MCP_SLURM_PARTITION` | Partition | Cluster default |
-| `IMAS_MCP_SLURM_ACCOUNT` | Account/project | User default |
-| `IMAS_MCP_SLURM_EXTRA` | Extra raw `srun` flags | (empty) |
-| `IMAS_MCP_USE_ENTRYPOINT` | Use `imas-mcp` entrypoint vs `python -m` | `0` |
+| Variable                   | Purpose                                  | Default         |
+| -------------------------- | ---------------------------------------- | --------------- |
+| `IMAS_MCP_SLURM_TIME`      | Walltime                                 | `08:00:00`      |
+| `IMAS_MCP_SLURM_CPUS`      | CPUs per task                            | `1`             |
+| `IMAS_MCP_SLURM_MEM`       | Memory (e.g. `4G`)                       | Slurm default   |
+| `IMAS_MCP_SLURM_PARTITION` | Partition                                | Cluster default |
+| `IMAS_MCP_SLURM_ACCOUNT`   | Account/project                          | User default    |
+| `IMAS_MCP_SLURM_EXTRA`     | Extra raw `srun` flags                   | (empty)         |
+| `IMAS_MCP_USE_ENTRYPOINT`  | Use `imas-mcp` entrypoint vs `python -m` | `0`             |
 
 Example:
 
@@ -330,9 +339,13 @@ The project includes two separate build scripts for creating the required data s
 
 ### Local Development MCP Configuration
 
-**VS Code** - The repository includes a `.vscode/mcp.json` file with pre-configured development server options. Use the `imas-local-stdio` configuration for local development.
+#### VS Code
 
-**Claude Desktop** - Add to your config file:
+The repository includes a `.vscode/mcp.json` file with pre-configured development server options. Use the `imas-local-stdio` configuration for local development.
+
+#### Claude Desktop
+
+Add to your config file:
 
 ```json
 {
