@@ -26,7 +26,7 @@ Choose hosted for instant access; choose a local option for customization or con
 
 ### HTTP (Remote Public Endpoint)
 
-Connect to the managed public server—no local install.
+Connect to the public IO IMAS MCP server—no local install.
 
 #### VS Code (Interactive)
 
