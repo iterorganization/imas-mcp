@@ -10,7 +10,6 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
- 
 ## Quick Start
 
 Select the setup method that matches your environment:
