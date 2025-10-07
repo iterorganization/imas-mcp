@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastmcp import Client
 
+from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.server import Server
@@ -52,6 +53,18 @@ def create_mock_documents() -> list[Document]:
             "equilibrium/time_slice/profiles_2d/b_field_r", "equilibrium"
         ),
     ]
+
+
+@pytest.fixture(autouse=True)
+def temporary_embedding_cache_dir(tmp_path_factory, monkeypatch):
+    """Keep embedding cache files isolated per test."""
+    temp_dir = tmp_path_factory.mktemp("embedding_cache")
+    monkeypatch.setattr(
+        Encoder,
+        "_get_cache_directory",
+        lambda self, _temp_dir=temp_dir: _temp_dir,
+    )
+    yield
 
 
 @pytest.fixture(autouse=True)

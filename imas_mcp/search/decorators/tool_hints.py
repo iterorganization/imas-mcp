@@ -255,7 +255,15 @@ def tool_hints(max_hints: int = 4) -> Callable[[F], F]:
             result = await func(*args, **kwargs)
 
             # Apply tool hints if result has tool_hints attribute (any ToolResult)
-            if hasattr(result, "tool_hints"):
+            # Check call-time include_hints option
+            include = kwargs.get("include_hints", True)
+            enabled = True
+            if isinstance(include, bool):
+                enabled = include
+            elif isinstance(include, dict):
+                enabled = include.get("tool", True)
+
+            if enabled and hasattr(result, "tool_hints"):
                 result = apply_tool_hints(result, max_hints)
 
             return result

@@ -174,7 +174,7 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResult(ToolResult, IdsResult, PhysicsContext, SearchHits):
+class SearchResult(ToolResult, PhysicsContext, SearchHits):
     """Search tool result."""
 
     @property

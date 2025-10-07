@@ -471,15 +471,13 @@ class IdentifiersTool(BaseTool):
                         if schema_info.get("total_options", 0) > 1
                         else "MINIMAL"
                     ),
-                    "sample_options": [
+                    "options": [
                         {
                             "name": opt.get("name", ""),
                             "index": opt.get("index", 0),
                             "description": opt.get("description", ""),
                         }
-                        for opt in schema_info.get("options", [])[
-                            :5
-                        ]  # Limit to 5 sample options
+                        for opt in schema_info.get("options", [])
                     ],
                 }
                 schemas.append(schema_item)

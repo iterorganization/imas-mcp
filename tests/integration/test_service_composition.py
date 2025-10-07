@@ -24,9 +24,7 @@ class TestServiceComposition:
         # Mock search execution
         with patch.object(search_tool, "_search_service") as mock_search:
             # Mock SearchResponse return from search service
-            mock_search.search = AsyncMock(
-                return_value=SearchResponse(hits=[], all_paths=[])
-            )
+            mock_search.search = AsyncMock(return_value=SearchResponse(hits=[]))
 
             # Mock response service
             mock_response = MagicMock()
@@ -65,14 +63,17 @@ class TestServiceComposition:
         # Mock physics enhancement
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
-        # Execute the search which should trigger service composition through decorators
-        result = await search_tool.search_imas(query="test")
+        # Execute the search with detailed profile to trigger physics hints through hints decorator
+        result = await search_tool.search_imas(
+            query="test", response_profile="detailed"
+        )
 
         # Verify search was executed
         search_tool.execute_search.assert_called_once()
 
-        # Verify physics enhancement was attempted
+        # Verify physics enhancement was attempted (only called in detailed/ALL hints mode)
         search_tool.physics.enhance_query.assert_called_once()
 
-        # Result should be the mock result
-        assert result == mock_result
+        # Result should be based on the mock result
+        assert result.query == "test"
+        assert len(result.hits) == 0

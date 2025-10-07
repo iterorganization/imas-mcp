@@ -36,7 +36,7 @@ class TestAbstractToolResult:
     def test_cannot_instantiate_abstract_class(self):
         """Test that ToolResult cannot be instantiated directly."""
         with pytest.raises(TypeError):
-            ToolResult()
+            ToolResult()  # type: ignore[abstract]
 
     def test_abstract_tool_name_property(self):
         """Test that tool_name is properly abstract."""
@@ -330,7 +330,6 @@ class TestMetadataInheritance:
 
         # Should also have properties from other base classes
         assert hasattr(result, "hit_count")  # From SearchHits
-        assert hasattr(result, "node_count")  # From IdsResult
         assert hasattr(result, "query")  # From QueryContext
 
 

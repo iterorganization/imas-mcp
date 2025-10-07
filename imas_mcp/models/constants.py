@@ -32,6 +32,22 @@ class DetailLevel(str, Enum):
     ADVANCED = "advanced"
 
 
+class HintsMode(str, Enum):
+    """Modes for hint generation behavior."""
+
+    ALL = "all"
+    MINIMAL = "minimal"
+    NONE = "none"
+
+
+class ResponseProfile(str, Enum):
+    """Response formatting presets for search results."""
+
+    MINIMAL = "minimal"  # Results only, no hints or context
+    STANDARD = "standard"  # Results + essential hints (default)
+    DETAILED = "detailed"  # Results + full AI enhancement
+
+
 class RelationshipType(str, Enum):
     """Types of relationships to explore."""
 

@@ -118,10 +118,10 @@ class TestExploreIdentifiersTool:
             assert "branching_significance" in schema, (
                 "Schema should have branching_significance"
             )
-            assert "sample_options" in schema, "Schema should have sample_options"
+            assert "options" in schema, "Schema should have options"
 
             # Sample options should be properly formatted
-            for option in schema["sample_options"]:
+            for option in schema["options"]:
                 assert "name" in option, "Option should have name"
                 assert "index" in option, "Option should have index"
                 assert "description" in option, "Option should have description"

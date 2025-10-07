@@ -5,8 +5,11 @@ This decorator provides a standard way to mark methods as MCP tools
 and attach descriptions that can be used by the MCP framework.
 """
 
+import logging
+import typing
 from collections.abc import Callable
-from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def mcp_tool(description: str):
@@ -24,7 +27,7 @@ def mcp_tool(description: str):
         Decorated function with MCP tool metadata
     """
 
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+    def decorator(func: Callable[..., typing.Any]) -> Callable[..., typing.Any]:
         func._mcp_tool = True
         func._mcp_description = description
         return func
