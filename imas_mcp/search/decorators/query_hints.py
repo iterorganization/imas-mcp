@@ -285,7 +285,14 @@ def query_hints(max_hints: int = 5) -> Callable[[F], F]:
             result = await func(*args, **kwargs)
 
             # Apply query hints if result has query_hints attribute (any ToolResult)
-            if hasattr(result, "query_hints"):
+            include = kwargs.get("include_hints", True)
+            enabled = True
+            if isinstance(include, bool):
+                enabled = include
+            elif isinstance(include, dict):
+                enabled = include.get("query", True)
+
+            if enabled and hasattr(result, "query_hints"):
                 result = apply_query_hints(result, max_hints)
 
             return result

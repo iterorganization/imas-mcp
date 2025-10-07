@@ -99,6 +99,32 @@ class SearchHit(SearchBase):
     data_type: str | None = Field(default=None, description="Data type")
     ids_name: str = Field(description="IDS name this path belongs to")
     physics_domain: str | None = Field(default=None, description="Physics domain")
+    coordinates: list[str] = Field(
+        default_factory=list,
+        description="Coordinate labels associated with the path",
+    )
+    lifecycle: str | None = Field(
+        default=None, description="Lifecycle designation for the path"
+    )
+    node_type: str | None = Field(
+        default=None, description="Underlying data node type, if provided"
+    )
+    timebase: str | None = Field(
+        default=None, description="Reference timebase path, if applicable"
+    )
+    coordinate1: str | None = Field(
+        default=None, description="Primary coordinate descriptor"
+    )
+    coordinate2: str | None = Field(
+        default=None, description="Secondary coordinate descriptor"
+    )
+    structure_reference: str | None = Field(
+        default=None, description="Reference to shared structure definitions"
+    )
+    has_identifier_schema: bool = Field(
+        default=False,
+        description="Whether this path is governed by an identifier schema",
+    )
 
 
 class SearchMatch(SearchBase):
@@ -117,6 +143,13 @@ class SearchMatch(SearchBase):
         Returns:
             SearchHit suitable for API responses
         """
+        metadata = self.document.metadata
+        raw_data = self.document.raw_data or {}
+
+        coordinates = (
+            list(metadata.coordinates) if getattr(metadata, "coordinates", None) else []
+        )
+
         return SearchHit(
             # Inherited base fields
             score=self.score,
@@ -124,12 +157,23 @@ class SearchMatch(SearchBase):
             search_mode=self.search_mode,
             highlights=self.highlights,
             # Flattened document fields for API
-            path=self.document.metadata.path_name,
+            path=metadata.path_name,
             documentation=self.document.documentation,
             units=self.document.units.unit_str if self.document.units else None,
-            data_type=self.document.metadata.data_type,
-            ids_name=self.document.metadata.ids_name,
-            physics_domain=self.document.metadata.physics_domain,
+            data_type=metadata.data_type,
+            ids_name=metadata.ids_name,
+            physics_domain=metadata.physics_domain,
+            coordinates=coordinates,
+            lifecycle=raw_data.get("lifecycle"),
+            node_type=raw_data.get("type"),
+            timebase=raw_data.get("timebase"),
+            coordinate1=raw_data.get("coordinate1"),
+            coordinate2=raw_data.get("coordinate2"),
+            structure_reference=raw_data.get("structure_reference"),
+            has_identifier_schema=bool(
+                raw_data.get("identifier_schema")
+                or metadata.data_type == "identifier_path"
+            ),
         )
 
 
