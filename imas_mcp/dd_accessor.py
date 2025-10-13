@@ -113,6 +113,46 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
         return self._imas_dd is not None
 
 
+class ImasDataDictionariesAccessor(ImasDataDictionaryAccessor):
+    """Accessor that uses imas_data_dictionaries PyPI package for specific versions."""
+
+    def __init__(self, dd_version: str):
+        """
+        Initialize with a specific DD version from PyPI.
+
+        Args:
+            dd_version: Version string like "3.42.2" or "4.0.0"
+        """
+        self.dd_version = dd_version
+        self._imas_dd = None
+        self._load_imas_dd()
+
+    def _load_imas_dd(self) -> None:
+        """Load the imas_data_dictionaries package."""
+        try:
+            import imas_data_dictionaries
+
+            self._imas_dd = imas_data_dictionaries
+        except ImportError as e:
+            raise ImportError(
+                "imas_data_dictionaries package required for version-specific builds. "
+                "Install with: pip install imas_data_dictionaries"
+            ) from e
+
+    def get_xml_tree(self) -> ET.ElementTree:
+        """Get the XML ElementTree for the specified DD version."""
+        if not self._imas_dd:
+            raise RuntimeError("imas_data_dictionaries not available")
+
+        xml_path = self._imas_dd.get_dd_xml(self.dd_version)
+        with xml_path.open("rb") as f:
+            return ET.parse(f)
+
+    def get_version(self) -> Version:
+        """Get the data dictionary version."""
+        return Version(self.dd_version)
+
+
 class MetadataDataDictionaryAccessor(DataDictionaryAccessor):
     """Accessor that uses cached metadata files."""
 
