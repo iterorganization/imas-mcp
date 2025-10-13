@@ -122,6 +122,7 @@ class BaseTool(ABC):
         """Build sampling tasks for sampling tool result content.
 
         Default implementation provides base sampling tasks for common fields.
+        Supports both nodes (IdsNode for complete data) and hits (SearchHit for search results).
         Override in subclasses to add tool-specific sampling tasks.
 
         Args:
@@ -132,7 +133,7 @@ class BaseTool(ABC):
         """
         tasks = []
 
-        # Base sampling for any tool with nodes
+        # Base sampling for tools with nodes (complete data retrieval)
         if hasattr(tool_result, "nodes") and tool_result.nodes:
             tasks.append(
                 {
@@ -140,6 +141,20 @@ class BaseTool(ABC):
                     "prompt_type": "sample_documentation",
                     "context": {
                         "nodes": tool_result.nodes[:5],  # Limit context size
+                        "query": getattr(tool_result, "query", ""),
+                        "tool_type": type(self).__name__,
+                    },
+                }
+            )
+
+        # Base sampling for tools with hits (search results)
+        if hasattr(tool_result, "hits") and tool_result.hits:
+            tasks.append(
+                {
+                    "field": "hits_analysis",
+                    "prompt_type": "sample_hits",
+                    "context": {
+                        "hits": tool_result.hits[:5],  # Limit context size
                         "query": getattr(tool_result, "query", ""),
                         "tool_type": type(self).__name__,
                     },

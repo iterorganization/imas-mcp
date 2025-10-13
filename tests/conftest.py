@@ -52,6 +52,9 @@ def create_mock_documents() -> list[Document]:
         create_mock_document(
             "equilibrium/time_slice/profiles_2d/b_field_r", "equilibrium"
         ),
+        create_mock_document("equilibrium/time_slice/boundary/psi", "equilibrium"),
+        create_mock_document("equilibrium/time_slice/boundary/psi_norm", "equilibrium"),
+        create_mock_document("equilibrium/time_slice/boundary/type", "equilibrium"),
     ]
 
 

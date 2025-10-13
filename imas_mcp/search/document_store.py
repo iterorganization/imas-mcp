@@ -20,7 +20,12 @@ from pathlib import Path
 from typing import Any
 
 import imas_mcp
-from imas_mcp.core.data_model import IdentifierSchema, IdsNode, PhysicsContext
+from imas_mcp.core.data_model import (
+    IdentifierSchema,
+    IdsNode,
+    PhysicsContext,
+    ValidationRules,
+)
 from imas_mcp.core.physics_accessors import UnitAccessor
 from imas_mcp.core.unit_loader import get_unit_dimensionality, get_unit_name
 
@@ -189,8 +194,20 @@ class Document:
                     metadata=schema_data.get("metadata", {}),
                 )
 
+        # Build validation rules if available
+        validation_rules = None
+        if self.raw_data.get("validation_rules"):
+            rules_data = self.raw_data["validation_rules"]
+            if isinstance(rules_data, dict):
+                validation_rules = ValidationRules(
+                    min_value=rules_data.get("min_value"),
+                    max_value=rules_data.get("max_value"),
+                    units_required=rules_data.get("units_required", True),
+                    coordinate_check=rules_data.get("coordinate_check"),
+                )
+
         return IdsNode(
-            path=self.metadata.path_name,
+            path=self.metadata.path_id,
             documentation=self.documentation,
             units=self.units.unit_str if self.units else "",
             coordinates=list(self.metadata.coordinates)
@@ -204,9 +221,7 @@ class Document:
             lifecycle_status=self.raw_data.get("lifecycle_status"),
             lifecycle_version=self.raw_data.get("lifecycle_version"),
             physics_context=physics_context,
-            related_paths=self.raw_data.get("related_paths", []),
-            usage_examples=self.raw_data.get("usage_examples", []),
-            validation_rules=self.raw_data.get("validation_rules"),
+            validation_rules=validation_rules,
             identifier_schema=identifier_schema,
             coordinate1=self.raw_data.get("coordinate1"),
             coordinate2=self.raw_data.get("coordinate2"),

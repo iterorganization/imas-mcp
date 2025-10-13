@@ -141,6 +141,55 @@ When analyzing search results, provide:
 
 Focus on helping researchers efficiently navigate and understand IMAS data for their specific physics investigations."""
 
+    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
+        """Build sampling tasks specific to SearchResult.
+
+        Only creates sampling tasks for semantic/hybrid queries that benefit from AI insights.
+        Skips sampling for simple lexical path lookups to avoid unnecessary AI calls.
+        """
+        from imas_mcp.models.result_models import SearchResult
+
+        # Skip sampling for LEXICAL mode - these are simple path lookups that don't need AI enhancement
+        if isinstance(tool_result, SearchResult):
+            if tool_result.search_mode == SearchMode.LEXICAL:
+                logger.debug(
+                    "Skipping AI sampling for LEXICAL search mode (simple path lookup)"
+                )
+                return []  # No sampling tasks for lexical searches
+
+        tasks = super().build_sample_tasks(
+            tool_result
+        )  # Get base tasks (hits_analysis)
+
+        if isinstance(tool_result, SearchResult) and tool_result.hits:
+            # Sample search-specific analysis for semantic/hybrid queries
+            tasks.append(
+                {
+                    "field": "search_insights",
+                    "prompt_type": "search_analysis",
+                    "context": {
+                        "query": tool_result.query,
+                        "results": tool_result.hits[:5],
+                        "hit_count": len(tool_result.hits),
+                        "search_mode": tool_result.search_mode.value,
+                    },
+                }
+            )
+
+        return tasks
+
+    def _apply_search_insights_sampling(
+        self, tool_result, sampled_content: str
+    ) -> None:
+        """Apply custom sampling for search insights."""
+        from imas_mcp.models.result_models import SearchResult
+
+        if isinstance(tool_result, SearchResult):
+            # Store insights in the summary dict
+            if not tool_result.summary:
+                tool_result.summary = {}
+            tool_result.summary["ai_insights"] = sampled_content
+
     def _build_search_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for search result analysis."""
         query = tool_context.get("query", "")

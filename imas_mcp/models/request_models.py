@@ -69,7 +69,33 @@ class SearchInput(BaseInputSchema):
             raise ValueError("Query cannot be empty")
         return v
 
-    # No backwards compatibility maintained for include_hints per guidelines
+    @field_validator("ids_filter", mode="before")
+    @classmethod
+    def validate_ids_filter(cls, v):
+        """Convert string ids_filter to list."""
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("search_mode", mode="before")
+    @classmethod
+    def validate_search_mode(cls, v):
+        """Convert string search_mode to enum, handle auto specially."""
+        if v is None:
+            return SearchMode.AUTO
+        if isinstance(v, str):
+            return SearchMode(v)
+        return v
+
+    @field_validator("response_profile", mode="before")
+    @classmethod
+    def validate_response_profile(cls, v):
+        """Convert string response_profile to enum."""
+        if v is None:
+            return ResponseProfile.STANDARD
+        if isinstance(v, str):
+            return ResponseProfile(v)
+        return v
 
 
 class ExplainInput(BaseInputSchema):
