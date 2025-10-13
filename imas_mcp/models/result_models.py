@@ -16,28 +16,25 @@ from imas_mcp.models.constants import (
     SearchMode,
 )
 from imas_mcp.models.context_models import (
-    AIContext,
-    PhysicsContext,
-    QueryContext,
+    BaseToolResult,
+    WithAIEnhancement,
+    WithHints,
+    WithPhysics,
 )
 from imas_mcp.models.physics_models import ConceptExplanation
 from imas_mcp.models.structure_models import StructureAnalysis
-from imas_mcp.models.suggestion_models import SearchSuggestion, ToolSuggestion
 from imas_mcp.search.search_strategy import SearchHit
 
 # ============================================================================
-# BASE MODELS
+# BASE MODELS WITH METADATA
 # ============================================================================
 
 
-class ToolResult(AIContext, QueryContext, BaseModel, ABC):
+class ToolResult(BaseToolResult, ABC):
     """
-    Abstract base class for all IMAS MCP tool results.
+    Base class for all tool results.
 
-    Provides standard context that all tools can benefit from:
-    - Query tracking (query, search_mode, ids_filter, max_results)
-    - AI enhancement capabilities (ai_response, ai_prompt)
-    - Standard metadata fields (tool_name must be implemented by subclasses)
+    Includes query tracking and standard metadata (version, timestamps).
     """
 
     @property
@@ -56,17 +53,12 @@ class ToolResult(AIContext, QueryContext, BaseModel, ABC):
         """Result format version."""
         return __version__
 
-    # Hint fields for follow-up suggestions (populated by decorators)
-    query_hints: list[SearchSuggestion] = Field(
-        default_factory=list, description="Query suggestions for follow-up searches"
-    )
-    tool_hints: list[ToolSuggestion] = Field(
-        default_factory=list, description="Tool suggestions for follow-up analysis"
-    )
-
 
 class IdsResult(BaseModel):
-    """Result containing IMAS data nodes."""
+    """Result containing IMAS data nodes.
+
+    Used by tools that return complete, authoritative IMAS path data.
+    """
 
     nodes: list[IdsNode] = Field(default_factory=list)
 
@@ -74,6 +66,20 @@ class IdsResult(BaseModel):
     def node_count(self) -> int:
         """Number of nodes in the result."""
         return len(self.nodes)
+
+
+class IdsPathResult(WithPhysics, ToolResult, IdsResult):
+    """Path retrieval result with physics aggregation."""
+
+    @property
+    def tool_name(self) -> str:
+        """Name of the tool that generated this result."""
+        return "fetch_imas_paths"
+
+    # Summary information
+    summary: dict[str, Any] = Field(
+        default_factory=dict, description="Summary of path retrieval operation"
+    )
 
 
 # ============================================================================
@@ -174,8 +180,11 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResult(ToolResult, PhysicsContext, SearchHits):
-    """Search tool result."""
+class SearchResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, SearchHits):
+    """Search tool result with AI enhancement, hints, and physics aggregation.
+
+    Uses AI sampling for detailed response profiles.
+    """
 
     @property
     def tool_name(self) -> str:
@@ -188,8 +197,8 @@ class SearchResult(ToolResult, PhysicsContext, SearchHits):
     )
 
 
-class OverviewResult(ToolResult, PhysicsContext, SearchHits):
-    """Overview tool response."""
+class OverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
+    """Overview tool response with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -233,8 +242,11 @@ class OverviewResult(ToolResult, PhysicsContext, SearchHits):
 # ============================================================================
 
 
-class ConceptResult(ToolResult, IdsResult, PhysicsContext):
-    """Concept explanation result."""
+class ConceptResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, SearchHits):
+    """Concept explanation result with AI enhancement.
+
+    Returns ranked search results related to the concept.
+    """
 
     @property
     def tool_name(self) -> str:
@@ -248,8 +260,11 @@ class ConceptResult(ToolResult, IdsResult, PhysicsContext):
     concept_explanation: ConceptExplanation | None = None
 
 
-class StructureResult(ToolResult, PhysicsContext):
-    """IDS structure analysis result."""
+class StructureResult(WithHints, WithPhysics, ToolResult):
+    """IDS structure analysis result with AI enhancement, hints, and physics aggregation.
+
+    Uses AI sampling for enhanced structural insights.
+    """
 
     @property
     def tool_name(self) -> str:
@@ -268,8 +283,8 @@ class StructureResult(ToolResult, PhysicsContext):
     )
 
 
-class IdentifierResult(ToolResult, PhysicsContext):
-    """Identifier exploration result."""
+class IdentifierResult(WithHints, WithPhysics, ToolResult):
+    """Identifier exploration result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -282,8 +297,12 @@ class IdentifierResult(ToolResult, PhysicsContext):
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
-    """Relationship exploration result."""
+class RelationshipResult(WithHints, WithPhysics, ToolResult):
+    """Relationship exploration result with hints and physics aggregation.
+
+    Does not inherit from IdsResult as it returns relationship metadata
+    in the connections dict, not complete IdsNode objects.
+    """
 
     @property
     def tool_name(self) -> str:
@@ -297,8 +316,6 @@ class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
         default_factory=dict,
         description="Categorized relationship paths with intra-IDS and cross-IDS separation",
     )
-
-    # Remove nodes field entirely - connections contain all the path information
 
     # Relationship-specific analysis fields
     relationship_insights: dict[str, Any] = Field(
@@ -316,8 +333,8 @@ class RelationshipResult(ToolResult, IdsResult, PhysicsContext):
 # ============================================================================
 
 
-class IDSExport(ToolResult, ExportResult):
-    """IDS export result."""
+class IDSExport(WithHints, ToolResult, ExportResult):
+    """IDS export result with hints."""
 
     @property
     def tool_name(self) -> str:
@@ -329,8 +346,8 @@ class IDSExport(ToolResult, ExportResult):
     include_relationships: bool = True
 
 
-class DomainExport(ToolResult, ExportResult):
-    """Physics domain export result."""
+class DomainExport(WithHints, ToolResult, ExportResult):
+    """Physics domain export result with hints."""
 
     @property
     def tool_name(self) -> str:

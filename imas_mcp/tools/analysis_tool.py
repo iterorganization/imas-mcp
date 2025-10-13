@@ -221,7 +221,34 @@ class AnalysisTool(BaseTool):
             # For no data case, we expect query to be the IDS name
             ids_name = tool_context.get("query", "")
             return self._build_no_data_prompt_simple(ids_name)
+        elif prompt_type == "structure_description_sampling":
+            return self._build_description_sampling_prompt(tool_context)
         return ""
+
+    def _build_description_sampling_prompt(self, context: dict[str, Any]) -> str:
+        """Build prompt for sampling structure description."""
+        ids_name = context.get("ids_name", "")
+        current_description = context.get("current_description", "")
+        sample_paths = context.get("sample_paths", [])
+        max_depth = context.get("max_depth", 0)
+
+        prompt = f"""Current description for '{ids_name}' IDS structure:
+{current_description}
+
+Structure metrics:
+- Max depth: {max_depth}
+- Sample paths: {", ".join(sample_paths[:5])}
+
+Sample and improve this description by:
+1. Adding physics context and measurement organization principles
+2. Explaining key structural patterns and data hierarchy
+3. Highlighting important branching points and identifier schemas
+4. Providing practical guidance for data access and navigation
+5. Connecting to common fusion physics workflows
+
+Focus on clarity and practical utility for researchers working with this IDS."""
+
+        return prompt
 
     def system_prompt(self) -> str:
         """Get enhanced analysis tool-specific system prompt."""
@@ -265,6 +292,37 @@ When analyzing IDS structures, focus on:
 Provide analysis that helps researchers understand not just what data is available, but how to work
 with it effectively using both structural insights and visual navigation aids for their specific
 research contexts."""
+
+    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
+        """Build sampling tasks specific to StructureResult."""
+        from imas_mcp.models.result_models import StructureResult
+
+        tasks = super().build_sample_tasks(tool_result)  # Get base tasks
+
+        if isinstance(tool_result, StructureResult):
+            # Sample structure-specific description
+            if tool_result.description:
+                tasks.append(
+                    {
+                        "field": "description",
+                        "prompt_type": "structure_description_sampling",
+                        "context": {
+                            "ids_name": tool_result.ids_name,
+                            "current_description": tool_result.description,
+                            "sample_paths": tool_result.sample_paths[:5],
+                            "max_depth": tool_result.max_depth,
+                        },
+                    }
+                )
+
+        return tasks
+
+    def _apply_description_sampling(self, tool_result, sampled_content: str) -> None:
+        """Apply custom sampling for description field."""
+        from imas_mcp.models.result_models import StructureResult
+
+        if isinstance(tool_result, StructureResult):
+            tool_result.description = sampled_content
 
     def _build_structure_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for IDS structure analysis with enhanced capabilities."""

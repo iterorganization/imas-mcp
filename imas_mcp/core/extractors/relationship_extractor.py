@@ -349,7 +349,6 @@ class RelationshipExtractor(BaseExtractor):
                     "ids": ids_name,
                     "documentation": documentation,
                     "physics_context": physics_context,
-                    "related_paths": path_data.get("related_paths", []),
                 }
 
         print(f"Generating embeddings for {len(path_descriptions)} paths...")
@@ -434,26 +433,6 @@ class RelationshipExtractor(BaseExtractor):
                         >= max_relationships_per_ids
                     ):
                         break
-
-            # Also include explicitly related paths from documentation
-            explicit_related = path_metadata[source_path].get("related_paths", [])
-            for related_path in explicit_related:
-                if (
-                    related_path in path_metadata
-                    and path_metadata[related_path]["ids"] != source_ids
-                ):
-                    if source_ids not in detailed_relationships:
-                        detailed_relationships[source_ids] = []
-
-                    # Add explicit relationships
-                    detailed_relationships[source_ids].append(
-                        {
-                            "target_path": related_path,
-                            "source_path": source_path,
-                            "similarity_score": 1.0,  # Explicit relationships get max score
-                            "relationship_type": "explicit",
-                        }
-                    )
 
         # Convert detailed relationships back to simple format for backward compatibility
         # but also store the detailed version
