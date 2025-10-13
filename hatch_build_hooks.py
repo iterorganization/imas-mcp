@@ -41,9 +41,11 @@ class CustomBuildHook(BuildHookInterface):
 
         # Get configuration options
         ids_filter = self.config.get("ids-filter", "")
+        dd_version = self.config.get("imas-dd-version", "")
 
         # Allow environment variable override for ASV builds
         ids_filter = os.environ.get("IDS_FILTER", ids_filter)
+        dd_version = os.environ.get("IMAS_DD_VERSION", dd_version)
 
         # Transform ids_filter from space-separated or comma-separated string to set
         ids_set = None
@@ -51,11 +53,17 @@ class CustomBuildHook(BuildHookInterface):
             # Support both space-separated and comma-separated formats
             ids_set = set(ids_filter.replace(",", " ").split())
 
-        # Build only JSON schemas (avoiding heavy relationship extraction)
-        json_transformer = DataDictionaryTransformer(ids_set=ids_set, use_rich=True)
-        json_transformer.build()
+        # Create DD accessor based on version config
+        dd_accessor = None
+        if dd_version:
+            # Use specific version from imas_data_dictionaries PyPI package
+            from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
 
-        # Skip Mermaid graph generation (requires relationships)
-        # resources_dir = package_root / "imas_mcp" / "resources"
-        # mermaid_generator = MermaidGraphGenerator(resources_dir)
-        # mermaid_generator.build(ids_set)
+            dd_accessor = ImasDataDictionariesAccessor(dd_version)
+            print(f"Building with IMAS DD version: {dd_version}")
+
+        # Build only JSON schemas (avoiding heavy relationship extraction)
+        json_transformer = DataDictionaryTransformer(
+            dd_accessor=dd_accessor, ids_set=ids_set, use_rich=True
+        )
+        json_transformer.build()
