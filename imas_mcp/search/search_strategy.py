@@ -9,6 +9,7 @@ and extensibility.
 import logging
 import re
 from abc import ABC, abstractmethod
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -126,6 +127,26 @@ class SearchHit(SearchBase):
         description="Whether this path is governed by an identifier schema",
     )
 
+    # Additional fields from raw_data
+    validation_rules: dict[str, Any] | None = Field(
+        default=None, description="Validation rules for this path"
+    )
+    physics_context: dict[str, Any] | None = Field(
+        default=None, description="Physics domain and phenomena context"
+    )
+    identifier_schema: dict[str, Any] | None = Field(
+        default=None, description="Full identifier schema with options"
+    )
+    introduced_after_version: str | None = Field(
+        default=None, description="IMAS version when this path was introduced"
+    )
+    lifecycle_status: str | None = Field(
+        default=None, description="Lifecycle status (alpha, obsolescent, etc.)"
+    )
+    lifecycle_version: str | None = Field(
+        default=None, description="Version associated with lifecycle status"
+    )
+
 
 class SearchMatch(SearchBase):
     """Internal search result with document reference for search processing."""
@@ -174,6 +195,13 @@ class SearchMatch(SearchBase):
                 raw_data.get("identifier_schema")
                 or metadata.data_type == "identifier_path"
             ),
+            # Additional fields from raw_data
+            validation_rules=raw_data.get("validation_rules"),
+            physics_context=raw_data.get("physics_context"),
+            identifier_schema=raw_data.get("identifier_schema"),
+            introduced_after_version=raw_data.get("introduced_after_version"),
+            lifecycle_status=raw_data.get("lifecycle_status"),
+            lifecycle_version=raw_data.get("lifecycle_version"),
         )
 
 

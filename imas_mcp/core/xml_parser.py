@@ -19,7 +19,6 @@ from imas_mcp.core.data_model import (
     IdsInfo,
     IdsNode,
     TransformationOutputs,
-    UsageExample,
 )
 from imas_mcp.core.extractors import (
     CoordinateExtractor,
@@ -41,7 +40,7 @@ from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 @dataclass
 class DataDictionaryTransformer:
-    """Refactored transformer using composable extractors with performance optimizations."""
+    """Transformer using composable extractors."""
 
     output_dir: Path | None = None
     dd_accessor: ImasDataDictionaryAccessor | None = None
@@ -507,26 +506,7 @@ class DataDictionaryTransformer:
             # Convert paths to DataPath objects, handling relationships properly
             data_paths = {}
             for path_key, path_data in data["paths"].items():
-                # Handle usage_examples conversion
-                usage_examples_data = path_data.get("usage_examples", [])
-                if usage_examples_data and isinstance(usage_examples_data, list):
-                    usage_examples = []
-                    for example in usage_examples_data:
-                        if isinstance(example, dict):
-                            usage_examples.append(UsageExample(**example))
-                        else:
-                            # Handle string format or other formats
-                            usage_examples.append(
-                                UsageExample(
-                                    scenario="General usage",
-                                    code=str(example),
-                                    notes="",
-                                )
-                            )
-                    path_data = path_data.copy()
-                    path_data["usage_examples"] = usage_examples
-
-                # Create DataPath object
+                # Create IdsNode object
                 data_paths[path_key] = IdsNode(**path_data)
 
             detailed = IdsDetailed(

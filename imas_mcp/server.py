@@ -134,8 +134,6 @@ class Server:
             logger.info(
                 f"Starting IMAS MCP server with {transport} transport on {host}:{port}"
             )
-            # Use stateful HTTP mode to support sampling functionality
-            logger.info("Using stateful HTTP mode to support MCP sampling")
             # Attach minimal /health endpoint (same port) for HTTP transports
             try:
                 HealthEndpoint(self).attach()

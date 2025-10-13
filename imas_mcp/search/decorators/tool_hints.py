@@ -216,8 +216,8 @@ def apply_tool_hints(result: Any, max_hints: int = 4) -> Any:
             logger.warning(f"Result type {type(result)} does not have tool_hints field")
             return result
 
-        # Generate hints based on result type
-        if hasattr(result, "hits") and hasattr(result, "query"):
+        # Generate hints based on result type - check tool_name property for SearchResult
+        if hasattr(result, "tool_name") and result.tool_name == "search_imas":
             # SearchResult - use existing search hint generator
             hints = generate_search_tool_hints(result)
         else:

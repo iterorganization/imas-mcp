@@ -45,11 +45,12 @@ class TestResponseService:
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
+        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
         assert response.ai_response == {}
         assert response.hits[0].path == "test.path"
 
     def test_build_search_response_with_insights(self):
-        """Test building search response with AI insights."""
+        """Test building search response."""
         service = ResponseService()
 
         mock_result = Mock()
@@ -64,19 +65,18 @@ class TestResponseService:
         )
 
         results = [mock_result]  # type: ignore
-        ai_response = {}  # ai_response should be empty (reserved for LLM sampling)
 
         response = service.build_search_response(
             results=results,
             query="plasma temperature",
             search_mode=SearchMode.SEMANTIC,
-            ai_response=ai_response,
         )
 
         assert isinstance(response, SearchResult)
         assert response.query == "plasma temperature"
         assert response.search_mode == SearchMode.SEMANTIC
-        assert response.ai_response == ai_response
+        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
+        assert response.ai_response == {}
         assert len(response.hits) == 1
 
     def test_add_standard_metadata(self):
