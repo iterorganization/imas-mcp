@@ -7,7 +7,6 @@ complex queries and full-text search.
 """
 
 import hashlib
-import importlib.resources as resources
 import json
 import logging
 import re
@@ -19,10 +18,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import imas_mcp
-from imas_mcp.core.data_model import IdentifierSchema, IdsNode, PhysicsContext
+from imas_mcp import dd_version
+from imas_mcp.core.data_model import (
+    IdentifierSchema,
+    IdsNode,
+    PhysicsContext,
+    ValidationRules,
+)
 from imas_mcp.core.physics_accessors import UnitAccessor
 from imas_mcp.core.unit_loader import get_unit_dimensionality, get_unit_name
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +194,20 @@ class Document:
                     metadata=schema_data.get("metadata", {}),
                 )
 
+        # Build validation rules if available
+        validation_rules = None
+        if self.raw_data.get("validation_rules"):
+            rules_data = self.raw_data["validation_rules"]
+            if isinstance(rules_data, dict):
+                validation_rules = ValidationRules(
+                    min_value=rules_data.get("min_value"),
+                    max_value=rules_data.get("max_value"),
+                    units_required=rules_data.get("units_required", True),
+                    coordinate_check=rules_data.get("coordinate_check"),
+                )
+
         return IdsNode(
-            path=self.metadata.path_name,
+            path=self.metadata.path_id,
             documentation=self.documentation,
             units=self.units.unit_str if self.units else "",
             coordinates=list(self.metadata.coordinates)
@@ -204,9 +221,7 @@ class Document:
             lifecycle_status=self.raw_data.get("lifecycle_status"),
             lifecycle_version=self.raw_data.get("lifecycle_version"),
             physics_context=physics_context,
-            related_paths=self.raw_data.get("related_paths", []),
-            usage_examples=self.raw_data.get("usage_examples", []),
-            validation_rules=self.raw_data.get("validation_rules"),
+            validation_rules=validation_rules,
             identifier_schema=identifier_schema,
             coordinate1=self.raw_data.get("coordinate1"),
             coordinate2=self.raw_data.get("coordinate2"),
@@ -375,6 +390,13 @@ class DocumentStore:
             [k for k in self._index.by_ids_name.keys() if k != "identifier_schema"]
         )
 
+        # Build or validate SQLite FTS index after loading documents
+        # This ensures the database file is created when embeddings are built
+        if self._should_rebuild_fts_index():
+            self._build_sqlite_fts_index()
+        else:
+            logger.debug("SQLite FTS index is up to date")
+
     def _ensure_loaded(self) -> None:
         """Ensure all available documents are loaded (fallback for full loading)."""
         if not self._loaded:
@@ -388,27 +410,14 @@ class DocumentStore:
             self._ensure_ids_loaded(available_ids)
 
     def _get_resources_path(self) -> Path:
-        """Get the path to the resources directory using importlib.resources."""
-        try:
-            # Use the new files() API instead of deprecated path()
-            resources_dir = resources.files("imas_mcp") / "resources" / "schemas"
-            # Convert Traversable to Path using str conversion
-            return Path(str(resources_dir))
-        except (ImportError, FileNotFoundError):
-            # Fallback to package relative path
-            package_path = Path(imas_mcp.__file__).parent
-            return package_path / "resources" / "schemas"
+        """Get the path to the resources directory using ResourcePathAccessor."""
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        return path_accessor.schemas_dir
 
     def _get_sqlite_dir(self) -> Path:
         """Get the database directory for database files."""
-        try:
-            # Use resources directory for database files
-            database_dir = resources.files("imas_mcp") / "resources" / "database"
-            return Path(str(database_dir))
-        except (ImportError, FileNotFoundError):
-            # Fallback to package relative path
-            package_path = Path(imas_mcp.__file__).parent
-            return package_path / "resources" / "database"
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        return path_accessor.database_dir
 
     def _get_dd_version(self) -> str:
         """Extract IMAS data dictionary version from ids_catalog.json metadata.

@@ -11,7 +11,7 @@ from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp.models.constants import SearchMode
+from imas_mcp.models.constants import ResponseProfile, SearchMode
 from imas_mcp.models.request_models import SearchInput
 from imas_mcp.models.result_models import SearchResult
 
@@ -23,10 +23,8 @@ from imas_mcp.search.decorators import (
     measure_performance,
     validate_input,
 )
-from imas_mcp.search.decorators.physics_hints import physics_hints
-from imas_mcp.search.decorators.query_hints import query_hints
+from imas_mcp.search.decorators.hints import hints
 from imas_mcp.search.decorators.sample import sample
-from imas_mcp.search.decorators.tool_hints import tool_hints
 
 from .base import BaseTool
 
@@ -45,18 +43,20 @@ class SearchTool(BaseTool):
     @validate_input(schema=SearchInput)
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @handle_errors(fallback="search_suggestions")
-    @tool_hints(max_hints=4)
-    @query_hints(max_hints=5)
-    @physics_hints()
+    @hints(tool_max=4, query_max=5)
     @sample(temperature=0.3, max_tokens=800)
-    @mcp_tool("Find IMAS data paths using semantic and lexical search")
+    @mcp_tool(
+        "Find IMAS IDS entries using semantic and lexical search. "
+        "Options: search_mode=auto|semantic|lexical|hybrid, "
+        "response_profile=minimal|standard|detailed"
+    )
     async def search_imas(
         self,
         query: str,
-        ids_filter: list[str] | None = None,
+        ids_filter: str | list[str] | None = None,
         max_results: int = 50,
         search_mode: str | SearchMode = "auto",
-        output_mode: str = "full",
+        response_profile: str | ResponseProfile = "standard",
         ctx: Context | None = None,
     ) -> SearchResult:
         """
@@ -67,15 +67,22 @@ class SearchTool(BaseTool):
         with physics context and documentation.
 
         Args:
-            query: Search term, physics concept, measurement name, or data path pattern
-            ids_filter: Limit search to specific IDS (e.g., ['equilibrium', 'transport'])
+            query: Full IMAS path for validation, or search term/concept for discovery
+            ids_filter: Limit search to specific IDS. Accepts either:
+                       - Space-delimited string: "equilibrium transport core_profiles"
+                       - List of IDS names: ["equilibrium", "transport"]
             max_results: Maximum number of hits to return (summary contains all matches)
             search_mode: Search strategy - "auto", "semantic", "lexical", or "hybrid"
-            output_mode: Output format - "full" or "compact"
+            response_profile: Response preset - "minimal" (results only, no hints/context),
+                            "standard" (results+essential hints, default), or "detailed" (full AI enhancement)
             context: FastMCP context for LLM sampling enhancement
 
         Returns:
             SearchResult with ranked data paths, documentation, and physics insights
+
+        Note:
+            For fast exact path validation, use the check_ids_path tool instead.
+            That tool is optimized for existence checking without search overhead.
         """
 
         # Execute search - base.py now handles SearchResult conversion and summary
@@ -90,12 +97,18 @@ class SearchTool(BaseTool):
         if hasattr(result, "summary") and result.summary:
             result.summary.update({"query": query, "search_mode": str(search_mode)})
 
-        # Apply output mode formatting if requested
-        if output_mode == "compact":
-            result = self._format_compact(result)
+        # Apply response profile formatting if requested
+        # Hints are handled in the composite decorator based on the provided mode via kwargs
+        profile = str(response_profile)
+        if profile == ResponseProfile.MINIMAL.value or profile == "minimal":
+            # Minimal: results only, strip all extras
+            result = self._format_minimal(result)
+        elif profile == ResponseProfile.DETAILED.value or profile == "detailed":
+            # Detailed: keep everything (default behavior from decorators)
+            pass  # No formatting needed, keep full response
 
         logger.info(
-            f"Search completed: {len(result.hits)} hits returned (of {result.summary.get('total_paths', 0)} total) in {output_mode} mode"
+            f"Search completed: {len(result.hits)} hits returned (of {result.summary.get('total_paths', 0)} total) with profile {response_profile}"
         )
         return result
 
@@ -127,6 +140,55 @@ When analyzing search results, provide:
 5. Insights into data quality considerations and validation approaches
 
 Focus on helping researchers efficiently navigate and understand IMAS data for their specific physics investigations."""
+
+    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
+        """Build sampling tasks specific to SearchResult.
+
+        Only creates sampling tasks for semantic/hybrid queries that benefit from AI insights.
+        Skips sampling for simple lexical path lookups to avoid unnecessary AI calls.
+        """
+        from imas_mcp.models.result_models import SearchResult
+
+        # Skip sampling for LEXICAL mode - these are simple path lookups that don't need AI enhancement
+        if isinstance(tool_result, SearchResult):
+            if tool_result.search_mode == SearchMode.LEXICAL:
+                logger.debug(
+                    "Skipping AI sampling for LEXICAL search mode (simple path lookup)"
+                )
+                return []  # No sampling tasks for lexical searches
+
+        tasks = super().build_sample_tasks(
+            tool_result
+        )  # Get base tasks (hits_analysis)
+
+        if isinstance(tool_result, SearchResult) and tool_result.hits:
+            # Sample search-specific analysis for semantic/hybrid queries
+            tasks.append(
+                {
+                    "field": "search_insights",
+                    "prompt_type": "search_analysis",
+                    "context": {
+                        "query": tool_result.query,
+                        "results": tool_result.hits[:5],
+                        "hit_count": len(tool_result.hits),
+                        "search_mode": tool_result.search_mode.value,
+                    },
+                }
+            )
+
+        return tasks
+
+    def _apply_search_insights_sampling(
+        self, tool_result, sampled_content: str
+    ) -> None:
+        """Apply custom sampling for search insights."""
+        from imas_mcp.models.result_models import SearchResult
+
+        if isinstance(tool_result, SearchResult):
+            # Store insights in the summary dict
+            if not tool_result.summary:
+                tool_result.summary = {}
+            tool_result.summary["ai_insights"] = sampled_content
 
     def _build_search_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
         """Build prompt for search result analysis."""
@@ -187,8 +249,8 @@ Please provide:
         return f"""Search mode: {search_mode}
 Provide mode-specific analysis and recommendations."""
 
-    def _format_compact(self, result: SearchResult) -> SearchResult:
-        """Format result with minimal documentation for efficiency."""
+    def _format_minimal(self, result: SearchResult) -> SearchResult:
+        """Format result with minimal information - results only, no extras."""
         # Keep paths and basic info but trim documentation
         for hit in result.hits:
             if hasattr(hit, "documentation") and hit.documentation:
@@ -199,18 +261,12 @@ Provide mode-specific analysis and recommendations."""
                     else hit.documentation
                 )
 
-        # Reduce hints to save space
-        result.query_hints = result.query_hints[:3] if result.query_hints else []
-        result.tool_hints = result.tool_hints[:3] if result.tool_hints else []
+        # Remove all hints and context
+        result.query_hints = []
+        result.tool_hints = []
 
-        # Keep physics context but reduce physics_matches to top 3
-        if (
-            hasattr(result, "physics_context")
-            and result.physics_context
-            and hasattr(result.physics_context, "physics_matches")
-        ):
-            result.physics_context.physics_matches = (
-                result.physics_context.physics_matches[:3]
-            )
+        # Remove physics context to save tokens
+        if hasattr(result, "physics_context"):
+            result.physics_context = None
 
         return result

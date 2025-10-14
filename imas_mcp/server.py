@@ -14,6 +14,7 @@ Each component is accessible via server.tools and server.resources properties.
 
 import importlib.metadata
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -22,8 +23,10 @@ from typing import Literal
 import nest_asyncio
 from fastmcp import FastMCP
 
+from imas_mcp import dd_version
 from imas_mcp.embeddings.embeddings import Embeddings
 from imas_mcp.health import HealthEndpoint
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.resource_provider import Resources
 from imas_mcp.search.semantic_search import SemanticSearch as _ServerSemanticSearch
 from imas_mcp.tools import Tools
@@ -79,6 +82,9 @@ class Server:
         """Initialize the MCP server after dataclass initialization."""
         self.mcp = FastMCP(name="imas")
 
+        # Validate schemas exist before initialization (fail fast)
+        self._validate_schemas_available()
+
         # Initialize components
         self.tools = Tools(ids_set=self.ids_set)
         self.resources = Resources(ids_set=self.ids_set)
@@ -107,6 +113,89 @@ class Server:
 
         logger.debug("Successfully registered all components")
 
+    def _validate_schemas_available(self):
+        """Validate that schema files exist for the current DD version.
+
+        Raises:
+            RuntimeError: If required schema files are missing with helpful error message.
+        """
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        catalog_path = path_accessor.schemas_dir / "ids_catalog.json"
+
+        if not catalog_path.exists():
+            # Check if this is a dev version to provide appropriate guidance
+            is_dev_version = "dev" in dd_version.lower()
+            build_cmd = (
+                "dd-version dev" if is_dev_version else f"dd-version {dd_version}"
+            )
+
+            # Get environment variable values for debugging
+            imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
+            ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
+
+            error_msg = (
+                f"\n\n"
+                f"Environment variables:\n"
+                f"  IMAS_DD_VERSION: {imas_dd_version_env}\n"
+                f"  IDS_FILTER: {ids_filter_env}\n\n"
+                f"Schema files not found for DD version '{dd_version}'.\n"
+                f"Expected location: {path_accessor.schemas_dir}\n\n"
+                f"To build schemas, run:\n"
+                f"  {build_cmd}\n\n"
+                f"To list all available versions:\n"
+                f"  dd-version --list\n\n"
+                f"To use a different DD version:\n"
+                f"  dd-version <version>  # e.g., dd-version 3.42.2\n"
+                f"  dd-version dev        # for development version\n"
+            )
+            raise RuntimeError(error_msg)
+
+        # Check for detailed files directory
+        detailed_dir = path_accessor.schemas_dir / "detailed"
+        if not detailed_dir.exists():
+            # Check if this is a dev version to provide appropriate guidance
+            is_dev_version = "dev" in dd_version.lower()
+            build_cmd = (
+                "dd-version dev --force-rebuild"
+                if is_dev_version
+                else f"dd-version {dd_version} --force-rebuild"
+            )
+
+            # Get environment variable values for debugging
+            imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
+            ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
+
+            error_msg = (
+                f"\n\n"
+                f"Environment variables:\n"
+                f"  IMAS_DD_VERSION: {imas_dd_version_env}\n"
+                f"  IDS_FILTER: {ids_filter_env}\n\n"
+                f"Schema detailed directory not found for DD version '{dd_version}'.\n"
+                f"Expected location: {detailed_dir}\n\n"
+                f"The catalog exists but detailed files are missing.\n"
+                f"To rebuild schemas, run:\n"
+                f"  {build_cmd}\n"
+            )
+            raise RuntimeError(error_msg)
+
+        # Check if detailed directory has any JSON files
+        detailed_files = list(detailed_dir.glob("*.json"))
+        if not detailed_files:
+            error_msg = (
+                f"\n\n"
+                f"No detailed schema files found for DD version '{dd_version}'.\n"
+                f"Expected location: {detailed_dir}\n\n"
+                f"The directory exists but contains no IDS schema files.\n"
+                f"To rebuild schemas, run:\n"
+                f"  IMAS_DD_VERSION={dd_version} uv run python scripts/build_schemas.py --force\n"
+            )
+            raise RuntimeError(error_msg)
+
+        # Log successful validation
+        logger.debug(
+            f"Schema validation passed: {len(detailed_files)} IDS schemas found for DD version '{dd_version}'"
+        )
+
     # Embedding initialization logic encapsulated in Embeddings dataclass (embeddings/embeddings.py)
 
     def run(
@@ -134,8 +223,6 @@ class Server:
             logger.info(
                 f"Starting IMAS MCP server with {transport} transport on {host}:{port}"
             )
-            # Use stateful HTTP mode to support sampling functionality
-            logger.info("Using stateful HTTP mode to support MCP sampling")
             # Attach minimal /health endpoint (same port) for HTTP transports
             try:
                 HealthEndpoint(self).attach()

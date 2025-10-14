@@ -2,7 +2,7 @@
 Context models for IMAS MCP tool operations.
 
 These models represent shared context components that can be composed
-into both service contexts and response models.
+into tool result models using multiple inheritance.
 """
 
 from typing import Any
@@ -11,9 +11,84 @@ from pydantic import BaseModel, Field
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.physics_models import PhysicsSearchResult
+from imas_mcp.models.suggestion_models import SearchSuggestion, ToolSuggestion
 
 # ============================================================================
-# CONTEXT MODELS (shared components)
+# BASE RESULT MODELS
+# ============================================================================
+
+
+class BaseToolResult(BaseModel):
+    """
+    Minimal base for tool results.
+
+    Contains only query tracking fields.
+    """
+
+    query: str | list[str] | None = Field(
+        default=None, description="Original user query"
+    )
+    search_mode: SearchMode | None = Field(default=None, description="Search mode used")
+    ids_filter: list[str] | str | None = Field(
+        default=None, description="IDS filter applied"
+    )
+    max_results: int | None = Field(
+        default=None, description="Maximum results requested"
+    )
+
+
+# ============================================================================
+# FEATURE MIXINS (use with multiple inheritance)
+# ============================================================================
+
+
+class WithHints(BaseModel):
+    """
+    Adds query and tool hints to results.
+
+    Use for tools that provide follow-up suggestions.
+    """
+
+    query_hints: list[SearchSuggestion] = Field(
+        default_factory=list, description="Query suggestions for follow-up searches"
+    )
+    tool_hints: list[ToolSuggestion] = Field(
+        default_factory=list, description="Tool suggestions for follow-up analysis"
+    )
+
+
+class WithPhysics(BaseModel):
+    """
+    Adds physics domain aggregation to results.
+
+    Use for tools that return multiple paths/nodes where physics categorization is useful.
+    """
+
+    physics_domains: list[str] = Field(
+        default_factory=list, description="Physics domains covered by results"
+    )
+    physics_context: PhysicsSearchResult | None = Field(
+        default=None, description="Detailed physics search context"
+    )
+
+
+class WithAIEnhancement(BaseModel):
+    """
+    Adds AI prompt and response tracking.
+
+    Use only for tools that use LLM enhancement (e.g., explain_concept).
+    """
+
+    ai_prompt: dict[str, Any] = Field(
+        default_factory=dict, description="AI prompts that were used"
+    )
+    ai_response: dict[str, Any] = Field(
+        default_factory=dict, description="AI-generated responses"
+    )
+
+
+# ============================================================================
+# LEGACY COMPATIBILITY (for gradual migration)
 # ============================================================================
 
 
@@ -29,34 +104,6 @@ class SearchParameters(BaseModel):
     max_results: int | None = Field(
         default=None, description="Maximum results to return"
     )
-
-
-class QueryContext(SearchParameters):
-    """Query metadata and parameters."""
-
-    query: str | list[str] | None = Field(
-        default=None, description="Original user query"
-    )
-
-
-class AIContext(BaseModel):
-    """AI enhancement context."""
-
-    ai_prompt: dict[str, str] = Field(
-        default_factory=dict,
-        description="AI prompts that were used",
-    )
-    ai_response: dict[str, Any] = Field(
-        default_factory=dict,
-        description="AI-generated responses",
-    )
-
-
-class PhysicsContext(BaseModel):
-    """Physics enhancement context."""
-
-    physics_domains: list[str] = Field(default_factory=list)
-    physics_context: PhysicsSearchResult | None = None
 
 
 class ToolMetadata(BaseModel):

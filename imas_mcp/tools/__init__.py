@@ -20,6 +20,7 @@ from .explain_tool import ExplainTool
 from .export_tool import ExportTool
 from .identifiers_tool import IdentifiersTool
 from .overview_tool import OverviewTool
+from .path_tool import PathTool
 from .relationships_tool import RelationshipsTool
 from .search_tool import SearchTool
 
@@ -41,6 +42,7 @@ class Tools(MCPProvider):
 
         # Initialize individual tools with shared document store
         self.search_tool = SearchTool(self.document_store)
+        self.path_tool = PathTool(self.document_store)
         self.explain_tool = ExplainTool(self.document_store)
         self.overview_tool = OverviewTool(self.document_store)
         self.analysis_tool = AnalysisTool(self.document_store)
@@ -58,6 +60,7 @@ class Tools(MCPProvider):
         # Register tools from each module
         for tool in [
             self.search_tool,
+            self.path_tool,
             self.explain_tool,
             self.overview_tool,
             self.analysis_tool,
@@ -74,6 +77,14 @@ class Tools(MCPProvider):
     async def search_imas(self, *args, **kwargs):
         """Delegate to search tool."""
         return await self.search_tool.search_imas(*args, **kwargs)
+
+    async def check_imas_paths(self, *args, **kwargs):
+        """Delegate to path tool."""
+        return await self.path_tool.check_imas_paths(*args, **kwargs)
+
+    async def fetch_imas_paths(self, *args, **kwargs):
+        """Delegate to path tool."""
+        return await self.path_tool.fetch_imas_paths(*args, **kwargs)
 
     async def explain_concept(self, *args, **kwargs):
         """Delegate to explain tool."""
@@ -107,6 +118,7 @@ class Tools(MCPProvider):
 __all__ = [
     "BaseTool",
     "SearchTool",
+    "PathTool",
     "ExplainTool",
     "OverviewTool",
     "AnalysisTool",
