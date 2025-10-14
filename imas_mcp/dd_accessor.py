@@ -144,13 +144,39 @@ class ImasDataDictionariesAccessor(ImasDataDictionaryAccessor):
         if not self._imas_dd:
             raise RuntimeError("imas_data_dictionaries not available")
 
-        xml_path = self._imas_dd.get_dd_xml(self.dd_version)
-        with xml_path.open("rb") as f:
-            return ET.parse(f)
+        # get_dd_xml returns bytes, not a Path
+        xml_bytes = self._imas_dd.get_dd_xml(self.dd_version)
+        return ET.ElementTree(ET.fromstring(xml_bytes))
 
     def get_version(self) -> Version:
         """Get the data dictionary version."""
         return Version(self.dd_version)
+
+    def get_schema(self, schema_path: str):
+        """Get a schema XML file from the PyPI package.
+
+        Args:
+            schema_path: The schema path (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+
+        Returns:
+            ElementTree of the schema file, or None if not available
+        """
+        if not self._imas_dd:
+            raise RuntimeError("imas_data_dictionaries not available")
+
+        try:
+            # Extract identifier name from schema path
+            # e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml' -> 'equilibrium_profiles_2d_identifier'
+            identifier_name = Path(schema_path).stem
+
+            # Get the identifier XML as bytes from PyPI package
+            xml_bytes = self._imas_dd.get_identifier_xml(identifier_name)
+
+            # Parse bytes to ElementTree
+            return ET.ElementTree(ET.fromstring(xml_bytes))
+        except Exception as e:
+            logger.debug(f"Could not load schema {schema_path}: {e}")
+            return None
 
 
 class MetadataDataDictionaryAccessor(DataDictionaryAccessor):

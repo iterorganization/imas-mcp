@@ -54,16 +54,22 @@ class ExportTool(BaseTool):
     def _load_relationships_data(self):
         """Load relationships data for clustering-enhanced analysis."""
         try:
-            import importlib.resources
             import json
 
-            relationships_file = (
-                importlib.resources.files("imas_mcp.resources.schemas")
-                / "relationships.json"
-            )
-            with relationships_file.open("r", encoding="utf-8") as f:
-                self._relationships_data = json.load(f)
-                logger.info("Loaded relationships data for enhanced export analysis")
+            from imas_mcp import dd_version
+            from imas_mcp.resource_path_accessor import ResourcePathAccessor
+
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            relationships_file = path_accessor.schemas_dir / "relationships.json"
+
+            if relationships_file.exists():
+                with relationships_file.open("r", encoding="utf-8") as f:
+                    self._relationships_data = json.load(f)
+                    logger.info(
+                        "Loaded relationships data for enhanced export analysis"
+                    )
+            else:
+                logger.warning(f"Relationships file not found at {relationships_file}")
         except Exception as e:
             logger.warning(f"Failed to load relationships data for export tool: {e}")
             self._relationships_data = {}

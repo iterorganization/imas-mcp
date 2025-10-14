@@ -48,14 +48,16 @@ class TestMCPServer:
         """Test tools are accessible through server composition."""
         # Test that all expected tools are available
         expected_tools = [
-            "search_imas",
-            "explain_concept",
-            "get_overview",
             "analyze_ids_structure",
-            "explore_relationships",
+            "check_imas_paths",
+            "explain_concept",
             "explore_identifiers",
+            "explore_relationships",
             "export_ids",
             "export_physics_domain",
+            "fetch_imas_paths",
+            "get_overview",
+            "search_imas",
         ]
 
         for tool_name in expected_tools:
@@ -126,14 +128,16 @@ class TestMCPProtocolCompliance:
 
             # Check that expected tools are registered
             expected_tools = [
-                "search_imas",
-                "explain_concept",
-                "get_overview",
                 "analyze_ids_structure",
-                "explore_relationships",
+                "check_imas_paths",
+                "explain_concept",
                 "explore_identifiers",
+                "explore_relationships",
                 "export_ids",
                 "export_physics_domain",
+                "fetch_imas_paths",
+                "get_overview",
+                "search_imas",
             ]
 
             for expected_tool in expected_tools:
