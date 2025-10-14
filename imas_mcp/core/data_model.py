@@ -87,14 +87,6 @@ class ValidationRules(BaseModel):
     coordinate_check: str | None = None
 
 
-class UsageExample(BaseModel):
-    """Code usage example."""
-
-    scenario: str
-    code: str
-    notes: str
-
-
 class IdentifierOption(BaseModel):
     """Single identifier enumeration option."""
 
@@ -129,8 +121,6 @@ class IdsNode(BaseModel):
     lifecycle_status: str | None = None  # Added lifecycle status field
     lifecycle_version: str | None = None  # Added lifecycle version field
     physics_context: PhysicsContext | None = None
-    related_paths: list[str] = Field(default_factory=list)
-    usage_examples: list[UsageExample] = Field(default_factory=list)
     validation_rules: ValidationRules | None = None
     identifier_schema: IdentifierSchema | None = (
         None  # Schema information for identifier fields

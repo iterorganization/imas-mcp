@@ -174,6 +174,8 @@ def generate_generic_query_hints(result: Any) -> list[SearchSuggestion]:
 
     if result_type == "ConceptResult":
         concept = getattr(result, "concept", "")
+        related_topics = getattr(result, "related_topics", [])
+
         if concept:
             hints.extend(
                 [
@@ -188,6 +190,16 @@ def generate_generic_query_hints(result: Any) -> list[SearchSuggestion]:
                         confidence=0.7,
                     ),
                 ]
+            )
+
+        # Add related topics as query suggestions
+        for topic in related_topics[:2]:  # Limit to first 2
+            hints.append(
+                SearchSuggestion(
+                    suggestion=topic,
+                    reason=f"Explore related concept: {topic}",
+                    confidence=0.6,
+                )
             )
 
     elif result_type == "StructureResult":
@@ -247,8 +259,8 @@ def apply_query_hints(result: Any, max_hints: int = 5) -> Any:
             )
             return result
 
-        # Generate hints - only SearchResult has the specific generator for now
-        if hasattr(result, "hits") and hasattr(result, "query"):
+        # Generate hints - check tool_name property for SearchResult
+        if hasattr(result, "tool_name") and result.tool_name == "search_imas":
             hints = generate_search_query_hints(result)
         else:
             # For other ToolResult types, generate basic query suggestions
@@ -285,7 +297,14 @@ def query_hints(max_hints: int = 5) -> Callable[[F], F]:
             result = await func(*args, **kwargs)
 
             # Apply query hints if result has query_hints attribute (any ToolResult)
-            if hasattr(result, "query_hints"):
+            include = kwargs.get("include_hints", True)
+            enabled = True
+            if isinstance(include, bool):
+                enabled = include
+            elif isinstance(include, dict):
+                enabled = include.get("query", True)
+
+            if enabled and hasattr(result, "query_hints"):
                 result = apply_query_hints(result, max_hints)
 
             return result

@@ -6,16 +6,17 @@ serving as the primary entry point for users to discover and navigate
 identifier schemas and enumeration options.
 """
 
-import importlib.resources
 import json
 import logging
 
 from fastmcp import Context
 
+from imas_mcp import dd_version
 from imas_mcp.models.constants import IdentifierScope
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import IdentifiersInput
 from imas_mcp.models.result_models import IdentifierResult
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
     handle_errors,
@@ -65,19 +66,15 @@ class IdentifiersTool(BaseTool):
     def _load_identifier_catalog(self):
         """Load the identifier catalog file specifically."""
         try:
-            try:
-                catalog_file = (
-                    importlib.resources.files("imas_mcp.resources.schemas")
-                    / "identifier_catalog.json"
-                )
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            catalog_file = path_accessor.schemas_dir / "identifier_catalog.json"
+
+            if catalog_file.exists():
                 with catalog_file.open("r", encoding="utf-8") as f:
                     self._identifier_catalog = json.load(f)
                     logger.info("Loaded identifier catalog for identifiers tool")
-            except FileNotFoundError:
-                logger.warning(
-                    "Identifier catalog (identifier_catalog.json) not found in resources/schemas/"
-                )
-
+            else:
+                logger.warning(f"Identifier catalog not found at {catalog_file}")
         except Exception as e:
             logger.error(f"Failed to load identifier catalog: {e}")
             self._identifier_catalog = {}
@@ -471,15 +468,13 @@ class IdentifiersTool(BaseTool):
                         if schema_info.get("total_options", 0) > 1
                         else "MINIMAL"
                     ),
-                    "sample_options": [
+                    "options": [
                         {
                             "name": opt.get("name", ""),
                             "index": opt.get("index", 0),
                             "description": opt.get("description", ""),
                         }
-                        for opt in schema_info.get("options", [])[
-                            :5
-                        ]  # Limit to 5 sample options
+                        for opt in schema_info.get("options", [])
                     ],
                 }
                 schemas.append(schema_item)

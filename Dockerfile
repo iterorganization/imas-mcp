@@ -21,6 +21,7 @@ WORKDIR /app
 # Add build args for IDS filter and transport
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
+ARG IMAS_DD_VERSION="4.0.0"
 
 # Additional build-time metadata for cache busting & traceability
 ARG GIT_SHA=""
@@ -31,6 +32,7 @@ ARG GIT_REF=""
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
     TRANSPORT=${TRANSPORT} \
+    IMAS_DD_VERSION=${IMAS_DD_VERSION} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
@@ -82,14 +84,16 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
-# Install imas-data-dictionary manually from git (needed for index building)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@c1342e2514ba36d007937425b2df522cd1b213df"
-
 # Build schema data
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building schema data..." && \
-    uv run --no-dev build-schemas --no-rich && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building schema data for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-schemas --ids-filter "${IDS_FILTER}" --no-rich; \
+    else \
+    echo "Building schema data for all IDS" && \
+    uv run --no-dev build-schemas --no-rich; \
+    fi && \
     echo "✓ Schema data ready"
 
 # Build embeddings (conditional on IDS_FILTER)

@@ -11,7 +11,9 @@ from typing import Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from imas_mcp import dd_version
 from imas_mcp.core.progress_monitor import create_progress_monitor
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 from .cache import EmbeddingCache
 from .config import EncoderConfig
@@ -229,12 +231,8 @@ class Encoder:
         return embeddings
 
     def _get_cache_directory(self) -> Path:
-        from importlib import resources
-
-        resources_dir = Path(str(resources.files("imas_mcp") / "resources"))
-        cache_dir = resources_dir / self.config.cache_dir
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        return path_accessor.embeddings_dir
 
     def _set_cache_path(self, cache_key: str | None = None) -> None:
         if self._cache_path is None:

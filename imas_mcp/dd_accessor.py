@@ -113,6 +113,72 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
         return self._imas_dd is not None
 
 
+class ImasDataDictionariesAccessor(ImasDataDictionaryAccessor):
+    """Accessor that uses imas_data_dictionaries PyPI package for specific versions."""
+
+    def __init__(self, dd_version: str):
+        """
+        Initialize with a specific DD version from PyPI.
+
+        Args:
+            dd_version: Version string like "3.42.2" or "4.0.0"
+        """
+        self.dd_version = dd_version
+        self._imas_dd = None
+        self._load_imas_dd()
+
+    def _load_imas_dd(self) -> None:
+        """Load the imas_data_dictionaries package."""
+        try:
+            import imas_data_dictionaries
+
+            self._imas_dd = imas_data_dictionaries
+        except ImportError as e:
+            raise ImportError(
+                "imas_data_dictionaries package required for version-specific builds. "
+                "Install with: pip install imas_data_dictionaries"
+            ) from e
+
+    def get_xml_tree(self) -> ET.ElementTree:
+        """Get the XML ElementTree for the specified DD version."""
+        if not self._imas_dd:
+            raise RuntimeError("imas_data_dictionaries not available")
+
+        # get_dd_xml returns bytes, not a Path
+        xml_bytes = self._imas_dd.get_dd_xml(self.dd_version)
+        return ET.ElementTree(ET.fromstring(xml_bytes))
+
+    def get_version(self) -> Version:
+        """Get the data dictionary version."""
+        return Version(self.dd_version)
+
+    def get_schema(self, schema_path: str):
+        """Get a schema XML file from the PyPI package.
+
+        Args:
+            schema_path: The schema path (e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml')
+
+        Returns:
+            ElementTree of the schema file, or None if not available
+        """
+        if not self._imas_dd:
+            raise RuntimeError("imas_data_dictionaries not available")
+
+        try:
+            # Extract identifier name from schema path
+            # e.g., 'equilibrium/equilibrium_profiles_2d_identifier.xml' -> 'equilibrium_profiles_2d_identifier'
+            identifier_name = Path(schema_path).stem
+
+            # Get the identifier XML as bytes from PyPI package
+            xml_bytes = self._imas_dd.get_identifier_xml(identifier_name)
+
+            # Parse bytes to ElementTree
+            return ET.ElementTree(ET.fromstring(xml_bytes))
+        except Exception as e:
+            logger.debug(f"Could not load schema {schema_path}: {e}")
+            return None
+
+
 class MetadataDataDictionaryAccessor(DataDictionaryAccessor):
     """Accessor that uses cached metadata files."""
 

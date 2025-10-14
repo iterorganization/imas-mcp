@@ -9,11 +9,12 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from imas_mcp import dd_version
 from imas_mcp.physics.relationship_engine import EnhancedRelationshipEngine
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +51,8 @@ class Relationships:
     def __post_init__(self):
         """Initialize computed fields after dataclass initialization."""
         if self.relationships_file is None:
-            # Default to package resources
-            resources_dir = resources.files("imas_mcp.resources.schemas")
-            self.relationships_file = Path(str(resources_dir / "relationships.json"))
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            self.relationships_file = path_accessor.schemas_dir / "relationships.json"
 
         # These should be Path objects now, not None
         self.embeddings_dir = self.relationships_file.parent.parent / "embeddings"
@@ -212,10 +212,13 @@ class Relationships:
         logger.info("Building relationships with optimal parameters...")
 
         try:
-            # Debug: Log the ids_set value
-            logger.info(
-                f"DEBUG: Relationships.build() called with ids_set: {self.ids_set}"
-            )
+            # Get version-specific paths using ResourcePathAccessor
+            from imas_mcp import dd_version
+            from imas_mcp.resource_path_accessor import ResourcePathAccessor
+
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            input_dir = path_accessor.version_dir / "schemas" / "detailed"
+            output_file = path_accessor.version_dir / "schemas" / "relationships.json"
 
             # Create configuration with optimal parameters
             default_config = {
@@ -223,12 +226,12 @@ class Relationships:
                 "cross_ids_min_samples": 2,
                 "intra_ids_eps": 0.0319,  # Optimal from Latin Hypercube optimization
                 "intra_ids_min_samples": 2,
-                "use_rich": False,  # Disable rich output for automatic rebuild
+                "use_rich": True,  # Use rich progress bar with force_terminal support
                 "ids_set": self.ids_set,  # Pass through the IDS filter
+                "input_dir": input_dir,  # Use version-specific path
+                "output_file": output_file,  # Use version-specific path
             }
             default_config.update(config_overrides)
-
-            logger.info(f"DEBUG: Final config ids_set: {default_config.get('ids_set')}")
 
             config = RelationshipExtractionConfig(**default_config)
 
