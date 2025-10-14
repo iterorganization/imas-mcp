@@ -386,12 +386,21 @@ def list_versions(verbose: bool = False):
         click.secho("Development Version:", bold=True)
         active_marker = " ← ACTIVE" if "dev" in dd_version.lower() else ""
         click.echo(f"  • {git_version} (use 'dd-version dev'){active_marker}")
+        click.echo()
 
-    click.echo("\n" + "=" * 80)
+    click.echo("=" * 80)
     click.echo("\nBuilt Versions (schemas already generated):")
 
     # Check which versions have been built
     built_versions = []
+
+    # Check dev version if it exists
+    if git_package_installed and git_version:
+        dev_metadata = get_built_version_metadata(git_version)
+        if dev_metadata["built"]:
+            built_versions.append((git_version, dev_metadata))
+
+    # Check PyPI versions
     for version in all_versions:
         metadata = get_built_version_metadata(version)
         if metadata["built"]:
@@ -433,6 +442,7 @@ def list_versions(verbose: bool = False):
                     extras.append("database")
                 if extras:
                     click.echo(f"    Extras: {', '.join(extras)}")
+                click.echo()  # Add blank line between versions in compact mode
 
     click.echo()
 
