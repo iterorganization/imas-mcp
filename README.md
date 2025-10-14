@@ -10,7 +10,6 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
- 
 ## Quick Start
 
 Select the setup method that matches your environment:
@@ -274,23 +273,30 @@ uv sync --all-extras
 
 ### Build Dependencies
 
-This project requires additional dependencies during the build process that are not part of the runtime dependencies. These include:
+This project requires additional dependencies during the build process that are not part of the runtime dependencies:
 
-- **`imas-data-dictionary`** - Required for generating the search index during build
+- **`imas-data-dictionary`** - Git development package, required only during wheel building for parsing latest DD changes
 - **`rich`** - Used for enhanced console output during build processes
 
-**For developers:** These build dependencies are included in the `dev` dependency group and can be installed with:
+**For runtime:** The `imas-data-dictionaries` PyPI package is now a core dependency and provides access to stable DD versions (e.g., 4.0.0). This eliminates the need for the git package at runtime and ensures reproducible builds.
+
+**For developers:** Build-time dependencies are included in the `[build-system.requires]` section for wheel building. The git package is only needed when building wheels with latest DD changes.
 
 ```bash
-uv sync --group dev
+# Regular development - uses imas-data-dictionaries (PyPI)
+uv sync --all-extras
+
+# Set DD version for building (defaults to 4.0.0)
+export IMAS_DD_VERSION=4.0.0
+uv run build-schemas
 ```
 
 **Location in configuration:**
 
 - **Build-time dependencies**: Listed in `[build-system.requires]` in `pyproject.toml`
-- **Development access**: Also available in `[dependency-groups.dev]` for local development
+- **Runtime dependencies**: `imas-data-dictionaries>=4.0.0` in `[project.dependencies]`
 
-**Note:** Regular users installing the package don't need these dependencies - they're only required when building from source or working with the data dictionary directly.
+**Note:** The `IMAS_DD_VERSION` environment variable controls which DD version is used for building schemas and embeddings. Docker containers have this set to `4.0.0` by default.
 
 ### Development Commands
 
@@ -373,29 +379,28 @@ Add to your config file:
 
 ## Optional Dependencies and Runtime Requirements
 
-The IMAS MCP server uses a composable pattern that allows it to work with or without the `imas-data-dictionary` package at runtime:
+The IMAS MCP server now includes `imas-data-dictionaries` as a core dependency, providing stable DD version access (default: 4.0.0). The git development package (`imas-data-dictionary`) is used during wheel building when parsing latest DD changes.
 
 ### Package Installation Options
 
-- **Runtime only**: `uv add imas-mcp` - Uses pre-built indexes, stdio transport only
+- **Runtime base**: `uv add imas-mcp` - Includes `imas-data-dictionaries`, stdio transport
 - **With HTTP support**: `uv add imas-mcp[http]` - Adds support for sse/streamable-http transports
-- **With build support**: `uv add imas-mcp[build]` - Includes `imas-data-dictionary` for index building
-- **Full installation**: `uv add imas-mcp[all]` - Includes all optional dependencies
+- **Full installation**: `uv add imas-mcp[http]` - Recommended for most users
 
 ### Data Dictionary Access
 
-The system uses multiple fallback strategies to access IMAS Data Dictionary version and metadata:
+The system uses composable accessors to access IMAS Data Dictionary version and metadata:
 
-1. **Environment Variable**: `IMAS_DD_VERSION` (highest priority)
+1. **Environment Variable**: `IMAS_DD_VERSION` (highest priority) - Set to specify DD version (e.g., "4.0.0")
 2. **Metadata File**: JSON metadata stored alongside indexes
 3. **Index Name Parsing**: Extracts version from index filename
-4. **IMAS Package**: Direct access to `imas-data-dictionary` (if available)
+4. **Package Default**: Falls back to `imas-data-dictionaries` package (4.0.0)
 
 This design ensures the server can:
 
-- **Build indexes** when the IMAS package is available
-- **Run with pre-built indexes** without requiring the IMAS package
-- **Access version/metadata** through multiple reliable fallback mechanisms
+- **Build indexes** using the version specified by `IMAS_DD_VERSION`
+- **Run with pre-built indexes** using version metadata
+- **Access stable DD versions** through `imas-data-dictionaries` PyPI package
 
 ### Index Building vs Runtime
 

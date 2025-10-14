@@ -655,14 +655,6 @@ wheels = [
 ]
 
 [[package]]
-name = "imas-data-dictionary"
-version = "4.0.1.dev277"
-source = { git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=8b28b0d89f053b511f9e6153af3305d2fd180e1c#8b28b0d89f053b511f9e6153af3305d2fd180e1c" }
-dependencies = [
-    { name = "packaging" },
-]
-
-[[package]]
 name = "imas-mcp"
 source = { editable = "." }
 dependencies = [
@@ -670,6 +662,7 @@ dependencies = [
     { name = "click" },
     { name = "fastmcp" },
     { name = "huggingface-hub", extra = ["hf-xet"] },
+    { name = "imas-data-dictionaries" },
     { name = "nest-asyncio" },
     { name = "networkx" },
     { name = "numpy" },
@@ -701,8 +694,6 @@ test = [
 [package.dev-dependencies]
 dev = [
     { name = "black" },
-    { name = "imas-data-dictionaries" },
-    { name = "imas-data-dictionary" },
     { name = "ipykernel" },
     { name = "ipython" },
     { name = "ipywidgets" },
@@ -724,6 +715,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'http'", specifier = ">=0.100.0,<1.0.0" },
     { name = "fastmcp", specifier = ">=2.12.0" },
     { name = "huggingface-hub", extras = ["hf-xet"], specifier = ">=0.33.4" },
+    { name = "imas-data-dictionaries", specifier = ">=4.0.0" },
     { name = "nest-asyncio", specifier = ">=1.5.0,<2.0.0" },
     { name = "networkx", specifier = ">=3.0,<4.0" },
     { name = "numpy", specifier = ">=2.3.1" },
@@ -745,8 +737,6 @@ provides-extras = ["bench", "http", "test"]
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=23.0.0" },
-    { name = "imas-data-dictionaries", specifier = ">=4.0.0" },
-    { name = "imas-data-dictionary", git = "https://github.com/iterorganization/imas-data-dictionary.git?rev=8b28b0d89f053b511f9e6153af3305d2fd180e1c" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "ipython", specifier = ">=9.2.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },

@@ -54,6 +54,7 @@ dependencies = [
     "sentence-transformers>=5.0.0",
     "huggingface-hub[hf_xet]>=0.33.4",
     "cachetools>=5.3.0,<6.0.0",
+    "imas-data-dictionaries>=4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -87,8 +88,6 @@ dev = [
     "ipywidgets>=8.1.7",
     # Build dependencies
     "rich>=13.7.0,<14.0.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
-    "imas-data-dictionaries>=4.0.0",
     "matplotlib>=3.10.5",
     "seaborn>=0.13.2",
 ]

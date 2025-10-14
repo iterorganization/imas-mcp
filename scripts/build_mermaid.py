@@ -13,6 +13,8 @@ from pathlib import Path
 
 import click
 
+from imas_mcp import dd_version
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
 
@@ -30,12 +32,7 @@ from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 @click.option(
     "--output-dir",
     type=click.Path(path_type=Path),
-    help="Custom output directory (defaults to imas_mcp/resources)",
-)
-@click.option(
-    "--schemas-dir",
-    type=click.Path(path_type=Path),
-    help="Directory containing schema files (defaults to imas_mcp/resources/schemas)",
+    help="Custom output directory (defaults to version-specific resource directory)",
 )
 def build_mermaid(
     verbose: bool,
@@ -43,7 +40,6 @@ def build_mermaid(
     force: bool,
     ids_filter: str,
     output_dir: Path | None,
-    schemas_dir: Path | None,
 ) -> int:
     """Build Mermaid graph visualizations for IMAS IDS structures.
 
@@ -56,7 +52,7 @@ def build_mermaid(
         build-mermaid -v                 # Build with verbose logging
         build-mermaid -f                 # Force rebuild even if exists
         build-mermaid --ids-filter "core_profiles equilibrium"  # Build specific IDS only
-        build-mermaid --output-dir /path/to/custom/dir  # Use custom output directory
+        build-mermaid --output-dir /path/to/custom/dir  # Use custom version-specific directory
     """
     # Set up logging level
     if quiet:
@@ -75,22 +71,26 @@ def build_mermaid(
     try:
         logger.info("Starting Mermaid graph build process...")
 
-        # Determine output directory
-        if output_dir is None:
-            # Default to imas_mcp/resources
-            output_dir = Path(__file__).parent.parent / "imas_mcp" / "resources"
+        # Use ResourcePathAccessor for version-aware directory resolution
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
 
-        if schemas_dir is None:
-            schemas_dir = output_dir / "schemas" / "detailed"
+        # Determine output directory - use version-specific directory
+        if output_dir is None:
+            # Use the version-specific directory from ResourcePathAccessor
+            output_dir = path_accessor.version_dir
+
+        # Get schemas directory from the version-specific path
+        schemas_dir = output_dir / "schemas"
+        detailed_dir = schemas_dir / "detailed"
 
         # Validate schemas directory exists
-        if not schemas_dir.exists():
-            logger.error(f"Schemas directory not found: {schemas_dir}")
+        if not detailed_dir.exists():
+            logger.error(f"Schemas directory not found: {detailed_dir}")
             logger.error("Please run 'build-schemas' first to generate schema data")
             return 1
 
         # Load IDS catalog
-        catalog_file = schemas_dir.parent / "ids_catalog.json"
+        catalog_file = schemas_dir / "ids_catalog.json"
         if not catalog_file.exists():
             logger.error(f"IDS catalog not found: {catalog_file}")
             logger.error("Please run 'build-schemas' first to generate schema data")
