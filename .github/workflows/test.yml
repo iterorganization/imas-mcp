@@ -15,7 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.13"]
+        imas-dd-version: ["3.42.2", "4.0.0"]
 
     steps:
       - uses: actions/checkout@v4
@@ -32,9 +33,12 @@ jobs:
         run: uv sync --extra test
         env:
           HATCH_BUILD_NO_HOOKS: true
+          IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
 
       - name: Build schema data
         run: uv run build-schemas --ids-filter "equilibrium core_profiles" --quiet
+        env:
+          IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
 
       - name: Lint with ruff
         run: uv run ruff check .
@@ -44,6 +48,8 @@ jobs:
 
       - name: Test with pytest
         run: uv run pytest --cov=imas_mcp --cov-report=xml --cov-report=term-missing
+        env:
+          IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4

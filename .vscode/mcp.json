@@ -4,19 +4,14 @@
       "url": "https://imas-dd.iter.org/mcp",
       "type": "http"
     },
-    // note: first initialization of imas-debug will take ~10 minutes to build the DD embeddings
+    // Launch the imas-debug server in a seperate terminal with: 
+    // uv run python -m imas-mcp --transport streamable-http --host 127.0.0.1 --port 8080
+    // note: first initialization of will take ~10 minutes to build the DD embeddings
+    // subsequent runs will use cached embeddings and will be much faster
     "imas-debug": {
-      "type": "stdio",
-      "command": "uv",
-      "args": [
-        "run",
-        "--active",
-        "imas-mcp",
-        "--no-rich",
-        "--log-level",
-        "INFO",
-      ]
-    },
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp"
+    }
     // Slurm-backed stdio server (allocates a compute node via srun --pty)
     // "imas-slurm": {
     //   "type": "stdio",

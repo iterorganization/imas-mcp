@@ -15,6 +15,7 @@ from .constants import (
     IdentifierScope,
     OutputFormat,
     RelationshipType,
+    ResponseProfile,
     SearchMode,
 )
 
@@ -49,14 +50,15 @@ class SearchInput(BaseInputSchema):
         ge=1,
         description="Maximum number of hits to return (summary contains all matches)",
     )
-    output_mode: OutputMode = Field(
-        default=OutputMode.FULL,
-        description="Output format: full (complete data) or compact (minimal data)",
+    response_profile: ResponseProfile = Field(
+        default=ResponseProfile.STANDARD,
+        description="Response preset: minimal | standard | detailed",
     )
     ids_filter: list[str] | None = Field(
         default=None,
         description="Optional list of IDS names to filter search results",
     )
+    # Hints merged into response_profile
 
     @field_validator("query")
     @classmethod
@@ -65,6 +67,34 @@ class SearchInput(BaseInputSchema):
         v = v.strip()
         if not v:
             raise ValueError("Query cannot be empty")
+        return v
+
+    @field_validator("ids_filter", mode="before")
+    @classmethod
+    def validate_ids_filter(cls, v):
+        """Convert string ids_filter to list."""
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("search_mode", mode="before")
+    @classmethod
+    def validate_search_mode(cls, v):
+        """Convert string search_mode to enum, handle auto specially."""
+        if v is None:
+            return SearchMode.AUTO
+        if isinstance(v, str):
+            return SearchMode(v)
+        return v
+
+    @field_validator("response_profile", mode="before")
+    @classmethod
+    def validate_response_profile(cls, v):
+        """Convert string response_profile to enum."""
+        if v is None:
+            return ResponseProfile.STANDARD
+        if isinstance(v, str):
+            return ResponseProfile(v)
         return v
 
 

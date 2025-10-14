@@ -3,12 +3,13 @@
 import json
 import logging
 import math
+import shutil
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from imas_mcp import dd_version
 from imas_mcp.core.data_model import (
     CatalogMetadata,
     CoordinateSystem,
@@ -19,7 +20,6 @@ from imas_mcp.core.data_model import (
     IdsInfo,
     IdsNode,
     TransformationOutputs,
-    UsageExample,
 )
 from imas_mcp.core.extractors import (
     CoordinateExtractor,
@@ -34,17 +34,30 @@ from imas_mcp.core.extractors import (
 )
 from imas_mcp.core.physics_categorization import physics_categorizer
 from imas_mcp.core.progress_monitor import create_progress_monitor
-from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+from imas_mcp.dd_accessor import DataDictionaryAccessor
 from imas_mcp.graph_analyzer import analyze_imas_graphs
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 
 @dataclass
 class DataDictionaryTransformer:
-    """Refactored transformer using composable extractors with performance optimizations."""
+    """Transformer using composable extractors.
 
+    Usage:
+        # Let transformer determine version from environment/defaults
+        transformer = DataDictionaryTransformer()
+
+        # Specify version explicitly
+        transformer = DataDictionaryTransformer(dd_version="3.42.2")
+
+        # Or provide custom accessor for advanced use cases
+        transformer = DataDictionaryTransformer(dd_accessor=custom_accessor)
+    """
+
+    dd_version: str = dd_version
     output_dir: Path | None = None
-    dd_accessor: ImasDataDictionaryAccessor | None = None
+    dd_accessor: DataDictionaryAccessor | None = None
     ids_set: set[str] | None = None
 
     # Processing configuration
@@ -57,12 +70,16 @@ class DataDictionaryTransformer:
 
     def __post_init__(self):
         """Initialize the transformer with performance optimizations."""
+        # Create ResourcePathAccessor to get both paths and accessor
         if self.dd_accessor is None:
-            self.dd_accessor = ImasDataDictionaryAccessor()
-
-        if self.output_dir is None:
-            schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
-            self.output_dir = Path(str(schema_resource))
+            path_accessor = ResourcePathAccessor(dd_version=self.dd_version)
+            self.dd_accessor = path_accessor.dd_accessor
+            if self.output_dir is None:
+                self.output_dir = path_accessor.schemas_dir
+        elif self.output_dir is None:
+            # dd_accessor provided but no output_dir - determine from version
+            path_accessor = ResourcePathAccessor(dd_version=self.dd_version)
+            self.output_dir = path_accessor.schemas_dir
 
         if not isinstance(self.output_dir, Path):
             self.output_dir = Path(self.output_dir)
@@ -494,8 +511,6 @@ class DataDictionaryTransformer:
         # Clear the detailed directory first to remove any orphaned files
         # This prevents files from previous builds (e.g., removed IDS) from remaining
         if detailed_dir.exists():
-            import shutil
-
             shutil.rmtree(detailed_dir)
 
         detailed_dir.mkdir(exist_ok=True)
@@ -507,26 +522,7 @@ class DataDictionaryTransformer:
             # Convert paths to DataPath objects, handling relationships properly
             data_paths = {}
             for path_key, path_data in data["paths"].items():
-                # Handle usage_examples conversion
-                usage_examples_data = path_data.get("usage_examples", [])
-                if usage_examples_data and isinstance(usage_examples_data, list):
-                    usage_examples = []
-                    for example in usage_examples_data:
-                        if isinstance(example, dict):
-                            usage_examples.append(UsageExample(**example))
-                        else:
-                            # Handle string format or other formats
-                            usage_examples.append(
-                                UsageExample(
-                                    scenario="General usage",
-                                    code=str(example),
-                                    notes="",
-                                )
-                            )
-                    path_data = path_data.copy()
-                    path_data["usage_examples"] = usage_examples
-
-                # Create DataPath object
+                # Create IdsNode object
                 data_paths[path_key] = IdsNode(**path_data)
 
             detailed = IdsDetailed(

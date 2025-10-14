@@ -31,18 +31,19 @@ from imas_mcp.models.result_models import (
 
 
 class TestAbstractToolResult:
-    """Test the abstract ToolResult base class."""
+    """Test the ToolResult base classes."""
 
-    def test_cannot_instantiate_abstract_class(self):
-        """Test that ToolResult cannot be instantiated directly."""
-        with pytest.raises(TypeError):
-            ToolResult()
+    def test_basetoolresult_is_instantiable(self):
+        """Test that BaseToolResult can be instantiated (minimal base class)."""
+        from imas_mcp.models.context_models import BaseToolResult
 
-    def test_abstract_tool_name_property(self):
-        """Test that tool_name is properly abstract."""
-        # This is tested implicitly by the fact that concrete classes
-        # must implement it to be instantiable
-        pass
+        result = BaseToolResult(query="test")
+        assert result.query == "test"
+
+    def test_toolresult_is_abstract(self):
+        """Test that ToolResult requires tool_name to be implemented."""
+        with pytest.raises(TypeError, match="abstract"):
+            ToolResult()  # type: ignore[abstract]
 
 
 class TestConcreteResultMetadata:
@@ -330,7 +331,6 @@ class TestMetadataInheritance:
 
         # Should also have properties from other base classes
         assert hasattr(result, "hit_count")  # From SearchHits
-        assert hasattr(result, "node_count")  # From IdsResult
         assert hasattr(result, "query")  # From QueryContext
 
 

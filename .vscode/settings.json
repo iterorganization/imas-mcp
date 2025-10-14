@@ -15,6 +15,7 @@
     "pydantic",
     "PYTHONWARNINGS",
     "qparser",
+    "streamable",
     "UDUNITS",
     "ureg"
   ],
@@ -39,8 +40,7 @@
   },
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: imas": {
-      "allowedModels": ["copilot/gpt-5"],
+    "imas-mcp/.vscode/mcp.json: imas-debug": {
       "allowedDuringChat": true
     }
   },

@@ -4,10 +4,10 @@ from typing import Any
 
 from pydantic import Field
 
-from imas_mcp.models.context_models import AIContext, QueryContext
+from imas_mcp.models.context_models import BaseToolResult, WithAIEnhancement
 
 
-class ToolError(AIContext, QueryContext):
+class ToolError(WithAIEnhancement, BaseToolResult):
     """Error response with suggestions, context, and fallback data."""
 
     error: str = Field(description="Error message")

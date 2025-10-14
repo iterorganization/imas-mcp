@@ -52,7 +52,7 @@ class TestSearchToolServices:
 
         # Mock services
         search_tool._search_service.search = AsyncMock(
-            return_value=SearchResponse(hits=[], all_paths=[])
+            return_value=SearchResponse(hits=[])
         )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
@@ -115,9 +115,7 @@ class TestSearchToolServices:
         )
 
         search_tool._search_service.search = AsyncMock(
-            return_value=SearchResponse(
-                hits=[mock_result], all_paths=["core_profiles/temperature"]
-            )
+            return_value=SearchResponse(hits=[mock_result])
         )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
@@ -197,7 +195,7 @@ class TestSearchToolServices:
 
         # Mock other services
         search_tool._search_service.search = AsyncMock(
-            return_value=SearchResponse(hits=[], all_paths=[])
+            return_value=SearchResponse(hits=[])
         )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
         mock_response = SearchResult(

@@ -125,7 +125,11 @@ class MermaidGraphGenerator:
     """Generate Mermaid diagrams for IMAS IDS structure visualization with caching."""
 
     def __init__(self, output_dir: Path):
-        """Initialize the Mermaid generator with output directory."""
+        """Initialize the Mermaid generator with version-specific output directory.
+
+        Args:
+            output_dir: Version-specific directory (e.g., imas_data_dictionary/4.0.1.dev277/)
+        """
         self.output_dir = output_dir
         self.mermaid_dir = output_dir / "mermaid"
         self.detailed_dir = self.mermaid_dir / "detailed"

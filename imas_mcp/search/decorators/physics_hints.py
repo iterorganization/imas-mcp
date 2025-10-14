@@ -83,7 +83,15 @@ def physics_hints() -> Callable[[F], F]:
                 and tool_instance
                 and hasattr(tool_instance, "physics")
             ):
-                result = await apply_physics_hints(result, tool_instance.physics)
+                include = kwargs.get("include_hints", True)
+                enabled = True
+                if isinstance(include, bool):
+                    enabled = include
+                elif isinstance(include, dict):
+                    enabled = include.get("physics", True)
+
+                if enabled:
+                    result = await apply_physics_hints(result, tool_instance.physics)
 
             return result
 

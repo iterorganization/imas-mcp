@@ -11,7 +11,9 @@ from typing import Any
 
 import numpy as np
 
+from imas_mcp import dd_version
 from imas_mcp.embeddings import Embeddings
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.document_store import Document, DocumentStore
 
 logger = logging.getLogger(__name__)
@@ -240,11 +242,8 @@ class SemanticSearch:
     @staticmethod
     def list_all_cache_files() -> list[dict[str, Any]]:
         try:
-            from importlib.resources import files
-            from pathlib import Path
-
-            resources_dir = Path(str(files("imas_mcp") / "resources"))
-            embeddings_dir = resources_dir / "embeddings"
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            embeddings_dir = path_accessor.embeddings_dir
             if not embeddings_dir.exists():
                 return []
             cache_files = []

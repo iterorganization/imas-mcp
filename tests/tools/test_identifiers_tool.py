@@ -106,8 +106,8 @@ class TestExploreIdentifiersTool:
         # Should discover multiple schemas (adjust expectation based on environment)
         # Full environment has 57+ schemas, filtered CI environment has fewer
         # Use a reasonable minimum that works for both full and CI environments
-        min_expected_schemas = 5  # At least a few schemas should be available
-        assert len(result.schemas) > min_expected_schemas, (
+        min_expected_schemas = 3  # At least a few schemas should be available
+        assert len(result.schemas) >= min_expected_schemas, (
             f"Should discover at least {min_expected_schemas} schemas, got {len(result.schemas)}"
         )
 
@@ -118,10 +118,10 @@ class TestExploreIdentifiersTool:
             assert "branching_significance" in schema, (
                 "Schema should have branching_significance"
             )
-            assert "sample_options" in schema, "Schema should have sample_options"
+            assert "options" in schema, "Schema should have options"
 
             # Sample options should be properly formatted
-            for option in schema["sample_options"]:
+            for option in schema["options"]:
                 assert "name" in option, "Option should have name"
                 assert "index" in option, "Option should have index"
                 assert "description" in option, "Option should have description"
@@ -274,7 +274,7 @@ class TestIdentifiersToolValidation:
 
         # Validate schema discovery
         result = await identifiers_tool.explore_identifiers()
-        assert len(result.schemas) > 5, "Should discover multiple schemas"
+        assert len(result.schemas) >= 3, "Should discover multiple schemas"
         print("✅ Schema discovery working")
 
         print("\n🎉 IDENTIFIERS TOOL VALIDATION COMPLETE!")

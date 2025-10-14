@@ -43,7 +43,7 @@ class ResponseService(BaseService):
         results: list[SearchMatch],
         query: str,
         search_mode: SearchMode,
-        ids_filter: list[str] | None = None,
+        ids_filter: str | list[str] | None = None,
         max_results: int | None = None,
         ai_response: dict[str, Any] | None = None,
         ai_prompt: dict[str, str] | None = None,
@@ -53,6 +53,10 @@ class ResponseService(BaseService):
         """Build SearchResult from search results with complete context."""
         # Convert SearchMatch objects to SearchHit for API response
         hits = [result.to_hit() for result in results]
+
+        # Convert ids_filter to list if it's a string
+        if isinstance(ids_filter, str):
+            ids_filter = ids_filter.split()
 
         return SearchResult(
             hits=hits,

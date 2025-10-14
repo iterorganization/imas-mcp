@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from imas_mcp.core.data_model import IdsNode
 from imas_mcp.models.constants import (
     DetailLevel,
     IdentifierScope,
@@ -26,6 +25,7 @@ from imas_mcp.models.result_models import (
     SearchResult,
     StructureResult,
 )
+from imas_mcp.search.search_strategy import SearchHit
 
 
 class MockPromptBuilder:
@@ -241,13 +241,19 @@ def sample_search_result():
     return SearchResult(
         query="plasma temperature",
         search_mode=SearchMode.AUTO,
-        nodes=[
-            IdsNode(
+        hits=[
+            SearchHit(
                 path="core_profiles/profiles_1d/grid/rho_tor_norm",
                 documentation="Normalized toroidal flux coordinate",
+                units="",
+                data_type="FLT_1D",
+                ids_name="core_profiles",
+                physics_domain="flux_surfaces",
+                score=0.9,
+                rank=0,
+                search_mode=SearchMode.SEMANTIC,
             )
         ],
-        hits=[],
     )
 
 
@@ -630,7 +636,7 @@ class TestSamplingCoverageAllResults:
         # SearchResult doesn't have explanation/related_topics by default,
         # but should still work with sampling infrastructure
         assert result.query == "plasma temperature"
-        assert len(result.nodes) > 0
+        assert result.hit_count > 0
 
     @pytest.mark.asyncio
     async def test_relationship_result_sampling(

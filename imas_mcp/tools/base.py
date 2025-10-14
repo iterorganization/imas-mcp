@@ -57,7 +57,7 @@ class BaseTool(ABC):
         query: str,
         search_mode: str | SearchMode = "auto",
         max_results: int = 10,
-        ids_filter: list[str] | None = None,
+        ids_filter: str | list[str] | None = None,
     ) -> SearchResult:
         """
         Unified search execution that returns a complete SearchResult.
@@ -66,7 +66,7 @@ class BaseTool(ABC):
             query: Search query
             search_mode: Search mode to use
             max_results: Maximum results to return
-            ids_filter: Optional IDS filter
+            ids_filter: Optional IDS filter (space-delimited string or list)
 
         Returns:
             SearchResult with all search data and context
@@ -79,7 +79,7 @@ class BaseTool(ABC):
         )
         config = self.search_config.optimize_for_query(query, config)
 
-        # Execute search - now returns SearchResponse with hits and all_paths
+        # Execute search - returns SearchResponse with hits
         search_result = await self._search_service.search(query, config)
 
         # Build response using search response service
@@ -122,6 +122,7 @@ class BaseTool(ABC):
         """Build sampling tasks for sampling tool result content.
 
         Default implementation provides base sampling tasks for common fields.
+        Supports both nodes (IdsNode for complete data) and hits (SearchHit for search results).
         Override in subclasses to add tool-specific sampling tasks.
 
         Args:
@@ -132,7 +133,7 @@ class BaseTool(ABC):
         """
         tasks = []
 
-        # Base sampling for any tool with nodes
+        # Base sampling for tools with nodes (complete data retrieval)
         if hasattr(tool_result, "nodes") and tool_result.nodes:
             tasks.append(
                 {
@@ -140,6 +141,20 @@ class BaseTool(ABC):
                     "prompt_type": "sample_documentation",
                     "context": {
                         "nodes": tool_result.nodes[:5],  # Limit context size
+                        "query": getattr(tool_result, "query", ""),
+                        "tool_type": type(self).__name__,
+                    },
+                }
+            )
+
+        # Base sampling for tools with hits (search results)
+        if hasattr(tool_result, "hits") and tool_result.hits:
+            tasks.append(
+                {
+                    "field": "hits_analysis",
+                    "prompt_type": "sample_hits",
+                    "context": {
+                        "hits": tool_result.hits[:5],  # Limit context size
                         "query": getattr(tool_result, "query", ""),
                         "tool_type": type(self).__name__,
                     },

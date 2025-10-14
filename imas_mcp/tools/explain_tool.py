@@ -10,7 +10,6 @@ from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp.core.data_model import IdsNode, PhysicsContext
 from imas_mcp.models.constants import DetailLevel, SearchMode
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.physics_models import ConceptExplanation
@@ -106,7 +105,7 @@ Always connect abstract concepts to concrete IMAS data paths and real-world meas
                             "concept": tool_result.concept,
                             "current_explanation": tool_result.explanation,
                             "detail_level": tool_result.detail_level.value,
-                            "nodes": tool_result.nodes[:3] if tool_result.nodes else [],
+                            "hits": tool_result.hits[:3] if tool_result.hits else [],
                         },
                     }
                 )
@@ -295,7 +294,6 @@ Top related paths found:
                 logger.warning(f"Physics enhancement failed for '{concept}': {e}")
 
             # Process search results for concept explanation
-            related_paths_data = []
             physics_domains = set()
             identifier_schemas = []
 
@@ -313,30 +311,11 @@ Top related paths found:
                         }
                     )
 
-                # Use physics domain if available
-                local_physics_context = None
-                if search_result.physics_domain:
-                    local_physics_context = PhysicsContext(
-                        domain=search_result.physics_domain,
-                        phenomena=[],
-                        typical_values={},
-                    )
-
-                related_paths_data.append(
-                    IdsNode(
-                        path=search_result.path,
-                        documentation=search_result.documentation[:150],
-                        units=search_result.units,
-                        data_type=search_result.data_type,
-                        physics_context=local_physics_context,
-                    )
-                )
-
             # Enhanced explanation with physics integration
             base_explanation = (
                 f"Analysis of '{concept}' within IMAS data dictionary context. "
                 f"Found in {len(physics_domains)} physics domain(s): {', '.join(list(physics_domains)[:3])}. "
-                f"Found {len(related_paths_data)} related data paths."
+                f"Found {len(search_results[:8])} related data paths."
             )
 
             # Combine with physics explanation if available
@@ -367,7 +346,7 @@ Top related paths found:
                 query=concept,
                 search_mode=SearchMode.SEMANTIC,
                 max_results=15,
-                nodes=related_paths_data,
+                hits=search_results[:8],  # Use SearchHit directly
                 physics_domains=list(physics_domains),
                 physics_context=physics_search_result,  # Use PhysicsSearchResult
             )
@@ -401,7 +380,7 @@ Top related paths found:
         concept = context.get("concept", "")
         current_explanation = context.get("current_explanation", "")
         detail_level = context.get("detail_level", "intermediate")
-        nodes = context.get("nodes", [])
+        hits = context.get("hits", [])
 
         prompt = f"""Current explanation for "{concept}" ({detail_level} level):
 {current_explanation}
@@ -415,8 +394,8 @@ Sample and improve this explanation by:
 
 Focus on clarity, accuracy, and practical utility for researchers working with IMAS data."""
 
-        if nodes:
-            prompt += f"\n\nRelevant IMAS paths found: {[node.get('path', '') for node in nodes[:3]]}"
+        if hits:
+            prompt += f"\n\nRelevant IMAS paths found: {[hit.path for hit in hits[:3]]}"
 
         return prompt
 

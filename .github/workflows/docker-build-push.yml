@@ -115,6 +115,7 @@ jobs:
           build-args: |
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
+            IMAS_DD_VERSION=4.0.0
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}

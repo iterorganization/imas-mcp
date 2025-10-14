@@ -20,7 +20,6 @@ from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp.core.data_model import IdsNode, PhysicsContext
 from imas_mcp.core.relationships import Relationships
 from imas_mcp.models.constants import RelationshipType
 from imas_mcp.models.error_models import ToolError
@@ -405,8 +404,8 @@ class RelationshipsTool(BaseTool):
 
     def _build_nodes_from_relationships(
         self, related_paths: list[dict], limit: int = 10
-    ) -> list[IdsNode]:
-        """Build simplified IdsNode objects focusing on essential information."""
+    ) -> list[dict[str, Any]]:
+        """Build simplified relationship dicts focusing on essential information."""
         nodes = []
 
         # Sort by strength and take top results
@@ -461,15 +460,6 @@ class RelationshipsTool(BaseTool):
                 elif cluster_size > 10:  # Medium cluster
                     documentation += f" (clustered with {cluster_size} similar paths)"
 
-            # Only create physics context if we have meaningful data
-            physics_context = None
-            if rel_info.get("physics_domain"):
-                physics_context = PhysicsContext(
-                    domain=rel_info["physics_domain"],
-                    phenomena=rel_info.get("phenomena", []),
-                    typical_values={},
-                )
-
             # Create minimal node with only meaningful fields
             node_data = {
                 "path": path,
@@ -486,10 +476,8 @@ class RelationshipsTool(BaseTool):
             node_data["relationship_strength"] = round(strength, 2)
             node_data["relationship_type"] = rel_type
 
-            # Add physics context only if meaningful
-            if physics_context and physics_context.domain:
-                node_data["physics_domain"] = physics_context.domain
-            elif rel_info.get("physics_domain"):
+            # Add physics domain if meaningful
+            if rel_info.get("physics_domain"):
                 node_data["physics_domain"] = rel_info["physics_domain"]
 
             # Store as dictionary for LLM consumption
@@ -661,8 +649,7 @@ class RelationshipsTool(BaseTool):
 
         Returns:
             RelationshipResult containing:
-            - **nodes**: List of related IdsNode objects with documentation and metadata
-            - **connections**: Categorized relationship lists (total, physics, cross-IDS)
+            - **connections**: Categorized relationship lists (intra-IDS, cross-IDS, involved IDS)
             - **physics_domains**: Identified physics domains (transport, mhd, thermal, etc.)
             - **relationship_insights**: Discovery summary, strength analysis, semantic insights
             - **physics_analysis**: Domain connections, phenomena, measurement chains
@@ -876,7 +863,15 @@ class RelationshipsTool(BaseTool):
                 physics_domains=list(set(filter(None, physics_domains))),
                 relationship_insights=relationship_insights,
                 physics_analysis=self._generate_physics_analysis(
-                    path, relationship_data, physics_context
+                    path,
+                    relationship_data,
+                    {
+                        "domain": physics_context.domain,
+                        "phenomena": physics_context.phenomena,
+                        "typical_values": physics_context.typical_values,
+                    }
+                    if physics_context
+                    else None,
                 ),
             )
 
@@ -958,8 +953,8 @@ class RelationshipsTool(BaseTool):
     def _generate_physics_analysis(
         self,
         path: str,
-        relationship_data: dict[str, list[dict[str, Any]]],
-        physics_context: PhysicsContext | None,
+        relationship_data: dict[str, Any],
+        physics_context: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Generate physics-focused analysis from relationships."""
         analysis = {
@@ -970,8 +965,8 @@ class RelationshipsTool(BaseTool):
         }
 
         if physics_context:
-            analysis["primary_domain"] = physics_context.domain
-            analysis["physics_phenomena"] = physics_context.phenomena
+            analysis["primary_domain"] = physics_context.get("domain")
+            analysis["physics_phenomena"] = physics_context.get("phenomena", [])
 
         # Analyze domain connections
         domain_connections = []
