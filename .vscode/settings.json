@@ -15,6 +15,7 @@
     "pydantic",
     "PYTHONWARNINGS",
     "qparser",
+    "streamable",
     "UDUNITS",
     "ureg"
   ],

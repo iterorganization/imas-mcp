@@ -112,6 +112,22 @@ def main(
     logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
 
+    # Log DD version and IDS filter configuration
+    import os
+
+    from imas_mcp import dd_version
+
+    dd_version_env = os.environ.get("IMAS_DD_VERSION")
+    ids_filter_env = os.environ.get("IDS_FILTER")
+
+    if dd_version_env:
+        logger.info(f"IMAS DD version: {dd_version} (IMAS_DD_VERSION={dd_version_env})")
+    else:
+        logger.info(f"IMAS DD version: {dd_version}")
+
+    if ids_filter_env:
+        logger.info(f"IDS filter: {ids_filter_env}")
+
     # Parse ids_filter string into a set if provided
     ids_set: set | None = set(ids_filter.split()) if ids_filter else None
     if ids_set:
@@ -124,7 +140,6 @@ def main(
             logger.debug("Using STDIO transport")
         case "streamable-http":
             logger.info(f"Using streamable-http transport on {host}:{port}")
-            logger.info("Stateful HTTP mode enabled to support MCP sampling")
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 

@@ -16,14 +16,15 @@ Key changes from async version:
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from importlib import resources
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 
+from imas_mcp import dd_version
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
@@ -122,10 +123,8 @@ class Embeddings:
 
     def cache_path(self) -> Path:
         """Return absolute path to expected cache file (under resources)."""
-        base = resources.files("imas_mcp") / "resources" / "embeddings"
-        embeddings_dir = Path(str(base))
-        embeddings_dir.mkdir(parents=True, exist_ok=True)
-        return embeddings_dir / self.cache_filename()
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        return path_accessor.embeddings_dir / self.cache_filename()
 
     def cache_exists(self) -> bool:
         """True if expected cache file exists on disk."""

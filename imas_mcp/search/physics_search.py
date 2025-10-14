@@ -11,7 +11,6 @@ import logging
 import pickle
 import time
 from dataclasses import dataclass, field
-from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +23,7 @@ from imas_mcp.models.physics_models import (
     EmbeddingDocument,
     SemanticResult,
 )
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.units import unit_registry
 
 logger = logging.getLogger(__name__)
@@ -78,11 +78,10 @@ class PhysicsSemanticSearch:
     def _get_default_cache_dir(self) -> Path:
         """Get default cache directory."""
         # Use the same embeddings directory as the main semantic search system
-        resources_dir = Path(str(files("imas_mcp") / "resources"))
-        embeddings_dir = resources_dir / "embeddings"
-        embeddings_dir.mkdir(parents=True, exist_ok=True)
+        from imas_mcp import dd_version
 
-        return embeddings_dir
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        return path_accessor.embeddings_dir
 
     def _get_cache_path(self) -> Path:
         """Get cache file path."""
@@ -162,10 +161,10 @@ class PhysicsSemanticSearch:
         logger.info(f"Loading sentence transformer model: {self.model_name}")
 
         # Get embeddings directory for model cache (same pattern as DD semantic search)
-        resources_dir = Path(str(files("imas_mcp") / "resources"))
-        embeddings_dir = resources_dir / "embeddings"
-        embeddings_dir.mkdir(parents=True, exist_ok=True)
-        cache_folder = str(embeddings_dir / "models")
+        from imas_mcp import dd_version
+
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        cache_folder = str(path_accessor.embeddings_dir / "models")
 
         # Try to load with local_files_only first for speed (like DD semantic search)
         try:

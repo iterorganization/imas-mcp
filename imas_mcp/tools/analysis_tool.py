@@ -10,10 +10,12 @@ from typing import Any
 
 from fastmcp import Context
 
+from imas_mcp import dd_version
 from imas_mcp.graph_analyzer import IMASGraphAnalyzer
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import AnalysisInput
 from imas_mcp.models.result_models import StructureResult
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
     handle_errors,
@@ -50,13 +52,10 @@ class AnalysisTool(BaseTool):
     def _load_relationships_data(self):
         """Load relationships data for clustering-enhanced analysis."""
         try:
-            import importlib.resources
             import json
 
-            relationships_file = (
-                importlib.resources.files("imas_mcp.resources.schemas")
-                / "relationships.json"
-            )
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            relationships_file = path_accessor.schemas_dir / "relationships.json"
             with relationships_file.open("r", encoding="utf-8") as f:
                 self._relationships_data = json.load(f)
                 logger.info(

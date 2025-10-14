@@ -5,7 +5,7 @@
       "type": "http"
     },
     // Launch the imas-debug server in a seperate terminal with: 
-    // uv run --active imas-mcp --transport streamable-http --host 127.0.0.1 --port 8080
+    // uv run python -m imas-mcp --transport streamable-http --host 127.0.0.1 --port 8080
     // note: first initialization of will take ~10 minutes to build the DD embeddings
     // subsequent runs will use cached embeddings and will be much faster
     "imas-debug": {
