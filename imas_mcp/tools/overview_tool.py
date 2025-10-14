@@ -13,9 +13,11 @@ import logging
 
 from fastmcp import Context
 
+from imas_mcp import dd_version
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.result_models import OverviewResult
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
     handle_errors,
@@ -58,10 +60,8 @@ class OverviewTool(BaseTool):
         """Load the IDS catalog file specifically."""
         try:
             try:
-                catalog_file = (
-                    importlib.resources.files("imas_mcp.resources.schemas")
-                    / "ids_catalog.json"
-                )
+                path_accessor = ResourcePathAccessor(dd_version=dd_version)
+                catalog_file = path_accessor.schemas_dir / "ids_catalog.json"
                 with catalog_file.open("r", encoding="utf-8") as f:
                     self._ids_catalog = json.load(f)
                     logger.info("Loaded IDS catalog for overview tool")
@@ -77,29 +77,61 @@ class OverviewTool(BaseTool):
     def _load_identifier_catalog(self):
         """Load the identifier catalog file."""
         try:
-            catalog_file = (
-                importlib.resources.files("imas_mcp.resources.schemas")
-                / "identifier_catalog.json"
-            )
-            with catalog_file.open("r", encoding="utf-8") as f:
-                self._identifier_catalog = json.load(f)
-                logger.info("Loaded identifier catalog for overview tool")
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            catalog_file = path_accessor.schemas_dir / "identifier_catalog.json"
+
+            if catalog_file.exists():
+                with catalog_file.open("r", encoding="utf-8") as f:
+                    self._identifier_catalog = json.load(f)
+                    logger.info("Loaded identifier catalog for overview tool")
+            else:
+                logger.warning(f"Identifier catalog not found at {catalog_file}")
         except Exception as e:
             logger.warning(f"Failed to load identifier catalog: {e}")
             self._identifier_catalog = {}
 
     def _get_mcp_tools(self) -> list[str]:
-        """Get list of available MCP tools on this server."""
-        return [
-            "search_imas",
-            "explain_concept",
-            "get_overview",
-            "analyze_ids_structure",
-            "explore_relationships",
-            "explore_identifiers",
-            "export_ids",
-            "export_physics_domain",
+        """Get list of available MCP tools on this server.
+
+        Programmatically discovers all tools by inspecting the tool modules
+        for @mcp_tool decorated methods.
+        """
+        from imas_mcp.tools import (
+            AnalysisTool,
+            ExplainTool,
+            ExportTool,
+            IdentifiersTool,
+            PathTool,
+            RelationshipsTool,
+            SearchTool,
+        )
+
+        tool_classes = [
+            SearchTool,
+            PathTool,
+            ExplainTool,
+            OverviewTool,  # self.__class__
+            IdentifiersTool,
+            AnalysisTool,
+            RelationshipsTool,
+            ExportTool,
         ]
+
+        tool_names = []
+        for tool_class in tool_classes:
+            # Inspect class methods for @mcp_tool decorator
+            for attr_name in dir(tool_class):
+                # Skip private methods
+                if attr_name.startswith("_"):
+                    continue
+                try:
+                    attr = getattr(tool_class, attr_name)
+                    if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
+                        tool_names.append(attr_name)
+                except AttributeError:
+                    continue
+
+        return sorted(tool_names)
 
     def _get_physics_domains(self) -> dict[str, list[str]]:
         """Get all physics domains and their associated IDS."""
@@ -229,7 +261,10 @@ class OverviewTool(BaseTool):
     @cache_results(ttl=3600, key_strategy="semantic")
     @validate_input(schema=OverviewInput)
     @handle_errors(fallback="overview_suggestions")
-    @mcp_tool("Get high-level overview of IMAS data dictionary structure and contents")
+    @mcp_tool(
+        "Get high-level overview of IMAS data dictionary structure and contents, "
+        "including DD and server version metadata"
+    )
     async def get_overview(
         self,
         query: str | None = None,
@@ -239,8 +274,9 @@ class OverviewTool(BaseTool):
         Get high-level overview of IMAS data dictionary structure and contents.
 
         Primary orientation tool for understanding available IDS, physics domains,
-        and data organization. Use this tool first to explore what data is available
-        and get recommendations for specific analysis workflows.
+        and data organization. Returns system metadata including MCP server version,
+        data dictionary version, and available tools. Use this tool first to explore
+        what data is available and get recommendations for specific analysis workflows.
 
         Args:
             query: Optional focus area (physics domain, measurement type, or IDS name)

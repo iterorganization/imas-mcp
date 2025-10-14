@@ -54,15 +54,24 @@ class CustomBuildHook(BuildHookInterface):
             ids_set = set(ids_filter.replace(",", " ").split())
 
         # Create DD accessor based on version config
+        # Note: Build process needs actual DD accessor for XML parsing,
+        # unlike runtime which can use lazy loading with just dd_version
         dd_accessor = None
         if dd_version:
-            # Use specific version from imas_data_dictionaries PyPI package
+            # Use specific version from imas-data-dictionaries PyPI package
             from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
 
             dd_accessor = ImasDataDictionariesAccessor(dd_version)
             print(f"Building with IMAS DD version: {dd_version}")
+        else:
+            # Use default imas-data-dictionary accessor
+            from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+
+            dd_accessor = ImasDataDictionaryAccessor()
+            print(f"Building with IMAS DD version: {dd_accessor.get_version()}")
 
         # Build only JSON schemas (avoiding heavy relationship extraction)
+        # Transformer determines its own version-aware output path
         json_transformer = DataDictionaryTransformer(
             dd_accessor=dd_accessor, ids_set=ids_set, use_rich=True
         )

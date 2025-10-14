@@ -10,9 +10,11 @@ from typing import Any
 
 import numpy as np
 
+from imas_mcp import dd_version
 from imas_mcp.embeddings import EmbeddingCache
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.document_store import DocumentStore
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
@@ -306,10 +308,8 @@ class RelationshipExtractor:
         # Get source data directory for validation (same as build_embeddings.py)
         source_data_dir = None
         try:
-            import importlib.resources as resources
-
-            resources_dir = Path(str(resources.files("imas_mcp") / "resources"))
-            source_data_dir = resources_dir / "schemas"
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            source_data_dir = path_accessor.schemas_dir
         except Exception:
             pass
 

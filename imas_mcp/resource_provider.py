@@ -8,13 +8,13 @@ Resources provide static JSON schema files and reference data.
 
 import json
 import logging
-from importlib import resources
-from pathlib import Path
 
 from fastmcp import FastMCP
 
+from imas_mcp import dd_version
 from imas_mcp.core.relationships import Relationships
 from imas_mcp.providers import MCPProvider
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
 logger = logging.getLogger(__name__)
@@ -37,10 +37,9 @@ class Resources(MCPProvider):
 
     def __init__(self, ids_set: set[str] | None = None):
         self.ids_set = ids_set
-        schema_resource = resources.files("imas_mcp") / "resources" / "schemas"
-        self.schema_dir = Path(str(schema_resource))
-        resources_dir = resources.files("imas_mcp") / "resources"
-        self.mermaid_generator = MermaidGraphGenerator(Path(str(resources_dir)))
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        self.schema_dir = path_accessor.schemas_dir
+        self.mermaid_generator = MermaidGraphGenerator(path_accessor.version_dir)
 
     @property
     def name(self) -> str:

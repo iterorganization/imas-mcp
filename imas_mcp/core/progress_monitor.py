@@ -48,9 +48,24 @@ class ProgressMonitor:
 
         # Determine if we should use rich
         if use_rich is None:
-            self._use_rich = RICH_AVAILABLE and self._is_interactive()
+            is_interactive = self._is_interactive()
+            self._use_rich = RICH_AVAILABLE and is_interactive
+            if not is_interactive:
+                self.logger.debug(
+                    f"Rich progress disabled: not interactive (RICH_AVAILABLE={RICH_AVAILABLE})"
+                )
         else:
             self._use_rich = use_rich and RICH_AVAILABLE
+            if use_rich and not RICH_AVAILABLE:
+                self.logger.warning(
+                    "Rich progress requested but rich library not available"
+                )
+            elif not use_rich:
+                self.logger.debug("Rich progress explicitly disabled")
+            else:
+                self.logger.debug(
+                    f"Rich progress enabled (RICH_AVAILABLE={RICH_AVAILABLE})"
+                )
 
         self._progress = None
         self._console = None
@@ -92,7 +107,8 @@ class ProgressMonitor:
             self._max_name_length = max(len(item) for item in items)
 
         if self._use_rich and RICH_AVAILABLE:
-            self._console = Console()  # type: ignore
+            # Force console to treat output as interactive for Windows terminals
+            self._console = Console(force_terminal=True, force_interactive=True)  # type: ignore
             self._progress = Progress(  # type: ignore
                 SpinnerColumn(),  # type: ignore
                 TextColumn("[progress.description]{task.description}"),  # type: ignore
