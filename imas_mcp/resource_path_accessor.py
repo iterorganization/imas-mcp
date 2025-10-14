@@ -49,19 +49,31 @@ class ResourcePathAccessor:
             # Check if this is a dev version (contains 'dev' in version string)
             # Dev versions only exist in the git package (imas-data-dictionary)
             if "dev" in dd_version.lower():
-                from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+                try:
+                    from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 
-                return ImasDataDictionaryAccessor()
+                    return ImasDataDictionaryAccessor()
+                except ImportError:
+                    # Fall back to PyPI package if git package not available
+                    from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
+
+                    return ImasDataDictionariesAccessor(dd_version)
             else:
                 # Use imas_data_dictionaries (PyPI) for specific stable version
                 from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
 
                 return ImasDataDictionariesAccessor(dd_version)
         else:
-            # Use default imas-data-dictionary package (git)
-            from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+            # Try default imas-data-dictionary package (git) first
+            try:
+                from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
 
-            return ImasDataDictionaryAccessor()
+                return ImasDataDictionaryAccessor()
+            except ImportError:
+                # Fall back to PyPI package with default version
+                from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
+
+                return ImasDataDictionariesAccessor("4.0.0")
 
     def _get_base_resources_dir(self) -> Path:
         """Get the base resources directory (imas_mcp/resources/)."""
