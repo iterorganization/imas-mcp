@@ -458,7 +458,7 @@ class OverviewTool(BaseTool):
             usage_guidance = {
                 "tools_available": [
                     "search_imas - Find specific data paths with semantic search",
-                    "list_imas_paths - List all paths in IDS with minimal overhead (yaml/list/count/json/dict formats)",
+                    "list_imas_paths - List all paths in IDS with minimal overhead (yaml/list/json/dict formats)",
                     "fetch_imas_paths - Retrieve full path documentation and metadata",
                     "check_imas_paths - Fast batch validation of IMAS paths",
                     "analyze_ids_structure - Get detailed structural analysis of any IDS",
