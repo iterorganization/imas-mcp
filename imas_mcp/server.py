@@ -80,7 +80,7 @@ class Server:
 
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
-        self.mcp = FastMCP(name="imas")
+        self.mcp = FastMCP(name="imas-data-dictionary")
 
         # Validate schemas exist before initialization (fail fast)
         self._validate_schemas_available()
@@ -200,7 +200,7 @@ class Server:
 
     def run(
         self,
-        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http",
         host: str = "127.0.0.1",
         port: int = 8000,
     ):
@@ -253,13 +253,13 @@ class Server:
 
 
 def main():
-    """Run the server with stdio transport."""
+    """Run the server with streamable-http transport."""
     server = Server()
-    server.run(transport="stdio")
+    server.run(transport="streamable-http")
 
 
 def run_server(
-    transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+    transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http",
     host: str = "127.0.0.1",
     port: int = 8000,
 ):

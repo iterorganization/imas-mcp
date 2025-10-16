@@ -37,7 +37,8 @@ class TestMCPServer:
         """Test MCP protocol integration."""
         # MCP should be properly initialized
         assert server.mcp is not None
-        assert server.mcp.name == "imas"
+        assert hasattr(server.mcp, "name")
+        assert server.mcp.name == "imas-data-dictionary"
 
     def test_server_ids_set_configuration(self, server):
         """Test server is configured with test IDS set."""

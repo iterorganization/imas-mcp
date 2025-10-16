@@ -13,7 +13,7 @@ Command Line Interface:
     Options:
       --transport [stdio|sse|streamable-http]
                                       Transport protocol to use (stdio, sse, or
-                                      streamable-http)  [default: stdio]
+                                      streamable-http)  [default: streamable-http]
       --host TEXT                     Host to bind to (for sse and streamable-http
                                       transports)  [default: 127.0.0.1]
       --port INTEGER                  Port to bind to (for sse and streamable-http
@@ -23,24 +23,29 @@ Command Line Interface:
       --help                          Show this message and exit.
 
 Usage Examples:
-    # Module execution (recommended)    python -m imas_mcp                          # Default stdio transport
+    # Module execution (recommended)
+    python -m imas_mcp                          # Default streamable-http transport
     python -m imas_mcp --help                   # Show help
-    python -m imas_mcp --log-level DEBUG        # Debug logging    # After installation with pip, use console scripts
-    imas-mcp                                     # Default stdio transport
-    imas-mcp --transport sse --port 8080        # Server-Sent Events
+    python -m imas_mcp --log-level DEBUG        # Debug logging
 
-    # Different transport protocols    python -m imas_mcp --transport stdio                    # Default: stdio for MCP clients
+    # After installation with pip, use console scripts
+    imas-mcp                                     # Default streamable-http transport
+    imas-mcp --transport stdio                   # Use stdio for MCP clients
+
+    # Different transport protocols
+    python -m imas_mcp --transport streamable-http          # Default: HTTP streaming
+    python -m imas_mcp --transport stdio                    # stdio for MCP clients
     python -m imas_mcp --transport sse --port 8080          # Server-Sent Events
-    python -m imas_mcp --transport streamable-http --port 9000  # HTTP streaming
 
-    # Different log levels    python -m imas_mcp --log-level DEBUG        # Verbose debugging output
+    # Different log levels
+    python -m imas_mcp --log-level DEBUG        # Verbose debugging output
     python -m imas_mcp --log-level WARNING      # Only warnings and errors
 
-    # Custom host/port (for sse and streamable-http)
-    python -m imas_mcp --transport sse --host 0.0.0.0 --port 8080
+    # Custom host/port
+    python -m imas_mcp --host 0.0.0.0 --port 8080
 
     # Multiple options
-    python -m imas_mcp --transport streamable-http --host 0.0.0.0 --port 8080 --log-level DEBUG
+    python -m imas_mcp --host 0.0.0.0 --port 8080 --log-level DEBUG
 
 Available Tools:
     The server provides the following MCP tools for querying IMAS data:
@@ -56,8 +61,14 @@ Available Tools:
     - get_common_units(): Get unit usage statistics
 
 Transport Protocols:
-    - stdio: Standard input/output (default, recommended for MCP clients)
-      * Use this for VS Code extensions and other MCP clients
+    - streamable-http: HTTP streaming protocol (default)
+      * Use for direct HTTP API access and development
+      * Supports POST requests with JSON payloads
+      * Supports MCP sampling for enhanced AI interactions
+      * Includes /health endpoint for monitoring
+
+    - stdio: Standard input/output
+      * Use for VS Code extensions and MCP clients
       * Communication via stdin/stdout
       * No network configuration required
 
@@ -65,11 +76,6 @@ Transport Protocols:
       * Use for web applications requiring real-time updates
       * Accessible via HTTP GET requests
       * Supports browser-based clients
-
-    - streamable-http: HTTP streaming protocol
-      * Use for direct HTTP API access
-      * Supports POST requests with JSON payloads
-      * Good for testing and development
 
 Installation & CLI:
     # Install from source
