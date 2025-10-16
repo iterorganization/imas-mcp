@@ -314,11 +314,11 @@ uv run build-schemas
 # Build document store and semantic search embeddings
 uv run build-embeddings
 
-# Run the server locally
-uv run --active imas-mcp --no-rich --transport streamable-http --port 8000
+# Run the server locally (default: streamable-http on port 8000)
+uv run --active imas-mcp --no-rich
 
-# Run with stdio transport for MCP development
-uv run --active imas-mcp --no-rich --transport stdio --auto-build
+# Run with stdio transport for MCP clients
+uv run --active imas-mcp --no-rich --transport stdio
 ```
 
 ### Build Scripts
@@ -383,9 +383,8 @@ The IMAS MCP server now includes `imas-data-dictionaries` as a core dependency, 
 
 ### Package Installation Options
 
-- **Runtime base**: `uv add imas-mcp` - Includes `imas-data-dictionaries`, stdio transport
-- **With HTTP support**: `uv add imas-mcp[http]` - Adds support for sse/streamable-http transports
-- **Full installation**: `uv add imas-mcp[http]` - Recommended for most users
+- **Runtime**: `uv add imas-mcp` - Includes all transports (stdio, sse, streamable-http)
+- **Full installation**: `uv add imas-mcp` - Recommended for all users
 
 ### Data Dictionary Access
 
