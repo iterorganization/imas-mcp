@@ -19,6 +19,7 @@ from pathlib import Path
 import click
 
 from imas_mcp.core.relationships import Relationships
+from imas_mcp.embeddings.config import EncoderConfig
 
 
 @click.command()
@@ -115,7 +116,21 @@ def build_relationships(
 
         # Use the unified relationships manager to check if rebuild is needed
         if not should_build and not force:
-            relationships = Relationships(output_file)
+            # Create encoder config for checking
+            ids_set_parsed = set(ids_filter.split()) if ids_filter else None
+            encoder_config = EncoderConfig(
+                model_name="all-MiniLM-L6-v2",
+                batch_size=250,
+                normalize_embeddings=True,
+                use_half_precision=False,
+                enable_cache=True,
+                cache_dir="embeddings",
+                ids_set=ids_set_parsed,
+                use_rich=False,
+            )
+            relationships = Relationships(
+                encoder_config=encoder_config, relationships_file=output_file
+            )
             if relationships.needs_rebuild():
                 should_build = True
                 logger.info(
@@ -171,7 +186,20 @@ def build_relationships(
                 logger.info("Relationships file does not exist, building new file...")
 
             # Use the unified relationships manager to build
-            relationships = Relationships(output_file)
+            ids_set_parsed = set(ids_filter.split()) if ids_filter else None
+            encoder_config = EncoderConfig(
+                model_name="all-MiniLM-L6-v2",
+                batch_size=250,
+                normalize_embeddings=True,
+                use_half_precision=False,
+                enable_cache=True,
+                cache_dir="embeddings",
+                ids_set=ids_set_parsed,
+                use_rich=not quiet,
+            )
+            relationships = Relationships(
+                encoder_config=encoder_config, relationships_file=output_file
+            )
             config_overrides = {
                 "cross_ids_eps": cross_ids_eps,
                 "cross_ids_min_samples": cross_ids_min_samples,

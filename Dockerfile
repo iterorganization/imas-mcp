@@ -60,7 +60,7 @@ RUN git config core.sparseCheckout true \
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv sync --no-dev --no-install-project --extra http --frozen || \
+    uv sync --no-dev --no-install-project --frozen || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
@@ -72,10 +72,10 @@ RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
     && echo "Git status after expanding sparse set (should be clean):" \
     && git status --porcelain
 
-## Install project with HTTP/build extras. Using --reinstall-package to ensure wheel build picks up version.
+## Install project. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install (project) git status (should be clean):" && git status --porcelain && \
-    uv sync --no-dev --reinstall-package imas-mcp --extra http --no-editable --frozen && \
+    uv sync --no-dev --reinstall-package imas-mcp --no-editable --frozen && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
