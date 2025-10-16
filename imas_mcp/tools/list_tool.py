@@ -222,7 +222,7 @@ class ListTool(BaseTool):
     @mcp_tool(
         "List all data paths in one or more IDS. Returns path names only (no descriptions). "
         "paths: space-separated IDS names or path prefixes (examples: 'equilibrium magnetics' or 'equilibrium/time_slice'). "
-        "format: 'yaml' (indented tree, default, most token-efficient), 'list' (array of path strings), 'count' (statistics only - ideal for quickly checking multiple IDS), 'json' (JSON string), 'dict' (structured dictionary)"
+        "format: 'yaml' (indented tree, default, most token-efficient), 'list' (array of path strings), 'json' (JSON string), 'dict' (structured dictionary)"
     )
     async def list_imas_paths(
         self,
@@ -251,7 +251,6 @@ class ListTool(BaseTool):
             format: Output format for paths (default: "yaml"):
                   - "yaml": YAML-style indented tree (DEFAULT - most token-efficient, human-friendly)
                   - "list": Array of path strings, one per element (easy parsing, copy-paste ready)
-                  - "count": Statistics only, no paths returned (fastest - ideal for checking multiple IDS quickly)
                   - "json": JSON string tree (structured text format)
                   - "dict": Structured dictionary tree (best for programmatic use)
 
@@ -265,8 +264,7 @@ class ListTool(BaseTool):
             max_paths: Maximum number of paths to return per IDS/prefix to prevent
                       overwhelming output (default: format-dependent)
                       - dict format: default 5000 (native objects, most efficient)
-                      - flat format: default 3000 (simple text)
-                      - count format: no limit (statistics only)
+                      - list format: default 3000 (simple text)
                       - json format: default 5000 (30-40% token reduction)
                       - yaml format: default 5000 (40-50% token reduction)
 
@@ -292,10 +290,6 @@ class ListTool(BaseTool):
                 → Returns:
                   ["time_slice/boundary/psi", "time_slice/boundary/psi_norm", ...]
 
-            Count paths without listing them (fastest, ideal for multiple IDS):
-                list_imas_paths("equilibrium magnetics thomson_scattering", format="count")
-                → Returns counts only for all 3 IDS, no path strings - perfect for quick statistics
-
             Multiple prefixes:
                 list_imas_paths("equilibrium/time_slice magnetics/flux_loop")
                 → Returns paths for both specific subtrees
@@ -319,7 +313,6 @@ class ListTool(BaseTool):
             format_defaults = {
                 "yaml": 5000,
                 "list": 3000,
-                "count": 999999,
                 "json": 5000,
                 "dict": 5000,
             }
@@ -409,7 +402,6 @@ class ListTool(BaseTool):
                     result.paths = self._build_yaml_tree(paths_to_show, leaf_only)
                 elif format == "list":
                     result.paths = self._build_flat_list(paths_to_show)
-                # "count" format doesn't include paths
 
                 results.append(result)
                 total_paths += len(all_paths)

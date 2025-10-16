@@ -314,7 +314,6 @@ class ListFormat(str, Enum):
 
     YAML = "yaml"
     LIST = "list"
-    COUNT = "count"
     JSON = "json"
     DICT = "dict"
 
@@ -329,7 +328,7 @@ class ListPathsInput(BaseInputSchema):
     )
     format: ListFormat = Field(
         default=ListFormat.YAML,
-        description="Output format: yaml (indented tree, default, most token-efficient), list (array of path strings), count (statistics only, ideal for checking multiple IDS quickly), json (JSON string), or dict (Python dictionary)",
+        description="Output format: yaml (indented tree, default, most token-efficient), list (array of path strings), json (JSON string), or dict (Python dictionary)",
     )
     leaf_only: bool = Field(
         default=False,
@@ -367,7 +366,6 @@ class ListPathsInput(BaseInputSchema):
             ListFormat.JSON: 5000,  # 30-40% token reduction, robust parsing
             ListFormat.YAML: 5000,  # ~2.7x token reduction (172% savings), clean indentation
             ListFormat.LIST: 3000,  # Baseline efficiency (full path strings)
-            ListFormat.COUNT: 999999,  # No limit for count-only
         }
 
         # Set default based on format if not provided
@@ -377,10 +375,6 @@ class ListPathsInput(BaseInputSchema):
         max_limit = limits.get(format_val, 3000)
 
         if v > max_limit:
-            if format_val == ListFormat.COUNT:
-                # COUNT format has no practical limit
-                return v
-
             # Build helpful error message
             suggestions = []
 
@@ -391,12 +385,6 @@ class ListPathsInput(BaseInputSchema):
             if format_val == ListFormat.LIST:
                 suggestions.append(
                     "use format='yaml' for better efficiency (~2.7x fewer tokens, limit: 5000)"
-                )
-
-            # Suggest count-only for very large queries
-            if v > 5000:
-                suggestions.append(
-                    "use format='count' for statistics only (no path limit)"
                 )
 
             # Suggest filtering by prefix
