@@ -74,7 +74,7 @@ docker run -d \
 
 ## Health Check
 
-The container includes a health check that verifies the server is responding correctly. When using the `streamable-http` transport, the server exposes a dedicated health endpoint that checks both server availability and search index functionality. The server now runs in stateful mode to support MCP sampling functionality:
+The container includes a health check that verifies the server is responding correctly. The server uses `streamable-http` transport by default, which exposes a dedicated health endpoint that checks both server availability and search index functionality. The server runs in stateful mode to support MCP sampling functionality:
 
 ```bash
 # Check container health status
@@ -115,7 +115,7 @@ healthcheck:
   start_period: 40s # Wait 40 seconds before starting checks
 ```
 
-**Note**: The health endpoint is only available when using `streamable-http` transport. For other transports (`stdio`, `sse`), the health check will verify port connectivity only.
+**Note**: The health endpoint is available when using `streamable-http` transport (default). For other transports (`stdio`, `sse`), the health check will verify port connectivity only.
 
 ## Production Deployment
 

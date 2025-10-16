@@ -34,7 +34,7 @@ def _print_version(
 @click.option(
     "--transport",
     envvar="TRANSPORT",
-    default="stdio",
+    default="streamable-http",
     type=click.Choice(["stdio", "sse", "streamable-http"]),
     help="Transport protocol (env: TRANSPORT) (stdio, sse, or streamable-http)",
 )
@@ -82,22 +82,25 @@ def main(
     """Run the AI-enhanced MCP server with configurable transport options.
 
     Examples:
-        # Run with default STDIO transport
+        # Run with default streamable-http transport
         python -m imas_mcp.cli
 
-        # Run with HTTP transport on custom host/port
-        python -m imas_mcp.cli --transport streamable-http --host 0.0.0.0 --port 9000
+        # Run with custom host/port
+        python -m imas_mcp.cli --host 0.0.0.0 --port 9000
+
+        # Run with stdio transport (for MCP clients)
+        python -m imas_mcp.cli --transport stdio
 
         # Run with debug logging
         python -m imas_mcp.cli --log-level DEBUG
 
-        # Run with HTTP transport on specific port
-        python -m imas_mcp.cli --transport streamable-http --port 8080
+        # Run on specific port
+        python -m imas_mcp.cli --port 8080
 
         # Run without rich progress output
         python -m imas_mcp.cli --no-rich
 
-    Note: streamable-http transport uses stateful mode to support
+    Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.
     """
     # Configure logging based on the provided level
@@ -147,7 +150,7 @@ def main(
     # For stdio transport, always disable rich output to prevent protocol interference
     use_rich = not no_rich and transport != "stdio"
     if transport == "stdio" and not no_rich:
-        logger.debug(
+        logger.info(
             "Disabled rich output for stdio transport to prevent protocol interference"
         )
 

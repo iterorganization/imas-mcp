@@ -42,6 +42,9 @@
   "chat.mcp.serverSampling": {
     "imas-mcp/.vscode/mcp.json: imas-debug": {
       "allowedDuringChat": true
+    },
+    "imas-mcp/.vscode/mcp.json: imas": {
+      "allowedDuringChat": true
     }
   },
   // Formatting settings

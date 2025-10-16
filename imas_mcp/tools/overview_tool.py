@@ -101,6 +101,7 @@ class OverviewTool(BaseTool):
             ExplainTool,
             ExportTool,
             IdentifiersTool,
+            ListTool,
             PathTool,
             RelationshipsTool,
             SearchTool,
@@ -109,6 +110,7 @@ class OverviewTool(BaseTool):
         tool_classes = [
             SearchTool,
             PathTool,
+            ListTool,
             ExplainTool,
             OverviewTool,  # self.__class__
             IdentifiersTool,
@@ -456,6 +458,9 @@ class OverviewTool(BaseTool):
             usage_guidance = {
                 "tools_available": [
                     "search_imas - Find specific data paths with semantic search",
+                    "list_imas_paths - List all paths in IDS with minimal overhead (yaml/list/json/dict formats)",
+                    "fetch_imas_paths - Retrieve full path documentation and metadata",
+                    "check_imas_paths - Fast batch validation of IMAS paths",
                     "analyze_ids_structure - Get detailed structural analysis of any IDS",
                     "explain_concept - Understand physics concepts and terminology",
                     "explore_relationships - Discover data connections and cross-references (uses relationships.json)",

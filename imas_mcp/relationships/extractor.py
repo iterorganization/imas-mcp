@@ -12,7 +12,6 @@ import numpy as np
 
 from imas_mcp import dd_version
 from imas_mcp.embeddings import EmbeddingCache
-from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.document_store import DocumentStore
@@ -288,18 +287,8 @@ class RelationshipExtractor:
             f"Found {len(all_documents)} total documents in document store"
         )
 
-        # Create Encoder with same configuration as build_embeddings.py
-        encoder_config = EncoderConfig(
-            model_name=self.config.model_name,
-            device=self.config.device,
-            batch_size=self.config.batch_size,
-            normalize_embeddings=self.config.normalize_embeddings,
-            use_half_precision=self.config.use_half_precision,
-            enable_cache=True,
-            cache_dir="embeddings",
-            ids_set=self.config.ids_set,
-            use_rich=self._use_rich,
-        )
+        # Use encoder config from relationship config (single source of truth)
+        encoder_config = self.config.get_encoder_config()
         encoder = Encoder(encoder_config)
 
         # Generate cache key using same method as build_embeddings.py and SemanticSearch
