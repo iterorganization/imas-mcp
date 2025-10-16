@@ -55,14 +55,12 @@ dependencies = [
     "huggingface-hub[hf_xet]>=0.33.4",
     "cachetools>=5.3.0,<6.0.0",
     "imas-data-dictionaries>=4.0.0",
-]
-
-[project.optional-dependencies]
-http = [
     "fastapi>=0.100.0,<1.0.0",
     "starlette>=0.37.0,<1.0.0",
     "uvicorn>=0.30.0,<1.0.0",
 ]
+
+[project.optional-dependencies]
 test = [
     "pytest>=8.3.5,<9.0.0",
     "pytest-cov>=6.1.1,<7.0.0",
@@ -72,7 +70,7 @@ test = [
     "pytest-timeout>=2.1.0,<3.0.0",
     "coverage>=7.0.0",
 ]
-bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
+bench = ["asv>=0.6.0,<1.0.0"]
 
 [dependency-groups]
 dev = [

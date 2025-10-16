@@ -76,7 +76,7 @@ test:
 test-fast:
 	uv run pytest
 
-# Run the server (default STDIO transport)
+# Run the server (default streamable-http transport)
 run:
 	uv run imas-mcp
 

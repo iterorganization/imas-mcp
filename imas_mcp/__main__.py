@@ -8,14 +8,14 @@ Usage:
     python -m imas_mcp [OPTIONS]
 
 Options:
-    --transport [stdio|sse|streamable-http]  Transport protocol [default: stdio]
+    --transport [stdio|sse|streamable-http]  Transport protocol [default: streamable-http]
     --host TEXT                              Host to bind to [default: 127.0.0.1]
     --port INTEGER                           Port to bind to [default: 8000]
     --log-level [DEBUG|INFO|WARNING|ERROR|CRITICAL]  Log level [default: INFO]
     --help                                   Show help message
 
 Examples:
-    # Run with default stdio transport
+    # Run with default streamable-http transport
     python -m imas_mcp
 
     # Show all CLI options
