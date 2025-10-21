@@ -29,7 +29,8 @@ concurrency:
 
 jobs:
   run-benchmark:
-    if: github.event.inputs.action != 'clear'
+    # Only deploy to GitHub Pages from main branch or manual workflow dispatch
+    if: github.event.inputs.action != 'clear' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
     # Use specific runner for consistent benchmark results
     runs-on: ubuntu-22.04 # 4 cores, 16GB RAM, consistent specs
     permissions:
