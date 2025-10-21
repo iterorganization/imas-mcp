@@ -260,7 +260,7 @@ class ConceptResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, Searc
     concept_explanation: ConceptExplanation | None = None
 
 
-class StructureResult(WithHints, WithPhysics, ToolResult):
+class StructureResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult):
     """IDS structure analysis result with AI enhancement, hints, and physics aggregation.
 
     Uses AI sampling for enhanced structural insights.
