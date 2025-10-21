@@ -351,7 +351,7 @@ class RelationshipExtractor:
             self._embeddings_cache = EmbeddingCache(
                 embeddings=embeddings,
                 path_ids=filtered_identifiers,
-                model_name=self.config.model_name,
+                model_name=self.config.encoder_config.model_name,
                 document_count=len(filtered_paths),
             )
 

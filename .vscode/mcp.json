@@ -12,10 +12,5 @@
       "type": "http",
       "url": "http://127.0.0.1:8080/mcp"
     }
-    // Slurm-backed stdio server (allocates a compute node via srun --pty)
-    // "imas-slurm": {
-    //   "type": "stdio",
-    //   "command": "scripts/imas_mcp_slurm.sh",
-    // },
   }
 }

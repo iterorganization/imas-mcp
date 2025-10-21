@@ -88,6 +88,7 @@ dev = [
     "rich>=13.7.0,<14.0.0",
     "matplotlib>=3.10.5",
     "seaborn>=0.13.2",
+    "qrcode[pil]>=8.2",
 ]
 
 [project.urls]
