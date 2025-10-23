@@ -1,11 +1,12 @@
 """CLI interface for IMAS MCP Server."""
 
 import logging
+import os
 from typing import Literal, cast
 
 import click
 
-from imas_mcp import __version__
+from imas_mcp import __version__, dd_version
 from imas_mcp.server import Server
 
 # Configure logging
@@ -94,14 +95,13 @@ def main(
         # Run with debug logging
         python -m imas_mcp.cli --log-level DEBUG
 
-        # Run on specific port
-        python -m imas_mcp.cli --port 8080
-
         # Run without rich progress output
         python -m imas_mcp.cli --no-rich
 
     Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.
+
+    To set DD version, use the IMAS_DD_VERSION environment variable.
     """
     # Configure logging based on the provided level
     # Force reconfigure logging by getting the root logger and setting its level
@@ -114,11 +114,6 @@ def main(
 
     logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
-
-    # Log DD version and IDS filter configuration
-    import os
-
-    from imas_mcp import dd_version
 
     dd_version_env = os.environ.get("IMAS_DD_VERSION")
     ids_filter_env = os.environ.get("IDS_FILTER")
