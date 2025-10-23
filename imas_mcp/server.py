@@ -80,7 +80,9 @@ class Server:
 
     def __post_init__(self):
         """Initialize the MCP server after dataclass initialization."""
-        self.mcp = FastMCP(name="imas-data-dictionary")
+        # Include DD version in server name so clients/LLMs know which version they're using
+        server_name = f"imas-data-dictionary-{dd_version}"
+        self.mcp = FastMCP(name=server_name)
 
         # Validate schemas exist before initialization (fail fast)
         self._validate_schemas_available()
