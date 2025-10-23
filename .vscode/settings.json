@@ -45,6 +45,12 @@
     },
     "imas-mcp/.vscode/mcp.json: imas": {
       "allowedDuringChat": true
+    },
+    "imas-mcp/.vscode/mcp.json: imas-ddv3": {
+      "allowedDuringChat": true
+    },
+    "imas-mcp/.vscode/mcp.json: imas-ddv4": {
+      "allowedDuringChat": true
     }
   },
   // Formatting settings
