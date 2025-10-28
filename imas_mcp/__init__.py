@@ -6,18 +6,25 @@ import importlib.metadata
 import os
 
 
-def _get_dd_version() -> str:
+def _get_dd_version(cli_version: str | None = None) -> str:
     """
     Get DD version without expensive DD accessor creation.
 
-    Checks environment variable first, then falls back to package __version__,
+    Checks CLI argument first, then environment variable, then falls back to package __version__,
     and finally defaults to "4.0.0" if neither is available.
     This avoids costly XML parsing (560ms) during package import.
+
+    Args:
+        cli_version: Optional DD version specified via CLI argument.
 
     Returns:
         Normalized DD version string (without git hash suffix).
     """
-    # Check environment first (allows version override)
+    # Check CLI argument first (highest priority)
+    if cli_version:
+        return cli_version
+
+    # Check environment second (allows version override)
     if env_version := os.getenv("IMAS_DD_VERSION"):
         return env_version
 

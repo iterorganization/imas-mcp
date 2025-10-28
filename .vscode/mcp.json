@@ -4,13 +4,31 @@
       "url": "https://imas-dd.iter.org/mcp",
       "type": "http"
     },
-    // Launch the imas-debug server in a seperate terminal with: 
+    // Launch the imas-debug server in a seperate terminal with:
     // uv run imas-mcp --host 127.0.0.1 --port 8080
     // note: first initialization of will take ~10 minutes to build the DD embeddings
     // subsequent runs will use cached embeddings and will be much faster
     "imas-debug": {
       "type": "http",
       "url": "http://127.0.0.1:8080/mcp"
+    },
+    // Launch IMAS MCP server directly using stdio transport (auto-started by Claude)
+    // This entry will automatically start the server when Claude connects
+    // Note: first initialization will take ~10 minutes to build the DD embeddings
+    // subsequent runs will use cached embeddings and will be much faster
+    "imas-ddv3": {
+      "command": "uv",
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
+      "env": {
+        "IMAS_DD_VERSION": "3.42.2"
+      }
+    },
+    "imas-ddv4": {
+      "command": "uv",
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
+      "env": {
+        "IMAS_DD_VERSION": "4.0.0"
+      }
     }
   }
 }
