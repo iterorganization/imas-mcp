@@ -18,24 +18,14 @@
     // subsequent runs will use cached embeddings and will be much faster
     "imas-ddv3": {
       "command": "uv",
-      "args": [
-        "run",
-        "imas-mcp",
-        "--transport",
-        "stdio"
-      ],
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
       "env": {
         "IMAS_DD_VERSION": "3.42.2"
       }
     },
     "imas-ddv4": {
       "command": "uv",
-      "args": [
-        "run",
-        "imas-mcp",
-        "--transport",
-        "stdio"
-      ],
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
       "env": {
         "IMAS_DD_VERSION": "4.0.0"
       }
