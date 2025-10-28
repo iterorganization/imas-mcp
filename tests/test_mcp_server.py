@@ -11,6 +11,7 @@ import asyncio
 import pytest
 from fastmcp import Client, FastMCP
 
+from imas_mcp import dd_version
 from imas_mcp.models.result_models import OverviewResult
 from imas_mcp.resource_provider import Resources
 from imas_mcp.server import Server
@@ -38,7 +39,9 @@ class TestMCPServer:
         # MCP should be properly initialized
         assert server.mcp is not None
         assert hasattr(server.mcp, "name")
-        assert server.mcp.name == "imas-data-dictionary"
+        # Server name should include DD version
+        expected_name = f"imas-data-dictionary-{dd_version}"
+        assert server.mcp.name == expected_name
 
     def test_server_ids_set_configuration(self, server):
         """Test server is configured with test IDS set."""
