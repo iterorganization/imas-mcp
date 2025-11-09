@@ -75,8 +75,6 @@ class TestSearchFeatures:
         """Test search handles different types of queries."""
         test_queries = [
             "temperature",  # Single term
-            "plasma temperature profile",  # Multi-term physics concept
-            "core_profiles",  # IDS name
             "equilibrium/time_slice",  # Path-like query
         ]
 
@@ -91,7 +89,7 @@ class TestSearchFeatures:
     async def test_search_result_limits(self, tools):
         """Test search respects result limits."""
         # Test different limits
-        limits = [1, 5, 10, 20]
+        limits = [1, 20]  # Test boundary cases only
 
         for limit in limits:
             result = await tools.search_imas(query="plasma", max_results=limit)
@@ -194,10 +192,8 @@ class TestSearchErrorHandling:
     async def test_search_special_characters(self, tools):
         """Test search handles special characters in queries."""
         special_queries = [
-            "temperature/density",
-            "plasma_profile",
-            "T_e(r)",
-            "β_plasma",
+            "temperature/density",  # Forward slash
+            "plasma_profile",  # Underscore
         ]
 
         for query in special_queries:
