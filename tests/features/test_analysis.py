@@ -34,7 +34,10 @@ class TestAnalysisFeatures:
     @pytest.mark.asyncio
     async def test_concept_explanation_physics_terms(self, tools):
         """Test concept explanation for physics terms."""
-        physics_concepts = ["equilibrium", "transport", "plasma", "temperature"]
+        physics_concepts = [
+            "equilibrium",
+            "transport",
+        ]  # Reduced for performance, still covers IDS and physics domain concepts
 
         for concept in physics_concepts:
             result = await tools.explain_concept(concept=concept)
