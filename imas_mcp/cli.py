@@ -5,9 +5,13 @@ import os
 from typing import Literal, cast
 
 import click
+from dotenv import load_dotenv
 
-from imas_mcp import __version__, dd_version
-from imas_mcp.server import Server
+# Load environment variables from .env file
+load_dotenv()
+
+from imas_mcp import __version__, dd_version  # noqa: E402
+from imas_mcp.server import Server  # noqa: E402
 
 # Configure logging
 logger = logging.getLogger(__name__)

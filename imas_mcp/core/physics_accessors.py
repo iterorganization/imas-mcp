@@ -5,8 +5,8 @@ This module provides high-level accessor methods for interacting with YAML-based
 physics domain definitions. Keeps data access methods close to the data files.
 """
 
+import functools
 import logging
-from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -354,27 +354,16 @@ class UnitAccessor:
         return matching_units
 
 
-# Global accessor instances
-_global_accessor: DomainAccessor | None = None
-_global_unit_accessor: UnitAccessor | None = None
-
-
-@lru_cache(maxsize=1)
+@functools.cache
 def get_domain_accessor() -> DomainAccessor:
-    """Get the global domain accessor instance with caching."""
-    global _global_accessor
-    if _global_accessor is None:
-        _global_accessor = DomainAccessor()
-    return _global_accessor
+    """Get domain accessor instance with lazy initialization and caching."""
+    return DomainAccessor()
 
 
-@lru_cache(maxsize=1)
+@functools.cache
 def get_unit_accessor() -> UnitAccessor:
-    """Get the global unit accessor instance with caching."""
-    global _global_unit_accessor
-    if _global_unit_accessor is None:
-        _global_unit_accessor = UnitAccessor()
-    return _global_unit_accessor
+    """Get unit accessor instance with lazy initialization and caching."""
+    return UnitAccessor()
 
 
 # Convenience functions for easy access

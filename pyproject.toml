@@ -48,6 +48,7 @@ dependencies = [
     "pint>=0.24.4,<0.25.0",
     "nest-asyncio>=1.5.0,<2.0.0",
     "click>=8.0.0,<9.0.0",
+    "python-dotenv>=1.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
     "numpy>=2.3.1",
@@ -58,6 +59,8 @@ dependencies = [
     "fastapi>=0.100.0,<1.0.0",
     "starlette>=0.37.0,<1.0.0",
     "uvicorn>=0.30.0,<1.0.0",
+    "aiohttp>=3.8.0,<4.0.0",
+    "anyio>=4.0.0,<5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +83,9 @@ dev = [
     "mypy>=1.15.0",
     "pre-commit>=4.2.0",
     "tqdm-stubs>=0.2.1",
+    # Async testing and utilities
+    "anyio>=4.0.0",
+    "pytest-httpserver>=1.0.0",
     # Interactive development
     "ipython>=9.2.0",
     "ipykernel>=6.29.5",
@@ -105,6 +111,7 @@ build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
+add-docs = "scripts.add_docs:add_docs"
 
 [tool.hatch.version]
 source = "vcs"

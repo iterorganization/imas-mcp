@@ -25,6 +25,9 @@ ENV/
 .venv/
 .tox/
 
+#secrets
+.env
+
 # Testing
 .coverage
 htmlcov/
@@ -58,3 +61,6 @@ poetry.lock
 .env
 .asv/
 imas_mcp/database/imas_fts.db
+
+# Documentation data
+docs-data/

@@ -20,8 +20,8 @@ def test_embedding_encoder_build_and_embed(tmp_path: Path):
     assert not was_cached
     assert list(out_ids) == ids
     assert embeddings.shape[0] == len(texts)
-    # sentence-transformers returns float32 (or float16 if configured)
-    assert embeddings.dtype in (np.float32, np.float16)
+    # sentence-transformers returns float32/float16 (or float64 depending on numpy version)
+    assert embeddings.dtype in (np.float32, np.float16, np.float64)
 
     # Second call should load from cache (force_rebuild False)
     embeddings2, out_ids2, was_cached2 = encoder.build_document_embeddings(
@@ -37,4 +37,5 @@ def test_embedding_encoder_ad_hoc_embed():
     encoder = Encoder(config)
     vecs = encoder.embed_texts(["one", "two"])
     assert vecs.shape[0] == 2
-    assert vecs.dtype in (np.float32, np.float16)
+    # sentence-transformers returns float32/float16 (or float64 depending on numpy version)
+    assert vecs.dtype in (np.float32, np.float16, np.float64)
