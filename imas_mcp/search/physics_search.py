@@ -6,8 +6,10 @@ phenomena, units, and concepts using sentence transformers. It integrates with t
 existing semantic search infrastructure while being specialized for physics concepts.
 """
 
+import functools
 import hashlib
 import logging
+import os
 import pickle
 import time
 from dataclasses import dataclass, field
@@ -16,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from imas_mcp import dd_version
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_accessors import DomainAccessor, UnitAccessor
 from imas_mcp.core.physics_domains import DomainCharacteristics
@@ -61,11 +64,14 @@ class PhysicsSemanticSearch:
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str | None = None,
         device: str = "cpu",
         enable_cache: bool = True,
         cache_dir: Path | None = None,
     ):
+        # Load model name from env var if not provided
+        if model_name is None:
+            model_name = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.model_name = model_name
         self.device = device
         self.enable_cache = enable_cache
@@ -78,8 +84,6 @@ class PhysicsSemanticSearch:
     def _get_default_cache_dir(self) -> Path:
         """Get default cache directory."""
         # Use the same embeddings directory as the main semantic search system
-        from imas_mcp import dd_version
-
         path_accessor = ResourcePathAccessor(dd_version=dd_version)
         return path_accessor.embeddings_dir
 
@@ -161,8 +165,6 @@ class PhysicsSemanticSearch:
         logger.info(f"Loading sentence transformer model: {self.model_name}")
 
         # Get embeddings directory for model cache (same pattern as DD semantic search)
-        from imas_mcp import dd_version
-
         path_accessor = ResourcePathAccessor(dd_version=dd_version)
         cache_folder = str(path_accessor.embeddings_dir / "models")
 
@@ -536,16 +538,10 @@ class PhysicsSemanticSearch:
             return None
 
 
-# Global instance for easy access
-_physics_search = None
-
-
+@functools.cache
 def get_physics_search() -> PhysicsSemanticSearch:
-    """Get global physics semantic search instance."""
-    global _physics_search
-    if _physics_search is None:
-        _physics_search = PhysicsSemanticSearch()
-    return _physics_search
+    """Get physics semantic search instance with lazy initialization and caching."""
+    return PhysicsSemanticSearch()
 
 
 def search_physics_concepts(

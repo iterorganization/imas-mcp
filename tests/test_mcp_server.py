@@ -6,8 +6,6 @@ focusing on MCP protocol compliance and component integration using FastMCP
 in-memory testing patterns.
 """
 
-import asyncio
-
 import pytest
 from fastmcp import Client, FastMCP
 
@@ -197,6 +195,8 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_multiple_concurrent_operations(self, server):
         """Test concurrent MCP operations work correctly."""
+        import asyncio
+
         async with Client(server.mcp) as client:
             # Execute multiple operations concurrently
             results = await asyncio.gather(

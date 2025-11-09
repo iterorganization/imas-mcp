@@ -11,10 +11,14 @@ import sys
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import DocumentStore
+
+# Load .env file with override to ensure local .env values take precedence
+load_dotenv(override=True)
 
 
 @click.command()
@@ -34,8 +38,8 @@ from imas_mcp.search.document_store import DocumentStore
 @click.option(
     "--model-name",
     type=str,
-    default="all-MiniLM-L6-v2",
-    help="Sentence transformer model name (default: all-MiniLM-L6-v2)",
+    default=None,
+    help="Sentence transformer model name (default: from IMAS_MCP_EMBEDDING_MODEL env var or all-MiniLM-L6-v2)",
 )
 @click.option(
     "--batch-size",
@@ -100,7 +104,7 @@ def build_embeddings(
     quiet: bool,
     force: bool,
     ids_filter: str,
-    model_name: str,
+    model_name: str | None,
     batch_size: int,
     no_cache: bool,
     half_precision: bool,
@@ -319,7 +323,7 @@ def build_embeddings(
             # Print summary for scripts/CI with accurate messaging
             action = "Loaded" if was_cached else "Built"
             click.echo(
-                f"{action} embeddings for {document_count} documents using {model_name}"
+                f"{action} embeddings for {document_count} documents using {config.model_name}"
             )
             if "cache_file_size_mb" in info:
                 click.echo(f"Cache size: {info['cache_file_size_mb']:.1f} MB")
