@@ -5,11 +5,16 @@ This module provides test fixtures for the composition-based server architecture
 focusing on MCP protocol testing and feature validation.
 """
 
+import os
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastmcp import Client
+
+# Force all tests to use the lightweight all-MiniLM-L6-v2 embedding model for performance
+# Set before any imas_mcp imports to ensure it's used during initialization
+os.environ.setdefault("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore

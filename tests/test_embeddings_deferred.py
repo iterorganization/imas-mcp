@@ -2,6 +2,7 @@ import pytest
 
 from imas_mcp.embeddings.embeddings import Embeddings
 from imas_mcp.search.document_store import DocumentStore
+from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 def test_embeddings_encoder_config_exposed():
@@ -25,7 +26,7 @@ def test_embeddings_lazy_build(monkeypatch):
 async def test_health_endpoint_deferred(monkeypatch):
     from imas_mcp.server import Server
 
-    srv = Server()
+    srv = Server(ids_set=STANDARD_TEST_IDS_SET)
     # Replace embeddings with deferred instance sharing same document store
     srv.embeddings = Embeddings(
         document_store=srv.tools.document_store, load_embeddings=False
