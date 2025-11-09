@@ -119,6 +119,7 @@ jobs:
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           cache-from: type=gha,scope=build-${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 

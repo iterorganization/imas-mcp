@@ -162,7 +162,8 @@ class TestSearchResultStructure:
 
                 # Score should be numeric
                 assert isinstance(search_result.score, int | float)
-                assert 0 <= search_result.score <= 1
+                # Note: hybrid search can return scores > 1 due to score combination
+                assert search_result.score >= 0
 
 
 class TestSearchErrorHandling:

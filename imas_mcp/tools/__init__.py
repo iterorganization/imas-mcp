@@ -1,21 +1,24 @@
-"""
-IMAS MCP Tools Package.
+"""IMAS MCP Tools Package.
 
 This package contains the refactored Tools implementation split into focused modules.
 Each module handles a specific tool functionality with clean separation of concerns.
 """
-
-from typing import Optional
 
 from fastmcp import FastMCP
 
 from imas_mcp.providers import MCPProvider
 from imas_mcp.search.document_store import DocumentStore
 
-from .analysis_tool import AnalysisTool
-
 # Import individual tool classes
+from .analysis_tool import AnalysisTool
 from .base import BaseTool
+
+# Import documentation search functions
+from .docs_functions import (
+    list_docs,
+    search_docs,
+    search_imas_python_docs,
+)
 from .explain_tool import ExplainTool
 from .export_tool import ExportTool
 from .identifiers_tool import IdentifiersTool
@@ -76,6 +79,15 @@ class Tools(MCPProvider):
                 if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
                     mcp.tool(description=attr._mcp_description)(attr)
 
+        # Register documentation search functions
+        for func in [
+            search_docs,
+            search_imas_python_docs,
+            list_docs,
+        ]:
+            if hasattr(func, "_mcp_tool") and func._mcp_tool:
+                mcp.tool(description=func._mcp_description)(func)
+
     # Primary method delegation
     async def search_imas(self, *args, **kwargs):
         """Delegate to search tool."""
@@ -121,6 +133,19 @@ class Tools(MCPProvider):
         """Delegate to export tool."""
         return await self.export_tool.export_physics_domain(*args, **kwargs)
 
+    # Documentation search delegation methods
+    async def search_docs(self, *args, **kwargs):
+        """Delegate to documentation search function."""
+        return await search_docs(*args, **kwargs)
+
+    async def search_imas_python_docs(self, *args, **kwargs):
+        """Delegate to IMAS-Python documentation search function."""
+        return await search_imas_python_docs(*args, **kwargs)
+
+    async def list_docs(self, *args, **kwargs):
+        """Delegate to library listing function."""
+        return await list_docs(*args, **kwargs)
+
 
 __all__ = [
     "BaseTool",
@@ -134,4 +159,8 @@ __all__ = [
     "IdentifiersTool",
     "ExportTool",
     "Tools",
+    # Documentation search functions
+    "search_docs",
+    "search_imas_python_docs",
+    "list_docs",
 ]

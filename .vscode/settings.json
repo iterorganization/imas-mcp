@@ -64,5 +64,6 @@
       "source.fixAll.ruff": "explicit"
     }
   },
-  "chat.mcp.access": "all"
+  "chat.mcp.access": "all",
+  "cursorpyright.analysis.typeCheckingMode": "basic"
 }

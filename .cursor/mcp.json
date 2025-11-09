@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "docs": {
+      "type": "http",
+      "url": "http://127.0.0.1:6280/mcp"
+    },
+    "imas-mcp": {
+      "command": "uv",
+      "args": [
+        "run",
+        "imas-mcp",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "DOCS_SERVER_URL": "http://localhost:6280"
+      }
+    }
+  }
+}

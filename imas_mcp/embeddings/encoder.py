@@ -18,6 +18,15 @@ from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from .cache import EmbeddingCache
 from .config import EncoderConfig
 
+# Import OpenRouter client for hybrid support
+try:
+    from .openrouter_client import OpenRouterClient
+
+    HAS_OPENROUTER_CLIENT = True
+except ImportError:
+    HAS_OPENROUTER_CLIENT = False
+    OpenRouterClient = None  # type: ignore
+
 
 class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching."""
@@ -138,6 +147,55 @@ class Encoder:
         return self._model  # type: ignore[return-value]
 
     def _load_model(self) -> None:
+        """Load either API-based or local embedding model based on configuration."""
+        try:
+            # Check if we should use API embeddings
+            if self.config.use_api_embeddings:
+                self._load_api_model()
+            else:
+                self._load_local_model()
+
+        except Exception as e:
+            # If API model fails, fallback to local model
+            if self.config.use_api_embeddings:
+                self.logger.warning(
+                    f"Failed to load API model '{self.config.model_name}': {e}. "
+                    f"Falling back to local model."
+                )
+                self.config.use_api_embeddings = False
+                self._load_local_model()
+            else:
+                # Re-raise if it's already a local model failure
+                raise
+
+    def _load_api_model(self) -> None:
+        """Load OpenRouter API-based model."""
+        try:
+            # Validate API configuration
+            self.config.validate_api_config()
+
+            # Import here to avoid dependency issues if not using API
+            from .openrouter_client import OpenRouterClient
+
+            # Create OpenRouter client with model name
+            self._model = OpenRouterClient(
+                model_name=self.config.model_name,
+                api_key=self.config.openai_api_key,
+                base_url=self.config.openai_base_url,
+                batch_size=self.config.batch_size,
+            )
+
+            self.logger.info(
+                f"API model '{self.config.model_name}' loaded successfully. "
+                f"device: {self._model.device}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to load API model: {e}")
+            raise
+
+    def _load_local_model(self) -> None:
+        """Load local SentenceTransformer model (original implementation)."""
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:

@@ -1,7 +1,13 @@
 """Configuration for embedding generation and caching."""
 
+import os
 from dataclasses import dataclass
 from typing import Any
+
+# Load .env file for local development
+from dotenv import load_dotenv
+
+load_dotenv(override=True)  # Override existing env vars with .env file values
 
 
 @dataclass
@@ -9,7 +15,7 @@ class EncoderConfig:
     """Configuration for embedding generation and management."""
 
     # Model configuration
-    model_name: str = "all-MiniLM-L6-v2"
+    model_name: str | None = None
     device: str | None = None
 
     # Generation settings
@@ -26,6 +32,60 @@ class EncoderConfig:
 
     # Progress display
     use_rich: bool = True
+
+    # OpenRouter API configuration
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+    use_api_embeddings: bool = False  # Set to True when using API models
+
+    def __post_init__(self) -> None:
+        """Initialize configuration with environment variables if not explicitly set."""
+        # Load model name: explicit param > env var > fallback
+        if self.model_name is None:
+            self.model_name = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+        # Load OpenRouter API configuration
+        if self.openai_api_key is None:
+            self.openai_api_key = os.getenv("OPENAI_API_KEY")
+
+        if self.openai_base_url is None:
+            self.openai_base_url = os.getenv(
+                "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
+            )
+
+        # Auto-detect if we should use API embeddings based on model name
+        if self.use_api_embeddings is False:  # Check against default
+            # Use API if model contains common API model indicators
+            # The "/" indicator is key: OpenRouter models use "provider/model" format
+            # while local SentenceTransformer models don't have slashes
+            is_api_model = any(
+                indicator in self.model_name
+                for indicator in ["/", "embedding", "text-embedding", "qwen", "openai"]
+            )
+            self.use_api_embeddings = is_api_model
+
+    def validate_api_config(self) -> None:
+        """Validate API configuration when using API embeddings."""
+        if self.use_api_embeddings:
+            # Check if we have an API key
+            if not self.openai_api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY environment variable required for API embeddings"
+                )
+
+            # Validate API key is not placeholder
+            if self.openai_api_key.startswith("your_") and self.openai_api_key.endswith(
+                "_here"
+            ):
+                raise ValueError(
+                    "Invalid API key - appears to be placeholder text. Please set a valid OPENAI_API_KEY."
+                )
+
+            # Check base URL
+            if not self.openai_base_url:
+                raise ValueError(
+                    "OPENAI_BASE_URL environment variable required for API embeddings"
+                )
 
     def generate_cache_key(self) -> str | None:
         """
@@ -58,6 +118,9 @@ class EncoderConfig:
             "cache_dir": self.cache_dir,
             "ids_set": list(self.ids_set) if self.ids_set else None,
             "use_rich": self.use_rich,
+            "use_api_embeddings": self.use_api_embeddings,
+            "openai_base_url": self.openai_base_url,
+            # Note: Don't include openai_api_key in serialization for security
         }
 
     @classmethod
@@ -68,6 +131,33 @@ class EncoderConfig:
             if hasattr(config, key):
                 if key == "ids_set" and value is not None:
                     setattr(config, key, set(value))
+                elif key == "openai_api_key":
+                    # Don't restore API key from dict for security
+                    continue
                 else:
                     setattr(config, key, value)
+
+        # Re-run post_init to set environment-based defaults if not explicitly set
+        config.__post_init__()
         return config
+
+    @classmethod
+    def from_environment(cls) -> "EncoderConfig":
+        """Create configuration entirely from environment variables.
+
+        With the new None-based approach, simply creating an instance
+        without parameters will automatically load from environment variables.
+        """
+        return cls()
+
+    def get_api_info(self) -> dict[str, Any]:
+        """Get API configuration info (without sensitive data)."""
+        return {
+            "use_api_embeddings": self.use_api_embeddings,
+            "model_name": self.model_name,
+            "has_api_key": bool(self.openai_api_key),
+            "base_url": self.openai_base_url,
+            "api_key_prefix": self.openai_api_key[:10] + "..."
+            if self.openai_api_key
+            else None,
+        }

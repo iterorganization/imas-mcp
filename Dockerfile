@@ -1,9 +1,9 @@
-## Stage 1: acquire uv binary (kept minimal). Using ARG here is supported in FROM.
+## Stage 1: acquire uv binary (kept minimal)
 ARG UV_VERSION=0.7.13
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-## Final stage: runtime image
-FROM python:3.12-slim
+## Stage 2: Build complete project
+FROM python:3.12-slim as builder
 
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -12,7 +12,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager (copied from first stage; version pinned by ARG above)
+# Copy uv binary
 COPY --from=uv /uv /uvx /bin/
 
 # Set working directory
@@ -28,6 +28,9 @@ ARG GIT_SHA=""
 ARG GIT_TAG=""
 ARG GIT_REF=""
 
+# OpenRouter API key for embeddings
+ARG OPENAI_API_KEY=""
+
 # Set environment variables
 ENV PYTHONPATH="/app" \
     IDS_FILTER=${IDS_FILTER} \
@@ -36,9 +39,10 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    IMAS_MCP_COMMIT=${GIT_SHA} \
-    IMAS_MCP_TAG=${GIT_TAG} \
-    IMAS_MCP_REF=${GIT_REF}
+    # OpenRouter configuration for embeddings
+    OPENAI_API_KEY=${OPENAI_API_KEY} \
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b
 
 # Labels for image provenance
 LABEL imas_mcp.git_sha=${GIT_SHA} \
@@ -64,7 +68,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
-## Expand sparse checkout to include project sources and scripts (phase 2)
+# Expand sparse checkout to include project sources and scripts (phase 2)
 RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
@@ -131,6 +135,97 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-mermaid --quiet; \
     fi && \
     echo "✓ Mermaid graphs ready"
+
+## Stage 3: Scrape documentation (independent of Python build)
+FROM python:3.12-slim as docs-scraper
+
+# Install Node.js for docs-mcp-server
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install docs-mcp-server
+RUN npm install -g @arabold/docs-mcp-server@latest
+
+# Set working directory for docs
+WORKDIR /docs-data
+
+# Build-time args for documentation scraping
+ARG OPENAI_API_KEY=""
+
+# Build-time environment variables
+ENV OPENAI_API_KEY=${OPENAI_API_KEY} \
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b \
+    DOCS_MCP_STORE_PATH=/docs-data
+
+# Scrape documentation directly with npx (bypasses add-docs script to avoid cache busting)
+# Using BuildKit cache mounts for npm packages and persistent store across builds
+# Each RUN is independently cached - only re-runs if URL/version/flags change
+# This stage is completely independent of Stage 2 (builder), so Python changes won't re-scrape docs
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npx -y @arabold/docs-mcp-server@latest scrape data-dictionary \
+    https://imas-data-dictionary.readthedocs.io/en// \
+    --store-path /docs-data \
+    --version 4.0.0 \
+    --max-pages 1500 \
+    --max-depth 10 \
+    --ignore-errors || true
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npx -y @arabold/docs-mcp-server@latest scrape imas-python \
+    https://imas-python.readthedocs.io/en/stable/ \
+    --store-path /docs-data \
+    --version 2.0.1 \
+    --max-pages 250 \
+    --max-depth 5 \
+    --ignore-errors || true
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npx -y @arabold/docs-mcp-server@latest scrape udunits \
+    https://docs.unidata.ucar.edu/udunits/current/ \
+    --store-path /docs-data \
+    --version 2.2.28 \
+    --max-pages 250 \
+    --max-depth 5 \
+    --ignore-errors || true
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npx -y @arabold/docs-mcp-server@latest scrape cf-conventions \
+    https://cfconventions.org/ \
+    --store-path /docs-data \
+    --version 1.12 \
+    --max-pages 1500 \
+    --max-depth 10 \
+    --ignore-errors || true
+
+## Stage 4: Final runtime image (assemble from builder + docs-scraper)
+FROM python:3.12-slim
+
+# Install Node.js for runtime docs server support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install docs-mcp-server for runtime
+RUN npm install -g @arabold/docs-mcp-server@latest
+
+# Copy Python app from builder stage
+COPY --from=builder /uv /uvx /bin/
+COPY --from=builder /app /app
+
+# Copy scraped documentation from docs stage
+COPY --from=docs-scraper /docs-data /app/data
+
+# Set working directory
+WORKDIR /app
+
+# Set runtime environment variables
+ENV PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DOCS_SERVER_URL=http://localhost:6280 \
+    DOCS_MCP_STORE_PATH=/app/data
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
