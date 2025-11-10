@@ -203,46 +203,46 @@ Once you have the IMAS MCP server configured, you can interact with it using nat
 ### Basic Search Examples
 
 ```text
-@imas Find data paths related to plasma temperature
-@imas Search for electron density measurements
-@imas What data is available for magnetic field analysis?
-@imas Show me core plasma profiles
+Find data paths related to plasma temperature
+Search for electron density measurements
+What data is available for magnetic field analysis?
+Show me core plasma profiles
 ```
 
 ### Physics Concept Exploration
 
 ```text
-@imas Explain what equilibrium reconstruction means in plasma physics
-@imas What is the relationship between pressure and magnetic fields?
-@imas How do transport coefficients relate to plasma confinement?
-@imas Describe the physics behind current drive mechanisms
+Explain what equilibrium reconstruction means in plasma physics
+What is the relationship between pressure and magnetic fields?
+How do transport coefficients relate to plasma confinement?
+Describe the physics behind current drive mechanisms
 ```
 
 ### Data Structure Analysis
 
 ```text
-@imas Analyze the structure of the core_profiles IDS
-@imas What are the relationships between equilibrium and core_profiles?
-@imas Show me identifier schemas for transport data
-@imas Export bulk data for equilibrium, core_profiles, and transport IDS
+Analyze the structure of the core_profiles IDS
+What are the relationships between equilibrium and core_profiles?
+Show me identifier schemas for transport data
+Export bulk data for equilibrium, core_profiles, and transport IDS
 ```
 
 ### Advanced Queries
 
 ```text
-@imas Find all paths containing temperature measurements across different IDS
-@imas What physics domains are covered in the IMAS data dictionary?
-@imas Show me measurement dependencies for fusion power calculations
-@imas Explore cross-domain relationships between heating and confinement
+Find all paths containing temperature measurements across different IDS
+What physics domains are covered in the IMAS data dictionary?
+Show me measurement dependencies for fusion power calculations
+Explore cross-domain relationships between heating and confinement
 ```
 
 ### Workflow and Integration
 
 ```text
-@imas How do I access electron temperature profiles from IMAS data?
-@imas What's the recommended workflow for equilibrium analysis?
-@imas Show me the branching logic for diagnostic identifier schemas
-@imas Export physics domain data for comprehensive transport analysis
+How do I access electron temperature profiles from IMAS data?
+What's the recommended workflow for equilibrium analysis?
+Show me the branching logic for diagnostic identifier schemas
+Export physics domain data for comprehensive transport analysis
 ```
 
 The IMAS MCP server provides 8 specialized tools for different types of queries:
@@ -291,19 +291,19 @@ The server includes integrated search for documentation libraries with IMAS-Pyth
 
 ```text
 # Search IMAS-Python documentation
-@imas search_imas_python_docs "equilibrium calculations"
-@imas search_imas_python_docs "IDS data structures" limit=5
-@imas search_imas_python_docs "magnetic field" version="2.0.1"
+search_imas_python_docs "equilibrium calculations"
+search_imas_python_docs "IDS data structures" limit=5
+search_imas_python_docs "magnetic field" version="2.0.1"
 
 # Search any documentation library
-@imas search_docs "neural networks" library="numpy"
-@imas search_docs "data visualization" library="matplotlib"
+search_docs "neural networks" library="numpy"
+search_docs "data visualization" library="matplotlib"
 
 # List all available libraries
-@imas list_docs
+list_docs
 
 # Get versions for specific library
-@imas list_docs "imas-python"
+list_docs "imas-python"
 
 # Add new documentation using CLI
 add-docs udunits https://docs.unidata.ucar.edu/udunits/current/
