@@ -136,70 +136,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Mermaid graphs ready"
 
-## Stage 3: Scrape documentation (independent of Python build)
-FROM python:3.12-slim as docs-scraper
+## Stage 3: Use pre-scraped documentation (from CI cache)
+FROM python:3.12-slim as docs-provider
 
-# Install Node.js for docs-mcp-server
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
+# Documentation already available in build context from CI
+# No copying needed - will be copied directly to final stage
 
-# Install docs-mcp-server
-RUN npm install -g @arabold/docs-mcp-server@latest
-
-# Set working directory for docs
-WORKDIR /docs-data
-
-# Build-time args for documentation scraping
-ARG OPENAI_API_KEY=""
-
-# Build-time environment variables
-ENV OPENAI_API_KEY=${OPENAI_API_KEY} \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b \
-    DOCS_MCP_STORE_PATH=/docs-data
-
-# Scrape documentation directly with npx (bypasses add-docs script to avoid cache busting)
-# Using BuildKit cache mounts for npm packages and persistent store across builds
-# Each RUN is independently cached - only re-runs if URL/version/flags change
-# This stage is completely independent of Stage 2 (builder), so Python changes won't re-scrape docs
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npx -y @arabold/docs-mcp-server@latest scrape data-dictionary \
-    https://imas-data-dictionary.readthedocs.io/en// \
-    --store-path /docs-data \
-    --version 4.0.0 \
-    --max-pages 1500 \
-    --max-depth 10 \
-    --ignore-errors || true
-
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npx -y @arabold/docs-mcp-server@latest scrape imas-python \
-    https://imas-python.readthedocs.io/en/stable/ \
-    --store-path /docs-data \
-    --version 2.0.1 \
-    --max-pages 250 \
-    --max-depth 5 \
-    --ignore-errors || true
-
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npx -y @arabold/docs-mcp-server@latest scrape udunits \
-    https://docs.unidata.ucar.edu/udunits/current/ \
-    --store-path /docs-data \
-    --version 2.2.28 \
-    --max-pages 250 \
-    --max-depth 5 \
-    --ignore-errors || true
-
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    npx -y @arabold/docs-mcp-server@latest scrape cf-conventions \
-    https://cfconventions.org/ \
-    --store-path /docs-data \
-    --version 1.12 \
-    --max-pages 1500 \
-    --max-depth 10 \
-    --ignore-errors || true
-
-## Stage 4: Final runtime image (assemble from builder + docs-scraper)
+## Stage 4: Final runtime image (assemble from builder + direct docs copy)
 FROM python:3.12-slim
 
 # Install Node.js for runtime docs server support
@@ -214,18 +157,23 @@ RUN npm install -g @arabold/docs-mcp-server@latest
 COPY --from=builder /uv /uvx /bin/
 COPY --from=builder /app /app
 
-# Copy scraped documentation from docs stage
-COPY --from=docs-scraper /docs-data /app/data
+# Copy scraped documentation directly from build context (CI artifacts)
+COPY docs-data/ /app/data
 
 # Set working directory
 WORKDIR /app
 
 # Set runtime environment variables
+# Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DOCS_SERVER_URL=http://localhost:6280 \
-    DOCS_MCP_STORE_PATH=/app/data
+    DOCS_MCP_TELEMETRY=false \
+    DOCS_MCP_STORE_PATH=/app/data \
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b \
+    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000

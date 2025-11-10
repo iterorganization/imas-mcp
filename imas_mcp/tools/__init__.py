@@ -8,17 +8,12 @@ from fastmcp import FastMCP
 
 from imas_mcp.providers import MCPProvider
 from imas_mcp.search.document_store import DocumentStore
+from imas_mcp.services.docs_server_manager import DocsServerManager
 
 # Import individual tool classes
 from .analysis_tool import AnalysisTool
 from .base import BaseTool
-
-# Import documentation search functions
-from .docs_functions import (
-    list_docs,
-    search_docs,
-    search_imas_python_docs,
-)
+from .docs_tool import DocsTool
 from .explain_tool import ExplainTool
 from .export_tool import ExportTool
 from .identifiers_tool import IdentifiersTool
@@ -32,12 +27,17 @@ from .search_tool import SearchTool
 class Tools(MCPProvider):
     """Main Tools class that delegates to individual tool implementations."""
 
-    def __init__(self, ids_set: set[str] | None = None):
+    def __init__(
+        self,
+        ids_set: set[str] | None = None,
+        docs_manager: DocsServerManager | None = None,
+    ):
         """Initialize the IMAS tools provider.
 
         Args:
             ids_set: Optional set of IDS names to limit processing to.
                     If None, will process all available IDS.
+            docs_manager: Optional shared docs server manager for documentation tools.
         """
         self.ids_set = ids_set
 
@@ -54,6 +54,13 @@ class Tools(MCPProvider):
         self.relationships_tool = RelationshipsTool(self.document_store)
         self.identifiers_tool = IdentifiersTool(self.document_store)
         self.export_tool = ExportTool(self.document_store)
+
+        # Initialize docs tool with injected docs manager
+        if docs_manager is None:
+            from imas_mcp.services.docs_server_manager import DocsServerManager
+
+            docs_manager = DocsServerManager()
+        self.docs_tool = DocsTool(docs_manager)
 
     @property
     def name(self) -> str:
@@ -73,20 +80,12 @@ class Tools(MCPProvider):
             self.relationships_tool,
             self.identifiers_tool,
             self.export_tool,
+            self.docs_tool,
         ]:
             for attr_name in dir(tool):
                 attr = getattr(tool, attr_name)
                 if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
                     mcp.tool(description=attr._mcp_description)(attr)
-
-        # Register documentation search functions
-        for func in [
-            search_docs,
-            search_imas_python_docs,
-            list_docs,
-        ]:
-            if hasattr(func, "_mcp_tool") and func._mcp_tool:
-                mcp.tool(description=func._mcp_description)(func)
 
     # Primary method delegation
     async def search_imas(self, *args, **kwargs):
@@ -135,16 +134,12 @@ class Tools(MCPProvider):
 
     # Documentation search delegation methods
     async def search_docs(self, *args, **kwargs):
-        """Delegate to documentation search function."""
-        return await search_docs(*args, **kwargs)
-
-    async def search_imas_python_docs(self, *args, **kwargs):
-        """Delegate to IMAS-Python documentation search function."""
-        return await search_imas_python_docs(*args, **kwargs)
+        """Delegate to docs tool."""
+        return await self.docs_tool.search_docs(*args, **kwargs)
 
     async def list_docs(self, *args, **kwargs):
-        """Delegate to library listing function."""
-        return await list_docs(*args, **kwargs)
+        """Delegate to docs tool."""
+        return await self.docs_tool.list_docs(*args, **kwargs)
 
 
 __all__ = [
@@ -158,9 +153,6 @@ __all__ = [
     "RelationshipsTool",
     "IdentifiersTool",
     "ExportTool",
+    "DocsTool",
     "Tools",
-    # Documentation search functions
-    "search_docs",
-    "search_imas_python_docs",
-    "list_docs",
 ]

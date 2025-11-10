@@ -398,3 +398,81 @@ class ListPathsInput(BaseInputSchema):
             )
 
         return v
+
+
+# Documentation search tool input schemas
+
+
+class SearchDocsInput(BaseInputSchema):
+    """Input validation schema for search_docs tool."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Documentation search query",
+    )
+    library: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Library name to search (required)",
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum number of results to return (1-20)",
+    )
+    version: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Specific library version to search",
+    )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v):
+        """Validate search query."""
+        v = v.strip()
+        if not v:
+            raise ValueError("Query cannot be empty")
+        return v
+
+    @field_validator("library")
+    @classmethod
+    def validate_library(cls, v):
+        """Validate library name."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Library name cannot be empty")
+        return v
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, v):
+        """Validate version string."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                return None
+        return v
+
+
+class ListDocsInput(BaseInputSchema):
+    """Input validation schema for list_docs tool."""
+
+    library: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Specific library name to get versions for (optional)",
+    )
+
+    @field_validator("library")
+    @classmethod
+    def validate_library(cls, v):
+        """Validate library name."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Library name cannot be empty")
+        return v
