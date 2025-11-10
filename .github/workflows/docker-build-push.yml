@@ -18,8 +18,60 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  scrape-docs:
+    runs-on: ubuntu-latest
+    env:
+      # Environment shared across all steps in this job
+      DOCS_MCP_STORE_PATH: ./docs-data
+      DOCS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-0.6b
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: https://openrouter.ai/api/v1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Cache documentation data
+        id: cache-docs
+        uses: actions/cache@v4
+        with:
+          path: docs-data
+          key: docs-${{ env.DOCS_MCP_EMBEDDING_MODEL }}-${{ hashFiles('.github/workflows/docker-build-push.yml', 'scripts/scrape-doc.sh') }}
+          restore-keys: |
+            docs-${{ env.DOCS_MCP_EMBEDDING_MODEL }}-
+
+      - name: Scrape all documentation sources
+        if: steps.cache-docs.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/scrape-doc.sh
+          
+          # All source definitions in one place - easy to read and modify
+          ./scripts/scrape-doc.sh "data-dictionary" "https://imas-data-dictionary.readthedocs.io/en//" "4.0.0" 1500 10
+          ./scripts/scrape-doc.sh "imas-python" "https://imas-python.readthedocs.io/en/stable/" "2.0.1" 250 5
+          ./scripts/scrape-doc.sh "udunits" "https://docs.unidata.ucar.edu/udunits/current/" "2.2.28" 250 5
+          ./scripts/scrape-doc.sh "cf-conventions" "https://cfconventions.org/" "1.12" 1500 10
+          
+          echo "All documentation scraped successfully!"
+          ls -lh docs-data/
+
+      - name: Upload documentation data as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-data
+          path: docs-data/
+          retention-days: 90  # Maximum retention - docs change infrequently
+
   build-and-push:
     runs-on: ubuntu-latest
+    needs: scrape-docs
     strategy:
       matrix:
         transport:
@@ -40,6 +92,12 @@ jobs:
           fetch-depth: 0 # Full git history for dynamic versioning
           # Ensure all refs are available
           ref: ${{ github.ref }}
+
+      - name: Download documentation data
+        uses: actions/download-artifact@v4
+        with:
+          name: documentation-data
+          path: docs-data/
 
       - name: Verify git state for versioning
         run: |
@@ -120,8 +178,12 @@ jobs:
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          cache-from: type=gha,scope=build-${{ github.ref_name }}
-          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
+          cache-from: |
+            type=gha,scope=build-${{ github.ref_name }}
+            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: |
+            type=gha,mode=max,scope=build-${{ github.ref_name }}
+            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
 
       - name: Verify version inside image (tag builds)
         if: startsWith(github.ref, 'refs/tags/')
