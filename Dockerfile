@@ -42,7 +42,7 @@ ENV PYTHONPATH="/app" \
     # OpenRouter configuration for embeddings
     OPENAI_API_KEY=${OPENAI_API_KEY} \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
 # Labels for image provenance
 LABEL imas_mcp.git_sha=${GIT_SHA} \
@@ -172,8 +172,8 @@ ENV PYTHONPATH="/app" \
     DOCS_MCP_TELEMETRY=false \
     DOCS_MCP_STORE_PATH=/app/data \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b \
-    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-0.6b
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b \
+    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000

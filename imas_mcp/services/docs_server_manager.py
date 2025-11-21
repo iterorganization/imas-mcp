@@ -26,6 +26,8 @@ import aiohttp
 import anyio
 from dotenv import load_dotenv
 
+from imas_mcp.exceptions import DocsServerError
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -34,12 +36,6 @@ logger = logging.getLogger(__name__)
 
 class PortAllocationError(Exception):
     """Raised when unable to allocate a port for the docs server."""
-
-    pass
-
-
-class DocsServerError(Exception):
-    """Base exception for docs server related errors."""
 
     pass
 
@@ -85,6 +81,9 @@ class DocsServerManager:
         self.allocated_port: int | None = None
         self._startup_task: asyncio.Task | None = None
         self._health_monitor_task: asyncio.Task | None = None
+        self._log_stdout_task: asyncio.Task | None = None
+        self._log_stderr_task: asyncio.Task | None = None
+        self._monitor_task: asyncio.Task | None = None
 
         # Health and status
         self._start_time: float | None = None
@@ -181,21 +180,53 @@ class DocsServerManager:
             except asyncio.CancelledError:
                 pass
 
+        # Stop monitor task
+        if self._monitor_task and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+
         # Terminate process
         if self.process:
-            self.process.terminate()
             try:
-                with anyio.fail_after(10):  # 10 second grace period
+                self.process.terminate()
+                try:
+                    with anyio.fail_after(10):  # 10 second grace period
+                        await self.process.wait()
+                except TimeoutError:
+                    logger.warning(
+                        "Docs server didn't stop gracefully, killing process"
+                    )
+                    self.process.kill()
                     await self.process.wait()
-            except TimeoutError:
-                logger.warning("Docs server didn't stop gracefully, killing process")
-                self.process.kill()
-                await self.process.wait()
+            except Exception as e:
+                logger.warning(f"Error stopping process: {e}")
+
+            # Ensure resource is closed (closes pipes etc)
+            if hasattr(self.process, "aclose"):
+                try:
+                    await self.process.aclose()
+                except Exception as e:
+                    logger.debug(f"Error closing process resource: {e}")
+
+        # Cancel logging tasks after process is dead
+        for task in [self._log_stdout_task, self._log_stderr_task]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         self.process = None
         self.allocated_port = None
         self._start_time = None
         self._libraries_cache = None
+        self._log_stdout_task = None
+        self._log_stderr_task = None
+        self._monitor_task = None
 
         logger.info("Docs server stopped")
 
@@ -373,11 +404,15 @@ class DocsServerManager:
             logger.info(f"Process started with PID: {self.process.pid}")
 
             # Start output logging tasks
-            asyncio.create_task(self._log_process_output(self.process.stdout, "stdout"))
-            asyncio.create_task(self._log_process_output(self.process.stderr, "stderr"))
+            self._log_stdout_task = asyncio.create_task(
+                self._log_process_output(self.process.stdout, "stdout")
+            )
+            self._log_stderr_task = asyncio.create_task(
+                self._log_process_output(self.process.stderr, "stderr")
+            )
 
             # Monitor process for unexpected termination
-            asyncio.create_task(self._monitor_process())
+            self._monitor_task = asyncio.create_task(self._monitor_process())
 
         except Exception as e:
             logger.error(f"Failed to start docs server process: {e}")

@@ -7,7 +7,11 @@ from typing import Any
 # Load .env file for local development
 from dotenv import load_dotenv
 
-load_dotenv(override=True)  # Override existing env vars with .env file values
+load_dotenv()  # Load .env file values (does not override existing env vars)
+
+
+# Define constants
+IMAS_MCP_EMBEDDING_MODEL = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 
 @dataclass
@@ -42,16 +46,16 @@ class EncoderConfig:
         """Initialize configuration with environment variables if not explicitly set."""
         # Load model name: explicit param > env var > fallback
         if self.model_name is None:
-            self.model_name = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            self.model_name = os.getenv(
+                "IMAS_MCP_EMBEDDING_MODEL", IMAS_MCP_EMBEDDING_MODEL
+            )
 
         # Load OpenRouter API configuration
         if self.openai_api_key is None:
             self.openai_api_key = os.getenv("OPENAI_API_KEY")
 
         if self.openai_base_url is None:
-            self.openai_base_url = os.getenv(
-                "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
-            )
+            self.openai_base_url = os.getenv("OPENAI_BASE_URL")
 
         # Auto-detect if we should use API embeddings based on model name
         if self.use_api_embeddings is False:  # Check against default
