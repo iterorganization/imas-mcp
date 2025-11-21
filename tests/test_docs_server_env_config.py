@@ -116,7 +116,7 @@ async def test_docs_server_env_config(mock_npx, mock_process, mock_aiohttp):
             assert env["DOCS_MCP_EMBEDDING_MODEL"] == expected_embedding_model
         else:
             # If not in .env, check default
-            assert env["DOCS_MCP_EMBEDDING_MODEL"] == "qwen/qwen3-embedding-0.6b"
+            assert env["DOCS_MCP_EMBEDDING_MODEL"] == "openai/text-embedding-3-small"
 
         if expected_store_path:
             # The manager might resolve the path to absolute, so we check if it ends with the expected path

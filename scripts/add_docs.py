@@ -32,6 +32,13 @@ load_dotenv(override=True)
     "--max-depth", default=5, type=int, help="Maximum depth for crawling (default: 5)"
 )
 @click.option(
+    "--model",
+    default=lambda: os.getenv(
+        "DOCS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+    ),
+    help="Embedding model to use (defaults to DOCS_MCP_EMBEDDING_MODEL env var or openai/text-embedding-3-small)",
+)
+@click.option(
     "--ignore-errors/--no-ignore-errors",
     default=True,
     help="Ignore errors during scraping (default: enabled)",
@@ -42,6 +49,7 @@ def add_docs(
     version: str,
     max_pages: int,
     max_depth: int,
+    model: str,
     ignore_errors: bool,
 ):
     """
@@ -70,6 +78,25 @@ def add_docs(
         click.echo("Error: URL must start with http:// or https://", err=True)
         sys.exit(1)
 
+    # Log environment configuration
+    click.echo("\n🔧 Environment Configuration:")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key:
+        masked_key = (
+            f"{openai_key[:8]}...{openai_key[-4:]}" if len(openai_key) > 12 else "***"
+        )
+        click.echo(f"   OPENAI_API_KEY: {masked_key}")
+    else:
+        click.echo("   OPENAI_API_KEY: ❌ NOT SET")
+
+    base_url = os.environ.get("OPENAI_BASE_URL", "")
+    if base_url:
+        click.echo(f"   OPENAI_BASE_URL: {base_url}")
+    else:
+        click.echo("   OPENAI_BASE_URL: (using default)")
+
+    click.echo(f"   Embedding Model: {model}\n")
+
     # Build the npx command
     cmd = ["npx", "@arabold/docs-mcp-server@latest", "scrape", library, url]
 
@@ -83,6 +110,8 @@ def add_docs(
             str(max_pages),
             "--max-depth",
             str(max_depth),
+            "--embedding-model",
+            model,
         ]
     )
 
