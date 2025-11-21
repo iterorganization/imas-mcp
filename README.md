@@ -351,6 +351,8 @@ cp env.example .env
    - **Name**: `OPENAI_API_KEY`
    - **Value**: Your OpenRouter API key
 
+> 📖 **Detailed Setup Guide:** See [.github/SECRETS_SETUP.md](.github/SECRETS_SETUP.md) for complete instructions on configuring GitHub repository secrets and troubleshooting.
+
 **Build Behavior:**
 - **With OPENAI_API_KEY**: Full documentation scraping during build
 - **Without OPENAI_API_KEY**: Documentation scraping is skipped, build continues
