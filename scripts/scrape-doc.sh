@@ -24,6 +24,13 @@ echo "Scraping $SOURCE_NAME..."
 echo "  URL: $SOURCE_URL"
 echo "  Version: $SOURCE_VERSION"
 echo "  Store: $DOCS_MCP_STORE_PATH"
+echo "  Embedding Model: $DOCS_MCP_EMBEDDING_MODEL"
+echo "  Base URL: $OPENAI_BASE_URL"
+if [ -n "$OPENAI_API_KEY" ]; then
+  echo "  API Key: ✅ SET (${#OPENAI_API_KEY} chars)"
+else
+  echo "  API Key: ❌ NOT SET"
+fi
 
 # Scrape using docs-mcp-server
 EXCLUDE_PATTERN="${6:-}"
