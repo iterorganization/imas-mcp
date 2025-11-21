@@ -127,7 +127,9 @@ class DocsProxyService:
                 raise DocsServerUnavailableError() from e
             raise DocsServerError(f"HTTP request failed: {str(e)}") from e
         except Exception as e:
-            if isinstance(e, DocsServerUnavailableError | PortAllocationError):
+            if isinstance(
+                e, DocsServerError | DocsServerUnavailableError | PortAllocationError
+            ):
                 raise
             # Enhance error messages for common issues
             error_msg = str(e)

@@ -43,9 +43,7 @@ class TestDocsFunctions:
             "library": "test-lib",
             "version": "1.0.0",
         }
-        mock_docs_manager.get_proxy_service.return_value.search_docs.return_value = (
-            mock_response
-        )
+        mock_docs_manager.proxy_search_docs.return_value = mock_response
 
         # Call the function
         result = await docs_tool.search_docs(
@@ -57,8 +55,8 @@ class TestDocsFunctions:
         assert result["query"] == mock_response["query"]
         assert result["library"] == mock_response["library"]
         assert result["version"] == mock_response["version"]
-        mock_docs_manager.get_proxy_service.return_value.search_docs.assert_called_once_with(
-            "test query", "test-lib", 5, "1.0.0"
+        mock_docs_manager.proxy_search_docs.assert_called_once_with(
+            "test query", "test-lib", "1.0.0", 5
         )
 
     @pytest.mark.asyncio
@@ -67,8 +65,8 @@ class TestDocsFunctions:
         result = await docs_tool.search_docs("")
 
         assert "error" in result
-        assert "Query cannot be empty" in result["error"]
-        assert result["validation_failed"] is True
+        assert "Validation error" in result["error"]
+        assert "query" in result["error"]
 
     @pytest.mark.asyncio
     async def test_search_docs_invalid_limit(self, docs_tool):
@@ -76,26 +74,26 @@ class TestDocsFunctions:
         result = await docs_tool.search_docs("test query", limit=25)
 
         assert "error" in result
-        assert "Limit must be between 1 and 20" in result["error"]
-        assert result["validation_failed"] is True
+        assert "Validation error" in result["error"]
+        assert "limit" in result["error"]
 
     @pytest.mark.asyncio
     async def test_search_docs_server_unavailable(self, docs_tool, mock_docs_manager):
         """Test search when docs server is unavailable."""
         from imas_mcp.services.docs_proxy_service import DocsServerUnavailableError
 
-        mock_docs_manager.get_proxy_service.return_value.search_docs.side_effect = (
-            DocsServerUnavailableError()
+        mock_docs_manager.proxy_search_docs.side_effect = DocsServerUnavailableError(
+            "Server unavailable"
         )
 
-        result = await docs_tool.search_docs("test query")
+        result = await docs_tool.search_docs("test query", library="test-lib")
 
         assert "error" in result
         # The error message can be either about server availability or missing library parameter
         assert any(
             msg in result["error"]
             for msg in [
-                "docs-mcp-server is not available",
+                "Server unavailable",
                 "Library parameter is required",
             ]
         )
@@ -105,8 +103,8 @@ class TestDocsFunctions:
         """Test search when library is not found."""
         from imas_mcp.services.docs_proxy_service import LibraryNotFoundError
 
-        mock_docs_manager.get_proxy_service.return_value.search_docs.side_effect = (
-            LibraryNotFoundError("unknown-lib", ["imas-python"])
+        mock_docs_manager.proxy_search_docs.side_effect = LibraryNotFoundError(
+            "unknown-lib", ["imas-python"]
         )
 
         result = await docs_tool.search_docs("test query", library="unknown-lib")
@@ -120,7 +118,7 @@ class TestDocsFunctions:
         """Test successful library listing."""
         # Setup mock response
         mock_libraries = ["imas-python", "numpy", "scipy"]
-        mock_docs_manager.get_proxy_service.return_value.list_available_libraries.return_value = mock_libraries
+        mock_docs_manager.proxy_list_libraries.return_value = mock_libraries
 
         # Call the function
         result = await docs_tool.list_docs()
@@ -135,30 +133,29 @@ class TestDocsFunctions:
         """Test library listing when docs server is unavailable."""
         from imas_mcp.services.docs_proxy_service import DocsServerUnavailableError
 
-        mock_docs_manager.get_proxy_service.return_value.list_available_libraries.side_effect = DocsServerUnavailableError()
+        mock_docs_manager.proxy_list_libraries.side_effect = DocsServerUnavailableError(
+            "Server unavailable"
+        )
 
         result = await docs_tool.list_docs()
 
         assert "error" in result
-        assert "docs-mcp-server is not available" in result["error"]
-        assert result["setup_instructions"] is True
+        assert "Server unavailable" in result["error"]
+        assert result["server_status"] == "unavailable"
         assert result["libraries"] == []
 
     @pytest.mark.asyncio
     async def test_list_docs_with_library_success(self, docs_tool, mock_docs_manager):
         """Test successful library version retrieval using list_docs with library parameter."""
         # Setup mock response
-        mock_versions = ["2.0.1", "2.0.0", "1.5.0"]
-        mock_docs_manager.get_proxy_service.return_value.get_library_versions.return_value = mock_versions
+        # Note: list_docs with library parameter just returns a note now
 
         # Call the function
         result = await docs_tool.list_docs("imas-python")
 
         # Verify the result
         assert result["library"] == "imas-python"
-        assert result["versions"] == mock_versions
-        assert result["latest"] == "2.0.1"
-        assert result["count"] == 3
+        assert "note" in result
         assert result["success"] is True
 
     @pytest.mark.asyncio
@@ -167,32 +164,28 @@ class TestDocsFunctions:
         result = await docs_tool.list_docs("")
 
         assert "error" in result
-        assert "Library name cannot be empty" in result["error"]
-        assert result["validation_failed"] is True
+        assert "Validation error" in result["error"]
+        assert "library" in result["error"]
 
     @pytest.mark.asyncio
     async def test_list_docs_with_library_library_not_found(
         self, docs_tool, mock_docs_manager
     ):
         """Test version retrieval when library is not found."""
-        from imas_mcp.services.docs_proxy_service import LibraryNotFoundError
-
-        mock_docs_manager.get_proxy_service.return_value.get_library_versions.side_effect = LibraryNotFoundError(
-            "unknown-lib", ["imas-python"]
-        )
+        # Note: list_docs with library parameter doesn't check existence anymore
+        # It just returns a note
 
         result = await docs_tool.list_docs("unknown-lib")
 
-        assert "error" in result
-        assert "Documentation library 'unknown-lib' not found" in result["error"]
-        assert result["library_not_found"] is True
-        assert result["available_libraries"] == ["imas-python"]
+        assert result["library"] == "unknown-lib"
+        assert "note" in result
+        assert result["success"] is True
 
     @pytest.mark.asyncio
     async def test_search_docs_library_required(self, docs_tool, mock_docs_manager):
         """Test search without library parameter returns helpful error."""
         # Mock the list_available_libraries call in the error handler
-        mock_docs_manager.get_proxy_service.return_value.list_available_libraries.return_value = [
+        mock_docs_manager.proxy_list_libraries.return_value = [
             "imas-python",
             "numpy",
         ]

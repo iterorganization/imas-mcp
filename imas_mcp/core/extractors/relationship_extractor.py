@@ -254,9 +254,10 @@ class RelationshipExtractor(BaseExtractor):
         cross_ids_relationships = {}
 
         # Initialize sentence transformer for semantic similarity
-        import os
+        from imas_mcp.embeddings.config import EncoderConfig
 
-        model_name = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        config = EncoderConfig.from_environment()
+        model_name = config.model_name
         model = SentenceTransformer(model_name)
 
         # Collect path descriptions for embedding

@@ -117,7 +117,7 @@ add-docs = "scripts.add_docs:add_docs"
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["imas_mcp"]
+packages = ["imas_mcp", "scripts"]
 exclude = ["imas_mcp/resources/.gitkeep"]
 artifacts = ["imas_mcp/resources/**"]
 
@@ -189,6 +189,7 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 # Performance optimizations
 cache_dir = ".pytest_cache"

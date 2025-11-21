@@ -73,15 +73,28 @@ class Encoder:
 
     def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
         """Embed ad-hoc texts (no caching)."""
-        model = self.get_model()
-        encode_kwargs = {
-            "convert_to_numpy": True,
-            "normalize_embeddings": self.config.normalize_embeddings,
-            "batch_size": self.config.batch_size,
-            "show_progress_bar": False,
-            **kwargs,
-        }
-        return model.encode(texts, **encode_kwargs)
+        try:
+            model = self.get_model()
+            encode_kwargs = {
+                "convert_to_numpy": True,
+                "normalize_embeddings": self.config.normalize_embeddings,
+                "batch_size": self.config.batch_size,
+                "show_progress_bar": False,
+                **kwargs,
+            }
+            return model.encode(texts, **encode_kwargs)
+        except Exception as e:
+            # Check if we are using API model and it failed
+            if self.config.use_api_embeddings and self._model:
+                self.logger.warning(
+                    f"API embedding failed: {e}. Falling back to local model."
+                )
+                self.config.use_api_embeddings = False
+                # Switch to default local model to avoid loading API model name locally
+                self.config.model_name = "all-MiniLM-L6-v2"
+                self._model = None  # Force reload
+                return self.embed_texts(texts, **kwargs)  # Retry with local model
+            raise
 
     def get_cache_info(self) -> dict[str, Any]:
         if not self._cache:
@@ -163,6 +176,8 @@ class Encoder:
                     f"Falling back to local model."
                 )
                 self.config.use_api_embeddings = False
+                # Switch to default local model to avoid loading API model name locally
+                self.config.model_name = "all-MiniLM-L6-v2"
                 self._load_local_model()
             else:
                 # Re-raise if it's already a local model failure

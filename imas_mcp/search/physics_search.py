@@ -9,7 +9,6 @@ existing semantic search infrastructure while being specialized for physics conc
 import functools
 import hashlib
 import logging
-import os
 import pickle
 import time
 from dataclasses import dataclass, field
@@ -71,7 +70,10 @@ class PhysicsSemanticSearch:
     ):
         # Load model name from env var if not provided
         if model_name is None:
-            model_name = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+            from imas_mcp.embeddings.config import EncoderConfig
+
+            config = EncoderConfig.from_environment()
+            model_name = config.model_name
         self.model_name = model_name
         self.device = device
         self.enable_cache = enable_cache
