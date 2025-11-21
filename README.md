@@ -263,11 +263,13 @@ The server includes integrated search for documentation libraries with IMAS-Pyth
 ### Available MCP Tool Functions
 
 - **`search_docs`**: Search any indexed documentation library
+
   - Parameters: `query` (required), `library` (optional), `limit` (optional, 1-20), `version` (optional)
   - Supports multiple documentation libraries
   - Returns comprehensive version and library information
 
 - **`search_imas_python_docs`**: Search specifically in IMAS-Python documentation
+
   - Parameters: `query` (required), `limit` (optional), `version` (optional)
   - Automatically uses IMAS-Python library
   - IMAS-specific search optimizations
@@ -339,6 +341,7 @@ python scripts/scrape_imas_docs.py
 For documentation scraping capabilities, you'll need an OpenRouter API key:
 
 **For Local Development:**
+
 ```bash
 # Set up environment variables (create .env file from env.example)
 cp env.example .env
@@ -346,6 +349,7 @@ cp env.example .env
 ```
 
 **For CI/CD (GitHub Actions):**
+
 1. Go to your repository settings: `Settings` → `Secrets and variables` → `Actions`
 2. Add a new repository secret:
    - **Name**: `OPENAI_API_KEY`
@@ -354,11 +358,13 @@ cp env.example .env
 > 📖 **Detailed Setup Guide:** See [.github/SECRETS_SETUP.md](.github/SECRETS_SETUP.md) for complete instructions on configuring GitHub repository secrets and troubleshooting.
 
 **Build Behavior:**
+
 - **With OPENAI_API_KEY**: Full documentation scraping during build
 - **Without OPENAI_API_KEY**: Documentation scraping is skipped, build continues
 - The container works normally regardless of scraping status
 
 **Local Docker Build:**
+
 ```bash
 # Build with API key
 docker build --build-arg OPENAI_API_KEY=your_key_here .
