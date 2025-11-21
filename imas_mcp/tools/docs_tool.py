@@ -41,7 +41,8 @@ class DocsTool:
     @validate_input(schema=SearchDocsInput)
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @mcp_tool(
-        "Search indexed documentation libraries for specific topics, APIs, or concepts. "
+        "Search documentation for IMAS, Python, and other indexed libraries. "
+        "Use this to find code examples, API references, and guides. "
         "Returns relevant documentation excerpts with URLs. "
         "Library parameter is required - use list_docs first to see available libraries. "
         "Examples: library='data-dictionary' query='time_slice equilibrium', library='imas-python' query='IDS class methods'. "
@@ -172,7 +173,7 @@ class DocsTool:
     @validate_input(schema=ListDocsInput)
     @measure_performance(include_metrics=True, slow_threshold=0.5)
     @mcp_tool(
-        "List all indexed documentation libraries available for search. "
+        "List all available documentation libraries. "
         "Returns library names that can be used with search_docs tool. "
         "Use this tool first before searching documentation to discover available libraries. "
         "Examples of returned libraries: 'data-dictionary', 'imas-python', 'testembeddings'. "
@@ -221,6 +222,10 @@ class DocsTool:
                 # Note: Library parameter currently unused - list_libraries MCP tool
                 # does not support per-library queries
                 # Return info suggesting to use search_docs for library-specific info
+
+                # Ensure server is started to get base_url
+                await self.docs_manager.ensure_started()
+
                 return {
                     "library": library,
                     "note": "Use search_docs with this library name to explore available content",

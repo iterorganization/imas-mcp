@@ -375,7 +375,7 @@ class DocsServerManager:
             env.update(
                 {
                     "DOCS_MCP_EMBEDDING_MODEL": env.get(
-                        "DOCS_MCP_EMBEDDING_MODEL", "qwen/qwen3-embedding-0.6b"
+                        "DOCS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small"
                     ),
                     "DOCS_MCP_TELEMETRY": env.get("DOCS_MCP_TELEMETRY", "false"),
                     "DOCS_MCP_STORE_PATH": str(self.store_path),

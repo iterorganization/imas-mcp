@@ -24,7 +24,7 @@ jobs:
     env:
       # Environment shared across all steps in this job
       DOCS_MCP_STORE_PATH: ./docs-data
-      DOCS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-0.6b
+      DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
@@ -56,7 +56,7 @@ jobs:
           # All source definitions in one place - easy to read and modify
           ./scripts/scrape-doc.sh "imas-python" "https://imas-python.readthedocs.io/en/stable/" "2.0.1" 500 5
           ./scripts/scrape-doc.sh "udunits" "https://docs.unidata.ucar.edu/udunits/current/" "2.2.28" 500 5
-          ./scripts/scrape-doc.sh "cf-conventions" "https://cfconventions.org/" "1.12" 1500 10 "*mailing-list-archive*"
+          ./scripts/scrape-doc.sh "cf-conventions" "https://cfconventions.org/" "1.12" 1500 10 "/mailing-list-archive/"
           
           
           echo "All documentation scraped successfully!"

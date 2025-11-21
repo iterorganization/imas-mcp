@@ -648,6 +648,9 @@ class DocsProxyService:
 
             # Parse the formatted text results from search_docs
             if "text" in result:
+                logger.info(
+                    f"Raw search results for query='{query}' library='{library}':\n{result['text'][:500]}..."
+                )
                 parsed = self._parse_search_results(result["text"])
                 parsed["query"] = query
                 parsed["library"] = library
