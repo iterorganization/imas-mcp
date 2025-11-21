@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv binary
-COPY --from=uv /uv /uvx /bin/
+COPY --from=uv /uv /bin/
 
 # Set working directory
 WORKDIR /app
@@ -153,7 +153,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @arabold/docs-mcp-server@latest
 
 # Copy Python app from builder stage
-COPY --from=builder /uv /uvx /bin/
+COPY --from=builder /bin/uv /bin/
 COPY --from=builder /app /app
 
 # Copy scraped documentation directly from build context (CI artifacts)
