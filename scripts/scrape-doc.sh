@@ -26,11 +26,18 @@ echo "  Version: $SOURCE_VERSION"
 echo "  Store: $DOCS_MCP_STORE_PATH"
 
 # Scrape using docs-mcp-server
-npx -y @arabold/docs-mcp-server@latest scrape "$SOURCE_NAME" "$SOURCE_URL" \
+EXCLUDE_PATTERN="${6:-}"
+ARGS=(scrape "$SOURCE_NAME" "$SOURCE_URL" \
     --version "$SOURCE_VERSION" \
     --max-pages "$MAX_PAGES" \
     --max-depth "$MAX_DEPTH" \
-    --ignore-errors || true
+    --ignore-errors)
+
+if [ -n "$EXCLUDE_PATTERN" ]; then
+    ARGS+=(--exclude-pattern "$EXCLUDE_PATTERN")
+fi
+
+npx -y @arabold/docs-mcp-server@latest "${ARGS[@]}" || true
 
 echo "✓ Completed scraping $SOURCE_NAME"
 
