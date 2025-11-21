@@ -12,7 +12,7 @@ MAX_DEPTH="$5"
 
 # Configuration (provided by environment or defaults for local use)
 export DOCS_MCP_STORE_PATH="${DOCS_MCP_STORE_PATH:-./docs-data}"
-export DOCS_MCP_EMBEDDING_MODEL="${DOCS_MCP_EMBEDDING_MODEL:-qwen/qwen3-embedding-0.6b}"
+export DOCS_MCP_EMBEDDING_MODEL="${DOCS_MCP_EMBEDDING_MODEL:-openai/text-embedding-3-small}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://openrouter.ai/api/v1}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 export HF_HUB_DISABLE_SYMLINKS_WARNING="${HF_HUB_DISABLE_SYMLINKS_WARNING:-1}"
