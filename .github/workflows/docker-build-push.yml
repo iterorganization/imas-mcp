@@ -54,9 +54,9 @@ jobs:
           chmod +x scripts/scrape-doc.sh
           
           # All source definitions in one place - easy to read and modify
-          ./scripts/scrape-doc.sh "imas-python" "https://imas-python.readthedocs.io/en/stable/" "2.0.1" 250 5
-          ./scripts/scrape-doc.sh "udunits" "https://docs.unidata.ucar.edu/udunits/current/" "2.2.28" 250 5
-          ./scripts/scrape-doc.sh "cf-conventions" "https://cfconventions.org/" "1.12" 1500 10
+          ./scripts/scrape-doc.sh "imas-python" "https://imas-python.readthedocs.io/en/stable/" "2.0.1" 500 5
+          ./scripts/scrape-doc.sh "udunits" "https://docs.unidata.ucar.edu/udunits/current/" "2.2.28" 500 5
+          ./scripts/scrape-doc.sh "cf-conventions" "https://cfconventions.org/" "1.12" 1500 10 "*mailing-list-archive*"
           
           
           echo "All documentation scraped successfully!"
@@ -178,6 +178,7 @@ jobs:
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}
+          secrets: |
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           cache-from: |
             type=gha,scope=build-${{ github.ref_name }}
