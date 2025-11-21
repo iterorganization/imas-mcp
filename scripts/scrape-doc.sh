@@ -27,7 +27,6 @@ echo "  Store: $DOCS_MCP_STORE_PATH"
 
 # Scrape using docs-mcp-server
 npx -y @arabold/docs-mcp-server@latest scrape "$SOURCE_NAME" "$SOURCE_URL" \
-    --store-path "$DOCS_MCP_STORE_PATH" \
     --version "$SOURCE_VERSION" \
     --max-pages "$MAX_PAGES" \
     --max-depth "$MAX_DEPTH" \
