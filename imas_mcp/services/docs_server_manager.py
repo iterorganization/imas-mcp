@@ -425,23 +425,55 @@ class DocsServerManager:
     async def _wait_for_server_ready(self, max_wait: int = 60) -> None:
         """Wait for the server to be ready to accept connections."""
         start_time = time.time()
+        last_error = None
+        attempt_count = 0
+
         while time.time() - start_time < max_wait:
+            attempt_count += 1
+
             if not self.is_running:
-                raise DocsServerError("Process terminated during startup")
+                # Collect any available stderr output for debugging
+                error_msg = "Process terminated during startup"
+                if self.process and hasattr(self.process, "returncode"):
+                    error_msg += f" (exit code: {self.process.returncode})"
+                raise DocsServerError(error_msg)
 
             try:
                 timeout = aiohttp.ClientTimeout(total=self.timeout)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(f"{self.base_url}/api/ping") as response:
                         if response.status == 200:
-                            logger.info("Docs server ready")
+                            logger.info(
+                                f"Docs server ready after {attempt_count} attempts ({time.time() - start_time:.1f}s)"
+                            )
                             return
-            except Exception:
-                pass
+                        else:
+                            last_error = f"HTTP {response.status}"
+            except Exception as e:
+                last_error = str(e)
+                # Log every 10th attempt to avoid spamming logs
+                if attempt_count % 10 == 0:
+                    logger.debug(
+                        f"Attempt {attempt_count}: Server not ready yet ({last_error})"
+                    )
 
             await asyncio.sleep(1)
 
-        raise DocsServerError(f"Server did not become ready within {max_wait} seconds")
+        # Provide detailed error message on timeout
+        error_parts = [f"Server did not become ready within {max_wait} seconds"]
+        if last_error:
+            error_parts.append(f"Last error: {last_error}")
+        error_parts.append(f"Attempts made: {attempt_count}")
+
+        # Check if process is still running
+        if self.is_running:
+            error_parts.append(
+                "Process is still running but not responding to health checks"
+            )
+        else:
+            error_parts.append("Process has terminated")
+
+        raise DocsServerError(". ".join(error_parts))
 
     async def _get_libraries(self) -> list[dict[str, Any]]:
         """Get list of available libraries and their versions."""
