@@ -21,6 +21,8 @@ env:
 jobs:
   scrape-docs:
     runs-on: ubuntu-latest
+    # Skip documentation scraping on PRs since secrets aren't available
+    if: github.event_name != 'pull_request'
     env:
       # Environment shared across all steps in this job
       DOCS_MCP_STORE_PATH: ./docs-data
@@ -51,7 +53,7 @@ jobs:
       - name: Scrape all documentation sources
         if: steps.cache-docs.outputs.cache-hit != 'true'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
           OPENAI_BASE_URL: https://openrouter.ai/api/v1
           DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
           DOCS_MCP_STORE_PATH: ./docs-data
@@ -77,6 +79,8 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: scrape-docs
+    # Skip build on PRs since we need docs and secrets
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         transport:
