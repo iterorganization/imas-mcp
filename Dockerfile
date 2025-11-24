@@ -36,7 +36,6 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    # OpenRouter configuration for embeddings
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
     IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 

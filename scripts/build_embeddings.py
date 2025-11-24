@@ -8,13 +8,14 @@ sentence transformer embeddings using the core embedding management system.
 
 import logging
 import sys
-from pathlib import Path
 
 import click
 from dotenv import load_dotenv
 
+from imas_mcp import dd_version
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.document_store import DocumentStore
 
 # Load .env file with override to ensure local .env values take precedence
@@ -232,13 +233,11 @@ def build_embeddings(
         # Generate cache key using centralized config method
         cache_key = config.generate_cache_key()
 
-        # Get source data directory for validation
+        # Get source data directory for validation using ResourcePathAccessor
         source_data_dir = None
         try:
-            import importlib.resources as resources
-
-            resources_dir = Path(str(resources.files("imas_mcp") / "resources"))
-            source_data_dir = resources_dir / "schemas"
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            source_data_dir = path_accessor.schemas_dir
         except Exception:
             pass
 
