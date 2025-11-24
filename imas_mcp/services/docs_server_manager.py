@@ -428,6 +428,9 @@ class DocsServerManager:
         last_error = None
         attempt_count = 0
 
+        # Use exponential backoff: 0.5s, 0.5s, 1s, 1s, 2s, 2s, 2s...
+        wait_time = 0.5
+
         while time.time() - start_time < max_wait:
             attempt_count += 1
 
@@ -439,7 +442,8 @@ class DocsServerManager:
                 raise DocsServerError(error_msg)
 
             try:
-                timeout = aiohttp.ClientTimeout(total=self.timeout)
+                # Use shorter timeout for individual attempts
+                timeout = aiohttp.ClientTimeout(total=min(5, self.timeout))
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(f"{self.base_url}/api/ping") as response:
                         if response.status == 200:
@@ -457,7 +461,9 @@ class DocsServerManager:
                         f"Attempt {attempt_count}: Server not ready yet ({last_error})"
                     )
 
-            await asyncio.sleep(1)
+            # Exponential backoff with cap at 2 seconds
+            await asyncio.sleep(wait_time)
+            wait_time = min(wait_time * 1.5, 2.0)
 
         # Provide detailed error message on timeout
         error_parts = [f"Server did not become ready within {max_wait} seconds"]
