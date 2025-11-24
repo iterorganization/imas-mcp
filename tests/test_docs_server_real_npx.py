@@ -2,14 +2,36 @@ import asyncio
 import os
 import random
 import shutil
+import subprocess
 
 import pytest
 
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 
+def npx_is_functional() -> bool:
+    """Check if npx can actually execute, not just if it exists in PATH.
+
+    Returns:
+        True if npx --version succeeds, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ["npx", "--version"],
+            capture_output=True,
+            timeout=5,
+            text=True,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 @pytest.mark.asyncio
-@pytest.mark.skipif(shutil.which("npx") is None, reason="npx not available")
+@pytest.mark.skipif(
+    not npx_is_functional(),
+    reason="npx not functional (may exist but cannot execute)",
+)
 @pytest.mark.skipif(
     not os.getenv("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY required for docs-mcp-server startup",
