@@ -335,12 +335,11 @@ def create_timeout_handler(timeout_seconds: float) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            import asyncio
+            import anyio
 
             try:
-                return await asyncio.wait_for(
-                    func(*args, **kwargs), timeout=timeout_seconds
-                )
+                with anyio.fail_after(timeout_seconds):
+                    return await func(*args, **kwargs)
             except TimeoutError as e:
                 query = kwargs.get("query", "")
                 tool_name = func.__name__ if hasattr(func, "__name__") else "unknown"

@@ -8,8 +8,8 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@8b28b0d89f053b511f9e6153af3305d2fd180e1c",
-    "imas-data-dictionaries>=4.0.0",
+    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@4.1.0",
+    "imas-data-dictionaries>=4.1.0",
 ]
 build-backend = "hatchling.build"
 
@@ -48,21 +48,24 @@ dependencies = [
     "pint>=0.24.4,<0.25.0",
     "nest-asyncio>=1.5.0,<2.0.0",
     "click>=8.0.0,<9.0.0",
+    "python-dotenv>=1.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
     "numpy>=2.3.1",
-    "sentence-transformers>=5.0.0",
     "huggingface-hub[hf_xet]>=0.33.4",
     "cachetools>=5.3.0,<6.0.0",
-    "imas-data-dictionaries>=4.0.0",
-]
-
-[project.optional-dependencies]
-http = [
+    "imas-data-dictionaries>=4.1.0",
     "fastapi>=0.100.0,<1.0.0",
     "starlette>=0.37.0,<1.0.0",
     "uvicorn>=0.30.0,<1.0.0",
+    "aiohttp>=3.8.0,<4.0.0",
+    "anyio>=4.0.0,<5.0.0",
+    "scikit-learn>=1.7.2",
+    "psutil>=6.1.1",
 ]
+
+[project.optional-dependencies]
+transformers = ["sentence-transformers>=5.0.0"]
 test = [
     "pytest>=8.3.5,<9.0.0",
     "pytest-cov>=6.1.1,<7.0.0",
@@ -72,7 +75,7 @@ test = [
     "pytest-timeout>=2.1.0,<3.0.0",
     "coverage>=7.0.0",
 ]
-bench = ["asv[virtualenv]>=0.6.0,<1.0.0"]
+bench = ["asv>=0.6.0,<1.0.0"]
 
 [dependency-groups]
 dev = [
@@ -82,6 +85,9 @@ dev = [
     "mypy>=1.15.0",
     "pre-commit>=4.2.0",
     "tqdm-stubs>=0.2.1",
+    # Async testing and utilities
+    "anyio>=4.0.0",
+    "pytest-httpserver>=1.0.0",
     # Interactive development
     "ipython>=9.2.0",
     "ipykernel>=6.29.5",
@@ -90,6 +96,7 @@ dev = [
     "rich>=13.7.0,<14.0.0",
     "matplotlib>=3.10.5",
     "seaborn>=0.13.2",
+    "qrcode[pil]>=8.2",
 ]
 
 [project.urls]
@@ -100,6 +107,7 @@ Documentation = "https://github.com/iterorganization/imas-mcp#readme"
 
 [project.scripts]
 imas-mcp = "imas_mcp.cli:main"
+docs = "scripts.docs:main"
 dd-version = "scripts.dd_version:main"
 build-schemas = "scripts.build_schemas:build_schemas"
 build-relationships = "scripts.build_relationships:build_relationships"
@@ -111,7 +119,7 @@ build-mermaid = "scripts.build_mermaid:build_mermaid"
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
-packages = ["imas_mcp"]
+packages = ["imas_mcp", "scripts"]
 exclude = ["imas_mcp/resources/.gitkeep"]
 artifacts = ["imas_mcp/resources/**"]
 
@@ -183,6 +191,7 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 # Performance optimizations
 cache_dir = ".pytest_cache"

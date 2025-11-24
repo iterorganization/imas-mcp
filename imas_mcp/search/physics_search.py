@@ -6,6 +6,7 @@ phenomena, units, and concepts using sentence transformers. It integrates with t
 existing semantic search infrastructure while being specialized for physics concepts.
 """
 
+import functools
 import hashlib
 import logging
 import pickle
@@ -14,11 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
+from imas_mcp import dd_version
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.core.physics_accessors import DomainAccessor, UnitAccessor
 from imas_mcp.core.physics_domains import DomainCharacteristics
+from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.models.physics_models import (
     EmbeddingDocument,
     SemanticResult,
@@ -61,25 +63,29 @@ class PhysicsSemanticSearch:
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str | None = None,
         device: str = "cpu",
         enable_cache: bool = True,
         cache_dir: Path | None = None,
     ):
+        # Load model name from env var if not provided
+        if model_name is None:
+            from imas_mcp.embeddings.config import EncoderConfig
+
+            config = EncoderConfig.from_environment()
+            model_name = config.model_name
         self.model_name = model_name
         self.device = device
         self.enable_cache = enable_cache
         self.cache_dir = cache_dir or self._get_default_cache_dir()
 
-        self._model: SentenceTransformer | None = None
+        self._encoder: Encoder | None = None
         self._cache: PhysicsEmbeddingCache | None = None
         self._domain_accessor = DomainAccessor()
 
     def _get_default_cache_dir(self) -> Path:
         """Get default cache directory."""
         # Use the same embeddings directory as the main semantic search system
-        from imas_mcp import dd_version
-
         path_accessor = ResourcePathAccessor(dd_version=dd_version)
         return path_accessor.embeddings_dir
 
@@ -153,38 +159,21 @@ class PhysicsSemanticSearch:
         except Exception as e:
             logger.error(f"Failed to save physics embeddings cache: {e}")
 
-    def _load_model(self) -> None:
-        """Load sentence transformer model with optimized loading pattern."""
-        if self._model is not None:
-            return
+    def _get_encoder(self) -> Encoder:
+        """Get or create Encoder instance for embeddings."""
+        if self._encoder is None:
+            from imas_mcp.embeddings.config import EncoderConfig
 
-        logger.info(f"Loading sentence transformer model: {self.model_name}")
-
-        # Get embeddings directory for model cache (same pattern as DD semantic search)
-        from imas_mcp import dd_version
-
-        path_accessor = ResourcePathAccessor(dd_version=dd_version)
-        cache_folder = str(path_accessor.embeddings_dir / "models")
-
-        # Try to load with local_files_only first for speed (like DD semantic search)
-        try:
-            self._model = SentenceTransformer(
-                self.model_name,
+            config = EncoderConfig(
+                model_name=self.model_name,
                 device=self.device,
-                cache_folder=cache_folder,
-                local_files_only=True,  # Prevent internet downloads
+                normalize_embeddings=True,
+                enable_cache=False,  # Physics search has its own caching
+                use_rich=False,
             )
-            logger.info(f"Loaded model {self.model_name} from cache")
-        except Exception:
-            # If local loading fails, try downloading
-            logger.info(f"Model not in cache, downloading {self.model_name}...")
-            self._model = SentenceTransformer(
-                self.model_name,
-                device=self.device,
-                cache_folder=cache_folder,
-                local_files_only=False,  # Allow downloads
-            )
-            logger.info(f"Downloaded and loaded model {self.model_name}")
+            self._encoder = Encoder(config)
+            logger.info(f"Initialized Encoder with model: {self.model_name}")
+        return self._encoder
 
     def _create_physics_documents(self) -> list[EmbeddingDocument]:
         """Create embedding documents from physics domain data."""
@@ -389,21 +378,17 @@ class PhysicsSemanticSearch:
             return
 
         logger.info("Building physics concept embeddings...")
-        self._load_model()
-
-        if self._model is None:
-            raise RuntimeError("Failed to load sentence transformer model")
+        encoder = self._get_encoder()
 
         # Create documents
         documents = self._create_physics_documents()
 
-        # Generate embeddings
+        # Generate embeddings using centralized Encoder
         content_texts = [doc.content for doc in documents]
-        embeddings = self._model.encode(
+        embeddings = encoder.embed_texts(
             content_texts,
             batch_size=32,
             show_progress_bar=True,
-            normalize_embeddings=True,
         )
 
         # Create cache
@@ -445,13 +430,10 @@ class PhysicsSemanticSearch:
         if self._cache is None or self._cache.size == 0:
             return []
 
-        self._load_model()
+        encoder = self._get_encoder()
 
-        if self._model is None:
-            raise RuntimeError("Failed to load sentence transformer model")
-
-        # Generate query embedding
-        query_embedding = self._model.encode([query], normalize_embeddings=True)[0]
+        # Generate query embedding using centralized Encoder
+        query_embedding = encoder.embed_texts([query])[0]
 
         # Calculate similarities
         similarities = np.dot(self._cache.embeddings, query_embedding)
@@ -536,16 +518,10 @@ class PhysicsSemanticSearch:
             return None
 
 
-# Global instance for easy access
-_physics_search = None
-
-
+@functools.cache
 def get_physics_search() -> PhysicsSemanticSearch:
-    """Get global physics semantic search instance."""
-    global _physics_search
-    if _physics_search is None:
-        _physics_search = PhysicsSemanticSearch()
-    return _physics_search
+    """Get physics semantic search instance with lazy initialization and caching."""
+    return PhysicsSemanticSearch()
 
 
 def search_physics_concepts(

@@ -5,7 +5,6 @@ This module handles the AI-assisted extraction of physics quantities
 from IMAS data dictionary JSON files.
 """
 
-import asyncio
 import json
 import logging
 from datetime import datetime
@@ -446,18 +445,19 @@ class BatchProcessor:
         Returns:
             List of ExtractionResult objects
         """
-        semaphore = asyncio.Semaphore(max_concurrent)
+        import anyio
+
+        semaphore = anyio.Semaphore(max_concurrent)
 
         async def process_single(ids_name: str) -> ExtractionResult:
             async with semaphore:
                 # Run in thread pool to avoid blocking
-                loop = asyncio.get_event_loop()
-                return await loop.run_in_executor(
-                    None, self.process_ids, ids_name, paths_per_ids
+                return await anyio.to_thread.run_sync(
+                    self.process_ids, ids_name, paths_per_ids
                 )
 
         tasks = [process_single(ids_name) for ids_name in ids_list]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await anyio.gather(*tasks, return_exceptions=True)
 
         # Handle exceptions
         final_results = []

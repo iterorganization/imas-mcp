@@ -16,10 +16,24 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
-        imas-dd-version: ["3.42.2", "4.0.0"]
+        imas-dd-version: ["3.42.2", "4.1.0"]
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify Node.js and npm installation
+        run: |
+          node --version
+          npm --version
+          npx --version
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -30,7 +44,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test
+        run: uv sync --extra test --extra transformers
         env:
           HATCH_BUILD_NO_HOOKS: true
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
@@ -50,6 +64,8 @@ jobs:
         run: uv run pytest --cov=imas_mcp --cov-report=xml --cov-report=term-missing
         env:
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4

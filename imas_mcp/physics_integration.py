@@ -20,7 +20,6 @@ from imas_mcp.models.physics_models import (
     UnitSuggestion,
 )
 from imas_mcp.search.physics_search import (
-    get_physics_search,
     search_physics_concepts,
 )
 
@@ -246,19 +245,3 @@ def get_unit_physics_context(unit: str) -> UnitContext:
         category=category,
         physics_domains=physics_domains,
     )
-
-
-# Initialize embeddings on import (non-blocking)
-def _initialize_physics_embeddings():
-    """Initialize physics embeddings in background."""
-    try:
-        physics_search_engine = get_physics_search()
-        # Try to load cache, build if needed
-        physics_search_engine.build_embeddings(force_rebuild=False)
-    except Exception as e:
-        # Don't fail import if embeddings can't be built
-        logger.warning(f"Could not initialize physics embeddings: {e}")
-
-
-# Initialize embeddings when module is imported
-_initialize_physics_embeddings()

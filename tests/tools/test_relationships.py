@@ -10,6 +10,7 @@ This module tests all aspects of the relationship tool including:
 """
 
 import asyncio
+import logging
 
 import pytest
 
@@ -21,6 +22,23 @@ from imas_mcp.physics.relationship_engine import (
 )
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.tools.relationships_tool import RelationshipsTool
+from tests.conftest import STANDARD_TEST_IDS_SET
+
+# Suppress expected warnings in test environment where the relationship extractor
+# loads real JSON files but only has embeddings for mocked documents
+logging.getLogger("imas_mcp.relationships.extractor").setLevel(logging.ERROR)
+
+
+@pytest.fixture(scope="function")
+def document_store():
+    """Provide a fresh DocumentStore instance for each test."""
+    return DocumentStore(ids_set=STANDARD_TEST_IDS_SET)
+
+
+@pytest.fixture(scope="function")
+def relationships_tool(document_store):
+    """Provide a fresh RelationshipsTool instance for each test."""
+    return RelationshipsTool(document_store)
 
 
 class TestRelationshipStrength:
@@ -98,46 +116,31 @@ class TestRelationshipsTool:
     """Test the main relationships tool functionality."""
 
     @pytest.mark.asyncio
-    async def test_tool_instantiation(self):
+    async def test_tool_instantiation(self, relationships_tool):
         """Test that the tool can be instantiated."""
-        document_store = DocumentStore()
-        tool = RelationshipsTool(document_store)
-
-        assert tool is not None
-        assert hasattr(tool, "explore_relationships")
+        assert relationships_tool is not None
+        assert hasattr(relationships_tool, "explore_relationships")
 
     @pytest.mark.asyncio
-    async def test_basic_relationship_discovery(self):
+    async def test_basic_relationship_discovery(self, relationships_tool):
         """Test basic relationship discovery functionality."""
-        document_store = DocumentStore()
-        tool = RelationshipsTool(document_store)
-
         # Test with a real physics path
-        try:
-            result = await tool.explore_relationships(
-                path="core_profiles/profiles_1d/electrons/density",
-                relationship_type=RelationshipType.ALL,
-                max_depth=1,
-            )
+        result = await relationships_tool.explore_relationships(
+            path="core_profiles/profiles_1d/electrons/density",
+            relationship_type=RelationshipType.ALL,
+            max_depth=1,
+        )
 
-            # Should return a valid result
-            assert result is not None
-            assert hasattr(result, "connections")
-            assert hasattr(result, "nodes")
+        # Should return a valid RelationshipResult
+        assert result is not None
+        assert hasattr(result, "connections")
+        assert hasattr(result, "relationship_insights")
+        assert hasattr(result, "physics_analysis")
 
-            # Basic structure validation
-            if hasattr(result, "connections"):
-                assert isinstance(result.connections, dict)
-
-            if hasattr(result, "nodes"):
-                assert isinstance(result.nodes, list)
-
-        except Exception as e:
-            # If it fails, it should be a reasonable error
-            assert any(
-                keyword in str(e).lower()
-                for keyword in ["path", "not found", "timeout", "connection"]
-            )
+        # Basic structure validation
+        assert isinstance(result.connections, dict)
+        assert isinstance(result.relationship_insights, dict)
+        assert isinstance(result.physics_analysis, dict)
 
     def test_relationship_types_available(self):
         """Test that all expected relationship types are available."""
@@ -169,16 +172,13 @@ class TestRelationshipWorkflow:
     """Test end-to-end relationship workflow."""
 
     @pytest.mark.asyncio
-    async def test_full_workflow(self):
+    async def test_full_workflow(self, relationships_tool):
         """Test complete relationship discovery workflow."""
-        document_store = DocumentStore()
-        tool = RelationshipsTool(document_store)
-
         # Use a basic path that should work
         test_path = "core_profiles/profiles_1d/electrons/density"
 
         try:
-            result = await tool.explore_relationships(
+            result = await relationships_tool.explore_relationships(
                 path=test_path, relationship_type=RelationshipType.ALL, max_depth=1
             )
 

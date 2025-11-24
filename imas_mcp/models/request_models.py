@@ -307,3 +307,172 @@ class ExportPhysicsDomainInput(BaseInputSchema):
             )
 
         return v
+
+
+class ListFormat(str, Enum):
+    """Output format for list_imas_paths tool."""
+
+    YAML = "yaml"
+    LIST = "list"
+    JSON = "json"
+    DICT = "dict"
+
+
+class ListPathsInput(BaseInputSchema):
+    """Input validation schema for list_imas_paths tool."""
+
+    paths: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Space-delimited IDS names or path prefixes",
+    )
+    format: ListFormat = Field(
+        default=ListFormat.YAML,
+        description="Output format: yaml (indented tree, default, most token-efficient), list (array of path strings), json (JSON string), or dict (Python dictionary)",
+    )
+    leaf_only: bool = Field(
+        default=False,
+        description="Return only leaf nodes (actual data paths)",
+    )
+    include_ids_prefix: bool = Field(
+        default=True,
+        description="Include IDS name in paths",
+    )
+    max_paths: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum paths per IDS/prefix (defaults based on format)",
+    )
+
+    @field_validator("paths")
+    @classmethod
+    def validate_paths(cls, v):
+        """Validate paths format."""
+        v = v.strip()
+        if not v:
+            raise ValueError("Paths cannot be empty")
+        return v
+
+    @field_validator("max_paths")
+    @classmethod
+    def validate_max_paths(cls, v, info):
+        """Validate max_paths based on format with helpful error messages."""
+        format_val = info.data.get("format", ListFormat.JSON)
+
+        # Format-specific limits and defaults based on token analysis
+        # YAML is ~2.7x more efficient than list due to shared prefixes
+        limits = {
+            ListFormat.DICT: 5000,  # Native Python dict, most efficient
+            ListFormat.JSON: 5000,  # 30-40% token reduction, robust parsing
+            ListFormat.YAML: 5000,  # ~2.7x token reduction (172% savings), clean indentation
+            ListFormat.LIST: 3000,  # Baseline efficiency (full path strings)
+        }
+
+        # Set default based on format if not provided
+        if v is None:
+            v = limits.get(format_val, 3000)
+
+        max_limit = limits.get(format_val, 3000)
+
+        if v > max_limit:
+            # Build helpful error message
+            suggestions = []
+
+            # Suggest lower limit
+            suggestions.append(f"reduce max_paths to {max_limit} or less")
+
+            # Suggest more efficient format
+            if format_val == ListFormat.LIST:
+                suggestions.append(
+                    "use format='yaml' for better efficiency (~2.7x fewer tokens, limit: 5000)"
+                )
+
+            # Suggest filtering by prefix
+            suggestions.append(
+                "filter by path prefix (e.g., 'equilibrium/time_slice' instead of 'equilibrium')"
+            )
+
+            raise ValueError(
+                f"max_paths={v} exceeds {format_val.value} format limit of {max_limit}. "
+                f"Options: {' OR '.join(suggestions)}"
+            )
+
+        return v
+
+
+# Documentation search tool input schemas
+
+
+class SearchDocsInput(BaseInputSchema):
+    """Input validation schema for search_docs tool."""
+
+    query: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Documentation search query",
+    )
+    library: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Library name to search (required)",
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum number of results to return (1-20)",
+    )
+    version: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Specific library version to search",
+    )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v):
+        """Validate search query."""
+        v = v.strip()
+        if not v:
+            raise ValueError("Query cannot be empty")
+        return v
+
+    @field_validator("library")
+    @classmethod
+    def validate_library(cls, v):
+        """Validate library name."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Library name cannot be empty")
+        return v
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, v):
+        """Validate version string."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                return None
+        return v
+
+
+class ListDocsInput(BaseInputSchema):
+    """Input validation schema for list_docs tool."""
+
+    library: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Specific library name to get versions for (optional)",
+    )
+
+    @field_validator("library")
+    @classmethod
+    def validate_library(cls, v):
+        """Validate library name."""
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Library name cannot be empty")
+        return v

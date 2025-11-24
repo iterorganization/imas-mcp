@@ -107,8 +107,8 @@ class EmbeddingClusterer:
         self.logger.info(f"Clustering {len(cross_candidates)} cross-IDS candidates")
 
         # DEBUG: Log the exact parameters being used
-        self.logger.info(
-            f"DEBUG: Cross-IDS DBSCAN parameters - eps={self.config.cross_ids_eps}, min_samples={self.config.cross_ids_min_samples}, metric=cosine"
+        self.logger.debug(
+            f"Cross-IDS DBSCAN parameters - eps={self.config.cross_ids_eps}, min_samples={self.config.cross_ids_min_samples}, metric=cosine"
         )
 
         # Cluster cross-IDS paths with stricter parameters
@@ -125,8 +125,8 @@ class EmbeddingClusterer:
         cluster_count_before_validation = len(unique_labels) - (
             1 if -1 in unique_labels else 0
         )
-        self.logger.info(
-            f"DEBUG: Cross-IDS raw clustering results - {cluster_count_before_validation} clusters, {noise_count} noise points"
+        self.logger.debug(
+            f"Cross-IDS raw clustering results - {cluster_count_before_validation} clusters, {noise_count} noise points"
         )
 
         # Build clusters - ONLY accept clusters that actually span multiple IDS
@@ -206,8 +206,8 @@ class EmbeddingClusterer:
 
             # DEBUG: Log the exact parameters being used for this IDS (only for first few)
             if len(clusters) < 5:  # Only log first few IDS to avoid spam
-                self.logger.info(
-                    f"DEBUG: Intra-IDS DBSCAN for {ids_name} - eps={self.config.intra_ids_eps}, min_samples={self.config.intra_ids_min_samples}, metric=cosine, paths={len(ids_paths)}"
+                self.logger.debug(
+                    f"Intra-IDS DBSCAN for {ids_name} - eps={self.config.intra_ids_eps}, min_samples={self.config.intra_ids_min_samples}, metric=cosine, paths={len(ids_paths)}"
                 )
 
             # Cluster this IDS
@@ -225,8 +225,8 @@ class EmbeddingClusterer:
                 cluster_count_for_ids = len(unique_labels) - (
                     1 if -1 in unique_labels else 0
                 )
-                self.logger.info(
-                    f"DEBUG: Intra-IDS {ids_name} clustering results - {cluster_count_for_ids} clusters, {noise_count} noise points"
+                self.logger.debug(
+                    f"Intra-IDS {ids_name} clustering results - {cluster_count_for_ids} clusters, {noise_count} noise points"
                 )
 
             # Create cluster objects
