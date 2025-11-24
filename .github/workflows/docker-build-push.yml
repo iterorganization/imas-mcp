@@ -18,6 +18,7 @@ env:
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
   IMAS_DD_VERSION: "4.1.0"
+  OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
 jobs:
   build-docs-resources:
@@ -29,7 +30,6 @@ jobs:
       DOCS_MCP_STORE_PATH: ./docs-data
       DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
     steps:
       - name: Checkout repository
@@ -94,9 +94,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: https://openrouter.ai/api/v1
       IMAS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-4b
-      IMAS_DD_VERSION: ${{ env.IMAS_DD_VERSION }}
 
     steps:
       - name: Checkout repository
