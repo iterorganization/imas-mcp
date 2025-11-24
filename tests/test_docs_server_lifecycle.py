@@ -9,6 +9,7 @@ and HTTP client communication.
 import asyncio
 import json
 import logging
+import os
 import signal
 import tempfile
 from pathlib import Path
@@ -29,7 +30,11 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 @pytest.fixture
-def mock_npx():
+def mock_npx(monkeypatch):
+    """Mock npx executable and ensure OPENAI_API_KEY is set for mocked tests."""
+    # Set a fake API key if not present to allow mocked tests to run
+    if not os.getenv("OPENAI_API_KEY"):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-test-key-for-mocked-tests")
     with patch("shutil.which", return_value="/usr/bin/npx"):
         yield
 
