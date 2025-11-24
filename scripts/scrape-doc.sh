@@ -37,7 +37,7 @@ if [ -n "$EXCLUDE_PATTERN" ]; then
     ARGS+=(--exclude-pattern "$EXCLUDE_PATTERN")
 fi
 
-npx -y @arabold/docs-mcp-server@1.29.0 "${ARGS[@]}" || true
+npx -y @arabold/docs-mcp-server@latest "${ARGS[@]}" || true
 
 echo "✓ Completed scraping $SOURCE_NAME"
 
