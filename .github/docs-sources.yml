@@ -1,0 +1,38 @@
+# Documentation sources configuration for mcp-docs-server
+# This file defines all documentation sources to scrape and embed
+# Used by: .github/workflows/docker-build-push.yml
+
+# Global embedding model configuration
+embedding_model: openai/text-embedding-3-small
+
+# Documentation sources
+# Each source corresponds to a call to: npx @arabold/docs-mcp-server@1.29.0 scrape
+sources:
+  - name: imas-python
+    url: https://imas-python.readthedocs.io/en/stable/
+    version: 2.0.1
+    max_pages: 500
+    max_depth: 5
+    exclude_patterns: []
+
+  - name: udunits
+    url: https://docs.unidata.ucar.edu/udunits/2.2.28/
+    version: 2.2.28
+    max_pages: 500
+    max_depth: 5
+    exclude_patterns: []
+
+  - name: cf-conventions
+    url: https://cfconventions.org/
+    version: 1.12
+    max_pages: 1500
+    max_depth: 10
+    exclude_patterns:
+      - /mailing-list-archive/
+
+  - name: fair-mast 
+    url: https://mastapp.site/
+    version: 1.0
+    max_pages: 500
+    max_depth: 3
+    exclude_patterns: []
