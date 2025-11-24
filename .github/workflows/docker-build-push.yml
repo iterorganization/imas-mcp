@@ -17,6 +17,7 @@ env:
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
+  IMAS_DD_VERSION: "4.1.0"
 
 jobs:
   scrape-docs:
@@ -131,6 +132,31 @@ jobs:
           echo "Git status:"
           git status --porcelain
 
+      - name: Cache IMAS embeddings
+        id: cache-embeddings
+        uses: actions/cache@v4
+        with:
+          path: imas_mcp/resources/imas_data_dictionary/
+          key: imas-embeddings-${{ github.sha }}
+          restore-keys: |
+            imas-embeddings-
+
+      - name: Build IMAS embeddings
+        if: steps.cache-embeddings.outputs.cache-hit != 'true'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
+          IMAS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-4b
+          IMAS_DD_VERSION: ${{ env.IMAS_DD_VERSION }}
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "Building IMAS embeddings..."
+          uv sync --no-dev
+          uv run build-embeddings --no-rich
+          echo "✓ Embeddings built successfully"
+          ls -lh imas_mcp/resources/imas_data_dictionary/
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -199,7 +225,7 @@ jobs:
           build-args: |
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
-            IMAS_DD_VERSION=4.0.0
+            IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}
