@@ -85,11 +85,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi
 
 # Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
+# This includes schemas, embeddings, relationships, and mermaid graphs built in CI
 # Git sparse checkout would have created the imas_mcp directory but without the generated resources
 # This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
 COPY imas_mcp/resources/ /app/imas_mcp/resources/
 
-# Build schema data
+# Build schema data (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building schema data..." && \
     if [ -n "${IDS_FILTER}" ]; then \
@@ -101,7 +102,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Schema data ready"
 
-# Build embeddings (conditional on IDS_FILTER)
+# Build embeddings (will skip if cache is valid from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
     export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY) && \
