@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+try:
+    from sentence_transformers import SentenceTransformer
+
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    HAS_SENTENCE_TRANSFORMERS = False
+    SentenceTransformer = None  # type: ignore
 
 from imas_mcp import dd_version
 from imas_mcp.core.progress_monitor import create_progress_monitor
@@ -17,6 +24,15 @@ from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 from .cache import EmbeddingCache
 from .config import EncoderConfig
+
+# Import OpenRouter client for hybrid support
+try:
+    from .openrouter_client import OpenRouterClient
+
+    HAS_OPENROUTER_CLIENT = True
+except ImportError:
+    HAS_OPENROUTER_CLIENT = False
+    OpenRouterClient = None  # type: ignore
 
 
 class Encoder:
@@ -64,15 +80,28 @@ class Encoder:
 
     def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
         """Embed ad-hoc texts (no caching)."""
-        model = self.get_model()
-        encode_kwargs = {
-            "convert_to_numpy": True,
-            "normalize_embeddings": self.config.normalize_embeddings,
-            "batch_size": self.config.batch_size,
-            "show_progress_bar": False,
-            **kwargs,
-        }
-        return model.encode(texts, **encode_kwargs)
+        try:
+            model = self.get_model()
+            encode_kwargs = {
+                "convert_to_numpy": True,
+                "normalize_embeddings": self.config.normalize_embeddings,
+                "batch_size": self.config.batch_size,
+                "show_progress_bar": False,
+                **kwargs,
+            }
+            return model.encode(texts, **encode_kwargs)
+        except Exception as e:
+            # Check if we are using API model and it failed
+            if self.config.use_api_embeddings and self._model:
+                self.logger.warning(
+                    f"API embedding failed: {e}. Falling back to local model."
+                )
+                self.config.use_api_embeddings = False
+                # Switch to default local model to avoid loading API model name locally
+                self.config.model_name = "all-MiniLM-L6-v2"
+                self._model = None  # Force reload
+                return self.embed_texts(texts, **kwargs)  # Retry with local model
+            raise
 
     def get_cache_info(self) -> dict[str, Any]:
         if not self._cache:
@@ -138,6 +167,67 @@ class Encoder:
         return self._model  # type: ignore[return-value]
 
     def _load_model(self) -> None:
+        """Load either API-based or local embedding model based on configuration."""
+        try:
+            # Check if we should use API embeddings
+            if self.config.use_api_embeddings:
+                self._load_api_model()
+            else:
+                self._load_local_model()
+
+        except Exception as e:
+            # If API model fails, fallback to local model
+            if self.config.use_api_embeddings:
+                self.logger.warning(
+                    f"Failed to load API model '{self.config.model_name}': {e}. "
+                    f"Falling back to local model."
+                )
+                self.config.use_api_embeddings = False
+                # Switch to default local model to avoid loading API model name locally
+                self.config.model_name = "all-MiniLM-L6-v2"
+                self._load_local_model()
+            else:
+                # Re-raise if it's already a local model failure
+                raise
+
+    def _load_api_model(self) -> None:
+        """Load OpenRouter API-based model."""
+        try:
+            # Validate API configuration
+            self.config.validate_api_config()
+
+            # Import here to avoid dependency issues if not using API
+            from .openrouter_client import OpenRouterClient
+
+            # Create OpenRouter client with model name
+            self._model = OpenRouterClient(
+                model_name=self.config.model_name,
+                api_key=self.config.openai_api_key,
+                base_url=self.config.openai_base_url,
+                batch_size=self.config.batch_size,
+            )
+
+            self.logger.info(
+                f"API model '{self.config.model_name}' loaded successfully. "
+                f"device: {self._model.device}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Failed to load API model: {e}")
+            raise
+
+    def _load_local_model(self) -> None:
+        """Load local SentenceTransformer model (original implementation)."""
+        if not HAS_SENTENCE_TRANSFORMERS:
+            raise ImportError(
+                "sentence-transformers is required for local embedding models but is not installed.\n\n"
+                "To fix this, either:\n"
+                "1. Install with transformers support: pip install imas-mcp[transformers]\n"
+                "2. Set an API key to use remote embeddings:\n"
+                "   - Set OPENAI_API_KEY environment variable\n"
+                "   - Set OPENAI_BASE_URL environment variable (e.g., https://openrouter.ai/api/v1)\n"
+                "   - Set IMAS_MCP_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)\n"
+            )
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:

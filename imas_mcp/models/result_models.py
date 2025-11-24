@@ -260,7 +260,7 @@ class ConceptResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, Searc
     concept_explanation: ConceptExplanation | None = None
 
 
-class StructureResult(WithHints, WithPhysics, ToolResult):
+class StructureResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult):
     """IDS structure analysis result with AI enhancement, hints, and physics aggregation.
 
     Uses AI sampling for enhanced structural insights.
@@ -358,3 +358,40 @@ class DomainExport(WithHints, ToolResult, ExportResult):
     domain_info: dict[str, Any] | None = None
     include_cross_domain: bool = False
     max_paths: int = 10
+
+
+# ============================================================================
+# LIST PATHS
+# ============================================================================
+
+
+class PathListQueryResult(BaseModel):
+    """Result for a single IDS/prefix query in list_imas_paths."""
+
+    query: str = Field(description="The IDS name or prefix queried")
+    path_count: int = Field(description="Total number of paths found")
+    truncated_to: int | None = Field(
+        default=None, description="Number of paths shown (only present when truncated)"
+    )
+    paths: str | dict[str, Any] | list[str] | None = Field(
+        default=None,
+        description="Formatted path listing: str (yaml/json), list[str] (list), dict (dict), or None (count)",
+    )
+    error: str | None = Field(default=None, description="Error message if query failed")
+
+
+class PathListResult(BaseModel):
+    """Result from list_imas_paths tool with minimal path enumeration.
+
+    Uses minimal BaseModel instead of ToolResult to avoid unnecessary search-related fields.
+    """
+
+    format: str = Field(
+        description="Output format used (yaml, list, count, json, dict)"
+    )
+    results: list[PathListQueryResult] = Field(
+        default_factory=list, description="Results for each queried IDS/prefix"
+    )
+    summary: dict[str, Any] = Field(
+        default_factory=dict, description="Overall statistics across all queries"
+    )

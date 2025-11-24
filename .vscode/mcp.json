@@ -4,18 +4,26 @@
       "url": "https://imas-dd.iter.org/mcp",
       "type": "http"
     },
-    // Launch the imas-debug server in a seperate terminal with: 
-    // uv run python -m imas-mcp --transport streamable-http --host 127.0.0.1 --port 8080
-    // note: first initialization of will take ~10 minutes to build the DD embeddings
-    // subsequent runs will use cached embeddings and will be much faster
-    "imas-debug": {
-      "type": "http",
-      "url": "http://127.0.0.1:8080/mcp"
-    }
-    // Slurm-backed stdio server (allocates a compute node via srun --pty)
-    // "imas-slurm": {
-    //   "type": "stdio",
-    //   "command": "scripts/imas_mcp_slurm.sh",
-    // },
-  }
+    "imas-test": {
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp",
+      "type": "http"
+    },
+    "imas-ddv3": {
+      "command": "uv",
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
+      "env": {
+        "IMAS_DD_VERSION": "3.42.2"
+      },
+      "type": "stdio"
+    },
+    "imas-ddv4": {
+      "command": "uv",
+      "args": ["run", "imas-mcp", "--transport", "stdio"],
+      "env": {
+        "IMAS_DD_VERSION": "4.0.0"
+      },
+      "type": "stdio"
+    },
+  },
+  "inputs": []
 }

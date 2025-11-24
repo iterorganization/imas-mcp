@@ -74,7 +74,7 @@ docker run -d \
 
 ## Health Check
 
-The container includes a health check that verifies the server is responding correctly. When using the `streamable-http` transport, the server exposes a dedicated health endpoint that checks both server availability and search index functionality. The server now runs in stateful mode to support MCP sampling functionality:
+The container includes a health check that verifies the server is responding correctly. The server uses `streamable-http` transport by default, which exposes a dedicated health endpoint that checks both server availability and search index functionality. The server runs in stateful mode to support MCP sampling functionality:
 
 ```bash
 # Check container health status
@@ -115,7 +115,7 @@ healthcheck:
   start_period: 40s # Wait 40 seconds before starting checks
 ```
 
-**Note**: The health endpoint is only available when using `streamable-http` transport. For other transports (`stdio`, `sse`), the health check will verify port connectivity only.
+**Note**: The health endpoint is available when using `streamable-http` transport (default). For other transports (`stdio`, `sse`), the health check will verify port connectivity only.
 
 ## Production Deployment
 
@@ -268,6 +268,29 @@ The project includes GitHub Actions workflows for:
 3. **Releases** (`.github/workflows/release.yml`)
    - Creates GitHub releases for tagged versions
    - Builds and uploads Python packages
+
+### GitHub Secrets Configuration
+
+For automated builds with documentation scraping capabilities, configure GitHub Secrets:
+
+1. **Repository Settings**: Go to `Settings` → `Secrets and variables` → `Actions`
+2. **Add Secret**: Create a new repository secret:
+   - **Name**: `OPENAI_API_KEY`
+   - **Value**: Your OpenRouter API key
+
+**Build Behavior:**
+- **With OPENAI_API_KEY secret**: Documentation scraping occurs during Docker build
+- **Without OPENAI_API_KEY secret**: Documentation scraping is skipped, build continues
+- The container functions normally regardless of scraping status
+
+**Manual Docker Build:**
+```bash
+# Build with API key
+docker build --build-arg OPENAI_API_KEY=your_key_here .
+
+# Build without API key (scraping will be skipped)
+docker build .
+```
 
 ## Security
 

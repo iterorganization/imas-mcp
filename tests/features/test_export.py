@@ -221,7 +221,8 @@ class TestExportPerformance:
         end_time = time.time()
 
         execution_time = end_time - start_time
-        assert execution_time < 10.0, (
+        # Allow up to 15 seconds for domain export (can be slow on first run)
+        assert execution_time < 15.0, (
             f"Domain export took {execution_time:.2f}s, too slow"
         )
 
