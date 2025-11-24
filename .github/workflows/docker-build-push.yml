@@ -190,6 +190,14 @@ jobs:
           name: imas-resources
           path: imas_mcp/resources/imas_data_dictionary/
 
+      - name: Verify downloaded resources exist
+        run: |
+          echo "Checking for downloaded IMAS resources..."
+          ls -la imas_mcp/resources/imas_data_dictionary/ || echo "Directory not found!"
+          echo ""
+          echo "Checking for embeddings .pkl files:"
+          find imas_mcp/resources/imas_data_dictionary/ -name "*.pkl" -ls 2>/dev/null || echo "No .pkl files found"
+
       - name: Verify git state for versioning
         run: |
           echo "Current commit: $(git rev-parse HEAD)"

@@ -84,8 +84,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
-# Copy pre-built IMAS resources from build context (CI artifacts) if available
-# This allows build scripts to skip rebuilding if resources already exist
+# Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
+# Git sparse checkout would have created the imas_mcp directory but without the generated resources
+# This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
 COPY imas_mcp/resources/ /app/imas_mcp/resources/
 
 # Build schema data
