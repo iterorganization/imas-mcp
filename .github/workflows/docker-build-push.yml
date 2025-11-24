@@ -150,6 +150,7 @@ jobs:
           name: imas-resources
           path: imas_mcp/resources/imas_data_dictionary/
           retention-days: 30  # Maximum retention - resources change infrequently
+          include-hidden-files: true  # Include .pkl cache files (hidden files starting with .)
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -188,12 +189,6 @@ jobs:
         with:
           name: imas-resources
           path: imas_mcp/resources/imas_data_dictionary/
-
-      - name: Verify IMAS resources in build context
-        run: |
-          echo "Verifying downloaded IMAS resources..."
-          ls -lh imas_mcp/resources/imas_data_dictionary/
-          echo "✓ IMAS resources ready for Docker build"
 
       - name: Verify git state for versioning
         run: |
