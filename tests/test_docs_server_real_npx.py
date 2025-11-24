@@ -6,14 +6,21 @@ import pytest
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 
+def _has_valid_openai_key() -> bool:
+    """Check if a valid-looking OPENAI_API_KEY is present."""
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    # OpenAI keys start with 'sk-' and are at least 20 chars
+    return bool(key and key.startswith("sk-") and len(key) > 20)
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not shutil.which("npx"),
     reason="npx not found in PATH",
 )
 @pytest.mark.skipif(
-    not os.getenv("OPENAI_API_KEY", "").strip(),
-    reason="Valid OPENAI_API_KEY required for docs-mcp-server startup",
+    not _has_valid_openai_key(),
+    reason="Valid OPENAI_API_KEY (starts with 'sk-') required for docs-mcp-server startup",
 )
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 async def test_docs_server_startup_real_npx():
