@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+try:
+    from sentence_transformers import SentenceTransformer
+
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    HAS_SENTENCE_TRANSFORMERS = False
+    SentenceTransformer = None  # type: ignore
 
 from imas_mcp import dd_version
 from imas_mcp.core.progress_monitor import create_progress_monitor
@@ -211,6 +218,16 @@ class Encoder:
 
     def _load_local_model(self) -> None:
         """Load local SentenceTransformer model (original implementation)."""
+        if not HAS_SENTENCE_TRANSFORMERS:
+            raise ImportError(
+                "sentence-transformers is required for local embedding models but is not installed.\n\n"
+                "To fix this, either:\n"
+                "1. Install with transformers support: pip install imas-mcp[transformers]\n"
+                "2. Set an API key to use remote embeddings:\n"
+                "   - Set OPENAI_API_KEY environment variable\n"
+                "   - Set OPENAI_BASE_URL environment variable (e.g., https://openrouter.ai/api/v1)\n"
+                "   - Set IMAS_MCP_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)\n"
+            )
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:

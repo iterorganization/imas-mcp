@@ -5,9 +5,10 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from imas_mcp.core.extractors.base import BaseExtractor
+from imas_mcp.embeddings.config import EncoderConfig
+from imas_mcp.embeddings.encoder import Encoder
 
 
 class RelationshipExtractor(BaseExtractor):
@@ -253,12 +254,9 @@ class RelationshipExtractor(BaseExtractor):
         # Build cross-IDS relationships using embedding-based semantic analysis
         cross_ids_relationships = {}
 
-        # Initialize sentence transformer for semantic similarity
-        from imas_mcp.embeddings.config import EncoderConfig
-
+        # Initialize encoder for semantic similarity
         config = EncoderConfig.from_environment()
-        model_name = config.model_name
-        model = SentenceTransformer(model_name)
+        encoder = Encoder(config)
 
         # Collect path descriptions for embedding
         path_descriptions = {}
@@ -357,14 +355,13 @@ class RelationshipExtractor(BaseExtractor):
 
         print(f"Generating embeddings for {len(path_descriptions)} paths...")
 
-        # Generate embeddings for all path descriptions
+        # Generate embeddings for all path descriptions using centralized Encoder
         descriptions_list = list(path_descriptions.values())
         paths_list = list(path_descriptions.keys())
 
-        embeddings = model.encode(
+        embeddings = encoder.embed_texts(
             descriptions_list,
-            convert_to_numpy=True,
-            normalize_embeddings=True,  # For cosine similarity via dot product
+            batch_size=32,
             show_progress_bar=False,
         )
 

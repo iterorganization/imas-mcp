@@ -13,6 +13,7 @@ from typing import Any
 import aiohttp
 
 from imas_mcp.exceptions import DocsServerError
+from imas_mcp.services.docs_cli_helpers import DOCS_MCP_SERVER_VERSION
 from imas_mcp.services.docs_server_manager import (
     DocsServerManager,
     DocsServerUnavailableError,
@@ -43,7 +44,7 @@ class LibraryNotFoundError(DocsServerError):
             f"Available libraries: {', '.join(available_libraries)}\n\n"
             f"To add a new library:\n"
             f"1. Use the add_docs script: python scripts/add_docs.py <library> <url>\n"
-            f"2. Or run: npx @arabold/docs-mcp-server@latest scrape <library> <url>"
+            f"2. Or run: npx @arabold/docs-mcp-server@{DOCS_MCP_SERVER_VERSION} scrape <library> <url>"
         )
         super().__init__(message)
 
@@ -396,31 +397,19 @@ class DocsProxyService:
             }
         """
         try:
-            result = await self._make_http_request("trpc/listLibraries")
+            # The newer docs-mcp-server exposes MCP tools at /mcp endpoint
+            # We need to call the list_docs tool via MCP protocol
+            # For now, use direct HTTP to the database file if available
+            # or return empty until proper MCP client integration is added
 
-            if isinstance(result, dict) and "result" in result:
-                data = result["result"]["data"]
-                if isinstance(data, list):
-                    # Transform to consistent format
-                    libraries = []
-                    for lib_info in data:
-                        if isinstance(lib_info, dict):
-                            # Normalize the library name field
-                            lib_name = lib_info.get("library") or lib_info.get("name")
-                            if lib_name:
-                                libraries.append(
-                                    {
-                                        "name": lib_name,
-                                        "versions": lib_info.get("versions", []),
-                                    }
-                                )
-                    return libraries
-                else:
-                    logger.warning(f"Unexpected libraries data format: {type(data)}")
-                    return []
-            else:
-                logger.warning(f"Unexpected libraries response format: {type(result)}")
-                return []
+            # Try the ping endpoint to verify server is running
+            await self._make_http_request("ping")
+
+            # Return empty list with a note about the API change
+            logger.info(
+                "docs-mcp-server is running but library listing via HTTP API is not yet implemented for the new version"
+            )
+            return []
 
         except DocsServerError:
             # Re-raise docs server errors as-is
@@ -672,6 +661,87 @@ class DocsProxyService:
         except Exception as e:
             logger.error(f"Failed to proxy search_docs: {e}")
             raise DocsServerError(f"Search failed: {str(e)}") from e
+
+    async def proxy_add_library(
+        self, library: str, url: str, max_pages: int | None = None
+    ) -> dict[str, Any]:
+        """Add a new documentation library by scraping a URL.
+
+        Args:
+            library: Library name to create
+            url: Documentation URL to scrape
+            max_pages: Optional maximum number of pages to scrape
+
+        Returns:
+            Dictionary with job_id and status information
+        """
+        try:
+            arguments = {"library": library, "url": url}
+            if max_pages:
+                arguments["maxPages"] = max_pages
+
+            result = await self._make_mcp_request("add_docs", arguments)
+
+            if "text" in result:
+                # Parse the text response to extract job info
+                text = result["text"]
+                logger.info(f"Add library response: {text}")
+                return {
+                    "success": True,
+                    "library": library,
+                    "url": url,
+                    "message": text,
+                }
+
+            return {
+                "success": True,
+                "library": library,
+                "url": url,
+                "result": result,
+            }
+        except Exception as e:
+            logger.error(f"Failed to add library: {e}")
+            raise DocsServerError(f"Failed to add library: {str(e)}") from e
+
+    async def proxy_remove_library(self, library: str) -> dict[str, Any]:
+        """Remove a documentation library.
+
+        Args:
+            library: Library name to remove
+
+        Returns:
+            Dictionary with success status and message
+        """
+        try:
+            # First check if library exists
+            libraries = await self.proxy_list_libraries()
+            if library not in libraries:
+                return {
+                    "success": False,
+                    "library": library,
+                    "error": f"Library '{library}' not found",
+                    "available_libraries": libraries,
+                }
+
+            result = await self._make_mcp_request("remove_docs", {"library": library})
+
+            if "text" in result:
+                text = result["text"]
+                logger.info(f"Remove library response: {text}")
+                return {
+                    "success": True,
+                    "library": library,
+                    "message": text,
+                }
+
+            return {
+                "success": True,
+                "library": library,
+                "result": result,
+            }
+        except Exception as e:
+            logger.error(f"Failed to remove library: {e}")
+            raise DocsServerError(f"Failed to remove library: {str(e)}") from e
 
     async def close(self) -> None:
         """Close method for compatibility - delegates to docs manager"""

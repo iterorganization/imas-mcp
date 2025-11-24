@@ -1,5 +1,6 @@
 """Tests for the /health endpoint on HTTP transports."""
 
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -40,7 +41,10 @@ def run_server(port: int, transport: str = "streamable-http"):
 
 @pytest.mark.parametrize("transport", ["streamable-http", "sse"])
 @pytest.mark.timeout(30)
-def test_health_basic(transport):
+def test_health_basic(transport, monkeypatch):
+    # Use free API embeddings by default
+    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
     port = 8900 if transport == "streamable-http" else 8901
     with run_server(port=port, transport=transport):
         # Poll until health available
@@ -64,7 +68,10 @@ def test_health_basic(transport):
             pytest.fail("/health endpoint not reachable")
 
 
-def test_health_idempotent_wrapping():
+def test_health_idempotent_wrapping(monkeypatch):
+    # Use free API embeddings by default
+    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
     port = 8902
     server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)
 

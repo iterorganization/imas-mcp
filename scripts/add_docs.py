@@ -13,6 +13,11 @@ import sys
 import click
 from dotenv import load_dotenv
 
+from imas_mcp.services.docs_cli_helpers import (
+    build_docs_server_command,
+    get_npx_executable,
+)
+
 # Load environment variables from .env file
 load_dotenv(override=True)
 
@@ -97,8 +102,14 @@ def add_docs(
 
     click.echo(f"   Embedding Model: {model}\n")
 
-    # Build the npx command
-    cmd = ["npx", "@arabold/docs-mcp-server@latest", "scrape", library, url]
+    # Build the npx command using helper
+    try:
+        npx = get_npx_executable()
+    except RuntimeError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    cmd = build_docs_server_command(npx, "scrape", library, url)
 
     # Only add version if specified
     if version and version.strip():
