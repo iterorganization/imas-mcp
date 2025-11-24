@@ -122,15 +122,35 @@ class EmbeddingCache:
         return modified_files
 
     def _compute_source_content_hash(self, source_data_dir: Path) -> str:
-        """Compute hash of source data directory content."""
-        hash_data = str(source_data_dir.resolve())
+        """Compute hash of source data directory content based on file contents, not paths."""
+
+        hash_obj = hashlib.md5()
 
         # Include IDS set in hash for proper cache isolation
         if self.ids_set:
             ids_str = "|".join(sorted(self.ids_set))
-            hash_data += f"|ids:{ids_str}"
+            hash_obj.update(f"ids:{ids_str}|".encode())
 
-        return hashlib.md5(hash_data.encode()).hexdigest()
+        # Hash actual file contents, not paths
+        try:
+            # Hash catalog file content
+            catalog_path = source_data_dir / "ids_catalog.json"
+            if catalog_path.exists():
+                hash_obj.update(catalog_path.read_bytes())
+
+            # Hash detailed files content in deterministic order
+            detailed_dir = source_data_dir / "detailed"
+            if detailed_dir.exists():
+                for json_file in sorted(detailed_dir.glob("*.json")):
+                    hash_obj.update(
+                        json_file.name.encode()
+                    )  # Include filename for structure
+                    hash_obj.update(json_file.read_bytes())
+        except Exception:
+            # If we can't read files, return a placeholder that will force rebuild
+            return "error-reading-files"
+
+        return hash_obj.hexdigest()
 
     def _get_max_source_mtime(self, source_data_dir: Path) -> float:
         """Get the maximum modification time of all source files."""

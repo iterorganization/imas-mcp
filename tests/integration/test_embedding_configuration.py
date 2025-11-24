@@ -18,18 +18,18 @@ class TestEmbeddingConfiguration:
     """Test embedding model configuration and switching."""
 
     def test_default_model_is_local(self):
-        """Verify that the default model (when no env var is set) is the local one."""
-        # We need to patch os.getenv to simulate no env var,
-        # but IMAS_MCP_EMBEDDING_MODEL is a module constant, so we check that instead
-        # or we check the default value in EncoderConfig
-
+        """Verify that the default model respects environment configuration."""
         config = EncoderConfig()
-        # If the test environment has set the env var (which conftest does),
-        # we expect it to be respected.
-        assert config.model_name == os.environ.get(
-            "IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2"
-        )
-        assert config.use_api_embeddings is False
+        # The model should match what's configured in the environment
+        # conftest.py sets this based on whether OPENAI_API_KEY is available
+        expected_model = os.environ.get("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        assert config.model_name == expected_model
+
+        # If using an API model (has "/" in name), use_api_embeddings should be True
+        if "/" in expected_model:
+            assert config.use_api_embeddings is True
+        else:
+            assert config.use_api_embeddings is False
 
     def test_api_model_detection(self):
         """Verify that API models are correctly detected."""
