@@ -27,6 +27,7 @@ sources:
     version: 1.12
     max_pages: 1500
     max_depth: 5
+    skip: true
     exclude_patterns:
       - /mailing-list-archive/
       - /Meetings/
