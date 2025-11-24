@@ -90,7 +90,7 @@ jobs:
         with:
           name: documentation-data
           path: docs-data/
-          retention-days: 90  # Maximum retention - docs change infrequently
+          retention-days: 30  # Maximum retention - docs change infrequently
 
   build-and-push:
     runs-on: ubuntu-latest
