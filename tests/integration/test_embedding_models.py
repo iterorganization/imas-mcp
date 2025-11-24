@@ -28,7 +28,9 @@ def api_config_available():
 @pytest.mark.parametrize(
     "model_name",
     [
-        LOCAL_MODEL,
+        pytest.param(
+            LOCAL_MODEL, marks=pytest.mark.skip(reason="Requires sentence-transformers")
+        ),
         pytest.param(API_MODEL, marks=pytest.mark.api_embedding),
     ],
 )

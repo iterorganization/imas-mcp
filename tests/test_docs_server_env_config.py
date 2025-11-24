@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dotenv import load_dotenv
 
+from imas_mcp.services.docs_cli_helpers import DOCS_MCP_SERVER_VERSION
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 # Load environment variables from .env file
@@ -107,7 +108,7 @@ async def test_docs_server_env_config(mock_npx, mock_process, mock_aiohttp):
 
         # Verify command structure
         assert "npx" in cmd[0]
-        assert "@arabold/docs-mcp-server@latest" in cmd
+        assert "@arabold/docs-mcp-server@" + DOCS_MCP_SERVER_VERSION in cmd
 
         # Verify environment variables
         assert env is not None

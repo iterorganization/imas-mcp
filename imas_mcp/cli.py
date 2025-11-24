@@ -8,11 +8,11 @@ from typing import Literal, cast
 import click
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+from imas_mcp import __version__, dd_version
+from imas_mcp.server import Server
 
-from imas_mcp import __version__, dd_version  # noqa: E402
-from imas_mcp.server import Server  # noqa: E402
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -110,24 +110,30 @@ def main(
 
     Examples:
         # Run with default streamable-http transport
-        python -m imas_mcp.cli
+        imas-mcp
 
         # Run with custom host/port
-        python -m imas_mcp.cli --host 0.0.0.0 --port 9000
+        imas-mcp --host 0.0.0.0 --port 9000
 
         # Run with stdio transport (for MCP clients)
-        python -m imas_mcp.cli --transport stdio
+        imas-mcp --transport stdio
 
         # Run with debug logging
-        python -m imas_mcp.cli --log-level DEBUG
+        imas-mcp --log-level DEBUG
 
         # Run without rich progress output
-        python -m imas_mcp.cli --no-rich
+        imas-mcp --no-rich
 
     Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.
 
     To set DD version, use the IMAS_DD_VERSION environment variable.
+
+    For documentation management, use the separate 'docs' command:
+        docs list
+        docs add <library> <url>
+        docs remove <library> --force
+        docs clear-all --force
     """
     # Configure logging based on the provided level
     # Force reconfigure logging by getting the root logger and setting its level
