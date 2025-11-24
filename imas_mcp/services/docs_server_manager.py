@@ -370,19 +370,19 @@ class DocsServerManager:
         logger.info(f"Python version: {sys.version}")
 
         try:
-            # Prepare environment variables
             env = os.environ.copy()
 
-            # Ensure PATH includes the directory containing npx
-            # This is critical in CI environments where Node.js was just installed
-            npx_dir = Path(npx_executable).parent
-            if "PATH" in env:
-                # Prepend npx directory to PATH to ensure it's found
-                env["PATH"] = f"{npx_dir}{os.pathsep}{env['PATH']}"
-            else:
-                env["PATH"] = str(npx_dir)
+            # Validate OPENAI_API_KEY
+            if not env.get("OPENAI_API_KEY"):
+                raise DocsServerError(
+                    "OPENAI_API_KEY environment variable required for docs-mcp-server"
+                )
 
-            # Set required environment variables with defaults
+            # Ensure npx directory is in PATH
+            npx_dir = Path(npx_executable).parent
+            env["PATH"] = f"{npx_dir}{os.pathsep}{env.get('PATH', '')}"
+
+            # Set docs-mcp-server environment variables
             env.update(
                 {
                     "DOCS_MCP_EMBEDDING_MODEL": env.get(
@@ -393,14 +393,9 @@ class DocsServerManager:
                 }
             )
 
-            # Log environment variables for debugging (mask sensitive data)
-            api_key_status = "SET" if env.get("OPENAI_API_KEY") else "NOT SET"
-            logger.info(f"  OPENAI_API_KEY: {api_key_status}")
-            logger.info(f"  OPENAI_BASE_URL: {env.get('OPENAI_BASE_URL', 'NOT SET')}")
-            logger.info(
-                f"  DOCS_MCP_EMBEDDING_MODEL: {env.get('DOCS_MCP_EMBEDDING_MODEL')}"
+            logger.debug(
+                f"Starting with OPENAI_API_KEY: {'SET' if env.get('OPENAI_API_KEY') else 'NOT SET'}"
             )
-            logger.debug(f"  PATH: {env.get('PATH', 'NOT SET')[:200]}...")
 
             # Start the process with stdio capture for logging
             self.process = await anyio.open_process(
@@ -438,38 +433,19 @@ class DocsServerManager:
         start_time = time.time()
         last_error = None
         attempt_count = 0
-
-        # Use exponential backoff: 0.5s, 0.5s, 1s, 1s, 2s, 2s, 2s...
         wait_time = 0.5
 
         while time.time() - start_time < max_wait:
             attempt_count += 1
 
             if not self.is_running:
-                # Collect any available stderr output for debugging
                 error_msg = "Process terminated during startup"
                 if self.process and hasattr(self.process, "returncode"):
                     error_msg += f" (exit code: {self.process.returncode})"
-
-                # Try to capture stderr output if available
-                if self.process and hasattr(self.process, "stderr"):
-                    try:
-                        # Read with a short timeout to avoid hanging
-                        with anyio.fail_after(0.5):
-                            stderr_data = await self.process.stderr.read()
-                            if stderr_data:
-                                stderr_text = stderr_data.decode(
-                                    "utf-8", errors="replace"
-                                ).strip()
-                                if stderr_text:
-                                    error_msg += f"\nStderr output: {stderr_text[:500]}"
-                    except (TimeoutError, Exception) as e:
-                        logger.debug(f"Could not read stderr: {e}")
-
+                error_msg += ". Check logs for details."
                 raise DocsServerError(error_msg)
 
             try:
-                # Use shorter timeout for individual attempts
                 timeout = aiohttp.ClientTimeout(total=min(5, self.timeout))
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(f"{self.base_url}/api/ping") as response:
@@ -482,31 +458,13 @@ class DocsServerManager:
                             last_error = f"HTTP {response.status}"
             except Exception as e:
                 last_error = str(e)
-                # Log every 10th attempt to avoid spamming logs
-                if attempt_count % 10 == 0:
-                    logger.debug(
-                        f"Attempt {attempt_count}: Server not ready yet ({last_error})"
-                    )
 
-            # Exponential backoff with cap at 2 seconds
             await asyncio.sleep(wait_time)
             wait_time = min(wait_time * 1.5, 2.0)
 
-        # Provide detailed error message on timeout
-        error_parts = [f"Server did not become ready within {max_wait} seconds"]
-        if last_error:
-            error_parts.append(f"Last error: {last_error}")
-        error_parts.append(f"Attempts made: {attempt_count}")
-
-        # Check if process is still running
-        if self.is_running:
-            error_parts.append(
-                "Process is still running but not responding to health checks"
-            )
-        else:
-            error_parts.append("Process has terminated")
-
-        raise DocsServerError(". ".join(error_parts))
+        raise DocsServerError(
+            f"Server did not become ready within {max_wait} seconds. Last error: {last_error}"
+        )
 
     async def _get_libraries(self) -> list[dict[str, Any]]:
         """Get list of available libraries and their versions."""
@@ -549,7 +507,8 @@ class DocsServerManager:
             async for line in stream:
                 line_str = line.decode("utf-8", errors="replace").rstrip()
                 if line_str:
-                    logger.info(f"[docs-mcp-server {prefix}] {line_str}")
+                    log_level = logger.warning if prefix == "stderr" else logger.info
+                    log_level(f"[docs-mcp-server {prefix}] {line_str}")
         except Exception as e:
             logger.debug(f"Error reading {prefix} stream: {e}")
 
