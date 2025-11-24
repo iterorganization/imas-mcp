@@ -2,9 +2,10 @@ import pytest
 
 from imas_mcp.embeddings.embeddings import Embeddings
 from imas_mcp.search.document_store import DocumentStore
+from tests.conftest import STANDARD_TEST_IDS_SET
 
 
-def test_embeddings_encoder_config_exposed():
+def test_embeddings_encoder_config_exposed(monkeypatch):
     ds = DocumentStore()
     emb = Embeddings(document_store=ds, load_embeddings=False)
     cfg = emb.encoder_config
@@ -12,6 +13,9 @@ def test_embeddings_encoder_config_exposed():
 
 
 def test_embeddings_lazy_build(monkeypatch):
+    # Use free API embeddings by default
+    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
     ds = DocumentStore()
     emb = Embeddings(document_store=ds, load_embeddings=False)
     assert emb._embeddings is None
@@ -23,9 +27,12 @@ def test_embeddings_lazy_build(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_endpoint_deferred(monkeypatch):
+    # Use free API embeddings by default
+    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
     from imas_mcp.server import Server
 
-    srv = Server()
+    srv = Server(ids_set=STANDARD_TEST_IDS_SET)
     # Replace embeddings with deferred instance sharing same document store
     srv.embeddings = Embeddings(
         document_store=srv.tools.document_store, load_embeddings=False

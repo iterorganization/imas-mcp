@@ -6,7 +6,7 @@ focusing on MCP protocol compliance and component integration using FastMCP
 in-memory testing patterns.
 """
 
-import asyncio
+import os
 
 import pytest
 from fastmcp import Client, FastMCP
@@ -97,8 +97,11 @@ class TestMCPServer:
         assert hasattr(server, "run")
         assert callable(server.run)
 
-    def test_multiple_server_instances_isolation(self):
+    def test_multiple_server_instances_isolation(self, monkeypatch):
         """Test multiple server instances don't interfere."""
+        # Use free API embeddings by default
+        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
         server1 = Server(ids_set=STANDARD_TEST_IDS_SET)
         server2 = Server(ids_set={"equilibrium"})
 
@@ -197,6 +200,8 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_multiple_concurrent_operations(self, server):
         """Test concurrent MCP operations work correctly."""
+        import asyncio
+
         async with Client(server.mcp) as client:
             # Execute multiple operations concurrently
             results = await asyncio.gather(

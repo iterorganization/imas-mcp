@@ -60,7 +60,7 @@ class RelationshipsTool(BaseTool):
         )
 
         encoder_config = EncoderConfig(
-            model_name="all-MiniLM-L6-v2",
+            model_name=None,  # Use env var or fallback
             device=None,
             batch_size=250,
             normalize_embeddings=True,

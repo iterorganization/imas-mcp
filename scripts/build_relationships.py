@@ -14,7 +14,6 @@ Optimization achieved 79% improvement over initial parameters (Score: 5436.17)
 
 import logging
 import sys
-from pathlib import Path
 
 import click
 
@@ -96,41 +95,47 @@ def build_relationships(
 
     logger = logging.getLogger(__name__)
 
-    # Hardcoded paths
-    output_file = Path("imas_mcp/resources/schemas/relationships.json")
-    embeddings_dir = Path("imas_mcp/resources/embeddings")
-    schemas_dir = Path("imas_mcp/resources/schemas/detailed")
+    # Parse ids_filter early
+    ids_set_parsed = set(ids_filter.split()) if ids_filter else None
+
+    if ids_set_parsed:
+        logger.info(
+            f"Building relationships for filtered IDS: {sorted(ids_set_parsed)}"
+        )
+    else:
+        logger.info("Building full dataset relationships file")
 
     try:
         logger.info("Starting relationship extraction process...")
 
-        # Parse ids_filter string into a set if provided
-        ids_set: set | None = set(ids_filter.split()) if ids_filter else None
-        if ids_set:
-            logger.info(f"Building relationships for specific IDS: {sorted(ids_set)}")
-        else:
-            logger.info("Building relationships for all available IDS")
+        # Use the already parsed ids_set from above
+        ids_set = ids_set_parsed
+
+        # Create encoder config to determine the correct output file path
+        encoder_config_temp = EncoderConfig(
+            model_name=None,
+            batch_size=250,
+            normalize_embeddings=True,
+            use_half_precision=False,
+            enable_cache=True,
+            cache_dir="embeddings",
+            ids_set=ids_set,
+            use_rich=False,
+        )
+
+        # Create Relationships instance - this will determine the correct filename via __post_init__
+        relationships_temp = Relationships(encoder_config=encoder_config_temp)
+        output_file = relationships_temp.file_path
+
+        logger.info(f"Output file: {output_file}")
 
         # Check if we need to build with cache busting strategy
         should_build = force or not output_file.exists()
 
         # Use the unified relationships manager to check if rebuild is needed
         if not should_build and not force:
-            # Create encoder config for checking
-            ids_set_parsed = set(ids_filter.split()) if ids_filter else None
-            encoder_config = EncoderConfig(
-                model_name="all-MiniLM-L6-v2",
-                batch_size=250,
-                normalize_embeddings=True,
-                use_half_precision=False,
-                enable_cache=True,
-                cache_dir="embeddings",
-                ids_set=ids_set_parsed,
-                use_rich=False,
-            )
-            relationships = Relationships(
-                encoder_config=encoder_config, relationships_file=output_file
-            )
+            # Reuse the temp relationships instance we already created
+            relationships = relationships_temp
             if relationships.needs_rebuild():
                 should_build = True
                 logger.info(
@@ -139,45 +144,7 @@ def build_relationships(
                 cache_info = relationships.get_cache_info()
                 logger.debug(f"Cache status: {cache_info}")
 
-        if not should_build and output_file.exists():
-            # Check if any source files are newer than the relationships file
-            relationships_mtime = output_file.stat().st_mtime
-
-            # Check if embeddings cache files are newer
-            newer_embeddings = False
-            if embeddings_dir.exists():
-                for embedding_file in embeddings_dir.glob("*.pkl"):
-                    if embedding_file.stat().st_mtime > relationships_mtime:
-                        newer_embeddings = True
-                        logger.info(
-                            f"Found newer embedding file: {embedding_file.name}"
-                        )
-                        break
-
-            # Check if schema files are newer
-            newer_schemas = False
-            if schemas_dir.exists():
-                for schema_file in schemas_dir.glob("*.json"):
-                    if schema_file.stat().st_mtime > relationships_mtime:
-                        newer_schemas = True
-                        logger.info(f"Found newer schema file: {schema_file.name}")
-                        break
-
-            # Force rebuild if dependencies are newer
-            if newer_embeddings or newer_schemas:
-                should_build = True
-                if newer_embeddings and newer_schemas:
-                    logger.info(
-                        "Cache busting: embeddings and schema files are newer than relationships file"
-                    )
-                elif newer_embeddings:
-                    logger.info(
-                        "Cache busting: embedding files are newer than relationships file"
-                    )
-                else:
-                    logger.info(
-                        "Cache busting: schema files are newer than relationships file"
-                    )
+        # The Relationships manager already handles dependency checking
 
         if should_build:
             if force and output_file.exists():
@@ -185,28 +152,15 @@ def build_relationships(
             else:
                 logger.info("Relationships file does not exist, building new file...")
 
-            # Use the unified relationships manager to build
-            ids_set_parsed = set(ids_filter.split()) if ids_filter else None
-            encoder_config = EncoderConfig(
-                model_name="all-MiniLM-L6-v2",
-                batch_size=250,
-                normalize_embeddings=True,
-                use_half_precision=False,
-                enable_cache=True,
-                cache_dir="embeddings",
-                ids_set=ids_set_parsed,
-                use_rich=not quiet,
-            )
-            relationships = Relationships(
-                encoder_config=encoder_config, relationships_file=output_file
-            )
+            # Reuse the temp relationships instance (already has correct encoder_config and file path)
+            relationships = relationships_temp
             config_overrides = {
                 "cross_ids_eps": cross_ids_eps,
                 "cross_ids_min_samples": cross_ids_min_samples,
                 "intra_ids_eps": intra_ids_eps,
                 "intra_ids_min_samples": intra_ids_min_samples,
                 "use_rich": not quiet,
-                "ids_set": ids_set,
+                # ids_set is already in encoder_config, no need to pass again
             }
 
             relationships.build(force=force, **config_overrides)

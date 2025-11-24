@@ -269,6 +269,29 @@ The project includes GitHub Actions workflows for:
    - Creates GitHub releases for tagged versions
    - Builds and uploads Python packages
 
+### GitHub Secrets Configuration
+
+For automated builds with documentation scraping capabilities, configure GitHub Secrets:
+
+1. **Repository Settings**: Go to `Settings` → `Secrets and variables` → `Actions`
+2. **Add Secret**: Create a new repository secret:
+   - **Name**: `OPENAI_API_KEY`
+   - **Value**: Your OpenRouter API key
+
+**Build Behavior:**
+- **With OPENAI_API_KEY secret**: Documentation scraping occurs during Docker build
+- **Without OPENAI_API_KEY secret**: Documentation scraping is skipped, build continues
+- The container functions normally regardless of scraping status
+
+**Manual Docker Build:**
+```bash
+# Build with API key
+docker build --build-arg OPENAI_API_KEY=your_key_here .
+
+# Build without API key (scraping will be skipped)
+docker build .
+```
+
 ## Security
 
 - Containers run as non-root user
