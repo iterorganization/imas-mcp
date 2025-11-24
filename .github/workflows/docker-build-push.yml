@@ -231,12 +231,8 @@ jobs:
             GIT_REF=${{ github.ref }}
           secrets: |
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          cache-from: |
-            type=gha,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ steps.image-name.outputs.lowercase }}:cache
-          cache-to: |
-            type=gha,mode=max,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ steps.image-name.outputs.lowercase }}:cache,mode=max
+          cache-from: type=gha,scope=build-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 
       - name: Verify version inside image (tag builds)
         if: startsWith(github.ref, 'refs/tags/v')
