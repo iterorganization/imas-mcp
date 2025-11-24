@@ -50,4 +50,7 @@ except importlib.metadata.PackageNotFoundError:
 # Get DD version efficiently (no XML parsing)
 dd_version = _get_dd_version()
 
-__all__ = ["__version__", "dd_version"]
+# Docs MCP server version - pinned to avoid npx download/verification delays
+DOCS_MCP_SERVER_VERSION = "1.29.0"
+
+__all__ = ["__version__", "dd_version", "DOCS_MCP_SERVER_VERSION"]

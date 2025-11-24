@@ -10,7 +10,6 @@ import asyncio
 import logging
 import os
 import platform
-import shutil
 import signal
 import socket
 import subprocess
@@ -24,6 +23,7 @@ if TYPE_CHECKING:
 
 import aiohttp
 import anyio
+import psutil
 from dotenv import load_dotenv
 
 from imas_mcp.exceptions import DocsServerError
@@ -56,7 +56,12 @@ class DocsServerManager:
     - Health monitoring and auto-recovery
     - Library and version discovery for health endpoints
     - Integration with IMAS MCP server lifecycle
+    - Process cleanup utilities for orphaned docs-mcp-server instances
     """
+
+    # Port range for docs-mcp-server (narrow range for faster scanning)
+    MIN_PORT = 6280
+    MAX_PORT = 6290
 
     def __init__(
         self,
@@ -338,29 +343,25 @@ class DocsServerManager:
 
     async def _start_docs_server_process(self) -> None:
         """Start the docs-mcp-server process."""
-        # Find npx executable using shutil.which() for cross-platform compatibility
-        npx_executable = shutil.which("npx")
-        if not npx_executable:
-            raise DocsServerError(
-                "npx executable not found in PATH. "
-                "Please ensure Node.js and npm are properly installed and npx is available. "
-                "You can install Node.js from https://nodejs.org/"
-            )
+        # Import helper to build command
+        from imas_mcp.services.docs_cli_helpers import (
+            build_docs_server_command,
+            get_npx_executable,
+        )
 
-        # Prepare command - npx should be called directly on all platforms
-        cmd = [
+        try:
+            npx_executable = get_npx_executable()
+        except RuntimeError as e:
+            raise DocsServerError(str(e)) from e
+
+        # Build command using helper
+        cmd = build_docs_server_command(
             npx_executable,
-            "-y",  # Auto-accept installation prompt
-            "@arabold/docs-mcp-server@latest",
-            "--protocol",
-            "http",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(self.allocated_port),
-            "--store-path",
-            str(self.store_path),
-        ]
+            command="",  # Server mode, no command
+            port=self.allocated_port,
+            host="127.0.0.1",
+            store_path=self.store_path,
+        )
 
         logger.info(f"Starting docs server with command: {' '.join(cmd)}")
         logger.info(f"Store path: {self.store_path.absolute()}")
@@ -638,6 +639,121 @@ class DocsServerManager:
                     )
 
         return libraries
+
+    @staticmethod
+    def find_docs_server_processes() -> list[dict[str, Any]]:
+        """Find all running docs-mcp-server processes by scanning ports 6280-6290.
+
+        Returns:
+            List of dicts with keys: pid, port, cmdline
+        """
+        found_processes = []
+
+        # First, quickly check which ports are actually open using direct socket testing
+        open_ports = []
+        for port in range(DocsServerManager.MIN_PORT, DocsServerManager.MAX_PORT + 1):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.1)
+                result = sock.connect_ex(("127.0.0.1", port))
+                sock.close()
+
+                if result == 0:  # Port is open
+                    open_ports.append(port)
+                    logger.debug(f"Port {port} is open")
+            except Exception as e:
+                logger.debug(f"Error checking port {port}: {e}")
+
+        # If no ports are open, return early
+        if not open_ports:
+            return found_processes
+
+        # Now get all connections ONCE and filter for our open ports
+        try:
+            all_connections = psutil.net_connections(kind="inet")
+
+            for conn in all_connections:
+                if (
+                    conn.status == psutil.CONN_LISTEN
+                    and conn.laddr.port in open_ports
+                    and conn.pid
+                ):
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        cmdline = " ".join(proc.cmdline())
+
+                        # Check if this is a docs-mcp-server process
+                        if "docs-mcp-server" in cmdline or (
+                            "node" in proc.name().lower()
+                            and "docs-mcp-server" in cmdline
+                        ):
+                            found_processes.append(
+                                {
+                                    "pid": conn.pid,
+                                    "port": conn.laddr.port,
+                                    "cmdline": cmdline,
+                                }
+                            )
+                            logger.debug(
+                                f"Found docs-mcp-server on port {conn.laddr.port}, PID {conn.pid}"
+                            )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except (psutil.AccessDenied, OSError) as e:
+            logger.debug(f"Error getting network connections: {e}")
+
+        return found_processes
+
+    @staticmethod
+    def kill_orphaned_servers(verbose: bool = True) -> int:
+        """Kill all orphaned docs-mcp-server processes.
+
+        Args:
+            verbose: If True, log information about killed processes
+
+        Returns:
+            Number of processes terminated
+        """
+        processes = DocsServerManager.find_docs_server_processes()
+        killed_count = 0
+
+        for proc_info in processes:
+            try:
+                proc = psutil.Process(proc_info["pid"])
+                if verbose:
+                    logger.info(
+                        f"Terminating docs-mcp-server on port {proc_info['port']}, PID {proc_info['pid']}"
+                    )
+                proc.terminate()
+
+                # Wait up to 5 seconds for graceful termination
+                try:
+                    proc.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    if verbose:
+                        logger.warning(
+                            f"Process {proc_info['pid']} didn't terminate gracefully, killing..."
+                        )
+                    proc.kill()
+                    proc.wait(timeout=2)
+
+                killed_count += 1
+                if verbose:
+                    logger.info(f"Successfully terminated PID {proc_info['pid']}")
+
+            except psutil.NoSuchProcess:
+                if verbose:
+                    logger.debug(f"Process {proc_info['pid']} already terminated")
+            except psutil.AccessDenied:
+                if verbose:
+                    logger.error(
+                        f"Access denied when trying to terminate PID {proc_info['pid']}"
+                    )
+            except Exception as e:
+                if verbose:
+                    logger.error(f"Error terminating process {proc_info['pid']}: {e}")
+
+        return killed_count
 
     # Context manager support
     async def __aenter__(self):

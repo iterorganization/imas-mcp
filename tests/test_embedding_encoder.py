@@ -8,6 +8,10 @@ import pytest
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 
+sentence_transformers = pytest.importorskip(
+    "sentence_transformers", reason="Requires sentence-transformers extra"
+)
+
 
 def test_embedding_encoder_build_and_embed(tmp_path: Path):
     # Use a small batch size to exercise batching logic even for few texts

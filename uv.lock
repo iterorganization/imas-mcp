@@ -761,10 +761,11 @@ dependencies = [
     { name = "networkx" },
     { name = "numpy" },
     { name = "pint" },
+    { name = "psutil" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "sentence-transformers" },
+    { name = "scikit-learn" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
@@ -781,6 +782,9 @@ test = [
     { name = "pytest-cov" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+]
+transformers = [
+    { name = "sentence-transformers" },
 ]
 
 [package.dev-dependencies]
@@ -817,6 +821,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.0,<4.0" },
     { name = "numpy", specifier = ">=2.3.1" },
     { name = "pint", specifier = ">=0.24.4,<0.25.0" },
+    { name = "psutil", specifier = ">=6.1.1" },
     { name = "pydantic", specifier = ">=2.11.4,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.5,<9.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.21.0,<1.0.0" },
@@ -826,11 +831,12 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.0.0,<4.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "sentence-transformers", specifier = ">=5.0.0" },
+    { name = "scikit-learn", specifier = ">=1.7.2" },
+    { name = "sentence-transformers", marker = "extra == 'transformers'", specifier = ">=5.0.0" },
     { name = "starlette", specifier = ">=0.37.0,<1.0.0" },
     { name = "uvicorn", specifier = ">=0.30.0,<1.0.0" },
 ]
-provides-extras = ["bench", "test"]
+provides-extras = ["bench", "test", "transformers"]
 
 [package.metadata.requires-dev]
 dev = [
