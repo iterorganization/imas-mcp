@@ -65,6 +65,7 @@ jobs:
         env:
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4

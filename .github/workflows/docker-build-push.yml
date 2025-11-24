@@ -53,11 +53,6 @@ jobs:
 
       - name: Scrape documentation
         if: steps.cache-docs.outputs.cache-hit != 'true'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
-          OPENAI_BASE_URL: https://openrouter.ai/api/v1
-          DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
-          DOCS_MCP_STORE_PATH: ./docs-data
         run: |
           chmod +x scripts/scrape-doc.sh
           
