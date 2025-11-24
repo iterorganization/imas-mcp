@@ -69,6 +69,14 @@ class HealthEndpoint:
             emb = self.server.embeddings
             # Status without forcing build if deferred
 
+            # Get docs server health information
+            docs_health = {}
+            try:
+                if hasattr(self.server, "docs_manager"):
+                    docs_health = await self.server.docs_manager.health_check()
+            except Exception as e:
+                docs_health = {"status": "unhealthy", "error": str(e)}
+
             def _format_uptime(seconds: float) -> str:
                 """Return a compact human-readable uptime string.
 
@@ -108,6 +116,7 @@ class HealthEndpoint:
                     "embedding_model_name": emb.model_name,
                     "started_at": self.server.started_at.isoformat(),
                     "uptime": _format_uptime(uptime_seconds),
+                    "docs_server_health": docs_health,
                 }
             )
 

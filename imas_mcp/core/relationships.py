@@ -58,8 +58,28 @@ class Relationships:
     def __post_init__(self):
         """Initialize computed fields after dataclass initialization."""
         if self.relationships_file is None:
+            import hashlib
+
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
-            self.relationships_file = path_accessor.schemas_dir / "relationships.json"
+
+            # Generate filename with hash suffix if IDS set is filtered
+            # This prevents test builds from overwriting production builds
+            if self.encoder_config.ids_set:
+                # Create hash based on sorted IDS names
+                ids_str = "_".join(sorted(self.encoder_config.ids_set))
+                ids_hash = hashlib.md5(ids_str.encode()).hexdigest()[:8]
+                filename = f"relationships_{ids_hash}.json"
+                logger.debug(
+                    f"Using filtered relationships file: {filename} for IDS set: {sorted(self.encoder_config.ids_set)}"
+                )
+            else:
+                # Full dataset uses simple name (production default)
+                filename = "relationships.json"
+                logger.debug(
+                    "Using full dataset relationships file: relationships.json"
+                )
+
+            self.relationships_file = path_accessor.schemas_dir / filename
 
     @property
     def file_path(self) -> Path:
@@ -241,7 +261,8 @@ class Relationships:
             # Get version-specific paths using ResourcePathAccessor
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
             input_dir = path_accessor.version_dir / "schemas" / "detailed"
-            output_file = path_accessor.version_dir / "schemas" / "relationships.json"
+            # Use the file path determined in __post_init__ (includes hash suffix if needed)
+            output_file = self.file_path
 
             # Create configuration with optimal parameters
             default_config = {
