@@ -1,13 +1,12 @@
 {
   "servers": {
     "imas": {
-	  // uv run imas-mcp --host 127.0.0.1 --port 8080
       "url": "https://imas-dd.iter.org/mcp",
       "type": "http"
     },
-    "imas-debug": {
-      "type": "http",
-      "url": "http://127.0.0.1:8080/mcp"
+    "imas-test": {
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp",
+      "type": "http"
     },
     "imas-ddv3": {
       "command": "uv",
@@ -25,10 +24,6 @@
       },
       "type": "stdio"
     },
-    "minds-db": {
-      "url": "http://127.0.0.1:47334/mcp/sse",
-      "type": "http"
-    }
   },
   "inputs": []
 }

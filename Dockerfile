@@ -3,7 +3,7 @@ ARG UV_VERSION=0.7.13
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 ## Stage 2: Build complete project
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -36,8 +36,6 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    # OpenRouter configuration for embeddings
-    OPENAI_API_KEY="" \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
     IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
@@ -85,7 +83,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
-# Build schema data
+# Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
+# This includes schemas, embeddings, relationships, and mermaid graphs built in CI
+# Git sparse checkout would have created the imas_mcp directory but without the generated resources
+# This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
+COPY imas_mcp/resources/ /app/imas_mcp/resources/
+
+# Build schema data (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building schema data..." && \
     if [ -n "${IDS_FILTER}" ]; then \
@@ -97,7 +101,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Schema data ready"
 
-# Build embeddings (conditional on IDS_FILTER)
+# Build embeddings (will skip if cache is valid from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
     export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY) && \
@@ -113,6 +117,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Build relationships (requires embeddings)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=OPENAI_API_KEY \
+    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
     echo "Building relationships..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building relationships for IDS: ${IDS_FILTER}" && \
@@ -136,7 +142,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "✓ Mermaid graphs ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
-FROM python:3.12-slim as docs-provider
+FROM python:3.12-slim AS docs-provider
 
 # Documentation already available in build context from CI
 # No copying needed - will be copied directly to final stage
@@ -150,7 +156,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install docs-mcp-server for runtime
-RUN npm install -g @arabold/docs-mcp-server@1.29.0
+ARG DOCS_MCP_SERVER_VERSION=1.29.0
+RUN npm install -g @arabold/docs-mcp-server@${DOCS_MCP_SERVER_VERSION}
 
 # Copy Python app from builder stage
 COPY --from=builder /bin/uv /bin/

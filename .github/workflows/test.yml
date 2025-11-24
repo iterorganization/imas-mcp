@@ -21,6 +21,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify Node.js and npm installation
+        run: |
+          node --version
+          npm --version
+          npx --version
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -51,6 +65,7 @@ jobs:
         env:
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
