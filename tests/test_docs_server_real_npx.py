@@ -12,8 +12,8 @@ from imas_mcp.services.docs_server_manager import DocsServerManager
     reason="npx not found in PATH",
 )
 @pytest.mark.skipif(
-    not os.getenv("OPENAI_API_KEY"),
-    reason="OPENAI_API_KEY required for docs-mcp-server startup",
+    not os.getenv("OPENAI_API_KEY", "").strip(),
+    reason="Valid OPENAI_API_KEY required for docs-mcp-server startup",
 )
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 async def test_docs_server_startup_real_npx():
