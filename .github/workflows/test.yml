@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
-        imas-dd-version: ["3.42.2", "4.0.0"]
+        imas-dd-version: ["3.42.2", "4.1.0"]
 
     steps:
       - uses: actions/checkout@v4
