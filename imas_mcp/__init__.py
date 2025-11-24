@@ -36,9 +36,9 @@ def _get_dd_version(cli_version: str | None = None) -> str:
         # Normalize: remove git hash suffix (e.g., '4.0.1.dev277+g8b28b0d89' -> '4.0.1.dev277')
         return version.split("+")[0] if "+" in version else version
     except ImportError:
-        # Default to 4.0.0 when using imas-data-dictionaries PyPI package
+        # Default to 4.1.0 when using imas-data-dictionaries PyPI package
         # This is the stable version that imas-data-dictionaries provides
-        return "4.0.0"
+        return "4.1.0"
 
 
 # import version from project metadata

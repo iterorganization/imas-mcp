@@ -3,6 +3,8 @@
 import shutil
 from pathlib import Path
 
+from imas_mcp import DOCS_MCP_SERVER_VERSION
+
 
 def get_npx_executable() -> str:
     """Find npx executable or raise error.
@@ -47,7 +49,7 @@ def build_docs_server_command(
     cmd = [
         npx_path,
         "--yes",  # Use long form for clarity
-        "@arabold/docs-mcp-server@latest",
+        f"@arabold/docs-mcp-server@{DOCS_MCP_SERVER_VERSION}",
     ]
 
     # For server mode, add protocol/host/port flags before command

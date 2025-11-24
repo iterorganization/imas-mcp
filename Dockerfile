@@ -151,7 +151,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install docs-mcp-server for runtime
-RUN npm install -g @arabold/docs-mcp-server@latest
+ARG DOCS_MCP_SERVER_VERSION=1.29.0
+RUN npm install -g @arabold/docs-mcp-server@${DOCS_MCP_SERVER_VERSION}
 
 # Copy Python app from builder stage
 COPY --from=builder /bin/uv /bin/

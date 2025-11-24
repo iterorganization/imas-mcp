@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dotenv import load_dotenv
 
-from imas_mcp.services.docs_cli_helpers import DOCS_MCP_SERVER_VERSION
+from imas_mcp import DOCS_MCP_SERVER_VERSION
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 # Load environment variables from .env file
