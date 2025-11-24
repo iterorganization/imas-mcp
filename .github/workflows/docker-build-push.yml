@@ -65,9 +65,16 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           
           # Read sources from docs-sources.yml and scrape each one
-          yq eval '.sources[] | [.name, .url, .version, .max_pages, .max_depth, (.exclude_patterns | join(" "))] | @tsv' .github/docs-sources.yml | \
-          while IFS=$'\t' read -r name url version max_pages max_depth exclude_patterns; do
-            echo "Processing: $name"
+          yq eval '.sources[] | [.name, .url, .version, .max_pages, .max_depth, (.skip // false), (.exclude_patterns | join(" "))] | @tsv' .github/docs-sources.yml | \
+          while IFS=$'\t' read -r name url version max_pages max_depth skip exclude_patterns; do
+            echo "Processing: $name (skip=$skip)"
+            
+            # Skip if skip flag is true
+            if [ "$skip" = "true" ]; then
+              echo "⊘ Skipping $name (skip flag set)"
+              continue
+            fi
+            
             if [ -n "$exclude_patterns" ]; then
               ./scripts/scrape-doc.sh "$name" "$url" "$version" "$max_pages" "$max_depth" "$exclude_patterns"
             else
