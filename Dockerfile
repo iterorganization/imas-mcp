@@ -84,6 +84,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
+# Copy pre-built IMAS resources from build context (CI artifacts) if available
+# This allows build scripts to skip rebuilding if resources already exist
+COPY imas_mcp/resources/ /app/imas_mcp/resources/
+
 # Build schema data
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building schema data..." && \
