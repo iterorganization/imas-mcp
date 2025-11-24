@@ -51,6 +51,9 @@
     },
     "imas-mcp/.vscode/mcp.json: imas-ddv4": {
       "allowedDuringChat": true
+    },
+    "imas-mcp/.vscode/mcp.json: imas-test": {
+      "allowedModels": ["copilot/gpt-4.1"]
     }
   },
   // Formatting settings
