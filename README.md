@@ -74,9 +74,56 @@ Placeholder: clarify what "op" refers to (e.g. OpenAI, Operator) to add tailored
 Install with [uv](https://docs.astral.sh/uv/):
 
 ```bash
+# Standard installation (requires API key for embeddings)
 uv tool install imas-mcp
-# or add to a project env
-uv add imas-mcp
+
+# Install with local embedding support (includes sentence-transformers)
+uv tool install "imas-mcp[transformers]"
+
+# Add to a project env with transformers support
+uv add "imas-mcp[transformers]"
+```
+
+#### Embedding Configuration
+
+The IMAS MCP server supports two modes for generating embeddings:
+
+1. **API-based embeddings** (default): Uses remote embedding APIs via OpenRouter
+
+   - Requires `OPENAI_API_KEY` and `OPENAI_BASE_URL` environment variables
+   - No local dependencies needed
+   - Example model: `openai/text-embedding-3-small`
+
+2. **Local embeddings**: Uses sentence-transformers library
+   - Install with `[transformers]` extra: `pip install imas-mcp[transformers]`
+   - Runs models locally without API calls
+   - Example model: `all-MiniLM-L6-v2` (default)
+
+**Configuration:**
+
+```bash
+# API-based (requires API key)
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
+export IMAS_MCP_EMBEDDING_MODEL="openai/text-embedding-3-small"
+
+# Local transformers (requires [transformers] extra)
+export IMAS_MCP_EMBEDDING_MODEL="all-MiniLM-L6-v2"
+```
+
+**Error Handling:**
+
+If you attempt to use local embeddings without the `[transformers]` extra installed, you'll see:
+
+```
+ImportError: sentence-transformers is required for local embedding models but is not installed.
+
+To fix this, either:
+1. Install with transformers support: pip install imas-mcp[transformers]
+2. Set an API key to use remote embeddings:
+   - Set OPENAI_API_KEY environment variable
+   - Set OPENAI_BASE_URL environment variable (e.g., https://openrouter.ai/api/v1)
+   - Set IMAS_MCP_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)
 ```
 
 VS Code:
@@ -203,46 +250,46 @@ Once you have the IMAS MCP server configured, you can interact with it using nat
 ### Basic Search Examples
 
 ```text
-@imas Find data paths related to plasma temperature
-@imas Search for electron density measurements
-@imas What data is available for magnetic field analysis?
-@imas Show me core plasma profiles
+Find data paths related to plasma temperature
+Search for electron density measurements
+What data is available for magnetic field analysis?
+Show me core plasma profiles
 ```
 
 ### Physics Concept Exploration
 
 ```text
-@imas Explain what equilibrium reconstruction means in plasma physics
-@imas What is the relationship between pressure and magnetic fields?
-@imas How do transport coefficients relate to plasma confinement?
-@imas Describe the physics behind current drive mechanisms
+Explain what equilibrium reconstruction means in plasma physics
+What is the relationship between pressure and magnetic fields?
+How do transport coefficients relate to plasma confinement?
+Describe the physics behind current drive mechanisms
 ```
 
 ### Data Structure Analysis
 
 ```text
-@imas Analyze the structure of the core_profiles IDS
-@imas What are the relationships between equilibrium and core_profiles?
-@imas Show me identifier schemas for transport data
-@imas Export bulk data for equilibrium, core_profiles, and transport IDS
+Analyze the structure of the core_profiles IDS
+What are the relationships between equilibrium and core_profiles?
+Show me identifier schemas for transport data
+Export bulk data for equilibrium, core_profiles, and transport IDS
 ```
 
 ### Advanced Queries
 
 ```text
-@imas Find all paths containing temperature measurements across different IDS
-@imas What physics domains are covered in the IMAS data dictionary?
-@imas Show me measurement dependencies for fusion power calculations
-@imas Explore cross-domain relationships between heating and confinement
+Find all paths containing temperature measurements across different IDS
+What physics domains are covered in the IMAS data dictionary?
+Show me measurement dependencies for fusion power calculations
+Explore cross-domain relationships between heating and confinement
 ```
 
 ### Workflow and Integration
 
 ```text
-@imas How do I access electron temperature profiles from IMAS data?
-@imas What's the recommended workflow for equilibrium analysis?
-@imas Show me the branching logic for diagnostic identifier schemas
-@imas Export physics domain data for comprehensive transport analysis
+How do I access electron temperature profiles from IMAS data?
+What's the recommended workflow for equilibrium analysis?
+Show me the branching logic for diagnostic identifier schemas
+Export physics domain data for comprehensive transport analysis
 ```
 
 The IMAS MCP server provides 8 specialized tools for different types of queries:
@@ -255,6 +302,144 @@ The IMAS MCP server provides 8 specialized tools for different types of queries:
 - **Identifiers**: Exploration of enumerated options and branching logic
 - **Bulk Export**: Comprehensive export of multiple IDS with relationships
 - **Domain Export**: Physics domain-specific data with measurement dependencies
+
+## Documentation Search
+
+The server includes integrated search for documentation libraries with IMAS-Python as the default indexed library. This feature enables AI assistants to search across documentation sources using natural language queries.
+
+### Available MCP Tool Functions
+
+- **`search_docs`**: Search any indexed documentation library
+
+  - Parameters: `query` (required), `library` (optional), `limit` (optional, 1-20), `version` (optional)
+  - Supports multiple documentation libraries
+  - Returns comprehensive version and library information
+
+- **`search_imas_python_docs`**: Search specifically in IMAS-Python documentation
+
+  - Parameters: `query` (required), `limit` (optional), `version` (optional)
+  - Automatically uses IMAS-Python library
+  - IMAS-specific search optimizations
+
+- **`list_docs`**: List all available documentation libraries or get versions for a specific library
+  - Parameters: `library` (optional)
+  - When no library specified: returns list of all available libraries
+  - When library specified: returns versions for that specific library
+  - Shows all indexed versions and latest
+
+### CLI Commands
+
+- **`add-docs`**: Add new documentation libraries via command line
+  - Usage: `add-docs LIBRARY URL [OPTIONS]`
+  - Requires: OpenRouter API key and embedding model configuration
+  - Supports custom max-pages and max-depth settings
+  - Includes `--ignore-errors` flag (enabled by default) to handle problematic pages gracefully
+  - See examples below
+
+### Documentation Search Examples
+
+```text
+# Search IMAS-Python documentation
+search_imas_python_docs "equilibrium calculations"
+search_imas_python_docs "IDS data structures" limit=5
+search_imas_python_docs "magnetic field" version="2.0.1"
+
+# Search any documentation library
+search_docs "neural networks" library="numpy"
+search_docs "data visualization" library="matplotlib"
+
+# List all available libraries
+list_docs
+
+# Get versions for specific library
+list_docs "imas-python"
+
+# Add new documentation using CLI
+add-docs udunits https://docs.unidata.ucar.edu/udunits/current/
+add-docs pandas https://pandas.pydata.org/docs/ --version 2.0.1 --max-pages 500
+add-docs imas-python https://imas-python.readthedocs.io/en/stable/ --no-ignore-errors
+```
+
+### Setup Instructions
+
+#### Production (Docker)
+
+IMAS-Python documentation is automatically scraped during build.
+
+```bash
+docker-compose up --build
+```
+
+#### Local Development
+
+```bash
+# 1. Start docs-mcp-server
+python scripts/start_docs_server.py
+
+# 2. In another terminal, start IMAS-MCP server
+python -m imas_mcp
+
+# 3. Scraping IMAS-Python documentation (first time only)
+python scripts/scrape_imas_docs.py
+```
+
+#### API Key Configuration
+
+For documentation scraping capabilities, you'll need an OpenRouter API key:
+
+**For Local Development:**
+
+```bash
+# Set up environment variables (create .env file from env.example)
+cp env.example .env
+# Edit .env with your OpenRouter API key
+```
+
+**For CI/CD (GitHub Actions):**
+
+1. Go to your repository settings: `Settings` → `Secrets and variables` → `Actions`
+2. Add a new repository secret:
+   - **Name**: `OPENAI_API_KEY`
+   - **Value**: Your OpenRouter API key
+
+> 📖 **Detailed Setup Guide:** See [.github/SECRETS_SETUP.md](.github/SECRETS_SETUP.md) for complete instructions on configuring GitHub repository secrets and troubleshooting.
+
+**Build Behavior:**
+
+- **With OPENAI_API_KEY**: Full documentation scraping during build
+- **Without OPENAI_API_KEY**: Documentation scraping is skipped, build continues
+- The container works normally regardless of scraping status
+
+**Local Docker Build:**
+
+```bash
+# Build with API key
+docker build --build-arg OPENAI_API_KEY=your_key_here .
+
+# Build without API key (scraping will be skipped)
+docker build .
+```
+
+#### Adding New Documentation Libraries
+
+Use the `add-docs` CLI command to add new documentation:
+
+```bash
+# Add documentation libraries
+add-docs udunits https://docs.unidata.ucar.edu/udunits/current/
+add-docs numpy https://numpy.org/doc/stable/ --max-pages 500 --max-depth 3
+```
+
+**Note:** Requires OPENAI_API_KEY environment variable to be set (see API Key Configuration above).
+
+#### Troubleshooting
+
+If documentation search is unavailable:
+
+- Check docs-mcp-server is running: `curl http://localhost:6280/api/ping`
+- Verify environment: `echo $DOCS_SERVER_URL`
+- Check logs for connection errors
+- Follow setup instructions in error messages
 
 ## Development
 

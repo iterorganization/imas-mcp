@@ -5,6 +5,7 @@ Determines when and how to apply AI enhancement to tool results.
 Works with the existing MCP sampling decorator to make sampling selective rather than always-on.
 """
 
+import functools
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -313,26 +314,28 @@ class EnhancementDecisionEngine:
         return 0 if not result else 1
 
 
-# Global configuration instance
-TOOL_ENHANCEMENT_CONFIG = EnhancementConfig()
-
-# Global decision engine instance
-_enhancement_engine = None
+# Default configuration instance (can be overridden via factory parameter)
+DEFAULT_ENHANCEMENT_CONFIG = EnhancementConfig()
 
 
-def get_enhancement_engine() -> EnhancementDecisionEngine:
-    """Get global enhancement decision engine instance."""
-    global _enhancement_engine
-    if _enhancement_engine is None:
-        _enhancement_engine = EnhancementDecisionEngine(TOOL_ENHANCEMENT_CONFIG)
-    return _enhancement_engine
+@functools.cache
+def get_enhancement_engine(
+    config: EnhancementConfig | None = None,
+) -> EnhancementDecisionEngine:
+    """
+    Get enhancement decision engine instance with lazy initialization and caching.
+
+    Note: Due to @functools.cache, the config parameter only applies on first call.
+    Use create_enhancement_engine() if you need multiple configurations.
+    """
+    if config is None:
+        config = DEFAULT_ENHANCEMENT_CONFIG
+    return EnhancementDecisionEngine(config)
 
 
-def configure_enhancement(config: EnhancementConfig) -> None:
-    """Configure global enhancement settings."""
-    global TOOL_ENHANCEMENT_CONFIG, _enhancement_engine
-    TOOL_ENHANCEMENT_CONFIG = config
-    _enhancement_engine = EnhancementDecisionEngine(config)
+def create_enhancement_engine(config: EnhancementConfig) -> EnhancementDecisionEngine:
+    """Create a new enhancement engine with custom configuration (not cached)."""
+    return EnhancementDecisionEngine(config)
 
 
 def should_enhance_result(

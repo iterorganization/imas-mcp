@@ -76,13 +76,13 @@ class TestExploreIdentifiersTool:
         assert isinstance(result, IdentifierResult)
 
         if len(result.schemas) > 0:
-            # Materials schema should have 31 options
+            # Materials schema should have 33 options
             materials_schema = next(
                 (s for s in result.schemas if "materials" in s["path"].lower()), None
             )
             if materials_schema:
-                assert materials_schema["option_count"] == 31, (
-                    "Materials schema should have 31 options"
+                assert materials_schema["option_count"] == 33, (
+                    "Materials schema should have 33 options"
                 )
 
         # Test overall enumeration space calculation

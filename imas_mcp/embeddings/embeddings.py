@@ -47,7 +47,7 @@ class Embeddings:
     document_store: DocumentStore
     ids_set: set[str] | None = None
     use_rich: bool = True
-    model_name: str = "all-MiniLM-L6-v2"
+    model_name: str | None = None
     load_embeddings: bool = True  # if True, build document embeddings in __post_init__ (was defer_build False)
 
     # Internal state
@@ -75,6 +75,8 @@ class Embeddings:
             use_half_precision=self._use_half_precision,
         )
         self._encoder = Encoder(config=config)
+        # Update model_name with the actual value from config (after env var resolution)
+        self.model_name = config.model_name
         if self.load_embeddings:
             self._load_embeddings()
 
@@ -108,6 +110,9 @@ class Embeddings:
     # Cache helpers -----------------------------------------------------
     def cache_filename(self) -> str:
         """Derive expected cache filename using same scheme as EmbeddingManager."""
+        assert self.model_name is not None, (
+            "model_name should be set after __post_init__"
+        )
         model_name_sanitized = self.model_name.split("/")[-1].replace("-", "_")
         config_parts: list[str] = [
             f"norm_{self._normalize_embeddings}",

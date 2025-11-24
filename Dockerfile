@@ -1,9 +1,9 @@
-## Stage 1: acquire uv binary (kept minimal). Using ARG here is supported in FROM.
+## Stage 1: acquire uv binary (kept minimal)
 ARG UV_VERSION=0.7.13
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-## Final stage: runtime image
-FROM python:3.12-slim
+## Stage 2: Build complete project
+FROM python:3.12-slim as builder
 
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -12,8 +12,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv package manager (copied from first stage; version pinned by ARG above)
-COPY --from=uv /uv /uvx /bin/
+# Copy uv binary
+COPY --from=uv /uv /bin/
 
 # Set working directory
 WORKDIR /app
@@ -36,9 +36,10 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    IMAS_MCP_COMMIT=${GIT_SHA} \
-    IMAS_MCP_TAG=${GIT_TAG} \
-    IMAS_MCP_REF=${GIT_REF}
+    # OpenRouter configuration for embeddings
+    OPENAI_API_KEY="" \
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
 # Labels for image provenance
 LABEL imas_mcp.git_sha=${GIT_SHA} \
@@ -64,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
-## Expand sparse checkout to include project sources and scripts (phase 2)
+# Expand sparse checkout to include project sources and scripts (phase 2)
 RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
@@ -98,6 +99,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Build embeddings (conditional on IDS_FILTER)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=OPENAI_API_KEY \
+    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY) && \
     echo "Building embeddings..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building embeddings for IDS: ${IDS_FILTER}" && \
@@ -131,6 +134,45 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-mermaid --quiet; \
     fi && \
     echo "✓ Mermaid graphs ready"
+
+## Stage 3: Use pre-scraped documentation (from CI cache)
+FROM python:3.12-slim as docs-provider
+
+# Documentation already available in build context from CI
+# No copying needed - will be copied directly to final stage
+
+## Stage 4: Final runtime image (assemble from builder + direct docs copy)
+FROM python:3.12-slim
+
+# Install Node.js for runtime docs server support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install docs-mcp-server for runtime
+RUN npm install -g @arabold/docs-mcp-server@1.29.0
+
+# Copy Python app from builder stage
+COPY --from=builder /bin/uv /bin/
+COPY --from=builder /app /app
+
+# Copy scraped documentation directly from build context (CI artifacts)
+COPY docs-data/ /app/data
+
+# Set working directory
+WORKDIR /app
+
+# Set runtime environment variables
+# Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
+ENV PYTHONPATH="/app" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DOCS_SERVER_URL=http://localhost:6280 \
+    DOCS_MCP_TELEMETRY=false \
+    DOCS_MCP_STORE_PATH=/app/data \
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b \
+    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
