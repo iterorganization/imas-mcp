@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from dotenv import load_dotenv
 
-from imas_mcp.services.docs_cli_helpers import DOCS_MCP_SERVER_VERSION
+from imas_mcp import DOCS_MCP_SERVER_VERSION
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 # Load environment variables from .env file
@@ -14,7 +14,11 @@ load_dotenv()
 
 
 @pytest.fixture
-def mock_npx():
+def mock_npx(monkeypatch):
+    """Mock npx executable and ensure OPENAI_API_KEY is set for mocked tests."""
+    # Set a fake API key if not present to allow mocked tests to run
+    if not os.getenv("OPENAI_API_KEY"):
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-test-key-for-mocked-tests")
     with patch("shutil.which", return_value="/usr/bin/npx"):
         yield
 

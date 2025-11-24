@@ -58,9 +58,13 @@ def configure_embedding_model(embedding_model_name):
     if embedding_model_name:
         os.environ["IMAS_MCP_EMBEDDING_MODEL"] = embedding_model_name
     else:
-        # Force local model for tests, ignoring .env configuration
-        # This ensures most tests use the free/local model unless explicitly overridden
-        os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
+        # If OPENAI_API_KEY is set, use API model; otherwise use local
+        # This allows tests to work with .env configuration
+        if not os.environ.get("IMAS_MCP_EMBEDDING_MODEL"):
+            if os.environ.get("OPENAI_API_KEY"):
+                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "openai/text-embedding-3-small"
+            else:
+                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 
 
 # Standard test IDS set for consistency across all tests

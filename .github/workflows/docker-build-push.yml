@@ -17,9 +17,11 @@ env:
   GHCR_REGISTRY: ghcr.io
   ACR_REGISTRY: crcommonallfrc.azurecr.io
   IMAGE_NAME: ${{ github.repository }}
+  IMAS_DD_VERSION: "4.1.0"
+  OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
 jobs:
-  scrape-docs:
+  build-docs-resources:
     runs-on: ubuntu-latest
     # Only run on tag pushes to limit embedding costs
     if: startsWith(github.ref, 'refs/tags/')
@@ -28,7 +30,6 @@ jobs:
       DOCS_MCP_STORE_PATH: ./docs-data
       DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: https://openrouter.ai/api/v1
 
     steps:
       - name: Checkout repository
@@ -52,11 +53,6 @@ jobs:
 
       - name: Scrape documentation
         if: steps.cache-docs.outputs.cache-hit != 'true'
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || '' }}
-          OPENAI_BASE_URL: https://openrouter.ai/api/v1
-          DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
-          DOCS_MCP_STORE_PATH: ./docs-data
         run: |
           chmod +x scripts/scrape-doc.sh
           
@@ -65,9 +61,16 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           
           # Read sources from docs-sources.yml and scrape each one
-          yq eval '.sources[] | [.name, .url, .version, .max_pages, .max_depth, (.exclude_patterns | join(" "))] | @tsv' .github/docs-sources.yml | \
-          while IFS=$'\t' read -r name url version max_pages max_depth exclude_patterns; do
-            echo "Processing: $name"
+          yq eval '.sources[] | [.name, .url, .version, .max_pages, .max_depth, (.skip // false), (.exclude_patterns | join(" "))] | @tsv' .github/docs-sources.yml | \
+          while IFS=$'\t' read -r name url version max_pages max_depth skip exclude_patterns; do
+            echo "Processing: $name (skip=$skip)"
+            
+            # Skip if skip flag is true
+            if [ "$skip" = "true" ]; then
+              echo "⊘ Skipping $name (skip flag set)"
+              continue
+            fi
+            
             if [ -n "$exclude_patterns" ]; then
               ./scripts/scrape-doc.sh "$name" "$url" "$version" "$max_pages" "$max_depth" "$exclude_patterns"
             else
@@ -83,11 +86,75 @@ jobs:
         with:
           name: documentation-data
           path: docs-data/
-          retention-days: 90  # Maximum retention - docs change infrequently
+          retention-days: 30  # Maximum retention - docs change infrequently
+
+  build-imas-resources:
+    runs-on: ubuntu-latest
+    # Only run on tag pushes to limit embedding costs
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      IMAS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-4b
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache IMAS resources
+        id: cache-imas-resources
+        uses: actions/cache@v4
+        with:
+          path: imas_mcp/resources/imas_data_dictionary/
+          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
+          restore-keys: |
+            imas-resources-${{ env.IMAS_DD_VERSION }}-
+
+      - name: Build IMAS resources
+        if: steps.cache-imas-resources.outputs.cache-hit != 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          
+          echo "Installing dependencies..."
+          uv sync --no-dev
+          
+          echo "Building schema data..."
+          # Schemas are built during uv sync via hatch build hook, verify they exist
+          if [ -d "imas_mcp/resources/imas_data_dictionary/" ] && [ -f "imas_mcp/resources/imas_data_dictionary/ids_metadata.json" ]; then
+            echo "✓ Schemas already built by hatch build hook"
+          else
+            echo "Building schemas explicitly..."
+            uv run build-schemas --no-rich
+          fi
+          
+          echo "Building embeddings..."
+          uv run build-embeddings --no-rich
+          echo "✓ Embeddings built successfully"
+          
+          echo "Building relationships..."
+          uv run build-relationships --quiet
+          echo "✓ Relationships built successfully"
+          
+          echo "Building mermaid graphs..."
+          uv run build-mermaid --quiet
+          echo "✓ Mermaid graphs built successfully"
+          
+          echo "All IMAS resources built successfully:"
+          ls -lh imas_mcp/resources/imas_data_dictionary/
+
+      - name: Upload IMAS resources as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imas-resources
+          path: imas_mcp/resources/imas_data_dictionary/
+          retention-days: 30  # Maximum retention - resources change infrequently
+          include-hidden-files: true  # Include .pkl cache files (hidden files starting with .)
 
   build-and-push:
     runs-on: ubuntu-latest
-    needs: scrape-docs
+    needs: [build-docs-resources, build-imas-resources]
     # Only run on tag pushes
     if: startsWith(github.ref, 'refs/tags/')
     strategy:
@@ -117,12 +184,31 @@ jobs:
           name: documentation-data
           path: docs-data/
 
+      - name: Download IMAS resources
+        uses: actions/download-artifact@v4
+        with:
+          name: imas-resources
+          path: imas_mcp/resources/imas_data_dictionary/
+
+      - name: Verify downloaded resources exist
+        run: |
+          echo "Checking for downloaded IMAS resources..."
+          ls -la imas_mcp/resources/imas_data_dictionary/ || echo "Directory not found!"
+          echo ""
+          echo "Checking for embeddings .pkl files:"
+          find imas_mcp/resources/imas_data_dictionary/ -name "*.pkl" -ls 2>/dev/null || echo "No .pkl files found"
+
       - name: Verify git state for versioning
         run: |
           echo "Current commit: $(git rev-parse HEAD)"
           echo "Git describe: $(git describe --tags --always --dirty)"
           echo "Git status:"
           git status --porcelain
+
+      - name: Set lowercase image name for cache
+        id: image-name
+        run: |
+          echo "lowercase=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -192,21 +278,17 @@ jobs:
           build-args: |
             IDS_FILTER=
             TRANSPORT=${{ matrix.transport }}
-            IMAS_DD_VERSION=4.0.0
+            IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GIT_SHA=${{ github.sha }}
             GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
             GIT_REF=${{ github.ref }}
           secrets: |
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          cache-from: |
-            type=gha,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}:cache
-          cache-to: |
-            type=gha,mode=max,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
+          cache-from: type=gha,scope=build-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 
       - name: Verify version inside image (tag builds)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           EXPECTED=${GITHUB_REF_NAME#v}
@@ -228,7 +310,7 @@ jobs:
           echo "Version check passed"
 
       - name: Generate artifact attestation for GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
