@@ -21,9 +21,7 @@ concurrency:
 
 jobs:
   run-benchmark:
-    # Only deploy to GitHub Pages from main branch or manual workflow dispatch
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
-    # Use specific runner for consistent benchmark results
     runs-on: ubuntu-22.04 # 4 cores, 16GB RAM, consistent specs
     permissions:
       contents: write  # Need write for gh-pages push
@@ -98,6 +96,9 @@ jobs:
           "
 
       - name: Setup ASV machine
+        env:
+          IMAS_MCP_EMBEDDING_MODEL: all-MiniLM-L6-v2
+          HF_HUB_DISABLE_SYMLINKS_WARNING: 1
         run: |
           # Get actual system specifications from the runner
           CPU_INFO=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
@@ -128,6 +129,9 @@ jobs:
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
       - name: Run benchmarks
+        env:
+          IMAS_MCP_EMBEDDING_MODEL: all-MiniLM-L6-v2
+          HF_HUB_DISABLE_SYMLINKS_WARNING: 1
         run: |
           # Run benchmarks
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
