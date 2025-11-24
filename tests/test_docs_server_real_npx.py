@@ -6,11 +6,13 @@ import pytest
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 
-def _has_valid_openai_key() -> bool:
-    """Check if a valid-looking OPENAI_API_KEY is present."""
+def _has_valid_openai_config() -> bool:
+    """Check if valid OPENAI_API_KEY and OPENAI_BASE_URL are present."""
     key = os.getenv("OPENAI_API_KEY", "").strip()
+    base_url = os.getenv("OPENAI_BASE_URL", "").strip()
     # OpenAI keys start with 'sk-' and are at least 20 chars
-    return bool(key and key.startswith("sk-") and len(key) > 20)
+    # Base URL is required for OpenRouter/custom endpoints
+    return bool(key and key.startswith("sk-") and len(key) > 20 and base_url)
 
 
 @pytest.mark.asyncio
@@ -19,15 +21,15 @@ def _has_valid_openai_key() -> bool:
     reason="npx not found in PATH",
 )
 @pytest.mark.skipif(
-    not _has_valid_openai_key(),
-    reason="Valid OPENAI_API_KEY (starts with 'sk-') required for docs-mcp-server startup",
+    not _has_valid_openai_config(),
+    reason="Valid OPENAI_API_KEY and OPENAI_BASE_URL required for docs-mcp-server startup",
 )
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 async def test_docs_server_startup_real_npx():
     """Test that the docs server can start up with npx and OPENAI_API_KEY.
 
     This is a simple integration test - if it fails, check:
-    1. OPENAI_API_KEY is set and valid
+    1. OPENAI_API_KEY and OPENAI_BASE_URL are set and valid
     2. npx is in PATH
     3. Network connectivity for downloading docs-mcp-server
     """
