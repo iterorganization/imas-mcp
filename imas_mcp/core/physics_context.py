@@ -5,6 +5,7 @@ This module provides physics context enrichment using YAML domain definitions
 and unit contexts to enhance MCP tool responses with domain-specific information.
 """
 
+import functools
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -271,12 +272,7 @@ class PhysicsContextProvider:
         return suggestions
 
 
-_physics_context_provider: PhysicsContextProvider | None = None
-
-
+@functools.cache
 def get_physics_context_provider() -> PhysicsContextProvider:
-    """Get the global physics context provider instance."""
-    global _physics_context_provider
-    if _physics_context_provider is None:
-        _physics_context_provider = PhysicsContextProvider()
-    return _physics_context_provider
+    """Get physics context provider instance with lazy initialization and caching."""
+    return PhysicsContextProvider()

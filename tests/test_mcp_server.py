@@ -6,11 +6,12 @@ focusing on MCP protocol compliance and component integration using FastMCP
 in-memory testing patterns.
 """
 
-import asyncio
+import os
 
 import pytest
 from fastmcp import Client, FastMCP
 
+from imas_mcp import dd_version
 from imas_mcp.models.result_models import OverviewResult
 from imas_mcp.resource_provider import Resources
 from imas_mcp.server import Server
@@ -37,7 +38,10 @@ class TestMCPServer:
         """Test MCP protocol integration."""
         # MCP should be properly initialized
         assert server.mcp is not None
-        assert server.mcp.name == "imas"
+        assert hasattr(server.mcp, "name")
+        # Server name should include DD version
+        expected_name = f"imas-data-dictionary-{dd_version}"
+        assert server.mcp.name == expected_name
 
     def test_server_ids_set_configuration(self, server):
         """Test server is configured with test IDS set."""
@@ -93,8 +97,11 @@ class TestMCPServer:
         assert hasattr(server, "run")
         assert callable(server.run)
 
-    def test_multiple_server_instances_isolation(self):
+    def test_multiple_server_instances_isolation(self, monkeypatch):
         """Test multiple server instances don't interfere."""
+        # Use free API embeddings by default
+        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+
         server1 = Server(ids_set=STANDARD_TEST_IDS_SET)
         server2 = Server(ids_set={"equilibrium"})
 
@@ -193,6 +200,8 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_multiple_concurrent_operations(self, server):
         """Test concurrent MCP operations work correctly."""
+        import asyncio
+
         async with Client(server.mcp) as client:
             # Execute multiple operations concurrently
             results = await asyncio.gather(

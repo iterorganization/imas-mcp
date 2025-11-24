@@ -49,13 +49,29 @@ class RelationshipsTool(BaseTool):
     def __init__(self, *args, **kwargs):
         """Initialize with relationships manager."""
         super().__init__(*args, **kwargs)
-        # Pass ids_set from document store to Relationships manager
+
+        # Create encoder config for relationships
+        from imas_mcp.embeddings.config import EncoderConfig
+
         ids_set = (
             self.document_store.ids_set
             if hasattr(self.document_store, "ids_set")
             else None
         )
-        self._relationships = Relationships(ids_set=ids_set)
+
+        encoder_config = EncoderConfig(
+            model_name=None,  # Use env var or fallback
+            device=None,
+            batch_size=250,
+            normalize_embeddings=True,
+            use_half_precision=False,
+            enable_cache=True,
+            cache_dir="embeddings",
+            ids_set=ids_set,
+            use_rich=False,
+        )
+
+        self._relationships = Relationships(encoder_config=encoder_config)
         self._load_relationships_catalog()
 
     def _load_relationships_catalog(self):

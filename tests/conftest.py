@@ -5,16 +5,67 @@ This module provides test fixtures for the composition-based server architecture
 focusing on MCP protocol testing and feature validation.
 """
 
+import os
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from dotenv import load_dotenv
 from fastmcp import Client
 
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.server import Server
+from imas_mcp.services.physics import PhysicsService
+
+# Load .env file with override=True to ensure test environment uses .env values
+# This fixes issues where empty or stale shell environment variables persist
+load_dotenv(override=True)
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--embedding-model",
+        action="store",
+        default=None,
+        help="Embedding model to use for tests (default: all-MiniLM-L6-v2 or from env)",
+    )
+
+
+def pytest_configure(config):
+    """Configure pytest."""
+    config.addinivalue_line(
+        "markers", "api_embedding: mark test as requiring API embedding model"
+    )
+
+
+@pytest.fixture(scope="session")
+def embedding_model_name(request):
+    """Get the embedding model name from command line option."""
+    return request.config.getoption("--embedding-model")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_embedding_model(embedding_model_name):
+    """Configure the embedding model environment variable."""
+    # Store original value from .env/shell for tests that need the real API config
+    if "IMAS_MCP_EMBEDDING_MODEL" in os.environ:
+        os.environ["IMAS_MCP_ORIGINAL_EMBEDDING_MODEL"] = os.environ[
+            "IMAS_MCP_EMBEDDING_MODEL"
+        ]
+
+    if embedding_model_name:
+        os.environ["IMAS_MCP_EMBEDDING_MODEL"] = embedding_model_name
+    else:
+        # If OPENAI_API_KEY is set, use API model; otherwise use local
+        # This allows tests to work with .env configuration
+        if not os.environ.get("IMAS_MCP_EMBEDDING_MODEL"):
+            if os.environ.get("OPENAI_API_KEY"):
+                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "openai/text-embedding-3-small"
+            else:
+                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
+
 
 # Standard test IDS set for consistency across all tests
 # This avoids re-embedding and ensures consistent performance
@@ -80,7 +131,7 @@ def disable_caching():
             yield
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def mock_heavy_operations():
     """Mock all heavy operations that slow down tests."""
     mock_documents = create_mock_documents()
@@ -153,23 +204,37 @@ def mock_heavy_operations():
                     "transport"
                 ]
 
-                # Mock search engines to prevent heavy initialization
-                with patch(
-                    "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine"
-                ) as mock_semantic_engine:
-                    mock_semantic_engine.return_value = MockSearchEngine()
-
-                    with patch(
-                        "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine"
-                    ) as mock_lexical_engine:
-                        mock_lexical_engine.return_value = MockSearchEngine()
-
-                        with patch(
-                            "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine"
-                        ) as mock_hybrid_engine:
-                            mock_hybrid_engine.return_value = MockSearchEngine()
-
-                            yield
+                # Mock search engine methods to prevent heavy execution
+                mock_engine = MockSearchEngine()
+                with (
+                    patch(
+                        "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
+                        side_effect=mock_engine.search,
+                    ),
+                    patch(
+                        "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
+                        side_effect=mock_engine.search,
+                    ),
+                    patch(
+                        "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
+                        side_effect=mock_engine.search,
+                    ),
+                ):
+                    # Mock PhysicsService methods to prevent heavy model loading
+                    with patch.multiple(
+                        PhysicsService,
+                        enhance_query=AsyncMock(return_value=None),
+                        get_concept_context=AsyncMock(
+                            return_value={
+                                "domain": "transport",
+                                "description": "Mock physics description",
+                                "phenomena": ["transport"],
+                                "typical_units": ["m"],
+                                "complexity_level": "intermediate",
+                            }
+                        ),
+                    ):
+                        yield
 
 
 @pytest.fixture(scope="session")

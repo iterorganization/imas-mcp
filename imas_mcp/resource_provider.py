@@ -152,7 +152,21 @@ class Resources(MCPProvider):
         """
         try:
             # Use the relationships manager for better cache management
-            relationships = Relationships(ids_set=self.ids_set)
+            from imas_mcp.embeddings.config import EncoderConfig
+
+            encoder_config = EncoderConfig(
+                model_name=None,  # Use env var or fallback
+                device=None,
+                batch_size=250,
+                normalize_embeddings=True,
+                use_half_precision=False,
+                enable_cache=True,
+                cache_dir="embeddings",
+                ids_set=self.ids_set,
+                use_rich=False,
+            )
+
+            relationships = Relationships(encoder_config=encoder_config)
 
             # Check if rebuild is needed and add warning to output
             if relationships.needs_rebuild():
