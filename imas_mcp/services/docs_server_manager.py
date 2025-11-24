@@ -372,6 +372,16 @@ class DocsServerManager:
         try:
             # Prepare environment variables
             env = os.environ.copy()
+
+            # Ensure PATH includes the directory containing npx
+            # This is critical in CI environments where Node.js was just installed
+            npx_dir = Path(npx_executable).parent
+            if "PATH" in env:
+                # Prepend npx directory to PATH to ensure it's found
+                env["PATH"] = f"{npx_dir}{os.pathsep}{env['PATH']}"
+            else:
+                env["PATH"] = str(npx_dir)
+
             # Set required environment variables with defaults
             env.update(
                 {
@@ -390,6 +400,7 @@ class DocsServerManager:
             logger.info(
                 f"  DOCS_MCP_EMBEDDING_MODEL: {env.get('DOCS_MCP_EMBEDDING_MODEL')}"
             )
+            logger.debug(f"  PATH: {env.get('PATH', 'NOT SET')[:200]}...")
 
             # Start the process with stdio capture for logging
             self.process = await anyio.open_process(
@@ -439,6 +450,22 @@ class DocsServerManager:
                 error_msg = "Process terminated during startup"
                 if self.process and hasattr(self.process, "returncode"):
                     error_msg += f" (exit code: {self.process.returncode})"
+
+                # Try to capture stderr output if available
+                if self.process and hasattr(self.process, "stderr"):
+                    try:
+                        # Read with a short timeout to avoid hanging
+                        with anyio.fail_after(0.5):
+                            stderr_data = await self.process.stderr.read()
+                            if stderr_data:
+                                stderr_text = stderr_data.decode(
+                                    "utf-8", errors="replace"
+                                ).strip()
+                                if stderr_text:
+                                    error_msg += f"\nStderr output: {stderr_text[:500]}"
+                    except (TimeoutError, Exception) as e:
+                        logger.debug(f"Could not read stderr: {e}")
+
                 raise DocsServerError(error_msg)
 
             try:

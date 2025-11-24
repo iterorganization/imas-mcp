@@ -3,15 +3,12 @@
 import shutil
 from pathlib import Path
 
-# Pinned version to avoid npx download/verification delays
-DOCS_MCP_SERVER_VERSION = "1.29.0"
-
 
 def get_npx_executable() -> str:
     """Find npx executable or raise error.
 
     Returns:
-        Path to npx executable
+        Path to npx executable (absolute path)
 
     Raises:
         RuntimeError: If npx is not found in PATH
@@ -22,7 +19,8 @@ def get_npx_executable() -> str:
             "npx executable not found in PATH. "
             "Please ensure Node.js and npm are properly installed."
         )
-    return npx_executable
+    # Resolve to absolute path to avoid PATH issues in subprocesses
+    return str(Path(npx_executable).resolve())
 
 
 def build_docs_server_command(
@@ -48,8 +46,8 @@ def build_docs_server_command(
     """
     cmd = [
         npx_path,
-        "-y",
-        f"@arabold/docs-mcp-server@{DOCS_MCP_SERVER_VERSION}",
+        "--yes",  # Use long form for clarity
+        "@arabold/docs-mcp-server@latest",
     ]
 
     # For server mode, add protocol/host/port flags before command
