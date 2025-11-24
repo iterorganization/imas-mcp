@@ -3,7 +3,7 @@ ARG UV_VERSION=0.7.13
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 ## Stage 2: Build complete project
-FROM python:3.12-slim as builder
+FROM python:3.12-slim AS builder
 
 # Install system dependencies including git for git dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -37,7 +37,6 @@ ENV PYTHONPATH="/app" \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
     # OpenRouter configuration for embeddings
-    OPENAI_API_KEY="" \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
     IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
 
@@ -113,6 +112,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Build relationships (requires embeddings)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=OPENAI_API_KEY \
+    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
     echo "Building relationships..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building relationships for IDS: ${IDS_FILTER}" && \
@@ -136,7 +137,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "✓ Mermaid graphs ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
-FROM python:3.12-slim as docs-provider
+FROM python:3.12-slim AS docs-provider
 
 # Documentation already available in build context from CI
 # No copying needed - will be copied directly to final stage
