@@ -132,9 +132,9 @@ class Tools(MCPProvider):
         """Delegate to export tool."""
         return await self.export_tool.export_physics_domain(*args, **kwargs)
 
-    async def update_path(self, *args, **kwargs):
+    async def update_imas_path(self, *args, **kwargs):
         """Delegate to path tool."""
-        return await self.path_tool.update_path(*args, **kwargs)
+        return await self.path_tool.update_imas_path(*args, **kwargs)
 
     # Documentation search delegation methods
     async def search_docs(self, *args, **kwargs):
