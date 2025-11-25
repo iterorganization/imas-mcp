@@ -313,57 +313,23 @@ class PathTool(BaseTool):
     async def update_imas_path(
         self,
         paths: str | list[str],
-        ids_name: str | list[str] | None = None,
+        ids_name: str | None = None,
         source_dd_version: str | None = None,
         ctx: Context | None = None,
     ) -> list[str]:
         """
-        Find updated IMAS path versions across different data dictionary versions.
-
-        Searches for equivalent paths in newer (or specified) DD versions, useful for
-        migration and version compatibility analysis.
-
+        update the IMAS path to the served dd_version.
         Args:
-            paths: One or more IMAS paths to convert. Accepts either:
+            paths: One or more IMAS paths to update. Accepts either:
                   - Space-delimited string: "time_slice/boundary/psi time_slice/boundary/psi_norm"
                   - List of paths: ["time_slice/boundary/psi", "profiles_1d/electrons/temperature"]
-            ids_name: Optional IDS name(s) to use with the paths. Can be:
-                     - Single IDS name (string): Applied to all paths
-                     - List of IDS names: One for each path (must match length of paths)
-                     - Space-delimited string: Multiple IDS names corresponding to paths
-                     - None: Searches across all IDS types (slower)
-            version: Optional target DD version to convert to. If None, searches all versions
-                    from newest to oldest to find the first match.
-            ctx: FastMCP context for potential future enhancements
-
-        Returns:
-            List of converted path strings, one for each input path. Paths that cannot be
-            found in any version return "PATH not found in any IMAS version".
-
-        Examples:
-            Single path with IDS:
-                update_path("time_slice/boundary/psi", ids_name="equilibrium")
-                → ["time_slice/boundary/psi"] or updated path if changed
-
-            Multiple paths with single IDS:
-                update_path("time_slice/boundary/psi time_slice/boundary/psi_norm", ids_name="equilibrium")
-                → List of converted paths
-
-            Multiple paths with multiple IDS:
-                update_path(["time_slice/boundary/psi", "profiles_1d/electrons/temperature"],
-                           ids_name=["equilibrium", "core_profiles"])
-
-            Search without IDS (slow):
-                update_path("time_slice/boundary/psi")
-                → Searches all IDS types for matching path
-
-        Note:
-            Specifying ids_name significantly improves performance by limiting the search scope.
+            ids_name: Optional IDS name(s) corresponding to the paths.
+                      Can be a single IDS name applied to all paths or a list matching the length of paths.
+            source_dd_version: Optional source DD version to start the search from.
+                               If not provided, searches from the latest version downwards.
         """
         if isinstance(paths, str):
             paths = paths.split(" ")
-        if isinstance(ids_name, str):
-            ids_name = ids_name.split(" ")
 
         version_list = (
             imas.dd_zip.dd_xml_versions()[::-1]
@@ -371,6 +337,8 @@ class PathTool(BaseTool):
             else [source_dd_version]
         )
         new_paths = len(paths) * [None]
+
+        logger.info(f"to version {dd_version}")
 
         for v in version_list:
             try:
@@ -382,25 +350,17 @@ class PathTool(BaseTool):
                             else self._convert_path(p, ids, v)
                             for idx, p in enumerate(paths)
                         ]
-                elif len(paths) == len(ids_name):
+                else:
                     new_paths = [
                         new_paths[idx]
                         if new_paths[idx]
-                        else self._convert_path(p, i, v)
-                        for idx, (p, i) in enumerate(zip(paths, ids_name, strict=True))
-                    ]
-                elif len(ids_name) == 1:
-                    new_paths = [
-                        new_paths[idx]
-                        if new_paths[idx]
-                        else self._convert_path(p, ids_name[0], v)
+                        else self._convert_path(p, ids_name, v)
                         for idx, p in enumerate(paths)
                     ]
-                else:
-                    raise ValueError(
-                        "ids_name length must be 1 or equal to paths length"
-                    )
             except UnknownDDVersion as e:
+                logger.info(e)
+                continue
+            except ValueError as e:
                 logger.info(e)
                 continue
 
@@ -411,8 +371,18 @@ class PathTool(BaseTool):
 
     def _convert_path(self, path: str, ids: str, version: str) -> str | None:
         """Helper to prefix path with IDS name if provided."""
+        if imas.dd_zip.parse_dd_version(version) > imas.dd_zip.parse_dd_version(
+            dd_version
+        ):
+            raise ValueError(
+                f"Source DD version {version} is older than served version {dd_version}"
+            )
+        elif imas.dd_zip.parse_dd_version(version) == imas.dd_zip.parse_dd_version(
+            dd_version
+        ):
+            return path
         version_map, _ = imas.ids_convert.dd_version_map_from_factories(
-            ids, imas.IDSFactory(dd_version), imas.IDSFactory(version)
+            ids, imas.IDSFactory(version), imas.IDSFactory(dd_version)
         )
         new_path = version_map.old_to_new.path.get(path)
         return new_path
