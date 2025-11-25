@@ -6,11 +6,77 @@ from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.tools import PathTool
 
 
+def _full_path(ids: str, path: str) -> str:
+    return f"{ids}/{path}"
+
+
 @pytest.fixture
-def path_tool():
+def path_tool() -> PathTool:
     """Create a PathTool instance for testing."""
     doc_store = DocumentStore()
     return PathTool(doc_store)
+
+
+@pytest.fixture
+def outdated_paths_with_ids() -> tuple[str, list[str]]:
+    return "equilibrium", [
+        "time_slice/constraints/bpol_probe",
+        "time_slice/constraints/bpol_probe",
+    ]
+
+
+@pytest.fixture
+def new_paths_with_ids() -> tuple[str, list[str]]:
+    return "equilibrium", [
+        "time_slice/constraints/b_field_pol_probe",
+        "time_slice/constraints/b_field_pol_probe",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_imas_path_tool_single(
+    path_tool: PathTool,
+    outdated_paths_with_ids: tuple[str, list[str]],
+    new_paths_with_ids: tuple[str, list[str]],
+):
+    """Basic test to ensure PathTool is instantiated correctly."""
+    _, outdated = outdated_paths_with_ids
+    ids, new = new_paths_with_ids
+
+    for o, n in zip(outdated, new, strict=False):
+        result = path_tool._convert_path(o, ids=ids, version="3.39.0")
+        assert result == n
+
+
+@pytest.mark.asyncio
+async def test_update_imas_path_tool_list(
+    path_tool: PathTool,
+    outdated_paths_with_ids: tuple[str, list[str]],
+    new_paths_with_ids: tuple[str, list[str]],
+):
+    _, outdated = outdated_paths_with_ids
+    ids, new = new_paths_with_ids
+
+    result = await path_tool.update_imas_path(
+        outdated, ids_name=ids, source_dd_version="3.39.0"
+    )
+    assert result == new
+
+
+@pytest.mark.asyncio
+async def test_update_imas_path_tool_spaced_list(
+    path_tool: PathTool,
+    outdated_paths_with_ids: tuple[str, list[str]],
+    new_paths_with_ids: tuple[str, list[str]],
+):
+    """Test updating IMAS paths provided as space-separated string."""
+    _, outdated = outdated_paths_with_ids
+    ids, new = new_paths_with_ids
+
+    result = await path_tool.update_imas_path(
+        " ".join(outdated), ids_name=ids, source_dd_version="3.39.0"
+    )
+    assert result == new
 
 
 @pytest.mark.asyncio
