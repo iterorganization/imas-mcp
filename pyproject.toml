@@ -8,7 +8,7 @@ requires = [
     "click>=8.0.0,<9.0.0",
     "networkx>=3.0,<4.0",
     "PyYAML>=6.0,<7.0",
-    "imas-data-dictionary @ git+https://github.com/iterorganization/imas-data-dictionary.git@4.1.0",
+    "imas-data-dictionary>=4.1.0",
     "imas-data-dictionaries>=4.1.0",
 ]
 build-backend = "hatchling.build"
