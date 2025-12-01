@@ -32,8 +32,19 @@ jobs:
           npm --version
           npx --version
 
+      - name: Cache npm packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
+      - name: Pre-install docs-mcp-server
+        run: npm install -g @arabold/docs-mcp-server@1.29.0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
