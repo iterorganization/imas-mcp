@@ -22,7 +22,7 @@ def _has_valid_openai_config() -> bool:
 )
 @pytest.mark.skipif(
     not _has_valid_openai_config(),
-    reason="Valid OPENAI_API_KEY and OPENAI_BASE_URL required for docs-mcp-server startup",
+    reason="OPENAI_API_KEY (starting with 'sk-') and OPENAI_BASE_URL environment variables required",
 )
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
 async def test_docs_server_startup_real_npx():
