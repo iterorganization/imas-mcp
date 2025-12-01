@@ -25,7 +25,7 @@ def _has_valid_openai_config() -> bool:
     reason="OPENAI_API_KEY (starting with 'sk-') and OPENAI_BASE_URL environment variables required",
 )
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
-async def test_docs_server_startup_real_npx():
+async def test_docs_server_startup_with_npx():
     """Test that the docs server can start up with npx and OPENAI_API_KEY.
 
     This is a simple integration test - if it fails, check:
