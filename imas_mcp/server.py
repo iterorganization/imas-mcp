@@ -200,9 +200,7 @@ class Server:
             )
             json_transformer.build()
 
-            logger.info(
-                f"✓ Schemas built successfully for DD version '{dd_version}'"
-            )
+            logger.info(f"✓ Schemas built successfully for DD version '{dd_version}'")
             return True
 
         except Exception as e:
@@ -230,9 +228,7 @@ class Server:
         # Auto-build failed - provide helpful error message
         path_accessor = ResourcePathAccessor(dd_version=dd_version)
         is_dev_version = "dev" in dd_version.lower()
-        build_cmd = (
-            "dd-version dev" if is_dev_version else f"dd-version {dd_version}"
-        )
+        build_cmd = "dd-version dev" if is_dev_version else f"dd-version {dd_version}"
 
         imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
         ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
