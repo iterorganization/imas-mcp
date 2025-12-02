@@ -338,7 +338,7 @@ class PathTool(BaseTool):
         if isinstance(paths, str):
             paths = paths.split(" ")
 
-        result = []
+        result: list[str | None] = []
         for path in paths:
             full_path = f"{ids_name}/{path}" if ids_name else path
             document = self.document_store.get_document(full_path)
@@ -348,7 +348,7 @@ class PathTool(BaseTool):
             result.append(path)
         return result
 
-    @persistent_cache("../resources/imas_path_migration_cache.json")
+    @persistent_cache("./imas_mcp/resources/imas_path_migration_cache.json")
     def _build_migration_map(self) -> dict[str, str | None]:
         """Build old_path -> new_path mapping for all IDS from all older versions to target."""
         version_factories: list[imas.IDSFactory] = [
