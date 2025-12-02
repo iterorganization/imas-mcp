@@ -141,6 +141,12 @@ def docs_list(docs_store_path: Path | None):
 @click.argument("library")
 @click.argument("url")
 @click.option(
+    "-v",
+    "--version",
+    type=str,
+    help="Version of the library (optional)",
+)
+@click.option(
     "--max-pages",
     type=int,
     help="Maximum number of pages to scrape",
@@ -152,12 +158,21 @@ def docs_list(docs_store_path: Path | None):
     help="Path for docs-mcp-server data storage (env: DOCS_MCP_STORE_PATH) (default: ./docs-data)",
 )
 def docs_add(
-    library: str, url: str, max_pages: int | None, docs_store_path: Path | None
+    library: str,
+    url: str,
+    version: str | None,
+    max_pages: int | None,
+    docs_store_path: Path | None,
 ):
     """Add a new documentation library by scraping a URL.
 
     LIBRARY: Name for the library
     URL: Documentation URL to scrape
+
+    Examples:
+        docs add numpy https://numpy.org/doc/stable/
+        docs add numpy https://numpy.org/doc/stable/ --version 1.24.0
+        docs add python https://docs.python.org/3/ -v 3.11
     """
     # Clean up orphaned servers first
     cleanup_orphaned_servers(verbose=False)
@@ -174,6 +189,9 @@ def docs_add(
     # Build the npx command using helper
     cmd = build_docs_server_command(npx, "scrape", library, url)
 
+    if version:
+        cmd.extend(["--version", version])
+
     if max_pages:
         cmd.extend(["--max-pages", str(max_pages)])
 
@@ -181,14 +199,15 @@ def docs_add(
     env = os.environ.copy()
     env["DOCS_MCP_STORE_PATH"] = str(store_path)
 
-    click.echo(f"Adding library '{library}' from {url}...")
+    version_str = f" (version: {version})" if version else ""
+    click.echo(f"Adding library '{library}'{version_str} from {url}...")
     if max_pages:
         click.echo(f"Maximum pages: {max_pages}")
 
     try:
         # Run the command with live output
         result = subprocess.run(cmd, check=True, env=env)
-        click.echo(f"\n✓ Successfully indexed '{library}'")
+        click.echo(f"\n✓ Successfully indexed '{library}'{version_str}")
         sys.exit(result.returncode)
 
     except subprocess.CalledProcessError as e:
@@ -417,6 +436,99 @@ def docs_cleanup():
 
     killed = cleanup_orphaned_servers(verbose=True)
     click.echo(f"\n✓ Terminated {killed} process(es)")
+
+
+@main.command("serve")
+@click.option(
+    "--port",
+    envvar="DOCS_SERVER_PORT",
+    default=6280,
+    type=int,
+    help="Port for docs-mcp-server (env: DOCS_SERVER_PORT) (default: 6280)",
+)
+@click.option(
+    "--host",
+    envvar="DOCS_SERVER_HOST",
+    default="127.0.0.1",
+    help="Host to bind (env: DOCS_SERVER_HOST) (default: 127.0.0.1)",
+)
+@click.option(
+    "--docs-store-path",
+    envvar="DOCS_MCP_STORE_PATH",
+    type=click.Path(path_type=Path),
+    help="Path for docs-mcp-server data storage (env: DOCS_MCP_STORE_PATH) (default: ./docs-data)",
+)
+def docs_serve(port: int, host: str, docs_store_path: Path | None):
+    """Start the docs-mcp-server in standalone mode.
+
+    This command launches a persistent docs-mcp-server instance that can be
+    used for documentation search and retrieval.
+
+    Examples:
+        # Start with default settings
+        docs serve
+
+        # Start on custom port
+        docs serve --port 6281
+
+        # Start with custom data path
+        docs serve --docs-store-path /path/to/docs-data
+    """
+    import asyncio
+    import signal
+
+    store_path = docs_store_path or get_store_path()
+    store_path.mkdir(parents=True, exist_ok=True)
+
+    click.echo("Starting docs-mcp-server...")
+    click.echo(f"  Host: {host}")
+    click.echo(f"  Port: {port}")
+    click.echo(f"  Store Path: {store_path.absolute()}")
+    click.echo()
+
+    # Clean up orphaned servers first
+    cleanup_orphaned_servers(verbose=False)
+
+    # Create server manager
+    manager = DocsServerManager(
+        default_port=port,
+        store_path=store_path,
+    )
+
+    # Setup signal handlers for graceful shutdown
+    shutdown_event = asyncio.Event()
+
+    def signal_handler(signum, frame):
+        click.echo("\nShutting down docs server...")
+        shutdown_event.set()
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+    async def run_server():
+        try:
+            await manager.start_server()
+
+            click.echo("✓ Docs server started successfully")
+            click.echo(f"  URL: {manager.base_url}")
+            click.echo(f"  MCP Endpoint: {manager.base_url}/mcp")
+            click.echo()
+            click.echo("Press Ctrl+C to stop the server")
+
+            # Wait for shutdown signal
+            await shutdown_event.wait()
+
+        except Exception as e:
+            click.echo(f"\n✗ Error starting server: {e}", err=True)
+            sys.exit(1)
+        finally:
+            await manager.stop_server()
+            click.echo("Server stopped")
+
+    try:
+        asyncio.run(run_server())
+    except KeyboardInterrupt:
+        click.echo("\nServer stopped")
 
 
 if __name__ == "__main__":
