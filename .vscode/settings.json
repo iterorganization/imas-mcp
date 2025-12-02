@@ -32,12 +32,6 @@
     "GEMINI_API_KEY": "your-gemini-key-here"
   },
   "python.envFile": "${workspaceFolder}/.env",
-  "chat.mcp.discovery.enabled": {
-    "claude-desktop": true,
-    "windsurf": true,
-    "cursor-global": true,
-    "cursor-workspace": true
-  },
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
     "imas-mcp/.vscode/mcp.json: imas-debug": {
@@ -51,6 +45,9 @@
     },
     "imas-mcp/.vscode/mcp.json: imas-ddv4": {
       "allowedDuringChat": true
+    },
+    "imas-mcp/.vscode/mcp.json: imas-test": {
+      "allowedModels": ["copilot/gpt-4.1"]
     }
   },
   // Formatting settings
