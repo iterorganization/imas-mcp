@@ -9,12 +9,17 @@ from typing import Any
 
 import imas
 from fastmcp import Context
-from imas.exception import UnknownDDVersion
 
 from imas_mcp import dd_version
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import IdsPathResult
-from imas_mcp.search.decorators import handle_errors, mcp_tool, measure_performance
+from imas_mcp.search.decorators import (
+    handle_errors,
+    mcp_tool,
+    measure_performance,
+    persistent_cache,
+)
+from imas_mcp.search.document_store import DocumentStore
 
 from .base import BaseTool
 
@@ -23,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 class PathTool(BaseTool):
     """Tool for IMAS path validation and data retrieval."""
+
+    def __init__(self, document_store: DocumentStore | None = None):
+        super().__init__(document_store=document_store)
+        self.supported_versions = imas.dd_zip.dd_xml_versions()
+        self.path_map = self._build_migration_map()
+        logging.info(f"Upgrade map built for target version {dd_version}.")
 
     @property
     def tool_name(self) -> str:
@@ -304,19 +315,14 @@ class PathTool(BaseTool):
         )
         return result
 
-    @mcp_tool(
-        "Find a new IMAS path version for a given path. "
-        "paths: space-delimited string or list of paths. "
-        "ids_name: optional IDS name(s) - single IDS for all paths or one per path. "
-        "version: optional target DD version (defaults to searching all versions)"
-    )
-    async def update_imas_path(
+    @mcp_tool("Ensure paths are updated to the current dd_version.")
+    async def ensure_current_path(
         self,
         paths: str | list[str],
         ids_name: str | None = None,
         source_dd_version: str | None = None,
         ctx: Context | None = None,
-    ) -> list[str]:
+    ) -> list[str | None]:
         """
         update the IMAS path to the served dd_version.
         Args:
@@ -325,64 +331,43 @@ class PathTool(BaseTool):
                   - List of paths: ["time_slice/boundary/psi", "profiles_1d/electrons/temperature"]
             ids_name: Optional IDS name(s) corresponding to the paths.
                       Can be a single IDS name applied to all paths or a list matching the length of paths.
-            source_dd_version: Optional source DD version to start the search from.
-                               If not provided, searches from the latest version downwards.
+        Returns:
+            List of paths existing in the target dd_version, or None if no mapping exists.
+
         """
         if isinstance(paths, str):
             paths = paths.split(" ")
 
-        version_list = (
-            imas.dd_zip.dd_xml_versions()[::-1]
-            if source_dd_version is None
-            else [source_dd_version]
-        )
-        new_paths = len(paths) * [None]
-
-        logger.info(f"to version {dd_version}")
-
-        for v in version_list:
-            try:
-                if ids_name is None:
-                    for ids in imas.IDSFactory(v).ids_names():
-                        new_paths = [
-                            new_paths[idx]
-                            if new_paths[idx]
-                            else self._convert_path(p, ids, v)
-                            for idx, p in enumerate(paths)
-                        ]
-                else:
-                    new_paths = [
-                        new_paths[idx]
-                        if new_paths[idx]
-                        else self._convert_path(p, ids_name, v)
-                        for idx, p in enumerate(paths)
-                    ]
-            except UnknownDDVersion as e:
-                logger.info(e)
+        result = []
+        for path in paths:
+            full_path = f"{ids_name}/{path}" if ids_name else path
+            document = self.document_store.get_document(full_path)
+            if not document:
+                result.append(self.path_map.get(full_path if ids_name else path, None))
                 continue
-            except ValueError as e:
-                logger.info(e)
-                continue
+            result.append(path)
+        return result
 
-        return [
-            n if n else "PATH not found in any IMAS version"
-            for i, n in enumerate(new_paths)
+    @persistent_cache("../resources/imas_path_migration_cache.json")
+    def _build_migration_map(self) -> dict[str, str | None]:
+        """Build old_path -> new_path mapping for all IDS from all older versions to target."""
+        version_factories: list[imas.IDSFactory] = [
+            imas.IDSFactory(v) for v in self.supported_versions if v < dd_version
         ]
+        target_factory = imas.IDSFactory(dd_version)
+        path_map: dict[str, str | None] = {}
 
-    def _convert_path(self, path: str, ids: str, version: str) -> str | None:
-        """Helper to prefix path with IDS name if provided."""
-        if imas.dd_zip.parse_dd_version(version) > imas.dd_zip.parse_dd_version(
-            dd_version
-        ):
-            raise ValueError(
-                f"Source DD version {version} is older than served version {dd_version}"
-            )
-        elif imas.dd_zip.parse_dd_version(version) == imas.dd_zip.parse_dd_version(
-            dd_version
-        ):
-            return path
-        version_map, _ = imas.ids_convert.dd_version_map_from_factories(
-            ids, imas.IDSFactory(version), imas.IDSFactory(dd_version)
-        )
-        new_path = version_map.old_to_new.path.get(path)
-        return new_path
+        for old_factory in version_factories:
+            for ids in old_factory.ids_names():
+                if ids not in target_factory.ids_names():
+                    continue  # IDS may not exist in new version -> cannot produce mapping (circumvent error handling for speedup)
+
+                version_map, _ = imas.ids_convert.dd_version_map_from_factories(
+                    ids, old_factory, target_factory
+                )
+
+                for old_path, new_path in version_map.old_to_new.path.items():
+                    full_old = f"{ids}/{old_path}"
+                    full_new = f"{ids}/{new_path}" if new_path else None
+                    path_map[full_old] = full_new
+        return path_map

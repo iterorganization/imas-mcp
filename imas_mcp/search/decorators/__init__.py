@@ -5,7 +5,7 @@ This package contains all the decorator implementations for cross-cutting concer
 like caching, validation, sampling, performance monitoring, and error handling.
 """
 
-from .cache import cache_results, clear_cache, get_cache_stats
+from .cache import cache_results, clear_cache, get_cache_stats, persistent_cache
 from .error_handling import (
     SearchError,
     ServiceError,
@@ -25,6 +25,7 @@ __all__ = [
     "cache_results",
     "clear_cache",
     "get_cache_stats",
+    "persistent_cache",
     # Validation decorators
     "validate_input",
     "create_validation_schema",
