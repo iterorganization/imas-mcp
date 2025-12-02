@@ -34,7 +34,7 @@ def new_paths_with_ids() -> tuple[str, list[str]]:
 
 
 @pytest.mark.asyncio
-async def test_update_imas_path_tool_single(
+async def test_ensure_current_path_single(
     path_tool: PathTool,
     outdated_paths_with_ids: tuple[str, list[str]],
     new_paths_with_ids: tuple[str, list[str]],
@@ -42,10 +42,11 @@ async def test_update_imas_path_tool_single(
     """Basic test to ensure PathTool is instantiated correctly."""
     _, outdated = outdated_paths_with_ids
     ids, new = new_paths_with_ids
+    new = [f"{ids}/{n}" for n in new]
 
     for o, n in zip(outdated, new, strict=False):
-        result = path_tool._convert_path(o, ids=ids, version="3.39.0")
-        assert result == n
+        result = await path_tool.ensure_current_path(o, ids)
+        assert result == [n]
 
 
 @pytest.mark.asyncio
@@ -54,12 +55,11 @@ async def test_update_imas_path_tool_list(
     outdated_paths_with_ids: tuple[str, list[str]],
     new_paths_with_ids: tuple[str, list[str]],
 ):
-    _, outdated = outdated_paths_with_ids
+    ids, outdated = outdated_paths_with_ids
     ids, new = new_paths_with_ids
+    new = [f"{ids}/{n}" for n in new]
 
-    result = await path_tool.update_imas_path(
-        outdated, ids_name=ids, source_dd_version="3.39.0"
-    )
+    result = await path_tool.ensure_current_path(outdated, ids_name=ids)
     assert result == new
 
 
@@ -70,12 +70,11 @@ async def test_update_imas_path_tool_spaced_list(
     new_paths_with_ids: tuple[str, list[str]],
 ):
     """Test updating IMAS paths provided as space-separated string."""
-    _, outdated = outdated_paths_with_ids
+    ids, outdated = outdated_paths_with_ids
     ids, new = new_paths_with_ids
+    new = [f"{ids}/{n}" for n in new]
 
-    result = await path_tool.update_imas_path(
-        " ".join(outdated), ids_name=ids, source_dd_version="3.39.0"
-    )
+    result = await path_tool.ensure_current_path(" ".join(outdated), ids_name=ids)
     assert result == new
 
 
