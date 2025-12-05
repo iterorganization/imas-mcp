@@ -5,9 +5,6 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
-  schedule:
-    # Run benchmarks daily at 2 AM UTC
-    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       benchmark_filter:
@@ -94,9 +91,6 @@ jobs:
           "
 
       - name: Setup ASV machine
-        env:
-          IMAS_MCP_EMBEDDING_MODEL: all-MiniLM-L6-v2
-          HF_HUB_DISABLE_SYMLINKS_WARNING: 1
         run: |
           # Get actual system specifications from the runner
           CPU_INFO=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
@@ -128,8 +122,7 @@ jobs:
 
       - name: Run benchmarks
         env:
-          IMAS_MCP_EMBEDDING_MODEL: all-MiniLM-L6-v2
-          HF_HUB_DISABLE_SYMLINKS_WARNING: 1
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           # Run benchmarks
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
