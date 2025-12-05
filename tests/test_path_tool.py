@@ -2,80 +2,121 @@
 
 import pytest
 
+from imas_mcp.migrations import MigrationEntry, PathMigrationMap, RenameHistoryEntry
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.tools import PathTool
 
+# ============================================================================
+# Mock PathMigrationMap for testing
+# ============================================================================
 
-def _full_path(ids: str, path: str) -> str:
-    return f"{ids}/{path}"
+
+class MockPathMigrationMap(PathMigrationMap):
+    """Mock PathMigrationMap with predefined test data."""
+
+    def __init__(self):
+        # Initialize with test data, bypassing file loading
+        migration_data = {
+            "metadata": {
+                "target_version": "4.0.1",
+                "total_migrations": 2,
+            },
+            "old_to_new": {
+                "equilibrium/time_slice/constraints/bpol_probe": {
+                    "new_path": "equilibrium/time_slice/constraints/b_field_pol_probe",
+                    "deprecated_in": "4.0.0",
+                    "last_valid_version": "3.42.0",
+                },
+                "equilibrium/time_slice/global_quantities/li": {
+                    "new_path": "equilibrium/time_slice/global_quantities/li_3",
+                    "deprecated_in": "4.0.0",
+                    "last_valid_version": "3.41.0",
+                },
+            },
+            "new_to_old": {
+                "equilibrium/time_slice/constraints/b_field_pol_probe": [
+                    {
+                        "old_path": "equilibrium/time_slice/constraints/bpol_probe",
+                        "deprecated_in": "4.0.0",
+                    }
+                ],
+                "equilibrium/time_slice/global_quantities/li_3": [
+                    {
+                        "old_path": "equilibrium/time_slice/global_quantities/li",
+                        "deprecated_in": "4.0.0",
+                    }
+                ],
+            },
+        }
+        super().__init__(dd_version="4.0.1", migration_data=migration_data)
 
 
 @pytest.fixture
-def path_tool() -> PathTool:
-    """Create a PathTool instance for testing."""
+def mock_migration_map() -> MockPathMigrationMap:
+    """Create a mock PathMigrationMap for testing."""
+    return MockPathMigrationMap()
+
+
+@pytest.fixture
+def path_tool(mock_migration_map: MockPathMigrationMap) -> PathTool:
+    """Create a PathTool instance for testing with mocked migration map."""
     doc_store = DocumentStore()
-    return PathTool(doc_store)
+    return PathTool(doc_store, migration_map=mock_migration_map)
 
 
-@pytest.fixture
-def outdated_paths_with_ids() -> tuple[str, list[str]]:
-    return "equilibrium", [
-        "time_slice/constraints/bpol_probe",
-        "time_slice/constraints/bpol_probe",
-    ]
+# ============================================================================
+# Tests for PathMigrationMap
+# ============================================================================
 
 
-@pytest.fixture
-def new_paths_with_ids() -> tuple[str, list[str]]:
-    return "equilibrium", [
-        "time_slice/constraints/b_field_pol_probe",
-        "time_slice/constraints/b_field_pol_probe",
-    ]
+def test_migration_map_get_migration(mock_migration_map: MockPathMigrationMap):
+    """Test getting migration info for an old path."""
+    migration = mock_migration_map.get_migration(
+        "equilibrium/time_slice/constraints/bpol_probe"
+    )
+
+    assert migration is not None
+    assert migration.new_path == "equilibrium/time_slice/constraints/b_field_pol_probe"
+    assert migration.deprecated_in == "4.0.0"
+    assert migration.last_valid_version == "3.42.0"
 
 
-@pytest.mark.asyncio
-async def test_ensure_current_path_single(
-    path_tool: PathTool,
-    outdated_paths_with_ids: tuple[str, list[str]],
-    new_paths_with_ids: tuple[str, list[str]],
+def test_migration_map_get_migration_not_found(
+    mock_migration_map: MockPathMigrationMap,
 ):
-    """Basic test to ensure PathTool is instantiated correctly."""
-    _, outdated = outdated_paths_with_ids
-    ids, new = new_paths_with_ids
-    new = [f"{ids}/{n}" for n in new]
-
-    for o, n in zip(outdated, new, strict=False):
-        result = await path_tool.ensure_current_path(o, ids)
-        assert result == [n]
+    """Test getting migration info for a path with no migration."""
+    migration = mock_migration_map.get_migration("fake/path/here")
+    assert migration is None
 
 
-@pytest.mark.asyncio
-async def test_update_imas_path_tool_list(
-    path_tool: PathTool,
-    outdated_paths_with_ids: tuple[str, list[str]],
-    new_paths_with_ids: tuple[str, list[str]],
+def test_migration_map_get_rename_history(mock_migration_map: MockPathMigrationMap):
+    """Test getting rename history for a current path."""
+    history = mock_migration_map.get_rename_history(
+        "equilibrium/time_slice/constraints/b_field_pol_probe"
+    )
+
+    assert len(history) == 1
+    assert history[0].old_path == "equilibrium/time_slice/constraints/bpol_probe"
+    assert history[0].deprecated_in == "4.0.0"
+
+
+def test_migration_map_get_rename_history_not_found(
+    mock_migration_map: MockPathMigrationMap,
 ):
-    ids, outdated = outdated_paths_with_ids
-    ids, new = new_paths_with_ids
-    new = [f"{ids}/{n}" for n in new]
-
-    result = await path_tool.ensure_current_path(outdated, ids_name=ids)
-    assert result == new
+    """Test getting rename history for a path with no history."""
+    history = mock_migration_map.get_rename_history("fake/path/here")
+    assert history == []
 
 
-@pytest.mark.asyncio
-async def test_update_imas_path_tool_spaced_list(
-    path_tool: PathTool,
-    outdated_paths_with_ids: tuple[str, list[str]],
-    new_paths_with_ids: tuple[str, list[str]],
-):
-    """Test updating IMAS paths provided as space-separated string."""
-    ids, outdated = outdated_paths_with_ids
-    ids, new = new_paths_with_ids
-    new = [f"{ids}/{n}" for n in new]
+def test_migration_map_metadata(mock_migration_map: MockPathMigrationMap):
+    """Test migration map metadata access."""
+    assert mock_migration_map.target_version == "4.0.1"
+    assert mock_migration_map.total_migrations == 2
 
-    result = await path_tool.ensure_current_path(" ".join(outdated), ids_name=ids)
-    assert result == new
+
+# ============================================================================
+# Tests for check_imas_paths - Basic validation
+# ============================================================================
 
 
 @pytest.mark.asyncio
@@ -222,6 +263,11 @@ async def test_token_efficient_response(path_tool):
     assert "documentation" not in res
 
 
+# ============================================================================
+# Tests for check_imas_paths - IDS prefix handling
+# ============================================================================
+
+
 @pytest.mark.asyncio
 async def test_ids_prefix_single_path(path_tool):
     """Test ids parameter with single path."""
@@ -299,6 +345,45 @@ async def test_ids_prefix_mixed_paths(path_tool):
 
 
 # ============================================================================
+# Tests for check_imas_paths - Migration suggestions
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_deprecated_path_returns_migration(path_tool):
+    """Test that deprecated paths return migration suggestions."""
+    result = await path_tool.check_imas_paths(
+        "equilibrium/time_slice/constraints/bpol_probe"
+    )
+
+    assert result["summary"]["total"] == 1
+    assert result["summary"]["not_found"] == 1
+
+    res = result["results"][0]
+    assert res["exists"] is False
+    assert res["path"] == "equilibrium/time_slice/constraints/bpol_probe"
+
+    # Should have migration info
+    assert "migration" in res
+    assert (
+        res["migration"]["new_path"]
+        == "equilibrium/time_slice/constraints/b_field_pol_probe"
+    )
+    assert res["migration"]["deprecated_in"] == "4.0.0"
+    assert res["migration"]["last_valid_version"] == "3.42.0"
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_path_no_migration(path_tool):
+    """Test that truly invalid paths don't have migration info."""
+    result = await path_tool.check_imas_paths("fake/nonexistent/path")
+
+    res = result["results"][0]
+    assert res["exists"] is False
+    assert "migration" not in res
+
+
+# ============================================================================
 # Tests for fetch_imas_paths - Rich data retrieval
 # ============================================================================
 
@@ -325,7 +410,6 @@ async def test_fetch_single_path(path_tool):
     assert node.path == "core_profiles/profiles_1d/electrons/temperature"
     assert node.documentation  # Should have documentation
     assert node.data_type  # Should have data_type
-    # Units might or might not be present depending on the path
 
 
 @pytest.mark.asyncio

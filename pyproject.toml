@@ -10,6 +10,7 @@ requires = [
     "PyYAML>=6.0,<7.0",
     "imas-data-dictionary>=4.1.0",
     "imas-data-dictionaries>=4.1.0",
+    "imas-python>=2.0.1",
 ]
 build-backend = "hatchling.build"
 
@@ -113,6 +114,7 @@ build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
+build-migrations = "scripts.build_migrations:build_migrations"
 
 [tool.hatch.version]
 source = "vcs"

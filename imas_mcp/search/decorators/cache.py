@@ -7,14 +7,10 @@ Provides result caching with configurable TTL and cache key strategies.
 import functools
 import hashlib
 import json
-import logging
-import os
 import time
 from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, TypeVar
-
-from imas_mcp import dd_version
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -207,39 +203,3 @@ def get_cache_stats() -> dict[str, Any]:
         "size": _cache.size(),
         "max_size": _cache.max_size,
     }
-
-
-def persistent_cache(filename="migration_cache.json"):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            cache = {}
-            if os.path.exists(filename):
-                try:
-                    logging.info(f"Loading cache from {filename}")
-                    with open(filename) as f:
-                        cache = json.load(f)
-                except (json.JSONDecodeError, OSError):
-                    logging.warning(
-                        f"Failed to load cache from {filename}, starting with empty cache."
-                    )
-                    pass
-
-            if dd_version in cache:
-                logging.info(f"Using cached migration map for version {dd_version}")
-                return cache[dd_version]
-
-            result = func(self, *args, **kwargs)
-
-            cache[dd_version] = result
-            try:
-                with open(filename, "w") as f:
-                    json.dump(cache, f)
-            except OSError:
-                logging.warning(f"Failed to write cache to {filename}")
-
-            return result
-
-        return wrapper
-
-    return decorator
