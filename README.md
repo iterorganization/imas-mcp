@@ -97,9 +97,19 @@ The IMAS MCP server supports two modes for generating embeddings:
 2. **Local embeddings**: Uses sentence-transformers library
    - Install with `[transformers]` extra: `pip install imas-mcp[transformers]`
    - Runs models locally without API calls
-   - Example model: `all-MiniLM-L6-v2` (default)
+   - Example model: `all-MiniLM-L6-v2` (fallback default)
 
 **Configuration:**
+
+Embedding model defaults are configured in `pyproject.toml` under `[tool.imas-mcp]`:
+
+```toml
+[tool.imas-mcp]
+imas-embedding-model = "openai/text-embedding-3-large"  # For DD embeddings
+docs-embedding-model = "openai/text-embedding-3-small"  # For documentation
+```
+
+Environment variables override pyproject.toml settings:
 
 ```bash
 # API-based (requires API key)

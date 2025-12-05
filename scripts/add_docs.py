@@ -17,6 +17,7 @@ from imas_mcp.services.docs_cli_helpers import (
     build_docs_server_command,
     get_npx_executable,
 )
+from imas_mcp.settings import get_docs_embedding_model
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -38,10 +39,8 @@ load_dotenv(override=True)
 )
 @click.option(
     "--model",
-    default=lambda: os.getenv(
-        "DOCS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small"
-    ),
-    help="Embedding model to use (defaults to DOCS_MCP_EMBEDDING_MODEL env var or openai/text-embedding-3-small)",
+    default=get_docs_embedding_model,
+    help="Embedding model to use (defaults to DOCS_MCP_EMBEDDING_MODEL env var or pyproject.toml setting)",
 )
 @click.option(
     "--ignore-errors/--no-ignore-errors",
