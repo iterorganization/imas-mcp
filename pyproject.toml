@@ -10,6 +10,7 @@ requires = [
     "PyYAML>=6.0,<7.0",
     "imas-data-dictionary>=4.1.0",
     "imas-data-dictionaries>=4.1.0",
+    "imas-python>=2.0.1",
 ]
 build-backend = "hatchling.build"
 
@@ -58,6 +59,7 @@ dependencies = [
     "anyio>=4.0.0,<5.0.0",
     "scikit-learn>=1.7.2",
     "psutil>=6.1.1",
+    "imas-python>=2.0.1",
     "requests>=2.25.0",
 ]
 
@@ -112,6 +114,7 @@ build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
+build-migrations = "scripts.build_migrations:build_migrations"
 
 [tool.hatch.version]
 source = "vcs"
@@ -126,6 +129,16 @@ path = "hatch_build_hooks.py"
 verbose = true
 ids-filter = ""
 imas-dd-version = ""
+
+# Embedding model configuration
+# These defaults are used during build and at runtime (can be overridden via env vars)
+[tool.imas-mcp]
+# Model for IMAS Data Dictionary embeddings (used for semantic search of DD paths)
+# text-embedding-3-large: Higher quality, 3072 dimensions, better for the complex DD structure
+imas-embedding-model = "openai/text-embedding-3-large"
+# Model for documentation embeddings (used by docs-mcp-server)
+# text-embedding-3-small: Faster, 1536 dimensions, suitable for general documentation
+docs-embedding-model = "openai/text-embedding-3-small"
 
 [tool.hatch.envs.test]
 dependencies = [

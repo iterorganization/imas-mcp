@@ -7,11 +7,13 @@ from typing import Any
 # Load .env file for local development
 from dotenv import load_dotenv
 
+from imas_mcp.settings import get_imas_embedding_model
+
 load_dotenv()  # Load .env file values (does not override existing env vars)
 
 
-# Define constants
-IMAS_MCP_EMBEDDING_MODEL = os.getenv("IMAS_MCP_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+# Define constants - uses pyproject.toml defaults with env var override
+IMAS_MCP_EMBEDDING_MODEL = get_imas_embedding_model()
 
 
 @dataclass
