@@ -36,8 +36,7 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Labels for image provenance
 LABEL imas_mcp.git_sha=${GIT_SHA} \
@@ -177,9 +176,7 @@ ENV PYTHONPATH="/app" \
     DOCS_SERVER_URL=http://localhost:6280 \
     DOCS_MCP_TELEMETRY=false \
     DOCS_MCP_STORE_PATH=/app/data \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b \
-    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
