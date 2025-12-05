@@ -21,6 +21,7 @@ from imas_mcp.core.data_model import (
     IdsNode,
     TransformationOutputs,
 )
+from imas_mcp.core.exclusions import ExclusionChecker
 from imas_mcp.core.extractors import (
     CoordinateExtractor,
     ExtractorContext,
@@ -68,8 +69,18 @@ class DataDictionaryTransformer:
     skip_error_fields: bool = True
     use_rich: bool | None = None  # Auto-detect if None
 
+    # Internal exclusion checker (initialized in __post_init__)
+    _exclusion_checker: ExclusionChecker = field(init=False, repr=False)
+
     def __post_init__(self):
         """Initialize the transformer with performance optimizations."""
+        # Initialize exclusion checker with current configuration
+        self._exclusion_checker = ExclusionChecker(
+            skip_ggd=self.skip_ggd,
+            skip_error_fields=self.skip_error_fields,
+            excluded_patterns=self.excluded_patterns,
+        )
+
         # Create ResourcePathAccessor to get both paths and accessor
         if self.dd_accessor is None:
             path_accessor = ResourcePathAccessor(dd_version=self.dd_version)
@@ -330,35 +341,8 @@ class DataDictionaryTransformer:
         if not path:
             return True
 
-        # Fast check for excluded patterns
-        for pattern in self.excluded_patterns:
-            if pattern in name or pattern in path:
-                return True
-
-        # Skip GGD entries (Grid Geometry Description) - check for various GGD patterns
-        if self.skip_ggd and (
-            "ggd" in name.lower()
-            or "/ggd/" in path.lower()
-            or "grids_ggd" in path.lower()
-            or path.lower().startswith("grids_ggd")
-            or "/grids_ggd/" in path.lower()
-        ):
-            return True
-
-        # Skip error fields (error_upper, error_lower, error_index, etc.)
-        if self.skip_error_fields and (
-            "_error_" in name
-            or "_error_" in path
-            or name.endswith("_error_upper")
-            or name.endswith("_error_lower")
-            or name.endswith("_error_index")
-            or "error_upper" in name
-            or "error_lower" in name
-            or "error_index" in name
-        ):
-            return True
-
-        return False
+        # Delegate to ExclusionChecker for consistent filtering
+        return self._exclusion_checker.is_excluded(path)
 
     def _build_element_path(
         self,

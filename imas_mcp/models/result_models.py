@@ -68,6 +68,30 @@ class DeprecatedPathInfo(BaseModel):
     )
     deprecated_in: str = Field(description="DD version where path was deprecated")
     last_valid_version: str = Field(description="Last DD version where path was valid")
+    new_path_excluded: bool = Field(
+        default=False,
+        description="True if new_path exists but is excluded from search index",
+    )
+    exclusion_reason: str | None = Field(
+        default=None,
+        description="Human-readable explanation of why new_path is excluded",
+    )
+
+
+class ExcludedPathInfo(BaseModel):
+    """Information about a path that exists but is excluded from search index.
+
+    Returned when check_imas_paths or fetch_imas_paths encounters a path
+    that is valid in the DD but excluded from indexing.
+    """
+
+    path: str = Field(description="The path that was requested")
+    reason_key: str = Field(
+        description="Exclusion reason key (error_field, ggd, metadata)"
+    )
+    reason_description: str = Field(
+        description="Human-readable explanation of why the path is excluded"
+    )
 
 
 class IdsResult(BaseModel):
@@ -87,7 +111,8 @@ class IdsResult(BaseModel):
 class IdsPathResult(WithPhysics, ToolResult, IdsResult):
     """Path retrieval result with physics aggregation.
 
-    Includes migration info for deprecated paths that weren't found.
+    Includes migration info for deprecated paths that weren't found,
+    and exclusion info for paths that are valid but not indexed.
     """
 
     @property
@@ -104,6 +129,12 @@ class IdsPathResult(WithPhysics, ToolResult, IdsResult):
     deprecated_paths: list[DeprecatedPathInfo] = Field(
         default_factory=list,
         description="Migration info for paths not found (deprecated in current DD version)",
+    )
+
+    # Info for paths that exist but are excluded from search index
+    excluded_paths: list[ExcludedPathInfo] = Field(
+        default_factory=list,
+        description="Info for paths that are valid but excluded from search index",
     )
 
 
