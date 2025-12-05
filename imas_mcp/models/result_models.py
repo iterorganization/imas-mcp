@@ -151,6 +151,17 @@ class IdsPath(BaseModel):
     physics_domain: str | None = Field(default=None, description="Physics domain")
     data_type: str | None = Field(default=None, description="Data type")
     units: str | None = Field(default=None, description="Physical units")
+    # Enhanced format fields
+    raw_data: dict[str, Any] | None = Field(
+        default=None, description="Raw data for enhanced format"
+    )
+    identifier_info: dict[str, Any] | None = Field(
+        default=None, description="Identifier info for enhanced format"
+    )
+    # Domain export field
+    measurement_type: str | None = Field(
+        default=None, description="Classified measurement type"
+    )
 
 
 class IdsInfo(BaseModel):
@@ -158,9 +169,13 @@ class IdsInfo(BaseModel):
 
     ids_name: str = Field(description="IDS name")
     description: str | None = Field(default=None, description="IDS description")
+    total_paths: int = Field(default=0, description="Total number of paths in this IDS")
     paths: list[IdsPath] = Field(default_factory=list, description="Paths in this IDS")
     physics_domains: list[str] = Field(
         default_factory=list, description="Physics domains"
+    )
+    identifier_paths: list[IdsPath] = Field(
+        default_factory=list, description="Identifier paths in this IDS"
     )
     measurement_types: list[str] = Field(
         default_factory=list, description="Measurement types"
@@ -180,14 +195,15 @@ class ExportSummary(BaseModel):
 class ExportData(BaseModel):
     """Structured export data instead of free-form dict."""
 
-    # For IDS exports
-    ids_data: dict[str, IdsInfo] | None = Field(
-        default=None, description="IDS export data"
+    # For IDS exports - use Any since export can return error dicts
+    ids_data: dict[str, Any] | None = Field(
+        default=None, description="IDS export data (IdsInfo or error dict)"
     )
     cross_relationships: dict[str, Any] | None = Field(
         default=None, description="Cross-IDS relationships"
     )
-    export_summary: ExportSummary | None = Field(
+    # Accept dict or ExportSummary for flexibility
+    export_summary: dict[str, Any] | None = Field(
         default=None, description="Export summary"
     )
 
