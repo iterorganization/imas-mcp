@@ -563,3 +563,89 @@ async def test_fetch_malformed_path(path_tool):
 
     assert result.node_count == 0
     assert result.summary["invalid"] == 1
+
+
+# ============================================================================
+# Tests for fetch_imas_paths - Deprecated path migration info
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_fetch_deprecated_path_returns_migration(path_tool):
+    """Test that fetching a deprecated path returns migration info."""
+    result = await path_tool.fetch_imas_paths(
+        "equilibrium/time_slice/constraints/bpol_probe"
+    )
+
+    # Should not be in nodes (path doesn't exist)
+    assert result.node_count == 0
+    assert result.summary["retrieved"] == 0
+
+    # Should be in deprecated_paths
+    assert result.summary["deprecated"] == 1
+    assert result.summary["not_found"] == 0
+    assert len(result.deprecated_paths) == 1
+
+    deprecated = result.deprecated_paths[0]
+    assert deprecated.path == "equilibrium/time_slice/constraints/bpol_probe"
+    assert deprecated.new_path == "equilibrium/time_slice/constraints/b_field_pol_probe"
+    assert deprecated.deprecated_in == "4.0.0"
+    assert deprecated.last_valid_version == "3.42.0"
+
+
+@pytest.mark.asyncio
+async def test_fetch_nonexistent_path_no_deprecated_info(path_tool):
+    """Test that truly non-existent paths don't appear in deprecated_paths."""
+    result = await path_tool.fetch_imas_paths("fake/nonexistent/path")
+
+    assert result.node_count == 0
+    assert result.summary["not_found"] == 1
+    assert result.summary["deprecated"] == 0
+    assert len(result.deprecated_paths) == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_mixed_valid_deprecated_invalid(path_tool):
+    """Test fetching mix of valid, deprecated, and invalid paths."""
+    result = await path_tool.fetch_imas_paths(
+        "equilibrium/time_slice/profiles_1d/psi equilibrium/time_slice/constraints/bpol_probe fake/path notapath"
+    )
+
+    # One valid path retrieved
+    assert result.node_count == 1
+    assert result.summary["retrieved"] == 1
+    assert result.nodes[0].path == "equilibrium/time_slice/profiles_1d/psi"
+
+    # One deprecated path
+    assert result.summary["deprecated"] == 1
+    assert len(result.deprecated_paths) == 1
+    assert (
+        result.deprecated_paths[0].path
+        == "equilibrium/time_slice/constraints/bpol_probe"
+    )
+
+    # One truly not found, one invalid
+    assert result.summary["not_found"] == 1
+    assert result.summary["invalid"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_multiple_deprecated_paths(path_tool):
+    """Test fetching multiple deprecated paths."""
+    result = await path_tool.fetch_imas_paths(
+        "equilibrium/time_slice/constraints/bpol_probe equilibrium/time_slice/global_quantities/li"
+    )
+
+    assert result.node_count == 0
+    assert result.summary["deprecated"] == 2
+    assert len(result.deprecated_paths) == 2
+
+    # Check both deprecated paths have migration info
+    paths = {dp.path for dp in result.deprecated_paths}
+    assert "equilibrium/time_slice/constraints/bpol_probe" in paths
+    assert "equilibrium/time_slice/global_quantities/li" in paths
+
+    for dp in result.deprecated_paths:
+        assert dp.new_path is not None
+        assert dp.deprecated_in
+        assert dp.last_valid_version

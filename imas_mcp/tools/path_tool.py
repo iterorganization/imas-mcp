@@ -12,7 +12,7 @@ from fastmcp import Context
 
 from imas_mcp.migrations import PathMigrationMap, get_migration_map
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import IdsPathResult
+from imas_mcp.models.result_models import DeprecatedPathInfo, IdsPathResult
 from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
@@ -283,8 +283,10 @@ class PathTool(BaseTool):
 
         # Initialize tracking
         nodes = []
+        deprecated_paths: list[DeprecatedPathInfo] = []
         found_count = 0
         not_found_count = 0
+        deprecated_count = 0
         invalid_count = 0
         physics_domains = set()
 
@@ -320,8 +322,22 @@ class PathTool(BaseTool):
                     nodes.append(node)
                     logger.debug(f"Path retrieved: {path}")
                 else:
-                    not_found_count += 1
-                    logger.debug(f"Path not found: {path}")
+                    # Path not found - check for migration
+                    migration = self.migration_map.get_migration(path)
+                    if migration:
+                        deprecated_count += 1
+                        deprecated_paths.append(
+                            DeprecatedPathInfo(
+                                path=path,
+                                new_path=migration.new_path,
+                                deprecated_in=migration.deprecated_in,
+                                last_valid_version=migration.last_valid_version,
+                            )
+                        )
+                        logger.debug(f"Path deprecated: {path} -> {migration.new_path}")
+                    else:
+                        not_found_count += 1
+                        logger.debug(f"Path not found: {path}")
 
             except Exception as e:
                 invalid_count += 1
@@ -331,6 +347,7 @@ class PathTool(BaseTool):
         summary = {
             "total_requested": len(paths_list),
             "retrieved": found_count,
+            "deprecated": deprecated_count,
             "not_found": not_found_count,
             "invalid": invalid_count,
             "physics_domains": sorted(physics_domains),
@@ -339,6 +356,7 @@ class PathTool(BaseTool):
         # Build result
         result = IdsPathResult(
             nodes=nodes,
+            deprecated_paths=deprecated_paths,
             summary=summary,
             query=" ".join(paths_list[:3]) + ("..." if len(paths_list) > 3 else ""),
             search_mode=SearchMode.LEXICAL,  # Direct lookup, not search
