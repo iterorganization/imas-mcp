@@ -114,7 +114,7 @@ build-relationships = "scripts.build_relationships:build_relationships"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
-build-path-map = "scripts.build_path_map:build_path_map"
+build-path-map = "scripts.build_path_map:build_path_map_cli"
 
 [tool.hatch.version]
 source = "vcs"
@@ -130,10 +130,15 @@ verbose = true
 ids-filter = ""
 imas-dd-version = ""
 
-# Embedding model configuration
+# IMAS MCP configuration
 [tool.imas-mcp]
+# Embedding models
 imas-embedding-model = "openai/text-embedding-3-large"
 docs-embedding-model = "openai/text-embedding-3-small"
+
+# Path inclusion settings (controls what paths are indexed)
+include-ggd = true
+include-error-fields = false
 
 [tool.hatch.envs.test]
 dependencies = [

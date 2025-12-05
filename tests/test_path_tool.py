@@ -743,15 +743,15 @@ class TestExclusionChecker:
 
     def test_configurable_exclusions(self):
         """Test that exclusions can be configured."""
-        # Disable error field exclusion
-        checker = ExclusionChecker(skip_error_fields=False)
+        # Enable error field inclusion (don't exclude)
+        checker = ExclusionChecker(include_error_fields=True)
         assert (
             checker.get_exclusion_reason("equilibrium/time_slice/psi_error_upper")
             is None
         )
 
-        # Disable GGD exclusion
-        checker = ExclusionChecker(skip_ggd=False)
+        # Enable GGD inclusion (don't exclude)
+        checker = ExclusionChecker(include_ggd=True)
         assert checker.get_exclusion_reason("edge_profiles/ggd/grid") is None
 
 

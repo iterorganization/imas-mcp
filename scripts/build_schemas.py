@@ -93,14 +93,19 @@ def build_schemas(
         else:
             logger.info("Building schema data for all available IDS")
 
-        # Initialize the transformer
-        transformer = DataDictionaryTransformer(
-            output_dir=output_dir,
-            ids_set=ids_set,
-            use_rich=not no_rich,  # Invert no_rich flag
-            skip_ggd=not include_ggd,  # Invert include_ggd flag
-            skip_error_fields=not include_error_fields,  # Invert include_error_fields flag
-        )
+        # Initialize the transformer (CLI flags override pyproject.toml defaults)
+        # Only pass include_* if explicitly set via CLI, otherwise use defaults
+        transformer_kwargs: dict = {
+            "output_dir": output_dir,
+            "ids_set": ids_set,
+            "use_rich": not no_rich,
+        }
+        if include_ggd:
+            transformer_kwargs["include_ggd"] = True
+        if include_error_fields:
+            transformer_kwargs["include_error_fields"] = True
+
+        transformer = DataDictionaryTransformer(**transformer_kwargs)
 
         # Check if we need to build
         catalog_file = transformer.resolved_output_dir / "ids_catalog.json"

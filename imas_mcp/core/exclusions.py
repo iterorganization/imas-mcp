@@ -8,6 +8,8 @@ and migrations (runtime lookup).
 
 from dataclasses import dataclass, field
 
+from imas_mcp.settings import get_include_error_fields, get_include_ggd
+
 # Exclusion reason identifiers and their descriptions
 EXCLUSION_REASONS: dict[str, str] = {
     "error_field": "Uncertainty bound fields (_error_upper, _error_lower, _error_index)",
@@ -23,10 +25,15 @@ class ExclusionChecker:
 
     Provides consistent exclusion logic for use during both build-time
     (XML parsing, migration generation) and runtime (path lookup).
+
+    Args:
+        include_ggd: Whether to include GGD paths. Default from settings.
+        include_error_fields: Whether to include error fields. Default from settings.
+        excluded_patterns: Patterns always excluded (metadata fields).
     """
 
-    skip_ggd: bool = True
-    skip_error_fields: bool = True
+    include_ggd: bool = field(default_factory=get_include_ggd)
+    include_error_fields: bool = field(default_factory=get_include_error_fields)
     excluded_patterns: set[str] = field(
         default_factory=lambda: {"ids_properties", "code"}
     )
@@ -54,12 +61,12 @@ class ExclusionChecker:
             if pattern in name or pattern in path:
                 return "metadata"
 
-        # Check GGD patterns
-        if self.skip_ggd and self._is_ggd_path(path_lower, name_lower):
+        # Check GGD patterns (exclude if not included)
+        if not self.include_ggd and self._is_ggd_path(path_lower, name_lower):
             return "ggd"
 
-        # Check error field patterns
-        if self.skip_error_fields and self._is_error_field(name):
+        # Check error field patterns (exclude if not included)
+        if not self.include_error_fields and self._is_error_field(name):
             return "error_field"
 
         return None
@@ -96,7 +103,7 @@ _default_checker: ExclusionChecker | None = None
 
 
 def get_exclusion_checker() -> ExclusionChecker:
-    """Get the default ExclusionChecker singleton."""
+    """Get the default ExclusionChecker singleton with settings from pyproject.toml."""
     global _default_checker
     if _default_checker is None:
         _default_checker = ExclusionChecker()
