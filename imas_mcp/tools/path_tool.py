@@ -10,9 +10,13 @@ from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp.migrations import PathMigrationMap, get_migration_map
+from imas_mcp.mappings import PathMap, get_path_map
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import DeprecatedPathInfo, IdsPathResult
+from imas_mcp.models.result_models import (
+    DeprecatedPathInfo,
+    ExcludedPathInfo,
+    IdsPathResult,
+)
 from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
@@ -31,24 +35,24 @@ class PathTool(BaseTool):
     def __init__(
         self,
         document_store: DocumentStore | None = None,
-        migration_map: PathMigrationMap | None = None,
+        path_map: PathMap | None = None,
     ):
         """
         Initialize PathTool.
 
         Args:
             document_store: Optional DocumentStore instance.
-            migration_map: Optional PathMigrationMap for testing. Uses singleton if None.
+            path_map: Optional PathMap for testing. Uses singleton if None.
         """
         super().__init__(document_store=document_store)
-        self._migration_map = migration_map
+        self._path_map = path_map
 
     @property
-    def migration_map(self) -> PathMigrationMap:
-        """Get the path migration map (lazy loaded)."""
-        if self._migration_map is None:
-            self._migration_map = get_migration_map()
-        return self._migration_map
+    def path_map(self) -> PathMap:
+        """Get the path map (lazy loaded)."""
+        if self._path_map is None:
+            self._path_map = get_path_map()
+        return self._path_map
 
     @property
     def tool_name(self) -> str:
@@ -171,7 +175,7 @@ class PathTool(BaseTool):
                         result["units"] = metadata.units
 
                     # Add rename history if available
-                    rename_history = self.migration_map.get_rename_history(path)
+                    rename_history = self.path_map.get_rename_history(path)
                     if rename_history:
                         result["renamed_from"] = [
                             {
@@ -191,13 +195,36 @@ class PathTool(BaseTool):
                     }
 
                     # Check for migration suggestion
-                    migration = self.migration_map.get_migration(path)
+                    migration = self.path_map.get_mapping(path)
                     if migration:
-                        result["migration"] = {
+                        migration_info: dict[str, Any] = {
                             "new_path": migration.new_path,
                             "deprecated_in": migration.deprecated_in,
                             "last_valid_version": migration.last_valid_version,
                         }
+                        # Check if the new path is excluded from index
+                        if migration.new_path:
+                            exclusion_reason = self.path_map.get_exclusion_reason(
+                                migration.new_path
+                            )
+                            if exclusion_reason:
+                                migration_info["new_path_excluded"] = True
+                                migration_info["exclusion_reason"] = (
+                                    self.path_map.get_exclusion_description(
+                                        exclusion_reason
+                                    )
+                                )
+                        result["migration"] = migration_info
+                    else:
+                        # Not deprecated - check if path is excluded from index
+                        exclusion_reason = self.path_map.get_exclusion_reason(path)
+                        if exclusion_reason:
+                            result["excluded"] = {
+                                "reason_key": exclusion_reason,
+                                "reason": self.path_map.get_exclusion_description(
+                                    exclusion_reason
+                                ),
+                            }
 
                     results.append(result)
                     logger.debug(f"Path validation: {path} - not found")
@@ -284,9 +311,11 @@ class PathTool(BaseTool):
         # Initialize tracking
         nodes = []
         deprecated_paths: list[DeprecatedPathInfo] = []
+        excluded_paths: list[ExcludedPathInfo] = []
         found_count = 0
         not_found_count = 0
         deprecated_count = 0
+        excluded_count = 0
         invalid_count = 0
         physics_domains = set()
 
@@ -323,21 +352,50 @@ class PathTool(BaseTool):
                     logger.debug(f"Path retrieved: {path}")
                 else:
                     # Path not found - check for migration
-                    migration = self.migration_map.get_migration(path)
+                    migration = self.path_map.get_mapping(path)
                     if migration:
                         deprecated_count += 1
+                        # Check if new path is excluded
+                        new_path_excluded = False
+                        exclusion_reason = None
+                        if migration.new_path:
+                            reason_key = self.path_map.get_exclusion_reason(
+                                migration.new_path
+                            )
+                            if reason_key:
+                                new_path_excluded = True
+                                exclusion_reason = (
+                                    self.path_map.get_exclusion_description(reason_key)
+                                )
                         deprecated_paths.append(
                             DeprecatedPathInfo(
                                 path=path,
                                 new_path=migration.new_path,
                                 deprecated_in=migration.deprecated_in,
                                 last_valid_version=migration.last_valid_version,
+                                new_path_excluded=new_path_excluded,
+                                exclusion_reason=exclusion_reason,
                             )
                         )
                         logger.debug(f"Path deprecated: {path} -> {migration.new_path}")
                     else:
-                        not_found_count += 1
-                        logger.debug(f"Path not found: {path}")
+                        # Not deprecated - check if path is excluded from index
+                        reason_key = self.path_map.get_exclusion_reason(path)
+                        if reason_key:
+                            excluded_count += 1
+                            excluded_paths.append(
+                                ExcludedPathInfo(
+                                    path=path,
+                                    reason_key=reason_key,
+                                    reason_description=self.path_map.get_exclusion_description(
+                                        reason_key
+                                    ),
+                                )
+                            )
+                            logger.debug(f"Path excluded: {path} ({reason_key})")
+                        else:
+                            not_found_count += 1
+                            logger.debug(f"Path not found: {path}")
 
             except Exception as e:
                 invalid_count += 1
@@ -348,6 +406,7 @@ class PathTool(BaseTool):
             "total_requested": len(paths_list),
             "retrieved": found_count,
             "deprecated": deprecated_count,
+            "excluded": excluded_count,
             "not_found": not_found_count,
             "invalid": invalid_count,
             "physics_domains": sorted(physics_domains),
@@ -357,6 +416,7 @@ class PathTool(BaseTool):
         result = IdsPathResult(
             nodes=nodes,
             deprecated_paths=deprecated_paths,
+            excluded_paths=excluded_paths,
             summary=summary,
             query=" ".join(paths_list[:3]) + ("..." if len(paths_list) > 3 else ""),
             search_mode=SearchMode.LEXICAL,  # Direct lookup, not search

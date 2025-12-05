@@ -33,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
-            from scripts.build_migrations import build_migration_map
+            from scripts.build_path_map import build_path_map
 
         finally:
             # Restore original sys.path
@@ -77,29 +77,28 @@ class CustomBuildHook(BuildHookInterface):
         )
         json_transformer.build()
 
-        # Build path migration map for version upgrades
-        # This enables migration suggestions for deprecated paths
+        # Build path map for version upgrades
+        # This enables mapping suggestions for deprecated paths
         resolved_dd_version = dd_version or str(dd_accessor.get_version())
-        print(f"Building path migration map for version: {resolved_dd_version}")
+        print(f"Building path map for version: {resolved_dd_version}")
 
         from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)
-        migrations_dir = path_accessor.migrations_dir
-        migration_file = migrations_dir / "path_migrations.json"
+        mappings_dir = path_accessor.mappings_dir
+        mapping_file = mappings_dir / "path_mappings.json"
 
         import json
 
-        migration_data = build_migration_map(
+        mapping_data = build_path_map(
             target_version=resolved_dd_version,
             ids_filter=ids_set,
             verbose=True,
         )
 
-        with open(migration_file, "w") as f:
-            json.dump(migration_data, f, indent=2)
+        with open(mapping_file, "w") as f:
+            json.dump(mapping_data, f, indent=2)
 
         print(
-            f"Built migration map with "
-            f"{migration_data['metadata']['total_migrations']} migrations"
+            f"Built path map with {mapping_data['metadata']['total_mappings']} mappings"
         )
