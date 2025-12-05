@@ -121,6 +121,28 @@ export IMAS_MCP_EMBEDDING_MODEL="openai/text-embedding-3-small"
 export IMAS_MCP_EMBEDDING_MODEL="all-MiniLM-L6-v2"
 ```
 
+**Path Inclusion Settings:**
+
+Control which IMAS paths are indexed and searchable. These settings affect schema generation, embeddings, and semantic search:
+
+| Setting | pyproject.toml | Environment Variable | Default | Description |
+|---------|----------------|---------------------|---------|-------------|
+| Include GGD | `include-ggd` | `IMAS_MCP_INCLUDE_GGD` | `true` | Include Grid Geometry Description paths |
+| Include Error Fields | `include-error-fields` | `IMAS_MCP_INCLUDE_ERROR_FIELDS` | `false` | Include uncertainty bound fields (`_error_upper`, `_error_lower`, etc.) |
+
+Example pyproject.toml configuration:
+```toml
+[tool.imas-mcp]
+include-ggd = true
+include-error-fields = false
+```
+
+Environment variable overrides:
+```bash
+export IMAS_MCP_INCLUDE_GGD=false     # Exclude GGD paths
+export IMAS_MCP_INCLUDE_ERROR_FIELDS=true  # Include error fields
+```
+
 **Error Handling:**
 
 If you attempt to use local embeddings without the `[transformers]` extra installed, you'll see:
