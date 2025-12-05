@@ -128,6 +128,16 @@ verbose = true
 ids-filter = ""
 imas-dd-version = ""
 
+# Embedding model configuration
+# These defaults are used during build and at runtime (can be overridden via env vars)
+[tool.imas-mcp]
+# Model for IMAS Data Dictionary embeddings (used for semantic search of DD paths)
+# text-embedding-3-large: Higher quality, 3072 dimensions, better for the complex DD structure
+imas-embedding-model = "openai/text-embedding-3-large"
+# Model for documentation embeddings (used by docs-mcp-server)
+# text-embedding-3-small: Faster, 1536 dimensions, suitable for general documentation
+docs-embedding-model = "openai/text-embedding-3-small"
+
 [tool.hatch.envs.test]
 dependencies = [
     "pytest>=8.3.5,<9.0.0",

@@ -62,5 +62,6 @@
     }
   },
   "chat.mcp.access": "all",
-  "cursorpyright.analysis.typeCheckingMode": "basic"
+  "cursorpyright.analysis.typeCheckingMode": "basic",
+  "chat.customAgentInSubagent.enabled": true
 }
