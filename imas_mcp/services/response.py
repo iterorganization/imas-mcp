@@ -45,8 +45,6 @@ class ResponseService(BaseService):
         search_mode: SearchMode,
         ids_filter: str | list[str] | None = None,
         max_results: int | None = None,
-        ai_response: dict[str, Any] | None = None,
-        ai_prompt: dict[str, str] | None = None,
         physics_context: Any | None = None,
         physics_domains: list[str] | None = None,
     ) -> SearchResult:
@@ -64,8 +62,6 @@ class ResponseService(BaseService):
             query=query,
             ids_filter=ids_filter,
             max_results=max_results,
-            ai_response=ai_response or {},
-            ai_prompt=ai_prompt or {},
             physics_context=physics_context,
             physics_domains=physics_domains or [],
         )
@@ -79,8 +75,6 @@ class ResponseService(BaseService):
         nodes: list[Any],
         physics_domains: list[str],
         query: str,
-        ai_prompt: dict[str, str] | None = None,
-        ai_response: dict[str, Any] | None = None,
         physics_context: Any | None = None,
         concept_explanation: Any | None = None,
     ) -> ConceptResult:
@@ -96,8 +90,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.SEMANTIC,
             max_results=15,
             ids_filter=None,
-            ai_prompt=ai_prompt or {},
-            ai_response=ai_response or {},
             physics_context=physics_context,
             concept_explanation=concept_explanation,
         )
@@ -108,8 +100,6 @@ class ResponseService(BaseService):
         available_ids: list[str],
         hits: list[Any],
         query: str | None = None,
-        ai_prompt: dict[str, str] | None = None,
-        ai_response: dict[str, Any] | None = None,
         physics_context: Any | None = None,
         physics_domains: list[str] | None = None,
         ids_statistics: dict[str, Any] | None = None,
@@ -124,8 +114,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.AUTO,
             max_results=None,
             ids_filter=None,
-            ai_prompt=ai_prompt or {},
-            ai_response=ai_response or {},
             physics_context=physics_context,
             physics_domains=physics_domains or [],
             ids_statistics=ids_statistics or {},
@@ -140,8 +128,6 @@ class ResponseService(BaseService):
         sample_paths: list[str],
         max_depth: int,
         tool_name: str,
-        ai_prompt: dict[str, str] | None = None,
-        ai_response: dict[str, Any] | None = None,
         physics_context: Any | None = None,
     ) -> StructureResult:
         """Build StructureResult for IDS structure analysis."""
@@ -154,8 +140,6 @@ class ResponseService(BaseService):
             tool_name=tool_name,
             processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
-            ai_prompt=ai_prompt or {},
-            ai_response=ai_response or {},
             physics_context=physics_context,
         )
 
@@ -167,8 +151,6 @@ class ResponseService(BaseService):
         analytics: dict[str, Any],
         tool_name: str,
         query: str | None = None,
-        ai_prompt: dict[str, str] | None = None,
-        ai_response: dict[str, Any] | None = None,
     ) -> IdentifierResult:
         """Build IdentifierResult for identifier exploration."""
         return IdentifierResult(
@@ -183,8 +165,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.AUTO,
             max_results=None,
             ids_filter=None,
-            ai_prompt=ai_prompt or {},
-            ai_response=ai_response or {},
         )
 
     def build_relationship_response(
@@ -196,8 +176,6 @@ class ResponseService(BaseService):
         nodes: list[Any],
         physics_domains: list[str],
         query: str,
-        ai_prompt: dict[str, str] | None = None,
-        ai_response: dict[str, Any] | None = None,
         physics_context: Any | None = None,
     ) -> RelationshipResult:
         """Build RelationshipResult for relationship exploration."""
@@ -212,8 +190,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.SEMANTIC,
             max_results=None,
             ids_filter=None,
-            ai_prompt=ai_prompt or {},
-            ai_response=ai_response or {},
             physics_context=physics_context,
         )
 
@@ -225,8 +201,6 @@ class ResponseService(BaseService):
         export_data: ExportData,
         metadata: dict[str, Any],
         tool_name: str,
-        ai_response: dict[str, Any] | None = None,
-        ai_prompt: dict[str, str] | None = None,
     ) -> IDSExport:
         """Build IDSExport for IDS exports."""
         return IDSExport(
@@ -238,8 +212,6 @@ class ResponseService(BaseService):
             tool_name=tool_name,
             processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
-            ai_response=ai_response or {},
-            ai_prompt=ai_prompt or {},
         )
 
     def build_domain_export_response(
@@ -251,8 +223,6 @@ class ResponseService(BaseService):
         export_data: ExportData,
         metadata: dict[str, Any],
         tool_name: str,
-        ai_response: dict[str, Any] | None = None,
-        ai_prompt: dict[str, str] | None = None,
     ) -> DomainExport:
         """Build DomainExport for physics domain exports."""
         return DomainExport(
@@ -265,8 +235,6 @@ class ResponseService(BaseService):
             tool_name=tool_name,
             processing_timestamp=datetime.now(UTC).isoformat(),
             version=VERSION,
-            ai_response=ai_response or {},
-            ai_prompt=ai_prompt or {},
         )
 
     def add_standard_metadata(self, response: T, tool_name: str) -> T:

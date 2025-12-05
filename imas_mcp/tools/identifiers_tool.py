@@ -514,7 +514,6 @@ class IdentifiersTool(BaseTool):
                 schemas=schemas,
                 paths=identifier_paths,
                 analytics=branching_analytics,
-                ai_response={},  # No AI processing needed for catalog data
             )
 
             logger.info(f"Identifier exploration completed with scope: {scope.value}")
