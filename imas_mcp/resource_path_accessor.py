@@ -144,6 +144,11 @@ class ResourcePathAccessor:
         """Get the mermaid graphs directory (imas_data_dictionary/{version}/mermaid/)."""
         return self._get_subdir_path("mermaid", create=True)
 
+    @cached_property
+    def migrations_dir(self) -> Path:
+        """Get the migrations directory (imas_data_dictionary/{version}/migrations/)."""
+        return self._get_subdir_path("migrations", create=True)
+
     @property
     def version(self) -> str:
         """Get the DD version string."""
