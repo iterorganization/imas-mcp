@@ -92,8 +92,6 @@ def create_error_response(
         context=context,
         fallback_data=fallback_data,
         query=query,
-        ai_prompt={},
-        ai_response={},
     )
 
 

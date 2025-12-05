@@ -45,8 +45,6 @@ class TestResponseService:
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
-        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
-        assert response.ai_response == {}
         assert response.hits[0].path == "test.path"
 
     def test_build_search_response_with_insights(self):
@@ -75,8 +73,6 @@ class TestResponseService:
         assert isinstance(response, SearchResult)
         assert response.query == "plasma temperature"
         assert response.search_mode == SearchMode.SEMANTIC
-        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
-        assert response.ai_response == {}
         assert len(response.hits) == 1
 
     def test_add_standard_metadata(self):
