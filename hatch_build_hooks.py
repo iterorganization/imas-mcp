@@ -33,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
-            # from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
+            from scripts.build_migrations import build_migration_map
 
         finally:
             # Restore original sys.path
@@ -76,3 +76,30 @@ class CustomBuildHook(BuildHookInterface):
             dd_accessor=dd_accessor, ids_set=ids_set, use_rich=True
         )
         json_transformer.build()
+
+        # Build path migration map for version upgrades
+        # This enables migration suggestions for deprecated paths
+        resolved_dd_version = dd_version or str(dd_accessor.get_version())
+        print(f"Building path migration map for version: {resolved_dd_version}")
+
+        from imas_mcp.resource_path_accessor import ResourcePathAccessor
+
+        path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)
+        migrations_dir = path_accessor.migrations_dir
+        migration_file = migrations_dir / "path_migrations.json"
+
+        import json
+
+        migration_data = build_migration_map(
+            target_version=resolved_dd_version,
+            ids_filter=ids_set,
+            verbose=True,
+        )
+
+        with open(migration_file, "w") as f:
+            json.dump(migration_data, f, indent=2)
+
+        print(
+            f"Built migration map with "
+            f"{migration_data['metadata']['total_migrations']} migrations"
+        )
