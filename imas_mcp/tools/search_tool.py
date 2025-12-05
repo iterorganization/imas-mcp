@@ -99,7 +99,7 @@ class SearchTool(BaseTool):
             result = self._format_minimal(result)
 
         logger.info(
-            f"Search completed: {len(result.hits)} hits returned (of {result.summary.get('total_paths', 0)} total) with profile {response_profile}"
+            f"Search completed: {len(result.hits)} hits returned with profile {response_profile}"
         )
         return result
 
