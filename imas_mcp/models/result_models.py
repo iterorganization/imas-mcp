@@ -54,6 +54,22 @@ class ToolResult(BaseToolResult, ABC):
         return __version__
 
 
+class DeprecatedPathInfo(BaseModel):
+    """Migration info for a deprecated path.
+
+    Returned when fetch_imas_paths encounters a path that doesn't exist
+    in the current DD version but has a known migration.
+    """
+
+    path: str = Field(description="The deprecated path that was requested")
+    new_path: str | None = Field(
+        default=None,
+        description="The current path to use (None if path was removed, not renamed)",
+    )
+    deprecated_in: str = Field(description="DD version where path was deprecated")
+    last_valid_version: str = Field(description="Last DD version where path was valid")
+
+
 class IdsResult(BaseModel):
     """Result containing IMAS data nodes.
 
@@ -69,7 +85,10 @@ class IdsResult(BaseModel):
 
 
 class IdsPathResult(WithPhysics, ToolResult, IdsResult):
-    """Path retrieval result with physics aggregation."""
+    """Path retrieval result with physics aggregation.
+
+    Includes migration info for deprecated paths that weren't found.
+    """
 
     @property
     def tool_name(self) -> str:
@@ -79,6 +98,12 @@ class IdsPathResult(WithPhysics, ToolResult, IdsResult):
     # Summary information
     summary: dict[str, Any] = Field(
         default_factory=dict, description="Summary of path retrieval operation"
+    )
+
+    # Migration info for deprecated paths
+    deprecated_paths: list[DeprecatedPathInfo] = Field(
+        default_factory=list,
+        description="Migration info for paths not found (deprecated in current DD version)",
     )
 
 
