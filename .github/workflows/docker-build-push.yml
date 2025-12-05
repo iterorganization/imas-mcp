@@ -28,7 +28,6 @@ jobs:
     env:
       # Environment shared across all steps in this job
       DOCS_MCP_STORE_PATH: ./docs-data
-      DOCS_MCP_EMBEDDING_MODEL: openai/text-embedding-3-small
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
     steps:
@@ -42,14 +41,22 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Extract embedding model from pyproject.toml
+        id: embedding-model
+        run: |
+          # Extract docs-embedding-model from pyproject.toml [tool.imas-mcp] section
+          MODEL=$(grep -A5 '\[tool.imas-mcp\]' pyproject.toml | grep 'docs-embedding-model' | cut -d'"' -f2)
+          echo "docs_model=${MODEL:-openai/text-embedding-3-small}" >> $GITHUB_OUTPUT
+          echo "Using docs embedding model: ${MODEL:-openai/text-embedding-3-small}"
+
       - name: Cache documentation data
         id: cache-docs
         uses: actions/cache@v4
         with:
           path: docs-data
-          key: docs-${{ env.DOCS_MCP_EMBEDDING_MODEL }}-${{ hashFiles('.github/docs-sources.yml', 'scripts/scrape-doc.sh') }}
+          key: docs-${{ steps.embedding-model.outputs.docs_model }}-${{ hashFiles('.github/docs-sources.yml', 'scripts/scrape-doc.sh') }}
           restore-keys: |
-            docs-${{ env.DOCS_MCP_EMBEDDING_MODEL }}-
+            docs-${{ steps.embedding-model.outputs.docs_model }}-
 
       - name: Scrape documentation
         if: steps.cache-docs.outputs.cache-hit != 'true'
@@ -94,7 +101,6 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      IMAS_MCP_EMBEDDING_MODEL: qwen/qwen3-embedding-4b
 
     steps:
       - name: Checkout repository
@@ -102,14 +108,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Extract embedding model from pyproject.toml
+        id: embedding-model
+        run: |
+          # Extract imas-embedding-model from pyproject.toml [tool.imas-mcp] section
+          MODEL=$(grep -A5 '\[tool.imas-mcp\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
+          echo "imas_model=${MODEL:-openai/text-embedding-3-large}" >> $GITHUB_OUTPUT
+          echo "Using IMAS embedding model: ${MODEL:-openai/text-embedding-3-large}"
+
       - name: Cache IMAS resources
         id: cache-imas-resources
         uses: actions/cache@v4
         with:
           path: imas_mcp/resources/imas_data_dictionary/
-          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
+          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
           restore-keys: |
-            imas-resources-${{ env.IMAS_DD_VERSION }}-
+            imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-
 
       - name: Build IMAS resources
         if: steps.cache-imas-resources.outputs.cache-hit != 'true'
