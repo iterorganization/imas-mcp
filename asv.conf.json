@@ -18,8 +18,7 @@
     ],
     "matrix": {
         "env_nobuild": {
-            "IMAS_MCP_EMBEDDING_MODEL": ["all-MiniLM-L6-v2"],
-            "HF_HUB_DISABLE_SYMLINKS_WARNING": ["1"]
+            "IMAS_MCP_EMBEDDING_MODEL": ["openai/text-embedding-3-small"]
         }
     },
     "benchmark_dir": "benchmarks",
