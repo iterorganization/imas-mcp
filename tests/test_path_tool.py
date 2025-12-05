@@ -698,8 +698,9 @@ class TestExclusionChecker:
         )
 
     def test_ggd_exclusion(self):
-        """Test that GGD paths are correctly identified."""
-        checker = ExclusionChecker()
+        """Test that GGD paths are correctly identified when GGD is excluded."""
+        # Explicitly disable GGD inclusion to test exclusion logic
+        checker = ExclusionChecker(include_ggd=False)
 
         # Various GGD patterns
         assert checker.get_exclusion_reason("edge_profiles/ggd/grid") == "ggd"
