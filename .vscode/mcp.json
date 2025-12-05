@@ -20,7 +20,7 @@
       "command": "uv",
       "args": ["run", "imas-mcp", "--transport", "stdio"],
       "env": {
-        "IMAS_DD_VERSION": "4.0.0"
+        "IMAS_DD_VERSION": "4.1.0"
       },
       "type": "stdio"
     },
