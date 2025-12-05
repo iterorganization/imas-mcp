@@ -21,6 +21,50 @@ from imas_mcp import dd_version
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 
+def _collect_all_paths(ids_def, ids_name: str, prefix: str = "") -> list[str]:
+    """Recursively collect all paths from an IDS definition."""
+    paths = []
+    try:
+        metadata = ids_def.metadata
+        for child_name in metadata.children:
+            child_path = f"{prefix}{child_name}" if prefix else child_name
+            full_path = f"{ids_name}/{child_path}"
+            paths.append(full_path)
+
+            # Recurse into child
+            try:
+                child = getattr(ids_def, child_name)
+                if hasattr(child, "metadata"):
+                    paths.extend(_collect_all_paths(child, ids_name, f"{child_path}/"))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return paths
+
+
+def _find_deprecation_version(
+    path: str,
+    last_valid: str,
+    sorted_versions: list[str],
+    paths_by_version: dict[str, set[str]],
+) -> str:
+    """Find the first version where a path no longer exists."""
+    # Find index of last_valid version
+    try:
+        start_idx = sorted_versions.index(last_valid)
+    except ValueError:
+        return sorted_versions[-1]
+
+    # Look for the first version after last_valid where path doesn't exist
+    for version in sorted_versions[start_idx + 1 :]:
+        if path not in paths_by_version.get(version, set()):
+            return version
+
+    # If path exists in all subsequent versions, it's deprecated in target
+    return sorted_versions[-1]
+
+
 def build_migration_map(
     target_version: str,
     ids_filter: set[str] | None = None,
@@ -58,11 +102,30 @@ def build_migration_map(
     old_to_new: dict[str, dict] = {}
     new_to_old: dict[str, list[dict]] = defaultdict(list)
 
-    # Track the earliest version where each path was deprecated
-    deprecation_versions: dict[str, str] = {}
-    # Track the latest version where each old path was valid
-    last_valid_versions: dict[str, str] = {}
+    # Track paths that exist in each version (to find when they disappear)
+    # We need to find the first version where a path no longer exists
+    sorted_versions = sorted(source_versions) + [target_version]
 
+    # First pass: collect all paths that exist in each version
+    paths_by_version: dict[str, set[str]] = {}
+    for version in sorted_versions:
+        factory = imas.IDSFactory(version)
+        paths_by_version[version] = set()
+
+        for ids_name in factory.ids_names():
+            if ids_name not in target_ids_names:
+                continue
+            try:
+                ids_def = factory.new(ids_name)
+                for path in _collect_all_paths(ids_def, ids_name):
+                    paths_by_version[version].add(path)
+            except Exception as e:
+                if verbose:
+                    logger.debug(
+                        f"Could not collect paths for {ids_name} in {version}: {e}"
+                    )
+
+    # Second pass: build migration mappings with correct deprecation versions
     for source_version in sorted(source_versions):
         if verbose:
             logger.debug(f"Processing version {source_version}")
@@ -92,47 +155,30 @@ def build_migration_map(
                 if full_old == full_new:
                     continue
 
-                # Track last valid version for this old path
-                # (the version before it was deprecated)
-                if full_old not in last_valid_versions:
-                    last_valid_versions[full_old] = source_version
+                # Only record first occurrence (earliest source version)
+                if full_old in old_to_new:
+                    continue
 
-                # Update old_to_new mapping
-                if full_old not in old_to_new:
-                    old_to_new[full_old] = {
-                        "new_path": full_new,
-                        "deprecated_in": target_version,  # Will refine below
-                        "last_valid_version": source_version,
-                    }
+                # Find the first version where this path no longer exists
+                deprecated_in = _find_deprecation_version(
+                    full_old, source_version, sorted_versions, paths_by_version
+                )
 
-                # Track deprecation version (first version where path changed)
-                if full_old not in deprecation_versions:
-                    deprecation_versions[full_old] = source_version
+                old_to_new[full_old] = {
+                    "new_path": full_new,
+                    "deprecated_in": deprecated_in,
+                    "last_valid_version": source_version,
+                }
 
                 # Build reverse mapping (new_to_old)
                 if full_new:
                     entry = {
                         "old_path": full_old,
-                        "deprecated_in": deprecation_versions.get(
-                            full_old, target_version
-                        ),
+                        "deprecated_in": deprecated_in,
                     }
-                    # Avoid duplicates
                     existing_old_paths = [e["old_path"] for e in new_to_old[full_new]]
                     if full_old not in existing_old_paths:
                         new_to_old[full_new].append(entry)
-
-    # Refine deprecation versions based on tracking
-    for old_path, info in old_to_new.items():
-        if old_path in deprecation_versions:
-            # Find the next version after last_valid
-            last_valid = last_valid_versions.get(old_path, info["last_valid_version"])
-            info["last_valid_version"] = last_valid
-
-            # Deprecated in is the target version (current DD)
-            # since that's when it's no longer valid
-            if old_path in deprecation_versions:
-                info["deprecated_in"] = target_version
 
     # Build final structure
     migration_data = {
