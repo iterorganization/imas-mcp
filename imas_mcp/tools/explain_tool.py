@@ -6,7 +6,6 @@ for physics integration, response building, and standardized metadata.
 """
 
 import logging
-from typing import Any
 
 from fastmcp import Context
 
@@ -23,7 +22,6 @@ from imas_mcp.search.decorators import (
     validate_input,
 )
 from imas_mcp.search.decorators.physics_hints import physics_hints
-from imas_mcp.search.decorators.sample import sample
 from imas_mcp.search.decorators.tool_hints import tool_hints
 
 from .base import BaseTool
@@ -39,185 +37,12 @@ class ExplainTool(BaseTool):
         """Return the name of this tool."""
         return "explain_concept"
 
-    def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
-        """Build concept explanation-specific AI prompts."""
-        if prompt_type == "concept_analysis":
-            # Standard context from sample decorator
-            concept = tool_context.get("query", "")
-            search_results = tool_context.get("results", [])
-            tool_context.get("hit_count", 0)
-
-            # Try to determine detail level from the query or use default
-            detail_level = "intermediate"  # Default level
-
-            return self._build_concept_analysis_prompt(
-                concept, detail_level, search_results
-            )
-        elif prompt_type == "no_results":
-            return self._build_no_results_prompt(tool_context)
-        elif prompt_type == "concept_explanation_sampling":
-            return self._build_explanation_sampling_prompt(tool_context)
-        elif prompt_type == "related_topics_sampling":
-            return self._build_topics_sampling_prompt(tool_context)
-        elif prompt_type == "sample_documentation":
-            return self._build_documentation_sampling_prompt(tool_context)
-        return ""
-
-    def system_prompt(self) -> str:
-        """Get explain tool-specific system prompt."""
-        return """You are an expert fusion physics educator and IMAS data specialist with deep knowledge in:
-
-- Tokamak physics fundamentals and advanced plasma phenomena
-- Plasma diagnostics, measurement techniques, and instrumentation principles
-- IMAS data structures, conventions, and integration patterns
-- Physics relationships between different measurement systems
-- Educational communication across basic, intermediate, and advanced levels
-
-Your role is to provide clear, comprehensive explanations that:
-1. Start with fundamental physics principles and build to specific IMAS contexts
-2. Explain measurement techniques and their underlying physics
-3. Connect concepts to practical data access and interpretation
-4. Provide appropriate technical depth for the requested detail level
-5. Suggest related concepts and cross-references for deeper understanding
-6. Include practical guidance for working with the data in research contexts
-
-Adapt your explanations to the specified detail level:
-- Basic: Focus on core concepts and practical understanding
-- Intermediate: Include technical details and measurement contexts
-- Advanced: Provide comprehensive physics derivations and implementation details
-
-Always connect abstract concepts to concrete IMAS data paths and real-world measurements."""
-
-    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
-        """Build sampling tasks specific to ConceptResult."""
-        from imas_mcp.models.result_models import ConceptResult
-
-        tasks = super().build_sample_tasks(tool_result)  # Get base tasks
-
-        if isinstance(tool_result, ConceptResult):
-            # Sample concept-specific fields
-            if tool_result.explanation:
-                tasks.append(
-                    {
-                        "field": "explanation",
-                        "prompt_type": "concept_explanation_sampling",
-                        "context": {
-                            "concept": tool_result.concept,
-                            "current_explanation": tool_result.explanation,
-                            "detail_level": tool_result.detail_level.value,
-                            "hits": tool_result.hits[:3] if tool_result.hits else [],
-                        },
-                    }
-                )
-
-            tasks.append(
-                {
-                    "field": "related_topics",
-                    "prompt_type": "related_topics_sampling",
-                    "context": {
-                        "concept": tool_result.concept,
-                        "current_topics": tool_result.related_topics,
-                        "physics_domains": getattr(tool_result, "physics_domains", []),
-                        "explanation_summary": tool_result.explanation[:200]
-                        if tool_result.explanation
-                        else "",
-                    },
-                }
-            )
-
-        return tasks
-
-    def _apply_explanation_sampling(self, tool_result, sampled_content: str) -> None:
-        """Apply custom sampling for explanation field."""
-        from imas_mcp.models.result_models import ConceptResult
-
-        if isinstance(tool_result, ConceptResult):
-            tool_result.explanation = sampled_content
-
-    def _apply_related_topics_sampling(self, tool_result, sampled_content: str) -> None:
-        """Apply custom sampling for related_topics field."""
-        from imas_mcp.models.result_models import ConceptResult
-
-        if isinstance(tool_result, ConceptResult):
-            # Parse response into topics list
-            topics = [t.strip() for t in sampled_content.split("\n") if t.strip()]
-            tool_result.related_topics = topics[:10]  # Limit to reasonable number
-
-    def _build_no_results_prompt(self, tool_context: dict[str, Any]) -> str:
-        """Build prompt for when no concept results are found."""
-        concept = tool_context.get("query", "")
-
-        return f"""Concept Explanation Request: "{concept}"
-
-No results were found for this concept in the IMAS data dictionary.
-
-Please provide:
-1. Suggestions for alternative concept terms or physics terminology
-2. Possible related IMAS concepts or fusion physics domains
-3. Common physics contexts where this concept might appear
-4. Educational resources for understanding this concept
-5. Recommended follow-up queries for exploration"""
-
-    def _extract_identifier_info(self, document) -> dict[str, Any]:
-        """Extract identifier information from document."""
-        # Simplified implementation - can be enhanced based on document structure
-        has_identifier = document.raw_data.get("identifier_schema") is not None
-        return {
-            "has_identifier": has_identifier,
-            "schema_type": document.raw_data.get("identifier_schema", {}).get("type")
-            if has_identifier
-            else None,
-        }
-
-    def _build_concept_analysis_prompt(
-        self, concept: str, detail_level: str, search_results: list[Any]
-    ) -> str:
-        """Build AI analysis prompt for concept explanation."""
-        prompt = f"""IMAS Concept Explanation: "{concept}"
-
-Detail Level: {detail_level}
-
-Found {len(search_results)} related IMAS paths. Please provide a comprehensive explanation covering:
-
-1. **Physics Context**: What this concept means in fusion physics and tokamak operations
-2. **IMAS Integration**: How this concept is represented in IMAS data structures
-3. **Measurement Context**: How this quantity is typically measured or calculated
-4. **Data Access**: Practical guidance for accessing related data in IMAS
-5. **Related Concepts**: Cross-references to related physics quantities and IMAS paths
-
-Top related paths found:
-"""
-
-        for i, result in enumerate(search_results[:5], 1):
-            # Handle both dict and object results
-            if hasattr(result, "path"):
-                path = result.path
-                doc = (
-                    result.documentation[:100]
-                    if hasattr(result, "documentation")
-                    else ""
-                )
-            elif isinstance(result, dict):
-                path = result.get("path", str(result))
-                doc = result.get("documentation", "")[:100]
-            else:
-                path = str(result)[:100]
-                doc = ""
-
-            prompt += f"{i}. {path}"
-            if doc:
-                prompt += f" - {doc}"
-            prompt += "\n"
-
-        return prompt
-
     @cache_results(ttl=600, key_strategy="semantic")
     @validate_input(schema=ExplainInput)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="concept_suggestions")
     @tool_hints(max_hints=3)
     @physics_hints()
-    @sample(temperature=0.3, max_tokens=800)
     @mcp_tool(
         "Provide detailed explanations of fusion physics concepts and IMAS terminology"
     )
@@ -237,7 +62,7 @@ Top related paths found:
         Args:
             concept: Physics concept, measurement name, or IMAS term to explain
             detail_level: Explanation depth - basic, intermediate, or advanced
-            ctx: MCP context for AI enhancement
+            ctx: FastMCP context
 
         Returns:
             ConceptResult with explanation, physics context, and related information
@@ -341,14 +166,14 @@ Top related paths found:
                     if search_results
                     else "Try related terminology",
                 ],
-                concept_explanation=concept_explanation,  # Now properly populated
+                concept_explanation=concept_explanation,
                 # QueryContext fields
                 query=concept,
                 search_mode=SearchMode.SEMANTIC,
                 max_results=15,
-                hits=search_results[:8],  # Use SearchHit directly
+                hits=search_results[:8],
                 physics_domains=list(physics_domains),
-                physics_context=physics_search_result,  # Use PhysicsSearchResult
+                physics_context=physics_search_result,
             )
 
             logger.info(f"Concept explanation completed for {concept}")
@@ -374,80 +199,3 @@ Top related paths found:
                     },
                 )
             )
-
-    def _build_explanation_sampling_prompt(self, context: dict[str, Any]) -> str:
-        """Build prompt for sampling concept explanation."""
-        concept = context.get("concept", "")
-        current_explanation = context.get("current_explanation", "")
-        detail_level = context.get("detail_level", "intermediate")
-        hits = context.get("hits", [])
-
-        prompt = f"""Current explanation for "{concept}" ({detail_level} level):
-{current_explanation}
-
-Sample and improve this explanation by:
-1. Adding more physics depth appropriate for {detail_level} level
-2. Including relevant IMAS data paths and measurement contexts
-3. Connecting to broader fusion physics concepts
-4. Adding practical guidance for data access and interpretation
-5. Ensuring accuracy and educational value
-
-Focus on clarity, accuracy, and practical utility for researchers working with IMAS data."""
-
-        if hits:
-            prompt += f"\n\nRelevant IMAS paths found: {[hit.path for hit in hits[:3]]}"
-
-        return prompt
-
-    def _build_topics_sampling_prompt(self, context: dict[str, Any]) -> str:
-        """Build prompt for sampling related topics."""
-        concept = context.get("concept", "")
-        current_topics = context.get("current_topics", [])
-        physics_domains = context.get("physics_domains", [])
-
-        prompt = f"""Current related topics for "{concept}":
-{chr(10).join([f"- {topic}" for topic in current_topics])}
-
-Sample and improve this list of related topics by:
-1. Adding relevant fusion physics concepts and phenomena
-2. Including related IMAS measurement techniques and diagnostics
-3. Suggesting complementary analysis tools and methods
-4. Connecting to broader tokamak physics domains
-5. Providing educational learning pathways
-
-Return a newline-separated list of topics (one per line)."""
-
-        if physics_domains:
-            prompt += f"\n\nPhysics domains context: {physics_domains}"
-
-        return prompt
-
-    def _build_documentation_sampling_prompt(self, context: dict[str, Any]) -> str:
-        """Build prompt for sampling node documentation."""
-        nodes = context.get("nodes", [])
-        query = context.get("query", "")
-
-        if not nodes:
-            return ""
-
-        prompt = f"""Sample and improve documentation for IMAS data paths related to "{query}":
-
-Current paths and documentation:"""
-
-        for node in nodes[:3]:
-            path = node.get("path", "")
-            doc = node.get("documentation", "")[:200]
-            prompt += f"\n\nPath: {path}\nCurrent doc: {doc}"
-
-        prompt += """
-
-Provide enhanced documentation that:
-1. Clarifies the physics meaning and measurement context
-2. Explains practical usage in fusion research
-3. Connects to related IMAS data structures
-4. Includes typical units and value ranges
-5. Suggests analysis workflows and tools
-
-Focus on practical utility for researchers accessing this data."""
-
-        return prompt

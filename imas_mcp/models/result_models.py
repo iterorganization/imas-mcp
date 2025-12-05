@@ -17,7 +17,6 @@ from imas_mcp.models.constants import (
 )
 from imas_mcp.models.context_models import (
     BaseToolResult,
-    WithAIEnhancement,
     WithHints,
     WithPhysics,
 )
@@ -252,11 +251,8 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, SearchHits):
-    """Search tool result with AI enhancement, hints, and physics aggregation.
-
-    Uses AI sampling for detailed response profiles.
-    """
+class SearchResult(WithHints, WithPhysics, ToolResult, SearchHits):
+    """Search tool result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -314,8 +310,8 @@ class OverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
 # ============================================================================
 
 
-class ConceptResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, SearchHits):
-    """Concept explanation result with AI enhancement.
+class ConceptResult(WithHints, WithPhysics, ToolResult, SearchHits):
+    """Concept explanation result.
 
     Returns ranked search results related to the concept.
     """
@@ -332,11 +328,8 @@ class ConceptResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult, Searc
     concept_explanation: ConceptExplanation | None = None
 
 
-class StructureResult(WithAIEnhancement, WithHints, WithPhysics, ToolResult):
-    """IDS structure analysis result with AI enhancement, hints, and physics aggregation.
-
-    Uses AI sampling for enhanced structural insights.
-    """
+class StructureResult(WithHints, WithPhysics, ToolResult):
+    """IDS structure analysis result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:

@@ -206,26 +206,6 @@ class TestStructureAnalysis:
 
             assert result is None
 
-    def test_prompt_building(self, analysis_tool):
-        """Test AI prompt building for structure analysis."""
-        prompt = analysis_tool.build_prompt(
-            "structure_analysis", {"query": "core_profiles"}
-        )
-
-        assert "core_profiles" in prompt
-        assert "comprehensive structural analysis" in prompt
-        assert "Architecture Overview" in prompt
-        assert "Physics Context" in prompt
-
-    def test_prompt_building_simple(self, analysis_tool):
-        """Test simple prompt building."""
-        prompt = analysis_tool._build_structure_analysis_prompt_simple("equilibrium")
-
-        assert "equilibrium" in prompt
-        assert "IMAS IDS Structure Analysis" in prompt
-        assert "Data Hierarchy" in prompt
-        assert "Usage Patterns" in prompt
-
 
 class TestStructureAnalysisIntegration:
     """Integration tests for structure analysis."""

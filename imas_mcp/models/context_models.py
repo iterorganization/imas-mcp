@@ -5,8 +5,6 @@ These models represent shared context components that can be composed
 into tool result models using multiple inheritance.
 """
 
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 from imas_mcp.models.constants import SearchMode
@@ -69,21 +67,6 @@ class WithPhysics(BaseModel):
     )
     physics_context: PhysicsSearchResult | None = Field(
         default=None, description="Detailed physics search context"
-    )
-
-
-class WithAIEnhancement(BaseModel):
-    """
-    Adds AI prompt and response tracking.
-
-    Use only for tools that use LLM enhancement (e.g., explain_concept).
-    """
-
-    ai_prompt: dict[str, Any] = Field(
-        default_factory=dict, description="AI prompts that were used"
-    )
-    ai_response: dict[str, Any] = Field(
-        default_factory=dict, description="AI-generated responses"
     )
 
 

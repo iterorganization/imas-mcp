@@ -24,7 +24,6 @@ from imas_mcp.search.decorators import (
     validate_input,
 )
 from imas_mcp.search.decorators.physics_hints import physics_hints
-from imas_mcp.search.decorators.sample import sample
 from imas_mcp.search.decorators.tool_hints import tool_hints
 from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
@@ -210,251 +209,12 @@ class AnalysisTool(BaseTool):
         """Return the name of this tool."""
         return "analyze_ids_structure"
 
-    def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
-        """Build analysis-specific AI prompts."""
-        if prompt_type == "structure_analysis":
-            # For structure analysis, we expect query to be the IDS name
-            ids_name = tool_context.get("query", "")
-            return self._build_structure_analysis_prompt_simple(ids_name)
-        elif prompt_type == "no_data":
-            # For no data case, we expect query to be the IDS name
-            ids_name = tool_context.get("query", "")
-            return self._build_no_data_prompt_simple(ids_name)
-        elif prompt_type == "structure_description_sampling":
-            return self._build_description_sampling_prompt(tool_context)
-        return ""
-
-    def _build_description_sampling_prompt(self, context: dict[str, Any]) -> str:
-        """Build prompt for sampling structure description."""
-        ids_name = context.get("ids_name", "")
-        current_description = context.get("current_description", "")
-        sample_paths = context.get("sample_paths", [])
-        max_depth = context.get("max_depth", 0)
-
-        prompt = f"""Current description for '{ids_name}' IDS structure:
-{current_description}
-
-Structure metrics:
-- Max depth: {max_depth}
-- Sample paths: {", ".join(sample_paths[:5])}
-
-Sample and improve this description by:
-1. Adding physics context and measurement organization principles
-2. Explaining key structural patterns and data hierarchy
-3. Highlighting important branching points and identifier schemas
-4. Providing practical guidance for data access and navigation
-5. Connecting to common fusion physics workflows
-
-Focus on clarity and practical utility for researchers working with this IDS."""
-
-        return prompt
-
-    def system_prompt(self) -> str:
-        """Get enhanced analysis tool-specific system prompt."""
-        return """You are an expert IMAS data architect and fusion physics analyst specializing in:
-
-- IMAS data dictionary structure, organization principles, and design patterns
-- Hierarchical data relationships and identifier schema architectures
-- Physics-based data organization and measurement categorization
-- Data access optimization and workflow design patterns
-- Cross-IDS relationships and data integration strategies
-- Graph theory analysis of data structures (centrality, clustering, complexity metrics)
-- Visual structure representation and navigation optimization
-
-Your expertise enables you to:
-1. Analyze complex data hierarchies using both traditional and graph-theoretic approaches
-2. Identify key organizational patterns through centrality analysis and structural metrics
-3. Explain the physics rationale behind data structure decisions
-4. Recommend optimal data access strategies using complexity analysis and navigation hints
-5. Identify important branching points, enumerations, and identifier schemas
-6. Suggest related data structures and cross-references based on structural similarity
-7. Provide actionable guidance leveraging visual representations (Mermaid diagrams)
-8. Optimize data exploration workflows using complexity scoring and entry point analysis
-
-Enhanced Analysis Capabilities:
-- Graph theory metrics: node centrality, clustering coefficients, branching factors
-- Hierarchical complexity scoring based on depth, breadth, and domain distribution
-- Physics domain distribution analysis across data structures
-- Visual structure mapping through Mermaid diagrams (hierarchy, domain, complexity views)
-- Navigation optimization using entry points and structural patterns
-- Real-time and pre-computed analysis integration
-
-When analyzing IDS structures, focus on:
-- High-level architectural insights supported by quantitative graph metrics
-- Key access patterns and common usage workflows optimized through structural analysis
-- Physics-motivated organization and measurement groupings with domain distribution
-- Practical guidance leveraging complexity scores and navigation hints
-- Relationships to other IDS discovered through structural similarity analysis
-- Performance considerations using graph density and clustering metrics
-- Visual understanding through hierarchical and domain-specific diagram interpretation
-
-Provide analysis that helps researchers understand not just what data is available, but how to work
-with it effectively using both structural insights and visual navigation aids for their specific
-research contexts."""
-
-    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
-        """Build sampling tasks specific to StructureResult."""
-        from imas_mcp.models.result_models import StructureResult
-
-        tasks = super().build_sample_tasks(tool_result)  # Get base tasks
-
-        if isinstance(tool_result, StructureResult):
-            # Sample structure-specific description
-            if tool_result.description:
-                tasks.append(
-                    {
-                        "field": "description",
-                        "prompt_type": "structure_description_sampling",
-                        "context": {
-                            "ids_name": tool_result.ids_name,
-                            "current_description": tool_result.description,
-                            "sample_paths": tool_result.sample_paths[:5],
-                            "max_depth": tool_result.max_depth,
-                        },
-                    }
-                )
-
-        return tasks
-
-    def _apply_description_sampling(self, tool_result, sampled_content: str) -> None:
-        """Apply custom sampling for description field."""
-        from imas_mcp.models.result_models import StructureResult
-
-        if isinstance(tool_result, StructureResult):
-            tool_result.description = sampled_content
-
-    def _build_structure_analysis_prompt(self, tool_context: dict[str, Any]) -> str:
-        """Build prompt for IDS structure analysis with enhanced capabilities."""
-        ids_name = tool_context.get("ids_name", "")
-        structure_analysis = tool_context.get("structure_analysis", {})
-        sample_paths = tool_context.get("sample_paths", [])
-        document_count = tool_context.get("document_count", 0)
-        physics_context = tool_context.get("physics_context")
-
-        prompt = f"""IMAS IDS Structure Analysis: "{ids_name}"
-
-Structural Data:
-- Total data paths: {document_count}
-- Root level paths: {structure_analysis.get("root_level_paths", 0)}
-- Maximum depth: {structure_analysis.get("max_depth", 0)}
-- Identifier nodes: {structure_analysis.get("identifier_nodes", 0)}
-- Branching complexity: {structure_analysis.get("branching_complexity", 0)}
-
-Enhanced Analysis Available:
-- Graph theory metrics (node centrality, clustering coefficients)
-- Physics domain distribution analysis
-- Hierarchical complexity scoring
-- Visual structure representations (Mermaid diagrams)
-- Navigation optimization hints
-
-Sample data paths:
-"""
-        for i, path in enumerate(sample_paths[:8], 1):
-            prompt += f"{i}. {path}\n"
-
-        if physics_context:
-            # Handle physics_context properly - it might not be a dict
-            context_desc = ""
-            if hasattr(physics_context, "description"):
-                context_desc = physics_context.description
-            elif hasattr(physics_context, "get"):
-                context_desc = physics_context.get("description", "")
-            elif isinstance(physics_context, str):
-                context_desc = physics_context
-            else:
-                context_desc = str(physics_context)
-
-            if context_desc:
-                prompt += f"\nPhysics Context: {context_desc}\n"
-
-        prompt += """
-Please provide a comprehensive structural analysis that includes:
-
-1. **Architecture Overview**: High-level organization and design patterns leveraging graph theory insights
-2. **Data Hierarchy**: Multi-level structure analysis with depth and branching factor considerations
-3. **Key Components**: Major data groups identified through centrality analysis and clustering
-4. **Identifier Schemas**: Branching points, enumerations, and access patterns optimization
-5. **Physics Context**: Domain distribution and measurement organization patterns
-6. **Usage Patterns**: Research workflow optimization based on structural insights
-7. **Data Access Guidance**: Navigation strategies using entry points and complexity metrics
-8. **Relationships**: Cross-IDS connections and data integration opportunities
-9. **Visual Structure**: Leverage Mermaid diagrams for hierarchy, domain distribution, and complexity visualization
-
-Focus on providing actionable insights that help researchers understand both the logical organization
-and the optimal access patterns for this specific IDS. Include recommendations for efficient data
-exploration strategies based on the structural complexity analysis.
-"""
-        return prompt
-
-    def _build_no_data_prompt(self, tool_context: dict[str, Any]) -> str:
-        """Build prompt for when no structure data is available."""
-        ids_name = tool_context.get("ids_name", "")
-
-        return f"""IDS Structure Analysis Request: "{ids_name}"
-
-No structure data is available for this IDS.
-
-Please provide:
-1. General information about this IDS type if known
-2. Suggestions for alternative IDS names or spellings
-3. Common IMAS IDS that might be related
-4. Guidance on how to explore available IDS structures
-5. Recommended follow-up actions for data discovery"""
-
-    def _build_no_data_prompt_simple(self, ids_name: str) -> str:
-        """Build simplified prompt for when no structure data is available."""
-        return f"""IDS Structure Analysis Request: "{ids_name}"
-
-No structure data is available for this IDS.
-
-Please provide:
-1. General information about this IDS type if known
-2. Suggestions for alternative IDS names or spellings
-3. Common IMAS IDS that might be related
-4. Guidance on how to explore available IDS structures
-5. Recommended follow-up actions for data discovery"""
-
-    def _build_structure_analysis_prompt_simple(self, ids_name: str) -> str:
-        """Build simplified prompt for structure analysis."""
-        return f"""IMAS IDS Structure Analysis: "{ids_name}"
-
-Please provide a comprehensive structural analysis that includes:
-
-1. **Architecture Overview**: High-level organization of the {ids_name} IDS and its design patterns
-2. **Data Hierarchy**: How data is structured, nested, and organized within this IDS
-3. **Key Components**: Major data groups, their purposes, and relationships
-4. **Identifier Schemas**: Important branching points, enumerations, and access patterns
-5. **Physics Context**: What physics phenomena this IDS represents and measures
-6. **Usage Patterns**: Common ways this IDS is used in fusion research workflows
-7. **Data Access Guidance**: Best practices for accessing and interpreting this data
-8. **Relationships**: How this IDS connects to other IMAS data structures
-
-Focus on providing actionable insights for researchers working with the {ids_name} IDS specifically."""
-
-    def _build_analysis_sample_prompt(self, ids_name: str) -> str:
-        """Build sampling prompt for structure analysis."""
-        return f"""IMAS IDS Structure Analysis Request: "{ids_name}"
-
-Please provide a comprehensive structural analysis that includes:
-
-1. **Architecture Overview**: High-level organization of the IDS
-2. **Data Hierarchy**: How data is structured and nested
-3. **Key Components**: Major data groups and their purposes
-4. **Identifier Schemas**: Important branching points and enumerations
-5. **Physics Context**: What physics phenomena this IDS represents
-6. **Usage Patterns**: Common ways this IDS is used in fusion research
-7. **Relationships**: How this IDS connects to other data structures
-
-Focus on providing actionable insights for researchers working with this specific IDS.
-"""
-
     @cache_results(ttl=900, key_strategy="path_based")
     @validate_input(schema=AnalysisInput)
     @measure_performance(include_metrics=True, slow_threshold=2.0)
     @handle_errors(fallback="analysis_suggestions")
     @tool_hints(max_hints=3)
     @physics_hints()
-    @sample(temperature=0.2, max_tokens=600)
     @mcp_tool("Analyze the internal structure and organization of a specific IMAS IDS")
     async def analyze_ids_structure(
         self, ids_name: str, ctx: Context | None = None
@@ -468,10 +228,10 @@ Focus on providing actionable insights for researchers working with this specifi
 
         Args:
             ids_name: Name of the IDS to analyze (e.g., 'equilibrium', 'thomson_scattering')
-            ctx: MCP context for AI enhancement
+            ctx: FastMCP context
 
         Returns:
-            StructureResult with detailed analysis and AI insights
+            StructureResult with detailed analysis
         """
         try:
             # Validate IDS exists using document service
@@ -491,10 +251,6 @@ Focus on providing actionable insights for researchers working with this specifi
                     structure={"total_paths": 0},
                     sample_paths=[],
                     max_depth=0,
-                    ai_response={
-                        "analysis": "No structure data available",
-                        "note": "IDS exists but has no accessible structure information",
-                    },
                 )
 
                 logger.info(f"Structure analysis completed for {ids_name}")
@@ -514,11 +270,8 @@ Focus on providing actionable insights for researchers working with this specifi
                     ),
                     "complexity_score": int(
                         structure_analysis.hierarchy_metrics.complexity_score * 100
-                    ),  # Convert to int
-                    "physics_domains": len(
-                        structure_analysis.domain_distribution
-                    ),  # Count of domains
-                    # organization_pattern removed from metrics as it's a string
+                    ),
+                    "physics_domains": len(structure_analysis.domain_distribution),
                 }
 
                 sample_paths = structure_analysis.navigation_hints.entry_points[:10]
@@ -542,11 +295,7 @@ Focus on providing actionable insights for researchers working with this specifi
                             if isinstance(value, int | bool):
                                 structure_dict[key] = value
                             elif isinstance(value, float):
-                                # Convert float to int for structure metrics
-                                structure_dict[key] = int(
-                                    value * 1000
-                                )  # Scale and convert to int
-                            # Skip string and other types as they don't belong in structure metrics
+                                structure_dict[key] = int(value * 1000)
 
             else:
                 # Fallback to real-time analysis using graph analyzer and basic analysis
@@ -589,7 +338,6 @@ Focus on providing actionable insights for researchers working with this specifi
                     description = f"Limited analysis available for {ids_name} IDS"
 
             # Get physics context
-            # Create proper PhysicsSearchResult
             from imas_mcp.models.physics_models import PhysicsSearchResult
 
             physics_context = PhysicsSearchResult(
@@ -601,7 +349,6 @@ Focus on providing actionable insights for researchers working with this specifi
                 imas_path_suggestions=[],
             )
 
-            # Build response with enhanced analysis
             # Add mermaid graph references to the description
             mermaid_info = (
                 f"\n\n## Visual Structure Analysis\n"
@@ -620,7 +367,6 @@ Focus on providing actionable insights for researchers working with this specifi
                     ids_name, ids_documents
                 )
                 if clustering_enhancement:
-                    # Add clustering summary to description
                     cluster_insights = clustering_enhancement.get(
                         "clustering_insights", {}
                     )
@@ -641,15 +387,10 @@ Focus on providing actionable insights for researchers working with this specifi
                 structure={**structure_dict, **clustering_enhancement},
                 sample_paths=sample_paths,
                 max_depth=max_depth,
-                analysis=structure_analysis,  # Include the full analysis object
-                ai_response={},  # Reserved for LLM sampling only
+                analysis=structure_analysis,
                 physics_context=physics_context,
-                query=ids_name,  # Required by QueryContext
+                query=ids_name,
             )
-
-            # AI prompt will be built automatically by the @sample decorator
-            # The decorator uses this tool instance (via PromptBuilder protocol)
-            # to call build_prompt() and system_prompt() methods when needed
 
             logger.info(f"Structure analysis completed for {ids_name}")
             return result
