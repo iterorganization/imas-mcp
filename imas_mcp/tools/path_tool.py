@@ -1,23 +1,22 @@
 """
 Path tool implementation.
 
-Provides both fast validation and rich data retrieval for IMAS paths.
+Provides both fast validation and rich data retrieval for IMAS paths,
+with migration suggestions for deprecated paths and rename history.
 """
 
 import logging
 from typing import Any
 
-import imas
 from fastmcp import Context
 
-from imas_mcp import dd_version
+from imas_mcp.migrations import PathMigrationMap, get_migration_map
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import IdsPathResult
 from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
     measure_performance,
-    persistent_cache,
 )
 from imas_mcp.search.document_store import DocumentStore
 
@@ -29,11 +28,27 @@ logger = logging.getLogger(__name__)
 class PathTool(BaseTool):
     """Tool for IMAS path validation and data retrieval."""
 
-    def __init__(self, document_store: DocumentStore | None = None):
+    def __init__(
+        self,
+        document_store: DocumentStore | None = None,
+        migration_map: PathMigrationMap | None = None,
+    ):
+        """
+        Initialize PathTool.
+
+        Args:
+            document_store: Optional DocumentStore instance.
+            migration_map: Optional PathMigrationMap for testing. Uses singleton if None.
+        """
         super().__init__(document_store=document_store)
-        self.supported_versions = imas.dd_zip.dd_xml_versions()
-        self.path_map = self._build_migration_map()
-        logging.info(f"Upgrade map built for target version {dd_version}.")
+        self._migration_map = migration_map
+
+    @property
+    def migration_map(self) -> PathMigrationMap:
+        """Get the path migration map (lazy loaded)."""
+        if self._migration_map is None:
+            self._migration_map = get_migration_map()
+        return self._migration_map
 
     @property
     def tool_name(self) -> str:
@@ -57,7 +72,8 @@ class PathTool(BaseTool):
         Check if one or more exact IMAS paths exist in the data dictionary.
 
         Fast validation tool for batch path existence checking without search overhead.
-        Directly accesses the data dictionary for immediate results.
+        Directly accesses the data dictionary for immediate results. Returns migration
+        suggestions for deprecated paths and rename history for current paths.
 
         Args:
             paths: One or more IMAS paths to validate. Accepts either:
@@ -77,25 +93,24 @@ class PathTool(BaseTool):
               - ids_name: IDS name if path exists
               - data_type: Data type if available (optional)
               - units: Physical units if available (optional)
+              - migration: Migration info if path is deprecated (optional):
+                - new_path: The current path to use
+                - deprecated_in: Version where path was deprecated
+                - last_valid_version: Last DD version where path was valid
+              - renamed_from: List of old paths that were renamed to this path (optional)
               - error: Error message if path format is invalid (optional)
 
         Examples:
-            Single path (string):
-                check_imas_paths("equilibrium/time_slice/boundary/psi")
-                → {"summary": {"total": 1, "found": 1, "not_found": 0, "invalid": 0},
-                   "results": [{"path": "equilibrium/time_slice/boundary/psi", "exists": true, "ids_name": "equilibrium"}]}
+            Path exists (current):
+                check_imas_paths("equilibrium/time_slice/constraints/b_field_pol_probe")
+                → {"results": [{"path": "...", "exists": true, "ids_name": "equilibrium",
+                   "renamed_from": [{"old_path": "equilibrium/time_slice/constraints/bpol_probe", "deprecated_in": "4.0.0"}]}]}
 
-            Multiple paths with ids prefix (ensemble checking):
-                check_imas_paths("time_slice/boundary/psi time_slice/boundary/psi_norm time_slice/boundary/type", ids="equilibrium")
-                → {"summary": {"total": 3, "found": 3, "not_found": 0, "invalid": 0},
-                   "results": [
-                     {"path": "equilibrium/time_slice/boundary/psi", "exists": true, "ids_name": "equilibrium"},
-                     {"path": "equilibrium/time_slice/boundary/psi_norm", "exists": true, "ids_name": "equilibrium"},
-                     {"path": "equilibrium/time_slice/boundary/type", "exists": true, "ids_name": "equilibrium"}
-                   ]}
-
-            Multiple paths (list):
-                check_imas_paths(["time_slice/boundary/psi", "time_slice/boundary/psi_norm"], ids="equilibrium")
+            Path deprecated (has migration):
+                check_imas_paths("equilibrium/time_slice/constraints/bpol_probe")
+                → {"results": [{"path": "...", "exists": false,
+                   "migration": {"new_path": "equilibrium/time_slice/constraints/b_field_pol_probe",
+                                "deprecated_in": "4.0.0", "last_valid_version": "3.42.0"}}]}
 
         Note:
             This tool is optimized for exact path validation. For discovering paths
@@ -105,7 +120,7 @@ class PathTool(BaseTool):
         if isinstance(paths, str):
             paths_list = paths.split()
         else:
-            paths_list = paths
+            paths_list = list(paths)
 
         # Initialize counters and results
         results = []
@@ -143,7 +158,7 @@ class PathTool(BaseTool):
                 if document and document.metadata:
                     found_count += 1
                     metadata = document.metadata
-                    result = {
+                    result: dict[str, Any] = {
                         "path": path,
                         "exists": True,
                         "ids_name": metadata.ids_name,
@@ -155,16 +170,36 @@ class PathTool(BaseTool):
                     if metadata.units:
                         result["units"] = metadata.units
 
+                    # Add rename history if available
+                    rename_history = self.migration_map.get_rename_history(path)
+                    if rename_history:
+                        result["renamed_from"] = [
+                            {
+                                "old_path": entry.old_path,
+                                "deprecated_in": entry.deprecated_in,
+                            }
+                            for entry in rename_history
+                        ]
+
                     results.append(result)
                     logger.debug(f"Path validation: {path} - exists")
                 else:
                     not_found_count += 1
-                    results.append(
-                        {
-                            "path": path,
-                            "exists": False,
+                    result = {
+                        "path": path,
+                        "exists": False,
+                    }
+
+                    # Check for migration suggestion
+                    migration = self.migration_map.get_migration(path)
+                    if migration:
+                        result["migration"] = {
+                            "new_path": migration.new_path,
+                            "deprecated_in": migration.deprecated_in,
+                            "last_valid_version": migration.last_valid_version,
                         }
-                    )
+
+                    results.append(result)
                     logger.debug(f"Path validation: {path} - not found")
 
             except Exception as e:
@@ -244,7 +279,7 @@ class PathTool(BaseTool):
         if isinstance(paths, str):
             paths_list = paths.split()
         else:
-            paths_list = paths
+            paths_list = list(paths)
 
         # Initialize tracking
         nodes = []
@@ -314,60 +349,3 @@ class PathTool(BaseTool):
             f"Path retrieval completed: {found_count}/{len(paths_list)} retrieved"
         )
         return result
-
-    @mcp_tool("Ensure paths are updated to the current dd_version.")
-    async def ensure_current_path(
-        self,
-        paths: str | list[str],
-        ids_name: str | None = None,
-        source_dd_version: str | None = None,
-        ctx: Context | None = None,
-    ) -> list[str | None]:
-        """
-        update the IMAS path to the served dd_version.
-        Args:
-            paths: One or more IMAS paths to update. Accepts either:
-                  - Space-delimited string: "time_slice/boundary/psi time_slice/boundary/psi_norm"
-                  - List of paths: ["time_slice/boundary/psi", "profiles_1d/electrons/temperature"]
-            ids_name: Optional IDS name(s) corresponding to the paths.
-                      Can be a single IDS name applied to all paths or a list matching the length of paths.
-        Returns:
-            List of paths existing in the target dd_version, or None if no mapping exists.
-
-        """
-        if isinstance(paths, str):
-            paths = paths.split(" ")
-
-        result: list[str | None] = []
-        for path in paths:
-            full_path = f"{ids_name}/{path}" if ids_name else path
-            document = self.document_store.get_document(full_path)
-            if not document:
-                result.append(self.path_map.get(full_path if ids_name else path, None))
-                continue
-            result.append(path)
-        return result
-
-    @persistent_cache("./imas_mcp/resources/imas_path_migration_cache.json")
-    def _build_migration_map(self) -> dict[str, str | None]:
-        """Build old_path -> new_path mapping for all IDS from all older versions to target."""
-        version_factories: list[imas.IDSFactory] = [
-            imas.IDSFactory(v) for v in self.supported_versions if v < dd_version
-        ]
-        target_factory = imas.IDSFactory(dd_version)
-        path_map: dict[str, str | None] = {}
-
-        for old_factory in version_factories:
-            for ids in old_factory.ids_names():
-                if ids not in target_factory.ids_names():
-                    continue  # IDS may not exist in new version -> cannot produce mapping (circumvent error handling for speedup)
-
-                version_map, _ = imas.ids_convert.dd_version_map_from_factories(
-                    ids, old_factory, target_factory
-                )
-
-                for old_path, new_path in version_map.old_to_new.path.items():
-                    full_old = f"{ids}/{old_path}"
-                    full_new = f"{ids}/{new_path}" if new_path else None
-                    path_map[full_old] = full_new
-        return path_map
