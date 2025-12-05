@@ -62,8 +62,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
-# Expand sparse checkout to include project sources and scripts (phase 2)
-RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
+# Expand sparse checkout to include project sources, scripts, and build hooks (phase 2)
+# Include hatch_build_hooks.py even though HATCH_BUILD_NO_HOOKS=true, because
+# hatchling validates file existence before checking the env var
+RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts hatch_build_hooks.py \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
     && git sparse-checkout list \
@@ -139,6 +141,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-mermaid --quiet; \
     fi && \
     echo "✓ Mermaid graphs ready"
+
+# Build path mappings for version upgrades (requires schemas)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building path mappings..." && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building path mappings for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
+    else \
+    echo "Building path mappings for all IDS" && \
+    uv run --no-dev build-path-map --no-rich; \
+    fi && \
+    echo "✓ Path mappings ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
 FROM python:3.12-slim AS docs-provider
