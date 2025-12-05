@@ -97,6 +97,57 @@ def get_docs_embedding_model() -> str:
     return "openai/text-embedding-3-small"
 
 
+def _parse_bool(value: str | bool) -> bool:
+    """Parse a boolean value from string or bool."""
+    if isinstance(value, bool):
+        return value
+    return value.lower() in ("true", "1", "yes")
+
+
+def get_include_ggd() -> bool:
+    """Get whether to include GGD (Grid Geometry Description) paths.
+
+    Priority:
+        1. IMAS_MCP_INCLUDE_GGD environment variable
+        2. pyproject.toml [tool.imas-mcp] include-ggd
+        3. Fallback default: True
+
+    Returns:
+        Boolean indicating whether to include GGD paths.
+    """
+    if env_val := os.getenv("IMAS_MCP_INCLUDE_GGD"):
+        return _parse_bool(env_val)
+
+    settings = _load_pyproject_settings()
+    if (val := settings.get("include-ggd")) is not None:
+        return _parse_bool(val)
+
+    return True
+
+
+def get_include_error_fields() -> bool:
+    """Get whether to include error fields (_error_upper, _error_lower, etc.).
+
+    Priority:
+        1. IMAS_MCP_INCLUDE_ERROR_FIELDS environment variable
+        2. pyproject.toml [tool.imas-mcp] include-error-fields
+        3. Fallback default: False
+
+    Returns:
+        Boolean indicating whether to include error fields.
+    """
+    if env_val := os.getenv("IMAS_MCP_INCLUDE_ERROR_FIELDS"):
+        return _parse_bool(env_val)
+
+    settings = _load_pyproject_settings()
+    if (val := settings.get("include-error-fields")) is not None:
+        return _parse_bool(val)
+
+    return False
+
+
 # Computed defaults (for use in module-level constants)
 IMAS_MCP_EMBEDDING_MODEL = get_imas_embedding_model()
 DOCS_MCP_EMBEDDING_MODEL = get_docs_embedding_model()
+INCLUDE_GGD = get_include_ggd()
+INCLUDE_ERROR_FIELDS = get_include_error_fields()

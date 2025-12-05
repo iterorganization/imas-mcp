@@ -38,6 +38,7 @@ from imas_mcp.core.progress_monitor import create_progress_monitor
 from imas_mcp.dd_accessor import DataDictionaryAccessor
 from imas_mcp.graph_analyzer import analyze_imas_graphs
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
+from imas_mcp.settings import get_include_error_fields, get_include_ggd
 from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 
@@ -65,8 +66,8 @@ class DataDictionaryTransformer:
     excluded_patterns: set[str] = field(
         default_factory=lambda: {"ids_properties", "code"}
     )
-    skip_ggd: bool = True
-    skip_error_fields: bool = True
+    include_ggd: bool = field(default_factory=get_include_ggd)
+    include_error_fields: bool = field(default_factory=get_include_error_fields)
     use_rich: bool | None = None  # Auto-detect if None
 
     # Internal exclusion checker (initialized in __post_init__)
@@ -76,8 +77,8 @@ class DataDictionaryTransformer:
         """Initialize the transformer with performance optimizations."""
         # Initialize exclusion checker with current configuration
         self._exclusion_checker = ExclusionChecker(
-            skip_ggd=self.skip_ggd,
-            skip_error_fields=self.skip_error_fields,
+            include_ggd=self.include_ggd,
+            include_error_fields=self.include_error_fields,
             excluded_patterns=self.excluded_patterns,
         )
 
@@ -206,7 +207,8 @@ class DataDictionaryTransformer:
                     ids_name=ids_name,
                     parent_map=self._global_parent_map,  # Use pre-built parent map
                     excluded_patterns=self.excluded_patterns,
-                    skip_ggd=self.skip_ggd,
+                    include_ggd=self.include_ggd,
+                    include_error_fields=self.include_error_fields,
                 )
 
                 # Extract IDS-level information

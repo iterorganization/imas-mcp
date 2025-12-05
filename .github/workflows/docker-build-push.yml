@@ -112,18 +112,28 @@ jobs:
         id: embedding-model
         run: |
           # Extract imas-embedding-model from pyproject.toml [tool.imas-mcp] section
-          MODEL=$(grep -A5 '\[tool.imas-mcp\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
+          MODEL=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
           echo "imas_model=${MODEL:-openai/text-embedding-3-large}" >> $GITHUB_OUTPUT
           echo "Using IMAS embedding model: ${MODEL:-openai/text-embedding-3-large}"
+
+      - name: Extract exclusion settings from pyproject.toml
+        id: exclusion-settings
+        run: |
+          # Extract include-ggd and include-error-fields from pyproject.toml [tool.imas-mcp] section
+          INCLUDE_GGD=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'include-ggd' | cut -d'=' -f2 | tr -d ' ')
+          INCLUDE_ERROR=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'include-error-fields' | cut -d'=' -f2 | tr -d ' ')
+          echo "include_ggd=${INCLUDE_GGD:-true}" >> $GITHUB_OUTPUT
+          echo "include_error_fields=${INCLUDE_ERROR:-false}" >> $GITHUB_OUTPUT
+          echo "Using exclusion settings: ggd=${INCLUDE_GGD:-true}, error=${INCLUDE_ERROR:-false}"
 
       - name: Cache IMAS resources
         id: cache-imas-resources
         uses: actions/cache@v4
         with:
           path: imas_mcp/resources/imas_data_dictionary/
-          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
+          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-ggd=${{ steps.exclusion-settings.outputs.include_ggd }}-err=${{ steps.exclusion-settings.outputs.include_error_fields }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
           restore-keys: |
-            imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-
+            imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-ggd=${{ steps.exclusion-settings.outputs.include_ggd }}-err=${{ steps.exclusion-settings.outputs.include_error_fields }}-
 
       - name: Build IMAS resources
         if: steps.cache-imas-resources.outputs.cache-hit != 'true'
