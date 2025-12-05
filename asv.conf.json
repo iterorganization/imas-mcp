@@ -16,6 +16,12 @@
     "uninstall_command": [
         "return-code=any python -m pip uninstall -y {project}"
     ],
+    "matrix": {
+        "env_nobuild": {
+            "IMAS_MCP_EMBEDDING_MODEL": ["all-MiniLM-L6-v2"],
+            "HF_HUB_DISABLE_SYMLINKS_WARNING": ["1"]
+        }
+    },
     "benchmark_dir": "benchmarks",
     "env_dir": ".asv/env",
     "results_dir": ".asv/results",
