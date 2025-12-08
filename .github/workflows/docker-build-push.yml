@@ -157,9 +157,9 @@ jobs:
           uv run build-embeddings --no-rich
           echo "✓ Embeddings built successfully"
           
-          echo "Building relationships..."
-          uv run build-relationships --quiet
-          echo "✓ Relationships built successfully"
+          echo "Building clusters..."
+          uv run build-clusters --quiet
+          echo "✓ Clusters built successfully"
           
           echo "Building mermaid graphs..."
           uv run build-mermaid --quiet

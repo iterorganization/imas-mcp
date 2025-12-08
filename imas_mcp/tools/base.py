@@ -17,7 +17,6 @@ from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.services import (
     DocumentService,
-    PhysicsService,
     ResponseService,
     SearchConfigurationService,
 )
@@ -36,7 +35,6 @@ class BaseTool(ABC):
         self._search_service = self._create_search_service()
 
         # Initialize services
-        self.physics = PhysicsService()
         self.response = ResponseService()
         self.documents = DocumentService(self.document_store)
         self.search_config = SearchConfigurationService()

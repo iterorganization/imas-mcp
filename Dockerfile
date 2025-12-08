@@ -116,19 +116,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Embeddings ready"
 
-# Build relationships (requires embeddings)
+# Build clusters (requires embeddings)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
     export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
-    echo "Building relationships..." && \
+    echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building relationships for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-relationships --ids-filter "${IDS_FILTER}" --quiet; \
+    echo "Building clusters for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-clusters --ids-filter "${IDS_FILTER}" --quiet; \
     else \
-    echo "Building relationships for all IDS" && \
-    uv run --no-dev build-relationships --quiet; \
+    echo "Building clusters for all IDS" && \
+    uv run --no-dev build-clusters --quiet; \
     fi && \
-    echo "✓ Relationships ready"
+    echo "✓ Clusters ready"
 
 # Build mermaid graphs (requires schemas)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \

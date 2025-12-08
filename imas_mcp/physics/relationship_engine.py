@@ -193,12 +193,12 @@ class SemanticRelationshipAnalyzer:
         return min(similarity_score, 1.0), details
 
 
-class EnhancedRelationshipEngine:
-    """Enhanced multi-layered relationship discovery engine."""
+class ClusterEngine:
+    """Multi-layered cluster discovery engine for semantic path analysis."""
 
-    def __init__(self, relationships_catalog: dict[str, Any]):
-        """Initialize with relationships catalog."""
-        self.relationships_catalog = relationships_catalog
+    def __init__(self, clusters_catalog: dict[str, Any]):
+        """Initialize with clusters catalog."""
+        self.clusters_catalog = clusters_catalog
         self.semantic_analyzer = SemanticRelationshipAnalyzer()
         self._path_cache = {}
 

@@ -62,7 +62,7 @@ class TestUserWorkflows:
             relationships_result = await tools.search_imas_clusters(
                 path=f"{ids_name}/profiles_1d/time"
             )
-            # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+            # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
             assert isinstance(relationships_result, SearchClustersResult | ToolError)
 
             # Step 3: Explore identifiers for comprehensive understanding
@@ -78,7 +78,7 @@ class TestUserWorkflows:
         relationships = await tools.search_imas_clusters(
             path=f"{ids_name}/profiles_1d/time"
         )
-        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
         assert isinstance(relationships, SearchClustersResult | ToolError)
 
         # Step 2: Explore identifiers

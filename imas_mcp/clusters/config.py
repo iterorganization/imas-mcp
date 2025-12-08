@@ -64,7 +64,7 @@ class RelationshipExtractionConfig:
 
     # Paths and directories
     input_dir: Path = Path("imas_mcp/resources/schemas/detailed")
-    output_file: Path = Path("imas_mcp/resources/schemas/relationships.json")
+    output_file: Path = Path("imas_mcp/resources/schemas/clusters.json")
     cache_dir: Path | None = None
 
     def __post_init__(self):
