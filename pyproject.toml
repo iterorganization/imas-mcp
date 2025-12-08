@@ -97,6 +97,8 @@ dev = [
     "matplotlib>=3.10.5",
     "seaborn>=0.13.2",
     "qrcode[pil]>=8.2",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=0.26.0",
 ]
 
 [project.urls]
