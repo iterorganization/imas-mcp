@@ -97,6 +97,27 @@ def get_docs_embedding_model() -> str:
     return "openai/text-embedding-3-small"
 
 
+def get_language_model() -> str:
+    """Get the LLM model for IMAS tasks (labeling, etc).
+
+    Priority:
+        1. IMAS_MCP_LANGUAGE_MODEL environment variable
+        2. pyproject.toml [tool.imas-mcp] imas-language-model
+        3. Fallback default: google/gemini-3-pro-preview
+
+    Returns:
+        Model name string.
+    """
+    if env_model := os.getenv("IMAS_MCP_LANGUAGE_MODEL"):
+        return env_model
+
+    settings = _load_pyproject_settings()
+    if model := settings.get("imas-language-model"):
+        return model
+
+    return "google/gemini-3-pro-preview"
+
+
 def _parse_bool(value: str | bool) -> bool:
     """Parse a boolean value from string or bool."""
     if isinstance(value, bool):
@@ -149,5 +170,6 @@ def get_include_error_fields() -> bool:
 # Computed defaults (for use in module-level constants)
 IMAS_MCP_EMBEDDING_MODEL = get_imas_embedding_model()
 DOCS_MCP_EMBEDDING_MODEL = get_docs_embedding_model()
+IMAS_MCP_LANGUAGE_MODEL = get_language_model()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()

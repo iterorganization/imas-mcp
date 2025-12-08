@@ -35,8 +35,8 @@ import numpy as np
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from imas_mcp.relationships.config import RelationshipExtractionConfig
-from imas_mcp.relationships.extractor import RelationshipExtractor
+from imas_mcp.clusters.config import RelationshipExtractionConfig
+from imas_mcp.clusters.extractor import RelationshipExtractor
 
 
 def evaluate_clustering_quality(relationships):
