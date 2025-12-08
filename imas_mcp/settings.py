@@ -118,6 +118,30 @@ def get_language_model() -> str:
     return "google/gemini-3-pro-preview"
 
 
+def get_labeling_batch_size() -> int:
+    """Get batch size for cluster labeling.
+
+    Smaller batches provide more frequent progress updates and better
+    resilience to failures. Cost difference is negligible (<2%).
+
+    Priority:
+        1. IMAS_MCP_LABELING_BATCH_SIZE environment variable
+        2. pyproject.toml [tool.imas-mcp] labeling-batch-size
+        3. Fallback default: 50
+
+    Returns:
+        Batch size as integer.
+    """
+    if env_val := os.getenv("IMAS_MCP_LABELING_BATCH_SIZE"):
+        return int(env_val)
+
+    settings = _load_pyproject_settings()
+    if (val := settings.get("labeling-batch-size")) is not None:
+        return int(val)
+
+    return 50
+
+
 def _parse_bool(value: str | bool) -> bool:
     """Parse a boolean value from string or bool."""
     if isinstance(value, bool):
@@ -171,5 +195,6 @@ def get_include_error_fields() -> bool:
 IMAS_MCP_EMBEDDING_MODEL = get_imas_embedding_model()
 DOCS_MCP_EMBEDDING_MODEL = get_docs_embedding_model()
 IMAS_MCP_LANGUAGE_MODEL = get_language_model()
+LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()

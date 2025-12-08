@@ -2,6 +2,7 @@
 Main relationship extractor class.
 """
 
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -244,6 +245,9 @@ class RelationshipExtractor:
     ) -> None:
         """Save clusters in optimized format with LLM-generated labels.
 
+        Labels are cached separately in labels.json and reused if clusters
+        haven't changed. This avoids expensive LLM calls on cluster-only rebuilds.
+
         Args:
             relationships: The extracted relationships
             output_file: Path to clusters.json
@@ -252,8 +256,20 @@ class RelationshipExtractor:
 
         clusters_list = relationships.clusters
 
-        # Generate labels using LLM
-        labels_map = self._generate_cluster_labels(clusters_list)
+        # Compute cluster hash for cache validation
+        cluster_hash = self._compute_cluster_hash(clusters_list)
+
+        # Try to load cached labels
+        labels_file = output_file.parent / "labels.json"
+        labels_map = self._load_cached_labels(labels_file, cluster_hash)
+
+        if labels_map is None:
+            # Generate labels using LLM
+            labels_map = self._generate_cluster_labels(clusters_list)
+            # Save labels cache for future runs
+            self._save_labels_cache(labels_file, labels_map, cluster_hash)
+        else:
+            self.logger.info("Using cached labels (cluster hash matched)")
 
         # Generate label embeddings for semantic search
         label_embeddings = self._generate_label_embeddings(labels_map)
@@ -460,6 +476,82 @@ class RelationshipExtractor:
             self.logger.warning(f"Failed to generate label embeddings: {e}")
             return {}
 
+    def _compute_cluster_hash(self, clusters: list) -> str:
+        """Compute a hash of cluster structure for cache validation.
+
+        The hash includes cluster IDs, paths, and IDS names but not labels,
+        so cached labels remain valid as long as clustering output is unchanged.
+        """
+        hash_data = []
+        for cluster in sorted(clusters, key=lambda c: c.id):
+            hash_data.append(
+                {
+                    "id": cluster.id,
+                    "is_cross_ids": cluster.is_cross_ids,
+                    "ids_names": sorted(cluster.ids_names),
+                    "paths": sorted(cluster.paths),
+                }
+            )
+
+        hash_str = json.dumps(hash_data, sort_keys=True)
+        return hashlib.sha256(hash_str.encode()).hexdigest()[:16]
+
+    def _load_cached_labels(
+        self, labels_file: Path, expected_hash: str
+    ) -> dict[int, dict[str, str]] | None:
+        """Load cached labels if they exist and hash matches.
+
+        Returns:
+            Labels map if cache hit, None if cache miss or invalid
+        """
+        if not labels_file.exists():
+            self.logger.info("No cached labels found")
+            return None
+
+        try:
+            with open(labels_file, encoding="utf-8") as f:
+                cache_data = json.load(f)
+
+            cached_hash = cache_data.get("cluster_hash")
+            if cached_hash != expected_hash:
+                self.logger.info(
+                    f"Cluster hash mismatch (cached: {cached_hash}, "
+                    f"current: {expected_hash}), regenerating labels"
+                )
+                return None
+
+            # Convert string keys back to int
+            labels = cache_data.get("labels", {})
+            return {int(k): v for k, v in labels.items()}
+
+        except Exception as e:
+            self.logger.warning(f"Failed to load cached labels: {e}")
+            return None
+
+    def _save_labels_cache(
+        self,
+        labels_file: Path,
+        labels_map: dict[int, dict[str, str]],
+        cluster_hash: str,
+    ) -> None:
+        """Save labels to cache file for future runs."""
+        try:
+            cache_data = {
+                "version": "1.0",
+                "generated": datetime.now().isoformat(),
+                "cluster_hash": cluster_hash,
+                "labeling_model": self._get_labeling_model(),
+                "labels": labels_map,
+            }
+
+            with open(labels_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            self.logger.info(f"Saved labels cache to {labels_file}")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to save labels cache: {e}")
+
     def _load_ids_data(self, input_dir: Path) -> dict[str, Any]:
         """Load detailed IDS JSON files, optionally filtered by ids_set."""
         ids_data = {}
@@ -573,7 +665,7 @@ class RelationshipExtractor:
             embeddings = np.vstack(filtered_embeddings)
 
             self.logger.info(
-                f"Extracted {len(filtered_embeddings)} embeddings for relationship analysis"
+                f"Extracted {len(filtered_embeddings)} embeddings for clustering"
             )
 
             # Store cache for compatibility
