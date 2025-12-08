@@ -3,10 +3,15 @@ Semantic search over clusters using centroid and label embeddings.
 
 This module provides functionality to search clusters by comparing
 a query embedding to cluster centroids or label embeddings.
+
+Embeddings are loaded from a compressed .npz file (cluster_embeddings.npz)
+for efficiency, rather than being stored in the JSON clusters file.
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -30,65 +35,80 @@ class ClusterSearchResult:
 
 @dataclass
 class ClusterSearcher:
-    """Searches clusters using centroid and label embeddings for semantic similarity."""
+    """Searches clusters using centroid and label embeddings for semantic similarity.
+
+    Embeddings are loaded from a compressed .npz file for efficiency.
+    The embeddings file must match the expected hash stored in clusters.json.
+    """
 
     clusters: list[dict[str, Any]]
+    embeddings_file: Path | None = None
+    expected_embeddings_hash: str | None = None
     centroids: np.ndarray | None = field(default=None, init=False)
     label_embeddings: np.ndarray | None = field(default=None, init=False)
     cluster_ids: list[int] = field(default_factory=list, init=False)
     label_cluster_ids: list[int] = field(default_factory=list, init=False)
     _indexes: dict[str, Any] = field(default_factory=dict, init=False)
+    _embeddings_loaded: bool = field(default=False, init=False)
 
     def __post_init__(self):
-        """Build embedding matrices and indexes from clusters."""
-        self._build_centroids_matrix()
-        self._build_label_embeddings_matrix()
+        """Build indexes from clusters. Embeddings are loaded lazily."""
         self._build_indexes()
 
-    def _build_centroids_matrix(self) -> None:
-        """Build a matrix of centroid embeddings for efficient search."""
-        centroids_list = []
-        cluster_ids = []
+    def _load_embeddings(self) -> None:
+        """Load embeddings from .npz file with hash validation."""
+        if self._embeddings_loaded:
+            return
 
-        for cluster in self.clusters:
-            centroid = cluster.get("centroid")
-            if centroid is not None and len(centroid) > 0:
-                centroids_list.append(centroid)
-                cluster_ids.append(cluster["id"])
-
-        if centroids_list:
-            self.centroids = np.array(centroids_list, dtype=np.float32)
-            self.cluster_ids = cluster_ids
-            logger.debug(
-                f"Built centroids matrix: {self.centroids.shape[0]} clusters, "
-                f"dim={self.centroids.shape[1]}"
+        if self.embeddings_file is None or not self.embeddings_file.exists():
+            logger.warning(
+                f"Embeddings file not found: {self.embeddings_file}. "
+                "Semantic search will be unavailable."
             )
-        else:
-            self.centroids = None
-            self.cluster_ids = []
-            logger.warning("No centroid embeddings found in clusters")
+            self._embeddings_loaded = True
+            return
 
-    def _build_label_embeddings_matrix(self) -> None:
-        """Build a matrix of label embeddings for natural language search."""
-        embeddings_list = []
-        cluster_ids = []
+        # Validate hash if provided
+        if self.expected_embeddings_hash:
+            actual_hash = hashlib.sha256(self.embeddings_file.read_bytes()).hexdigest()[
+                :16
+            ]
+            if actual_hash != self.expected_embeddings_hash:
+                raise ValueError(
+                    f"Embeddings file hash mismatch: expected {self.expected_embeddings_hash}, "
+                    f"got {actual_hash}. Rebuild clusters to sync files."
+                )
 
-        for cluster in self.clusters:
-            label_embedding = cluster.get("label_embedding")
-            if label_embedding is not None and len(label_embedding) > 0:
-                embeddings_list.append(label_embedding)
-                cluster_ids.append(cluster["id"])
+        # Load embeddings from .npz
+        try:
+            data = np.load(self.embeddings_file)
 
-        if embeddings_list:
-            self.label_embeddings = np.array(embeddings_list, dtype=np.float32)
-            self.label_cluster_ids = cluster_ids
-            logger.debug(
-                f"Built label embeddings matrix: {self.label_embeddings.shape[0]} clusters"
-            )
-        else:
-            self.label_embeddings = None
-            self.label_cluster_ids = []
-            logger.debug("No label embeddings found in clusters")
+            # Load centroids
+            if "centroids" in data and data["centroids"].size > 0:
+                self.centroids = data["centroids"]
+                self.cluster_ids = data["centroid_cluster_ids"].tolist()
+                logger.debug(
+                    f"Loaded centroids: {self.centroids.shape[0]} clusters, "
+                    f"dim={self.centroids.shape[1]}"
+                )
+            else:
+                logger.warning("No centroid embeddings found in .npz file")
+
+            # Load label embeddings
+            if "label_embeddings" in data and data["label_embeddings"].size > 0:
+                self.label_embeddings = data["label_embeddings"]
+                self.label_cluster_ids = data["label_cluster_ids"].tolist()
+                logger.debug(
+                    f"Loaded label embeddings: {self.label_embeddings.shape[0]} clusters"
+                )
+            else:
+                logger.debug("No label embeddings found in .npz file")
+
+        except Exception as e:
+            logger.error(f"Failed to load embeddings from {self.embeddings_file}: {e}")
+            raise
+
+        self._embeddings_loaded = True
 
     def _build_indexes(self) -> None:
         """Build path and IDS indexes for fast lookup."""
@@ -179,6 +199,9 @@ class ClusterSearcher:
         Returns:
             List of ClusterSearchResult sorted by similarity
         """
+        # Lazy-load embeddings on first semantic search
+        self._load_embeddings()
+
         if use_labels:
             embeddings = self.label_embeddings
             cluster_ids = self.label_cluster_ids
@@ -333,11 +356,16 @@ class ClusterSearcher:
         Returns:
             List of similar clusters (excluding the source)
         """
-        cluster = self._get_cluster_by_id(cluster_id)
-        if cluster is None or cluster.get("centroid") is None:
+        # Load embeddings and look up centroid by cluster ID
+        self._load_embeddings()
+
+        if self.centroids is None or cluster_id not in self.cluster_ids:
             return []
 
-        centroid = np.array(cluster["centroid"], dtype=np.float32)
+        # Get centroid for the source cluster
+        idx = self.cluster_ids.index(cluster_id)
+        centroid = self.centroids[idx]
+
         results = self.search(
             centroid,
             top_k=top_k + 1,  # +1 to account for self

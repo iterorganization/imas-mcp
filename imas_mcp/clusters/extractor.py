@@ -272,10 +272,15 @@ class RelationshipExtractor:
             self.logger.info("Using cached labels (cluster hash matched)")
 
         # Generate label embeddings for semantic search
-        label_embeddings = self._generate_label_embeddings(labels_map)
+        label_embeddings_map = self._generate_label_embeddings(labels_map)
 
-        # Build clusters array with labels
+        # Build clusters array with labels (without embeddings - stored in .npz)
         clusters_data = []
+        centroid_embeddings = []
+        label_embeddings_list = []
+        centroid_cluster_ids = []
+        label_cluster_ids = []
+
         for cluster in clusters_list:
             cluster_id = cluster.id
             label_info = labels_map.get(cluster_id, {})
@@ -288,12 +293,17 @@ class RelationshipExtractor:
                 "similarity": round(cluster.similarity_score, 4),
                 "ids": cluster.ids_names,
                 "paths": cluster.paths,
-                "centroid": cluster.centroid,
+                # Note: centroid and label_embedding now stored in .npz file
             }
 
-            # Add label embedding if available
-            if cluster_id in label_embeddings:
-                cluster_entry["label_embedding"] = label_embeddings[cluster_id]
+            # Collect embeddings for .npz file
+            if cluster.centroid is not None and len(cluster.centroid) > 0:
+                centroid_embeddings.append(cluster.centroid)
+                centroid_cluster_ids.append(cluster_id)
+
+            if cluster_id in label_embeddings_map:
+                label_embeddings_list.append(label_embeddings_map[cluster_id])
+                label_cluster_ids.append(cluster_id)
 
             clusters_data.append(cluster_entry)
 
@@ -325,12 +335,24 @@ class RelationshipExtractor:
             else:
                 intra_ids_list.append(cluster_id)
 
+        # Save embeddings to .npz file (compressed binary format)
+        embeddings_file = output_file.parent / "cluster_embeddings.npz"
+        embeddings_hash = self._save_embeddings_npz(
+            embeddings_file,
+            centroid_embeddings,
+            centroid_cluster_ids,
+            label_embeddings_list,
+            label_cluster_ids,
+        )
+
         # Build final structure
         output_data = {
-            "version": "1.0",
+            "version": "2.0",
             "dd_version": dd_version,
             "generated": datetime.now().isoformat(),
             "labeling_model": self._get_labeling_model(),
+            "embeddings_file": embeddings_file.name,
+            "embeddings_hash": embeddings_hash,
             "clusters": clusters_data,
             "indexes": {
                 "path": path_to_cluster,
@@ -343,6 +365,8 @@ class RelationshipExtractor:
                 "cross_ids_count": len(cross_ids_list),
                 "intra_ids_count": len(intra_ids_list),
                 "total_paths": len(path_to_cluster),
+                "centroid_embeddings_count": len(centroid_cluster_ids),
+                "label_embeddings_count": len(label_cluster_ids),
                 "clustering_params": {
                     "cross_ids": {
                         "eps": self.config.cross_ids_eps,
@@ -360,6 +384,64 @@ class RelationshipExtractor:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         self.logger.info(f"Saved clusters.json to {output_file}")
+        self.logger.info(
+            f"Saved {len(centroid_cluster_ids)} centroid and "
+            f"{len(label_cluster_ids)} label embeddings to {embeddings_file}"
+        )
+
+    def _save_embeddings_npz(
+        self,
+        embeddings_file: Path,
+        centroid_embeddings: list,
+        centroid_cluster_ids: list[int],
+        label_embeddings: list,
+        label_cluster_ids: list[int],
+    ) -> str:
+        """Save embeddings to compressed .npz file and compute hash.
+
+        Args:
+            embeddings_file: Path to output .npz file
+            centroid_embeddings: List of centroid embedding vectors
+            centroid_cluster_ids: List of cluster IDs for centroids
+            label_embeddings: List of label embedding vectors
+            label_cluster_ids: List of cluster IDs for label embeddings
+
+        Returns:
+            SHA256 hash (first 16 chars) of the saved file
+        """
+        # Convert to numpy arrays
+        centroids_array = (
+            np.array(centroid_embeddings, dtype=np.float32)
+            if centroid_embeddings
+            else np.array([], dtype=np.float32)
+        )
+        centroid_ids_array = np.array(centroid_cluster_ids, dtype=np.int32)
+
+        labels_array = (
+            np.array(label_embeddings, dtype=np.float32)
+            if label_embeddings
+            else np.array([], dtype=np.float32)
+        )
+        label_ids_array = np.array(label_cluster_ids, dtype=np.int32)
+
+        # Save compressed
+        np.savez_compressed(
+            embeddings_file,
+            centroids=centroids_array,
+            centroid_cluster_ids=centroid_ids_array,
+            label_embeddings=labels_array,
+            label_cluster_ids=label_ids_array,
+        )
+
+        # Compute hash of saved file
+        file_hash = hashlib.sha256(embeddings_file.read_bytes()).hexdigest()[:16]
+
+        self.logger.debug(
+            f"Saved embeddings: centroids={centroids_array.shape}, "
+            f"labels={labels_array.shape}, hash={file_hash}"
+        )
+
+        return file_hash
 
     def _get_labeling_model(self) -> str:
         """Get the labeling model name."""

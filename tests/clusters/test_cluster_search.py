@@ -1,5 +1,8 @@
 """Tests for cluster search functionality using centroid embeddings."""
 
+import tempfile
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -107,7 +110,7 @@ class TestClusterSearcher:
 
     @pytest.fixture
     def sample_clusters(self):
-        """Create sample clusters with centroids."""
+        """Create sample clusters (without embedded centroids - now in .npz)."""
         return [
             {
                 "id": 0,
@@ -115,7 +118,6 @@ class TestClusterSearcher:
                 "is_cross_ids": True,
                 "ids_names": ["core_profiles", "equilibrium"],
                 "paths": ["core_profiles/density", "equilibrium/psi"],
-                "centroid": [1.0, 0.0, 0.0],  # X-axis direction
             },
             {
                 "id": 1,
@@ -123,7 +125,6 @@ class TestClusterSearcher:
                 "is_cross_ids": False,
                 "ids_names": ["core_profiles"],
                 "paths": ["core_profiles/temperature", "core_profiles/pressure"],
-                "centroid": [0.0, 1.0, 0.0],  # Y-axis direction
             },
             {
                 "id": 2,
@@ -131,13 +132,42 @@ class TestClusterSearcher:
                 "is_cross_ids": True,
                 "ids_names": ["equilibrium", "mhd"],
                 "paths": ["equilibrium/boundary", "mhd/stability"],
-                "centroid": [0.0, 0.0, 1.0],  # Z-axis direction
             },
         ]
 
-    def test_searcher_initialization(self, sample_clusters):
-        """ClusterSearcher should build centroids matrix."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+    @pytest.fixture
+    def sample_embeddings_file(self, tmp_path):
+        """Create a temporary .npz file with sample embeddings."""
+        embeddings_file = tmp_path / "cluster_embeddings.npz"
+
+        # Centroids: unit vectors in X, Y, Z directions
+        centroids = np.array(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
+        )
+        centroid_cluster_ids = np.array([0, 1, 2], dtype=np.int32)
+
+        # No label embeddings for basic tests
+        label_embeddings = np.array([], dtype=np.float32)
+        label_cluster_ids = np.array([], dtype=np.int32)
+
+        np.savez_compressed(
+            embeddings_file,
+            centroids=centroids,
+            centroid_cluster_ids=centroid_cluster_ids,
+            label_embeddings=label_embeddings,
+            label_cluster_ids=label_cluster_ids,
+        )
+
+        return embeddings_file
+
+    def test_searcher_initialization(self, sample_clusters, sample_embeddings_file):
+        """ClusterSearcher should load centroids matrix from .npz file."""
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
+
+        # Force load embeddings (normally lazy)
+        searcher._load_embeddings()
 
         assert searcher.centroids is not None
         assert searcher.centroids.shape == (3, 3)
@@ -150,9 +180,13 @@ class TestClusterSearcher:
         assert searcher.centroids is None
         assert len(searcher.cluster_ids) == 0
 
-    def test_search_finds_closest_cluster(self, sample_clusters):
+    def test_search_finds_closest_cluster(
+        self, sample_clusters, sample_embeddings_file
+    ):
         """Search returns cluster with most similar centroid."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         # Query in X direction should find cluster 0
         query = np.array([0.9, 0.1, 0.0], dtype=np.float32)
@@ -161,18 +195,22 @@ class TestClusterSearcher:
         assert len(results) == 1
         assert results[0].cluster_id == 0
 
-    def test_search_respects_top_k(self, sample_clusters):
+    def test_search_respects_top_k(self, sample_clusters, sample_embeddings_file):
         """Search respects top_k limit."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         query = np.array([0.5, 0.5, 0.5], dtype=np.float32)
         results = searcher.search(query, top_k=2)
 
         assert len(results) <= 2
 
-    def test_search_respects_threshold(self, sample_clusters):
+    def test_search_respects_threshold(self, sample_clusters, sample_embeddings_file):
         """Search respects similarity threshold."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         query = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         results = searcher.search(query, top_k=10, similarity_threshold=0.99)
@@ -181,9 +219,11 @@ class TestClusterSearcher:
         assert len(results) == 1
         assert results[0].cluster_id == 0
 
-    def test_search_cross_ids_only(self, sample_clusters):
+    def test_search_cross_ids_only(self, sample_clusters, sample_embeddings_file):
         """Search can filter to cross-IDS clusters only."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         # Query in Y direction (cluster 1 is intra-IDS)
         query = np.array([0.0, 1.0, 0.0], dtype=np.float32)
@@ -198,9 +238,11 @@ class TestClusterSearcher:
         for result in results:
             assert result.is_cross_ids
 
-    def test_search_result_fields(self, sample_clusters):
+    def test_search_result_fields(self, sample_clusters, sample_embeddings_file):
         """Search results have expected fields."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         query = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         results = searcher.search(query, top_k=1)
@@ -213,9 +255,11 @@ class TestClusterSearcher:
         assert isinstance(result.ids_names, list)
         assert isinstance(result.paths, list)
 
-    def test_get_similar_clusters(self, sample_clusters):
+    def test_get_similar_clusters(self, sample_clusters, sample_embeddings_file):
         """Can find clusters similar to a given cluster."""
-        searcher = ClusterSearcher(clusters=sample_clusters)
+        searcher = ClusterSearcher(
+            clusters=sample_clusters, embeddings_file=sample_embeddings_file
+        )
 
         # Get clusters similar to cluster 0
         similar = searcher.get_similar_clusters(
@@ -229,7 +273,7 @@ class TestClusterSearcher:
             assert result.cluster_id != 0
 
     def test_clusters_without_centroids(self):
-        """Searcher handles clusters without centroids."""
+        """Searcher handles clusters without embeddings file."""
         clusters = [
             {
                 "id": 0,
@@ -237,12 +281,13 @@ class TestClusterSearcher:
                 "is_cross_ids": True,
                 "ids_names": ["core_profiles"],
                 "paths": ["core_profiles/a"],
-                # No centroid
             },
         ]
 
+        # No embeddings file provided
         searcher = ClusterSearcher(clusters=clusters)
 
+        # Embeddings not loaded yet (lazy), should be None
         assert searcher.centroids is None
         results = searcher.search(np.array([1.0, 0.0, 0.0]))
         assert len(results) == 0
