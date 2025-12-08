@@ -27,7 +27,7 @@ class TestAnalysisFeatures:
         test_path = f"{ids_name}/profiles_1d/electrons/temperature"
         result = await tools.search_imas_clusters(path=test_path)
 
-        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
         assert isinstance(result, SearchClustersResult | ToolError)
 
         if isinstance(result, SearchClustersResult):
@@ -42,7 +42,7 @@ class TestAnalysisFeatures:
         test_path = f"{ids_name}/profiles_1d/electrons/temperature"
         result = await tools.search_imas_clusters(path=test_path)
 
-        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        # Accept either SearchClustersResult or ToolError (when clusters.json is missing)
         assert isinstance(result, SearchClustersResult | ToolError)
 
         if isinstance(result, SearchClustersResult) and hasattr(result, "connections"):

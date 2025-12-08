@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Build relationships between IMAS data paths using optimized clustering.
-This script takes the detailed JSON schemas as input and generates relationships.
+Build semantic clusters of IMAS data paths using optimized DBSCAN clustering.
+This script takes the detailed JSON schemas as input and generates clusters.json.
 
 OPTIMAL CLUSTERING PARAMETERS (Latin Hypercube Optimization):
 - cross_ids_eps = 0.0751 (cross-IDS clustering epsilon)
@@ -17,7 +17,7 @@ import sys
 
 import click
 
-from imas_mcp.core.relationships import Relationships
+from imas_mcp.core.clusters import Clusters
 from imas_mcp.embeddings.config import EncoderConfig
 
 
@@ -56,7 +56,7 @@ from imas_mcp.embeddings.config import EncoderConfig
     type=str,
     help="Specific IDS names to include as a space-separated string (e.g., 'core_profiles equilibrium')",
 )
-def build_relationships(
+def build_clusters(
     verbose: bool,
     quiet: bool,
     force: bool,
@@ -66,20 +66,20 @@ def build_relationships(
     intra_ids_min_samples: int,
     ids_filter: str,
 ) -> int:
-    """Build relationships between IMAS data paths using multi-membership DBSCAN clustering.
+    """Build semantic clusters of IMAS data paths using multi-membership DBSCAN clustering.
 
-    This command reads detailed IDS JSON files and generates semantic relationships
-    between data paths using embedding-based clustering. It performs separate clustering
-    for cross-IDS relationships (paths that span multiple IDS) and intra-IDS
-    relationships (paths within the same IDS).
+    This command reads detailed IDS JSON files and generates semantic clusters
+    using embedding-based clustering. It performs separate clustering
+    for cross-IDS clusters (paths that span multiple IDS) and intra-IDS
+    clusters (paths within the same IDS).
 
     Examples:
-        build-relationships                              # Build with default settings
-        build-relationships -v                           # Build with verbose logging
-        build-relationships -f                           # Force rebuild even if exists
-        build-relationships --ids-filter "core_profiles equilibrium"  # Build specific IDS only
-        build-relationships --cross-ids-eps 0.0751 --intra-ids-eps 0.0319  # Optimized clustering parameters
-        build-relationships --cross-ids-min-samples 2   # Custom minimum samples for cross-IDS
+        build-clusters                              # Build with default settings
+        build-clusters -v                           # Build with verbose logging
+        build-clusters -f                           # Force rebuild even if exists
+        build-clusters --ids-filter "core_profiles equilibrium"  # Build specific IDS only
+        build-clusters --cross-ids-eps 0.0751 --intra-ids-eps 0.0319  # Optimized clustering parameters
+        build-clusters --cross-ids-min-samples 2   # Custom minimum samples for cross-IDS
     """
     # Set up logging level
     if quiet:
@@ -99,14 +99,12 @@ def build_relationships(
     ids_set_parsed = set(ids_filter.split()) if ids_filter else None
 
     if ids_set_parsed:
-        logger.info(
-            f"Building relationships for filtered IDS: {sorted(ids_set_parsed)}"
-        )
+        logger.info(f"Building clusters for filtered IDS: {sorted(ids_set_parsed)}")
     else:
-        logger.info("Building full dataset relationships file")
+        logger.info("Building full dataset clusters file")
 
     try:
-        logger.info("Starting relationship extraction process...")
+        logger.info("Starting cluster extraction process...")
 
         # Use the already parsed ids_set from above
         ids_set = ids_set_parsed
@@ -123,59 +121,50 @@ def build_relationships(
             use_rich=False,
         )
 
-        # Create Relationships instance - this will determine the correct filename via __post_init__
-        relationships_temp = Relationships(encoder_config=encoder_config_temp)
-        output_file = relationships_temp.file_path
+        # Create Clusters instance - this will determine the correct filename via __post_init__
+        clusters_manager = Clusters(encoder_config=encoder_config_temp)
+        output_file = clusters_manager.file_path
 
         logger.info(f"Output file: {output_file}")
 
         # Check if we need to build with cache busting strategy
         should_build = force or not output_file.exists()
 
-        # Use the unified relationships manager to check if rebuild is needed
+        # Use the unified clusters manager to check if rebuild is needed
         if not should_build and not force:
-            # Reuse the temp relationships instance we already created
-            relationships = relationships_temp
-            if relationships.needs_rebuild():
+            if clusters_manager.needs_rebuild():
                 should_build = True
-                logger.info(
-                    "Cache busting: dependencies are newer than relationships file"
-                )
-                cache_info = relationships.get_cache_info()
+                logger.info("Cache busting: dependencies are newer than clusters file")
+                cache_info = clusters_manager.get_cache_info()
                 logger.debug(f"Cache status: {cache_info}")
-
-        # The Relationships manager already handles dependency checking
 
         if should_build:
             if force and output_file.exists():
-                logger.info("Force rebuilding existing relationships file")
+                logger.info("Force rebuilding existing clusters file")
             else:
-                logger.info("Relationships file does not exist, building new file...")
+                logger.info("Clusters file does not exist, building new file...")
 
-            # Reuse the temp relationships instance (already has correct encoder_config and file path)
-            relationships = relationships_temp
             config_overrides = {
                 "cross_ids_eps": cross_ids_eps,
                 "cross_ids_min_samples": cross_ids_min_samples,
                 "intra_ids_eps": intra_ids_eps,
                 "intra_ids_min_samples": intra_ids_min_samples,
                 "use_rich": not quiet,
-                # ids_set is already in encoder_config, no need to pass again
             }
 
-            relationships.build(force=force, **config_overrides)
+            clusters_manager.build(force=force, **config_overrides)
 
-            logger.info("Relationships built successfully")
-            click.echo(f"Built relationships file: {output_file}")
+            logger.info("Clusters built successfully")
+            click.echo(f"Built clusters file: {output_file}")
 
         else:
-            logger.info("Relationships file already exists at %s", output_file)
-            click.echo(f"Relationships already exist at {output_file}")
+            logger.info("Clusters file already exists at %s", output_file)
+            click.echo(f"Clusters already exist at {output_file}")
 
         return 0
 
     except Exception as e:
-        logger.error(f"Error building relationships: {e}")
+        logger.error(f"Error building clusters: {e}")
         if verbose:
             logger.exception("Full traceback:")
         click.echo(f"Error: {e}", err=True)
@@ -183,4 +172,4 @@ def build_relationships(
 
 
 if __name__ == "__main__":
-    sys.exit(build_relationships())
+    sys.exit(build_clusters())

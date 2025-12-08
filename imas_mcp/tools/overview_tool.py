@@ -39,7 +39,7 @@ class OverviewTool(BaseTool):
     IDS structures and physics domains.
 
     Other specialized tools handle:
-    - search_imas_clusters() -> relationships.json
+    - search_imas_clusters() -> clusters.json
     - get_imas_identifiers() -> identifier_catalog.json
     """
 

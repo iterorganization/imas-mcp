@@ -1,7 +1,7 @@
 """
-Unified relationships management for IMAS relationship data.
+Unified clusters management for IMAS semantic cluster data.
 
-This module provides a single, coherent dataclass for managing relationships.json with
+This module provides a single, coherent dataclass for managing clusters.json with
 intelligent cache management, dependency tracking, and automatic rebuilding.
 """
 
@@ -20,7 +20,7 @@ from imas_mcp.clusters import (
 )
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
-from imas_mcp.physics.relationship_engine import EnhancedRelationshipEngine
+from imas_mcp.physics.relationship_engine import ClusterEngine
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
@@ -33,27 +33,25 @@ OPTIMAL_INTRA_IDS_MIN_SAMPLES = 2
 
 
 @dataclass
-class Relationships:
+class Clusters:
     """
-    Unified relationships manager with intelligent cache management and auto-rebuild.
+    Unified clusters manager with intelligent cache management and auto-rebuild.
 
     Features:
     - Automatic dependency tracking (embeddings)
     - Cache busting when dependencies are newer
     - Lazy loading with error handling
     - Automatic rebuilding with optimal parameters
-    - Consistent interface for both building and accessing relationships
+    - Consistent interface for both building and accessing clusters
     """
 
     encoder_config: EncoderConfig  # Required: encoder configuration for embeddings
-    relationships_file: Path | None = None
+    clusters_file: Path | None = None
 
     # Cache state
     _cached_data: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _cached_mtime: float | None = field(default=None, init=False, repr=False)
-    _enhanced_engine: EnhancedRelationshipEngine | None = field(
-        default=None, init=False, repr=False
-    )
+    _cluster_engine: ClusterEngine | None = field(default=None, init=False, repr=False)
     _cluster_searcher: ClusterSearcher | None = field(
         default=None, init=False, repr=False
     )
@@ -65,7 +63,7 @@ class Relationships:
 
     def __post_init__(self):
         """Initialize computed fields after dataclass initialization."""
-        if self.relationships_file is None:
+        if self.clusters_file is None:
             import hashlib
 
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
@@ -76,26 +74,24 @@ class Relationships:
                 # Create hash based on sorted IDS names
                 ids_str = "_".join(sorted(self.encoder_config.ids_set))
                 ids_hash = hashlib.md5(ids_str.encode()).hexdigest()[:8]
-                filename = f"relationships_{ids_hash}.json"
+                filename = f"clusters_{ids_hash}.json"
                 logger.debug(
-                    f"Using filtered relationships file: {filename} for IDS set: {sorted(self.encoder_config.ids_set)}"
+                    f"Using filtered clusters file: {filename} for IDS set: {sorted(self.encoder_config.ids_set)}"
                 )
             else:
                 # Full dataset uses simple name (production default)
-                filename = "relationships.json"
-                logger.debug(
-                    "Using full dataset relationships file: relationships.json"
-                )
+                filename = "clusters.json"
+                logger.debug("Using full dataset clusters file: clusters.json")
 
-            self.relationships_file = path_accessor.schemas_dir / filename
+            self.clusters_file = path_accessor.schemas_dir / filename
 
     @property
     def file_path(self) -> Path:
-        """Get the relationships file path, guaranteed to be non-None after __post_init__."""
-        assert self.relationships_file is not None, (
-            "relationships_file should be set in __post_init__"
+        """Get the clusters file path, guaranteed to be non-None after __post_init__."""
+        assert self.clusters_file is not None, (
+            "clusters_file should be set in __post_init__"
         )
-        return self.relationships_file
+        return self.clusters_file
 
     def _get_file_mtime(self, file_path: Path) -> float:
         """Get modification time of a file, returning 0 if file doesn't exist."""
@@ -106,7 +102,7 @@ class Relationships:
 
     def _get_embedding_cache_file(self) -> Path | None:
         """
-        Get the specific embedding cache file that relationships will load from.
+        Get the specific embedding cache file that clusters will load from.
 
         Uses the encoder_config to determine the cache file path.
         """
@@ -124,43 +120,41 @@ class Relationships:
 
     def _check_dependency_freshness(self) -> bool:
         """
-        Check if any dependency files are newer than the relationships file.
+        Check if any dependency files are newer than the clusters file.
 
-        Only checks the embedding cache file since relationships are computed from
+        Only checks the embedding cache file since clusters are computed from
         embeddings, not directly from schema files.
 
         Returns:
-            True if relationships file should be regenerated, False otherwise.
+            True if clusters file should be regenerated, False otherwise.
         """
         if not self.file_path.exists():
-            logger.debug("Relationships file does not exist")
+            logger.debug("Clusters file does not exist")
             return True
 
-        relationships_mtime = self._get_file_mtime(self.file_path)
-        relationships_time = datetime.fromtimestamp(relationships_mtime)
+        clusters_mtime = self._get_file_mtime(self.file_path)
+        clusters_time = datetime.fromtimestamp(clusters_mtime)
 
         # Check the specific embedding cache file that will be loaded
         embedding_cache = self._get_embedding_cache_file()
         if embedding_cache:
             embedding_mtime = self._get_file_mtime(embedding_cache)
-            if embedding_mtime > relationships_mtime:
+            if embedding_mtime > clusters_mtime:
                 embedding_time = datetime.fromtimestamp(embedding_mtime)
-                time_diff = embedding_mtime - relationships_mtime
+                time_diff = embedding_mtime - clusters_mtime
                 logger.info(
-                    f"Embedding cache newer than relationships: {embedding_cache.name} "
-                    f"(embedding: {embedding_time.isoformat()}, relationships: {relationships_time.isoformat()}, diff: {time_diff:.1f}s)"
+                    f"Embedding cache newer than clusters: {embedding_cache.name} "
+                    f"(embedding: {embedding_time.isoformat()}, clusters: {clusters_time.isoformat()}, diff: {time_diff:.1f}s)"
                 )
                 return True
             else:
                 logger.debug(
                     f"Embedding cache is up-to-date: {embedding_cache.name} "
-                    f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, relationships: {relationships_time.isoformat()})"
+                    f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, clusters: {clusters_time.isoformat()})"
                 )
         else:
             # If no embedding cache exists, we need to rebuild
-            logger.info(
-                "No embedding cache file found - relationships rebuild required"
-            )
+            logger.info("No embedding cache file found - clusters rebuild required")
             return True
 
         return False
@@ -177,21 +171,21 @@ class Relationships:
 
     def _invalidate_cache(self) -> None:
         """Invalidate cached data and engine."""
-        logger.debug("Invalidating relationships cache")
+        logger.debug("Invalidating clusters cache")
         self._cached_data = None
         self._cached_mtime = None
-        self._enhanced_engine = None
+        self._cluster_engine = None
         self._cluster_searcher = None
 
-    def _load_relationships_data(self) -> dict[str, Any]:
+    def _load_clusters_data(self) -> dict[str, Any]:
         """
-        Load relationships data from file with dependency checking and auto-rebuild.
+        Load clusters data from file with dependency checking and auto-rebuild.
 
         Returns:
-            Dictionary containing relationships data.
+            Dictionary containing clusters data.
 
         Raises:
-            FileNotFoundError: If relationships file doesn't exist and can't be built.
+            FileNotFoundError: If clusters file doesn't exist and can't be built.
             json.JSONDecodeError: If file contains invalid JSON.
         """
         # Check if we should verify dependencies
@@ -199,7 +193,7 @@ class Relationships:
             self._last_dependency_check = datetime.now().timestamp()
 
             if self._check_dependency_freshness():
-                logger.info("Relationships file is outdated. Auto-rebuilding...")
+                logger.info("Clusters file is outdated. Auto-rebuilding...")
                 try:
                     self.build(force=True)
                 except Exception as e:
@@ -216,10 +210,10 @@ class Relationships:
             return self._cached_data
 
         # Load fresh data
-        logger.debug(f"Loading relationships data from {self.file_path}")
+        logger.debug(f"Loading clusters data from {self.file_path}")
 
         if not self.file_path.exists():
-            logger.info("Relationships file not found. Building...")
+            logger.info("Clusters file not found. Building...")
             self.build(force=True)
 
         try:
@@ -229,10 +223,10 @@ class Relationships:
             # Cache the loaded data
             self._cached_data = data
             self._cached_mtime = current_mtime
-            self._enhanced_engine = None  # Reset engine on data reload
+            self._cluster_engine = None  # Reset engine on data reload
 
             logger.debug(
-                f"Loaded {len(data.get('clusters', []))} clusters from relationships file"
+                f"Loaded {len(data.get('clusters', []))} clusters from clusters file"
             )
             return data
 
@@ -244,13 +238,13 @@ class Relationships:
 
             self._cached_data = data
             self._cached_mtime = current_mtime
-            self._enhanced_engine = None
+            self._cluster_engine = None
 
             return data
 
     def build(self, force: bool = False, **config_overrides) -> bool:
         """
-        Build relationships file using optimal parameters.
+        Build clusters file using optimal parameters.
 
         Args:
             force: Force rebuild even if dependencies aren't newer
@@ -261,10 +255,10 @@ class Relationships:
         """
         # Check if rebuild is actually needed
         if not force and not self.needs_rebuild():
-            logger.debug("Relationships rebuild not needed")
+            logger.debug("Clusters rebuild not needed")
             return False
 
-        logger.info("Building relationships with optimal parameters...")
+        logger.info("Building clusters with optimal parameters...")
 
         try:
             # Get version-specific paths using ResourcePathAccessor
@@ -289,45 +283,45 @@ class Relationships:
 
             config = RelationshipExtractionConfig(**default_config)
 
-            # Build relationships using the extractor
+            # Build clusters using the extractor
             extractor = RelationshipExtractor(config)
-            relationships = extractor.extract_relationships(force_rebuild=True)
+            clusters = extractor.extract_relationships(force_rebuild=True)
 
-            # Save relationships
-            extractor.save_relationships(relationships)
+            # Save clusters
+            extractor.save_relationships(clusters)
 
             # Invalidate cache to pick up new data
             self._invalidate_cache()
 
-            logger.info("Relationships build completed successfully")
+            logger.info("Clusters build completed successfully")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to build relationships: {e}")
+            logger.error(f"Failed to build clusters: {e}")
             raise
 
     def get_data(self) -> dict[str, Any]:
         """
-        Get relationships data with caching and auto-rebuild.
+        Get clusters data with caching and auto-rebuild.
 
         Returns:
-            Dictionary containing relationships data.
+            Dictionary containing clusters data.
         """
-        return self._load_relationships_data()
+        return self._load_clusters_data()
 
-    def get_enhanced_engine(self) -> EnhancedRelationshipEngine:
+    def get_cluster_engine(self) -> ClusterEngine:
         """
-        Get enhanced relationship engine with cached relationships data.
+        Get cluster engine with cached clusters data.
 
         Returns:
-            EnhancedRelationshipEngine instance.
+            ClusterEngine instance.
         """
-        if self._enhanced_engine is None:
-            relationships_data = self.get_data()
-            self._enhanced_engine = EnhancedRelationshipEngine(relationships_data)
-            logger.debug("Created enhanced relationship engine")
+        if self._cluster_engine is None:
+            clusters_data = self.get_data()
+            self._cluster_engine = ClusterEngine(clusters_data)
+            logger.debug("Created cluster engine")
 
-        return self._enhanced_engine
+        return self._cluster_engine
 
     def get_clusters(self) -> list[dict[str, Any]]:
         """Get relationship clusters."""
@@ -335,7 +329,7 @@ class Relationships:
         return data.get("clusters", [])
 
     def get_metadata(self) -> dict[str, Any]:
-        """Get relationships metadata."""
+        """Get clusters metadata."""
         data = self.get_data()
         return data.get("metadata", {})
 
@@ -350,7 +344,7 @@ class Relationships:
         return data.get("cross_references", {})
 
     def is_available(self) -> bool:
-        """Check if relationships data is available."""
+        """Check if clusters data is available."""
         try:
             self.get_data()
             return True
@@ -359,7 +353,7 @@ class Relationships:
 
     def needs_rebuild(self) -> bool:
         """
-        Check if relationships file needs rebuilding based on dependencies.
+        Check if clusters file needs rebuilding based on dependencies.
 
         Returns:
             True if rebuild is recommended, False otherwise.
@@ -377,7 +371,7 @@ class Relationships:
             "file_path": str(self.file_path),
             "file_exists": self.file_path.exists(),
             "cached": self._cached_data is not None,
-            "engine_cached": self._enhanced_engine is not None,
+            "engine_cached": self._cluster_engine is not None,
         }
 
         if self.file_path.exists():
@@ -396,8 +390,8 @@ class Relationships:
         return info
 
     def force_reload(self) -> None:
-        """Force reload of relationships data, bypassing cache."""
-        logger.info("Forcing reload of relationships data")
+        """Force reload of clusters data, bypassing cache."""
+        logger.info("Forcing reload of clusters data")
         self._invalidate_cache()
         # Next call to get_data() will reload from disk
 

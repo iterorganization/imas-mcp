@@ -7,19 +7,16 @@ Provides search over clusters of related paths using:
 - IDS filtering
 """
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp import dd_version
 from imas_mcp.clusters.search import ClusterSearcher, ClusterSearchResult
+from imas_mcp.core.clusters import Clusters
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import cache_results, handle_errors, mcp_tool
 
 from .base import BaseTool
@@ -32,8 +29,8 @@ class ClustersTool(BaseTool):
     Search tool for discovering related IMAS data paths via semantic clusters.
 
     Clusters group paths with similar physics meaning, enabling discovery of:
-    - Cross-IDS relationships (same concept across different IDS)
-    - Intra-IDS relationships (related paths within an IDS)
+    - Cross-IDS clusters (same concept across different IDS)
+    - Intra-IDS clusters (related paths within an IDS)
     """
 
     def __init__(self, *args, **kwargs):
@@ -57,43 +54,30 @@ class ClustersTool(BaseTool):
             use_rich=False,
         )
 
-        self._clusters_data: dict[str, Any] | None = None
+        # Use the Clusters class for unified management with auto-build
+        self._clusters: Clusters | None = None
         self._searcher: ClusterSearcher | None = None
         self._encoder: Encoder | None = None
 
-        self._load_clusters()
+        self._initialize_clusters()
 
-    def _get_clusters_path(self) -> Path:
-        """Get path to clusters.json file."""
-        path_accessor = ResourcePathAccessor(dd_version=dd_version)
-        return path_accessor.schemas_dir / "clusters.json"
-
-    def _load_clusters(self) -> None:
-        """Load clusters data from clusters.json."""
-        clusters_path = self._get_clusters_path()
-
-        if not clusters_path.exists():
-            # Fall back to relationships.json for backwards compatibility
-            relationships_path = clusters_path.parent / "relationships.json"
-            if relationships_path.exists():
-                logger.info(f"clusters.json not found, using {relationships_path}")
-                clusters_path = relationships_path
-            else:
-                logger.warning("No clusters or relationships file found")
-                self._clusters_data = {"clusters": []}
-                return
-
+    def _initialize_clusters(self) -> None:
+        """Initialize clusters using the Clusters class with auto-build support."""
         try:
-            with open(clusters_path, encoding="utf-8") as f:
-                self._clusters_data = json.load(f)
+            self._clusters = Clusters(encoder_config=self._encoder_config)
 
-            clusters = self._clusters_data.get("clusters", [])
-            self._searcher = ClusterSearcher(clusters=clusters)
-
-            logger.info(f"Loaded {len(clusters)} clusters from {clusters_path.name}")
+            # Check if clusters are available (will auto-build if needed)
+            if self._clusters.is_available():
+                clusters_data = self._clusters.get_clusters()
+                self._searcher = ClusterSearcher(clusters=clusters_data)
+                logger.info(f"Loaded {len(clusters_data)} clusters")
+            else:
+                logger.warning("Clusters not available")
+                self._searcher = None
         except Exception as e:
-            logger.error(f"Failed to load clusters: {e}")
-            self._clusters_data = {"clusters": []}
+            logger.error(f"Failed to initialize clusters: {e}")
+            self._clusters = None
+            self._searcher = None
 
     def _get_encoder(self) -> Encoder:
         """Get or create encoder for query embedding."""
@@ -140,8 +124,8 @@ class ClustersTool(BaseTool):
             return ToolError(
                 error="Cluster search not available",
                 suggestions=[
-                    "Ensure clusters.json or relationships.json exists",
-                    "Try rebuilding with: build-relationships",
+                    "Ensure clusters.json exists",
+                    "Try rebuilding with: build-clusters",
                 ],
                 context={"tool": "search_imas_clusters"},
             )

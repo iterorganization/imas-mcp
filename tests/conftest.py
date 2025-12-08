@@ -17,7 +17,6 @@ from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.server import Server
-from imas_mcp.services.physics import PhysicsService
 
 # Load .env file with override=True to ensure test environment uses .env values
 # This fixes issues where empty or stale shell environment variables persist
@@ -220,21 +219,7 @@ def mock_heavy_operations():
                         side_effect=mock_engine.search,
                     ),
                 ):
-                    # Mock PhysicsService methods to prevent heavy model loading
-                    with patch.multiple(
-                        PhysicsService,
-                        enhance_query=AsyncMock(return_value=None),
-                        get_concept_context=AsyncMock(
-                            return_value={
-                                "domain": "transport",
-                                "description": "Mock physics description",
-                                "phenomena": ["transport"],
-                                "typical_units": ["m"],
-                                "complexity_level": "intermediate",
-                            }
-                        ),
-                    ):
-                        yield
+                    yield
 
 
 @pytest.fixture(scope="session")

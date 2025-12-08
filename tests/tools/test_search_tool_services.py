@@ -56,7 +56,6 @@ class TestSearchToolServices:
         search_tool._search_service.search = AsyncMock(
             return_value=SearchResponse(hits=[])
         )
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         mock_response = SearchPathsResult(
             hits=[],
@@ -119,7 +118,6 @@ class TestSearchToolServices:
         search_tool._search_service.search = AsyncMock(
             return_value=SearchResponse(hits=[mock_result])
         )
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Mock response service to capture arguments
         mock_response = SearchPathsResult(
@@ -173,7 +171,6 @@ class TestSearchToolServices:
     async def test_service_initialization(self, search_tool):
         """Test that all services are properly initialized."""
         # Verify all services are initialized
-        assert hasattr(search_tool, "physics")
         assert hasattr(search_tool, "response")
         assert hasattr(search_tool, "documents")
         assert hasattr(search_tool, "search_config")
@@ -181,12 +178,10 @@ class TestSearchToolServices:
         # Verify service types
         from imas_mcp.services import (
             DocumentService,
-            PhysicsService,
             ResponseService,
             SearchConfigurationService,
         )
 
-        assert isinstance(search_tool.physics, PhysicsService)
         assert isinstance(search_tool.response, ResponseService)
         assert isinstance(search_tool.documents, DocumentService)
         assert isinstance(search_tool.search_config, SearchConfigurationService)
@@ -199,7 +194,6 @@ class TestSearchToolServices:
         search_tool._search_service.search = AsyncMock(
             return_value=SearchResponse(hits=[])
         )
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
         mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.LEXICAL,
