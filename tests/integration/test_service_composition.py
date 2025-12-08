@@ -46,7 +46,6 @@ class TestServiceComposition:
     def test_template_method_customization(self, search_tool):
         """Test template method pattern allows tool-specific customization."""
         # Verify SearchTool has core services available
-        assert hasattr(search_tool, "physics")
         assert hasattr(search_tool, "response")
         assert hasattr(search_tool, "documents")
         assert hasattr(search_tool, "search_config")
@@ -59,9 +58,6 @@ class TestServiceComposition:
         # Mock the search execution to return controlled results
         mock_result = SearchPathsResult(hits=[], query="test")
         search_tool.execute_search = AsyncMock(return_value=mock_result)
-
-        # Mock physics enhancement
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Execute the search with detailed profile
         result = await search_tool.search_imas_paths(
