@@ -35,7 +35,9 @@ class TestSearchToolServices:
         # Mock context for physics enhancement
         mock_ctx = MagicMock()
 
-        result = await search_tool.search_imas(query="plasma temperature", ctx=mock_ctx)
+        result = await search_tool.search_imas_paths(
+            query="plasma temperature", ctx=mock_ctx
+        )
 
         # Verify execute_search was called (which handles physics enhancement internally)
         search_tool.execute_search.assert_called_once()
@@ -71,7 +73,7 @@ class TestSearchToolServices:
         )
 
         # Test with complex query that should trigger semantic search
-        await search_tool.search_imas(
+        await search_tool.search_imas_paths(
             query="plasma temperature profile equilibrium magnetic field"
         )
 
@@ -134,7 +136,7 @@ class TestSearchToolServices:
             return_value=mock_response
         )
 
-        await search_tool.search_imas(query="temperature")
+        await search_tool.search_imas_paths(query="temperature")
 
         # Verify response service received correct arguments from SearchResponse.hits
         build_call = search_tool.response.build_search_response.call_args
@@ -159,7 +161,7 @@ class TestSearchToolServices:
         )
         search_tool.execute_search = AsyncMock(return_value=mock_response)
 
-        result = await search_tool.search_imas(query="nonexistent")
+        result = await search_tool.search_imas_paths(query="nonexistent")
 
         # Verify empty results were handled gracefully
         search_tool.execute_search.assert_called_once()
@@ -213,7 +215,7 @@ class TestSearchToolServices:
         )
 
         # Test boolean query that should use lexical search
-        await search_tool.search_imas(
+        await search_tool.search_imas_paths(
             query="temperature AND pressure", max_results=15, search_mode="auto"
         )
 

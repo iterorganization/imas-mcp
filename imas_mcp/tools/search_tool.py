@@ -33,7 +33,7 @@ class SearchTool(BaseTool):
     @property
     def tool_name(self) -> str:
         """Return the name of this tool."""
-        return "search_imas"
+        return "search_imas_paths"
 
     @cache_results(ttl=300, key_strategy="semantic")
     @validate_input(schema=SearchInput)
@@ -45,7 +45,7 @@ class SearchTool(BaseTool):
         "Options: search_mode=auto|semantic|lexical|hybrid, "
         "response_profile=minimal|standard|detailed"
     )
-    async def search_imas(
+    async def search_imas_paths(
         self,
         query: str,
         ids_filter: str | list[str] | None = None,

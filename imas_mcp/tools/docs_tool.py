@@ -44,11 +44,11 @@ class DocsTool:
         "Search documentation for IMAS, Python, and other indexed libraries. "
         "Use this to find code examples, API references, and guides. "
         "Returns relevant documentation excerpts with URLs. "
-        "Library parameter is required - use list_docs first to see available libraries. "
+        "Library parameter is required - use list_imas_docs first to see available libraries. "
         "Examples: library='data-dictionary' query='time_slice equilibrium', library='imas-python' query='IDS class methods'. "
         "Supports optional version filtering for specific library versions."
     )
-    async def search_docs(
+    async def search_imas_docs(
         self,
         query: str,
         library: str | None = None,
@@ -77,7 +77,7 @@ class DocsTool:
             - success: Boolean indicating success
 
         Note:
-            Use list_docs tool first to discover available libraries.
+            Use list_imas_docs tool first to discover available libraries.
             Library parameter is required for search.
         """
 
@@ -174,12 +174,12 @@ class DocsTool:
     @measure_performance(include_metrics=True, slow_threshold=0.5)
     @mcp_tool(
         "List all available documentation libraries. "
-        "Returns library names that can be used with search_docs tool. "
+        "Returns library names that can be used with search_imas_docs tool. "
         "Use this tool first before searching documentation to discover available libraries. "
         "Examples of returned libraries: 'data-dictionary', 'imas-python', 'testembeddings'. "
-        "Returns library names only - for version-specific searches, use the version parameter in search_docs."
+        "Returns library names only - for version-specific searches, use the version parameter in search_imas_docs."
     )
-    async def list_docs(
+    async def list_imas_docs(
         self,
         library: str | None = None,
         ctx: Context | None = None,
@@ -188,7 +188,7 @@ class DocsTool:
         List all indexed documentation libraries available for search.
 
         Discovery tool for finding what documentation libraries are available.
-        Use before search_docs to know which libraries can be searched.
+        Use before search_imas_docs to know which libraries can be searched.
 
         Args:
             library: Specific library name to get info for (optional, currently unused)
@@ -202,7 +202,7 @@ class DocsTool:
             - note: Information about version availability
 
         Examples:
-            list_docs() → {"libraries": ["data-dictionary", "testembeddings"], "count": 2, "success": true}
+            list_imas_docs() → {"libraries": ["data-dictionary", "testembeddings"], "count": 2, "success": true}
 
         Note:
             Returns library names only. The MCP list_libraries tool does not provide
@@ -228,7 +228,7 @@ class DocsTool:
 
                 return {
                     "library": library,
-                    "note": "Use search_docs with this library name to explore available content",
+                    "note": "Use search_imas_docs with this library name to explore available content",
                     "success": True,
                     "proxy_info": {
                         "method": "docs-mcp-server",

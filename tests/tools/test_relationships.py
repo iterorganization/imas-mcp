@@ -119,13 +119,13 @@ class TestRelationshipsTool:
     async def test_tool_instantiation(self, relationships_tool):
         """Test that the tool can be instantiated."""
         assert relationships_tool is not None
-        assert hasattr(relationships_tool, "explore_relationships")
+        assert hasattr(relationships_tool, "search_imas_clusters")
 
     @pytest.mark.asyncio
     async def test_basic_relationship_discovery(self, relationships_tool):
         """Test basic relationship discovery functionality."""
         # Test with a real physics path
-        result = await relationships_tool.explore_relationships(
+        result = await relationships_tool.search_imas_clusters(
             path="core_profiles/profiles_1d/electrons/density",
             relationship_type=RelationshipType.ALL,
             max_depth=1,
@@ -178,7 +178,7 @@ class TestRelationshipWorkflow:
         test_path = "core_profiles/profiles_1d/electrons/density"
 
         try:
-            result = await relationships_tool.explore_relationships(
+            result = await relationships_tool.search_imas_clusters(
                 path=test_path, relationship_type=RelationshipType.ALL, max_depth=1
             )
 

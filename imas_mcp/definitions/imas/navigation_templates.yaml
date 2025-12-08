@@ -21,7 +21,7 @@ common_workflows:
       - "First-time IDS exploration"
       - "Structure documentation"
       - "Data availability assessment"
-    tools_required: ["analyze_ids_structure", "get_overview"]
+    tools_required: ["list_imas_paths", "get_imas_overview"]
     
   physics_analysis:
     description: "Physics-focused analysis workflow for domain-specific research"
@@ -39,7 +39,7 @@ common_workflows:
       - "Physics domain analysis"
       - "Measurement extraction"
       - "Cross-domain studies"
-    tools_required: ["export_physics_domain", "explore_relationships", "analyze_ids_structure"]
+    tools_required: ["search_imas_paths", "search_imas_clusters", "list_imas_paths"]
     
   data_access:
     description: "Data access optimization workflow for efficient data retrieval"
@@ -57,7 +57,7 @@ common_workflows:
       - "Performance optimization"
       - "Large dataset access"
       - "Automated data processing"
-    tools_required: ["analyze_ids_structure", "explore_identifiers"]
+    tools_required: ["list_imas_paths", "list_imas_identifiers"]
     
   diagnostic_analysis:
     description: "Diagnostic-focused workflow for measurement system analysis"
@@ -75,7 +75,7 @@ common_workflows:
       - "Diagnostic system analysis"
       - "Measurement validation"
       - "Calibration procedures"
-    tools_required: ["analyze_ids_structure", "explore_identifiers", "search_imas"]
+    tools_required: ["list_imas_paths", "list_imas_identifiers", "search_imas_paths"]
 
 # Interactive navigation features
 interactive_features:

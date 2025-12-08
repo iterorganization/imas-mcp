@@ -34,7 +34,7 @@ class TestServiceComposition:
             )
 
             # Execute search
-            result = await search_tool.search_imas(
+            result = await search_tool.search_imas_paths(
                 query="test query", search_mode="semantic"
             )
 
@@ -64,7 +64,7 @@ class TestServiceComposition:
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Execute the search with detailed profile to trigger physics hints through hints decorator
-        result = await search_tool.search_imas(
+        result = await search_tool.search_imas_paths(
             query="test", response_profile="detailed"
         )
 
