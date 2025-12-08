@@ -7,21 +7,14 @@ from typing import Any, TypeVar
 from pydantic import BaseModel
 
 from imas_mcp.models.constants import (
-    DetailLevel,
-    IdentifierScope,
     RelationshipType,
     SearchMode,
 )
 from imas_mcp.models.result_models import (
-    ConceptResult,
-    DomainExport,
-    ExportData,
     IdentifierResult,
-    IDSExport,
     OverviewResult,
     RelationshipResult,
     SearchResult,
-    StructureResult,
 )
 from imas_mcp.search.search_strategy import SearchMatch
 
@@ -66,34 +59,6 @@ class ResponseService(BaseService):
             physics_domains=physics_domains or [],
         )
 
-    def build_concept_response(
-        self,
-        concept: str,
-        explanation: str,
-        detail_level: DetailLevel,
-        related_topics: list[str],
-        nodes: list[Any],
-        physics_domains: list[str],
-        query: str,
-        physics_context: Any | None = None,
-        concept_explanation: Any | None = None,
-    ) -> ConceptResult:
-        """Build ConceptResult for concept explanations."""
-        return ConceptResult(
-            concept=concept,
-            explanation=explanation,
-            detail_level=detail_level,
-            related_topics=related_topics,
-            nodes=nodes,
-            physics_domains=physics_domains,
-            query=query,
-            search_mode=SearchMode.SEMANTIC,
-            max_results=15,
-            ids_filter=None,
-            physics_context=physics_context,
-            concept_explanation=concept_explanation,
-        )
-
     def build_overview_response(
         self,
         content: str,
@@ -120,32 +85,8 @@ class ResponseService(BaseService):
             usage_guidance=usage_guidance or {},
         )
 
-    def build_structure_response(
-        self,
-        ids_name: str,
-        description: str,
-        structure: dict[str, int],
-        sample_paths: list[str],
-        max_depth: int,
-        tool_name: str,
-        physics_context: Any | None = None,
-    ) -> StructureResult:
-        """Build StructureResult for IDS structure analysis."""
-        return StructureResult(
-            ids_name=ids_name,
-            description=description,
-            structure=structure,
-            sample_paths=sample_paths,
-            max_depth=max_depth,
-            tool_name=tool_name,
-            processing_timestamp=datetime.now(UTC).isoformat(),
-            version=VERSION,
-            physics_context=physics_context,
-        )
-
     def build_identifier_response(
         self,
-        scope: IdentifierScope,
         schemas: list[dict[str, Any]],
         paths: list[dict[str, Any]],
         analytics: dict[str, Any],
@@ -154,7 +95,6 @@ class ResponseService(BaseService):
     ) -> IdentifierResult:
         """Build IdentifierResult for identifier exploration."""
         return IdentifierResult(
-            scope=scope,
             schemas=schemas,
             paths=paths,
             analytics=analytics,
@@ -191,50 +131,6 @@ class ResponseService(BaseService):
             max_results=None,
             ids_filter=None,
             physics_context=physics_context,
-        )
-
-    def build_export_response(
-        self,
-        ids_names: list[str],
-        include_physics: bool,
-        include_relationships: bool,
-        export_data: ExportData,
-        metadata: dict[str, Any],
-        tool_name: str,
-    ) -> IDSExport:
-        """Build IDSExport for IDS exports."""
-        return IDSExport(
-            ids_names=ids_names,
-            include_physics=include_physics,
-            include_relationships=include_relationships,
-            data=export_data,
-            metadata=metadata,
-            tool_name=tool_name,
-            processing_timestamp=datetime.now(UTC).isoformat(),
-            version=VERSION,
-        )
-
-    def build_domain_export_response(
-        self,
-        domain: str,
-        domain_info: dict[str, Any],
-        include_cross_domain: bool,
-        max_paths: int,
-        export_data: ExportData,
-        metadata: dict[str, Any],
-        tool_name: str,
-    ) -> DomainExport:
-        """Build DomainExport for physics domain exports."""
-        return DomainExport(
-            domain=domain,
-            domain_info=domain_info,
-            include_cross_domain=include_cross_domain,
-            max_paths=max_paths,
-            data=export_data,
-            metadata=metadata,
-            tool_name=tool_name,
-            processing_timestamp=datetime.now(UTC).isoformat(),
-            version=VERSION,
         )
 
     def add_standard_metadata(self, response: T, tool_name: str) -> T:

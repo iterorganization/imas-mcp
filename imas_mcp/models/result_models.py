@@ -10,8 +10,6 @@ from pydantic import BaseModel, Field
 from imas_mcp import __version__
 from imas_mcp.core.data_model import IdsNode
 from imas_mcp.models.constants import (
-    DetailLevel,
-    IdentifierScope,
     RelationshipType,
     SearchMode,
 )
@@ -20,8 +18,6 @@ from imas_mcp.models.context_models import (
     WithHints,
     WithPhysics,
 )
-from imas_mcp.models.physics_models import ConceptExplanation
-from imas_mcp.models.structure_models import StructureAnalysis
 from imas_mcp.search.search_strategy import SearchHit
 
 # ============================================================================
@@ -310,69 +306,26 @@ class OverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
 # ============================================================================
 
 
-class ConceptResult(WithHints, WithPhysics, ToolResult, SearchHits):
-    """Concept explanation result.
-
-    Returns ranked search results related to the concept.
-    """
-
-    @property
-    def tool_name(self) -> str:
-        """Name of the tool that generated this result."""
-        return "explain_concept"
-
-    concept: str
-    explanation: str
-    detail_level: DetailLevel = DetailLevel.INTERMEDIATE
-    related_topics: list[str] = Field(default_factory=list)
-    concept_explanation: ConceptExplanation | None = None
-
-
-class StructureResult(WithHints, WithPhysics, ToolResult):
-    """IDS structure analysis result with hints and physics aggregation."""
-
-    @property
-    def tool_name(self) -> str:
-        """Name of the tool that generated this result."""
-        return "analyze_ids_structure"
-
-    ids_name: str
-    description: str
-    structure: dict[str, Any] = Field(
-        default_factory=dict
-    )  # Structure metrics (mixed types)
-    sample_paths: list[str] = Field(default_factory=list)
-    max_depth: int = 0
-    analysis: StructureAnalysis | None = Field(
-        default=None, description="Enhanced structure analysis"
-    )
-
-
 class IdentifierResult(WithHints, WithPhysics, ToolResult):
     """Identifier exploration result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "explore_identifiers"
+        return "list_imas_identifiers"
 
-    scope: IdentifierScope = IdentifierScope.ALL
     schemas: list[dict[str, Any]] = Field(default_factory=list)
     paths: list[dict[str, Any]] = Field(default_factory=list)
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
 class RelationshipResult(WithHints, WithPhysics, ToolResult):
-    """Relationship exploration result with hints and physics aggregation.
-
-    Does not inherit from IdsResult as it returns relationship metadata
-    in the connections dict, not complete IdsNode objects.
-    """
+    """Cluster search result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "explore_relationships"
+        return "search_imas_clusters"
 
     path: str
     relationship_type: RelationshipType = RelationshipType.ALL
@@ -391,38 +344,6 @@ class RelationshipResult(WithHints, WithPhysics, ToolResult):
         default_factory=dict,
         description="Physics domain analysis, domain connections, and phenomena",
     )
-
-
-# ============================================================================
-# EXPORT
-# ============================================================================
-
-
-class IDSExport(WithHints, ToolResult, ExportResult):
-    """IDS export result with hints."""
-
-    @property
-    def tool_name(self) -> str:
-        """Name of the tool that generated this result."""
-        return "export_ids"
-
-    ids_names: list[str]
-    include_physics: bool = True
-    include_relationships: bool = True
-
-
-class DomainExport(WithHints, ToolResult, ExportResult):
-    """Physics domain export result with hints."""
-
-    @property
-    def tool_name(self) -> str:
-        """Name of the tool that generated this result."""
-        return "export_physics_domain"
-
-    domain: str
-    domain_info: dict[str, Any] | None = None
-    include_cross_domain: bool = False
-    max_paths: int = 10
 
 
 # ============================================================================

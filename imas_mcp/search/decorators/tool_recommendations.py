@@ -74,7 +74,7 @@ def generate_search_suggestions(
         # Suggest exploring relationships
         suggestions.append(
             {
-                "tool": "explore_relationships",
+                "tool": "search_imas_clusters",
                 "reason": f"Explore data relationships for the {context['result_count']} found paths",
                 "description": "Discover how these data paths connect to other IMAS structures",
             }
@@ -85,7 +85,7 @@ def generate_search_suggestions(
             for ids_name in context["ids_names"][:2]:  # Limit suggestions
                 suggestions.append(
                     {
-                        "tool": "analyze_ids_structure",
+                        "tool": "list_imas_paths",
                         "reason": f"Analyze detailed structure of {ids_name} IDS",
                         "description": f"Get comprehensive structural analysis of {ids_name}",
                     }
@@ -96,7 +96,7 @@ def generate_search_suggestions(
             for domain in context["domains"][:2]:  # Limit suggestions
                 suggestions.append(
                     {
-                        "tool": "explain_concept",
+                        "tool": "get_imas_overview",
                         "reason": f"Learn more about {domain} physics domain",
                         "description": f"Get detailed explanation of {domain} concepts",
                     }
@@ -106,7 +106,7 @@ def generate_search_suggestions(
         if len(context["paths"]) >= 3:
             suggestions.append(
                 {
-                    "tool": "export_ids",
+                    "tool": "fetch_imas_paths",
                     "reason": f"Export data for the {len(context['ids_names'])} IDS found",
                     "description": "Export structured data for use in analysis workflows",
                 }
@@ -116,7 +116,7 @@ def generate_search_suggestions(
         # No results - suggest broader search strategies
         suggestions.append(
             {
-                "tool": "get_overview",
+                "tool": "get_imas_overview",
                 "reason": "No results found - get overview of available data",
                 "description": "Explore IMAS data structure and available concepts",
             }
@@ -124,7 +124,7 @@ def generate_search_suggestions(
 
         suggestions.append(
             {
-                "tool": "explore_identifiers",
+                "tool": "list_imas_identifiers",
                 "reason": "Search for related terms and identifiers",
                 "description": "Discover alternative search terms and data identifiers",
             }
@@ -133,7 +133,7 @@ def generate_search_suggestions(
         # Suggest concept explanation for the query
         suggestions.append(
             {
-                "tool": "explain_concept",
+                "tool": "get_imas_overview",
                 "reason": f'Learn about "{query}" concept in fusion physics',
                 "description": "Get conceptual understanding and context",
             }
@@ -154,12 +154,12 @@ def generate_concept_suggestions(concept: str) -> list[dict[str, str]]:
     """
     suggestions = [
         {
-            "tool": "search_imas",
+            "tool": "search_imas_paths",
             "reason": f"Find data paths related to {concept}",
             "description": f"Search for IMAS data containing {concept} measurements",
         },
         {
-            "tool": "explore_identifiers",
+            "tool": "list_imas_identifiers",
             "reason": f"Explore identifiers and terms related to {concept}",
             "description": "Discover related concepts and terminology",
         },
@@ -171,7 +171,7 @@ def generate_concept_suggestions(concept: str) -> list[dict[str, str]]:
     if any(term in concept_lower for term in ["temperature", "density", "pressure"]):
         suggestions.append(
             {
-                "tool": "search_imas",
+                "tool": "search_imas_paths",
                 "reason": "Explore core plasma profiles",
                 "description": "Search for core_profiles data containing plasma parameters",
             }
@@ -180,7 +180,7 @@ def generate_concept_suggestions(concept: str) -> list[dict[str, str]]:
     if any(term in concept_lower for term in ["magnetic", "field", "equilibrium"]):
         suggestions.append(
             {
-                "tool": "analyze_ids_structure",
+                "tool": "list_imas_paths",
                 "reason": "Analyze equilibrium IDS structure",
                 "description": "Examine magnetic equilibrium data organization",
             }
@@ -189,7 +189,7 @@ def generate_concept_suggestions(concept: str) -> list[dict[str, str]]:
     if any(term in concept_lower for term in ["transport", "flux"]):
         suggestions.append(
             {
-                "tool": "explore_relationships",
+                "tool": "search_imas_clusters",
                 "reason": "Explore transport-related data relationships",
                 "description": "Understand connections between transport phenomena",
             }
@@ -215,7 +215,7 @@ def generate_tool_recommendations(
         # Error case - suggest diagnostic tools
         return [
             {
-                "tool": "get_overview",
+                "tool": "get_imas_overview",
                 "reason": "Get overview of available data and functionality",
                 "description": "Explore IMAS capabilities and data structure",
             }
@@ -239,12 +239,12 @@ def generate_tool_recommendations(
         # Generic suggestions
         return [
             {
-                "tool": "search_imas",
+                "tool": "search_imas_paths",
                 "reason": "Search for specific data paths",
                 "description": "Find relevant IMAS data for your research",
             },
             {
-                "tool": "get_overview",
+                "tool": "get_imas_overview",
                 "reason": "Get overview of IMAS structure",
                 "description": "Understand available data and capabilities",
             },

@@ -52,16 +52,15 @@ class TestMCPServer:
         """Test tools are accessible through server composition."""
         # Test that all expected tools are available
         expected_tools = [
-            "analyze_ids_structure",
             "check_imas_paths",
-            "explain_concept",
-            "explore_identifiers",
-            "explore_relationships",
-            "export_ids",
-            "export_physics_domain",
             "fetch_imas_paths",
-            "get_overview",
-            "search_imas",
+            "get_imas_overview",
+            "list_imas_docs",
+            "list_imas_identifiers",
+            "list_imas_paths",
+            "search_imas_clusters",
+            "search_imas_docs",
+            "search_imas_paths",
         ]
 
         for tool_name in expected_tools:
@@ -135,16 +134,15 @@ class TestMCPProtocolCompliance:
 
             # Check that expected tools are registered
             expected_tools = [
-                "analyze_ids_structure",
                 "check_imas_paths",
-                "explain_concept",
-                "explore_identifiers",
-                "explore_relationships",
-                "export_ids",
-                "export_physics_domain",
                 "fetch_imas_paths",
-                "get_overview",
-                "search_imas",
+                "get_imas_overview",
+                "list_imas_docs",
+                "list_imas_identifiers",
+                "list_imas_paths",
+                "search_imas_clusters",
+                "search_imas_docs",
+                "search_imas_paths",
             ]
 
             for expected_tool in expected_tools:
@@ -175,12 +173,12 @@ class TestMCPProtocolCompliance:
         """Test tools can be executed through MCP client."""
         async with Client(server.mcp) as client:
             # Test simple tool execution
-            result = await client.call_tool("search_imas", {"query": "plasma"})
+            result = await client.call_tool("search_imas_paths", {"query": "plasma"})
             assert result is not None
             assert hasattr(result, "content") or hasattr(result, "data")
 
             # Test tool with different parameters
-            result = await client.call_tool("get_overview")
+            result = await client.call_tool("get_imas_overview")
             assert result is not None
             assert hasattr(result, "content") or hasattr(result, "data")
 
@@ -205,8 +203,8 @@ class TestMCPProtocolCompliance:
         async with Client(server.mcp) as client:
             # Execute multiple operations concurrently
             results = await asyncio.gather(
-                client.call_tool("search_imas", {"query": "equilibrium"}),
-                client.call_tool("get_overview"),
+                client.call_tool("search_imas_paths", {"query": "equilibrium"}),
+                client.call_tool("get_imas_overview"),
                 client.read_resource("ids://identifiers"),
                 return_exceptions=True,
             )
@@ -227,14 +225,12 @@ class TestServerComponentIntegration:
         # Check core properties exist
         assert hasattr(tools, "document_store")
         assert hasattr(tools, "search_tool")
-        assert hasattr(tools, "analysis_tool")
 
         # Check that document store is shared properly
         assert tools.document_store is not None
 
         # Check that individual tools are initialized
         assert tools.search_tool is not None
-        assert tools.analysis_tool is not None
 
     def test_resources_component_initialization(self, server):
         """Test resources component is properly initialized."""
@@ -252,7 +248,7 @@ class TestServerComponentIntegration:
         # For example, tools might access schema resources
 
         # Get an overview (uses tools)
-        overview_result = await server.tools.get_overview()
+        overview_result = await server.tools.get_imas_overview()
         assert isinstance(overview_result, OverviewResult)
 
         # Resources should provide schema information

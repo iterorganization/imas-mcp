@@ -218,23 +218,17 @@ class TestToolHintsDecorator:
         assert len(hints) > 0
         assert isinstance(hints[0], ToolSuggestion)
 
-        # Should suggest explore_relationships for found paths
-        relationship_hints = [
-            h for h in hints if h.tool_name == "explore_relationships"
-        ]
+        # Should suggest search_imas_clusters for found paths
+        relationship_hints = [h for h in hints if h.tool_name == "search_imas_clusters"]
         assert len(relationship_hints) > 0
         assert (
             "connect" in relationship_hints[0].description.lower()
-            or "relationships" in relationship_hints[0].description.lower()
+            or "discover" in relationship_hints[0].description.lower()
         )
 
-        # Should suggest analyze_ids_structure for IDS found
-        structure_hints = [h for h in hints if h.tool_name == "analyze_ids_structure"]
+        # Should suggest list_imas_paths for IDS found
+        structure_hints = [h for h in hints if h.tool_name == "list_imas_paths"]
         assert len(structure_hints) > 0
-
-        # Should suggest explain_concept for physics domains
-        concept_hints = [h for h in hints if h.tool_name == "explain_concept"]
-        assert len(concept_hints) > 0
 
     def test_generate_search_tool_hints_many_results(self):
         """Test tool hint generation for searches with many results."""
@@ -263,10 +257,13 @@ class TestToolHintsDecorator:
 
         hints = generate_search_tool_hints(result)
 
-        # Should suggest export for substantial results
-        export_hints = [h for h in hints if h.tool_name == "export_ids"]
+        # Should suggest fetch_imas_paths for substantial results
+        export_hints = [h for h in hints if h.tool_name == "fetch_imas_paths"]
         assert len(export_hints) > 0
-        assert "export" in export_hints[0].description.lower()
+        assert (
+            "documentation" in export_hints[0].description.lower()
+            or "details" in export_hints[0].description.lower()
+        )
 
     def test_generate_search_tool_hints_no_results(self):
         """Test tool hint generation when no results are found."""
@@ -281,17 +278,13 @@ class TestToolHintsDecorator:
         # Should suggest discovery tools
         assert len(hints) > 0
 
-        # Should suggest get_overview
-        overview_hints = [h for h in hints if h.tool_name == "get_overview"]
+        # Should suggest get_imas_overview
+        overview_hints = [h for h in hints if h.tool_name == "get_imas_overview"]
         assert len(overview_hints) > 0
 
-        # Should suggest explore_identifiers
-        identifier_hints = [h for h in hints if h.tool_name == "explore_identifiers"]
+        # Should suggest list_imas_identifiers
+        identifier_hints = [h for h in hints if h.tool_name == "list_imas_identifiers"]
         assert len(identifier_hints) > 0
-
-        # Should suggest explain_concept
-        concept_hints = [h for h in hints if h.tool_name == "explain_concept"]
-        assert len(concept_hints) > 0
 
     def test_apply_tool_hints_to_search_result(self):
         """Test applying tool hints directly to SearchResult."""
