@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.physics_models import PhysicsSearchResult
-from imas_mcp.models.suggestion_models import SearchSuggestion, ToolSuggestion
 
 # ============================================================================
 # BASE RESULT MODELS
@@ -38,21 +37,6 @@ class BaseToolResult(BaseModel):
 # ============================================================================
 # FEATURE MIXINS (use with multiple inheritance)
 # ============================================================================
-
-
-class WithHints(BaseModel):
-    """
-    Adds query and tool hints to results.
-
-    Use for tools that provide follow-up suggestions.
-    """
-
-    query_hints: list[SearchSuggestion] = Field(
-        default_factory=list, description="Query suggestions for follow-up searches"
-    )
-    tool_hints: list[ToolSuggestion] = Field(
-        default_factory=list, description="Tool suggestions for follow-up analysis"
-    )
 
 
 class WithPhysics(BaseModel):

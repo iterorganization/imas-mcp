@@ -15,7 +15,6 @@ from imas_mcp.models.constants import (
 )
 from imas_mcp.models.context_models import (
     BaseToolResult,
-    WithHints,
     WithPhysics,
 )
 from imas_mcp.search.search_strategy import SearchHit
@@ -247,8 +246,8 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchPathsResult(WithHints, WithPhysics, ToolResult, SearchHits):
-    """Search tool result with hints and physics aggregation."""
+class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
+    """Search tool result with physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -261,8 +260,8 @@ class SearchPathsResult(WithHints, WithPhysics, ToolResult, SearchHits):
     )
 
 
-class GetOverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
-    """Overview tool response with hints and physics aggregation."""
+class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
+    """Overview tool response with physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -306,8 +305,8 @@ class GetOverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
 # ============================================================================
 
 
-class GetIdentifiersResult(WithHints, WithPhysics, ToolResult):
-    """Identifier exploration result with hints and physics aggregation."""
+class GetIdentifiersResult(WithPhysics, ToolResult):
+    """Identifier exploration result with physics aggregation."""
 
     @property
     def tool_name(self) -> str:
@@ -319,8 +318,8 @@ class GetIdentifiersResult(WithHints, WithPhysics, ToolResult):
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
-class SearchClustersResult(WithHints, WithPhysics, ToolResult):
-    """Cluster search result with hints and physics aggregation."""
+class SearchClustersResult(WithPhysics, ToolResult):
+    """Cluster search result with physics aggregation."""
 
     @property
     def tool_name(self) -> str:
