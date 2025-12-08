@@ -115,6 +115,7 @@ build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-mermaid = "scripts.build_mermaid:build_mermaid"
 build-migrations = "scripts.build_migrations:build_migrations"
+build-path-map = "scripts.build_path_map:build_path_map_cli"
 
 [tool.hatch.version]
 source = "vcs"
