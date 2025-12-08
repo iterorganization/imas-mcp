@@ -21,6 +21,7 @@ from imas_mcp.core.data_model import (
     IdsNode,
     TransformationOutputs,
 )
+from imas_mcp.core.exclusions import ExclusionChecker
 from imas_mcp.core.extractors import (
     CoordinateExtractor,
     ExtractorContext,
@@ -28,7 +29,6 @@ from imas_mcp.core.extractors import (
     LifecycleExtractor,
     MetadataExtractor,
     PathExtractor,
-    PhysicsExtractor,
     SemanticExtractor,
     ValidationExtractor,
 )
@@ -37,6 +37,7 @@ from imas_mcp.core.progress_monitor import create_progress_monitor
 from imas_mcp.dd_accessor import DataDictionaryAccessor
 from imas_mcp.graph_analyzer import analyze_imas_graphs
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
+from imas_mcp.settings import get_include_error_fields, get_include_ggd
 from imas_mcp.structure.structure_analyzer import StructureAnalyzer
 
 
@@ -64,12 +65,22 @@ class DataDictionaryTransformer:
     excluded_patterns: set[str] = field(
         default_factory=lambda: {"ids_properties", "code"}
     )
-    skip_ggd: bool = True
-    skip_error_fields: bool = True
+    include_ggd: bool = field(default_factory=get_include_ggd)
+    include_error_fields: bool = field(default_factory=get_include_error_fields)
     use_rich: bool | None = None  # Auto-detect if None
+
+    # Internal exclusion checker (initialized in __post_init__)
+    _exclusion_checker: ExclusionChecker = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the transformer with performance optimizations."""
+        # Initialize exclusion checker with current configuration
+        self._exclusion_checker = ExclusionChecker(
+            include_ggd=self.include_ggd,
+            include_error_fields=self.include_error_fields,
+            excluded_patterns=self.excluded_patterns,
+        )
+
         # Create ResourcePathAccessor to get both paths and accessor
         if self.dd_accessor is None:
             path_accessor = ResourcePathAccessor(dd_version=self.dd_version)
@@ -195,7 +206,8 @@ class DataDictionaryTransformer:
                     ids_name=ids_name,
                     parent_map=self._global_parent_map,  # Use pre-built parent map
                     excluded_patterns=self.excluded_patterns,
-                    skip_ggd=self.skip_ggd,
+                    include_ggd=self.include_ggd,
+                    include_error_fields=self.include_error_fields,
                 )
 
                 # Extract IDS-level information
@@ -267,7 +279,6 @@ class DataDictionaryTransformer:
         extractors = [
             MetadataExtractor(context),
             LifecycleExtractor(context),
-            PhysicsExtractor(context),
             ValidationExtractor(context),
             PathExtractor(context),
             IdentifierExtractor(context),
@@ -330,35 +341,8 @@ class DataDictionaryTransformer:
         if not path:
             return True
 
-        # Fast check for excluded patterns
-        for pattern in self.excluded_patterns:
-            if pattern in name or pattern in path:
-                return True
-
-        # Skip GGD entries (Grid Geometry Description) - check for various GGD patterns
-        if self.skip_ggd and (
-            "ggd" in name.lower()
-            or "/ggd/" in path.lower()
-            or "grids_ggd" in path.lower()
-            or path.lower().startswith("grids_ggd")
-            or "/grids_ggd/" in path.lower()
-        ):
-            return True
-
-        # Skip error fields (error_upper, error_lower, error_index, etc.)
-        if self.skip_error_fields and (
-            "_error_" in name
-            or "_error_" in path
-            or name.endswith("_error_upper")
-            or name.endswith("_error_lower")
-            or name.endswith("_error_index")
-            or "error_upper" in name
-            or "error_lower" in name
-            or "error_index" in name
-        ):
-            return True
-
-        return False
+        # Delegate to ExclusionChecker for consistent filtering
+        return self._exclusion_checker.is_excluded(path)
 
     def _build_element_path(
         self,
@@ -553,11 +537,6 @@ class DataDictionaryTransformer:
             for path, path_data in paths.items():
                 identifier_schema = path_data.get("identifier_schema")
                 if identifier_schema and identifier_schema.get("options"):
-                    # Extract physics domain if available
-                    physics_domain = None
-                    if "physics_context" in path_data and path_data["physics_context"]:
-                        physics_domain = path_data["physics_context"].get("domain")
-
                     identifier_path = IdentifierPath(
                         path=path,
                         ids_name=ids_name,
@@ -568,7 +547,7 @@ class DataDictionaryTransformer:
                             :200
                         ],  # First 200 chars
                         option_count=len(identifier_schema.get("options", [])),
-                        physics_domain=physics_domain,
+                        physics_domain=None,
                     )
                     identifier_paths.append(identifier_path)
 

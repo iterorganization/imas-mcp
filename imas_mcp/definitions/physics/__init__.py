@@ -1,1 +1,0 @@
-"""Physics-related definitions package."""

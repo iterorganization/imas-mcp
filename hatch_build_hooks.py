@@ -33,7 +33,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             from imas_mcp.core.xml_parser import DataDictionaryTransformer
-            # from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
+            from scripts.build_path_map import build_path_map
 
         finally:
             # Restore original sys.path
@@ -76,3 +76,29 @@ class CustomBuildHook(BuildHookInterface):
             dd_accessor=dd_accessor, ids_set=ids_set, use_rich=True
         )
         json_transformer.build()
+
+        # Build path map for version upgrades
+        # This enables mapping suggestions for deprecated paths
+        resolved_dd_version = dd_version or str(dd_accessor.get_version())
+        print(f"Building path map for version: {resolved_dd_version}")
+
+        from imas_mcp.resource_path_accessor import ResourcePathAccessor
+
+        path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)
+        mappings_dir = path_accessor.mappings_dir
+        mapping_file = mappings_dir / "path_mappings.json"
+
+        import json
+
+        mapping_data = build_path_map(
+            target_version=resolved_dd_version,
+            ids_filter=ids_set,
+            verbose=True,
+        )
+
+        with open(mapping_file, "w") as f:
+            json.dump(mapping_data, f, indent=2)
+
+        print(
+            f"Built path map with {mapping_data['metadata']['total_mappings']} mappings"
+        )

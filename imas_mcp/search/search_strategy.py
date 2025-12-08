@@ -131,9 +131,6 @@ class SearchHit(SearchBase):
     validation_rules: dict[str, Any] | None = Field(
         default=None, description="Validation rules for this path"
     )
-    physics_context: dict[str, Any] | None = Field(
-        default=None, description="Physics domain and phenomena context"
-    )
     identifier_schema: dict[str, Any] | None = Field(
         default=None, description="Full identifier schema with options"
     )
@@ -197,7 +194,6 @@ class SearchMatch(SearchBase):
             ),
             # Additional fields from raw_data
             validation_rules=raw_data.get("validation_rules"),
-            physics_context=raw_data.get("physics_context"),
             identifier_schema=raw_data.get("identifier_schema"),
             introduced_after_version=raw_data.get("introduced_after_version"),
             lifecycle_status=raw_data.get("lifecycle_status"),

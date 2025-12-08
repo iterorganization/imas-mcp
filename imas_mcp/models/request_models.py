@@ -12,9 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .constants import (
     AnalysisDepth,
     DetailLevel,
-    IdentifierScope,
     OutputFormat,
-    RelationshipType,
     ResponseProfile,
     SearchMode,
 )
@@ -147,47 +145,28 @@ class AnalysisInput(BaseInputSchema):
         return v
 
 
-class RelationshipsInput(BaseInputSchema):
-    """Input validation schema for explore_relationships tool."""
+class ClustersInput(BaseInputSchema):
+    """Input validation schema for search_imas_clusters tool."""
 
-    path: str = Field(
+    query: str = Field(
         min_length=1,
         max_length=500,
-        description="Data path to explore relationships for",
-    )
-    relationship_type: RelationshipType = Field(
-        default=RelationshipType.ALL,
-        description="Type of relationships to explore",
-    )
-    max_depth: int = Field(
-        default=2,
-        ge=1,
-        le=5,
-        description="Maximum relationship depth to explore",
+        description="Path or natural language query to search for",
     )
 
-    @field_validator("path")
+    @field_validator("query")
     @classmethod
-    def validate_path(cls, v):
-        """Validate path format."""
+    def validate_query(cls, v):
+        """Validate query is not empty."""
         v = v.strip()
         if not v:
-            raise ValueError("Path cannot be empty")
-
-        # Check for hierarchical path format
-        if "/" not in v and "." not in v:
-            raise ValueError("Path should contain hierarchical separators (/ or .)")
-
+            raise ValueError("Query cannot be empty")
         return v
 
 
 class IdentifiersInput(BaseInputSchema):
-    """Input validation schema for explore_identifiers tool."""
+    """Input validation schema for list_imas_identifiers tool."""
 
-    scope: IdentifierScope = Field(
-        default=IdentifierScope.ALL,
-        description="Scope of identifier exploration",
-    )
     query: str | None = Field(
         default=None,
         max_length=200,
