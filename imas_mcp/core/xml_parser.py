@@ -29,7 +29,6 @@ from imas_mcp.core.extractors import (
     LifecycleExtractor,
     MetadataExtractor,
     PathExtractor,
-    PhysicsExtractor,
     SemanticExtractor,
     ValidationExtractor,
 )
@@ -280,7 +279,6 @@ class DataDictionaryTransformer:
         extractors = [
             MetadataExtractor(context),
             LifecycleExtractor(context),
-            PhysicsExtractor(context),
             ValidationExtractor(context),
             PathExtractor(context),
             IdentifierExtractor(context),
@@ -539,11 +537,6 @@ class DataDictionaryTransformer:
             for path, path_data in paths.items():
                 identifier_schema = path_data.get("identifier_schema")
                 if identifier_schema and identifier_schema.get("options"):
-                    # Extract physics domain if available
-                    physics_domain = None
-                    if "physics_context" in path_data and path_data["physics_context"]:
-                        physics_domain = path_data["physics_context"].get("domain")
-
                     identifier_path = IdentifierPath(
                         path=path,
                         ids_name=ids_name,
@@ -554,7 +547,7 @@ class DataDictionaryTransformer:
                             :200
                         ],  # First 200 chars
                         option_count=len(identifier_schema.get("options", [])),
-                        physics_domain=physics_domain,
+                        physics_domain=None,
                     )
                     identifier_paths.append(identifier_path)
 

@@ -8,7 +8,6 @@ into tool result models using multiple inheritance.
 from pydantic import BaseModel, Field
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.physics_models import PhysicsSearchResult
 
 # ============================================================================
 # BASE RESULT MODELS
@@ -48,9 +47,6 @@ class WithPhysics(BaseModel):
 
     physics_domains: list[str] = Field(
         default_factory=list, description="Physics domains covered by results"
-    )
-    physics_context: PhysicsSearchResult | None = Field(
-        default=None, description="Detailed physics search context"
     )
 
 

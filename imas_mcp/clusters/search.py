@@ -154,6 +154,23 @@ class ClusterSearcher:
                 results.append(self._cluster_to_result(cluster, similarity_score=1.0))
         return results
 
+    def get_cluster_labels_for_path(self, path: str) -> list[dict[str, str]]:
+        """Get cluster labels and descriptions for a specific path.
+
+        Args:
+            path: IMAS path to look up
+
+        Returns:
+            List of dicts with 'label' and 'description' for each cluster
+            containing this path. Empty list if path not in any cluster.
+        """
+        results = self.search_by_path(path)
+        return [
+            {"label": r.label, "description": r.description}
+            for r in results
+            if r.label  # Only include clusters with labels
+        ]
+
     def search_by_ids(
         self, ids_name: str, cross_ids_only: bool = False
     ) -> list[ClusterSearchResult]:
