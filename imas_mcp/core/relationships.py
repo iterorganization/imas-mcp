@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from imas_mcp import dd_version
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
-from imas_mcp.physics.relationship_engine import EnhancedRelationshipEngine
-from imas_mcp.relationships import (
+from imas_mcp.clusters import (
     ClusterSearcher,
     RelationshipExtractionConfig,
     RelationshipExtractor,
 )
+from imas_mcp.embeddings.config import EncoderConfig
+from imas_mcp.embeddings.encoder import Encoder
+from imas_mcp.physics.relationship_engine import EnhancedRelationshipEngine
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)

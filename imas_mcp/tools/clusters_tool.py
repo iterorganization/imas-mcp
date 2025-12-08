@@ -15,10 +15,10 @@ from typing import Any
 from fastmcp import Context
 
 from imas_mcp import dd_version
+from imas_mcp.clusters.search import ClusterSearcher, ClusterSearchResult
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.relationships.search import ClusterSearcher, ClusterSearchResult
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import cache_results, handle_errors, mcp_tool
 

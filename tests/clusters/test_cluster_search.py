@@ -3,12 +3,12 @@
 import numpy as np
 import pytest
 
-from imas_mcp.relationships import ClusterSearcher, ClusterSearchResult
-from imas_mcp.relationships.clustering import (
+from imas_mcp.clusters import ClusterSearcher, ClusterSearchResult
+from imas_mcp.clusters.clustering import (
     _compute_cluster_centroid,
     _compute_cluster_similarity,
 )
-from imas_mcp.relationships.models import ClusterInfo
+from imas_mcp.clusters.models import ClusterInfo
 
 
 class TestCentroidComputation:

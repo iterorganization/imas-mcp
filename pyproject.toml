@@ -137,6 +137,7 @@ imas-dd-version = ""
 [tool.imas-mcp]
 imas-embedding-model = "openai/text-embedding-3-large"
 docs-embedding-model = "openai/text-embedding-3-small"
+imas-language-model = "google/gemini-3-pro-preview"
 
 [tool.hatch.envs.test]
 dependencies = [

@@ -347,11 +347,9 @@ class RelationshipExtractor:
 
     def _get_labeling_model(self) -> str:
         """Get the labeling model name."""
-        import os
+        from imas_mcp.settings import get_language_model
 
-        from .labeler import DEFAULT_LABELING_MODEL
-
-        return os.getenv("IMAS_MCP_LABELING_MODEL", DEFAULT_LABELING_MODEL)
+        return get_language_model()
 
     def _generate_cluster_labels(self, clusters: list) -> dict[int, dict[str, str]]:
         """Generate labels for clusters using LLM.

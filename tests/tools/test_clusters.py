@@ -7,11 +7,11 @@ over related IMAS paths using LLM-generated labels.
 
 import pytest
 
+from imas_mcp.clusters.search import ClusterSearcher, ClusterSearchResult
 from imas_mcp.physics.relationship_engine import (
     RelationshipStrength,
     SemanticRelationshipAnalyzer,
 )
-from imas_mcp.relationships.search import ClusterSearcher, ClusterSearchResult
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.tools.clusters_tool import ClustersTool
 from tests.conftest import STANDARD_TEST_IDS_SET
