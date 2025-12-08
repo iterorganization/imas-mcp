@@ -1,118 +1,131 @@
 """
-This module provides comprehensive categorization of IDS into physics domains
-using the PhysicsDomain enum with domain accessor backend.
+Physics domain categorization for IDS.
+
+This module provides IDS-to-physics-domain mapping loaded from LLM-generated
+JSON file in the resources directory. The mappings are generated at build time
+by the build-physics script.
 """
 
-from typing import Any
+import json
+import logging
+from functools import lru_cache
 
 from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.core.physics_accessors import DomainAccessor
-from imas_mcp.core.physics_domains import DomainCharacteristics
+from imas_mcp.resource_path_accessor import ResourcePathAccessor
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_physics_mappings() -> dict[str, str]:
+    """Load physics domain mappings from JSON file.
+
+    Returns:
+        Dictionary mapping IDS names to physics domain strings.
+        Returns empty dict if file doesn't exist.
+    """
+    try:
+        accessor = ResourcePathAccessor()
+        mapping_path = accessor.schemas_path / "physics_domains.json"
+
+        if not mapping_path.exists():
+            logger.warning(
+                f"Physics domain mappings not found at {mapping_path}. "
+                "Run 'build-physics' to generate."
+            )
+            return {}
+
+        with open(mapping_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        mappings = data.get("mappings", {})
+        logger.debug(f"Loaded {len(mappings)} physics domain mappings")
+        return mappings
+
+    except Exception as e:
+        logger.error(f"Failed to load physics domain mappings: {e}")
+        return {}
 
 
 class PhysicsDomainCategorizer:
-    """Categorization system using PhysicsDomain enum with domain accessor."""
+    """Categorization system using LLM-generated physics domain mappings."""
 
     def __init__(self):
-        self.domains_accessor = DomainAccessor()
+        """Initialize the categorizer with cached mappings."""
+        self._mappings: dict[str, str] | None = None
+
+    @property
+    def mappings(self) -> dict[str, str]:
+        """Get the IDS to domain mappings (lazy loaded)."""
+        if self._mappings is None:
+            self._mappings = _load_physics_mappings()
+        return self._mappings
 
     def get_domain_for_ids(self, ids_name: str) -> PhysicsDomain:
-        """Get the physics domain for a given IDS name."""
-        domain_str = self.domains_accessor.get_ids_domain(ids_name)
+        """Get the physics domain for a given IDS name.
+
+        Args:
+            ids_name: Name of the IDS (e.g., 'equilibrium', 'core_profiles')
+
+        Returns:
+            PhysicsDomain enum value for the IDS, or GENERAL if not found.
+        """
+        domain_str = self.mappings.get(ids_name.lower())
         if domain_str:
             try:
                 return PhysicsDomain(domain_str)
             except ValueError:
+                logger.warning(
+                    f"Unknown physics domain '{domain_str}' for IDS '{ids_name}'"
+                )
                 return PhysicsDomain.GENERAL
         return PhysicsDomain.GENERAL
-
-    def get_domain_characteristics(
-        self, domain: PhysicsDomain
-    ) -> DomainCharacteristics | None:
-        """Get characteristics for a physics domain."""
-        return self.domains_accessor.get_domain_info(domain)
-
-    def get_related_domains(self, domain: PhysicsDomain) -> set[PhysicsDomain]:
-        """Get domains related to the given domain."""
-        related_domains = self.domains_accessor.get_related_domains(domain)
-        return set(related_domains)
 
     def analyze_domain_distribution(
         self, ids_list: list[str]
     ) -> dict[PhysicsDomain, int]:
-        """Analyze the distribution of IDS across physics domains."""
-        distribution = {}
+        """Analyze the distribution of IDS across physics domains.
+
+        Args:
+            ids_list: List of IDS names to analyze
+
+        Returns:
+            Dictionary mapping domains to count of IDS in each domain.
+        """
+        distribution: dict[PhysicsDomain, int] = {}
         for ids_name in ids_list:
             domain = self.get_domain_for_ids(ids_name)
             distribution[domain] = distribution.get(domain, 0) + 1
         return distribution
 
-    def get_domain_summary(self) -> dict[PhysicsDomain, dict[str, Any]]:
-        """Get domain summary using PhysicsDomain enum."""
-        summary_data = self.domains_accessor.get_domain_summary()
-        enum_summary = {}
+    def get_all_mappings(self) -> dict[str, PhysicsDomain]:
+        """Get all IDS to domain mappings as enum values.
 
-        for domain_str, info in summary_data.items():
+        Returns:
+            Dictionary mapping IDS names to PhysicsDomain enum values.
+        """
+        result = {}
+        for ids_name, domain_str in self.mappings.items():
             try:
-                domain_enum = PhysicsDomain(domain_str)
+                result[ids_name] = PhysicsDomain(domain_str)
             except ValueError:
-                domain_enum = PhysicsDomain.GENERAL
-            enum_summary[domain_enum] = info
+                result[ids_name] = PhysicsDomain.GENERAL
+        return result
 
-        return enum_summary
+    def get_ids_for_domain(self, domain: PhysicsDomain) -> list[str]:
+        """Get all IDS names belonging to a specific domain.
 
-    def suggest_domain_improvements(
-        self, ids_name: str, current_paths: list[str] | None = None
-    ) -> dict[str, Any]:
-        """Domain suggestions using PhysicsDomain enum."""
-        current_domain = self.get_domain_for_ids(ids_name)
-        cross_analysis = self.domains_accessor.get_cross_domain_analysis(current_domain)
+        Args:
+            domain: Physics domain to filter by
 
-        suggestions = {
-            "current_domain": current_domain,
-            "confidence": "high" if cross_analysis else "low",
-            "alternative_domains": [],
-            "reasoning": [],
-            "analysis": cross_analysis,
-        }
-
-        if cross_analysis:
-            related_domains = cross_analysis.get("shared_phenomena_domains", [])
-            for domain_str in related_domains[:3]:
-                try:
-                    enum_domain = PhysicsDomain(domain_str)
-                    if enum_domain != current_domain:
-                        suggestions["alternative_domains"].append(enum_domain)
-                        suggestions["reasoning"].append(
-                            f"Shares phenomena with {domain_str}"
-                        )
-                except ValueError:
-                    continue
-
-        return suggestions
-
-    def validate_definitions(self) -> dict[str, Any]:
-        """Validate the domain definitions."""
-        return self.domains_accessor.validate_definitions()
-
-    def search_domains_by_concept(self, concept: str) -> list[PhysicsDomain]:
-        """Search domains by concept or phenomenon."""
-        return self.domains_accessor.search_domains_by_phenomenon(concept)
-
-    def get_domains_by_complexity(self, complexity: str) -> list[PhysicsDomain]:
-        """Get domains filtered by complexity level."""
-        complexity_distribution = (
-            self.domains_accessor.get_domain_complexity_distribution()
-        )
-        return complexity_distribution.get(complexity, [])
-
-    def get_measurement_methods_for_domain(self, domain: PhysicsDomain) -> list[str]:
-        """Get measurement methods for a domain."""
-        return self.domains_accessor.find_measurement_methods_for_domain(domain)
-
-    def get_typical_units_for_domain(self, domain: PhysicsDomain) -> list[str]:
-        """Get typical units for a domain."""
-        return self.domains_accessor.find_units_for_domain(domain)
+        Returns:
+            List of IDS names in the specified domain.
+        """
+        return [
+            ids_name
+            for ids_name, domain_str in self.mappings.items()
+            if domain_str == domain.value
+        ]
 
 
 # Global instance for easy access

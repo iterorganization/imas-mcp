@@ -59,7 +59,6 @@ class PathFilter:
     def _build_semantic_description(self, path: str, path_data: dict[str, Any]) -> str:
         """Build semantic description from path and documentation."""
         documentation = path_data.get("documentation", "")
-        physics_context = path_data.get("physics_context", "")
 
         # Clean documentation
         if documentation:
@@ -76,8 +75,6 @@ class PathFilter:
             description_parts.append(cleaned_doc)
         if path_context:
             description_parts.append(f"Context: {path_context}")
-        if physics_context:
-            description_parts.append(f"Physics: {physics_context}")
 
         return (
             ". ".join(description_parts) if description_parts else "Generic data field"

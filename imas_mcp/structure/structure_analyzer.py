@@ -173,9 +173,7 @@ class StructureAnalyzer:
                     new_node = PathNode(
                         path=node_path,
                         depth=i + 1,
-                        physics_domain=path_data.get("physics_context", {}).get(
-                            "domain", ""
-                        ),
+                        physics_domain="",  # No longer derived from path-level context
                         data_type=path_data.get("data_type", ""),
                         units=path_data.get("units", ""),
                     )
@@ -227,17 +225,14 @@ class StructureAnalyzer:
     def _analyze_domain_distribution(
         self, paths: dict[str, Any]
     ) -> list[DomainDistribution]:
-        """Analyze physics domain distribution within the IDS."""
-        domain_counts: dict[str, list[str]] = {}
+        """Analyze physics domain distribution within the IDS.
 
-        # Count paths by domain
-        for path, path_data in paths.items():
-            physics_context = path_data.get("physics_context", {})
-            domain = physics_context.get("domain", "unspecified")
-
-            if domain not in domain_counts:
-                domain_counts[domain] = []
-            domain_counts[domain].append(path)
+        Note: Path-level physics_context has been removed. Domain distribution
+        is now simplified - all paths are grouped as 'unspecified' since
+        physics domain is determined at IDS level, not path level.
+        """
+        # All paths go into 'unspecified' since we no longer have path-level context
+        domain_counts: dict[str, list[str]] = {"unspecified": list(paths.keys())}
 
         # Create distribution objects
         total_paths = len(paths)
@@ -377,15 +372,7 @@ class StructureAnalyzer:
         if time_organization:
             pattern += " with temporal structure"
 
-        # Check for physics-based organization
-        physics_domains = set()
-        for path_data in paths.values():
-            domain = path_data.get("physics_context", {}).get("domain", "")
-            if domain:
-                physics_domains.add(domain)
-
-        if len(physics_domains) > 1:
-            pattern += " with multi-domain physics coverage"
+        # Note: Physics domain detection removed - domain is at IDS level only
 
         return pattern
 

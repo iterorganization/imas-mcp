@@ -87,7 +87,6 @@ def create_mock_document(path_id: str, ids_name: str = "core_profiles") -> Docum
     return Document(
         metadata=metadata,
         documentation=f"Mock documentation for {path_id}",
-        physics_context={"domain": "transport", "phenomena": ["transport", "plasma"]},
         relationships={},
         raw_data={"data_type": "float", "units": "m"},
     )
@@ -188,38 +187,23 @@ def mock_heavy_operations():
             mock_semantic_instance._initialize.return_value = None
             mock_semantic.return_value = mock_semantic_instance
 
-            # Mock unit accessor to prevent heavy physics integration
-            with patch(
-                "imas_mcp.search.document_store.UnitAccessor"
-            ) as mock_unit_accessor:
-                mock_unit_accessor.return_value.get_all_unit_contexts.return_value = {}
-                mock_unit_accessor.return_value.get_unit_context.return_value = (
-                    "test context"
-                )
-                mock_unit_accessor.return_value.get_category_for_unit.return_value = (
-                    "test_category"
-                )
-                mock_unit_accessor.return_value.get_domains_for_unit.return_value = [
-                    "transport"
-                ]
-
-                # Mock search engine methods to prevent heavy execution
-                mock_engine = MockSearchEngine()
-                with (
-                    patch(
-                        "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                ):
-                    yield
+            # Mock search engine methods to prevent heavy execution
+            mock_engine = MockSearchEngine()
+            with (
+                patch(
+                    "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+            ):
+                yield
 
 
 @pytest.fixture(scope="session")
