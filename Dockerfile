@@ -184,9 +184,11 @@ WORKDIR /app
 
 # Set runtime environment variables
 # Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
+# HATCH_BUILD_NO_HOOKS prevents build hooks from running if uv triggers a sync
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    HATCH_BUILD_NO_HOOKS=true \
     DOCS_SERVER_URL=http://localhost:6280 \
     DOCS_MCP_TELEMETRY=false \
     DOCS_MCP_STORE_PATH=/app/data \
