@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.search_strategy import SearchResponse
 from imas_mcp.tools.search_tool import SearchTool
 
@@ -23,7 +23,7 @@ class TestSearchToolServices:
         """Test search with physics enhancement through service."""
 
         # Mock execute_search to return controlled response
-        mock_response = SearchResult(
+        mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="plasma temperature",
@@ -43,10 +43,10 @@ class TestSearchToolServices:
         search_tool.execute_search.assert_called_once()
 
         # Verify the result structure
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         assert result.query == "plasma temperature"
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
 
     @pytest.mark.asyncio
     async def test_search_configuration_optimization(self, search_tool):
@@ -58,7 +58,7 @@ class TestSearchToolServices:
         )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
-        mock_response = SearchResult(
+        mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="complex query",
@@ -122,7 +122,7 @@ class TestSearchToolServices:
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
         # Mock response service to capture arguments
-        mock_response = SearchResult(
+        mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="temperature",
@@ -152,7 +152,7 @@ class TestSearchToolServices:
         """Test guidance generation when no results found."""
 
         # Mock execute_search to return empty results
-        mock_response = SearchResult(
+        mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="nonexistent",
@@ -165,7 +165,7 @@ class TestSearchToolServices:
 
         # Verify empty results were handled gracefully
         search_tool.execute_search.assert_called_once()
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         assert len(result.hits) == 0
         assert result.query == "nonexistent"
 
@@ -200,7 +200,7 @@ class TestSearchToolServices:
             return_value=SearchResponse(hits=[])
         )
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
-        mock_response = SearchResult(
+        mock_response = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.LEXICAL,
             query="test",

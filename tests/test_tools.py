@@ -11,10 +11,10 @@ import pytest
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
-    IdentifierResult,
-    OverviewResult,
-    RelationshipResult,
-    SearchResult,
+    GetIdentifiersResult,
+    GetOverviewResult,
+    SearchClustersResult,
+    SearchPathsResult,
 )
 from tests.conftest import STANDARD_TEST_IDS_SET
 
@@ -41,7 +41,7 @@ class TestToolsComposition:
             query="plasma temperature", max_results=5
         )
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         assert hasattr(result, "hits")
         assert isinstance(result.hits, list)
         assert len(result.hits) <= 5
@@ -54,7 +54,7 @@ class TestToolsComposition:
         result = await tools.get_imas_overview()
 
         # Test interface contract
-        assert isinstance(result, OverviewResult)
+        assert isinstance(result, GetOverviewResult)
         assert hasattr(result, "available_ids")
         assert isinstance(result.available_ids, list)
         assert hasattr(result, "content")
@@ -66,20 +66,20 @@ class TestToolsComposition:
         ids_name = mcp_test_context["test_ids"]
         result = await tools.search_imas_clusters(path=f"{ids_name}/profiles_1d/time")
 
-        # Test interface contract - accept either RelationshipResult or ToolError
-        assert isinstance(result, RelationshipResult | ToolError)
+        # Test interface contract - accept either SearchClustersResult or ToolError
+        assert isinstance(result, SearchClustersResult | ToolError)
 
-        if isinstance(result, RelationshipResult):
+        if isinstance(result, SearchClustersResult):
             assert hasattr(result, "path")
             assert hasattr(result, "connections")
 
     @pytest.mark.asyncio
     async def test_identifiers_tool_interface(self, tools, mcp_test_context):
         """Test identifiers tool interface and basic functionality."""
-        result = await tools.list_imas_identifiers()
+        result = await tools.get_imas_identifiers()
 
         # Test interface contract
-        assert isinstance(result, IdentifierResult)
+        assert isinstance(result, GetIdentifiersResult)
         assert hasattr(result, "schemas")
         assert hasattr(result, "analytics")
 
@@ -106,13 +106,13 @@ class TestToolsParameterValidation:
         """Test search tool parameter validation."""
         # Test required parameter
         result = await tools.search_imas_paths(query="test")
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
 
         # Test optional parameters
         result = await tools.search_imas_paths(
             query="test", max_results=10, ids_filter=["core_profiles"]
         )
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
 
 
 class TestToolsCompositionPattern:

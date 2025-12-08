@@ -11,8 +11,8 @@ import pytest
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
-    IdentifierResult,
-    RelationshipResult,
+    GetIdentifiersResult,
+    SearchClustersResult,
 )
 
 
@@ -27,10 +27,10 @@ class TestAnalysisFeatures:
         test_path = f"{ids_name}/profiles_1d/electrons/temperature"
         result = await tools.search_imas_clusters(path=test_path)
 
-        # Accept either RelationshipResult or ToolError (when relationships.json is missing)
-        assert isinstance(result, RelationshipResult | ToolError)
+        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        assert isinstance(result, SearchClustersResult | ToolError)
 
-        if isinstance(result, RelationshipResult):
+        if isinstance(result, SearchClustersResult):
             assert hasattr(result, "path")
             assert result.path == test_path
 
@@ -42,10 +42,10 @@ class TestAnalysisFeatures:
         test_path = f"{ids_name}/profiles_1d/electrons/temperature"
         result = await tools.search_imas_clusters(path=test_path)
 
-        # Accept either RelationshipResult or ToolError (when relationships.json is missing)
-        assert isinstance(result, RelationshipResult | ToolError)
+        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        assert isinstance(result, SearchClustersResult | ToolError)
 
-        if isinstance(result, RelationshipResult) and hasattr(result, "connections"):
+        if isinstance(result, SearchClustersResult) and hasattr(result, "connections"):
             connections = result.connections
             # Should provide structured relationship information
             assert isinstance(connections, dict)
@@ -54,9 +54,9 @@ class TestAnalysisFeatures:
     async def test_identifier_exploration_basic(self, tools, mcp_test_context):
         """Test basic identifier exploration."""
         ids_name = mcp_test_context["test_ids"]
-        result = await tools.list_imas_identifiers(query=ids_name)
+        result = await tools.get_imas_identifiers(query=ids_name)
 
-        assert isinstance(result, IdentifierResult)
+        assert isinstance(result, GetIdentifiersResult)
         # Check for the actual fields that are returned
         assert hasattr(result, "analytics")
         assert hasattr(result, "schemas")
@@ -65,9 +65,9 @@ class TestAnalysisFeatures:
     async def test_identifier_structure_information(self, tools, mcp_test_context):
         """Test identifier exploration provides structure information."""
         ids_name = mcp_test_context["test_ids"]
-        result = await tools.list_imas_identifiers(query=ids_name)
+        result = await tools.get_imas_identifiers(query=ids_name)
 
-        assert isinstance(result, IdentifierResult)
+        assert isinstance(result, GetIdentifiersResult)
         if hasattr(result, "schemas"):
             schemas = result.schemas
             # Should provide identifier structure information
@@ -92,9 +92,9 @@ class TestAnalysisErrorHandling:
         """Test identifier exploration handles invalid IDS names."""
         invalid_ids = "nonexistent_ids_name"
 
-        result = await tools.list_imas_identifiers(query=invalid_ids)
+        result = await tools.get_imas_identifiers(query=invalid_ids)
         # May return either success with empty results or error - both valid
-        assert isinstance(result, IdentifierResult | ToolError)
+        assert isinstance(result, GetIdentifiersResult | ToolError)
 
 
 class TestAnalysisPerformance:
@@ -104,14 +104,14 @@ class TestAnalysisPerformance:
     async def test_identifiers_response_time(self, tools):
         """Test identifiers tool responds in reasonable time."""
         start_time = time.time()
-        result = await tools.list_imas_identifiers()
+        result = await tools.get_imas_identifiers()
         end_time = time.time()
 
         execution_time = end_time - start_time
         assert execution_time < 10.0, (
             f"Identifiers took {execution_time:.2f}s, too slow"
         )
-        assert isinstance(result, IdentifierResult | ToolError)
+        assert isinstance(result, GetIdentifiersResult | ToolError)
 
 
 if __name__ == "__main__":

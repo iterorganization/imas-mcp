@@ -76,5 +76,5 @@ class DataDictionaryEntry(IndexableDocument):
         return self
 
 
-# Note: SearchResult for MCP tool responses is now in models/result_models.py
+# Note: SearchPathsResult for MCP tool responses is now in models/result_models.py
 # This file contains only internal search engine models

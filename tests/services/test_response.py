@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.search_strategy import SearchHit
 from imas_mcp.services.response import ResponseService
 
@@ -23,7 +23,7 @@ class TestResponseService:
         """Test building basic search response."""
         service = ResponseService()
 
-        # Create mock SearchResult objects that return proper SearchHit instances
+        # Create mock SearchPathsResult objects that return proper SearchHit instances
         mock_result = Mock()
         mock_result.to_hit.return_value = SearchHit(
             path="test.path",
@@ -41,7 +41,7 @@ class TestResponseService:
             results=results, query="test query", search_mode=SearchMode.SEMANTIC
         )
 
-        assert isinstance(response, SearchResult)
+        assert isinstance(response, SearchPathsResult)
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
@@ -70,7 +70,7 @@ class TestResponseService:
             search_mode=SearchMode.SEMANTIC,
         )
 
-        assert isinstance(response, SearchResult)
+        assert isinstance(response, SearchPathsResult)
         assert response.query == "plasma temperature"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1

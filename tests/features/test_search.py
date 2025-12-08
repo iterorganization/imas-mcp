@@ -10,7 +10,7 @@ import time
 import pytest
 
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 
 
 class TestSearchFeatures:
@@ -23,8 +23,8 @@ class TestSearchFeatures:
             query="plasma temperature", max_results=5
         )
 
-        # Should return SearchResult object
-        assert isinstance(result, SearchResult)
+        # Should return SearchPathsResult object
+        assert isinstance(result, SearchPathsResult)
         assert hasattr(result, "hits")
         assert hasattr(result, "hit_count")
         assert isinstance(result.hits, list)
@@ -44,7 +44,7 @@ class TestSearchFeatures:
             query="temperature", ids_filter=["core_profiles"], max_results=10
         )
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         assert hasattr(result, "hits")
 
         # All results should be from the specified IDS (if any)
@@ -60,7 +60,7 @@ class TestSearchFeatures:
             query="electron density profile", max_results=10
         )
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         if result.hits:
             # Results should be relevant to electron density
             for search_hit in result.hits:
@@ -83,7 +83,7 @@ class TestSearchFeatures:
         for query in test_queries:
             result = await tools.search_imas_paths(query=query, max_results=5)
 
-            assert isinstance(result, SearchResult)
+            assert isinstance(result, SearchPathsResult)
             assert hasattr(result, "hits")
             # Each query type should return some form of structured response
 
@@ -96,7 +96,7 @@ class TestSearchFeatures:
         for limit in limits:
             result = await tools.search_imas_paths(query="plasma", max_results=limit)
 
-            assert isinstance(result, SearchResult)
+            assert isinstance(result, SearchPathsResult)
             assert hasattr(result, "hits")
             assert len(result.hits) <= limit
 
@@ -105,9 +105,9 @@ class TestSearchFeatures:
         """Test search handles empty or minimal queries."""
         result = await tools.search_imas_paths(query="", max_results=5)
 
-        # Should handle gracefully - may return error dict or SearchResult
+        # Should handle gracefully - may return error dict or SearchPathsResult
         assert result is not None
-        # Both error dict and SearchResult are acceptable for empty query
+        # Both error dict and SearchPathsResult are acceptable for empty query
 
     @pytest.mark.asyncio
     async def test_search_performance_basic(self, tools):
@@ -123,10 +123,10 @@ class TestSearchFeatures:
         assert execution_time < 10.0, f"Search took {execution_time:.2f}s, too slow"
 
         # Should return results
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
 
 
-class TestSearchResultStructure:
+class TestSearchPathsResultStructure:
     """Test search result structure and consistency."""
 
     @pytest.mark.asyncio
@@ -134,7 +134,7 @@ class TestSearchResultStructure:
         """Test search results have consistent structure."""
         result = await tools.search_imas_paths(query="temperature", max_results=5)
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
         assert hasattr(result, "hits")
 
         # All results should have consistent structure
@@ -153,7 +153,7 @@ class TestSearchResultStructure:
             query="core_profiles temperature", max_results=3
         )
 
-        assert isinstance(result, SearchResult)
+        assert isinstance(result, SearchPathsResult)
 
         if result.hits:
             for search_result in result.hits:
@@ -178,7 +178,7 @@ class TestSearchErrorHandling:
         result = await tools.search_imas_paths(query="test", max_results=-1)
 
         # Should return ToolError due to validation failure
-        assert isinstance(result, SearchResult | ToolError)
+        assert isinstance(result, SearchPathsResult | ToolError)
 
     @pytest.mark.asyncio
     async def test_search_very_long_query(self, tools):
@@ -204,7 +204,7 @@ class TestSearchErrorHandling:
             result = await tools.search_imas_paths(query=query, max_results=3)
 
             # Should handle without crashing
-            assert isinstance(result, SearchResult)
+            assert isinstance(result, SearchPathsResult)
 
 
 if __name__ == "__main__":

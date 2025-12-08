@@ -1,5 +1,5 @@
 """
-Tool hints decorator for SearchResult enhancement.
+Tool hints decorator for SearchPathsResult enhancement.
 
 Provides intelligent tool recommendations based on search results.
 """
@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ...models.result_models import SearchResult
+from ...models.result_models import SearchPathsResult
 from ...models.suggestion_models import ToolSuggestion
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -17,12 +17,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 logger = logging.getLogger(__name__)
 
 
-def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggestion]:
+def generate_search_tool_hints(
+    search_result: SearchPathsResult,
+) -> list[ToolSuggestion]:
     """
-    Generate tool hints based on SearchResult content.
+    Generate tool hints based on SearchPathsResult content.
 
     Args:
-        search_result: The SearchResult to analyze
+        search_result: The SearchPathsResult to analyze
 
     Returns:
         List of tool suggestions
@@ -86,7 +88,7 @@ def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggesti
                     relevance="No results found - get overview of available data",
                 ),
                 ToolSuggestion(
-                    tool_name="list_imas_identifiers",
+                    tool_name="get_imas_identifiers",
                     description="Discover alternative search terms and data identifiers",
                     relevance="Search for related terms and identifiers",
                 ),
@@ -111,7 +113,7 @@ def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
     # Determine result type and suggest appropriate tools
     result_type = type(result).__name__
 
-    if result_type == "OverviewResult":
+    if result_type == "GetOverviewResult":
         # For overview, suggest search and exploration tools
         hints.extend(
             [
@@ -121,14 +123,14 @@ def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
                     relevance="Find specific data paths in the IMAS data dictionary",
                 ),
                 ToolSuggestion(
-                    tool_name="list_imas_identifiers",
+                    tool_name="get_imas_identifiers",
                     description="Explore identifier schemas and enumerations",
                     relevance="Discover valid values and identifiers",
                 ),
             ]
         )
 
-    elif result_type == "RelationshipResult":
+    elif result_type == "SearchClustersResult":
         # For relationship results, suggest search and path listing
         hints.extend(
             [
@@ -145,7 +147,7 @@ def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
             ]
         )
 
-    elif result_type == "IdentifierResult":
+    elif result_type == "GetIdentifiersResult":
         # For identifier results, suggest search and overview
         hints.extend(
             [
@@ -199,9 +201,9 @@ def apply_tool_hints(result: Any, max_hints: int = 4) -> Any:
             logger.warning(f"Result type {type(result)} does not have tool_hints field")
             return result
 
-        # Generate hints based on result type - check tool_name property for SearchResult
+        # Generate hints based on result type - check tool_name property for SearchPathsResult
         if hasattr(result, "tool_name") and result.tool_name == "search_imas_paths":
-            # SearchResult - use existing search hint generator
+            # SearchPathsResult - use existing search hint generator
             hints = generate_search_tool_hints(result)
         else:
             # Other ToolResult types - generate generic tool hints

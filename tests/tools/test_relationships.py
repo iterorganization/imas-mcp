@@ -131,7 +131,7 @@ class TestRelationshipsTool:
             max_depth=1,
         )
 
-        # Should return a valid RelationshipResult
+        # Should return a valid SearchClustersResult
         assert result is not None
         assert hasattr(result, "connections")
         assert hasattr(result, "relationship_insights")

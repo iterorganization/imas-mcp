@@ -24,7 +24,7 @@ from imas_mcp.core.relationships import Relationships
 from imas_mcp.models.constants import RelationshipType
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import RelationshipsInput
-from imas_mcp.models.result_models import RelationshipResult
+from imas_mcp.models.result_models import SearchClustersResult
 from imas_mcp.search.decorators import (
     cache_results,
     handle_errors,
@@ -547,7 +547,7 @@ class RelationshipsTool(BaseTool):
         recommendations.extend(
             [
                 "💡 Use get_imas_overview() to understand overall IMAS structure",
-                "🌐 Use list_imas_identifiers() to browse available enumerations",
+                "🌐 Use get_imas_identifiers() to browse available enumerations",
             ]
         )
 
@@ -566,7 +566,7 @@ class RelationshipsTool(BaseTool):
         relationship_type: RelationshipType = RelationshipType.ALL,
         max_depth: int = 2,
         ctx: Context | None = None,
-    ) -> RelationshipResult | ToolError:
+    ) -> SearchClustersResult | ToolError:
         """
         Search for semantically related IMAS path clusters.
 
@@ -581,7 +581,7 @@ class RelationshipsTool(BaseTool):
             ctx: MCP context
 
         Returns:
-            RelationshipResult with clustered connections and physics analysis
+            SearchClustersResult with clustered connections and physics analysis
 
         Examples:
             search_imas_clusters(path="core_profiles/profiles_1d/electrons/density")
@@ -762,7 +762,7 @@ class RelationshipsTool(BaseTool):
                 relationship_insights = {"summary": relationship_summary}
 
             # Build enhanced response with improved connections structure
-            response = RelationshipResult(
+            response = SearchClustersResult(
                 path=path,
                 relationship_type=relationship_type,
                 max_depth=max_depth,

@@ -1,5 +1,5 @@
 """
-Physics hints decorator for SearchResult enhancement.
+Physics hints decorator for SearchPathsResult enhancement.
 
 Provides physics context enhancement for search results.
 """
@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ...models.result_models import SearchResult
+from ...models.result_models import SearchPathsResult
 from ...services import PhysicsService
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -18,18 +18,18 @@ logger = logging.getLogger(__name__)
 
 
 async def apply_physics_hints(
-    search_result: SearchResult,
+    search_result: SearchPathsResult,
     physics_service: PhysicsService,
-) -> SearchResult:
+) -> SearchPathsResult:
     """
-    Apply physics hints to a SearchResult.
+    Apply physics hints to a SearchPathsResult.
 
     Args:
-        search_result: The SearchResult to enhance
+        search_result: The SearchPathsResult to enhance
         physics_service: Physics service for enhancement
 
     Returns:
-        Enhanced SearchResult with physics context
+        Enhanced SearchPathsResult with physics context
     """
     try:
         # Determine query to use for physics enhancement
@@ -62,10 +62,10 @@ async def apply_physics_hints(
 
 def physics_hints() -> Callable[[F], F]:
     """
-    Decorator to add physics hints to SearchResult.
+    Decorator to add physics hints to SearchPathsResult.
 
     Returns:
-        Decorated function with physics hints applied to SearchResult
+        Decorated function with physics hints applied to SearchPathsResult
     """
 
     def decorator(func: F) -> F:
@@ -77,9 +77,9 @@ def physics_hints() -> Callable[[F], F]:
             # Execute original function
             result = await func(*args, **kwargs)
 
-            # Apply physics hints if result is SearchResult and tool has physics service
+            # Apply physics hints if result is SearchPathsResult and tool has physics service
             if (
-                isinstance(result, SearchResult)
+                isinstance(result, SearchPathsResult)
                 and tool_instance
                 and hasattr(tool_instance, "physics")
             ):

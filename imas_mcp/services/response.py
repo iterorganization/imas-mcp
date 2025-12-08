@@ -11,10 +11,10 @@ from imas_mcp.models.constants import (
     SearchMode,
 )
 from imas_mcp.models.result_models import (
-    IdentifierResult,
-    OverviewResult,
-    RelationshipResult,
-    SearchResult,
+    GetIdentifiersResult,
+    GetOverviewResult,
+    SearchClustersResult,
+    SearchPathsResult,
 )
 from imas_mcp.search.search_strategy import SearchMatch
 
@@ -40,8 +40,8 @@ class ResponseService(BaseService):
         max_results: int | None = None,
         physics_context: Any | None = None,
         physics_domains: list[str] | None = None,
-    ) -> SearchResult:
-        """Build SearchResult from search results with complete context."""
+    ) -> SearchPathsResult:
+        """Build SearchPathsResult from search results with complete context."""
         # Convert SearchMatch objects to SearchHit for API response
         hits = [result.to_hit() for result in results]
 
@@ -49,7 +49,7 @@ class ResponseService(BaseService):
         if isinstance(ids_filter, str):
             ids_filter = ids_filter.split()
 
-        return SearchResult(
+        return SearchPathsResult(
             hits=hits,
             search_mode=search_mode,
             query=query,
@@ -69,9 +69,9 @@ class ResponseService(BaseService):
         physics_domains: list[str] | None = None,
         ids_statistics: dict[str, Any] | None = None,
         usage_guidance: dict[str, Any] | None = None,
-    ) -> OverviewResult:
-        """Build OverviewResult for system overviews."""
-        return OverviewResult(
+    ) -> GetOverviewResult:
+        """Build GetOverviewResult for system overviews."""
+        return GetOverviewResult(
             content=content,
             available_ids=available_ids,
             hits=hits,
@@ -92,9 +92,9 @@ class ResponseService(BaseService):
         analytics: dict[str, Any],
         tool_name: str,
         query: str | None = None,
-    ) -> IdentifierResult:
-        """Build IdentifierResult for identifier exploration."""
-        return IdentifierResult(
+    ) -> GetIdentifiersResult:
+        """Build GetIdentifiersResult for identifier exploration."""
+        return GetIdentifiersResult(
             schemas=schemas,
             paths=paths,
             analytics=analytics,
@@ -117,9 +117,9 @@ class ResponseService(BaseService):
         physics_domains: list[str],
         query: str,
         physics_context: Any | None = None,
-    ) -> RelationshipResult:
-        """Build RelationshipResult for relationship exploration."""
-        return RelationshipResult(
+    ) -> SearchClustersResult:
+        """Build SearchClustersResult for relationship exploration."""
+        return SearchClustersResult(
             path=path,
             relationship_type=relationship_type,
             max_depth=max_depth,

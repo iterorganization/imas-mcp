@@ -16,7 +16,7 @@ from fastmcp import Context
 from imas_mcp import dd_version
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import OverviewInput
-from imas_mcp.models.result_models import OverviewResult
+from imas_mcp.models.result_models import GetOverviewResult
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
@@ -40,7 +40,7 @@ class OverviewTool(BaseTool):
 
     Other specialized tools handle:
     - search_imas_clusters() -> relationships.json
-    - list_imas_identifiers() -> identifier_catalog.json
+    - get_imas_identifiers() -> identifier_catalog.json
     """
 
     @property
@@ -230,7 +230,7 @@ class OverviewTool(BaseTool):
                 term in query.lower() for term in ["identifier", "enum", "enumeration"]
             ):
                 recommendations.append(
-                    "🔢 Use list_imas_identifiers() to browse identifier schemas and enumerations"
+                    "🔢 Use get_imas_identifiers() to browse identifier schemas and enumerations"
                 )
 
         if relevant_ids:
@@ -252,7 +252,7 @@ class OverviewTool(BaseTool):
         # Always include general recommendations
         recommendations.extend(
             [
-                "🔗 Use list_imas_identifiers() to browse available enumerations",
+                "🔗 Use get_imas_identifiers() to browse available enumerations",
                 "🌐 Use search_imas_clusters() to find semantically related paths",
                 "📚 Use search_imas_docs() to search IMAS documentation",
             ]
@@ -271,7 +271,7 @@ class OverviewTool(BaseTool):
         self,
         query: str | None = None,
         ctx: Context | None = None,
-    ) -> OverviewResult | ToolError:
+    ) -> GetOverviewResult | ToolError:
         """
         Get high-level overview of IMAS data dictionary structure and contents.
 
@@ -285,7 +285,7 @@ class OverviewTool(BaseTool):
             ctx: MCP context for potential AI enhancement
 
         Returns:
-            OverviewResult with available IDS, physics domains, and usage guidance
+            GetOverviewResult with available IDS, physics domains, and usage guidance
         """
         try:
             # Check if IDS catalog is loaded
@@ -465,15 +465,15 @@ class OverviewTool(BaseTool):
                     "fetch_imas_paths - Retrieve full path documentation and metadata",
                     "check_imas_paths - Fast batch validation of IMAS paths",
                     "search_imas_clusters - Find semantically related path clusters",
-                    "list_imas_identifiers - Browse identifier schemas and enumerations",
+                    "get_imas_identifiers - Browse identifier schemas and enumerations",
                     "list_imas_docs - List available documentation libraries",
                     "search_imas_docs - Search documentation content",
                 ],
                 "getting_started": recommendations,
-                "catalog_focus": "This tool serves the IDS catalog - use search_imas_clusters() and list_imas_identifiers() for specialized searches",
+                "catalog_focus": "This tool serves the IDS catalog - use search_imas_clusters() and get_imas_identifiers() for specialized searches",
             }
 
-            return OverviewResult(
+            return GetOverviewResult(
                 content="\n".join(content_parts),
                 available_ids=relevant_ids,
                 query=query,

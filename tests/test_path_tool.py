@@ -142,16 +142,14 @@ async def test_single_valid_path(path_tool):
         "core_profiles/profiles_1d/electrons/temperature"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["found"] == 1
-    assert result["summary"]["not_found"] == 0
-    assert len(result["results"]) == 1
-    assert result["results"][0]["exists"] is True
-    assert (
-        result["results"][0]["path"]
-        == "core_profiles/profiles_1d/electrons/temperature"
-    )
-    assert result["results"][0]["ids_name"] == "core_profiles"
+    # Now returns CheckPathsResult Pydantic model
+    assert result.summary["total"] == 1
+    assert result.summary["found"] == 1
+    assert result.summary["not_found"] == 0
+    assert len(result.results) == 1
+    assert result.results[0].exists is True
+    assert result.results[0].path == "core_profiles/profiles_1d/electrons/temperature"
+    assert result.results[0].ids_name == "core_profiles"
 
 
 @pytest.mark.asyncio
@@ -159,12 +157,12 @@ async def test_single_invalid_path(path_tool):
     """Test validation of a non-existent path."""
     result = await path_tool.check_imas_paths("fake/nonexistent/path")
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["found"] == 0
-    assert result["summary"]["not_found"] == 1
-    assert len(result["results"]) == 1
-    assert result["results"][0]["exists"] is False
-    assert result["results"][0]["path"] == "fake/nonexistent/path"
+    assert result.summary["total"] == 1
+    assert result.summary["found"] == 0
+    assert result.summary["not_found"] == 1
+    assert len(result.results) == 1
+    assert result.results[0].exists is False
+    assert result.results[0].path == "fake/nonexistent/path"
 
 
 @pytest.mark.asyncio
@@ -174,22 +172,22 @@ async def test_multiple_paths_space_delimited(path_tool):
         "equilibrium/time_slice/profiles_1d/psi core_profiles/profiles_1d/electrons/temperature fake/path"
     )
 
-    assert result["summary"]["total"] == 3
-    assert result["summary"]["found"] == 2
-    assert result["summary"]["not_found"] == 1
-    assert len(result["results"]) == 3
+    assert result.summary["total"] == 3
+    assert result.summary["found"] == 2
+    assert result.summary["not_found"] == 1
+    assert len(result.results) == 3
 
     # Check first path
-    assert result["results"][0]["exists"] is True
-    assert result["results"][0]["ids_name"] == "equilibrium"
+    assert result.results[0].exists is True
+    assert result.results[0].ids_name == "equilibrium"
 
     # Check second path
-    assert result["results"][1]["exists"] is True
-    assert result["results"][1]["ids_name"] == "core_profiles"
+    assert result.results[1].exists is True
+    assert result.results[1].ids_name == "core_profiles"
 
     # Check third path
-    assert result["results"][2]["exists"] is False
-    assert result["results"][2]["path"] == "fake/path"
+    assert result.results[2].exists is False
+    assert result.results[2].path == "fake/path"
 
 
 @pytest.mark.asyncio
@@ -202,10 +200,10 @@ async def test_multiple_paths_list(path_tool):
         ]
     )
 
-    assert result["summary"]["total"] == 2
-    assert result["summary"]["found"] == 2
-    assert result["summary"]["not_found"] == 0
-    assert len(result["results"]) == 2
+    assert result.summary["total"] == 2
+    assert result.summary["found"] == 2
+    assert result.summary["not_found"] == 0
+    assert len(result.results) == 2
 
 
 @pytest.mark.asyncio
@@ -213,11 +211,11 @@ async def test_malformed_path_no_slash(path_tool):
     """Test validation with malformed path (no slash)."""
     result = await path_tool.check_imas_paths("notapath")
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["invalid"] == 1
-    assert result["results"][0]["exists"] is False
-    assert "error" in result["results"][0]
-    assert "Invalid format" in result["results"][0]["error"]
+    assert result.summary["total"] == 1
+    assert result.summary["invalid"] == 1
+    assert result.results[0].exists is False
+    assert result.results[0].error is not None
+    assert "Invalid format" in result.results[0].error
 
 
 @pytest.mark.asyncio
@@ -227,10 +225,10 @@ async def test_mixed_valid_invalid_paths(path_tool):
         "equilibrium/time_slice/profiles_1d/psi invalid/path notapath core_profiles/profiles_1d/electrons/temperature"
     )
 
-    assert result["summary"]["total"] == 4
-    assert result["summary"]["found"] == 2
-    assert result["summary"]["not_found"] == 1
-    assert result["summary"]["invalid"] == 1
+    assert result.summary["total"] == 4
+    assert result.summary["found"] == 2
+    assert result.summary["not_found"] == 1
+    assert result.summary["invalid"] == 1
 
 
 @pytest.mark.asyncio
@@ -238,24 +236,24 @@ async def test_returns_structured_response(path_tool):
     """Test that response has proper structure."""
     result = await path_tool.check_imas_paths("equilibrium/time_slice/profiles_1d/psi")
 
-    # Should have summary and results
-    assert isinstance(result, dict)
-    assert "summary" in result
-    assert "results" in result
+    # Should be a CheckPathsResult Pydantic model
+    from imas_mcp.models.result_models import CheckPathsResult
+
+    assert isinstance(result, CheckPathsResult)
 
     # Summary should have counts
-    assert "total" in result["summary"]
-    assert "found" in result["summary"]
-    assert "not_found" in result["summary"]
-    assert "invalid" in result["summary"]
+    assert "total" in result.summary
+    assert "found" in result.summary
+    assert "not_found" in result.summary
+    assert "invalid" in result.summary
 
     # Results should be a list
-    assert isinstance(result["results"], list)
+    assert isinstance(result.results, list)
 
     # Each result should have path and exists
-    for item in result["results"]:
-        assert "path" in item
-        assert "exists" in item
+    for item in result.results:
+        assert item.path is not None
+        assert item.exists is not None
 
 
 @pytest.mark.asyncio
@@ -263,20 +261,20 @@ async def test_token_efficient_response(path_tool):
     """Test that response is token-efficient (no verbose fields unless needed)."""
     result = await path_tool.check_imas_paths("equilibrium/time_slice/profiles_1d/psi")
 
-    # Should not have search-specific fields
-    assert "hits" not in result
-    assert "query_hints" not in result
-    assert "tool_hints" not in result
-    assert "physics_context" not in result
+    # Should not have search-specific fields (check model doesn't have these)
+    assert not hasattr(result, "hits")
+    assert not hasattr(result, "query_hints")
+    assert not hasattr(result, "tool_hints")
+    assert not hasattr(result, "physics_context")
 
     # Results should be minimal
-    res = result["results"][0]
-    assert "path" in res
-    assert "exists" in res
-    assert "ids_name" in res
+    res = result.results[0]
+    assert res.path is not None
+    assert res.exists is not None
+    assert res.ids_name is not None
 
-    # Should not have documentation (token-heavy)
-    assert "documentation" not in res
+    # Should not have documentation (token-heavy) - model doesn't include it
+    assert not hasattr(res, "documentation")
 
 
 # ============================================================================
@@ -291,11 +289,11 @@ async def test_ids_prefix_single_path(path_tool):
         "time_slice/boundary/psi", ids="equilibrium"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["found"] == 1
-    assert result["results"][0]["exists"] is True
-    assert result["results"][0]["path"] == "equilibrium/time_slice/boundary/psi"
-    assert result["results"][0]["ids_name"] == "equilibrium"
+    assert result.summary["total"] == 1
+    assert result.summary["found"] == 1
+    assert result.results[0].exists is True
+    assert result.results[0].path == "equilibrium/time_slice/boundary/psi"
+    assert result.results[0].ids_name == "equilibrium"
 
 
 @pytest.mark.asyncio
@@ -306,15 +304,15 @@ async def test_ids_prefix_multiple_paths(path_tool):
         ids="equilibrium",
     )
 
-    assert result["summary"]["total"] == 3
-    assert result["summary"]["found"] == 3
-    assert result["summary"]["not_found"] == 0
+    assert result.summary["total"] == 3
+    assert result.summary["found"] == 3
+    assert result.summary["not_found"] == 0
 
     # All paths should be prefixed with equilibrium
-    for res in result["results"]:
-        assert res["path"].startswith("equilibrium/")
-        assert res["exists"] is True
-        assert res["ids_name"] == "equilibrium"
+    for res in result.results:
+        assert res.path.startswith("equilibrium/")
+        assert res.exists is True
+        assert res.ids_name == "equilibrium"
 
 
 @pytest.mark.asyncio
@@ -324,10 +322,10 @@ async def test_ids_prefix_with_list(path_tool):
         ["time_slice/boundary/psi", "time_slice/boundary/psi_norm"], ids="equilibrium"
     )
 
-    assert result["summary"]["total"] == 2
-    assert result["summary"]["found"] == 2
-    assert result["results"][0]["path"] == "equilibrium/time_slice/boundary/psi"
-    assert result["results"][1]["path"] == "equilibrium/time_slice/boundary/psi_norm"
+    assert result.summary["total"] == 2
+    assert result.summary["found"] == 2
+    assert result.results[0].path == "equilibrium/time_slice/boundary/psi"
+    assert result.results[1].path == "equilibrium/time_slice/boundary/psi_norm"
 
 
 @pytest.mark.asyncio
@@ -337,11 +335,11 @@ async def test_ids_prefix_already_present(path_tool):
         "equilibrium/time_slice/boundary/psi", ids="equilibrium"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["found"] == 1
+    assert result.summary["total"] == 1
+    assert result.summary["found"] == 1
     # Should not be double-prefixed
-    assert result["results"][0]["path"] == "equilibrium/time_slice/boundary/psi"
-    assert result["results"][0]["path"].count("equilibrium/") == 1
+    assert result.results[0].path == "equilibrium/time_slice/boundary/psi"
+    assert result.results[0].path.count("equilibrium/") == 1
 
 
 @pytest.mark.asyncio
@@ -352,12 +350,12 @@ async def test_ids_prefix_mixed_paths(path_tool):
         ids="equilibrium",
     )
 
-    assert result["summary"]["total"] == 2
-    assert result["summary"]["found"] == 2
+    assert result.summary["total"] == 2
+    assert result.summary["found"] == 2
 
     # Both should have correct paths without duplication
-    assert result["results"][0]["path"] == "equilibrium/time_slice/boundary/psi"
-    assert result["results"][1]["path"] == "equilibrium/time_slice/boundary/psi_norm"
+    assert result.results[0].path == "equilibrium/time_slice/boundary/psi"
+    assert result.results[1].path == "equilibrium/time_slice/boundary/psi_norm"
 
 
 # ============================================================================
@@ -372,21 +370,21 @@ async def test_deprecated_path_returns_migration(path_tool):
         "equilibrium/time_slice/constraints/bpol_probe"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["not_found"] == 1
+    assert result.summary["total"] == 1
+    assert result.summary["not_found"] == 1
 
-    res = result["results"][0]
-    assert res["exists"] is False
-    assert res["path"] == "equilibrium/time_slice/constraints/bpol_probe"
+    res = result.results[0]
+    assert res.exists is False
+    assert res.path == "equilibrium/time_slice/constraints/bpol_probe"
 
     # Should have migration info
-    assert "migration" in res
+    assert res.migration is not None
     assert (
-        res["migration"]["new_path"]
+        res.migration["new_path"]
         == "equilibrium/time_slice/constraints/b_field_pol_probe"
     )
-    assert res["migration"]["deprecated_in"] == "4.0.0"
-    assert res["migration"]["last_valid_version"] == "3.42.0"
+    assert res.migration["deprecated_in"] == "4.0.0"
+    assert res.migration["last_valid_version"] == "3.42.0"
 
 
 @pytest.mark.asyncio
@@ -394,9 +392,9 @@ async def test_nonexistent_path_no_migration(path_tool):
     """Test that truly invalid paths don't have migration info."""
     result = await path_tool.check_imas_paths("fake/nonexistent/path")
 
-    res = result["results"][0]
-    assert res["exists"] is False
-    assert "migration" not in res
+    res = result.results[0]
+    assert res.exists is False
+    assert res.migration is None
 
 
 # ============================================================================
@@ -542,18 +540,21 @@ async def test_fetch_vs_check_difference(path_tool):
     """Test that fetch returns more data than check."""
     path = "equilibrium/time_slice/profiles_1d/psi"
 
-    # Check (minimal)
+    # Check (minimal) - returns CheckPathsResult
     check_result = await path_tool.check_imas_paths(path)
 
     # Fetch (rich)
     fetch_result = await path_tool.fetch_imas_paths(path)
 
-    # Check returns dict with minimal info
-    assert isinstance(check_result, dict)
-    assert "exists" in check_result["results"][0]
-    assert "documentation" not in check_result["results"][0]
+    # Check returns CheckPathsResult with minimal info
+    from imas_mcp.models.result_models import CheckPathsResult
 
-    # Fetch returns IdsPathResult with full IdsNode objects
+    assert isinstance(check_result, CheckPathsResult)
+    assert check_result.results[0].exists is True
+    # CheckPathsResultItem doesn't have documentation field
+    assert not hasattr(check_result.results[0], "documentation")
+
+    # Fetch returns FetchPathsResult with full IdsNode objects
     assert hasattr(fetch_result, "nodes")
     assert fetch_result.node_count == 1
     assert fetch_result.nodes[0].documentation  # Has full documentation
@@ -815,14 +816,14 @@ async def test_check_excluded_path_returns_exclusion_info(path_tool):
         "equilibrium/time_slice/profiles_1d/psi_error_lower"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["not_found"] == 1
+    assert result.summary["total"] == 1
+    assert result.summary["not_found"] == 1
 
-    res = result["results"][0]
-    assert res["exists"] is False
-    assert "excluded" in res
-    assert res["excluded"]["reason_key"] == "error_field"
-    assert "reason" in res["excluded"]
+    res = result.results[0]
+    assert res.exists is False
+    assert res.excluded is not None
+    assert res.excluded["reason_key"] == "error_field"
+    assert "reason" in res.excluded
 
 
 @pytest.mark.asyncio
@@ -832,15 +833,15 @@ async def test_check_deprecated_path_with_excluded_new_path(path_tool):
         "core_profiles/profiles_1d/j_tor_error_upper_old"
     )
 
-    assert result["summary"]["total"] == 1
-    assert result["summary"]["not_found"] == 1
+    assert result.summary["total"] == 1
+    assert result.summary["not_found"] == 1
 
-    res = result["results"][0]
-    assert res["exists"] is False
-    assert "migration" in res
-    assert res["migration"]["new_path"] == "core_profiles/profiles_1d/j_tor_error_upper"
-    assert res["migration"]["new_path_excluded"] is True
-    assert "exclusion_reason" in res["migration"]
+    res = result.results[0]
+    assert res.exists is False
+    assert res.migration is not None
+    assert res.migration["new_path"] == "core_profiles/profiles_1d/j_tor_error_upper"
+    assert res.migration["new_path_excluded"] is True
+    assert "exclusion_reason" in res.migration
 
 
 # ============================================================================
