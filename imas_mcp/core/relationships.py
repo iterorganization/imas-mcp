@@ -16,7 +16,11 @@ from imas_mcp import dd_version
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.physics.relationship_engine import EnhancedRelationshipEngine
-from imas_mcp.relationships import RelationshipExtractionConfig, RelationshipExtractor
+from imas_mcp.relationships import (
+    ClusterSearcher,
+    RelationshipExtractionConfig,
+    RelationshipExtractor,
+)
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,10 @@ class Relationships:
     _enhanced_engine: EnhancedRelationshipEngine | None = field(
         default=None, init=False, repr=False
     )
+    _cluster_searcher: ClusterSearcher | None = field(
+        default=None, init=False, repr=False
+    )
+    _encoder: Encoder | None = field(default=None, init=False, repr=False)
 
     # Dependency tracking
     _last_dependency_check: float | None = field(default=None, init=False, repr=False)
@@ -173,6 +181,7 @@ class Relationships:
         self._cached_data = None
         self._cached_mtime = None
         self._enhanced_engine = None
+        self._cluster_searcher = None
 
     def _load_relationships_data(self) -> dict[str, Any]:
         """
@@ -391,3 +400,71 @@ class Relationships:
         logger.info("Forcing reload of relationships data")
         self._invalidate_cache()
         # Next call to get_data() will reload from disk
+
+    def get_cluster_searcher(self) -> ClusterSearcher:
+        """Get cluster searcher for semantic search over clusters.
+
+        Returns:
+            ClusterSearcher instance with centroids loaded.
+        """
+        if self._cluster_searcher is None:
+            clusters = self.get_clusters()
+            self._cluster_searcher = ClusterSearcher(clusters=clusters)
+            logger.debug(f"Created cluster searcher with {len(clusters)} clusters")
+
+        return self._cluster_searcher
+
+    def get_encoder(self) -> Encoder:
+        """Get encoder for embedding queries.
+
+        Returns:
+            Encoder instance.
+        """
+        if self._encoder is None:
+            self._encoder = Encoder(self.encoder_config)
+            logger.debug("Created encoder for cluster search")
+
+        return self._encoder
+
+    def search_clusters(
+        self,
+        query: str,
+        top_k: int = 10,
+        similarity_threshold: float = 0.3,
+        cross_ids_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Search for clusters matching a text query.
+
+        Uses centroid embeddings to find semantically similar clusters.
+
+        Args:
+            query: Text query to search for
+            top_k: Maximum number of results
+            similarity_threshold: Minimum similarity score (0-1)
+            cross_ids_only: If True, only return cross-IDS clusters
+
+        Returns:
+            List of matching clusters with similarity scores
+        """
+        searcher = self.get_cluster_searcher()
+        encoder = self.get_encoder()
+
+        results = searcher.search_by_text(
+            query=query,
+            encoder=encoder,
+            top_k=top_k,
+            similarity_threshold=similarity_threshold,
+            cross_ids_only=cross_ids_only,
+        )
+
+        return [
+            {
+                "cluster_id": r.cluster_id,
+                "similarity_score": r.similarity_score,
+                "is_cross_ids": r.is_cross_ids,
+                "ids_names": r.ids_names,
+                "paths": r.paths,
+                "cluster_similarity": r.cluster_similarity,
+            }
+            for r in results
+        ]

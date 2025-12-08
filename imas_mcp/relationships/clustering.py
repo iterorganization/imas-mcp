@@ -32,6 +32,30 @@ def _compute_cluster_similarity(
     return min(1.0, max(0.0, avg_similarity))
 
 
+def _compute_cluster_centroid(
+    cluster_indices: list[int], embeddings: np.ndarray, normalize: bool = True
+) -> list[float]:
+    """Compute the centroid embedding for a cluster.
+
+    Args:
+        cluster_indices: Indices of paths in the cluster
+        embeddings: Full embeddings matrix
+        normalize: Whether to L2-normalize the centroid
+
+    Returns:
+        Centroid embedding as a list of floats
+    """
+    cluster_embeddings = embeddings[cluster_indices]
+    centroid = np.mean(cluster_embeddings, axis=0)
+
+    if normalize:
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid = centroid / norm
+
+    return centroid.tolist()
+
+
 class EmbeddingClusterer:
     """Performs multi-membership clustering with separate cross-IDS and intra-IDS stages."""
 
@@ -157,6 +181,11 @@ class EmbeddingClusterer:
                 [cross_indices[i] for i in cluster_indices], embeddings
             )
 
+            # Compute centroid embedding for semantic search
+            centroid = _compute_cluster_centroid(
+                [cross_indices[i] for i in cluster_indices], embeddings
+            )
+
             cluster = ClusterInfo(
                 id=cluster_id,
                 similarity_score=similarity_score,
@@ -164,6 +193,7 @@ class EmbeddingClusterer:
                 is_cross_ids=True,
                 ids_names=sorted(ids_in_cluster),
                 paths=cluster_paths,
+                centroid=centroid,
             )
             clusters.append(cluster)
 
@@ -245,6 +275,11 @@ class EmbeddingClusterer:
                     [indices[i] for i in cluster_indices], embeddings
                 )
 
+                # Compute centroid embedding for semantic search
+                centroid = _compute_cluster_centroid(
+                    [indices[i] for i in cluster_indices], embeddings
+                )
+
                 cluster = ClusterInfo(
                     id=cluster_id,
                     similarity_score=similarity_score,
@@ -252,6 +287,7 @@ class EmbeddingClusterer:
                     is_cross_ids=False,
                     ids_names=[ids_name],
                     paths=cluster_paths,
+                    centroid=centroid,
                 )
                 clusters.append(cluster)
 
