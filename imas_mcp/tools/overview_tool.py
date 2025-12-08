@@ -103,12 +103,12 @@ class OverviewTool(BaseTool):
 
         # We need to scan all tool classes for @mcp_tool decorated methods
         from imas_mcp.tools import (
+            ClustersTool,
             DocsTool,
             IdentifiersTool,
             ListTool,
             OverviewTool,
             PathTool,
-            RelationshipsTool,
             SearchTool,
         )
 
@@ -118,7 +118,7 @@ class OverviewTool(BaseTool):
             ListTool,
             OverviewTool,
             IdentifiersTool,
-            RelationshipsTool,
+            ClustersTool,
             DocsTool,
         ]
 
