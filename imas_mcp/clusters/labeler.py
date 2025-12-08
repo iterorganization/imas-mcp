@@ -7,15 +7,14 @@ using Gemini-3-Pro's large context window for batch processing.
 
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass
 
 import requests
 
-logger = logging.getLogger(__name__)
+from imas_mcp.settings import get_language_model
 
-DEFAULT_LABELING_MODEL = "google/gemini-3-pro-preview"
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,13 +38,13 @@ class ClusterLabeler:
         """Initialize the labeler.
 
         Args:
-            model: LLM model to use (default: gemini-2.5-pro-preview)
+            model: LLM model to use (default from settings)
             api_key: OpenRouter API key (uses OPENAI_API_KEY env var if not provided)
             base_url: API base URL (uses OPENAI_BASE_URL env var if not provided)
         """
-        self.model = model or os.getenv(
-            "IMAS_MCP_LABELING_MODEL", DEFAULT_LABELING_MODEL
-        )
+        import os
+
+        self.model = model or get_language_model()
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url or os.getenv(
             "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
