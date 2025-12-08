@@ -20,11 +20,9 @@ from typing import Any
 from imas_mcp.models.structure_models import (
     DomainDistribution,
     HierarchyMetrics,
-    MermaidGraphs,
     NavigationHints,
     StructureAnalysis,
 )
-from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +111,6 @@ class StructureAnalyzer:
         self.structure_dir = data_dir / "structure"
         self.structure_dir.mkdir(exist_ok=True)
 
-        # Initialize Mermaid generator with resources directory (parent of schemas)
-        # data_dir is typically the schemas directory, so we need to go up one level
-        resources_dir = data_dir.parent
-        self.mermaid_generator = MermaidGraphGenerator(resources_dir)
-
     def analyze_all_ids(self, ids_data: dict[str, dict[str, Any]]) -> None:
         """Analyze structure for all IDS and generate static data files."""
         logger.info("Generating enhanced structure analysis for all IDS...")
@@ -128,12 +121,7 @@ class StructureAnalyzer:
             analysis = self.analyze_ids_structure(ids_name, data)
             self._save_structure_analysis(ids_name, analysis)
 
-        # Generate Mermaid graphs alongside structure analysis
         self._generate_structure_catalog(ids_data)
-
-        # Generate Mermaid graphs for visual representation
-        logger.info("Generating Mermaid graphs for visual analysis...")
-        self.mermaid_generator.generate_all_graphs(ids_data)
 
         logger.info(f"Enhanced structure analysis completed for {len(ids_data)} IDS")
 
@@ -496,50 +484,10 @@ class StructureAnalyzer:
 
             # Convert back to Pydantic models
             analysis = StructureAnalysis(**analysis_data)
-
-            # Load Mermaid graphs if available
-            mermaid_graphs = self._load_mermaid_graphs(ids_name)
-            if mermaid_graphs:
-                analysis.mermaid_graphs = mermaid_graphs
-
             return analysis
 
         except Exception as e:
             logger.error(f"Failed to load structure analysis for {ids_name}: {e}")
-            return None
-
-    def _load_mermaid_graphs(self, ids_name: str) -> MermaidGraphs | None:
-        """Load Mermaid graphs for an IDS."""
-        try:
-            available_graphs = self.mermaid_generator.get_available_graphs(ids_name)
-
-            if not available_graphs:
-                return None
-
-            mermaid_graphs = MermaidGraphs(available_graphs=available_graphs)
-
-            # Load each available graph type
-            if "hierarchy" in available_graphs:
-                mermaid_graphs.hierarchy_graph = (
-                    self.mermaid_generator.load_mermaid_graph(ids_name, "hierarchy")
-                )
-
-            if "physics_domains" in available_graphs:
-                mermaid_graphs.physics_domains_graph = (
-                    self.mermaid_generator.load_mermaid_graph(
-                        ids_name, "physics_domains"
-                    )
-                )
-
-            if "complexity" in available_graphs:
-                mermaid_graphs.complexity_graph = (
-                    self.mermaid_generator.load_mermaid_graph(ids_name, "complexity")
-                )
-
-            return mermaid_graphs
-
-        except Exception as e:
-            logger.error(f"Failed to load Mermaid graphs for {ids_name}: {e}")
             return None
 
     def get_structure_catalog(self) -> dict[str, Any] | None:

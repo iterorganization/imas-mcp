@@ -100,12 +100,12 @@ class TestResponseService:
         mock_response = Mock()
         mock_response.metadata = {}
 
-        service.add_standard_metadata(mock_response, "search_imas")
+        service.add_standard_metadata(mock_response, "search_imas_paths")
 
         metadata = mock_response.metadata
 
         # Verify tool name
-        assert metadata["tool"] == "search_imas"
+        assert metadata["tool"] == "search_imas_paths"
 
         # Verify timestamp format (ISO 8601 with timezone)
         timestamp = metadata["processing_timestamp"]

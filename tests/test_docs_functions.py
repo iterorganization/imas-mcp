@@ -46,7 +46,7 @@ class TestDocsFunctions:
         mock_docs_manager.proxy_search_docs.return_value = mock_response
 
         # Call the function
-        result = await docs_tool.search_docs(
+        result = await docs_tool.search_imas_docs(
             "test query", library="test-lib", limit=5, version="1.0.0"
         )
 
@@ -62,7 +62,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_search_docs_empty_query(self, docs_tool):
         """Test search with empty query returns validation error."""
-        result = await docs_tool.search_docs("")
+        result = await docs_tool.search_imas_docs("")
 
         assert "error" in result
         assert "Validation error" in result["error"]
@@ -71,7 +71,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_search_docs_invalid_limit(self, docs_tool):
         """Test search with invalid limit returns validation error."""
-        result = await docs_tool.search_docs("test query", limit=25)
+        result = await docs_tool.search_imas_docs("test query", limit=25)
 
         assert "error" in result
         assert "Validation error" in result["error"]
@@ -86,7 +86,7 @@ class TestDocsFunctions:
             "Server unavailable"
         )
 
-        result = await docs_tool.search_docs("test query", library="test-lib")
+        result = await docs_tool.search_imas_docs("test query", library="test-lib")
 
         assert "error" in result
         # The error message can be either about server availability or missing library parameter
@@ -107,7 +107,7 @@ class TestDocsFunctions:
             "unknown-lib", ["imas-python"]
         )
 
-        result = await docs_tool.search_docs("test query", library="unknown-lib")
+        result = await docs_tool.search_imas_docs("test query", library="unknown-lib")
 
         assert "error" in result
         assert "Documentation library 'unknown-lib' not found" in result["error"]
@@ -121,7 +121,7 @@ class TestDocsFunctions:
         mock_docs_manager.proxy_list_libraries.return_value = mock_libraries
 
         # Call the function
-        result = await docs_tool.list_docs()
+        result = await docs_tool.list_imas_docs()
 
         # Verify the result
         assert result["libraries"] == mock_libraries
@@ -137,7 +137,7 @@ class TestDocsFunctions:
             "Server unavailable"
         )
 
-        result = await docs_tool.list_docs()
+        result = await docs_tool.list_imas_docs()
 
         assert "error" in result
         assert "Server unavailable" in result["error"]
@@ -151,7 +151,7 @@ class TestDocsFunctions:
         # Note: list_docs with library parameter just returns a note now
 
         # Call the function
-        result = await docs_tool.list_docs("imas-python")
+        result = await docs_tool.list_imas_docs("imas-python")
 
         # Verify the result
         assert result["library"] == "imas-python"
@@ -161,7 +161,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_list_docs_with_library_empty_library(self, docs_tool):
         """Test version retrieval with empty library name returns validation error."""
-        result = await docs_tool.list_docs("")
+        result = await docs_tool.list_imas_docs("")
 
         assert "error" in result
         assert "Validation error" in result["error"]
@@ -175,7 +175,7 @@ class TestDocsFunctions:
         # Note: list_docs with library parameter doesn't check existence anymore
         # It just returns a note
 
-        result = await docs_tool.list_docs("unknown-lib")
+        result = await docs_tool.list_imas_docs("unknown-lib")
 
         assert result["library"] == "unknown-lib"
         assert "note" in result
@@ -190,7 +190,7 @@ class TestDocsFunctions:
             "numpy",
         ]
 
-        result = await docs_tool.search_docs("test query")
+        result = await docs_tool.search_imas_docs("test query")
 
         assert "error" in result
         assert "Library parameter is required for search" in result["error"]

@@ -290,16 +290,15 @@ def mcp_test_context():
         "test_query": "plasma temperature",
         "test_ids": "core_profiles",
         "expected_tools": [
-            "analyze_ids_structure",
             "check_imas_paths",
-            "explain_concept",
-            "explore_identifiers",
-            "explore_relationships",
-            "export_ids",
-            "export_physics_domain",
             "fetch_imas_paths",
-            "get_overview",
-            "search_imas",
+            "get_imas_overview",
+            "list_imas_docs",
+            "list_imas_identifiers",
+            "list_imas_paths",
+            "search_imas_clusters",
+            "search_imas_docs",
+            "search_imas_paths",
         ],
     }
 

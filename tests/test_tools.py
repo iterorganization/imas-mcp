@@ -11,14 +11,10 @@ import pytest
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
-    ConceptResult,
-    DomainExport,
     IdentifierResult,
-    IDSExport,
     OverviewResult,
     RelationshipResult,
     SearchResult,
-    StructureResult,
 )
 from tests.conftest import STANDARD_TEST_IDS_SET
 
@@ -41,7 +37,9 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_search_tool_interface(self, tools):
         """Test search tool interface and basic functionality."""
-        result = await tools.search_imas(query="plasma temperature", max_results=5)
+        result = await tools.search_imas_paths(
+            query="plasma temperature", max_results=5
+        )
 
         assert isinstance(result, SearchResult)
         assert hasattr(result, "hits")
@@ -53,7 +51,7 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_overview_tool_interface(self, tools):
         """Test overview tool interface and basic functionality."""
-        result = await tools.get_overview()
+        result = await tools.get_imas_overview()
 
         # Test interface contract
         assert isinstance(result, OverviewResult)
@@ -63,32 +61,10 @@ class TestToolsComposition:
         assert hasattr(result, "physics_domains")
 
     @pytest.mark.asyncio
-    async def test_analysis_tool_interface(self, tools, mcp_test_context):
-        """Test analysis tool interface and basic functionality."""
-        ids_name = mcp_test_context["test_ids"]
-        result = await tools.analyze_ids_structure(ids_name=ids_name)
-
-        # Test interface contract
-        assert isinstance(result, StructureResult)
-        assert hasattr(result, "ids_name")
-        assert result.ids_name == ids_name
-        assert hasattr(result, "structure")
-
-    @pytest.mark.asyncio
-    async def test_explain_tool_interface(self, tools):
-        """Test explain tool interface and basic functionality."""
-        result = await tools.explain_concept(concept="core_profiles")
-
-        # Test interface contract
-        assert isinstance(result, ConceptResult)
-        assert hasattr(result, "concept")
-        assert hasattr(result, "explanation")
-
-    @pytest.mark.asyncio
     async def test_relationships_tool_interface(self, tools, mcp_test_context):
         """Test relationships tool interface and basic functionality."""
         ids_name = mcp_test_context["test_ids"]
-        result = await tools.explore_relationships(path=f"{ids_name}/profiles_1d/time")
+        result = await tools.search_imas_clusters(path=f"{ids_name}/profiles_1d/time")
 
         # Test interface contract - accept either RelationshipResult or ToolError
         assert isinstance(result, RelationshipResult | ToolError)
@@ -100,34 +76,12 @@ class TestToolsComposition:
     @pytest.mark.asyncio
     async def test_identifiers_tool_interface(self, tools, mcp_test_context):
         """Test identifiers tool interface and basic functionality."""
-        result = await tools.explore_identifiers()
+        result = await tools.list_imas_identifiers()
 
         # Test interface contract
         assert isinstance(result, IdentifierResult)
         assert hasattr(result, "schemas")
         assert hasattr(result, "analytics")
-
-    @pytest.mark.asyncio
-    async def test_export_ids_tool_interface(self, tools, mcp_test_context):
-        """Test export IDS tool interface and basic functionality."""
-        ids_name = mcp_test_context["test_ids"]
-        result = await tools.export_ids(ids_list=[ids_name])
-
-        # Test interface contract
-        assert isinstance(result, IDSExport)
-        assert hasattr(result, "ids_names")
-        assert hasattr(result, "data")
-
-    @pytest.mark.asyncio
-    async def test_export_domain_tool_interface(self, tools):
-        """Test export physics domain tool interface and basic functionality."""
-        result = await tools.export_physics_domain(domain="transport")
-
-        # Test interface contract - now returns DomainExport object
-        assert isinstance(result, DomainExport)
-        assert hasattr(result, "domain")
-        assert hasattr(result, "data")
-        assert result.domain == "transport"
 
 
 class TestToolsErrorHandling:
@@ -137,38 +91,11 @@ class TestToolsErrorHandling:
     async def test_search_tool_invalid_parameters(self, tools):
         """Test search tool handles invalid parameters gracefully."""
         # Test with invalid max_results
-        result = await tools.search_imas(query="test", max_results=-1)
+        result = await tools.search_imas_paths(query="test", max_results=-1)
 
         # Should handle gracefully - either clamp to valid range or return error
         assert isinstance(result, ToolError)
         assert "max_results" in result.error.lower()
-
-    @pytest.mark.asyncio
-    async def test_analysis_tool_invalid_ids(self, tools):
-        """Test analysis tool handles invalid IDS name gracefully."""
-        result = await tools.analyze_ids_structure(ids_name="nonexistent_ids")
-
-        assert isinstance(result, ToolError)
-        # Should return structured error response
-        assert isinstance(result.error, str)
-        assert hasattr(result, "context")
-        assert hasattr(result, "suggestions")
-
-    @pytest.mark.asyncio
-    async def test_explain_tool_empty_concept(self, tools):
-        """Test explain tool handles empty concept gracefully."""
-        result = await tools.explain_concept(concept="")
-
-        assert isinstance(result, ToolError)
-        assert "concept" in result.error.lower()
-
-    @pytest.mark.asyncio
-    async def test_export_tool_invalid_domain(self, tools):
-        """Test export tool handles invalid domain gracefully."""
-        result = await tools.export_physics_domain(domain="nonexistent_domain")
-
-        assert isinstance(result, DomainExport)
-        assert result.domain == "nonexistent_domain"
 
 
 class TestToolsParameterValidation:
@@ -178,28 +105,14 @@ class TestToolsParameterValidation:
     async def test_search_tool_parameter_validation(self, tools):
         """Test search tool parameter validation."""
         # Test required parameter
-        result = await tools.search_imas(query="test")
+        result = await tools.search_imas_paths(query="test")
         assert isinstance(result, SearchResult)
 
         # Test optional parameters
-        result = await tools.search_imas(
+        result = await tools.search_imas_paths(
             query="test", max_results=10, ids_filter=["core_profiles"]
         )
         assert isinstance(result, SearchResult)
-
-    @pytest.mark.asyncio
-    async def test_analysis_tool_parameter_validation(self, tools):
-        """Test analysis tool parameter validation."""
-        # Test required parameter
-        result = await tools.analyze_ids_structure(ids_name="core_profiles")
-        assert isinstance(result, StructureResult)
-
-    @pytest.mark.asyncio
-    async def test_explain_tool_parameter_validation(self, tools):
-        """Test explain tool parameter validation."""
-        # Test required parameter
-        result = await tools.explain_concept(concept="equilibrium")
-        assert isinstance(result, ConceptResult)
 
 
 class TestToolsCompositionPattern:
@@ -210,7 +123,6 @@ class TestToolsCompositionPattern:
         # Check main properties exist
         assert hasattr(tools, "document_store")
         assert hasattr(tools, "search_tool")
-        assert hasattr(tools, "analysis_tool")
 
         # Document store should be consistent
         doc_store1 = tools.document_store

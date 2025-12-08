@@ -34,7 +34,7 @@ def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggesti
         # Suggest exploring relationships for found paths
         hints.append(
             ToolSuggestion(
-                tool_name="explore_relationships",
+                tool_name="search_imas_clusters",
                 description="Discover how these data paths connect to other IMAS structures",
                 relevance=f"Explore relationships for {search_result.hit_count} found paths",
             )
@@ -54,36 +54,25 @@ def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggesti
             if hasattr(hit, "physics_domain") and hit.physics_domain:
                 domains.add(hit.physics_domain)
 
-        # Suggest IDS structure analysis for top IDS
+        # Suggest listing paths for top IDS
         if ids_names:
             top_ids = list(ids_names)[:2]  # Limit to top 2
             for ids_name in top_ids:
                 hints.append(
                     ToolSuggestion(
-                        tool_name="analyze_ids_structure",
-                        description=f"Get comprehensive structural analysis of {ids_name}",
-                        relevance=f"Analyze detailed structure of {ids_name} IDS",
+                        tool_name="list_imas_paths",
+                        description=f"List all data paths in {ids_name}",
+                        relevance=f"Explore the structure of {ids_name} IDS",
                     )
                 )
 
-        # Suggest concept explanations for physics domains
-        if domains:
-            for domain in list(domains)[:2]:  # Limit to top 2
-                hints.append(
-                    ToolSuggestion(
-                        tool_name="explain_concept",
-                        description=f"Get detailed explanation of {domain} concepts",
-                        relevance=f"Learn more about {domain} physics domain",
-                    )
-                )
-
-        # Suggest export for substantial results
+        # Suggest fetch_imas_paths for substantial results
         if search_result.hit_count >= 5:
             hints.append(
                 ToolSuggestion(
-                    tool_name="export_ids",
-                    description="Export structured data for analysis workflows",
-                    relevance=f"Export data for {len(ids_names)} IDS found",
+                    tool_name="fetch_imas_paths",
+                    description="Get detailed documentation for found paths",
+                    relevance=f"Get details for {search_result.hit_count} paths found",
                 )
             )
 
@@ -92,19 +81,14 @@ def generate_search_tool_hints(search_result: SearchResult) -> list[ToolSuggesti
         hints.extend(
             [
                 ToolSuggestion(
-                    tool_name="get_overview",
+                    tool_name="get_imas_overview",
                     description="Explore IMAS data structure and available concepts",
                     relevance="No results found - get overview of available data",
                 ),
                 ToolSuggestion(
-                    tool_name="explore_identifiers",
+                    tool_name="list_imas_identifiers",
                     description="Discover alternative search terms and data identifiers",
                     relevance="Search for related terms and identifiers",
-                ),
-                ToolSuggestion(
-                    tool_name="explain_concept",
-                    description="Get conceptual understanding and context",
-                    relevance=f'Learn about "{search_result.query}" concept in fusion physics',
                 ),
             ]
         )
@@ -127,54 +111,53 @@ def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
     # Determine result type and suggest appropriate tools
     result_type = type(result).__name__
 
-    if result_type == "ConceptResult":
-        # For concept explanations, suggest related tools
+    if result_type == "OverviewResult":
+        # For overview, suggest search and exploration tools
         hints.extend(
             [
                 ToolSuggestion(
-                    tool_name="search_imas",
-                    description="Search for IMAS data paths related to this concept",
-                    relevance=f"Find data paths for concept: {getattr(result, 'concept', '')}",
+                    tool_name="search_imas_paths",
+                    description="Search for specific IMAS data paths",
+                    relevance="Find specific data paths in the IMAS data dictionary",
                 ),
                 ToolSuggestion(
-                    tool_name="explore_relationships",
-                    description="Explore how this concept relates to other IMAS structures",
-                    relevance="Discover related physics concepts and measurements",
+                    tool_name="list_imas_identifiers",
+                    description="Explore identifier schemas and enumerations",
+                    relevance="Discover valid values and identifiers",
                 ),
             ]
         )
 
-    elif result_type == "StructureResult":
-        # For structure analysis, suggest data exploration tools
-        ids_name = getattr(result, "ids_name", "")
+    elif result_type == "RelationshipResult":
+        # For relationship results, suggest search and path listing
         hints.extend(
             [
                 ToolSuggestion(
-                    tool_name="export_ids",
-                    description=f"Export comprehensive data from {ids_name}",
-                    relevance=f"Get all data from {ids_name} for analysis",
+                    tool_name="fetch_imas_paths",
+                    description="Get detailed documentation for related paths",
+                    relevance="Get full documentation for related data paths",
                 ),
                 ToolSuggestion(
-                    tool_name="search_imas",
-                    description=f"Search for specific data within {ids_name}",
-                    relevance=f"Find specific measurements in {ids_name}",
+                    tool_name="search_imas_paths",
+                    description="Search for related data paths",
+                    relevance="Find additional related measurements",
                 ),
             ]
         )
 
-    elif result_type in ["IDSExport", "DomainExport"]:
-        # For export results, suggest analysis tools
+    elif result_type == "IdentifierResult":
+        # For identifier results, suggest search and overview
         hints.extend(
             [
                 ToolSuggestion(
-                    tool_name="analyze_ids_structure",
-                    description="Analyze the structure of exported data",
-                    relevance="Understand the organization of exported data",
+                    tool_name="search_imas_paths",
+                    description="Search for paths using these identifiers",
+                    relevance="Find data paths that use these identifiers",
                 ),
                 ToolSuggestion(
-                    tool_name="explore_relationships",
-                    description="Explore relationships within exported data",
-                    relevance="Find connections between exported data elements",
+                    tool_name="get_imas_overview",
+                    description="Get overview of IMAS data structure",
+                    relevance="Understand the broader context of these identifiers",
                 ),
             ]
         )
@@ -184,12 +167,12 @@ def generate_generic_tool_hints(result: Any) -> list[ToolSuggestion]:
         hints.extend(
             [
                 ToolSuggestion(
-                    tool_name="search_imas",
+                    tool_name="search_imas_paths",
                     description="Search for related IMAS data paths",
                     relevance="Find additional related data",
                 ),
                 ToolSuggestion(
-                    tool_name="get_overview",
+                    tool_name="get_imas_overview",
                     description="Get overview of IMAS data structure",
                     relevance="Explore the broader IMAS data context",
                 ),
@@ -217,7 +200,7 @@ def apply_tool_hints(result: Any, max_hints: int = 4) -> Any:
             return result
 
         # Generate hints based on result type - check tool_name property for SearchResult
-        if hasattr(result, "tool_name") and result.tool_name == "search_imas":
+        if hasattr(result, "tool_name") and result.tool_name == "search_imas_paths":
             # SearchResult - use existing search hint generator
             hints = generate_search_tool_hints(result)
         else:

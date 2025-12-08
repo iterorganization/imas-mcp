@@ -1,6 +1,6 @@
 """IMAS MCP Tools Package.
 
-This package contains the refactored Tools implementation split into focused modules.
+This package contains the Tools implementation split into focused modules.
 Each module handles a specific tool functionality with clean separation of concerns.
 """
 
@@ -10,12 +10,8 @@ from imas_mcp.providers import MCPProvider
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
-# Import individual tool classes
-from .analysis_tool import AnalysisTool
 from .base import BaseTool
 from .docs_tool import DocsTool
-from .explain_tool import ExplainTool
-from .export_tool import ExportTool
 from .identifiers_tool import IdentifiersTool
 from .list_tool import ListTool
 from .overview_tool import OverviewTool
@@ -26,6 +22,9 @@ from .search_tool import SearchTool
 
 class Tools(MCPProvider):
     """Main Tools class that delegates to individual tool implementations."""
+
+    # Class-level registry of tool instances for dynamic discovery
+    _tool_instances: list = []
 
     def __init__(
         self,
@@ -48,12 +47,9 @@ class Tools(MCPProvider):
         self.search_tool = SearchTool(self.document_store)
         self.path_tool = PathTool(self.document_store)
         self.list_tool = ListTool(self.document_store)
-        self.explain_tool = ExplainTool(self.document_store)
         self.overview_tool = OverviewTool(self.document_store)
-        self.analysis_tool = AnalysisTool(self.document_store)
         self.relationships_tool = RelationshipsTool(self.document_store)
         self.identifiers_tool = IdentifiersTool(self.document_store)
-        self.export_tool = ExportTool(self.document_store)
 
         # Initialize docs tool with injected docs manager
         if docs_manager is None:
@@ -62,6 +58,17 @@ class Tools(MCPProvider):
             docs_manager = DocsServerManager()
         self.docs_tool = DocsTool(docs_manager)
 
+        # Store tool instances for dynamic discovery
+        self._tool_instances = [
+            self.search_tool,
+            self.path_tool,
+            self.list_tool,
+            self.overview_tool,
+            self.relationships_tool,
+            self.identifiers_tool,
+            self.docs_tool,
+        ]
+
     @property
     def name(self) -> str:
         """Provider name for logging and identification."""
@@ -69,28 +76,31 @@ class Tools(MCPProvider):
 
     def register(self, mcp: FastMCP):
         """Register all IMAS tools with the MCP server."""
-        # Register tools from each module
-        for tool in [
-            self.search_tool,
-            self.path_tool,
-            self.list_tool,
-            self.explain_tool,
-            self.overview_tool,
-            self.analysis_tool,
-            self.relationships_tool,
-            self.identifiers_tool,
-            self.export_tool,
-            self.docs_tool,
-        ]:
+        for tool in self._tool_instances:
             for attr_name in dir(tool):
                 attr = getattr(tool, attr_name)
                 if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
                     mcp.tool(description=attr._mcp_description)(attr)
 
+    def get_registered_tool_names(self) -> list[str]:
+        """Get list of all registered MCP tool names."""
+        tool_names = []
+        for tool in self._tool_instances:
+            for attr_name in dir(tool):
+                if attr_name.startswith("_"):
+                    continue
+                try:
+                    attr = getattr(tool, attr_name)
+                    if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
+                        tool_names.append(attr_name)
+                except AttributeError:
+                    continue
+        return sorted(tool_names)
+
     # Primary method delegation
-    async def search_imas(self, *args, **kwargs):
+    async def search_imas_paths(self, *args, **kwargs):
         """Delegate to search tool."""
-        return await self.search_tool.search_imas(*args, **kwargs)
+        return await self.search_tool.search_imas_paths(*args, **kwargs)
 
     async def check_imas_paths(self, *args, **kwargs):
         """Delegate to path tool."""
@@ -104,42 +114,26 @@ class Tools(MCPProvider):
         """Delegate to list tool."""
         return await self.list_tool.list_imas_paths(*args, **kwargs)
 
-    async def explain_concept(self, *args, **kwargs):
-        """Delegate to explain tool."""
-        return await self.explain_tool.explain_concept(*args, **kwargs)
-
-    async def get_overview(self, *args, **kwargs):
+    async def get_imas_overview(self, *args, **kwargs):
         """Delegate to overview tool."""
-        return await self.overview_tool.get_overview(*args, **kwargs)
+        return await self.overview_tool.get_imas_overview(*args, **kwargs)
 
-    async def explore_identifiers(self, *args, **kwargs):
+    async def list_imas_identifiers(self, *args, **kwargs):
         """Delegate to identifiers tool."""
-        return await self.identifiers_tool.explore_identifiers(*args, **kwargs)
+        return await self.identifiers_tool.list_imas_identifiers(*args, **kwargs)
 
-    async def analyze_ids_structure(self, *args, **kwargs):
-        """Delegate to analysis tool."""
-        return await self.analysis_tool.analyze_ids_structure(*args, **kwargs)
-
-    async def explore_relationships(self, *args, **kwargs):
+    async def search_imas_clusters(self, *args, **kwargs):
         """Delegate to relationships tool."""
-        return await self.relationships_tool.explore_relationships(*args, **kwargs)
-
-    async def export_ids(self, *args, **kwargs):
-        """Delegate to export tool."""
-        return await self.export_tool.export_ids(*args, **kwargs)
-
-    async def export_physics_domain(self, *args, **kwargs):
-        """Delegate to export tool."""
-        return await self.export_tool.export_physics_domain(*args, **kwargs)
+        return await self.relationships_tool.search_imas_clusters(*args, **kwargs)
 
     # Documentation search delegation methods
-    async def search_docs(self, *args, **kwargs):
+    async def search_imas_docs(self, *args, **kwargs):
         """Delegate to docs tool."""
-        return await self.docs_tool.search_docs(*args, **kwargs)
+        return await self.docs_tool.search_imas_docs(*args, **kwargs)
 
-    async def list_docs(self, *args, **kwargs):
+    async def list_imas_docs(self, *args, **kwargs):
         """Delegate to docs tool."""
-        return await self.docs_tool.list_docs(*args, **kwargs)
+        return await self.docs_tool.list_imas_docs(*args, **kwargs)
 
 
 __all__ = [
@@ -147,12 +141,9 @@ __all__ = [
     "SearchTool",
     "PathTool",
     "ListTool",
-    "ExplainTool",
     "OverviewTool",
-    "AnalysisTool",
     "RelationshipsTool",
     "IdentifiersTool",
-    "ExportTool",
     "DocsTool",
     "Tools",
 ]

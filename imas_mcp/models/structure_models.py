@@ -30,23 +30,6 @@ class NavigationHints(BaseModel):
     drill_down_suggestions: list[str] = Field(default_factory=list)
 
 
-class MermaidGraphs(BaseModel):
-    """Mermaid graph visualizations for IDS structure."""
-
-    hierarchy_graph: str | None = Field(
-        default=None, description="Hierarchical structure graph"
-    )
-    physics_domains_graph: str | None = Field(
-        default=None, description="Physics domain organization graph"
-    )
-    complexity_graph: str | None = Field(
-        default=None, description="Complexity visualization graph"
-    )
-    available_graphs: list[str] = Field(
-        default_factory=list, description="Available graph types"
-    )
-
-
 class StructureAnalysis(BaseModel):
     """Enhanced structure analysis for IDS."""
 
@@ -55,6 +38,3 @@ class StructureAnalysis(BaseModel):
     navigation_hints: NavigationHints = Field(default_factory=NavigationHints)
     complexity_summary: str = ""
     organization_pattern: str = ""
-    mermaid_graphs: MermaidGraphs | None = Field(
-        default=None, description="Mermaid visualization graphs"
-    )

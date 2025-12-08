@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .constants import (
     AnalysisDepth,
     DetailLevel,
-    IdentifierScope,
     OutputFormat,
     RelationshipType,
     ResponseProfile,
@@ -182,12 +181,8 @@ class RelationshipsInput(BaseInputSchema):
 
 
 class IdentifiersInput(BaseInputSchema):
-    """Input validation schema for explore_identifiers tool."""
+    """Input validation schema for list_imas_identifiers tool."""
 
-    scope: IdentifierScope = Field(
-        default=IdentifierScope.ALL,
-        description="Scope of identifier exploration",
-    )
     query: str | None = Field(
         default=None,
         max_length=200,

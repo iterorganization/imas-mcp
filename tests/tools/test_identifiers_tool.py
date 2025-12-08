@@ -1,19 +1,18 @@
 """
-Test suite for explore_identifiers tool functionality.
+Test suite for list_imas_identifiers tool functionality.
 
-This test suite validates that the explore_identifiers tool works correctly,
-covering all scopes, query types, and analytics calculations.
+This test suite validates that the list_imas_identifiers tool works correctly,
+covering all query types and analytics calculations.
 """
 
 import pytest
 
-from imas_mcp.models.constants import IdentifierScope
 from imas_mcp.models.result_models import IdentifierResult
 from imas_mcp.tools.identifiers_tool import IdentifiersTool
 
 
 class TestExploreIdentifiersTool:
-    """Test explore_identifiers tool functionality."""
+    """Test list_imas_identifiers tool functionality."""
 
     @pytest.fixture
     async def identifiers_tool(self):
@@ -25,7 +24,7 @@ class TestExploreIdentifiersTool:
         """Tool returns non-empty results for standard queries."""
 
         # Test with no query (should return all schemas)
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert isinstance(result, IdentifierResult)
         assert len(result.schemas) > 0, "Should return schemas when no query specified"
         assert len(result.paths) > 0, "Should return paths when no query specified"
@@ -33,46 +32,17 @@ class TestExploreIdentifiersTool:
 
         # Test with broad query terms
         for query in ["materials", "coordinate", "plasma"]:
-            result = await identifiers_tool.explore_identifiers(query=query)
+            result = await identifiers_tool.list_imas_identifiers(query=query)
             assert isinstance(result, IdentifierResult)
             # Note: Some queries may return empty results if no matching schemas exist
             # This is expected behavior, not an error
-
-    @pytest.mark.asyncio
-    async def test_all_scope_options_function(self, identifiers_tool):
-        """All scope options function correctly."""
-
-        scopes_to_test = [
-            IdentifierScope.ALL,
-            IdentifierScope.ENUMS,
-            IdentifierScope.IDENTIFIERS,
-            IdentifierScope.COORDINATES,
-            IdentifierScope.CONSTANTS,
-        ]
-
-        for scope in scopes_to_test:
-            result = await identifiers_tool.explore_identifiers(scope=scope)
-            assert isinstance(result, IdentifierResult)
-            assert result.scope == scope, f"Scope {scope} should be preserved in result"
-            # Note: Some scopes might return empty results depending on data availability
-            # This is expected behavior, not an error
-
-        # Test that ENUMS scope filters to only schemas with options
-        result = await identifiers_tool.explore_identifiers(scope=IdentifierScope.ENUMS)
-        if len(result.schemas) > 0:
-            for schema in result.schemas:
-                assert schema["option_count"] > 0, (
-                    "ENUMS scope should only return schemas with options"
-                )
 
     @pytest.mark.asyncio
     async def test_enumeration_spaces_calculation(self, identifiers_tool):
         """Enumeration spaces are properly calculated."""
 
         # Test with materials query which should have a known enumeration space
-        result = await identifiers_tool.explore_identifiers(
-            query="materials", scope=IdentifierScope.ENUMS
-        )
+        result = await identifiers_tool.list_imas_identifiers(query="materials")
         assert isinstance(result, IdentifierResult)
 
         if len(result.schemas) > 0:
@@ -100,12 +70,10 @@ class TestExploreIdentifiersTool:
     async def test_schema_discovery(self, identifiers_tool):
         """Schema discovery works correctly."""
 
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert isinstance(result, IdentifierResult)
 
         # Should discover multiple schemas (adjust expectation based on environment)
-        # Full environment has 57+ schemas, filtered CI environment has fewer
-        # Use a reasonable minimum that works for both full and CI environments
         min_expected_schemas = 3  # At least a few schemas should be available
         assert len(result.schemas) >= min_expected_schemas, (
             f"Should discover at least {min_expected_schemas} schemas, got {len(result.schemas)}"
@@ -131,12 +99,12 @@ class TestExploreIdentifiersTool:
         """Test behavior with various query patterns."""
 
         # Test that overly specific queries return empty results (this is correct behavior)
-        result = await identifiers_tool.explore_identifiers(query="plasma state")
+        result = await identifiers_tool.list_imas_identifiers(query="plasma state")
         assert isinstance(result, IdentifierResult)
         # Empty results for overly specific queries is expected, not an error
 
         # Test partial matching works
-        result = await identifiers_tool.explore_identifiers(query="material")
+        result = await identifiers_tool.list_imas_identifiers(query="material")
         assert isinstance(result, IdentifierResult)
         # May return empty if no matching schemas, which is valid
 
@@ -144,20 +112,18 @@ class TestExploreIdentifiersTool:
     async def test_error_handling(self, identifiers_tool):
         """Test error handling scenarios."""
 
-        # Test with valid scope values
+        # Test with valid call
         try:
-            result = await identifiers_tool.explore_identifiers(
-                scope=IdentifierScope.ALL
-            )
+            result = await identifiers_tool.list_imas_identifiers()
             assert isinstance(result, IdentifierResult)
         except Exception as e:
-            pytest.fail(f"Valid scope should not raise exception: {e}")
+            pytest.fail(f"Valid call should not raise exception: {e}")
 
     @pytest.mark.asyncio
     async def test_analytics_calculations(self, identifiers_tool):
         """Test analytics field calculations."""
 
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert isinstance(result, IdentifierResult)
 
         analytics = result.analytics
@@ -165,31 +131,15 @@ class TestExploreIdentifiersTool:
         assert "total_paths" in analytics
         assert "enumeration_space" in analytics
         assert "significance" in analytics
-        assert "scope_applied" in analytics
 
         # Analytics should be consistent with returned data
-        # Note: Analytics total_schemas reflects total available, while len(result.schemas)
-        # may be limited by pagination or result limiting
         assert analytics["total_schemas"] >= len(result.schemas)
-        # Note: total_paths might be different due to pagination/limiting
-
-    @pytest.mark.asyncio
-    async def test_coordinate_schemas_discovery(self, identifiers_tool):
-        """Test discovery of coordinate-related schemas."""
-
-        result = await identifiers_tool.explore_identifiers(
-            scope=IdentifierScope.COORDINATES
-        )
-        assert isinstance(result, IdentifierResult)
-
-        # Should find coordinate-related schemas if any exist
-        # Note: May be empty if no coordinate schemas match the filter, which is valid
 
     @pytest.mark.asyncio
     async def test_branching_significance_calculation(self, identifiers_tool):
         """Test branching significance calculation."""
 
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert isinstance(result, IdentifierResult)
 
         significance_levels = ["MINIMAL", "MODERATE", "HIGH", "CRITICAL"]
@@ -228,7 +178,7 @@ class TestIdentifiersToolPerformance:
 
         start_time = time.time()
 
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
 
         end_time = time.time()
         execution_time = end_time - start_time
@@ -253,27 +203,19 @@ class TestIdentifiersToolValidation:
         """Validate that the tool is fully functional."""
 
         # Validate basic functionality
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert len(result.schemas) > 0, "Tool should return schemas"
         print("✅ Tool returns schemas for basic queries")
 
-        # Validate scope functionality
-        for scope in IdentifierScope:
-            result = await identifiers_tool.explore_identifiers(scope=scope)
-            assert isinstance(result, IdentifierResult), f"Scope {scope} should work"
-        print("✅ All scope options function correctly")
-
         # Validate enumeration calculation
-        result = await identifiers_tool.explore_identifiers(
-            query="materials", scope=IdentifierScope.ENUMS
-        )
+        result = await identifiers_tool.list_imas_identifiers(query="materials")
         if len(result.schemas) > 0:
             expected_space = sum(schema["option_count"] for schema in result.schemas)
             assert result.analytics["enumeration_space"] == expected_space
         print("✅ Enumeration spaces properly calculated")
 
         # Validate schema discovery
-        result = await identifiers_tool.explore_identifiers()
+        result = await identifiers_tool.list_imas_identifiers()
         assert len(result.schemas) >= 3, "Should discover multiple schemas"
         print("✅ Schema discovery working")
 
