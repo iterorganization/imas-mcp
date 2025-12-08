@@ -294,7 +294,7 @@ def mcp_test_context():
             "fetch_imas_paths",
             "get_imas_overview",
             "list_imas_docs",
-            "list_imas_identifiers",
+            "get_imas_identifiers",
             "list_imas_paths",
             "search_imas_clusters",
             "search_imas_docs",

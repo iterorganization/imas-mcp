@@ -54,10 +54,10 @@ class TestServiceComposition:
     @pytest.mark.asyncio
     async def test_apply_services_method(self, search_tool):
         """Test the service composition works correctly through decorators."""
-        from imas_mcp.models.result_models import SearchResult
+        from imas_mcp.models.result_models import SearchPathsResult
 
         # Mock the search execution to return controlled results
-        mock_result = SearchResult(hits=[], query="test")
+        mock_result = SearchPathsResult(hits=[], query="test")
         search_tool.execute_search = AsyncMock(return_value=mock_result)
 
         # Mock physics enhancement

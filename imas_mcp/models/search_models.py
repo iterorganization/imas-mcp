@@ -23,7 +23,7 @@ class DocsSearchRequest(BaseModel):
     version: str | None = Field(default=None, description="Specific version to search")
 
 
-class DocsSearchResult(BaseModel):
+class DocsSearchPathsResult(BaseModel):
     """Individual search result from documentation"""
 
     url: str = Field(..., description="URL of the documentation page")
@@ -48,7 +48,7 @@ class DocsSearchMetadata(BaseModel):
 class DocsSearchResponse(BaseModel):
     """Response model for documentation search"""
 
-    results: list[DocsSearchResult] = Field(
+    results: list[DocsSearchPathsResult] = Field(
         default_factory=list, description="Search results"
     )
     query: str = Field(..., description="Original search query")

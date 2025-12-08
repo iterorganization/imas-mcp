@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
@@ -57,9 +57,9 @@ class BaseTool(ABC):
         search_mode: str | SearchMode = "auto",
         max_results: int = 10,
         ids_filter: str | list[str] | None = None,
-    ) -> SearchResult:
+    ) -> SearchPathsResult:
         """
-        Unified search execution that returns a complete SearchResult.
+        Unified search execution that returns a complete SearchPathsResult.
 
         Args:
             query: Search query
@@ -68,7 +68,7 @@ class BaseTool(ABC):
             ids_filter: Optional IDS filter (space-delimited string or list)
 
         Returns:
-            SearchResult with all search data and context
+            SearchPathsResult with all search data and context
         """
         # Create and optimize configuration
         config = self.search_config.create_config(

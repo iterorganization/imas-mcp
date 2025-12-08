@@ -8,7 +8,7 @@ physics context confusion is resolved.
 import pytest
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.search_strategy import SearchHit
 
 
@@ -233,7 +233,7 @@ class TestResultIntegration:
     """Test integration of ranking improvements with search results."""
 
     def test_search_result_with_improved_ranking(self):
-        """Test SearchResult with improved ranking applied."""
+        """Test SearchPathsResult with improved ranking applied."""
         # Create a result with the improved ranking
         hits = [
             SearchHit(
@@ -271,7 +271,7 @@ class TestResultIntegration:
             ),
         ]
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             search_mode=SearchMode.HYBRID,
             query="psi",
@@ -291,14 +291,14 @@ class TestResultIntegration:
 
     def test_metadata_integration_with_ranking(self):
         """Test that metadata properties work with ranking improvements."""
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=[],
             search_mode=SearchMode.SEMANTIC,
             query="test",
         )
 
         # Test abstract property implementation
-        assert result.tool_name == "search_imas"
+        assert result.tool_name == "search_imas_paths"
         assert result.processing_timestamp  # Should be populated
         assert result.version  # Should be populated
 

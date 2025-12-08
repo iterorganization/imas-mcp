@@ -12,7 +12,7 @@ from fastmcp import Context
 
 from imas_mcp.models.constants import ResponseProfile, SearchMode
 from imas_mcp.models.request_models import SearchInput
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.decorators import (
     cache_results,
     handle_errors,
@@ -53,7 +53,7 @@ class SearchTool(BaseTool):
         search_mode: str | SearchMode = "auto",
         response_profile: str | ResponseProfile = "standard",
         ctx: Context | None = None,
-    ) -> SearchResult:
+    ) -> SearchPathsResult:
         """
         Find IMAS data paths using semantic and lexical search capabilities.
 
@@ -73,14 +73,14 @@ class SearchTool(BaseTool):
             ctx: FastMCP context
 
         Returns:
-            SearchResult with ranked data paths, documentation, and physics insights
+            SearchPathsResult with ranked data paths, documentation, and physics insights
 
         Note:
             For fast exact path validation, use the check_ids_path tool instead.
             That tool is optimized for existence checking without search overhead.
         """
 
-        # Execute search - base.py now handles SearchResult conversion and summary
+        # Execute search - base.py now handles SearchPathsResult conversion and summary
         result = await self.execute_search(
             query=query,
             search_mode=search_mode,
@@ -103,7 +103,7 @@ class SearchTool(BaseTool):
         )
         return result
 
-    def _format_minimal(self, result: SearchResult) -> SearchResult:
+    def _format_minimal(self, result: SearchPathsResult) -> SearchPathsResult:
         """Format result with minimal information - results only, no extras."""
         # Keep paths and basic info but trim documentation
         for hit in result.hits:

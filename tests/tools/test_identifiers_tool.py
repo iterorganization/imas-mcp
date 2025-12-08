@@ -1,18 +1,18 @@
 """
-Test suite for list_imas_identifiers tool functionality.
+Test suite for get_imas_identifiers tool functionality.
 
-This test suite validates that the list_imas_identifiers tool works correctly,
+This test suite validates that the get_imas_identifiers tool works correctly,
 covering all query types and analytics calculations.
 """
 
 import pytest
 
-from imas_mcp.models.result_models import IdentifierResult
+from imas_mcp.models.result_models import GetIdentifiersResult
 from imas_mcp.tools.identifiers_tool import IdentifiersTool
 
 
 class TestExploreIdentifiersTool:
-    """Test list_imas_identifiers tool functionality."""
+    """Test get_imas_identifiers tool functionality."""
 
     @pytest.fixture
     async def identifiers_tool(self):
@@ -24,16 +24,16 @@ class TestExploreIdentifiersTool:
         """Tool returns non-empty results for standard queries."""
 
         # Test with no query (should return all schemas)
-        result = await identifiers_tool.list_imas_identifiers()
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers()
+        assert isinstance(result, GetIdentifiersResult)
         assert len(result.schemas) > 0, "Should return schemas when no query specified"
         assert len(result.paths) > 0, "Should return paths when no query specified"
         assert result.analytics["total_schemas"] > 0, "Should have total_schemas > 0"
 
         # Test with broad query terms
         for query in ["materials", "coordinate", "plasma"]:
-            result = await identifiers_tool.list_imas_identifiers(query=query)
-            assert isinstance(result, IdentifierResult)
+            result = await identifiers_tool.get_imas_identifiers(query=query)
+            assert isinstance(result, GetIdentifiersResult)
             # Note: Some queries may return empty results if no matching schemas exist
             # This is expected behavior, not an error
 
@@ -42,8 +42,8 @@ class TestExploreIdentifiersTool:
         """Enumeration spaces are properly calculated."""
 
         # Test with materials query which should have a known enumeration space
-        result = await identifiers_tool.list_imas_identifiers(query="materials")
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers(query="materials")
+        assert isinstance(result, GetIdentifiersResult)
 
         if len(result.schemas) > 0:
             # Materials schema should have 33 options
@@ -70,8 +70,8 @@ class TestExploreIdentifiersTool:
     async def test_schema_discovery(self, identifiers_tool):
         """Schema discovery works correctly."""
 
-        result = await identifiers_tool.list_imas_identifiers()
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers()
+        assert isinstance(result, GetIdentifiersResult)
 
         # Should discover multiple schemas (adjust expectation based on environment)
         min_expected_schemas = 3  # At least a few schemas should be available
@@ -99,13 +99,13 @@ class TestExploreIdentifiersTool:
         """Test behavior with various query patterns."""
 
         # Test that overly specific queries return empty results (this is correct behavior)
-        result = await identifiers_tool.list_imas_identifiers(query="plasma state")
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers(query="plasma state")
+        assert isinstance(result, GetIdentifiersResult)
         # Empty results for overly specific queries is expected, not an error
 
         # Test partial matching works
-        result = await identifiers_tool.list_imas_identifiers(query="material")
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers(query="material")
+        assert isinstance(result, GetIdentifiersResult)
         # May return empty if no matching schemas, which is valid
 
     @pytest.mark.asyncio
@@ -114,8 +114,8 @@ class TestExploreIdentifiersTool:
 
         # Test with valid call
         try:
-            result = await identifiers_tool.list_imas_identifiers()
-            assert isinstance(result, IdentifierResult)
+            result = await identifiers_tool.get_imas_identifiers()
+            assert isinstance(result, GetIdentifiersResult)
         except Exception as e:
             pytest.fail(f"Valid call should not raise exception: {e}")
 
@@ -123,8 +123,8 @@ class TestExploreIdentifiersTool:
     async def test_analytics_calculations(self, identifiers_tool):
         """Test analytics field calculations."""
 
-        result = await identifiers_tool.list_imas_identifiers()
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers()
+        assert isinstance(result, GetIdentifiersResult)
 
         analytics = result.analytics
         assert "total_schemas" in analytics
@@ -139,8 +139,8 @@ class TestExploreIdentifiersTool:
     async def test_branching_significance_calculation(self, identifiers_tool):
         """Test branching significance calculation."""
 
-        result = await identifiers_tool.list_imas_identifiers()
-        assert isinstance(result, IdentifierResult)
+        result = await identifiers_tool.get_imas_identifiers()
+        assert isinstance(result, GetIdentifiersResult)
 
         significance_levels = ["MINIMAL", "MODERATE", "HIGH", "CRITICAL"]
 
@@ -178,7 +178,7 @@ class TestIdentifiersToolPerformance:
 
         start_time = time.time()
 
-        result = await identifiers_tool.list_imas_identifiers()
+        result = await identifiers_tool.get_imas_identifiers()
 
         end_time = time.time()
         execution_time = end_time - start_time
@@ -187,7 +187,7 @@ class TestIdentifiersToolPerformance:
         assert execution_time < 5.0, (
             f"Tool should complete within 5 seconds, took {execution_time}"
         )
-        assert isinstance(result, IdentifierResult)
+        assert isinstance(result, GetIdentifiersResult)
 
 
 class TestIdentifiersToolValidation:
@@ -203,19 +203,19 @@ class TestIdentifiersToolValidation:
         """Validate that the tool is fully functional."""
 
         # Validate basic functionality
-        result = await identifiers_tool.list_imas_identifiers()
+        result = await identifiers_tool.get_imas_identifiers()
         assert len(result.schemas) > 0, "Tool should return schemas"
         print("✅ Tool returns schemas for basic queries")
 
         # Validate enumeration calculation
-        result = await identifiers_tool.list_imas_identifiers(query="materials")
+        result = await identifiers_tool.get_imas_identifiers(query="materials")
         if len(result.schemas) > 0:
             expected_space = sum(schema["option_count"] for schema in result.schemas)
             assert result.analytics["enumeration_space"] == expected_space
         print("✅ Enumeration spaces properly calculated")
 
         # Validate schema discovery
-        result = await identifiers_tool.list_imas_identifiers()
+        result = await identifiers_tool.get_imas_identifiers()
         assert len(result.schemas) >= 3, "Should discover multiple schemas"
         print("✅ Schema discovery working")
 

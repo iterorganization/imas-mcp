@@ -103,7 +103,7 @@ class IdsResult(BaseModel):
         return len(self.nodes)
 
 
-class IdsPathResult(WithPhysics, ToolResult, IdsResult):
+class FetchPathsResult(WithPhysics, ToolResult, IdsResult):
     """Path retrieval result with physics aggregation.
 
     Includes migration info for deprecated paths that weren't found,
@@ -247,13 +247,13 @@ class SearchHits(BaseModel):
         return len(self.hits)
 
 
-class SearchResult(WithHints, WithPhysics, ToolResult, SearchHits):
+class SearchPathsResult(WithHints, WithPhysics, ToolResult, SearchHits):
     """Search tool result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "search_imas"
+        return "search_imas_paths"
 
     # Search-specific fields
     search_mode: SearchMode = Field(
@@ -261,13 +261,13 @@ class SearchResult(WithHints, WithPhysics, ToolResult, SearchHits):
     )
 
 
-class OverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
+class GetOverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
     """Overview tool response with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "get_overview"
+        return "get_imas_overview"
 
     content: str
     available_ids: list[str] = Field(default_factory=list)
@@ -306,20 +306,20 @@ class OverviewResult(WithHints, WithPhysics, ToolResult, SearchHits):
 # ============================================================================
 
 
-class IdentifierResult(WithHints, WithPhysics, ToolResult):
+class GetIdentifiersResult(WithHints, WithPhysics, ToolResult):
     """Identifier exploration result with hints and physics aggregation."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
-        return "list_imas_identifiers"
+        return "get_imas_identifiers"
 
     schemas: list[dict[str, Any]] = Field(default_factory=list)
     paths: list[dict[str, Any]] = Field(default_factory=list)
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
-class RelationshipResult(WithHints, WithPhysics, ToolResult):
+class SearchClustersResult(WithHints, WithPhysics, ToolResult):
     """Cluster search result with hints and physics aggregation."""
 
     @property
@@ -351,7 +351,7 @@ class RelationshipResult(WithHints, WithPhysics, ToolResult):
 # ============================================================================
 
 
-class PathListQueryResult(BaseModel):
+class ListPathsResultItem(BaseModel):
     """Result for a single IDS/prefix query in list_imas_paths."""
 
     query: str = Field(description="The IDS name or prefix queried")
@@ -366,7 +366,7 @@ class PathListQueryResult(BaseModel):
     error: str | None = Field(default=None, description="Error message if query failed")
 
 
-class PathListResult(BaseModel):
+class ListPathsResult(BaseModel):
     """Result from list_imas_paths tool with minimal path enumeration.
 
     Uses minimal BaseModel instead of ToolResult to avoid unnecessary search-related fields.
@@ -375,9 +375,91 @@ class PathListResult(BaseModel):
     format: str = Field(
         description="Output format used (yaml, list, count, json, dict)"
     )
-    results: list[PathListQueryResult] = Field(
+    results: list[ListPathsResultItem] = Field(
         default_factory=list, description="Results for each queried IDS/prefix"
     )
     summary: dict[str, Any] = Field(
         default_factory=dict, description="Overall statistics across all queries"
     )
+
+
+# ============================================================================
+# PATH VALIDATION
+# ============================================================================
+
+
+class CheckPathsResultItem(BaseModel):
+    """Validation result for a single IMAS path."""
+
+    path: str = Field(description="The path that was validated")
+    exists: bool = Field(description="Whether the path exists in the data dictionary")
+    ids_name: str | None = Field(default=None, description="IDS name if path exists")
+    data_type: str | None = Field(default=None, description="Data type if available")
+    units: str | None = Field(default=None, description="Physical units if available")
+    migration: dict[str, Any] | None = Field(
+        default=None, description="Migration info if path is deprecated"
+    )
+    excluded: dict[str, Any] | None = Field(
+        default=None, description="Exclusion info if path is valid but excluded"
+    )
+    renamed_from: list[dict[str, Any]] | None = Field(
+        default=None, description="Rename history if path was renamed"
+    )
+    error: str | None = Field(default=None, description="Error message if invalid")
+
+
+class CheckPathsResult(BaseModel):
+    """Result from check_imas_paths tool for batch path validation."""
+
+    summary: dict[str, int] = Field(
+        description="Counts: total, found, not_found, invalid"
+    )
+    results: list[CheckPathsResultItem] = Field(
+        default_factory=list, description="Validation result for each path"
+    )
+
+
+# ============================================================================
+# DOCUMENTATION SEARCH
+# ============================================================================
+
+
+class SearchDocsResultItem(BaseModel):
+    """A single documentation search result."""
+
+    title: str | None = Field(default=None, description="Document title")
+    url: str | None = Field(default=None, description="URL to documentation")
+    content: str | None = Field(default=None, description="Content excerpt")
+    score: float | None = Field(default=None, description="Relevance score")
+
+
+class SearchDocsResult(BaseModel):
+    """Result from search_imas_docs tool."""
+
+    results: list[SearchDocsResultItem] = Field(
+        default_factory=list, description="Search results"
+    )
+    count: int = Field(default=0, description="Number of results returned")
+    query: str | None = Field(default=None, description="Search query")
+    library: str | None = Field(default=None, description="Library searched")
+    version: str | None = Field(default=None, description="Library version")
+    success: bool = Field(default=True, description="Whether search succeeded")
+    error: str | None = Field(default=None, description="Error message if failed")
+    available_libraries: list[str] | None = Field(
+        default=None, description="Available libraries if library not specified"
+    )
+
+
+class ListDocsResult(BaseModel):
+    """Result from list_imas_docs tool."""
+
+    libraries: list[str] = Field(
+        default_factory=list, description="Available library names"
+    )
+    count: int = Field(default=0, description="Number of libraries available")
+    success: bool = Field(default=True, description="Whether listing succeeded")
+    error: str | None = Field(default=None, description="Error message if failed")
+    library: str | None = Field(
+        default=None, description="Specific library queried (if any)"
+    )
+    note: str | None = Field(default=None, description="Additional information")

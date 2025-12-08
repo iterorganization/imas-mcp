@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from ...models.constants import HintsMode, ResponseProfile
-from ...models.result_models import SearchResult
+from ...models.result_models import SearchPathsResult
 from .physics_hints import apply_physics_hints
 from .query_hints import apply_query_hints
 from .tool_hints import apply_tool_hints
@@ -74,7 +74,7 @@ def hints(tool_max: int = 4, query_max: int = 5) -> Callable[[F], F]:
 
             # Apply physics hints first to enrich context for other hints
             physics_on = mode == HintsMode.ALL
-            if physics_on and isinstance(result, SearchResult):
+            if physics_on and isinstance(result, SearchPathsResult):
                 try:
                     if tool_instance and hasattr(tool_instance, "physics"):
                         result = await apply_physics_hints(

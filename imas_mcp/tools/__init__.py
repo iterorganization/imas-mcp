@@ -118,9 +118,9 @@ class Tools(MCPProvider):
         """Delegate to overview tool."""
         return await self.overview_tool.get_imas_overview(*args, **kwargs)
 
-    async def list_imas_identifiers(self, *args, **kwargs):
+    async def get_imas_identifiers(self, *args, **kwargs):
         """Delegate to identifiers tool."""
-        return await self.identifiers_tool.list_imas_identifiers(*args, **kwargs)
+        return await self.identifiers_tool.get_imas_identifiers(*args, **kwargs)
 
     async def search_imas_clusters(self, *args, **kwargs):
         """Delegate to relationships tool."""

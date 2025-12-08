@@ -5,11 +5,15 @@ Provides documentation search capabilities using the docs-mcp-server proxy.
 """
 
 import logging
-from typing import Any
 
 from fastmcp import Context
 
 from imas_mcp.models.request_models import ListDocsInput, SearchDocsInput
+from imas_mcp.models.result_models import (
+    ListDocsResult,
+    SearchDocsResult,
+    SearchDocsResultItem,
+)
 from imas_mcp.search.decorators import (
     cache_results,
     mcp_tool,
@@ -55,7 +59,7 @@ class DocsTool:
         limit: int = 5,
         version: str | None = None,
         ctx: Context | None = None,
-    ) -> dict[str, Any]:
+    ) -> SearchDocsResult:
         """
         Search indexed documentation libraries for specific topics, APIs, or concepts.
 
@@ -70,8 +74,8 @@ class DocsTool:
             ctx: FastMCP context
 
         Returns:
-            Dictionary containing:
-            - results: List of search results with content and URLs
+            SearchDocsResult with:
+            - results: List of SearchDocsResultItem with content and URLs
             - count: Number of results returned
             - query, library, version: Search parameters
             - success: Boolean indicating success
@@ -83,91 +87,93 @@ class DocsTool:
 
         # Basic parameter validation
         if not query or not query.strip():
-            return {
-                "error": "Query cannot be empty",
-                "query": query,
-                "library": library,
-                "version": version,
-                "validation_failed": True,
-            }
+            return SearchDocsResult(
+                query=query,
+                library=library,
+                version=version,
+                success=False,
+                error="Query cannot be empty",
+            )
 
         if limit < 1 or limit > 20:
-            return {
-                "error": "Limit must be between 1 and 20",
-                "query": query,
-                "library": library,
-                "version": version,
-                "validation_failed": True,
-            }
+            return SearchDocsResult(
+                query=query,
+                library=library,
+                version=version,
+                success=False,
+                error="Limit must be between 1 and 20",
+            )
 
         # The docs-mcp-server requires a library parameter
         if not library:
             # Get available libraries to help the user
             try:
                 available_libraries = await self.docs_manager.proxy_list_libraries()
-                return {
-                    "error": "Library parameter is required for search",
-                    "query": query,
-                    "library": library,
-                    "version": version,
-                    "available_libraries": available_libraries,
-                    "library_required": True,
-                    "proxy_info": {
-                        "method": "docs-mcp-server proxy",
-                        "server_url": self.docs_manager.base_url,
-                    },
-                    "setup_instructions": True,
-                }
+                return SearchDocsResult(
+                    query=query,
+                    library=library,
+                    version=version,
+                    success=False,
+                    error="Library parameter is required for search",
+                    available_libraries=available_libraries,
+                )
             except Exception:
-                return {
-                    "error": "Library parameter is required for search",
-                    "query": query,
-                    "library": library,
-                    "version": version,
-                    "library_required": True,
-                    "proxy_info": {
-                        "method": "fallback",
-                        "server_url": self.docs_manager.base_url,
-                    },
-                    "setup_instructions": True,
-                }
+                return SearchDocsResult(
+                    query=query,
+                    library=library,
+                    version=version,
+                    success=False,
+                    error="Library parameter is required for search",
+                )
 
         try:
             # Use proxy method for search
             result = await self.docs_manager.proxy_search_docs(
                 query, library, version, limit
             )
-            result["proxy_info"] = {
-                "method": "docs-mcp-server proxy",
-                "server_url": self.docs_manager.base_url,
-            }
-            return result
+            # Convert proxy result to Pydantic model
+            hits = [
+                SearchDocsResultItem(
+                    title=r.get("title"),
+                    url=r.get("url"),
+                    content=r.get("content"),
+                    score=r.get("score"),
+                )
+                for r in result.get("results", [])
+            ]
+            return SearchDocsResult(
+                results=hits,
+                count=len(hits),
+                query=query,
+                library=library,
+                version=version,
+                success=True,
+            )
         except DocsServerUnavailableError as e:
-            return {
-                "error": str(e),
-                "query": query,
-                "library": library,
-                "version": version,
-                "setup_instructions": True,
-            }
+            return SearchDocsResult(
+                query=query,
+                library=library,
+                version=version,
+                success=False,
+                error=str(e),
+            )
         except LibraryNotFoundError as e:
-            return {
-                "error": str(e),
-                "query": query,
-                "library": library,
-                "version": version,
-                "available_libraries": e.available_libraries,
-                "library_not_found": True,
-            }
+            return SearchDocsResult(
+                query=query,
+                library=library,
+                version=version,
+                success=False,
+                error=str(e),
+                available_libraries=e.available_libraries,
+            )
         except Exception as e:
-            # Basic error handling without IMAS-specific fallbacks
-            return {
-                "error": f"Search failed: {str(e)}",
-                "query": query,
-                "library": library,
-                "version": version,
-                "search_failed": True,
-            }
+            return SearchDocsResult(
+                query=query,
+                library=library,
+                version=version,
+                success=False,
+                error=f"Search failed: {str(e)}",
+            )
 
     @cache_results(ttl=600, key_strategy="simple")
     @validate_input(schema=ListDocsInput)
@@ -183,7 +189,7 @@ class DocsTool:
         self,
         library: str | None = None,
         ctx: Context | None = None,
-    ) -> dict[str, Any]:
+    ) -> ListDocsResult:
         """
         List all indexed documentation libraries available for search.
 
@@ -195,14 +201,14 @@ class DocsTool:
             ctx: FastMCP context
 
         Returns:
-            Dictionary containing:
+            ListDocsResult with:
             - libraries: List of available library names
             - count: Number of libraries available
             - success: Boolean indicating success
             - note: Information about version availability
 
         Examples:
-            list_imas_docs() → {"libraries": ["data-dictionary", "testembeddings"], "count": 2, "success": true}
+            list_imas_docs() → ListDocsResult with libraries=["data-dictionary", "testembeddings"]
 
         Note:
             Returns library names only. The MCP list_libraries tool does not provide
@@ -211,11 +217,11 @@ class DocsTool:
 
         # Basic parameter validation
         if library is not None and not library.strip():
-            return {
-                "error": "Library name cannot be empty",
-                "library": library,
-                "validation_failed": True,
-            }
+            return ListDocsResult(
+                library=library,
+                success=False,
+                error="Library name cannot be empty",
+            )
 
         try:
             if library:
@@ -226,56 +232,40 @@ class DocsTool:
                 # Ensure server is started to get base_url
                 await self.docs_manager.ensure_started()
 
-                return {
-                    "library": library,
-                    "note": "Use search_imas_docs with this library name to explore available content",
-                    "success": True,
-                    "proxy_info": {
-                        "method": "docs-mcp-server",
-                        "server_url": self.docs_manager.base_url,
-                    },
-                }
+                return ListDocsResult(
+                    library=library,
+                    success=True,
+                    note="Use search_imas_docs with this library name to explore available content",
+                )
             else:
                 # List all available libraries using MCP proxy
                 # Note: The MCP list_libraries tool only returns library names (not versions)
                 libraries = await self.docs_manager.proxy_list_libraries()
 
                 if not libraries:
-                    return {
-                        "error": "No libraries found in docs-mcp-server",
-                        "libraries": [],
-                        "count": 0,
-                        "success": False,
-                        "proxy_info": {
-                            "method": "docs-mcp-server MCP tool",
-                            "server_url": self.docs_manager.base_url,
-                        },
-                        "note": "The MCP list_libraries tool returns library names only. For version info, query individual libraries.",
-                    }
+                    return ListDocsResult(
+                        success=False,
+                        error="No libraries found in docs-mcp-server",
+                        note="The MCP list_libraries tool returns library names only.",
+                    )
 
-                return {
-                    "libraries": libraries,
-                    "count": len(libraries),
-                    "success": True,
-                    "proxy_info": {
-                        "method": "docs-mcp-server MCP tool",
-                        "server_url": self.docs_manager.base_url,
-                    },
-                    "note": "This list contains library names only. For version details, query individual libraries.",
-                }
+                return ListDocsResult(
+                    libraries=libraries,
+                    count=len(libraries),
+                    success=True,
+                    note="Library names only. Use version parameter in search_imas_docs for version-specific searches.",
+                )
         except DocsServerUnavailableError as e:
             # Graceful fallback when docs-mcp-server is not available
-            return {
-                "error": str(e),
-                "libraries": [],
-                "library": library,
-                "server_status": "unavailable",
-            }
+            return ListDocsResult(
+                library=library,
+                success=False,
+                error=str(e),
+            )
         except Exception as e:
             # Catch-all for any other unexpected errors
-            return {
-                "error": f"Unexpected error: {str(e)}",
-                "libraries": [],
-                "library": library,
-                "unexpected_error": True,
-            }
+            return ListDocsResult(
+                library=library,
+                success=False,
+                error=f"Unexpected error: {str(e)}",
+            )
