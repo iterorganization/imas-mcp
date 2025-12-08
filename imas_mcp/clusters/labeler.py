@@ -7,12 +7,12 @@ using Gemini-3-Pro's large context window for batch processing.
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 
-import requests
-
-from imas_mcp.settings import get_language_model
+from imas_mcp.embeddings.openrouter_client import OpenRouterClient
+from imas_mcp.settings import get_labeling_batch_size, get_language_model
 
 logger = logging.getLogger(__name__)
 
@@ -42,44 +42,23 @@ class ClusterLabeler:
             api_key: OpenRouter API key (uses OPENAI_API_KEY env var if not provided)
             base_url: API base URL (uses OPENAI_BASE_URL env var if not provided)
         """
-        import os
-
         self.model = model or get_language_model()
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = base_url or os.getenv(
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
+        base_url = base_url or os.getenv(
             "OPENAI_BASE_URL", "https://openrouter.ai/api/v1"
         )
 
-        if not self.api_key:
+        if not api_key:
             raise ValueError(
                 "API key required. Set OPENAI_API_KEY environment variable."
             )
 
-    def _make_request(self, messages: list[dict], max_tokens: int = 100000) -> str:
-        """Make a chat completion request to the API."""
-        url = f"{self.base_url.rstrip('/')}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "imas-mcp",
-            "X-Title": "IMAS MCP Cluster Labeling",
-        }
-        data = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": 0.3,
-        }
-
-        response = requests.post(url, headers=headers, json=data, timeout=300)
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"API request failed: {response.status_code} - {response.text}"
-            )
-
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
+        # Use shared OpenRouterClient for retry logic and rate limit handling
+        self._client = OpenRouterClient(
+            model_name=self.model,
+            api_key=api_key,
+            base_url=base_url,
+        )
 
     def _build_prompt(self, clusters: list[dict]) -> str:
         """Build the labeling prompt for a batch of clusters."""
@@ -120,23 +99,25 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
     def label_clusters(
         self,
         clusters: list[dict],
-        batch_size: int = 500,
+        batch_size: int | None = None,
     ) -> list[ClusterLabel]:
         """Generate labels for all clusters.
 
         Args:
             clusters: List of cluster dictionaries
-            batch_size: Number of clusters per API request
+            batch_size: Number of clusters per API request (default from settings)
 
         Returns:
             List of ClusterLabel objects
         """
+        if batch_size is None:
+            batch_size = get_labeling_batch_size()
+
         all_labels = []
         total_clusters = len(clusters)
 
         logger.info(f"Labeling {total_clusters} clusters using {self.model}")
 
-        # Process in batches (Gemini-3-Pro can handle ~500-1000 clusters per request)
         for i in range(0, total_clusters, batch_size):
             batch = clusters[i : i + batch_size]
             batch_num = i // batch_size + 1
@@ -150,7 +131,9 @@ RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
             messages = [{"role": "user", "content": prompt}]
 
             try:
-                response = self._make_request(messages)
+                response = self._client.make_chat_request(
+                    messages, model=self.model, max_tokens=100000
+                )
                 batch_labels = self._parse_response(response, batch)
                 all_labels.extend(batch_labels)
                 logger.info(
