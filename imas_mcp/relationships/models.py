@@ -16,6 +16,9 @@ class ClusterInfo(BaseModel):
     is_cross_ids: bool
     ids_names: list[str]
     paths: list[str]
+    centroid: list[float] | None = None  # Centroid embedding for semantic search
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def model_post_init(self, __context):
         """Validate and compute derived fields."""
