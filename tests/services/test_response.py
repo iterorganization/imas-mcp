@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.search_strategy import SearchHit
 from imas_mcp.services.response import ResponseService
 
@@ -23,7 +23,7 @@ class TestResponseService:
         """Test building basic search response."""
         service = ResponseService()
 
-        # Create mock SearchResult objects that return proper SearchHit instances
+        # Create mock SearchPathsResult objects that return proper SearchHit instances
         mock_result = Mock()
         mock_result.to_hit.return_value = SearchHit(
             path="test.path",
@@ -41,12 +41,10 @@ class TestResponseService:
             results=results, query="test query", search_mode=SearchMode.SEMANTIC
         )
 
-        assert isinstance(response, SearchResult)
+        assert isinstance(response, SearchPathsResult)
         assert response.query == "test query"
         assert response.search_mode == SearchMode.SEMANTIC
         assert len(response.hits) == 1
-        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
-        assert response.ai_response == {}
         assert response.hits[0].path == "test.path"
 
     def test_build_search_response_with_insights(self):
@@ -72,11 +70,9 @@ class TestResponseService:
             search_mode=SearchMode.SEMANTIC,
         )
 
-        assert isinstance(response, SearchResult)
+        assert isinstance(response, SearchPathsResult)
         assert response.query == "plasma temperature"
         assert response.search_mode == SearchMode.SEMANTIC
-        # SearchResult has ai_response (uses @sample decorator for AI enhancement)
-        assert response.ai_response == {}
         assert len(response.hits) == 1
 
     def test_add_standard_metadata(self):
@@ -104,12 +100,12 @@ class TestResponseService:
         mock_response = Mock()
         mock_response.metadata = {}
 
-        service.add_standard_metadata(mock_response, "search_imas")
+        service.add_standard_metadata(mock_response, "search_imas_paths")
 
         metadata = mock_response.metadata
 
         # Verify tool name
-        assert metadata["tool"] == "search_imas"
+        assert metadata["tool"] == "search_imas_paths"
 
         # Verify timestamp format (ISO 8601 with timezone)
         timestamp = metadata["processing_timestamp"]

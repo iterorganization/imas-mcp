@@ -4,7 +4,7 @@ from .base import BaseExtractor, ExtractorContext
 from .coordinate_extractor import CoordinateExtractor
 from .identifier_extractor import IdentifierExtractor
 from .metadata_extractor import MetadataExtractor
-from .physics_extractor import LifecycleExtractor, PhysicsExtractor
+from .physics_extractor import LifecycleExtractor
 from .semantic_extractor import PathExtractor, SemanticExtractor
 from .validation_extractor import ValidationExtractor
 
@@ -25,7 +25,6 @@ __all__ = [
     "LifecycleExtractor",
     "MetadataExtractor",
     "PathExtractor",
-    "PhysicsExtractor",
     "SemanticExtractor",
     "ValidationExtractor",
 ]

@@ -1,25 +1,82 @@
 """
 Path tool implementation.
 
-Provides both fast validation and rich data retrieval for IMAS paths.
+Provides both fast validation and rich data retrieval for IMAS paths,
+with migration suggestions for deprecated paths and rename history.
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from fastmcp import Context
 
+from imas_mcp.mappings import PathMap, get_path_map
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import IdsPathResult
-from imas_mcp.search.decorators import handle_errors, mcp_tool, measure_performance
+from imas_mcp.models.result_models import (
+    CheckPathsResult,
+    CheckPathsResultItem,
+    DeprecatedPathInfo,
+    ExcludedPathInfo,
+    FetchPathsResult,
+)
+from imas_mcp.search.decorators import (
+    handle_errors,
+    mcp_tool,
+    measure_performance,
+)
+from imas_mcp.search.document_store import DocumentStore
 
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from imas_mcp.clusters.search import ClusterSearcher
 
 logger = logging.getLogger(__name__)
 
 
 class PathTool(BaseTool):
     """Tool for IMAS path validation and data retrieval."""
+
+    def __init__(
+        self,
+        document_store: DocumentStore | None = None,
+        path_map: PathMap | None = None,
+    ):
+        """
+        Initialize PathTool.
+
+        Args:
+            document_store: Optional DocumentStore instance.
+            path_map: Optional PathMap for testing. Uses singleton if None.
+        """
+        super().__init__(document_store=document_store)
+        self._path_map = path_map
+        self._cluster_searcher: ClusterSearcher | None = None
+
+    @property
+    def path_map(self) -> PathMap:
+        """Get the path map (lazy loaded)."""
+        if self._path_map is None:
+            self._path_map = get_path_map()
+        return self._path_map
+
+    @property
+    def cluster_searcher(self) -> "ClusterSearcher | None":
+        """Get the cluster searcher (lazy loaded)."""
+        if self._cluster_searcher is None:
+            try:
+                from imas_mcp.core.clusters import Clusters
+
+                clusters = Clusters()
+                if clusters.is_available():
+                    from imas_mcp.clusters.search import ClusterSearcher
+
+                    self._cluster_searcher = ClusterSearcher(
+                        clusters=clusters.get_clusters()
+                    )
+            except Exception as e:
+                logger.debug(f"Cluster searcher not available: {e}")
+        return self._cluster_searcher
 
     @property
     def tool_name(self) -> str:
@@ -38,12 +95,13 @@ class PathTool(BaseTool):
         paths: str | list[str],
         ids: str | None = None,
         ctx: Context | None = None,
-    ) -> dict[str, Any]:
+    ) -> CheckPathsResult:
         """
         Check if one or more exact IMAS paths exist in the data dictionary.
 
         Fast validation tool for batch path existence checking without search overhead.
-        Directly accesses the data dictionary for immediate results.
+        Directly accesses the data dictionary for immediate results. Returns migration
+        suggestions for deprecated paths and rename history for current paths.
 
         Args:
             paths: One or more IMAS paths to validate. Accepts either:
@@ -55,33 +113,18 @@ class PathTool(BaseTool):
                  becomes "equilibrium/time_slice/boundary/psi"
 
         Returns:
-            Dictionary with structured validation results:
-            - summary: {"total": int, "found": int, "not_found": int, "invalid": int}
-            - results: List of path results, each containing:
-              - path: The queried path (with IDS prefix)
-              - exists: Boolean indicating if path was found
-              - ids_name: IDS name if path exists
-              - data_type: Data type if available (optional)
-              - units: Physical units if available (optional)
-              - error: Error message if path format is invalid (optional)
+            CheckPathsResult with:
+            - summary: Counts (total, found, not_found, invalid)
+            - results: List of CheckPathsResultItem for each path
 
         Examples:
-            Single path (string):
-                check_imas_paths("equilibrium/time_slice/boundary/psi")
-                → {"summary": {"total": 1, "found": 1, "not_found": 0, "invalid": 0},
-                   "results": [{"path": "equilibrium/time_slice/boundary/psi", "exists": true, "ids_name": "equilibrium"}]}
+            Path exists (current):
+                check_imas_paths("equilibrium/time_slice/constraints/b_field_pol_probe")
+                → CheckPathsResult with exists=True, rename history
 
-            Multiple paths with ids prefix (ensemble checking):
-                check_imas_paths("time_slice/boundary/psi time_slice/boundary/psi_norm time_slice/boundary/type", ids="equilibrium")
-                → {"summary": {"total": 3, "found": 3, "not_found": 0, "invalid": 0},
-                   "results": [
-                     {"path": "equilibrium/time_slice/boundary/psi", "exists": true, "ids_name": "equilibrium"},
-                     {"path": "equilibrium/time_slice/boundary/psi_norm", "exists": true, "ids_name": "equilibrium"},
-                     {"path": "equilibrium/time_slice/boundary/type", "exists": true, "ids_name": "equilibrium"}
-                   ]}
-
-            Multiple paths (list):
-                check_imas_paths(["time_slice/boundary/psi", "time_slice/boundary/psi_norm"], ids="equilibrium")
+            Path deprecated (has migration):
+                check_imas_paths("equilibrium/time_slice/constraints/bpol_probe")
+                → CheckPathsResult with exists=False, migration info
 
         Note:
             This tool is optimized for exact path validation. For discovering paths
@@ -91,10 +134,10 @@ class PathTool(BaseTool):
         if isinstance(paths, str):
             paths_list = paths.split()
         else:
-            paths_list = paths
+            paths_list = list(paths)
 
         # Initialize counters and results
-        results = []
+        results: list[CheckPathsResultItem] = []
         found_count = 0
         not_found_count = 0
         invalid_count = 0
@@ -114,11 +157,11 @@ class PathTool(BaseTool):
             if "/" not in path:
                 invalid_count += 1
                 results.append(
-                    {
-                        "path": path,
-                        "exists": False,
-                        "error": "Invalid format - must contain '/'",
-                    }
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
+                        error="Invalid format - must contain '/'",
+                    )
                 )
                 continue
 
@@ -129,27 +172,73 @@ class PathTool(BaseTool):
                 if document and document.metadata:
                     found_count += 1
                     metadata = document.metadata
-                    result = {
-                        "path": path,
-                        "exists": True,
-                        "ids_name": metadata.ids_name,
-                    }
 
-                    # Add optional fields if available (for detailed view)
-                    if metadata.data_type:
-                        result["data_type"] = metadata.data_type
-                    if metadata.units:
-                        result["units"] = metadata.units
+                    # Build rename history if available
+                    renamed_from = None
+                    rename_history = self.path_map.get_rename_history(path)
+                    if rename_history:
+                        renamed_from = [
+                            {
+                                "old_path": entry.old_path,
+                                "deprecated_in": entry.deprecated_in,
+                            }
+                            for entry in rename_history
+                        ]
 
-                    results.append(result)
+                    results.append(
+                        CheckPathsResultItem(
+                            path=path,
+                            exists=True,
+                            ids_name=metadata.ids_name,
+                            data_type=metadata.data_type,
+                            units=metadata.units,
+                            renamed_from=renamed_from,
+                        )
+                    )
                     logger.debug(f"Path validation: {path} - exists")
                 else:
                     not_found_count += 1
-                    results.append(
-                        {
-                            "path": path,
-                            "exists": False,
+                    migration_info = None
+                    excluded_info = None
+
+                    # Check for migration suggestion
+                    migration = self.path_map.get_mapping(path)
+                    if migration:
+                        migration_info = {
+                            "new_path": migration.new_path,
+                            "deprecated_in": migration.deprecated_in,
+                            "last_valid_version": migration.last_valid_version,
                         }
+                        # Check if the new path is excluded from index
+                        if migration.new_path:
+                            exclusion_reason = self.path_map.get_exclusion_reason(
+                                migration.new_path
+                            )
+                            if exclusion_reason:
+                                migration_info["new_path_excluded"] = True
+                                migration_info["exclusion_reason"] = (
+                                    self.path_map.get_exclusion_description(
+                                        exclusion_reason
+                                    )
+                                )
+                    else:
+                        # Not deprecated - check if path is excluded from index
+                        exclusion_reason = self.path_map.get_exclusion_reason(path)
+                        if exclusion_reason:
+                            excluded_info = {
+                                "reason_key": exclusion_reason,
+                                "reason": self.path_map.get_exclusion_description(
+                                    exclusion_reason
+                                ),
+                            }
+
+                    results.append(
+                        CheckPathsResultItem(
+                            path=path,
+                            exists=False,
+                            migration=migration_info,
+                            excluded=excluded_info,
+                        )
                     )
                     logger.debug(f"Path validation: {path} - not found")
 
@@ -157,11 +246,11 @@ class PathTool(BaseTool):
                 invalid_count += 1
                 logger.error(f"Error validating path {path}: {e}")
                 results.append(
-                    {
-                        "path": path,
-                        "exists": False,
-                        "error": str(e),
-                    }
+                    CheckPathsResultItem(
+                        path=path,
+                        exists=False,
+                        error=str(e),
+                    )
                 )
 
         # Build summary
@@ -173,7 +262,7 @@ class PathTool(BaseTool):
         }
 
         logger.info(f"Batch path validation: {found_count}/{len(paths_list)} found")
-        return {"summary": summary, "results": results}
+        return CheckPathsResult(summary=summary, results=results)
 
     @measure_performance(include_metrics=False, slow_threshold=0.2)
     @handle_errors(fallback=None)
@@ -187,12 +276,13 @@ class PathTool(BaseTool):
         paths: str | list[str],
         ids: str | None = None,
         ctx: Context | None = None,
-    ) -> IdsPathResult:
+    ) -> FetchPathsResult:
         """
         Retrieve full data for one or more IMAS paths including documentation and metadata.
 
         Rich data retrieval tool for fetching complete path information with documentation,
-        units, data types, and physics context. Returns structured IdsNode objects.
+        units, data types, and cluster labels. Returns structured IdsNode objects enriched
+        with LLM-generated cluster labels describing the physics context.
 
         Args:
             paths: One or more IMAS paths to retrieve. Accepts either:
@@ -205,19 +295,19 @@ class PathTool(BaseTool):
             ctx: FastMCP context for potential future enhancements
 
         Returns:
-            IdsPathResult containing:
-            - nodes: List of IdsNode objects with complete documentation and metadata
+            FetchPathsResult containing:
+            - nodes: List of IdsNode objects with documentation, metadata, and cluster_labels
             - summary: Statistics about the retrieval operation
-            - physics_context: Aggregated physics domain information
+            - physics_domains: Aggregated physics domain information
 
         Examples:
             Single path retrieval:
                 fetch_imas_paths("equilibrium/time_slice/boundary/psi")
-                → IdsPathResult with one IdsNode containing full documentation
+                → FetchPathsResult with one IdsNode containing full documentation
 
             Multiple paths with ids prefix:
                 fetch_imas_paths("time_slice/boundary/psi time_slice/boundary/psi_norm", ids="equilibrium")
-                → IdsPathResult with multiple IdsNode objects
+                → FetchPathsResult with multiple IdsNode objects
 
             List of paths:
                 fetch_imas_paths(["time_slice/boundary/psi", "profiles_1d/electrons/temperature"], ids="equilibrium")
@@ -230,14 +320,21 @@ class PathTool(BaseTool):
         if isinstance(paths, str):
             paths_list = paths.split()
         else:
-            paths_list = paths
+            paths_list = list(paths)
 
         # Initialize tracking
         nodes = []
+        deprecated_paths: list[DeprecatedPathInfo] = []
+        excluded_paths: list[ExcludedPathInfo] = []
         found_count = 0
         not_found_count = 0
+        deprecated_count = 0
+        excluded_count = 0
         invalid_count = 0
         physics_domains = set()
+
+        # Get cluster searcher for enriching paths with cluster labels
+        searcher = self.cluster_searcher
 
         # Retrieve each path
         for path in paths_list:
@@ -268,11 +365,61 @@ class PathTool(BaseTool):
 
                     # Use document.to_datapath() to get complete IdsNode with all fields
                     node = document.to_datapath()
+
+                    # Enrich with cluster labels if available
+                    if searcher:
+                        cluster_labels = searcher.get_cluster_labels_for_path(path)
+                        if cluster_labels:
+                            node.cluster_labels = cluster_labels
+
                     nodes.append(node)
                     logger.debug(f"Path retrieved: {path}")
                 else:
-                    not_found_count += 1
-                    logger.debug(f"Path not found: {path}")
+                    # Path not found - check for migration
+                    migration = self.path_map.get_mapping(path)
+                    if migration:
+                        deprecated_count += 1
+                        # Check if new path is excluded
+                        new_path_excluded = False
+                        exclusion_reason = None
+                        if migration.new_path:
+                            reason_key = self.path_map.get_exclusion_reason(
+                                migration.new_path
+                            )
+                            if reason_key:
+                                new_path_excluded = True
+                                exclusion_reason = (
+                                    self.path_map.get_exclusion_description(reason_key)
+                                )
+                        deprecated_paths.append(
+                            DeprecatedPathInfo(
+                                path=path,
+                                new_path=migration.new_path,
+                                deprecated_in=migration.deprecated_in,
+                                last_valid_version=migration.last_valid_version,
+                                new_path_excluded=new_path_excluded,
+                                exclusion_reason=exclusion_reason,
+                            )
+                        )
+                        logger.debug(f"Path deprecated: {path} -> {migration.new_path}")
+                    else:
+                        # Not deprecated - check if path is excluded from index
+                        reason_key = self.path_map.get_exclusion_reason(path)
+                        if reason_key:
+                            excluded_count += 1
+                            excluded_paths.append(
+                                ExcludedPathInfo(
+                                    path=path,
+                                    reason_key=reason_key,
+                                    reason_description=self.path_map.get_exclusion_description(
+                                        reason_key
+                                    ),
+                                )
+                            )
+                            logger.debug(f"Path excluded: {path} ({reason_key})")
+                        else:
+                            not_found_count += 1
+                            logger.debug(f"Path not found: {path}")
 
             except Exception as e:
                 invalid_count += 1
@@ -282,14 +429,18 @@ class PathTool(BaseTool):
         summary = {
             "total_requested": len(paths_list),
             "retrieved": found_count,
+            "deprecated": deprecated_count,
+            "excluded": excluded_count,
             "not_found": not_found_count,
             "invalid": invalid_count,
             "physics_domains": sorted(physics_domains),
         }
 
         # Build result
-        result = IdsPathResult(
+        result = FetchPathsResult(
             nodes=nodes,
+            deprecated_paths=deprecated_paths,
+            excluded_paths=excluded_paths,
             summary=summary,
             query=" ".join(paths_list[:3]) + ("..." if len(paths_list) > 3 else ""),
             search_mode=SearchMode.LEXICAL,  # Direct lookup, not search

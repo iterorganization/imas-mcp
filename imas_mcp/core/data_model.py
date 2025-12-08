@@ -70,14 +70,6 @@ class CoordinateSystem(BaseModel):
     usage: str
 
 
-class PhysicsContext(BaseModel):
-    """Physics context for a data field."""
-
-    domain: str
-    phenomena: list[str] = Field(default_factory=list)
-    typical_values: dict[str, str] = Field(default_factory=dict)
-
-
 class ValidationRules(BaseModel):
     """Validation rules for data fields."""
 
@@ -120,7 +112,7 @@ class IdsNode(BaseModel):
     introduced_after_version: str | None = None  # Renamed from introduced_after
     lifecycle_status: str | None = None  # Added lifecycle status field
     lifecycle_version: str | None = None  # Added lifecycle version field
-    physics_context: PhysicsContext | None = None
+    cluster_labels: list[dict[str, str]] | None = None  # LLM-generated cluster labels
     validation_rules: ValidationRules | None = None
     identifier_schema: IdentifierSchema | None = (
         None  # Schema information for identifier fields
