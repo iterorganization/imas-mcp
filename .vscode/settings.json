@@ -32,19 +32,14 @@
     "GEMINI_API_KEY": "your-gemini-key-here"
   },
   "python.envFile": "${workspaceFolder}/.env",
-  "chat.mcp.discovery.enabled": {
-    "claude-desktop": true,
-    "windsurf": true,
-    "cursor-global": true,
-    "cursor-workspace": true
-  },
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
     "imas-mcp/.vscode/mcp.json: imas-debug": {
       "allowedDuringChat": true
     },
     "imas-mcp/.vscode/mcp.json: imas": {
-      "allowedDuringChat": true
+      "allowedDuringChat": true,
+      "allowedModels": ["copilot/gemini-3-pro-preview"]
     },
     "imas-mcp/.vscode/mcp.json: imas-ddv3": {
       "allowedDuringChat": true
@@ -68,5 +63,6 @@
     }
   },
   "chat.mcp.access": "all",
-  "cursorpyright.analysis.typeCheckingMode": "basic"
+  "cursorpyright.analysis.typeCheckingMode": "basic",
+  "gistpad.mcp.enabled": false
 }
