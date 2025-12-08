@@ -1,5 +1,5 @@
 """
-Query hints decorator for SearchResult enhancement.
+Query hints decorator for SearchPathsResult enhancement.
 
 Provides intelligent query suggestions based on search results.
 """
@@ -9,7 +9,7 @@ import logging
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from ...models.result_models import SearchResult
+from ...models.result_models import SearchPathsResult
 from ...models.suggestion_models import SearchSuggestion
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -17,12 +17,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 logger = logging.getLogger(__name__)
 
 
-def generate_search_query_hints(search_result: SearchResult) -> list[SearchSuggestion]:
+def generate_search_query_hints(
+    search_result: SearchPathsResult,
+) -> list[SearchSuggestion]:
     """
-    Generate query hints based on SearchResult content.
+    Generate query hints based on SearchPathsResult content.
 
     Args:
-        search_result: The SearchResult to analyze
+        search_result: The SearchPathsResult to analyze
 
     Returns:
         List of search suggestions
@@ -259,7 +261,7 @@ def apply_query_hints(result: Any, max_hints: int = 5) -> Any:
             )
             return result
 
-        # Generate hints - check tool_name property for SearchResult
+        # Generate hints - check tool_name property for SearchPathsResult
         if hasattr(result, "tool_name") and result.tool_name == "search_imas":
             hints = generate_search_query_hints(result)
         else:

@@ -14,7 +14,7 @@ from fastmcp import Context
 from imas_mcp import dd_version
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import IdentifiersInput
-from imas_mcp.models.result_models import IdentifierResult
+from imas_mcp.models.result_models import GetIdentifiersResult
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
@@ -56,7 +56,7 @@ class IdentifiersTool(BaseTool):
     @property
     def tool_name(self) -> str:
         """Return the name of this tool."""
-        return "list_imas_identifiers"
+        return "get_imas_identifiers"
 
     def _filter_schemas_by_query(self, query: str) -> list[str]:
         """Filter identifier schemas based on query terms using OR logic for multiple keywords."""
@@ -189,11 +189,11 @@ class IdentifiersTool(BaseTool):
         "Browse IMAS identifier schemas and enumeration options - discover valid "
         "values for array indices, coordinate systems, and measurement configurations"
     )
-    async def list_imas_identifiers(
+    async def get_imas_identifiers(
         self,
         query: str | None = None,
         ctx: Context | None = None,
-    ) -> IdentifierResult | ToolError:
+    ) -> GetIdentifiersResult | ToolError:
         """
         Browse available identifier schemas and enumeration options in IMAS data.
 
@@ -208,12 +208,12 @@ class IdentifiersTool(BaseTool):
             ctx: MCP context
 
         Returns:
-            IdentifierResult containing schemas, paths, and analytics
+            GetIdentifiersResult containing schemas, paths, and analytics
 
         Examples:
-            list_imas_identifiers()  # All schemas
-            list_imas_identifiers(query="material")  # Material-related schemas
-            list_imas_identifiers(query="coordinate transport")  # OR search
+            get_imas_identifiers()  # All schemas
+            get_imas_identifiers(query="material")  # Material-related schemas
+            get_imas_identifiers(query="coordinate transport")  # OR search
         """
         try:
             if not self._identifier_catalog:
@@ -225,7 +225,7 @@ class IdentifiersTool(BaseTool):
                         "Use search_imas_paths() for direct data access",
                     ],
                     context={
-                        "tool": "list_imas_identifiers",
+                        "tool": "get_imas_identifiers",
                         "operation": "catalog_access",
                     },
                 )
@@ -289,7 +289,7 @@ class IdentifiersTool(BaseTool):
                 "query_context": query,
             }
 
-            response = IdentifierResult(
+            response = GetIdentifiersResult(
                 schemas=schemas,
                 paths=identifier_paths,
                 analytics=branching_analytics,
@@ -309,7 +309,7 @@ class IdentifiersTool(BaseTool):
                 ],
                 context={
                     "query": query,
-                    "tool": "list_imas_identifiers",
+                    "tool": "get_imas_identifiers",
                     "operation": "catalog_identifiers",
                     "identifier_catalog_loaded": bool(self._identifier_catalog),
                 },

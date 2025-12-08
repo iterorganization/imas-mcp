@@ -12,7 +12,7 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from imas_mcp import dd_version
-from imas_mcp.models.result_models import OverviewResult
+from imas_mcp.models.result_models import GetOverviewResult
 from imas_mcp.resource_provider import Resources
 from imas_mcp.server import Server
 from imas_mcp.tools import Tools
@@ -56,7 +56,7 @@ class TestMCPServer:
             "fetch_imas_paths",
             "get_imas_overview",
             "list_imas_docs",
-            "list_imas_identifiers",
+            "get_imas_identifiers",
             "list_imas_paths",
             "search_imas_clusters",
             "search_imas_docs",
@@ -138,7 +138,7 @@ class TestMCPProtocolCompliance:
                 "fetch_imas_paths",
                 "get_imas_overview",
                 "list_imas_docs",
-                "list_imas_identifiers",
+                "get_imas_identifiers",
                 "list_imas_paths",
                 "search_imas_clusters",
                 "search_imas_docs",
@@ -249,7 +249,7 @@ class TestServerComponentIntegration:
 
         # Get an overview (uses tools)
         overview_result = await server.tools.get_imas_overview()
-        assert isinstance(overview_result, OverviewResult)
+        assert isinstance(overview_result, GetOverviewResult)
 
         # Resources should provide schema information
         assert server.resources.schema_dir.exists()

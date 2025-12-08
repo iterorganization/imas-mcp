@@ -2,13 +2,13 @@
 Tests for search decorator functionality.
 
 This module tests that the query_hints and tool_hints decorators
-properly populate the SearchResult fields.
+properly populate the SearchPathsResult fields.
 """
 
 import pytest
 
 from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.models.suggestion_models import SearchSuggestion, ToolSuggestion
 from imas_mcp.search.decorators.query_hints import (
     apply_query_hints,
@@ -28,7 +28,7 @@ class TestQueryHintsDecorator:
 
     def test_generate_search_query_hints_with_results(self):
         """Test query hint generation for successful searches."""
-        # Create a SearchResult with some hits
+        # Create a SearchPathsResult with some hits
         hits = [
             SearchHit(
                 path="core_profiles/profiles_1d/temperature",
@@ -54,7 +54,7 @@ class TestQueryHintsDecorator:
             ),
         ]
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             query="temperature",
             search_mode=SearchMode.SEMANTIC,
@@ -79,7 +79,7 @@ class TestQueryHintsDecorator:
 
     def test_generate_search_query_hints_no_results(self):
         """Test query hint generation when no results are found."""
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=[],
             query="nonexistent_quantity",
             search_mode=SearchMode.SEMANTIC,
@@ -107,7 +107,7 @@ class TestQueryHintsDecorator:
         assert len(hints) >= 1
 
     def test_apply_query_hints_to_search_result(self):
-        """Test applying query hints directly to SearchResult."""
+        """Test applying query hints directly to SearchPathsResult."""
         hits = [
             SearchHit(
                 path="equilibrium/time_slice/profiles_1d/psi",
@@ -122,7 +122,7 @@ class TestQueryHintsDecorator:
             )
         ]
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             query="psi",
             search_mode=SearchMode.HYBRID,
@@ -144,7 +144,7 @@ class TestQueryHintsDecorator:
         """Test the query_hints decorator on a mock function."""
 
         @query_hints(max_hints=2)
-        async def mock_search_function(query: str) -> SearchResult:
+        async def mock_search_function(query: str) -> SearchPathsResult:
             """Mock search function for testing decorator."""
             hits = [
                 SearchHit(
@@ -159,7 +159,7 @@ class TestQueryHintsDecorator:
                     ids_name="core_profiles",
                 )
             ]
-            return SearchResult(
+            return SearchPathsResult(
                 hits=hits,
                 query=query,
                 search_mode=SearchMode.SEMANTIC,
@@ -205,7 +205,7 @@ class TestToolHintsDecorator:
             ),
         ]
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             query="temperature profile",
             search_mode=SearchMode.SEMANTIC,
@@ -249,7 +249,7 @@ class TestToolHintsDecorator:
                 )
             )
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             query="profiles",
             search_mode=SearchMode.HYBRID,
@@ -267,7 +267,7 @@ class TestToolHintsDecorator:
 
     def test_generate_search_tool_hints_no_results(self):
         """Test tool hint generation when no results are found."""
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=[],
             query="missing_data",
             search_mode=SearchMode.SEMANTIC,
@@ -282,12 +282,12 @@ class TestToolHintsDecorator:
         overview_hints = [h for h in hints if h.tool_name == "get_imas_overview"]
         assert len(overview_hints) > 0
 
-        # Should suggest list_imas_identifiers
-        identifier_hints = [h for h in hints if h.tool_name == "list_imas_identifiers"]
+        # Should suggest get_imas_identifiers
+        identifier_hints = [h for h in hints if h.tool_name == "get_imas_identifiers"]
         assert len(identifier_hints) > 0
 
     def test_apply_tool_hints_to_search_result(self):
-        """Test applying tool hints directly to SearchResult."""
+        """Test applying tool hints directly to SearchPathsResult."""
         hits = [
             SearchHit(
                 path="equilibrium/time_slice/profiles_1d/psi_norm",
@@ -302,7 +302,7 @@ class TestToolHintsDecorator:
             ),
         ]
 
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=hits,
             query="psi_norm",
             search_mode=SearchMode.LEXICAL,
@@ -321,7 +321,7 @@ class TestToolHintsDecorator:
         """Test the tool_hints decorator on a mock function."""
 
         @tool_hints(max_hints=3)
-        async def mock_search_function(query: str) -> SearchResult:
+        async def mock_search_function(query: str) -> SearchPathsResult:
             """Mock search function for testing decorator."""
             hits = [
                 SearchHit(
@@ -336,7 +336,7 @@ class TestToolHintsDecorator:
                     ids_name="transport",
                 ),
             ]
-            return SearchResult(
+            return SearchPathsResult(
                 hits=hits,
                 query=query,
                 search_mode=SearchMode.HYBRID,
@@ -360,7 +360,7 @@ class TestDecoratorInteraction:
 
         @query_hints(max_hints=2)
         @tool_hints(max_hints=2)
-        async def mock_search_with_both(query: str) -> SearchResult:
+        async def mock_search_with_both(query: str) -> SearchPathsResult:
             """Mock function with both decorators."""
             hits = [
                 SearchHit(
@@ -375,7 +375,7 @@ class TestDecoratorInteraction:
                     ids_name="core_profiles",
                 ),
             ]
-            return SearchResult(
+            return SearchPathsResult(
                 hits=hits,
                 query=query,
                 search_mode=SearchMode.AUTO,
@@ -395,10 +395,10 @@ class TestDecoratorInteraction:
         """Test that decorators handle errors gracefully."""
 
         @query_hints(max_hints=2)
-        async def mock_search_with_error(query: str) -> SearchResult:
+        async def mock_search_with_error(query: str) -> SearchPathsResult:
             """Mock function that might cause decorator errors."""
             # Return a minimal result that might cause issues
-            return SearchResult(
+            return SearchPathsResult(
                 hits=[],
                 query=query,
                 search_mode=SearchMode.SEMANTIC,
@@ -418,7 +418,7 @@ class TestDecoratorFieldPopulation:
 
     def test_query_hints_field_population(self):
         """Test that query_hints decorator populates query_hints field."""
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=[
                 SearchHit(
                     path="equilibrium/time_slice/profiles_1d/psi",
@@ -443,7 +443,7 @@ class TestDecoratorFieldPopulation:
 
     def test_tool_hints_field_population(self):
         """Test that tool_hints decorator populates tool_hints field."""
-        result = SearchResult(
+        result = SearchPathsResult(
             hits=[
                 SearchHit(
                     path="core_profiles/profiles_1d/density",

@@ -11,7 +11,7 @@ from fastmcp import Context
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import ListPathsInput
-from imas_mcp.models.result_models import PathListQueryResult, PathListResult
+from imas_mcp.models.result_models import ListPathsResult, ListPathsResultItem
 from imas_mcp.search.decorators import (
     handle_errors,
     mcp_tool,
@@ -232,7 +232,7 @@ class ListTool(BaseTool):
         include_ids_prefix: bool = True,
         max_paths: int | None = None,
         ctx: Context | None = None,
-    ) -> PathListResult | ToolError:
+    ) -> ListPathsResult | ToolError:
         """
         List all data paths in one or more IDS or path prefixes with minimal overhead.
 
@@ -271,9 +271,9 @@ class ListTool(BaseTool):
             ctx: FastMCP context for potential future enhancements
 
         Returns:
-            PathListResult containing:
+            ListPathsResult containing:
             - format: The output format used
-            - results: List of PathListQueryResult for each queried IDS/prefix
+            - results: List of ListPathsResultItem for each queried IDS/prefix
             - summary: Overall statistics across all queries
 
         Examples:
@@ -343,7 +343,7 @@ class ListTool(BaseTool):
                 valid_ids, invalid_ids = await self.documents.validate_ids([ids_name])
                 if not valid_ids:
                     results.append(
-                        PathListQueryResult(
+                        ListPathsResultItem(
                             query=query,
                             error=f"IDS '{ids_name}' not found",
                             path_count=0,
@@ -356,7 +356,7 @@ class ListTool(BaseTool):
 
                 if not ids_documents:
                     results.append(
-                        PathListQueryResult(
+                        ListPathsResultItem(
                             query=query,
                             error=f"No paths found in IDS '{ids_name}'",
                             path_count=0,
@@ -384,7 +384,7 @@ class ListTool(BaseTool):
                 paths_to_show = all_paths[:max_paths]
 
                 # Build result using Pydantic model
-                result = PathListQueryResult(
+                result = ListPathsResultItem(
                     query=query,
                     path_count=len(all_paths),
                     truncated_to=max_paths if truncated else None,
@@ -414,7 +414,7 @@ class ListTool(BaseTool):
             except Exception as e:
                 logger.error(f"Error listing paths for '{query}': {e}")
                 results.append(
-                    PathListQueryResult(
+                    ListPathsResultItem(
                         query=query,
                         error=str(e),
                         path_count=0,
@@ -431,7 +431,7 @@ class ListTool(BaseTool):
             "truncated_results": total_truncated,
         }
 
-        return PathListResult(
+        return ListPathsResult(
             format=format,
             results=results,
             summary=summary,

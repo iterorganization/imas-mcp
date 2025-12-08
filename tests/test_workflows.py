@@ -12,10 +12,10 @@ import pytest
 
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
-    IdentifierResult,
-    OverviewResult,
-    RelationshipResult,
-    SearchResult,
+    GetIdentifiersResult,
+    GetOverviewResult,
+    SearchClustersResult,
+    SearchPathsResult,
 )
 
 
@@ -27,7 +27,7 @@ class TestUserWorkflows:
         """Test: overview → search workflow."""
         # Step 1: Get overview to understand what's available
         overview = await tools.get_imas_overview()
-        assert isinstance(overview, OverviewResult)
+        assert isinstance(overview, GetOverviewResult)
 
         if overview.available_ids:
             # Step 2: Search for specific content from test dataset IDS
@@ -35,7 +35,7 @@ class TestUserWorkflows:
             search_result = await tools.search_imas_paths(
                 query=search_query, max_results=5
             )
-            assert isinstance(search_result, SearchResult)
+            assert isinstance(search_result, SearchPathsResult)
 
     @pytest.mark.asyncio
     async def test_research_workflow(self, tools, workflow_test_data):
@@ -45,7 +45,7 @@ class TestUserWorkflows:
         search_result = await tools.search_imas_paths(
             query=search_query, max_results=10
         )
-        assert isinstance(search_result, SearchResult)
+        assert isinstance(search_result, SearchPathsResult)
 
         if search_result.hits:
             # Step 2: Explore relationships for found IDS
@@ -62,12 +62,12 @@ class TestUserWorkflows:
             relationships_result = await tools.search_imas_clusters(
                 path=f"{ids_name}/profiles_1d/time"
             )
-            # Accept either RelationshipResult or ToolError (when relationships.json is missing)
-            assert isinstance(relationships_result, RelationshipResult | ToolError)
+            # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+            assert isinstance(relationships_result, SearchClustersResult | ToolError)
 
             # Step 3: Explore identifiers for comprehensive understanding
-            identifiers_result = await tools.list_imas_identifiers()
-            assert isinstance(identifiers_result, IdentifierResult)
+            identifiers_result = await tools.get_imas_identifiers()
+            assert isinstance(identifiers_result, GetIdentifiersResult)
 
     @pytest.mark.asyncio
     async def test_comprehensive_exploration_workflow(self, tools):
@@ -78,18 +78,18 @@ class TestUserWorkflows:
         relationships = await tools.search_imas_clusters(
             path=f"{ids_name}/profiles_1d/time"
         )
-        # Accept either RelationshipResult or ToolError (when relationships.json is missing)
-        assert isinstance(relationships, RelationshipResult | ToolError)
+        # Accept either SearchClustersResult or ToolError (when relationships.json is missing)
+        assert isinstance(relationships, SearchClustersResult | ToolError)
 
         # Step 2: Explore identifiers
-        identifiers = await tools.list_imas_identifiers()
-        assert isinstance(identifiers, IdentifierResult)
+        identifiers = await tools.get_imas_identifiers()
+        assert isinstance(identifiers, GetIdentifiersResult)
 
         # Step 3: Search within this IDS
         search = await tools.search_imas_paths(
             query=f"{ids_name} temperature", max_results=5
         )
-        assert isinstance(search, SearchResult)
+        assert isinstance(search, SearchPathsResult)
 
 
 class TestWorkflowPerformance:
@@ -110,8 +110,8 @@ class TestWorkflowPerformance:
         assert total_time < 30.0, f"Workflow took {total_time:.2f}s, too slow"
 
         # All steps should complete successfully
-        assert isinstance(overview, OverviewResult)
-        assert isinstance(search, SearchResult)
+        assert isinstance(overview, GetOverviewResult)
+        assert isinstance(search, SearchPathsResult)
 
     @pytest.mark.asyncio
     async def test_concurrent_tool_usage(self, tools):
@@ -126,8 +126,8 @@ class TestWorkflowPerformance:
 
         # All tasks should complete successfully
         assert len(results) == 2
-        assert isinstance(results[0], OverviewResult)  # overview
-        assert isinstance(results[1], SearchResult)  # search
+        assert isinstance(results[0], GetOverviewResult)  # overview
+        assert isinstance(results[1], SearchPathsResult)  # search
 
 
 class TestWorkflowErrorRecovery:
@@ -138,11 +138,11 @@ class TestWorkflowErrorRecovery:
         """Test workflow can continue after one step fails."""
         # Step 1: Valid operation
         overview = await tools.get_imas_overview()
-        assert isinstance(overview, OverviewResult)
+        assert isinstance(overview, GetOverviewResult)
 
         # Step 2: Continue with valid operation
         search = await tools.search_imas_paths(query="temperature", max_results=3)
-        assert isinstance(search, SearchResult)
+        assert isinstance(search, SearchPathsResult)
 
         # Workflow should complete without errors
 
@@ -158,7 +158,7 @@ class TestWorkflowDataConsistency:
             query="core_profiles temperature", max_results=5
         )
 
-        assert isinstance(search_result, SearchResult)
+        assert isinstance(search_result, SearchPathsResult)
 
 
 if __name__ == "__main__":
