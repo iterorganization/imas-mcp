@@ -20,11 +20,9 @@ from typing import Any
 from imas_mcp.models.structure_models import (
     DomainDistribution,
     HierarchyMetrics,
-    MermaidGraphs,
     NavigationHints,
     StructureAnalysis,
 )
-from imas_mcp.structure.mermaid_generator import MermaidGraphGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +111,6 @@ class StructureAnalyzer:
         self.structure_dir = data_dir / "structure"
         self.structure_dir.mkdir(exist_ok=True)
 
-        # Initialize Mermaid generator with resources directory (parent of schemas)
-        # data_dir is typically the schemas directory, so we need to go up one level
-        resources_dir = data_dir.parent
-        self.mermaid_generator = MermaidGraphGenerator(resources_dir)
-
     def analyze_all_ids(self, ids_data: dict[str, dict[str, Any]]) -> None:
         """Analyze structure for all IDS and generate static data files."""
         logger.info("Generating enhanced structure analysis for all IDS...")
@@ -128,12 +121,7 @@ class StructureAnalyzer:
             analysis = self.analyze_ids_structure(ids_name, data)
             self._save_structure_analysis(ids_name, analysis)
 
-        # Generate Mermaid graphs alongside structure analysis
         self._generate_structure_catalog(ids_data)
-
-        # Generate Mermaid graphs for visual representation
-        logger.info("Generating Mermaid graphs for visual analysis...")
-        self.mermaid_generator.generate_all_graphs(ids_data)
 
         logger.info(f"Enhanced structure analysis completed for {len(ids_data)} IDS")
 
@@ -185,9 +173,7 @@ class StructureAnalyzer:
                     new_node = PathNode(
                         path=node_path,
                         depth=i + 1,
-                        physics_domain=path_data.get("physics_context", {}).get(
-                            "domain", ""
-                        ),
+                        physics_domain="",  # No longer derived from path-level context
                         data_type=path_data.get("data_type", ""),
                         units=path_data.get("units", ""),
                     )
@@ -239,17 +225,14 @@ class StructureAnalyzer:
     def _analyze_domain_distribution(
         self, paths: dict[str, Any]
     ) -> list[DomainDistribution]:
-        """Analyze physics domain distribution within the IDS."""
-        domain_counts: dict[str, list[str]] = {}
+        """Analyze physics domain distribution within the IDS.
 
-        # Count paths by domain
-        for path, path_data in paths.items():
-            physics_context = path_data.get("physics_context", {})
-            domain = physics_context.get("domain", "unspecified")
-
-            if domain not in domain_counts:
-                domain_counts[domain] = []
-            domain_counts[domain].append(path)
+        Note: Path-level physics_context has been removed. Domain distribution
+        is now simplified - all paths are grouped as 'unspecified' since
+        physics domain is determined at IDS level, not path level.
+        """
+        # All paths go into 'unspecified' since we no longer have path-level context
+        domain_counts: dict[str, list[str]] = {"unspecified": list(paths.keys())}
 
         # Create distribution objects
         total_paths = len(paths)
@@ -389,15 +372,7 @@ class StructureAnalyzer:
         if time_organization:
             pattern += " with temporal structure"
 
-        # Check for physics-based organization
-        physics_domains = set()
-        for path_data in paths.values():
-            domain = path_data.get("physics_context", {}).get("domain", "")
-            if domain:
-                physics_domains.add(domain)
-
-        if len(physics_domains) > 1:
-            pattern += " with multi-domain physics coverage"
+        # Note: Physics domain detection removed - domain is at IDS level only
 
         return pattern
 
@@ -496,50 +471,10 @@ class StructureAnalyzer:
 
             # Convert back to Pydantic models
             analysis = StructureAnalysis(**analysis_data)
-
-            # Load Mermaid graphs if available
-            mermaid_graphs = self._load_mermaid_graphs(ids_name)
-            if mermaid_graphs:
-                analysis.mermaid_graphs = mermaid_graphs
-
             return analysis
 
         except Exception as e:
             logger.error(f"Failed to load structure analysis for {ids_name}: {e}")
-            return None
-
-    def _load_mermaid_graphs(self, ids_name: str) -> MermaidGraphs | None:
-        """Load Mermaid graphs for an IDS."""
-        try:
-            available_graphs = self.mermaid_generator.get_available_graphs(ids_name)
-
-            if not available_graphs:
-                return None
-
-            mermaid_graphs = MermaidGraphs(available_graphs=available_graphs)
-
-            # Load each available graph type
-            if "hierarchy" in available_graphs:
-                mermaid_graphs.hierarchy_graph = (
-                    self.mermaid_generator.load_mermaid_graph(ids_name, "hierarchy")
-                )
-
-            if "physics_domains" in available_graphs:
-                mermaid_graphs.physics_domains_graph = (
-                    self.mermaid_generator.load_mermaid_graph(
-                        ids_name, "physics_domains"
-                    )
-                )
-
-            if "complexity" in available_graphs:
-                mermaid_graphs.complexity_graph = (
-                    self.mermaid_generator.load_mermaid_graph(ids_name, "complexity")
-                )
-
-            return mermaid_graphs
-
-        except Exception as e:
-            logger.error(f"Failed to load Mermaid graphs for {ids_name}: {e}")
             return None
 
     def get_structure_catalog(self) -> dict[str, Any] | None:

@@ -160,88 +160,95 @@ class Server:
 
         logger.debug("Successfully registered all components")
 
-    def _validate_schemas_available(self):
-        """Validate that schema files exist for the current DD version.
+    def _build_schemas_if_missing(self) -> bool:
+        """Automatically build schemas if they're missing.
 
-        Raises:
-            RuntimeError: If required schema files are missing with helpful error message.
+        Returns:
+            True if schemas exist or were built successfully, False otherwise.
         """
         path_accessor = ResourcePathAccessor(dd_version=dd_version)
         catalog_path = path_accessor.schemas_dir / "ids_catalog.json"
-
-        if not catalog_path.exists():
-            # Check if this is a dev version to provide appropriate guidance
-            is_dev_version = "dev" in dd_version.lower()
-            build_cmd = (
-                "dd-version dev" if is_dev_version else f"dd-version {dd_version}"
-            )
-
-            # Get environment variable values for debugging
-            imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
-            ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
-
-            error_msg = (
-                f"\n\n"
-                f"Environment variables:\n"
-                f"  IMAS_DD_VERSION: {imas_dd_version_env}\n"
-                f"  IDS_FILTER: {ids_filter_env}\n\n"
-                f"Schema files not found for DD version '{dd_version}'.\n"
-                f"Expected location: {path_accessor.schemas_dir}\n\n"
-                f"To build schemas, run:\n"
-                f"  {build_cmd}\n\n"
-                f"To list all available versions:\n"
-                f"  dd-version --list\n\n"
-                f"To use a different DD version:\n"
-                f"  dd-version <version>  # e.g., dd-version 3.42.2\n"
-                f"  dd-version dev        # for development version\n"
-            )
-            raise RuntimeError(error_msg)
-
-        # Check for detailed files directory
         detailed_dir = path_accessor.schemas_dir / "detailed"
-        if not detailed_dir.exists():
-            # Check if this is a dev version to provide appropriate guidance
-            is_dev_version = "dev" in dd_version.lower()
-            build_cmd = (
-                "dd-version dev --force-rebuild"
-                if is_dev_version
-                else f"dd-version {dd_version} --force-rebuild"
-            )
 
-            # Get environment variable values for debugging
-            imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
-            ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
+        # Check if schemas already exist and are complete
+        if (
+            catalog_path.exists()
+            and detailed_dir.exists()
+            and list(detailed_dir.glob("*.json"))
+        ):
+            return True
 
-            error_msg = (
-                f"\n\n"
-                f"Environment variables:\n"
-                f"  IMAS_DD_VERSION: {imas_dd_version_env}\n"
-                f"  IDS_FILTER: {ids_filter_env}\n\n"
-                f"Schema detailed directory not found for DD version '{dd_version}'.\n"
-                f"Expected location: {detailed_dir}\n\n"
-                f"The catalog exists but detailed files are missing.\n"
-                f"To rebuild schemas, run:\n"
-                f"  {build_cmd}\n"
-            )
-            raise RuntimeError(error_msg)
-
-        # Check if detailed directory has any JSON files
-        detailed_files = list(detailed_dir.glob("*.json"))
-        if not detailed_files:
-            error_msg = (
-                f"\n\n"
-                f"No detailed schema files found for DD version '{dd_version}'.\n"
-                f"Expected location: {detailed_dir}\n\n"
-                f"The directory exists but contains no IDS schema files.\n"
-                f"To rebuild schemas, run:\n"
-                f"  IMAS_DD_VERSION={dd_version} uv run python scripts/build_schemas.py --force\n"
-            )
-            raise RuntimeError(error_msg)
-
-        # Log successful validation
-        logger.debug(
-            f"Schema validation passed: {len(detailed_files)} IDS schemas found for DD version '{dd_version}'"
+        # Schemas are missing - attempt to build them
+        logger.info(
+            f"Schemas not found for DD version '{dd_version}'. Building schemas automatically..."
         )
+
+        try:
+            from imas_mcp.core.xml_parser import DataDictionaryTransformer
+            from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
+
+            # Create DD accessor
+            dd_accessor = ImasDataDictionariesAccessor(dd_version)
+
+            # Build schemas (this is what the build hook does)
+            logger.info(
+                f"Building schemas for DD version {dd_version}. This may take a minute..."
+            )
+
+            json_transformer = DataDictionaryTransformer(
+                dd_accessor=dd_accessor, ids_set=self.ids_set, use_rich=False
+            )
+            json_transformer.build()
+
+            logger.info(f"✓ Schemas built successfully for DD version '{dd_version}'")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to auto-build schemas: {e}")
+            return False
+
+    def _validate_schemas_available(self):
+        """Validate that schema files exist for the current DD version.
+
+        Attempts to auto-build schemas if they're missing (useful for editable installs).
+
+        Raises:
+            RuntimeError: If required schema files are missing and cannot be built.
+        """
+        # Try to auto-build schemas if missing
+        if self._build_schemas_if_missing():
+            path_accessor = ResourcePathAccessor(dd_version=dd_version)
+            detailed_dir = path_accessor.schemas_dir / "detailed"
+            detailed_files = list(detailed_dir.glob("*.json"))
+            logger.debug(
+                f"Schema validation passed: {len(detailed_files)} IDS schemas found for DD version '{dd_version}'"
+            )
+            return
+
+        # Auto-build failed - provide helpful error message
+        path_accessor = ResourcePathAccessor(dd_version=dd_version)
+        is_dev_version = "dev" in dd_version.lower()
+        build_cmd = "dd-version dev" if is_dev_version else f"dd-version {dd_version}"
+
+        imas_dd_version_env = os.environ.get("IMAS_DD_VERSION", "(not set)")
+        ids_filter_env = os.environ.get("IDS_FILTER", "(not set)")
+
+        error_msg = (
+            f"\n\n"
+            f"Environment variables:\n"
+            f"  IMAS_DD_VERSION: {imas_dd_version_env}\n"
+            f"  IDS_FILTER: {ids_filter_env}\n\n"
+            f"Schema files not found for DD version '{dd_version}'.\n"
+            f"Expected location: {path_accessor.schemas_dir}\n\n"
+            f"Auto-build failed. To build schemas manually, run:\n"
+            f"  {build_cmd}\n\n"
+            f"To list all available versions:\n"
+            f"  dd-version --list\n\n"
+            f"To use a different DD version:\n"
+            f"  dd-version <version>  # e.g., dd-version 3.42.2\n"
+            f"  dd-version dev        # for development version\n"
+        )
+        raise RuntimeError(error_msg)
 
     # Embedding initialization logic encapsulated in Embeddings dataclass (embeddings/embeddings.py)
 

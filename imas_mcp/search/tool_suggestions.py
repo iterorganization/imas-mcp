@@ -30,14 +30,14 @@ def suggest_follow_up_tools(
 
     try:
         # Tool-specific suggestions using clear switch-like logic
-        if func_name == "search_imas":
+        if func_name == "search_imas_paths":
             # For search results, suggest concept explanation and structure analysis
             if results.get("results"):
                 suggestions.append(
                     {
-                        "tool": "explain_concept",
+                        "tool": "get_imas_overview",
                         "reason": "Get detailed explanation of physics concepts found in search results",
-                        "sample_call": "explain_concept(concept='plasma temperature')",
+                        "sample_call": "get_imas_overview(query='plasma temperature')",
                     }
                 )
 
@@ -47,61 +47,61 @@ def suggest_follow_up_tools(
                         ids_name = result["path"].split("/")[0]
                         suggestions.append(
                             {
-                                "tool": "analyze_ids_structure",
+                                "tool": "list_imas_paths",
                                 "reason": f"Analyze structure of {ids_name} IDS for better understanding",
-                                "sample_call": f"analyze_ids_structure(ids_name='{ids_name}')",
+                                "sample_call": f"list_imas_paths(paths='{ids_name}')",
                             }
                         )
                         break
 
-        elif func_name == "explain_concept":
+        elif func_name == "get_imas_overview":
             # After concept explanation, suggest searching for related data
             concept = results.get("concept", "")
             if concept:
                 suggestions.append(
                     {
-                        "tool": "search_imas",
+                        "tool": "search_imas_paths",
                         "reason": f"Search for data paths related to {concept}",
-                        "sample_call": f"search_imas(query='{concept}')",
+                        "sample_call": f"search_imas_paths(query='{concept}')",
                     }
                 )
 
-        elif func_name == "analyze_ids_structure":
+        elif func_name == "list_imas_paths":
             # After structure analysis, suggest exploring relationships
             ids_name = results.get("ids_name", "")
             if ids_name:
                 suggestions.append(
                     {
-                        "tool": "explore_relationships",
+                        "tool": "search_imas_clusters",
                         "reason": f"Explore relationships within {ids_name} IDS",
-                        "sample_call": f"explore_relationships(path='{ids_name}')",
+                        "sample_call": f"search_imas_clusters(path='{ids_name}')",
                     }
                 )
 
-        elif func_name == "get_overview":
+        elif func_name == "get_imas_overview":
             # After overview, suggest searching for specific topics
             suggestions.extend(
                 [
                     {
-                        "tool": "search_imas",
+                        "tool": "search_imas_paths",
                         "reason": "Search for specific physics concepts or data paths",
-                        "sample_call": "search_imas(query='plasma temperature')",
+                        "sample_call": "search_imas_paths(query='plasma temperature')",
                     },
                     {
-                        "tool": "explore_identifiers",
+                        "tool": "list_imas_identifiers",
                         "reason": "Explore identifier schemas and enumeration options",
-                        "sample_call": "explore_identifiers(scope='summary')",
+                        "sample_call": "list_imas_identifiers(query='summary')",
                     },
                 ]
             )
 
-        elif func_name in ["export_ids", "export_physics_domain"]:
+        elif func_name in ["fetch_imas_paths", "export_physics_domain"]:
             # After exports, suggest analysis tools
             suggestions.append(
                 {
-                    "tool": "search_imas",
+                    "tool": "search_imas_paths",
                     "reason": "Search for specific data within exported domains",
-                    "sample_call": "search_imas(query='specific concept')",
+                    "sample_call": "search_imas_paths(query='specific concept')",
                 }
             )
 

@@ -6,11 +6,10 @@ This module contains common functionality shared across all tool implementations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any
 
 from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.models.result_models import SearchResult
+from imas_mcp.models.result_models import SearchPathsResult
 from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.search.engines.hybrid_engine import HybridSearchEngine
 from imas_mcp.search.engines.lexical_engine import LexicalSearchEngine
@@ -18,7 +17,6 @@ from imas_mcp.search.engines.semantic_engine import SemanticSearchEngine
 from imas_mcp.search.services.search_service import SearchService
 from imas_mcp.services import (
     DocumentService,
-    PhysicsService,
     ResponseService,
     SearchConfigurationService,
 )
@@ -37,7 +35,6 @@ class BaseTool(ABC):
         self._search_service = self._create_search_service()
 
         # Initialize services
-        self.physics = PhysicsService()
         self.response = ResponseService()
         self.documents = DocumentService(self.document_store)
         self.search_config = SearchConfigurationService()
@@ -58,9 +55,9 @@ class BaseTool(ABC):
         search_mode: str | SearchMode = "auto",
         max_results: int = 10,
         ids_filter: str | list[str] | None = None,
-    ) -> SearchResult:
+    ) -> SearchPathsResult:
         """
-        Unified search execution that returns a complete SearchResult.
+        Unified search execution that returns a complete SearchPathsResult.
 
         Args:
             query: Search query
@@ -69,7 +66,7 @@ class BaseTool(ABC):
             ids_filter: Optional IDS filter (space-delimited string or list)
 
         Returns:
-            SearchResult with all search data and context
+            SearchPathsResult with all search data and context
         """
         # Create and optimize configuration
         config = self.search_config.create_config(
@@ -109,59 +106,6 @@ class BaseTool(ABC):
             }
 
         return response
-
-    def build_prompt(self, prompt_type: str, tool_context: dict[str, Any]) -> str:
-        """Override in subclasses to build tool-specific AI prompts."""
-        return ""
-
-    def system_prompt(self) -> str:
-        """Override in subclasses to provide tool-specific system prompts."""
-        return "You are an expert assistant analyzing IMAS fusion physics data. Provide detailed, accurate insights."
-
-    def build_sample_tasks(self, tool_result) -> list[dict[str, Any]]:
-        """Build sampling tasks for sampling tool result content.
-
-        Default implementation provides base sampling tasks for common fields.
-        Supports both nodes (IdsNode for complete data) and hits (SearchHit for search results).
-        Override in subclasses to add tool-specific sampling tasks.
-
-        Args:
-            tool_result: The tool result to build sampling tasks for
-
-        Returns:
-            List of sampling tasks with field, prompt_type, and context
-        """
-        tasks = []
-
-        # Base sampling for tools with nodes (complete data retrieval)
-        if hasattr(tool_result, "nodes") and tool_result.nodes:
-            tasks.append(
-                {
-                    "field": "nodes_documentation",
-                    "prompt_type": "sample_documentation",
-                    "context": {
-                        "nodes": tool_result.nodes[:5],  # Limit context size
-                        "query": getattr(tool_result, "query", ""),
-                        "tool_type": type(self).__name__,
-                    },
-                }
-            )
-
-        # Base sampling for tools with hits (search results)
-        if hasattr(tool_result, "hits") and tool_result.hits:
-            tasks.append(
-                {
-                    "field": "hits_analysis",
-                    "prompt_type": "sample_hits",
-                    "context": {
-                        "hits": tool_result.hits[:5],  # Limit context size
-                        "query": getattr(tool_result, "query", ""),
-                        "tool_type": type(self).__name__,
-                    },
-                }
-            )
-
-        return tasks
 
     def _create_search_service(self) -> SearchService:
         """Create search service with appropriate engines."""

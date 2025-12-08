@@ -34,7 +34,6 @@ class DataDictionaryEntry(IndexableDocument):
     coordinates: str | None = None
     lifecycle: str | None = None
     data_type: str | None = None
-    physics_context: str | None = None
     related_paths: str | None = None
     usage_examples: str | None = None
     validation_rules: str | None = None
@@ -76,5 +75,5 @@ class DataDictionaryEntry(IndexableDocument):
         return self
 
 
-# Note: SearchResult for MCP tool responses is now in models/result_models.py
+# Note: SearchPathsResult for MCP tool responses is now in models/result_models.py
 # This file contains only internal search engine models

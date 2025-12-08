@@ -17,7 +17,6 @@ from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.server import Server
-from imas_mcp.services.physics import PhysicsService
 
 # Load .env file with override=True to ensure test environment uses .env values
 # This fixes issues where empty or stale shell environment variables persist
@@ -88,7 +87,6 @@ def create_mock_document(path_id: str, ids_name: str = "core_profiles") -> Docum
     return Document(
         metadata=metadata,
         documentation=f"Mock documentation for {path_id}",
-        physics_context={"domain": "transport", "phenomena": ["transport", "plasma"]},
         relationships={},
         raw_data={"data_type": "float", "units": "m"},
     )
@@ -189,52 +187,23 @@ def mock_heavy_operations():
             mock_semantic_instance._initialize.return_value = None
             mock_semantic.return_value = mock_semantic_instance
 
-            # Mock unit accessor to prevent heavy physics integration
-            with patch(
-                "imas_mcp.search.document_store.UnitAccessor"
-            ) as mock_unit_accessor:
-                mock_unit_accessor.return_value.get_all_unit_contexts.return_value = {}
-                mock_unit_accessor.return_value.get_unit_context.return_value = (
-                    "test context"
-                )
-                mock_unit_accessor.return_value.get_category_for_unit.return_value = (
-                    "test_category"
-                )
-                mock_unit_accessor.return_value.get_domains_for_unit.return_value = [
-                    "transport"
-                ]
-
-                # Mock search engine methods to prevent heavy execution
-                mock_engine = MockSearchEngine()
-                with (
-                    patch(
-                        "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                ):
-                    # Mock PhysicsService methods to prevent heavy model loading
-                    with patch.multiple(
-                        PhysicsService,
-                        enhance_query=AsyncMock(return_value=None),
-                        get_concept_context=AsyncMock(
-                            return_value={
-                                "domain": "transport",
-                                "description": "Mock physics description",
-                                "phenomena": ["transport"],
-                                "typical_units": ["m"],
-                                "complexity_level": "intermediate",
-                            }
-                        ),
-                    ):
-                        yield
+            # Mock search engine methods to prevent heavy execution
+            mock_engine = MockSearchEngine()
+            with (
+                patch(
+                    "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+            ):
+                yield
 
 
 @pytest.fixture(scope="session")
@@ -290,16 +259,15 @@ def mcp_test_context():
         "test_query": "plasma temperature",
         "test_ids": "core_profiles",
         "expected_tools": [
-            "analyze_ids_structure",
             "check_imas_paths",
-            "explain_concept",
-            "explore_identifiers",
-            "explore_relationships",
-            "export_ids",
-            "export_physics_domain",
             "fetch_imas_paths",
-            "get_overview",
-            "search_imas",
+            "get_imas_overview",
+            "list_imas_docs",
+            "get_imas_identifiers",
+            "list_imas_paths",
+            "search_imas_clusters",
+            "search_imas_docs",
+            "search_imas_paths",
         ],
     }
 

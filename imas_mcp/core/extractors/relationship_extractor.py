@@ -295,7 +295,6 @@ class RelationshipExtractor(BaseExtractor):
 
                 # Build semantic description using complete documentation, excluding units/metadata
                 documentation = path_data.get("documentation", "")
-                physics_context = path_data.get("physics_context", "")
 
                 # Use complete documentation string, excluding only cross-reference sections
                 complete_doc = ""
@@ -350,7 +349,6 @@ class RelationshipExtractor(BaseExtractor):
                 path_metadata[path] = {
                     "ids": ids_name,
                     "documentation": documentation,
-                    "physics_context": physics_context,
                 }
 
         print(f"Generating embeddings for {len(path_descriptions)} paths...")

@@ -8,7 +8,7 @@
     "pythons": ["3.12"],
     "build_command": [
         "python -m pip install build",
-        "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; os.environ['IMAS_MCP_EMBEDDING_MODEL']='all-MiniLM-L6-v2'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
+        "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
     ],
     "install_command": [
         "in-dir={env_dir} python -m pip install {wheel_file}[transformers]"
@@ -16,6 +16,11 @@
     "uninstall_command": [
         "return-code=any python -m pip uninstall -y {project}"
     ],
+    "matrix": {
+        "env_nobuild": {
+            "IMAS_MCP_EMBEDDING_MODEL": ["openai/text-embedding-3-small"]
+        }
+    },
     "benchmark_dir": "benchmarks",
     "env_dir": ".asv/env",
     "results_dir": ".asv/results",

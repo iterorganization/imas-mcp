@@ -27,6 +27,7 @@ import psutil
 from dotenv import load_dotenv
 
 from imas_mcp.exceptions import DocsServerError
+from imas_mcp.settings import get_docs_embedding_model
 
 # Load environment variables from .env file
 load_dotenv()
@@ -386,7 +387,7 @@ class DocsServerManager:
             env.update(
                 {
                     "DOCS_MCP_EMBEDDING_MODEL": env.get(
-                        "DOCS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+                        "DOCS_MCP_EMBEDDING_MODEL", get_docs_embedding_model()
                     ),
                     "DOCS_MCP_TELEMETRY": env.get("DOCS_MCP_TELEMETRY", "false"),
                     "DOCS_MCP_STORE_PATH": str(self.store_path),

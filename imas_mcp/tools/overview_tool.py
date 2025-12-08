@@ -16,7 +16,7 @@ from fastmcp import Context
 from imas_mcp import dd_version
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import OverviewInput
-from imas_mcp.models.result_models import OverviewResult
+from imas_mcp.models.result_models import GetOverviewResult
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import (
     cache_results,
@@ -39,8 +39,8 @@ class OverviewTool(BaseTool):
     IDS structures and physics domains.
 
     Other specialized tools handle:
-    - explore_relationships() -> relationships.json
-    - explore_identifiers() -> identifier_catalog.json
+    - search_imas_clusters() -> clusters.json
+    - get_imas_identifiers() -> identifier_catalog.json
     """
 
     @property
@@ -93,17 +93,22 @@ class OverviewTool(BaseTool):
     def _get_mcp_tools(self) -> list[str]:
         """Get list of available MCP tools on this server.
 
-        Programmatically discovers all tools by inspecting the tool modules
-        for @mcp_tool decorated methods.
+        Dynamically discovers all tools by using the Tools class registry.
         """
+        from imas_mcp.tools import Tools
+
+        # Create a temporary Tools instance to get registered tool names
+        temp_tools = Tools.__new__(Tools)
+        temp_tools._tool_instances = []
+
+        # We need to scan all tool classes for @mcp_tool decorated methods
         from imas_mcp.tools import (
-            AnalysisTool,
-            ExplainTool,
-            ExportTool,
+            ClustersTool,
+            DocsTool,
             IdentifiersTool,
             ListTool,
+            OverviewTool,
             PathTool,
-            RelationshipsTool,
             SearchTool,
         )
 
@@ -111,19 +116,15 @@ class OverviewTool(BaseTool):
             SearchTool,
             PathTool,
             ListTool,
-            ExplainTool,
-            OverviewTool,  # self.__class__
+            OverviewTool,
             IdentifiersTool,
-            AnalysisTool,
-            RelationshipsTool,
-            ExportTool,
+            ClustersTool,
+            DocsTool,
         ]
 
         tool_names = []
         for tool_class in tool_classes:
-            # Inspect class methods for @mcp_tool decorator
             for attr_name in dir(tool_class):
-                # Skip private methods
                 if attr_name.startswith("_"):
                     continue
                 try:
@@ -202,7 +203,7 @@ class OverviewTool(BaseTool):
 
         if query:
             recommendations.append(
-                f"🔍 Use search_imas('{query}') to find specific data paths"
+                f"🔍 Use search_imas_paths('{query}') to find specific data paths"
             )
 
             # Domain-specific recommendations
@@ -210,26 +211,26 @@ class OverviewTool(BaseTool):
                 term in query.lower() for term in ["magnetic", "field", "equilibrium"]
             ):
                 recommendations.append(
-                    "⚡ Try explore_relationships('equilibrium/time_slice/profiles_2d') for magnetic field data"
+                    "⚡ Try search_imas_clusters('equilibrium boundary') for related magnetic field data"
                 )
 
             if any(
                 term in query.lower() for term in ["temperature", "density", "pressure"]
             ):
                 recommendations.append(
-                    "🌡️ Use export_physics_domain('transport') for temperature and density profiles"
+                    "🌡️ Use search_imas_clusters('transport profiles') for temperature and density data"
                 )
 
             if any(term in query.lower() for term in ["diagnostic", "measurement"]):
                 recommendations.append(
-                    "📊 Try analyze_ids_structure() on diagnostic IDS like 'thomson_scattering'"
+                    "📊 Try list_imas_paths('thomson_scattering') to explore diagnostic structure"
                 )
 
             if any(
                 term in query.lower() for term in ["identifier", "enum", "enumeration"]
             ):
                 recommendations.append(
-                    "🔢 Use explore_identifiers() to browse identifier schemas and enumerations"
+                    "🔢 Use get_imas_identifiers() to browse identifier schemas and enumerations"
                 )
 
         if relevant_ids:
@@ -237,24 +238,23 @@ class OverviewTool(BaseTool):
             match len(relevant_ids):
                 case 1:
                     recommendations.append(
-                        f"� Use export_ids(['{relevant_ids[0]}']) to extract this IDS data"
+                        f"📋 Use list_imas_paths('{relevant_ids[0]}') to explore this IDS structure"
                     )
                 case 2:
                     recommendations.append(
-                        f"� Use analyze_ids_structure('{relevant_ids[0]}') for detailed structure analysis"
+                        f"📋 Use list_imas_paths('{relevant_ids[0]}') for detailed structure"
                     )
                 case 3:
                     recommendations.append(
-                        "🌐 Use explore_relationships() to find connections between these IDS"
+                        "🌐 Use search_imas_clusters() to find related path clusters"
                     )
 
         # Always include general recommendations
         recommendations.extend(
             [
-                "💡 Use explain_concept() to understand physics concepts",
-                "🔗 Use explore_identifiers() to browse available enumerations",
-                "🌐 Use explore_relationships() to find data connections",
-                "📈 Use export_physics_domain() for domain-specific data exports",
+                "🔗 Use get_imas_identifiers() to browse available enumerations",
+                "🌐 Use search_imas_clusters() to find semantically related paths",
+                "📚 Use search_imas_docs() to search IMAS documentation",
             ]
         )
 
@@ -267,11 +267,11 @@ class OverviewTool(BaseTool):
         "Get high-level overview of IMAS data dictionary structure and contents, "
         "including DD and server version metadata"
     )
-    async def get_overview(
+    async def get_imas_overview(
         self,
         query: str | None = None,
         ctx: Context | None = None,
-    ) -> OverviewResult | ToolError:
+    ) -> GetOverviewResult | ToolError:
         """
         Get high-level overview of IMAS data dictionary structure and contents.
 
@@ -285,7 +285,7 @@ class OverviewTool(BaseTool):
             ctx: MCP context for potential AI enhancement
 
         Returns:
-            OverviewResult with available IDS, physics domains, and usage guidance
+            GetOverviewResult with available IDS, physics domains, and usage guidance
         """
         try:
             # Check if IDS catalog is loaded
@@ -295,9 +295,12 @@ class OverviewTool(BaseTool):
                     suggestions=[
                         "Check if ids_catalog.json exists in resources/schemas/",
                         "Try restarting the MCP server",
-                        "Use search_imas() for direct data access",
+                        "Use search_imas_paths() for direct data access",
                     ],
-                    context={"tool": "get_overview", "operation": "catalog_access"},
+                    context={
+                        "tool": "get_imas_overview",
+                        "operation": "catalog_access",
+                    },
                 )
 
             # Get basic metadata
@@ -457,22 +460,20 @@ class OverviewTool(BaseTool):
             # Build usage guidance
             usage_guidance = {
                 "tools_available": [
-                    "search_imas - Find specific data paths with semantic search",
+                    "search_imas_paths - Find specific data paths with semantic search",
                     "list_imas_paths - List all paths in IDS with minimal overhead (yaml/list/json/dict formats)",
                     "fetch_imas_paths - Retrieve full path documentation and metadata",
                     "check_imas_paths - Fast batch validation of IMAS paths",
-                    "analyze_ids_structure - Get detailed structural analysis of any IDS",
-                    "explain_concept - Understand physics concepts and terminology",
-                    "explore_relationships - Discover data connections and cross-references (uses relationships.json)",
-                    "explore_identifiers - Browse identifier schemas and enumerations (uses identifier_catalog.json)",
-                    "export_ids - Extract data from multiple IDS simultaneously",
-                    "export_physics_domain - Get domain-specific data exports",
+                    "search_imas_clusters - Find semantically related path clusters",
+                    "get_imas_identifiers - Browse identifier schemas and enumerations",
+                    "list_imas_docs - List available documentation libraries",
+                    "search_imas_docs - Search documentation content",
                 ],
                 "getting_started": recommendations,
-                "catalog_focus": "This tool serves the IDS catalog - use explore_relationships() and explore_identifiers() for other catalog data",
+                "catalog_focus": "This tool serves the IDS catalog - use search_imas_clusters() and get_imas_identifiers() for specialized searches",
             }
 
-            return OverviewResult(
+            return GetOverviewResult(
                 content="\n".join(content_parts),
                 available_ids=relevant_ids,
                 query=query,
@@ -493,12 +494,12 @@ class OverviewTool(BaseTool):
                 error=str(e),
                 suggestions=[
                     "Try a simpler query or general overview",
-                    "Use search_imas() for direct data exploration",
+                    "Use search_imas_paths() for direct data exploration",
                     "Check catalog file availability",
                 ],
                 context={
                     "query": query,
-                    "tool": "get_overview",
+                    "tool": "get_imas_overview",
                     "operation": "catalog_overview",
                     "ids_catalog_loaded": bool(self._ids_catalog),
                 },

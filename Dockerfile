@@ -36,8 +36,7 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Labels for image provenance
 LABEL imas_mcp.git_sha=${GIT_SHA} \
@@ -63,8 +62,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during dep sync (unexpected)." >&2; exit 1; fi
 
-# Expand sparse checkout to include project sources and scripts (phase 2)
-RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts \
+# Expand sparse checkout to include project sources, scripts, and build hooks (phase 2)
+# Include hatch_build_hooks.py even though HATCH_BUILD_NO_HOOKS=true, because
+# hatchling validates file existence before checking the env var
+RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts hatch_build_hooks.py \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
     && git sparse-checkout list \
@@ -115,19 +116,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Embeddings ready"
 
-# Build relationships (requires embeddings)
+# Build clusters (requires embeddings)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
     export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
-    echo "Building relationships..." && \
+    echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building relationships for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-relationships --ids-filter "${IDS_FILTER}" --quiet; \
+    echo "Building clusters for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-clusters --ids-filter "${IDS_FILTER}" --quiet; \
     else \
-    echo "Building relationships for all IDS" && \
-    uv run --no-dev build-relationships --quiet; \
+    echo "Building clusters for all IDS" && \
+    uv run --no-dev build-clusters --quiet; \
     fi && \
-    echo "✓ Relationships ready"
+    echo "✓ Clusters ready"
 
 # Build mermaid graphs (requires schemas)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
@@ -140,6 +141,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-mermaid --quiet; \
     fi && \
     echo "✓ Mermaid graphs ready"
+
+# Build path mappings for version upgrades (requires schemas)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building path mappings..." && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building path mappings for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
+    else \
+    echo "Building path mappings for all IDS" && \
+    uv run --no-dev build-path-map --no-rich; \
+    fi && \
+    echo "✓ Path mappings ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
 FROM python:3.12-slim AS docs-provider
@@ -171,15 +184,15 @@ WORKDIR /app
 
 # Set runtime environment variables
 # Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
+# HATCH_BUILD_NO_HOOKS prevents build hooks from running if uv triggers a sync
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    HATCH_BUILD_NO_HOOKS=true \
     DOCS_SERVER_URL=http://localhost:6280 \
     DOCS_MCP_TELEMETRY=false \
     DOCS_MCP_STORE_PATH=/app/data \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    IMAS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b \
-    DOCS_MCP_EMBEDDING_MODEL=qwen/qwen3-embedding-4b
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000

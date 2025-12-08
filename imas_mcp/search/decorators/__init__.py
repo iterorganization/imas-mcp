@@ -14,7 +14,6 @@ from .error_handling import (
     create_timeout_handler,
     handle_errors,
 )
-from .hints import hints
 from .mcp_tool import mcp_tool
 from .performance import get_performance_summary, measure_performance
 from .tool_recommendations import generate_tool_recommendations, recommend_tools
@@ -39,12 +38,9 @@ __all__ = [
     "create_timeout_handler",
     # MCP tool decorator
     "mcp_tool",
-    "hints",
     # Error classes
     "ToolError",
     "ValidationError",
     "SearchError",
     "ServiceError",
-    # Note: physics_hints, query_hints, sample, and tool_hints are not exported
-    # to avoid circular dependencies. Import them directly when needed.
 ]

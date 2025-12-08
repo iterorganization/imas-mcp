@@ -2,10 +2,11 @@
 
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+from imas_mcp.settings import get_include_error_fields, get_include_ggd
 
 
 @dataclass
@@ -20,7 +21,8 @@ class ExtractorContext:
 
     # Configuration
     excluded_patterns: set[str]
-    skip_ggd: bool = True
+    include_ggd: bool = field(default_factory=get_include_ggd)
+    include_error_fields: bool = field(default_factory=get_include_error_fields)
 
     def __post_init__(self):
         """Build parent map for efficient tree traversal."""
@@ -65,8 +67,14 @@ class BaseExtractor(ABC):
             if pattern in path_lower or pattern in name_lower:
                 return True
 
-        # Filter out GGD if configured
-        if self.context.skip_ggd and ("ggd" in path_lower or "ggd" in name_lower):
+        # Filter out GGD if not included
+        if not self.context.include_ggd and (
+            "ggd" in path_lower or "ggd" in name_lower
+        ):
+            return True
+
+        # Filter out error fields if not included
+        if not self.context.include_error_fields and self._is_error_field(elem_name):
             return True
 
         # Filter type-specific logic
@@ -78,6 +86,20 @@ class BaseExtractor(ABC):
             return self._filter_element_noise(path, elem_name)
 
         return False
+
+    def _is_error_field(self, name: str | None) -> bool:
+        """Check if name matches error field patterns."""
+        if not name:
+            return False
+        return (
+            "_error_" in name
+            or name.endswith("_error_upper")
+            or name.endswith("_error_lower")
+            or name.endswith("_error_index")
+            or "error_upper" in name
+            or "error_lower" in name
+            or "error_index" in name
+        )
 
     def _filter_coordinate_noise(self, path: str | None, elem_name: str | None) -> bool:
         """Filter coordinate-specific noise."""

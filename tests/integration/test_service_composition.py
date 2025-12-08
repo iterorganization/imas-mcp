@@ -34,7 +34,7 @@ class TestServiceComposition:
             )
 
             # Execute search
-            result = await search_tool.search_imas(
+            result = await search_tool.search_imas_paths(
                 query="test query", search_mode="semantic"
             )
 
@@ -46,7 +46,6 @@ class TestServiceComposition:
     def test_template_method_customization(self, search_tool):
         """Test template method pattern allows tool-specific customization."""
         # Verify SearchTool has core services available
-        assert hasattr(search_tool, "physics")
         assert hasattr(search_tool, "response")
         assert hasattr(search_tool, "documents")
         assert hasattr(search_tool, "search_config")
@@ -54,25 +53,19 @@ class TestServiceComposition:
     @pytest.mark.asyncio
     async def test_apply_services_method(self, search_tool):
         """Test the service composition works correctly through decorators."""
-        from imas_mcp.models.result_models import SearchResult
+        from imas_mcp.models.result_models import SearchPathsResult
 
         # Mock the search execution to return controlled results
-        mock_result = SearchResult(hits=[], query="test")
+        mock_result = SearchPathsResult(hits=[], query="test")
         search_tool.execute_search = AsyncMock(return_value=mock_result)
 
-        # Mock physics enhancement
-        search_tool.physics.enhance_query = AsyncMock(return_value=None)
-
-        # Execute the search with detailed profile to trigger physics hints through hints decorator
-        result = await search_tool.search_imas(
+        # Execute the search with detailed profile
+        result = await search_tool.search_imas_paths(
             query="test", response_profile="detailed"
         )
 
         # Verify search was executed
         search_tool.execute_search.assert_called_once()
-
-        # Verify physics enhancement was attempted (only called in detailed/ALL hints mode)
-        search_tool.physics.enhance_query.assert_called_once()
 
         # Result should be based on the mock result
         assert result.query == "test"
