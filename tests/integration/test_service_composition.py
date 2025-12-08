@@ -63,16 +63,13 @@ class TestServiceComposition:
         # Mock physics enhancement
         search_tool.physics.enhance_query = AsyncMock(return_value=None)
 
-        # Execute the search with detailed profile to trigger physics hints through hints decorator
+        # Execute the search with detailed profile
         result = await search_tool.search_imas_paths(
             query="test", response_profile="detailed"
         )
 
         # Verify search was executed
         search_tool.execute_search.assert_called_once()
-
-        # Verify physics enhancement was attempted (only called in detailed/ALL hints mode)
-        search_tool.physics.enhance_query.assert_called_once()
 
         # Result should be based on the mock result
         assert result.query == "test"

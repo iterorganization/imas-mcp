@@ -2,8 +2,7 @@
 Search tool implementation.
 
 This module contains the search_imas tool logic with decorators
-for caching, validation, tool recommendations, performance
-monitoring, and error handling.
+for caching, validation, performance monitoring, and error handling.
 """
 
 import logging
@@ -20,7 +19,6 @@ from imas_mcp.search.decorators import (
     measure_performance,
     validate_input,
 )
-from imas_mcp.search.decorators.hints import hints
 
 from .base import BaseTool
 
@@ -39,7 +37,6 @@ class SearchTool(BaseTool):
     @validate_input(schema=SearchInput)
     @measure_performance(include_metrics=True, slow_threshold=1.0)
     @handle_errors(fallback="search_suggestions")
-    @hints(tool_max=4, query_max=5)
     @mcp_tool(
         "Find IMAS IDS entries using semantic and lexical search. "
         "Options: search_mode=auto|semantic|lexical|hybrid, "
@@ -68,8 +65,8 @@ class SearchTool(BaseTool):
                        - List of IDS names: ["equilibrium", "transport"]
             max_results: Maximum number of hits to return (summary contains all matches)
             search_mode: Search strategy - "auto", "semantic", "lexical", or "hybrid"
-            response_profile: Response preset - "minimal" (results only, no hints/context),
-                            "standard" (results+essential hints, default), or "detailed" (full context)
+            response_profile: Response preset - "minimal" (results only),
+                            "standard" (results+physics context, default), or "detailed" (full context)
             ctx: FastMCP context
 
         Returns:
@@ -114,10 +111,6 @@ class SearchTool(BaseTool):
                     if len(hit.documentation) > 100
                     else hit.documentation
                 )
-
-        # Remove all hints and context
-        result.query_hints = []
-        result.tool_hints = []
 
         # Remove physics context to save tokens
         if hasattr(result, "physics_context"):
