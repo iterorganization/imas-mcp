@@ -6,6 +6,7 @@ with migration suggestions for deprecated paths and rename history.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastmcp import Context
 
@@ -27,6 +28,9 @@ from imas_mcp.search.document_store import DocumentStore
 
 from .base import BaseTool
 
+if TYPE_CHECKING:
+    from imas_mcp.clusters.search import ClusterSearcher
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +51,7 @@ class PathTool(BaseTool):
         """
         super().__init__(document_store=document_store)
         self._path_map = path_map
+        self._cluster_searcher: ClusterSearcher | None = None
 
     @property
     def path_map(self) -> PathMap:
@@ -54,6 +59,24 @@ class PathTool(BaseTool):
         if self._path_map is None:
             self._path_map = get_path_map()
         return self._path_map
+
+    @property
+    def cluster_searcher(self) -> "ClusterSearcher | None":
+        """Get the cluster searcher (lazy loaded)."""
+        if self._cluster_searcher is None:
+            try:
+                from imas_mcp.core.clusters import Clusters
+
+                clusters = Clusters()
+                if clusters.is_available():
+                    from imas_mcp.clusters.search import ClusterSearcher
+
+                    self._cluster_searcher = ClusterSearcher(
+                        clusters=clusters.get_clusters()
+                    )
+            except Exception as e:
+                logger.debug(f"Cluster searcher not available: {e}")
+        return self._cluster_searcher
 
     @property
     def tool_name(self) -> str:
@@ -258,7 +281,8 @@ class PathTool(BaseTool):
         Retrieve full data for one or more IMAS paths including documentation and metadata.
 
         Rich data retrieval tool for fetching complete path information with documentation,
-        units, data types, and physics context. Returns structured IdsNode objects.
+        units, data types, and cluster labels. Returns structured IdsNode objects enriched
+        with LLM-generated cluster labels describing the physics context.
 
         Args:
             paths: One or more IMAS paths to retrieve. Accepts either:
@@ -272,9 +296,9 @@ class PathTool(BaseTool):
 
         Returns:
             FetchPathsResult containing:
-            - nodes: List of IdsNode objects with complete documentation and metadata
+            - nodes: List of IdsNode objects with documentation, metadata, and cluster_labels
             - summary: Statistics about the retrieval operation
-            - physics_context: Aggregated physics domain information
+            - physics_domains: Aggregated physics domain information
 
         Examples:
             Single path retrieval:
@@ -309,6 +333,9 @@ class PathTool(BaseTool):
         invalid_count = 0
         physics_domains = set()
 
+        # Get cluster searcher for enriching paths with cluster labels
+        searcher = self.cluster_searcher
+
         # Retrieve each path
         for path in paths_list:
             path = path.strip()
@@ -338,6 +365,13 @@ class PathTool(BaseTool):
 
                     # Use document.to_datapath() to get complete IdsNode with all fields
                     node = document.to_datapath()
+
+                    # Enrich with cluster labels if available
+                    if searcher:
+                        cluster_labels = searcher.get_cluster_labels_for_path(path)
+                        if cluster_labels:
+                            node.cluster_labels = cluster_labels
+
                     nodes.append(node)
                     logger.debug(f"Path retrieved: {path}")
                 else:

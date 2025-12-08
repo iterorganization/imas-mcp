@@ -112,8 +112,4 @@ class SearchTool(BaseTool):
                     else hit.documentation
                 )
 
-        # Remove physics context to save tokens
-        if hasattr(result, "physics_context"):
-            result.physics_context = None
-
         return result
