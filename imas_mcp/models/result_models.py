@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field
 from imas_mcp import __version__
 from imas_mcp.core.data_model import IdsNode
 from imas_mcp.models.constants import (
-    RelationshipType,
     SearchMode,
 )
 from imas_mcp.models.context_models import (
@@ -318,30 +317,20 @@ class GetIdentifiersResult(WithPhysics, ToolResult):
     analytics: dict[str, Any] = Field(default_factory=dict)
 
 
-class SearchClustersResult(WithPhysics, ToolResult):
-    """Cluster search result with physics aggregation."""
+class SearchClustersResult(ToolResult):
+    """Result from cluster search."""
 
     @property
     def tool_name(self) -> str:
         """Name of the tool that generated this result."""
         return "search_imas_clusters"
 
-    path: str
-    relationship_type: RelationshipType = RelationshipType.ALL
-    max_depth: int = 2
-    connections: dict[str, list[str]] = Field(
-        default_factory=dict,
-        description="Categorized relationship paths with intra-IDS and cross-IDS separation",
-    )
-
-    # Relationship-specific analysis fields
-    relationship_insights: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Discovery summary, strength analysis, and semantic insights",
-    )
-    physics_analysis: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Physics domain analysis, domain connections, and phenomena",
+    query: str = Field(description="The search query (path or natural language)")
+    query_type: str = Field(description="Type of query: 'path' or 'semantic'")
+    clusters_found: int = Field(description="Number of clusters found")
+    clusters: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of matching clusters with labels, descriptions, and paths",
     )
 
 
