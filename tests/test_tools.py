@@ -13,7 +13,6 @@ from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.result_models import (
     GetIdentifiersResult,
     GetOverviewResult,
-    SearchClustersResult,
     SearchPathsResult,
 )
 from tests.conftest import STANDARD_TEST_IDS_SET
@@ -61,17 +60,17 @@ class TestToolsComposition:
         assert hasattr(result, "physics_domains")
 
     @pytest.mark.asyncio
-    async def test_relationships_tool_interface(self, tools, mcp_test_context):
-        """Test relationships tool interface and basic functionality."""
+    async def test_clusters_tool_interface(self, tools, mcp_test_context):
+        """Test clusters tool interface and basic functionality."""
         ids_name = mcp_test_context["test_ids"]
-        result = await tools.search_imas_clusters(path=f"{ids_name}/profiles_1d/time")
+        result = await tools.search_imas_clusters(query=f"{ids_name}/profiles_1d/time")
 
-        # Test interface contract - accept either SearchClustersResult or ToolError
-        assert isinstance(result, SearchClustersResult | ToolError)
+        # Test interface contract - accept either dict result or ToolError
+        assert isinstance(result, dict | ToolError)
 
-        if isinstance(result, SearchClustersResult):
-            assert hasattr(result, "path")
-            assert hasattr(result, "connections")
+        if isinstance(result, dict):
+            assert "query" in result
+            assert "clusters" in result
 
     @pytest.mark.asyncio
     async def test_identifiers_tool_interface(self, tools, mcp_test_context):

@@ -216,6 +216,9 @@ class RelationshipExtractor:
         """Save relationships to JSON file with additional groupings."""
         output_file = output_file or self.config.output_file
 
+        # Determine clusters.json path (same directory, new filename)
+        clusters_file = output_file.parent / "clusters.json"
+
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -230,6 +233,234 @@ class RelationshipExtractor:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         self.logger.info("Saved relationships to %s", output_file)
+
+        # Also save in new clusters.json format with labels
+        self._save_clusters_json(relationships, clusters_file)
+
+    def _save_clusters_json(
+        self,
+        relationships: RelationshipSet,
+        output_file: Path,
+    ) -> None:
+        """Save clusters in optimized format with LLM-generated labels.
+
+        Args:
+            relationships: The extracted relationships
+            output_file: Path to clusters.json
+        """
+        from imas_mcp import dd_version
+
+        clusters_list = relationships.clusters
+
+        # Generate labels using LLM
+        labels_map = self._generate_cluster_labels(clusters_list)
+
+        # Generate label embeddings for semantic search
+        label_embeddings = self._generate_label_embeddings(labels_map)
+
+        # Build clusters array with labels
+        clusters_data = []
+        for cluster in clusters_list:
+            cluster_id = cluster.id
+            label_info = labels_map.get(cluster_id, {})
+
+            cluster_entry = {
+                "id": cluster_id,
+                "label": label_info.get("label", f"Cluster {cluster_id}"),
+                "description": label_info.get("description", ""),
+                "type": "cross_ids" if cluster.is_cross_ids else "intra_ids",
+                "similarity": round(cluster.similarity_score, 4),
+                "ids": cluster.ids_names,
+                "paths": cluster.paths,
+                "centroid": cluster.centroid,
+            }
+
+            # Add label embedding if available
+            if cluster_id in label_embeddings:
+                cluster_entry["label_embedding"] = label_embeddings[cluster_id]
+
+            clusters_data.append(cluster_entry)
+
+        # Build indexes
+        path_to_cluster: dict[str, list[int]] = {}
+        ids_to_clusters: dict[str, list[int]] = {}
+        cross_ids_list: list[int] = []
+        intra_ids_list: list[int] = []
+
+        for cluster in clusters_list:
+            cluster_id = cluster.id
+
+            # Path index (supports multi-membership)
+            for path in cluster.paths:
+                if path not in path_to_cluster:
+                    path_to_cluster[path] = []
+                path_to_cluster[path].append(cluster_id)
+
+            # IDS index
+            for ids_name in cluster.ids_names:
+                if ids_name not in ids_to_clusters:
+                    ids_to_clusters[ids_name] = []
+                if cluster_id not in ids_to_clusters[ids_name]:
+                    ids_to_clusters[ids_name].append(cluster_id)
+
+            # Type lists
+            if cluster.is_cross_ids:
+                cross_ids_list.append(cluster_id)
+            else:
+                intra_ids_list.append(cluster_id)
+
+        # Build final structure
+        output_data = {
+            "version": "1.0",
+            "dd_version": dd_version,
+            "generated": datetime.now().isoformat(),
+            "labeling_model": self._get_labeling_model(),
+            "clusters": clusters_data,
+            "indexes": {
+                "path": path_to_cluster,
+                "ids": ids_to_clusters,
+                "cross_ids": cross_ids_list,
+                "intra_ids": intra_ids_list,
+            },
+            "statistics": {
+                "total_clusters": len(clusters_list),
+                "cross_ids_count": len(cross_ids_list),
+                "intra_ids_count": len(intra_ids_list),
+                "total_paths": len(path_to_cluster),
+                "clustering_params": {
+                    "cross_ids": {
+                        "eps": self.config.cross_ids_eps,
+                        "min_samples": self.config.cross_ids_min_samples,
+                    },
+                    "intra_ids": {
+                        "eps": self.config.intra_ids_eps,
+                        "min_samples": self.config.intra_ids_min_samples,
+                    },
+                },
+            },
+        }
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+        self.logger.info(f"Saved clusters.json to {output_file}")
+
+    def _get_labeling_model(self) -> str:
+        """Get the labeling model name."""
+        import os
+
+        from .labeler import DEFAULT_LABELING_MODEL
+
+        return os.getenv("IMAS_MCP_LABELING_MODEL", DEFAULT_LABELING_MODEL)
+
+    def _generate_cluster_labels(self, clusters: list) -> dict[int, dict[str, str]]:
+        """Generate labels for clusters using LLM.
+
+        Args:
+            clusters: List of ClusterInfo objects
+
+        Returns:
+            Dict mapping cluster_id to {"label": str, "description": str}
+        """
+        import os
+
+        # Check if API key is available for LLM labeling
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key or api_key.startswith("your_"):
+            self.logger.warning(
+                "No API key available for LLM labeling. Using fallback labels."
+            )
+            return self._generate_fallback_labels(clusters)
+
+        try:
+            from .labeler import ClusterLabeler
+
+            labeler = ClusterLabeler()
+
+            # Convert ClusterInfo to dicts for labeler
+            cluster_dicts = []
+            for cluster in clusters:
+                cluster_dicts.append(
+                    {
+                        "id": cluster.id,
+                        "is_cross_ids": cluster.is_cross_ids,
+                        "ids_names": cluster.ids_names,
+                        "paths": cluster.paths,
+                    }
+                )
+
+            labels = labeler.label_clusters(cluster_dicts)
+
+            return {
+                label.cluster_id: {
+                    "label": label.label,
+                    "description": label.description,
+                }
+                for label in labels
+            }
+
+        except Exception as e:
+            self.logger.error(f"LLM labeling failed: {e}. Using fallback labels.")
+            return self._generate_fallback_labels(clusters)
+
+    def _generate_fallback_labels(self, clusters: list) -> dict[int, dict[str, str]]:
+        """Generate fallback labels without LLM."""
+        labels = {}
+        for cluster in clusters:
+            # Extract common terms from paths
+            paths = cluster.paths[:5]
+            if paths:
+                segments = [p.split("/")[-1] for p in paths]
+                common = " ".join(segments[:2]).replace("_", " ").title()
+                label = common[:50]  # Truncate
+            else:
+                label = f"Cluster {cluster.id}"
+
+            type_str = "cross-IDS" if cluster.is_cross_ids else "intra-IDS"
+            ids_str = ", ".join(cluster.ids_names[:3])
+            description = f"A {type_str} cluster of related paths from {ids_str}."
+
+            labels[cluster.id] = {"label": label, "description": description}
+
+        return labels
+
+    def _generate_label_embeddings(
+        self, labels_map: dict[int, dict[str, str]]
+    ) -> dict[int, list[float]]:
+        """Generate embeddings for cluster labels+descriptions.
+
+        Args:
+            labels_map: Dict mapping cluster_id to {"label": str, "description": str}
+
+        Returns:
+            Dict mapping cluster_id to embedding vector
+        """
+        if not labels_map:
+            return {}
+
+        try:
+            encoder_config = self.config.get_encoder_config()
+            encoder = Encoder(encoder_config)
+
+            # Combine label and description for embedding
+            texts = []
+            cluster_ids = []
+            for cluster_id, info in labels_map.items():
+                text = f"{info['label']}: {info['description']}"
+                texts.append(text)
+                cluster_ids.append(cluster_id)
+
+            # Generate embeddings
+            embeddings = encoder.embed_texts(texts)
+
+            return {
+                cluster_id: embedding.tolist()
+                for cluster_id, embedding in zip(cluster_ids, embeddings, strict=True)
+            }
+
+        except Exception as e:
+            self.logger.warning(f"Failed to generate label embeddings: {e}")
+            return {}
 
     def _load_ids_data(self, input_dir: Path) -> dict[str, Any]:
         """Load detailed IDS JSON files, optionally filtered by ids_set."""

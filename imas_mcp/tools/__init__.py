@@ -11,12 +11,12 @@ from imas_mcp.search.document_store import DocumentStore
 from imas_mcp.services.docs_server_manager import DocsServerManager
 
 from .base import BaseTool
+from .clusters_tool import ClustersTool
 from .docs_tool import DocsTool
 from .identifiers_tool import IdentifiersTool
 from .list_tool import ListTool
 from .overview_tool import OverviewTool
 from .path_tool import PathTool
-from .relationships_tool import RelationshipsTool
 from .search_tool import SearchTool
 
 
@@ -48,7 +48,7 @@ class Tools(MCPProvider):
         self.path_tool = PathTool(self.document_store)
         self.list_tool = ListTool(self.document_store)
         self.overview_tool = OverviewTool(self.document_store)
-        self.relationships_tool = RelationshipsTool(self.document_store)
+        self.clusters_tool = ClustersTool(self.document_store)
         self.identifiers_tool = IdentifiersTool(self.document_store)
 
         # Initialize docs tool with injected docs manager
@@ -64,7 +64,7 @@ class Tools(MCPProvider):
             self.path_tool,
             self.list_tool,
             self.overview_tool,
-            self.relationships_tool,
+            self.clusters_tool,
             self.identifiers_tool,
             self.docs_tool,
         ]
@@ -123,8 +123,8 @@ class Tools(MCPProvider):
         return await self.identifiers_tool.get_imas_identifiers(*args, **kwargs)
 
     async def search_imas_clusters(self, *args, **kwargs):
-        """Delegate to relationships tool."""
-        return await self.relationships_tool.search_imas_clusters(*args, **kwargs)
+        """Delegate to clusters tool."""
+        return await self.clusters_tool.search_imas_clusters(*args, **kwargs)
 
     # Documentation search delegation methods
     async def search_imas_docs(self, *args, **kwargs):
@@ -142,7 +142,7 @@ __all__ = [
     "PathTool",
     "ListTool",
     "OverviewTool",
-    "RelationshipsTool",
+    "ClustersTool",
     "IdentifiersTool",
     "DocsTool",
     "Tools",

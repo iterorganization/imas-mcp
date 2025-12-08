@@ -7,6 +7,7 @@ IMAS data paths using advanced clustering and embedding techniques.
 
 from .config import RelationshipExtractionConfig
 from .extractor import RelationshipExtractor
+from .labeler import ClusterLabel, ClusterLabeler
 from .models import ClusterInfo, RelationshipSet
 from .search import ClusterSearcher, ClusterSearchResult
 
@@ -17,4 +18,6 @@ __all__ = [
     "RelationshipSet",
     "ClusterSearcher",
     "ClusterSearchResult",
+    "ClusterLabeler",
+    "ClusterLabel",
 ]
