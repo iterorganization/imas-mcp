@@ -20,7 +20,6 @@ from imas_mcp.clusters import (
 )
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
-from imas_mcp.physics.relationship_engine import ClusterEngine
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,6 @@ class Clusters:
     # Cache state
     _cached_data: dict[str, Any] | None = field(default=None, init=False, repr=False)
     _cached_mtime: float | None = field(default=None, init=False, repr=False)
-    _cluster_engine: ClusterEngine | None = field(default=None, init=False, repr=False)
     _cluster_searcher: ClusterSearcher | None = field(
         default=None, init=False, repr=False
     )
@@ -309,20 +307,6 @@ class Clusters:
         """
         return self._load_clusters_data()
 
-    def get_cluster_engine(self) -> ClusterEngine:
-        """
-        Get cluster engine with cached clusters data.
-
-        Returns:
-            ClusterEngine instance.
-        """
-        if self._cluster_engine is None:
-            clusters_data = self.get_data()
-            self._cluster_engine = ClusterEngine(clusters_data)
-            logger.debug("Created cluster engine")
-
-        return self._cluster_engine
-
     def get_clusters(self) -> list[dict[str, Any]]:
         """Get relationship clusters."""
         data = self.get_data()
@@ -403,7 +387,18 @@ class Clusters:
         """
         if self._cluster_searcher is None:
             clusters = self.get_clusters()
-            self._cluster_searcher = ClusterSearcher(clusters=clusters)
+            data = self.get_data()
+
+            # Get embeddings file path and hash from clusters.json metadata
+            embeddings_filename = data.get("embeddings_file", "cluster_embeddings.npz")
+            embeddings_file = self.file_path.parent / embeddings_filename
+            embeddings_hash = data.get("embeddings_hash")
+
+            self._cluster_searcher = ClusterSearcher(
+                clusters=clusters,
+                embeddings_file=embeddings_file,
+                expected_embeddings_hash=embeddings_hash,
+            )
             logger.debug(f"Created cluster searcher with {len(clusters)} clusters")
 
         return self._cluster_searcher
