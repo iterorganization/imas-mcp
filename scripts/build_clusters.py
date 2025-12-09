@@ -16,9 +16,13 @@ import logging
 import sys
 
 import click
+from dotenv import load_dotenv
 
 from imas_mcp.core.clusters import Clusters
 from imas_mcp.embeddings.config import EncoderConfig
+
+# Load environment variables from .env file, overriding any existing values
+load_dotenv(override=True)
 
 
 @click.command()
