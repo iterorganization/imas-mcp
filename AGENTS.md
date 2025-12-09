@@ -25,7 +25,9 @@ cd /home/ITER/mcintos/Code/imas-mcp && source .venv/bin/activate && pytest
 - **Package manager**: `uv`
 - **Add dependencies**: `uv add <package>`
 - **Add dev dependencies**: `uv add --dev <package>`
-- **Sync environment**: `uv sync`
+- **Sync environment**: `uv sync --extra test` (includes transformers and pytest-cov)
+
+**IMPORTANT for CLI agents in worktrees**: Always run `uv sync --extra test` before running tests or any Python commands. The `[test]` extra includes `sentence-transformers` and `pytest-cov` which are required for the test suite.
 
 ### Code Quality
 
@@ -70,8 +72,11 @@ git commit -m "refactor!: description"  # ! causes bash errors
 ### Testing
 
 - **Framework**: `pytest`
-- **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `pytest`
+- **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `uv run pytest`
 - **Async support**: `pytest-asyncio` with auto mode
+- **Coverage**: `uv run pytest --cov=imas_mcp`
+
+**Before running tests**: Ensure dependencies are synced with `uv sync --extra test`
 
 ## Project Structure
 
