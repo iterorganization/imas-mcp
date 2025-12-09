@@ -1,7 +1,10 @@
 """Tests for overview_tool.py internal methods."""
 
+from unittest.mock import patch
+
 import pytest
 
+from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.tools.overview_tool import OverviewTool
 
 
@@ -29,16 +32,29 @@ class TestOverviewToolInternals:
         assert domains == {}
 
     def test_get_physics_domains_groups_by_domain(self, overview_tool):
-        """Domains are correctly grouped."""
+        """Domains are correctly grouped via PhysicsDomainCategorizer."""
         overview_tool._ids_catalog = {
             "ids_catalog": {
-                "equilibrium": {"physics_domain": "mhd"},
-                "core_profiles": {"physics_domain": "transport"},
-                "edge_profiles": {"physics_domain": "transport"},
+                "equilibrium": {},
+                "core_profiles": {},
+                "edge_profiles": {},
             }
         }
 
-        domains = overview_tool._get_physics_domains()
+        # Mock the physics_categorizer to return specific domains
+        def mock_get_domain(ids_name):
+            domain_map = {
+                "equilibrium": PhysicsDomain.MHD,
+                "core_profiles": PhysicsDomain.TRANSPORT,
+                "edge_profiles": PhysicsDomain.TRANSPORT,
+            }
+            return domain_map.get(ids_name, PhysicsDomain.GENERAL)
+
+        with patch(
+            "imas_mcp.tools.overview_tool.physics_categorizer.get_domain_for_ids",
+            side_effect=mock_get_domain,
+        ):
+            domains = overview_tool._get_physics_domains()
 
         assert "mhd" in domains
         assert "transport" in domains
@@ -58,11 +74,9 @@ class TestOverviewToolInternals:
             "ids_catalog": {
                 "equilibrium": {
                     "description": "MHD equilibrium",
-                    "physics_domain": "mhd",
                 },
                 "core_profiles": {
                     "description": "Core plasma profiles",
-                    "physics_domain": "transport",
                 },
             }
         }
@@ -77,7 +91,6 @@ class TestOverviewToolInternals:
             "ids_catalog": {
                 "equilibrium": {
                     "description": "MHD equilibrium",
-                    "physics_domain": "mhd",
                 },
             }
         }
@@ -87,17 +100,26 @@ class TestOverviewToolInternals:
         assert "equilibrium" in result
 
     def test_filter_ids_by_query_matches_domain(self, overview_tool):
-        """Query matches physics domain."""
+        """Query matches physics domain via PhysicsDomainCategorizer."""
         overview_tool._ids_catalog = {
             "ids_catalog": {
                 "core_profiles": {
                     "description": "Profiles",
-                    "physics_domain": "transport",
                 },
             }
         }
 
-        result = overview_tool._filter_ids_by_query("transport")
+        # Mock the physics_categorizer to return transport domain
+        def mock_get_domain(ids_name):
+            if ids_name == "core_profiles":
+                return PhysicsDomain.TRANSPORT
+            return PhysicsDomain.GENERAL
+
+        with patch(
+            "imas_mcp.tools.overview_tool.physics_categorizer.get_domain_for_ids",
+            side_effect=mock_get_domain,
+        ):
+            result = overview_tool._filter_ids_by_query("transport")
 
         assert "core_profiles" in result
 

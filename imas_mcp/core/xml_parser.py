@@ -472,7 +472,6 @@ class DataDictionaryTransformer:
                 "name": ids_name,
                 "description": data["ids_info"]["description"],
                 "path_count": len(data["paths"]),
-                "physics_domain": data["ids_info"]["physics_domain"],
             }
 
         catalog_dict = {
