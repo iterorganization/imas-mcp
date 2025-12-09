@@ -95,11 +95,13 @@ class ClustersTool(BaseTool):
     @mcp_tool(
         "Search for semantically related IMAS path clusters. "
         "Accepts paths (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r') "
-        "or natural language queries (e.g., 'electron temperature measurements')."
+        "or natural language queries (e.g., 'electron temperature measurements'). "
+        "ids_filter: limit results to specific IDS (space-delimited or list)"
     )
     async def search_imas_clusters(
         self,
         query: str,
+        ids_filter: str | list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any] | ToolError:
         """
@@ -111,6 +113,9 @@ class ClustersTool(BaseTool):
 
         Args:
             query: Path or natural language query
+            ids_filter: Limit results to specific IDS. Accepts either:
+                       - Space-delimited string: "equilibrium transport core_profiles"
+                       - List of IDS names: ["equilibrium", "transport"]
             ctx: MCP context
 
         Returns:
@@ -119,6 +124,7 @@ class ClustersTool(BaseTool):
         Examples:
             search_imas_clusters(query="core_profiles/profiles_1d/electrons/density")
             search_imas_clusters(query="electron temperature measurements")
+            search_imas_clusters(query="magnetic field", ids_filter="equilibrium magnetics")
         """
         if not self._searcher:
             return ToolError(
@@ -131,6 +137,14 @@ class ClustersTool(BaseTool):
             )
 
         try:
+            # Parse ids_filter into a set for efficient lookup
+            ids_set: set[str] | None = None
+            if ids_filter:
+                if isinstance(ids_filter, str):
+                    ids_set = set(ids_filter.split())
+                else:
+                    ids_set = set(ids_filter)
+
             # Detect query type and search
             is_path = "/" in query and " " not in query
 
@@ -147,7 +161,18 @@ class ClustersTool(BaseTool):
                     similarity_threshold=0.3,
                 )
 
+            # Apply IDS filter if specified
+            if ids_set and results:
+                results = [
+                    r
+                    for r in results
+                    if any(ids_name in ids_set for ids_name in r.ids_names)
+                ]
+
             if not results:
+                error_context: dict[str, Any] = {"query": query}
+                if ids_set:
+                    error_context["ids_filter"] = list(ids_set)
                 return ToolError(
                     error=f"No clusters found for query: {query}",
                     suggestions=[
@@ -155,11 +180,11 @@ class ClustersTool(BaseTool):
                         "Use search_imas_paths() for direct path search",
                         "Check available IDS with get_imas_overview()",
                     ],
-                    context={"query": query},
+                    context=error_context,
                 )
 
             # Format response
-            return self._format_results(query, results, is_path)
+            return self._format_results(query, results, is_path, ids_set)
 
         except Exception as e:
             logger.error(f"Cluster search failed: {e}")
@@ -177,11 +202,17 @@ class ClustersTool(BaseTool):
         query: str,
         results: list[ClusterSearchResult],
         is_path: bool,
+        ids_filter: set[str] | None = None,
     ) -> dict[str, Any]:
         """Format search results for output."""
         clusters = []
 
         for result in results:
+            # Filter paths to only include those from requested IDS
+            paths = result.paths
+            if ids_filter:
+                paths = [p for p in paths if p.split("/")[0] in ids_filter]
+
             cluster_data = {
                 "id": result.cluster_id,
                 "label": result.label or f"Cluster {result.cluster_id}",
@@ -189,18 +220,23 @@ class ClustersTool(BaseTool):
                 "type": "cross_ids" if result.is_cross_ids else "intra_ids",
                 "ids": result.ids_names,
                 "similarity": round(result.similarity_score, 3),
-                "paths": result.paths[:20],  # Limit paths in response
+                "paths": paths[:20],  # Limit paths in response
             }
 
-            if len(result.paths) > 20:
-                cluster_data["total_paths"] = len(result.paths)
+            if len(paths) > 20:
+                cluster_data["total_paths"] = len(paths)
                 cluster_data["paths_truncated"] = True
 
             clusters.append(cluster_data)
 
-        return {
+        response: dict[str, Any] = {
             "query": query,
             "query_type": "path" if is_path else "semantic",
             "clusters_found": len(clusters),
             "clusters": clusters,
         }
+
+        if ids_filter:
+            response["ids_filter"] = sorted(ids_filter)
+
+        return response
