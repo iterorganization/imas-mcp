@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
 from imas_mcp import dd_version
 from imas_mcp.core.data_model import PhysicsDomain
@@ -26,19 +27,22 @@ from imas_mcp.embeddings.openrouter_client import OpenRouterClient
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.settings import get_language_model
 
+# Load environment variables from .env file, overriding any existing values
+load_dotenv(override=True)
+
 logger = logging.getLogger(__name__)
 
 
 def get_physics_mapping_path() -> Path:
     """Get the path to the physics domain mapping file."""
-    accessor = ResourcePathAccessor()
-    return accessor.schemas_path / "physics_domains.json"
+    accessor = ResourcePathAccessor(dd_version)
+    return accessor.schemas_dir / "physics_domains.json"
 
 
 def load_ids_catalog() -> dict:
     """Load the IDS catalog from the schemas directory."""
-    accessor = ResourcePathAccessor()
-    catalog_path = accessor.schemas_path / "ids_catalog.json"
+    accessor = ResourcePathAccessor(dd_version)
+    catalog_path = accessor.schemas_dir / "ids_catalog.json"
 
     if not catalog_path.exists():
         raise FileNotFoundError(
@@ -225,7 +229,7 @@ def build_physics(
         # Load IDS catalog
         logger.info("Loading IDS catalog...")
         catalog = load_ids_catalog()
-        ids_entries = list(catalog.get("ids", {}).values())
+        ids_entries = list(catalog.get("ids_catalog", {}).values())
 
         if not ids_entries:
             logger.error("No IDS entries found in catalog")

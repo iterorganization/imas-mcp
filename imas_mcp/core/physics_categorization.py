@@ -10,6 +10,7 @@ import json
 import logging
 from functools import lru_cache
 
+from imas_mcp import dd_version
 from imas_mcp.core.data_model import PhysicsDomain
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
@@ -25,8 +26,8 @@ def _load_physics_mappings() -> dict[str, str]:
         Returns empty dict if file doesn't exist.
     """
     try:
-        accessor = ResourcePathAccessor()
-        mapping_path = accessor.schemas_path / "physics_domains.json"
+        accessor = ResourcePathAccessor(dd_version)
+        mapping_path = accessor.schemas_dir / "physics_domains.json"
 
         if not mapping_path.exists():
             logger.warning(
