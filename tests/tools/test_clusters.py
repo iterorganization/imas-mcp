@@ -5,28 +5,10 @@ This module tests the clusters tool which provides semantic search
 over related IMAS paths using LLM-generated labels.
 """
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-from imas_mcp.clusters.search import ClusterSearcher, ClusterSearchResult
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.tools.clusters_tool import ClustersTool
-from tests.conftest import STANDARD_TEST_IDS_SET
-
-
-@pytest.fixture(scope="function")
-def document_store():
-    """Provide a fresh DocumentStore instance for each test."""
-    return DocumentStore(ids_set=STANDARD_TEST_IDS_SET)
-
-
-@pytest.fixture(scope="function")
-def clusters_tool(document_store):
-    """Provide a fresh ClustersTool instance for each test."""
-    return ClustersTool(document_store)
+from imas_mcp.clusters.search import ClusterSearcher
 
 
 class TestClusterSearcher:
@@ -94,35 +76,35 @@ class TestClusterSearcher:
 
 
 class TestClustersTool:
-    """Test the main clusters tool functionality."""
+    """Test the main clusters tool functionality using session-scoped fixtures."""
 
     @pytest.mark.asyncio
-    async def test_tool_instantiation(self, clusters_tool):
+    async def test_tool_instantiation(self, tools):
         """Test that the tool can be instantiated."""
-        assert clusters_tool is not None
-        assert hasattr(clusters_tool, "search_imas_clusters")
+        assert tools.clusters_tool is not None
+        assert hasattr(tools.clusters_tool, "search_imas_clusters")
 
     @pytest.mark.asyncio
-    async def test_path_query(self, clusters_tool):
+    async def test_path_query(self, tools):
         """Test path-based query."""
-        result = await clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_imas_clusters(
             query="core_profiles/profiles_1d/electrons/density",
         )
         # Should return result or error
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_natural_language_query(self, clusters_tool):
+    async def test_natural_language_query(self, tools):
         """Test natural language query."""
-        result = await clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_imas_clusters(
             query="electron temperature",
         )
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_semantic_query(self, clusters_tool):
+    async def test_semantic_query(self, tools):
         """Test semantic query."""
-        result = await clusters_tool.search_imas_clusters(
+        result = await tools.clusters_tool.search_imas_clusters(
             query="magnetic field",
         )
         assert result is not None

@@ -78,6 +78,8 @@ class Tools(MCPProvider):
         """Register all IMAS tools with the MCP server."""
         for tool in self._tool_instances:
             for attr_name in dir(tool):
+                if attr_name.startswith("_"):
+                    continue
                 attr = getattr(tool, attr_name)
                 if hasattr(attr, "_mcp_tool") and attr._mcp_tool:
                     mcp.tool(description=attr._mcp_description)(attr)

@@ -9,10 +9,12 @@ import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import pytest
 from dotenv import load_dotenv
 from fastmcp import Client
 
+from imas_mcp.clusters.search import ClusterSearchResult
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
@@ -104,6 +106,70 @@ def create_mock_documents() -> list[Document]:
         create_mock_document("equilibrium/time_slice/boundary/psi", "equilibrium"),
         create_mock_document("equilibrium/time_slice/boundary/psi_norm", "equilibrium"),
         create_mock_document("equilibrium/time_slice/boundary/type", "equilibrium"),
+    ]
+
+
+def create_mock_clusters() -> list[dict]:
+    """Create mock cluster data for testing."""
+    return [
+        {
+            "id": 0,
+            "label": "Electron Temperature Profiles",
+            "description": "Temperature measurements for electrons",
+            "is_cross_ids": False,
+            "ids_names": ["core_profiles"],
+            "paths": [
+                "core_profiles/profiles_1d/electrons/temperature",
+                "core_profiles/profiles_1d/electrons/temperature_fit",
+            ],
+            "similarity_score": 0.95,
+            "cluster_similarity": 0.87,
+        },
+        {
+            "id": 1,
+            "label": "Magnetic Field Components",
+            "description": "Magnetic field measurements and derived quantities",
+            "is_cross_ids": True,
+            "ids_names": ["equilibrium", "core_profiles"],
+            "paths": [
+                "equilibrium/time_slice/profiles_2d/b_field_r",
+                "equilibrium/time_slice/profiles_2d/b_field_z",
+            ],
+            "similarity_score": 0.88,
+            "cluster_similarity": 0.82,
+        },
+        {
+            "id": 2,
+            "label": "Boundary Conditions",
+            "description": "Plasma boundary and separatrix data",
+            "is_cross_ids": False,
+            "ids_names": ["equilibrium"],
+            "paths": [
+                "equilibrium/time_slice/boundary/psi",
+                "equilibrium/time_slice/boundary/psi_norm",
+                "equilibrium/time_slice/boundary/type",
+            ],
+            "similarity_score": 0.92,
+            "cluster_similarity": 0.79,
+        },
+    ]
+
+
+def create_mock_cluster_search_results(query: str) -> list[ClusterSearchResult]:
+    """Create mock cluster search results for testing."""
+    mock_clusters = create_mock_clusters()
+    return [
+        ClusterSearchResult(
+            cluster_id=c["id"],
+            label=c["label"],
+            description=c["description"],
+            is_cross_ids=c["is_cross_ids"],
+            ids_names=c["ids_names"],
+            paths=c["paths"],
+            similarity_score=c["similarity_score"],
+            cluster_similarity=c["cluster_similarity"],
+        )
+        for c in mock_clusters[:2]  # Return first 2 clusters
     ]
 
 
@@ -203,7 +269,44 @@ def mock_heavy_operations():
                     side_effect=mock_engine.search,
                 ),
             ):
-                yield
+                # Mock Clusters class to prevent loading cluster files
+                mock_clusters = create_mock_clusters()
+                with patch("imas_mcp.core.clusters.Clusters") as mock_clusters_class:
+                    mock_clusters_instance = MagicMock()
+                    mock_clusters_instance.is_available.return_value = True
+                    mock_clusters_instance.get_clusters.return_value = mock_clusters
+                    mock_clusters_class.return_value = mock_clusters_instance
+
+                    # Also patch in the tools module where it's imported
+                    with patch(
+                        "imas_mcp.tools.clusters_tool.Clusters"
+                    ) as mock_clusters_tool:
+                        mock_clusters_tool.return_value = mock_clusters_instance
+
+                        # Mock ClusterSearcher to return mock results
+                        with patch(
+                            "imas_mcp.tools.clusters_tool.ClusterSearcher"
+                        ) as mock_searcher_class:
+                            mock_searcher = MagicMock()
+                            mock_searcher.search_by_path.return_value = (
+                                create_mock_cluster_search_results("path")
+                            )
+                            mock_searcher.search_by_text.return_value = (
+                                create_mock_cluster_search_results("text")
+                            )
+                            mock_searcher_class.return_value = mock_searcher
+
+                            # Mock Encoder to prevent model loading
+                            with patch(
+                                "imas_mcp.tools.clusters_tool.Encoder"
+                            ) as mock_encoder_class:
+                                mock_encoder = MagicMock()
+                                mock_encoder.encode.return_value = np.zeros(
+                                    (1, 384), dtype=np.float32
+                                )
+                                mock_encoder_class.return_value = mock_encoder
+
+                                yield
 
 
 @pytest.fixture(scope="session")
