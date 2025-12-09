@@ -19,6 +19,7 @@ from imas_mcp.search.document_store import DocumentStore
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
 from .config import RelationshipExtractionConfig
+from .label_cache import LabelCache
 from .models import (
     ClusteringParameters,
     ClusteringStatistics,
@@ -245,8 +246,8 @@ class RelationshipExtractor:
     ) -> None:
         """Save clusters in optimized format with LLM-generated labels.
 
-        Labels are cached separately in labels.json and reused if clusters
-        haven't changed. This avoids expensive LLM calls on cluster-only rebuilds.
+        Labels are cached using content-addressed keys (hash of sorted paths).
+        This enables incremental cache growth and reuse across clustering runs.
 
         Args:
             relationships: The extracted relationships
@@ -256,20 +257,9 @@ class RelationshipExtractor:
 
         clusters_list = relationships.clusters
 
-        # Compute cluster hash for cache validation
-        cluster_hash = self._compute_cluster_hash(clusters_list)
-
-        # Try to load cached labels
-        labels_file = output_file.parent / "labels.json"
-        labels_map = self._load_cached_labels(labels_file, cluster_hash)
-
-        if labels_map is None:
-            # Generate labels using LLM
-            labels_map = self._generate_cluster_labels(clusters_list)
-            # Save labels cache for future runs
-            self._save_labels_cache(labels_file, labels_map, cluster_hash)
-        else:
-            self.logger.info("Using cached labels (cluster hash matched)")
+        # Use content-addressed label cache
+        label_cache = LabelCache(output_file.parent / "label_cache.db")
+        labels_map = self._get_labels_with_cache(clusters_list, label_cache)
 
         # Generate label embeddings for semantic search
         label_embeddings_map = self._generate_label_embeddings(labels_map)
@@ -449,11 +439,78 @@ class RelationshipExtractor:
 
         return get_language_model()
 
-    def _generate_cluster_labels(self, clusters: list) -> dict[int, dict[str, str]]:
-        """Generate labels for clusters using LLM.
+    def _get_labels_with_cache(
+        self, clusters: list, label_cache: LabelCache
+    ) -> dict[int, dict[str, str]]:
+        """Get labels for clusters, using cache when available.
+
+        Uses content-addressed caching: each cluster is keyed by a hash of its
+        sorted paths. This enables incremental cache growth and reuse across
+        different clustering runs.
 
         Args:
             clusters: List of ClusterInfo objects
+            label_cache: LabelCache instance for persistence
+
+        Returns:
+            Dict mapping cluster_id to {"label": str, "description": str}
+        """
+        model = self._get_labeling_model()
+
+        # Convert clusters to dicts for cache lookup
+        cluster_dicts = [
+            {
+                "id": c.id,
+                "is_cross_ids": c.is_cross_ids,
+                "ids_names": c.ids_names,
+                "paths": c.paths,
+            }
+            for c in clusters
+        ]
+
+        # Check cache for existing labels
+        cached, uncached = label_cache.get_many(cluster_dicts, model=model)
+
+        # Convert cached labels to the expected format
+        labels_map = {
+            cluster_id: {
+                "label": cached_label.label,
+                "description": cached_label.description,
+            }
+            for cluster_id, cached_label in cached.items()
+        }
+
+        if not uncached:
+            self.logger.info(f"All {len(clusters)} labels retrieved from cache")
+            return labels_map
+
+        # Generate labels for uncached clusters
+        self.logger.info(f"Generating labels for {len(uncached)} uncached clusters")
+        generated = self._generate_cluster_labels_for_batch(uncached)
+
+        # Store generated labels in cache
+        labels_to_cache = []
+        for cluster in uncached:
+            cluster_id = cluster["id"]
+            if cluster_id in generated:
+                info = generated[cluster_id]
+                labels_to_cache.append(
+                    (cluster["paths"], info["label"], info["description"])
+                )
+                labels_map[cluster_id] = info
+
+        if labels_to_cache:
+            label_cache.set_many(labels_to_cache, model=model)
+
+        return labels_map
+
+    def _generate_cluster_labels_for_batch(
+        self, clusters: list[dict]
+    ) -> dict[int, dict[str, str]]:
+        """Generate labels for a batch of clusters using LLM.
+
+        Args:
+            clusters: List of cluster dicts with id, is_cross_ids, ids_names, paths
 
         Returns:
             Dict mapping cluster_id to {"label": str, "description": str}
@@ -466,26 +523,13 @@ class RelationshipExtractor:
             self.logger.warning(
                 "No API key available for LLM labeling. Using fallback labels."
             )
-            return self._generate_fallback_labels(clusters)
+            return self._generate_fallback_labels_from_dicts(clusters)
 
         try:
             from .labeler import ClusterLabeler
 
             labeler = ClusterLabeler()
-
-            # Convert ClusterInfo to dicts for labeler
-            cluster_dicts = []
-            for cluster in clusters:
-                cluster_dicts.append(
-                    {
-                        "id": cluster.id,
-                        "is_cross_ids": cluster.is_cross_ids,
-                        "ids_names": cluster.ids_names,
-                        "paths": cluster.paths,
-                    }
-                )
-
-            labels = labeler.label_clusters(cluster_dicts)
+            labels = labeler.label_clusters(clusters)
 
             return {
                 label.cluster_id: {
@@ -497,7 +541,33 @@ class RelationshipExtractor:
 
         except Exception as e:
             self.logger.error(f"LLM labeling failed: {e}. Using fallback labels.")
-            return self._generate_fallback_labels(clusters)
+            return self._generate_fallback_labels_from_dicts(clusters)
+
+    def _generate_fallback_labels_from_dicts(
+        self, clusters: list[dict]
+    ) -> dict[int, dict[str, str]]:
+        """Generate fallback labels from cluster dicts without LLM."""
+        labels = {}
+        for cluster in clusters:
+            cluster_id = cluster["id"]
+            paths = cluster.get("paths", [])[:5]
+            is_cross_ids = cluster.get("is_cross_ids", False)
+            ids_names = cluster.get("ids_names", [])
+
+            if paths:
+                segments = [p.split("/")[-1] for p in paths]
+                common = " ".join(segments[:2]).replace("_", " ").title()
+                label = common[:50]
+            else:
+                label = f"Cluster {cluster_id}"
+
+            type_str = "cross-IDS" if is_cross_ids else "intra-IDS"
+            ids_str = ", ".join(ids_names[:3])
+            description = f"A {type_str} cluster of related paths from {ids_str}."
+
+            labels[cluster_id] = {"label": label, "description": description}
+
+        return labels
 
     def _generate_fallback_labels(self, clusters: list) -> dict[int, dict[str, str]]:
         """Generate fallback labels without LLM."""
@@ -557,82 +627,6 @@ class RelationshipExtractor:
         except Exception as e:
             self.logger.warning(f"Failed to generate label embeddings: {e}")
             return {}
-
-    def _compute_cluster_hash(self, clusters: list) -> str:
-        """Compute a hash of cluster structure for cache validation.
-
-        The hash includes cluster IDs, paths, and IDS names but not labels,
-        so cached labels remain valid as long as clustering output is unchanged.
-        """
-        hash_data = []
-        for cluster in sorted(clusters, key=lambda c: c.id):
-            hash_data.append(
-                {
-                    "id": cluster.id,
-                    "is_cross_ids": cluster.is_cross_ids,
-                    "ids_names": sorted(cluster.ids_names),
-                    "paths": sorted(cluster.paths),
-                }
-            )
-
-        hash_str = json.dumps(hash_data, sort_keys=True)
-        return hashlib.sha256(hash_str.encode()).hexdigest()[:16]
-
-    def _load_cached_labels(
-        self, labels_file: Path, expected_hash: str
-    ) -> dict[int, dict[str, str]] | None:
-        """Load cached labels if they exist and hash matches.
-
-        Returns:
-            Labels map if cache hit, None if cache miss or invalid
-        """
-        if not labels_file.exists():
-            self.logger.info("No cached labels found")
-            return None
-
-        try:
-            with open(labels_file, encoding="utf-8") as f:
-                cache_data = json.load(f)
-
-            cached_hash = cache_data.get("cluster_hash")
-            if cached_hash != expected_hash:
-                self.logger.info(
-                    f"Cluster hash mismatch (cached: {cached_hash}, "
-                    f"current: {expected_hash}), regenerating labels"
-                )
-                return None
-
-            # Convert string keys back to int
-            labels = cache_data.get("labels", {})
-            return {int(k): v for k, v in labels.items()}
-
-        except Exception as e:
-            self.logger.warning(f"Failed to load cached labels: {e}")
-            return None
-
-    def _save_labels_cache(
-        self,
-        labels_file: Path,
-        labels_map: dict[int, dict[str, str]],
-        cluster_hash: str,
-    ) -> None:
-        """Save labels to cache file for future runs."""
-        try:
-            cache_data = {
-                "version": "1.0",
-                "generated": datetime.now().isoformat(),
-                "cluster_hash": cluster_hash,
-                "labeling_model": self._get_labeling_model(),
-                "labels": labels_map,
-            }
-
-            with open(labels_file, "w", encoding="utf-8") as f:
-                json.dump(cache_data, f, indent=2, ensure_ascii=False)
-
-            self.logger.info(f"Saved labels cache to {labels_file}")
-
-        except Exception as e:
-            self.logger.warning(f"Failed to save labels cache: {e}")
 
     def _load_ids_data(self, input_dir: Path) -> dict[str, Any]:
         """Load detailed IDS JSON files, optionally filtered by ids_set."""
