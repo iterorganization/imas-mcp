@@ -122,7 +122,11 @@ class EmbeddingCache:
         return modified_files
 
     def _compute_source_content_hash(self, source_data_dir: Path) -> str:
-        """Compute hash of source data directory content based on file contents, not paths."""
+        """Compute hash of source data directory content based on file contents, not paths.
+
+        Note: Excludes dynamic metadata fields (e.g., generation_date) from the catalog
+        so that regenerating schemas with identical content doesn't invalidate the cache.
+        """
 
         hash_obj = hashlib.md5()
 
@@ -133,10 +137,16 @@ class EmbeddingCache:
 
         # Hash actual file contents, not paths
         try:
-            # Hash catalog file content
+            # Hash catalog file content (excluding dynamic metadata)
             catalog_path = source_data_dir / "ids_catalog.json"
             if catalog_path.exists():
-                hash_obj.update(catalog_path.read_bytes())
+                catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
+                # Remove dynamic fields that change on every rebuild
+                if "metadata" in catalog_data:
+                    catalog_data["metadata"].pop("generation_date", None)
+                # Use sorted keys for deterministic JSON output
+                stable_catalog = json.dumps(catalog_data, sort_keys=True)
+                hash_obj.update(stable_catalog.encode())
 
             # Hash detailed files content in deterministic order
             detailed_dir = source_data_dir / "detailed"
