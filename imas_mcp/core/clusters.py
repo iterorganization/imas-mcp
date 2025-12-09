@@ -81,7 +81,7 @@ class Clusters:
                 filename = "clusters.json"
                 logger.debug("Using full dataset clusters file: clusters.json")
 
-            self.clusters_file = path_accessor.schemas_dir / filename
+            self.clusters_file = path_accessor.clusters_dir / filename
 
     @property
     def file_path(self) -> Path:

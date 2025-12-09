@@ -64,7 +64,7 @@ class LabelCache:
         """
         if cache_file is None:
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
-            cache_file = path_accessor.schemas_dir / "label_cache.db"
+            cache_file = path_accessor.clusters_dir / "label_cache.db"
 
         self.cache_file = cache_file
         self._ensure_schema()

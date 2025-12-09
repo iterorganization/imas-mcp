@@ -215,29 +215,18 @@ class RelationshipExtractor:
     def save_relationships(
         self, relationships: RelationshipSet, output_file: Path | None = None
     ) -> None:
-        """Save relationships to JSON file with additional groupings."""
-        output_file = output_file or self.config.output_file
+        """Save clusters to JSON file with LLM-generated labels.
 
-        # Determine clusters.json path (same directory, new filename)
-        clusters_file = output_file.parent / "clusters.json"
+        Saves a single clusters.json with labels and indexes. Embeddings
+        (centroids and label embeddings) are stored separately in .npz format.
+        """
+        output_file = output_file or self.config.output_file
 
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert to dict for JSON serialization using Pydantic
-        data = relationships.model_dump()
-
-        # Add additional groupings for tool compatibility if they exist
-        if hasattr(relationships, "_unit_families"):
-            data["unit_families"] = relationships._unit_families
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        self.logger.info("Saved relationships to %s", output_file)
-
-        # Also save in new clusters.json format with labels
-        self._save_clusters_json(relationships, clusters_file)
+        # Save clusters with labels (embeddings in separate .npz file)
+        self._save_clusters_json(relationships, output_file)
 
     def _save_clusters_json(
         self,
@@ -326,7 +315,9 @@ class RelationshipExtractor:
                 intra_ids_list.append(cluster_id)
 
         # Save embeddings to .npz file (compressed binary format)
-        embeddings_file = output_file.parent / "cluster_embeddings.npz"
+        # Derive embeddings filename from clusters filename to preserve hash suffix
+        embeddings_stem = output_file.stem.replace("clusters", "cluster_embeddings")
+        embeddings_file = output_file.parent / f"{embeddings_stem}.npz"
         embeddings_hash = self._save_embeddings_npz(
             embeddings_file,
             centroid_embeddings,
