@@ -85,7 +85,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi
 
 # Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
-# This includes schemas, embeddings, relationships, and mermaid graphs built in CI
+# This includes schemas, embeddings, relationships, and clusters built in CI
 # Git sparse checkout would have created the imas_mcp directory but without the generated resources
 # This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
 COPY imas_mcp/resources/ /app/imas_mcp/resources/
@@ -129,30 +129,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-clusters --quiet; \
     fi && \
     echo "✓ Clusters ready"
-
-# Build mermaid graphs (requires schemas)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building mermaid graphs..." && \
-    if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building mermaid graphs for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-mermaid --ids-filter "${IDS_FILTER}" --quiet; \
-    else \
-    echo "Building mermaid graphs for all IDS" && \
-    uv run --no-dev build-mermaid --quiet; \
-    fi && \
-    echo "✓ Mermaid graphs ready"
-
-# Build path mappings for version upgrades (requires schemas)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building path mappings..." && \
-    if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building path mappings for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
-    else \
-    echo "Building path mappings for all IDS" && \
-    uv run --no-dev build-path-map --no-rich; \
-    fi && \
-    echo "✓ Path mappings ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
 FROM python:3.12-slim AS docs-provider
