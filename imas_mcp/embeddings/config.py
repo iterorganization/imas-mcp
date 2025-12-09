@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from imas_mcp.settings import get_imas_embedding_model
 
-load_dotenv()  # Load .env file values (does not override existing env vars)
+load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
 
 # Define constants - uses pyproject.toml defaults with env var override

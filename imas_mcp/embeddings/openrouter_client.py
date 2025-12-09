@@ -210,7 +210,7 @@ class OpenRouterClient:
                     self.chat_url,
                     headers=self._get_headers(),
                     json=data,
-                    timeout=timeout,
+                    timeout=(30, timeout),  # (connect_timeout, read_timeout)
                 )
 
                 if response.status_code == 200:
