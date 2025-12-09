@@ -8,15 +8,6 @@ from .physics_extractor import LifecycleExtractor
 from .semantic_extractor import PathExtractor, SemanticExtractor
 from .validation_extractor import ValidationExtractor
 
-# Conditionally import RelationshipExtractor to avoid heavy dependencies during build
-try:
-    from .relationship_extractor import RelationshipExtractor
-
-    _relationship_available = True
-except ImportError:
-    RelationshipExtractor = None
-    _relationship_available = False
-
 __all__ = [
     "BaseExtractor",
     "ExtractorContext",
@@ -28,6 +19,3 @@ __all__ = [
     "SemanticExtractor",
     "ValidationExtractor",
 ]
-
-if _relationship_available:
-    __all__.append("RelationshipExtractor")
