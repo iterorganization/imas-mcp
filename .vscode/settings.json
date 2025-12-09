@@ -64,5 +64,6 @@
   },
   "chat.mcp.access": "all",
   "cursorpyright.analysis.typeCheckingMode": "basic",
-  "chat.customAgentInSubagent.enabled": true
+  "chat.customAgentInSubagent.enabled": true,
+  "gistpad.mcp.enabled": false
 }
