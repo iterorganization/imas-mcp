@@ -1,35 +1,36 @@
 # Coverage Improvement Plan
 
-**Current Coverage:** 45.48%  
+**Current Coverage:** 55.09%  
 **Target Coverage:** >95%  
 **Date Created:** December 9, 2025
+**Last Updated:** December 9, 2025
 
 ---
 
-## Phase 1: Quick Wins (Est. +15-20% coverage)
+## Phase 1: Quick Wins (Est. +15-20% coverage) ✅ COMPLETED (+9.61%)
 
 High-impact, relatively straightforward unit tests.
 
-- [ ] **core/extractors/** - 417 lines at 0%
-  - `base.py` (80 lines)
-  - `coordinate_extractor.py` (21 lines)
-  - `identifier_extractor.py` (137 lines)
-  - `metadata_extractor.py` (98 lines)
-  - `physics_extractor.py` (13 lines)
-  - `semantic_extractor.py` (45 lines)
-  - `validation_extractor.py` (23 lines)
+- [x] **core/extractors/** - 417 lines at 0% → **93.6% avg**
+  - `base.py` (80 lines) → 97.50%
+  - `coordinate_extractor.py` (21 lines) → 95.24%
+  - `identifier_extractor.py` (137 lines) → 84.67%
+  - `metadata_extractor.py` (98 lines) → 86.73%
+  - `physics_extractor.py` (13 lines) → 100%
+  - `semantic_extractor.py` (45 lines) → 95.56%
+  - `validation_extractor.py` (23 lines) → 100%
 
-- [ ] **search/document_store.py** - 443 lines at 31%
+- [x] **search/document_store.py** - 443 lines at 31% → **46.17%**
   - Focus on document indexing and retrieval
   - Test search query building
   - Test result filtering
 
-- [ ] **search/engines/** - ~200 lines combined
-  - `lexical_engine.py` (109 lines at 16%)
-  - `hybrid_engine.py` (55 lines at 26%)
-  - `semantic_engine.py` (34 lines at 35%)
+- [x] **search/engines/** - ~200 lines combined → **63.7% avg**
+  - `lexical_engine.py` (109 lines at 16%) → 71.54%
+  - `hybrid_engine.py` (55 lines at 26%) → 58.11%
+  - `semantic_engine.py` (34 lines at 35%) → 61.54%
 
-- [ ] **dd_accessor.py** - 134 lines at 29%
+- [x] **dd_accessor.py** - 134 lines at 29% → **79.89%**
   - Test IDS accessors
   - Test path resolution
   - Test caching behavior
@@ -41,29 +42,29 @@ High-impact, relatively straightforward unit tests.
 Requires more setup but still well-defined test boundaries.
 
 - [ ] **clusters/** modules - ~500 lines combined
-  - `clustering.py` (155 lines at 15%)
-  - `extractor.py` (246 lines at 12%)
-  - `labeler.py` (72 lines at 22%)
-  - `preprocessing.py` (53 lines at 17%)
-  - `label_cache.py` (68 lines at 29%)
+  - `clustering.py` (183 lines at 15%)
+  - `extractor.py` (279 lines at 12%)
+  - `labeler.py` (92 lines at 22%)
+  - `preprocessing.py` (64 lines at 17%)
+  - `label_cache.py` (96 lines at 29%)
 
 - [ ] **core/xml_parser.py** - 310 lines at 0%
   - Test XML element parsing
   - Test path extraction
   - Test attribute handling
 
-- [ ] **core/xml_utils.py** - 69 lines at 0%
+- [ ] **core/xml_utils.py** - 69 lines (improved to 78%)
   - Test utility functions
 
-- [ ] **tools/list_tool.py** - 122 lines at 16%
+- [ ] **tools/list_tool.py** - 146 lines at 16%
   - Test path listing functionality
   - Test format options (yaml, list, json, dict)
 
 - [ ] **search/decorators/** - ~130 lines combined
-  - `cache.py` (32 lines at 59%)
-  - `error_handling.py` (46 lines at 59%)
-  - `performance.py` (50 lines at 51%)
-  - `tool_recommendations.py` (62 lines at 13%)
+  - `cache.py` (79 lines at 59%)
+  - `error_handling.py` (113 lines at 59%)
+  - `performance.py` (101 lines at 51%)
+  - `tool_recommendations.py` (71 lines at 13%)
 
 ---
 
@@ -147,21 +148,33 @@ These modules already have good coverage. Only add tests if bugs are found.
 | models/error_models.py | 100% |
 | models/result_models.py | 97% |
 | core/data_model.py | 99% |
+| core/extractors/base.py | 97.5% |
+| core/extractors/physics_extractor.py | 100% |
+| core/extractors/validation_extractor.py | 100% |
+| core/extractors/semantic_extractor.py | 95.6% |
+| core/extractors/coordinate_extractor.py | 95.2% |
 | tools/path_tool.py | 93% |
 | tools/base.py | 90% |
 | core/exclusions.py | 88% |
 | health.py | 85% |
 | services/response.py | 84% |
+| dd_accessor.py | 80% |
 
 ---
 
 ## Testing Strategy Notes
 
-### Fixtures to Create
-- Mock DD accessor with sample data
+### Fixtures Created (Phase 1)
+- ExtractorContext with mock DD accessor and sample XML
+- Mock DocumentStore with configurable behavior
+- Mock search engines (semantic, lexical, hybrid)
+- Sample identifier schema XML
+
+### Fixtures to Create (Phase 2+)
 - Mock embedding encoder
 - Sample XML fragments for parser tests
 - Mock HTTP server for docs proxy tests
+- Cluster data fixtures
 
 ### Test Organization
 - Mirror source structure in `tests/`
