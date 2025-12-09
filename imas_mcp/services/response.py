@@ -16,10 +16,19 @@ from imas_mcp.search.search_strategy import SearchMatch
 
 from .base import BaseService
 
-try:
-    VERSION = importlib.metadata.version("imas-mcp")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "development"
+
+def _get_version() -> str:
+    """Get package version with robust fallback."""
+    try:
+        version = importlib.metadata.version("imas-mcp")
+        if version is not None:
+            return version
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    return "development"
+
+
+VERSION = _get_version()
 
 T = TypeVar("T", bound=BaseModel)
 
