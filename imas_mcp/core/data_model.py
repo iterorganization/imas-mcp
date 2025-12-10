@@ -237,7 +237,6 @@ class IdentifierPath(BaseModel):
     schema_name: str
     description: str
     option_count: int
-    physics_domain: str | None = None
     usage_frequency: int = 1
 
 
@@ -251,7 +250,6 @@ class IdentifierCatalogSchema(BaseModel):
     options: list[IdentifierOption]
     usage_count: int
     usage_paths: list[str]
-    physics_domains: list[str]
     branching_complexity: float  # Entropy measure
 
 
@@ -261,6 +259,4 @@ class IdentifierCatalog(BaseModel):
     metadata: CatalogMetadata
     schemas: dict[str, IdentifierCatalogSchema]
     paths_by_ids: dict[str, list[IdentifierPath]]
-    cross_references: dict[str, list[str]]
-    physics_mapping: dict[str, list[str]]
     branching_analytics: dict[str, Any]
