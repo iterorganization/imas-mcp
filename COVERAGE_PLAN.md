@@ -1,8 +1,20 @@
 # Coverage Improvement Plan
 
-**Current Coverage:** 45.48%  
+**Current Coverage:** 49.20% (updated Dec 9, 2025)  
+**Previous Coverage:** 45.48%  
 **Target Coverage:** >95%  
 **Date Created:** December 9, 2025
+
+---
+
+## Progress Summary
+
+| Phase | Status | Coverage Gain |
+|-------|--------|---------------|
+| Phase 1 | Not started | - |
+| Phase 2 | Not started | - |
+| Phase 3 | **In progress** | +3.72% |
+| Phase 4 | Not started | - |
 
 ---
 
@@ -71,30 +83,36 @@ Requires more setup but still well-defined test boundaries.
 
 Requires mocking external services or complex setup.
 
-- [ ] **services/docs_proxy_service.py** - 272 lines at 18%
+- [x] **services/docs_proxy_service.py** - 272 lines at 18% → **46.69%** ✅
   - Mock HTTP requests
   - Test document fetching
   - Test error handling
+  - Tests added: `tests/services/test_docs_proxy_service.py`
 
 - [ ] **services/docs_server_manager.py** - 198 lines at 55%
   - Test server lifecycle
   - Test health monitoring
   - Mock process management
+  - Note: Existing tests in `tests/test_docs_server_lifecycle.py`
 
-- [ ] **cli.py** - 60 lines at 0%
+- [x] **cli.py** - 60 lines at 0% → **91.67%** ✅
   - Test CLI argument parsing
   - Test command execution
   - Use click testing utilities
+  - Tests added: `tests/test_cli.py`
 
-- [ ] **graph_analyzer.py** - 86 lines at 0%
+- [x] **graph_analyzer.py** - 86 lines at 0% → **96.51%** ✅
   - Test graph construction
   - Test relationship detection
+  - Tests added: `tests/test_graph_analyzer.py`
 
-- [ ] **core/physics_categorization.py** - 57 lines at 0%
+- [x] **core/physics_categorization.py** - 57 lines at 0% → **100%** ✅
   - Test physics domain classification
+  - Tests added: `tests/core/test_physics_categorization.py`
 
 - [ ] **core/clusters.py** - 147 lines at 25%
   - Test cluster operations
+  - Note: Session-scoped mock in conftest.py prevents direct testing
 
 ---
 
