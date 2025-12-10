@@ -634,7 +634,6 @@ Available Options ({schema_data.get("total_options", 0)} total):
 
 Usage: Used in {schema_data.get("usage_count", 0)} paths across IMAS
 Branching Complexity: {schema_data.get("branching_complexity", 0):.2f}
-Physics Domains: {", ".join(schema_data.get("physics_domains", []))}
 
 Paths using this schema:
 {chr(10).join(f"- {path}" for path in schema_data.get("usage_paths", [])[:10])}
@@ -648,10 +647,8 @@ Paths using this schema:
             units="",
             data_type="identifier_schema",
             coordinates=(),
-            physics_domain=schema_data.get("physics_domains", [""])[0]
-            if schema_data.get("physics_domains")
-            else "",
-            physics_phenomena=tuple(schema_data.get("physics_domains", [])),
+            physics_domain="",
+            physics_phenomena=(),
         )
 
         # Create document with enhanced raw_data for MCP tools
@@ -690,7 +687,6 @@ Paths using this schema:
 {path_data.get("description", "")}
 
 Schema: {path_data.get("schema_name", "")} ({path_data.get("option_count", 0)} options)
-Physics Domain: {path_data.get("physics_domain", "unspecified")}
 
 This path uses identifier enumeration logic that defines branching behavior in the {ids_name} IDS.
 See the '{path_data.get("schema_name", "")}' identifier schema for available options.
@@ -704,12 +700,8 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             units="",
             data_type="identifier_path",
             coordinates=(),
-            physics_domain=path_data.get("physics_domain", ""),
-            physics_phenomena=tuple(
-                [path_data.get("physics_domain")]
-                if path_data.get("physics_domain")
-                else []
-            ),
+            physics_domain="",
+            physics_phenomena=(),
         )
 
         # Create document with enhanced raw_data
