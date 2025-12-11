@@ -40,11 +40,11 @@ class SearchTool(BaseTool):
     @handle_errors(fallback="search_suggestions")
     @mcp_tool(
         "Find IMAS IDS entries using semantic and lexical search. "
-        "query (required): Natural language or path-like query. "
-        "ids_filter: Limit search to specific IDS - accepts JSON array, space-delimited, or comma-delimited string. "
+        "query (required): Natural language description or physics term (e.g., 'electron temperature', 'magnetic field boundary', 'plasma current'). "
+        "Common abbreviations supported: Te (electron temp), Ti (ion temp), ne (electron density), Ip (plasma current). "
+        "ids_filter: Limit to specific IDS (space/comma-delimited: 'equilibrium magnetics' or 'equilibrium, core_profiles'). "
         "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
-        "response_profile: 'minimal', 'standard' (default), or 'detailed'. "
-        "Returns error message with guidance if query is empty."
+        "response_profile: 'minimal', 'standard' (default), or 'detailed'."
     )
     async def search_imas_paths(
         self,
@@ -84,13 +84,20 @@ class SearchTool(BaseTool):
         # Validate query is not empty
         is_valid, error_message = validate_query(query, "search_imas_paths")
         if not is_valid:
+            helpful_error = (
+                "Query cannot be empty. Provide a search term like:\n"
+                "  - 'electron temperature' or 'Te' for temperature data\n"
+                "  - 'magnetic field' for field measurements\n"
+                "  - 'equilibrium boundary' for plasma boundary data\n"
+                "Use get_imas_overview() to explore available IDS structures."
+            )
             return SearchPathsResult(
                 hits=[],
-                summary={"error": error_message, "query": query or ""},
+                summary={"error": helpful_error, "query": query or ""},
                 query=query or "",
                 search_mode=SearchMode.AUTO,
                 physics_domains=[],
-                error=error_message,
+                error=helpful_error,
             )
 
         # Normalize ids_filter to support space/comma-delimited strings
