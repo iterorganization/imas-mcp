@@ -71,6 +71,24 @@ class DeprecatedPathInfo(BaseModel):
     )
 
 
+class NotFoundPathInfo(BaseModel):
+    """Details about a path that was not found.
+
+    Returned when check_imas_paths or fetch_imas_paths encounters a path
+    that doesn't exist and isn't deprecated. Includes suggestions for typos.
+    """
+
+    path: str = Field(description="The path that was not found")
+    reason: str = Field(
+        default="path_not_exists",
+        description="Reason: 'invalid_ids', 'path_not_exists', 'invalid_format'",
+    )
+    suggestion: str | None = Field(
+        default=None,
+        description="Suggested correction (e.g., 'Did you mean: X?')",
+    )
+
+
 class ExcludedPathInfo(BaseModel):
     """Information about a path that exists but is excluded from search index.
 
@@ -128,6 +146,17 @@ class FetchPathsResult(WithPhysics, ToolResult, IdsResult):
     excluded_paths: list[ExcludedPathInfo] = Field(
         default_factory=list,
         description="Info for paths that are valid but excluded from search index",
+    )
+
+    # Explicit list of not-found paths with suggestions
+    not_found_paths: list[NotFoundPathInfo] = Field(
+        default_factory=list,
+        description="Paths that were not found, with typo suggestions",
+    )
+
+    # Error field for input validation issues
+    error: str | None = Field(
+        default=None, description="Error message if input was invalid"
     )
 
 
@@ -256,6 +285,11 @@ class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
     # Search-specific fields
     search_mode: SearchMode = Field(
         default=SearchMode.AUTO, description="Search mode used"
+    )
+
+    # Error field for input validation issues
+    error: str | None = Field(
+        default=None, description="Error message if query was invalid"
     )
 
 
@@ -393,6 +427,10 @@ class CheckPathsResultItem(BaseModel):
     renamed_from: list[dict[str, Any]] | None = Field(
         default=None, description="Rename history if path was renamed"
     )
+    suggestion: str | None = Field(
+        default=None,
+        description="Suggested correction for not-found paths (typo hints)",
+    )
     error: str | None = Field(default=None, description="Error message if invalid")
 
 
@@ -404,6 +442,9 @@ class CheckPathsResult(BaseModel):
     )
     results: list[CheckPathsResultItem] = Field(
         default_factory=list, description="Validation result for each path"
+    )
+    error: str | None = Field(
+        default=None, description="Error message if input was invalid"
     )
 
 

@@ -18,6 +18,7 @@ from imas_mcp.models.result_models import (
     DeprecatedPathInfo,
     ExcludedPathInfo,
     FetchPathsResult,
+    NotFoundPathInfo,
 )
 from imas_mcp.search.decorators import (
     handle_errors,
@@ -25,8 +26,10 @@ from imas_mcp.search.decorators import (
     measure_performance,
 )
 from imas_mcp.search.document_store import DocumentStore
+from imas_mcp.search.fuzzy_matcher import suggest_correction
 
 from .base import BaseTool
+from .utils import normalize_paths_input
 
 if TYPE_CHECKING:
     from imas_mcp.clusters.search import ClusterSearcher
@@ -83,12 +86,32 @@ class PathTool(BaseTool):
         """Return the name of this tool."""
         return "path_tool"
 
+    def _get_valid_ids_names(self) -> list[str]:
+        """Get list of valid IDS names from document store."""
+        return self.document_store._get_available_ids()
+
+    def _get_valid_paths(self) -> list[str]:
+        """Get list of valid paths from document store."""
+        return list(self.document_store._documents.keys())
+
+    def _get_suggestion_for_path(self, path: str) -> str | None:
+        """Get a typo suggestion for a not-found path."""
+        try:
+            valid_ids = self._get_valid_ids_names()
+            valid_paths = self._get_valid_paths()
+            return suggest_correction(path, valid_ids, valid_paths)
+        except Exception as e:
+            logger.debug(f"Error getting suggestion for path {path}: {e}")
+            return None
+
     @measure_performance(include_metrics=False, slow_threshold=0.1)
     @handle_errors(fallback=None)
     @mcp_tool(
         "Fast batch validation of IMAS paths. "
         "paths: space-delimited string or list of paths. "
-        "ids: optional IDS name to prefix all paths (e.g., ids='equilibrium' + paths='time_slice/boundary/psi')"
+        "ids: optional IDS prefix applied to all paths (e.g., ids='equilibrium' + paths='time_slice/boundary/psi'). "
+        "Returns existence status, data type, and units for each path. "
+        "Includes suggestions for paths that are not found (typo correction)."
     )
     async def check_imas_paths(
         self,
@@ -130,11 +153,18 @@ class PathTool(BaseTool):
             This tool is optimized for exact path validation. For discovering paths
             or searching by concept, use search_imas instead.
         """
-        # Convert paths to list if provided as space-delimited string
-        if isinstance(paths, str):
-            paths_list = paths.split()
-        else:
-            paths_list = list(paths)
+        # Normalize paths to list using utility function
+        paths_list = normalize_paths_input(paths)
+
+        # Handle empty input with helpful error message
+        if not paths_list:
+            return CheckPathsResult(
+                summary={"total": 0, "found": 0, "not_found": 0, "invalid": 0},
+                results=[],
+                error="No paths provided. Provide space-delimited paths like "
+                "'equilibrium/time_slice/boundary/psi' or use the 'ids' parameter "
+                "with relative paths like 'time_slice/boundary/psi'.",
+            )
 
         # Initialize counters and results
         results: list[CheckPathsResultItem] = []
@@ -232,12 +262,18 @@ class PathTool(BaseTool):
                                 ),
                             }
 
+                    # Get suggestion for not-found paths (only if not deprecated/excluded)
+                    suggestion = None
+                    if not migration_info and not excluded_info:
+                        suggestion = self._get_suggestion_for_path(path)
+
                     results.append(
                         CheckPathsResultItem(
                             path=path,
                             exists=False,
                             migration=migration_info,
                             excluded=excluded_info,
+                            suggestion=suggestion,
                         )
                     )
                     logger.debug(f"Path validation: {path} - not found")
@@ -269,7 +305,9 @@ class PathTool(BaseTool):
     @mcp_tool(
         "Retrieve full IMAS path data with documentation. "
         "paths: space-delimited string or list of paths. "
-        "ids: optional IDS name to prefix all paths (e.g., ids='equilibrium' + paths='time_slice/boundary/psi')"
+        "ids: optional IDS prefix applied to all paths. "
+        "Returns detailed documentation, units, coordinates, and validation rules. "
+        "Explicitly lists any paths that were not found with typo suggestions."
     )
     async def fetch_imas_paths(
         self,
@@ -316,16 +354,37 @@ class PathTool(BaseTool):
             For fast existence checking without documentation overhead, use check_imas_paths instead.
             For discovering paths by concept, use search_imas.
         """
-        # Convert paths to list if provided as space-delimited string
-        if isinstance(paths, str):
-            paths_list = paths.split()
-        else:
-            paths_list = list(paths)
+        # Normalize paths to list using utility function
+        paths_list = normalize_paths_input(paths)
+
+        # Handle empty input with helpful error message
+        if not paths_list:
+            return FetchPathsResult(
+                nodes=[],
+                deprecated_paths=[],
+                excluded_paths=[],
+                summary={
+                    "total_requested": 0,
+                    "retrieved": 0,
+                    "deprecated": 0,
+                    "excluded": 0,
+                    "not_found": 0,
+                    "invalid": 0,
+                    "physics_domains": [],
+                },
+                query="",
+                search_mode=SearchMode.LEXICAL,
+                physics_domains=[],
+                error="No paths provided. Provide space-delimited paths like "
+                "'equilibrium/time_slice/boundary/psi' or use the 'ids' parameter "
+                "with relative paths.",
+            )
 
         # Initialize tracking
         nodes = []
         deprecated_paths: list[DeprecatedPathInfo] = []
         excluded_paths: list[ExcludedPathInfo] = []
+        not_found_paths: list[NotFoundPathInfo] = []
         found_count = 0
         not_found_count = 0
         deprecated_count = 0
@@ -348,6 +407,13 @@ class PathTool(BaseTool):
             # Check for invalid format
             if "/" not in path:
                 invalid_count += 1
+                not_found_paths.append(
+                    NotFoundPathInfo(
+                        path=path,
+                        reason="invalid_format",
+                        suggestion="Path must contain '/' (e.g., 'equilibrium/time_slice').",
+                    )
+                )
                 logger.warning(f"Invalid path format (no '/'): {path}")
                 continue
 
@@ -419,6 +485,15 @@ class PathTool(BaseTool):
                             logger.debug(f"Path excluded: {path} ({reason_key})")
                         else:
                             not_found_count += 1
+                            # Get suggestion for typo correction
+                            suggestion = self._get_suggestion_for_path(path)
+                            not_found_paths.append(
+                                NotFoundPathInfo(
+                                    path=path,
+                                    reason="path_not_exists",
+                                    suggestion=suggestion,
+                                )
+                            )
                             logger.debug(f"Path not found: {path}")
 
             except Exception as e:
@@ -441,6 +516,7 @@ class PathTool(BaseTool):
             nodes=nodes,
             deprecated_paths=deprecated_paths,
             excluded_paths=excluded_paths,
+            not_found_paths=not_found_paths,
             summary=summary,
             query=" ".join(paths_list[:3]) + ("..." if len(paths_list) > 3 else ""),
             search_mode=SearchMode.LEXICAL,  # Direct lookup, not search

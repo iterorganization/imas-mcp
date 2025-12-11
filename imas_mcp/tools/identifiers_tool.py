@@ -186,8 +186,10 @@ class IdentifiersTool(BaseTool):
     @validate_input(schema=IdentifiersInput)
     @handle_errors(fallback="identifiers_suggestions")
     @mcp_tool(
-        "Browse IMAS identifier schemas and enumeration options - discover valid "
-        "values for array indices, coordinate systems, and measurement configurations"
+        "Browse IMAS identifier schemas and enumeration options. "
+        "query: Optional filter for schema names/descriptions. "
+        "Returns identifier schemas with their valid options. "
+        "Use for understanding valid values for array indices, coordinate systems, and measurement configurations."
     )
     async def get_imas_identifiers(
         self,

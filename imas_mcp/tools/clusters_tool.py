@@ -20,6 +20,7 @@ from imas_mcp.models.error_models import ToolError
 from imas_mcp.search.decorators import cache_results, handle_errors, mcp_tool
 
 from .base import BaseTool
+from .utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,10 @@ class ClustersTool(BaseTool):
     @handle_errors(fallback="cluster_suggestions")
     @mcp_tool(
         "Search for semantically related IMAS path clusters. "
-        "Accepts paths (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r') "
-        "or natural language queries (e.g., 'electron temperature measurements'). "
-        "ids_filter: limit results to specific IDS (space-delimited or list)"
+        "query (required): Path or natural language query. "
+        "ids_filter: Limit results to specific IDS - accepts JSON array, space-delimited, or comma-delimited string. "
+        "Returns clusters of semantically related paths, useful for discovering related data structures. "
+        "Returns error message with guidance if query is empty."
     )
     async def search_imas_clusters(
         self,
@@ -114,9 +116,10 @@ class ClustersTool(BaseTool):
         - Natural language → semantic search on cluster labels/descriptions
 
         Args:
-            query: Path or natural language query
-            ids_filter: Limit results to specific IDS. Accepts either:
+            query: Path or natural language query (required)
+            ids_filter: Limit results to specific IDS. Accepts:
                        - Space-delimited string: "equilibrium transport core_profiles"
+                       - Comma-delimited string: "equilibrium, transport, core_profiles"
                        - List of IDS names: ["equilibrium", "transport"]
             ctx: MCP context
 
@@ -127,7 +130,21 @@ class ClustersTool(BaseTool):
             search_imas_clusters(query="core_profiles/profiles_1d/electrons/density")
             search_imas_clusters(query="electron temperature measurements")
             search_imas_clusters(query="magnetic field", ids_filter="equilibrium magnetics")
+            search_imas_clusters(query="transport", ids_filter="equilibrium, core_profiles")
         """
+        # Validate query is not empty
+        is_valid, error_message = validate_query(query, "search_imas_clusters")
+        if not is_valid:
+            return ToolError(
+                error=error_message or "Query cannot be empty",
+                suggestions=[
+                    "Provide a search term like 'electron temperature'",
+                    "Or provide a path like 'equilibrium/time_slice/profiles_2d'",
+                    "Use get_imas_overview() to explore available IDS structures",
+                ],
+                context={"tool": "search_imas_clusters"},
+            )
+
         if not self._searcher:
             return ToolError(
                 error="Cluster search not available",
@@ -139,13 +156,11 @@ class ClustersTool(BaseTool):
             )
 
         try:
-            # Parse ids_filter into a set for efficient lookup
-            ids_set: set[str] | None = None
-            if ids_filter:
-                if isinstance(ids_filter, str):
-                    ids_set = set(ids_filter.split())
-                else:
-                    ids_set = set(ids_filter)
+            # Normalize ids_filter using utility function
+            normalized_filter = normalize_ids_filter(ids_filter)
+            ids_set: set[str] | None = (
+                set(normalized_filter) if normalized_filter else None
+            )
 
             # Detect query type and search
             is_path = "/" in query and " " not in query
