@@ -304,7 +304,12 @@ class ListTool(BaseTool):
         queries = paths.strip().split()
 
         if not queries:
-            return self._create_error_response("No IDS or path prefix specified", paths)
+            return self._create_error_response(
+                "No IDS or path prefix specified. "
+                "Provide IDS names like 'equilibrium magnetics' or path prefixes like "
+                "'equilibrium/time_slice'. Use get_imas_overview() to see available IDS.",
+                paths,
+            )
 
         # After validation, max_paths should be set to a default if None
         # This is a safety check since validation should handle it

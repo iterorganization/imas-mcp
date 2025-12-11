@@ -21,6 +21,7 @@ from imas_mcp.search.decorators import (
 )
 
 from .base import BaseTool
+from .utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,11 @@ class SearchTool(BaseTool):
     @handle_errors(fallback="search_suggestions")
     @mcp_tool(
         "Find IMAS IDS entries using semantic and lexical search. "
-        "Options: search_mode=auto|semantic|lexical|hybrid, "
-        "response_profile=minimal|standard|detailed"
+        "query (required): Natural language or path-like query. "
+        "ids_filter: Limit search to specific IDS - accepts JSON array, space-delimited, or comma-delimited string. "
+        "search_mode: 'auto' (default), 'semantic', 'lexical', or 'hybrid'. "
+        "response_profile: 'minimal', 'standard' (default), or 'detailed'. "
+        "Returns error message with guidance if query is empty."
     )
     async def search_imas_paths(
         self,
@@ -60,8 +64,9 @@ class SearchTool(BaseTool):
 
         Args:
             query: Full IMAS path for validation, or search term/concept for discovery
-            ids_filter: Limit search to specific IDS. Accepts either:
+            ids_filter: Limit search to specific IDS. Accepts:
                        - Space-delimited string: "equilibrium transport core_profiles"
+                       - Comma-delimited string: "equilibrium, transport, core_profiles"
                        - List of IDS names: ["equilibrium", "transport"]
             max_results: Maximum number of hits to return (summary contains all matches)
             search_mode: Search strategy - "auto", "semantic", "lexical", or "hybrid"
@@ -76,13 +81,27 @@ class SearchTool(BaseTool):
             For fast exact path validation, use the check_ids_path tool instead.
             That tool is optimized for existence checking without search overhead.
         """
+        # Validate query is not empty
+        is_valid, error_message = validate_query(query, "search_imas_paths")
+        if not is_valid:
+            return SearchPathsResult(
+                hits=[],
+                summary={"error": error_message, "query": query or ""},
+                query=query or "",
+                search_mode=SearchMode.AUTO,
+                physics_domains=[],
+                error=error_message,
+            )
+
+        # Normalize ids_filter to support space/comma-delimited strings
+        normalized_ids_filter = normalize_ids_filter(ids_filter)
 
         # Execute search - base.py now handles SearchPathsResult conversion and summary
         result = await self.execute_search(
             query=query,
             search_mode=search_mode,
             max_results=max_results,
-            ids_filter=ids_filter,
+            ids_filter=normalized_ids_filter,
         )
 
         # Add query and search_mode to summary if not already present
