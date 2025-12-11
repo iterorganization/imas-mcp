@@ -68,9 +68,11 @@ class ClustersTool(BaseTool):
 
             # Check if clusters are available (will auto-build if needed)
             if self._clusters.is_available():
-                clusters_data = self._clusters.get_clusters()
-                self._searcher = ClusterSearcher(clusters=clusters_data)
-                logger.info(f"Loaded {len(clusters_data)} clusters")
+                # Use get_cluster_searcher() which properly loads embeddings
+                self._searcher = self._clusters.get_cluster_searcher()
+                logger.info(
+                    f"Loaded {len(self._clusters.get_clusters())} clusters with embeddings"
+                )
             else:
                 logger.warning("Clusters not available")
                 self._searcher = None
