@@ -65,5 +65,7 @@
   "chat.mcp.access": "all",
   "cursorpyright.analysis.typeCheckingMode": "basic",
   "chat.customAgentInSubagent.enabled": true,
-  "gistpad.mcp.enabled": false
+  "gistpad.mcp.enabled": false,
+  "markdown-pdf.highlightStyle": "solarized-light.css",
+  "markdown-pdf.includeDefaultStyles": false
 }
