@@ -267,8 +267,10 @@ class OverviewTool(BaseTool):
     @validate_input(schema=OverviewInput)
     @handle_errors(fallback="overview_suggestions")
     @mcp_tool(
-        "Get high-level overview of IMAS data dictionary structure and contents, "
-        "including DD and server version metadata"
+        "Get high-level overview of IMAS data dictionary structure and contents. "
+        "query: Optional context for filtering the overview (physics domain, IDS name, etc.). "
+        "Returns dataset statistics, available IDS list with descriptions, and version metadata. "
+        "Use this tool first to understand what data structures are available."
     )
     async def get_imas_overview(
         self,
