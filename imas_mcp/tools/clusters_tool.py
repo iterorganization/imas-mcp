@@ -97,10 +97,10 @@ class ClustersTool(BaseTool):
     @handle_errors(fallback="cluster_suggestions")
     @mcp_tool(
         "Search for semantically related IMAS path clusters. "
-        "query (required): Path or natural language query. "
-        "ids_filter: Limit results to specific IDS - accepts JSON array, space-delimited, or comma-delimited string. "
-        "Returns clusters of semantically related paths, useful for discovering related data structures. "
-        "Returns error message with guidance if query is empty."
+        "query (required): Natural language (e.g., 'electron density measurements') or IMAS path (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r'). "
+        "ids_filter: Limit to specific IDS (space/comma-delimited). "
+        "Returns: Clusters of related paths - cross_ids (same concept across IDS) or intra_ids (related within one IDS). "
+        "Use for discovering related data structures across diagnostics."
     )
     async def search_imas_clusters(
         self,
@@ -136,10 +136,11 @@ class ClustersTool(BaseTool):
         is_valid, error_message = validate_query(query, "search_imas_clusters")
         if not is_valid:
             return ToolError(
-                error=error_message or "Query cannot be empty",
+                error="Query cannot be empty",
                 suggestions=[
-                    "Provide a search term like 'electron temperature'",
-                    "Or provide a path like 'equilibrium/time_slice/profiles_2d'",
+                    "Try 'electron temperature' for temperature-related clusters",
+                    "Try 'magnetic field measurements' for B-field data",
+                    "Try a path like 'equilibrium/time_slice/profiles_2d' for related paths",
                     "Use get_imas_overview() to explore available IDS structures",
                 ],
                 context={"tool": "search_imas_clusters"},

@@ -220,9 +220,12 @@ class ListTool(BaseTool):
     @validate_input(schema=ListPathsInput)
     @handle_errors(fallback=None)
     @mcp_tool(
-        "List all data paths in one or more IDS. Returns path names only (no descriptions). "
-        "paths: space-separated IDS names or path prefixes (examples: 'equilibrium magnetics' or 'equilibrium/time_slice'). "
-        "format: 'yaml' (indented tree, default, most token-efficient), 'list' (array of path strings), 'json' (JSON string), 'dict' (structured dictionary)"
+        "List data paths in IDS with minimal overhead (paths only, no descriptions). "
+        "paths (required): Space-separated IDS names or path prefixes (e.g., 'equilibrium', 'magnetics/flux_loop'). "
+        "format: 'yaml' (default, token-efficient tree), 'list' (flat array), 'json', 'dict'. "
+        "leaf_only: True returns only data fields, not intermediate structure nodes. "
+        "max_paths: Limit output size. "
+        "Use for structure exploration; use fetch_imas_paths for documentation."
     )
     async def list_imas_paths(
         self,

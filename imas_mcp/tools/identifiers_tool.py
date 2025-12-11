@@ -187,9 +187,10 @@ class IdentifiersTool(BaseTool):
     @handle_errors(fallback="identifiers_suggestions")
     @mcp_tool(
         "Browse IMAS identifier schemas and enumeration options. "
-        "query: Optional filter for schema names/descriptions. "
-        "Returns identifier schemas with their valid options. "
-        "Use for understanding valid values for array indices, coordinate systems, and measurement configurations."
+        "query: Optional keyword filter with OR-logic for multiple terms (e.g., 'coordinate material', 'transport source'). "
+        "Returns identifier schemas with valid index values and descriptions. "
+        "Key schemas: coordinate_identifier (35 options), core_source_identifier (53 options), ggd_subset_identifier (61 options). "
+        "Use for: array indices, coordinate systems, source types, measurement configurations."
     )
     async def get_imas_identifiers(
         self,

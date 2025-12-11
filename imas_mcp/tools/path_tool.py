@@ -108,10 +108,9 @@ class PathTool(BaseTool):
     @handle_errors(fallback=None)
     @mcp_tool(
         "Fast batch validation of IMAS paths. "
-        "paths: space-delimited string or list of paths. "
-        "ids: optional IDS prefix applied to all paths (e.g., ids='equilibrium' + paths='time_slice/boundary/psi'). "
-        "Returns existence status, data type, and units for each path. "
-        "Includes suggestions for paths that are not found (typo correction)."
+        "paths: Space-delimited paths (e.g., 'equilibrium/time_slice/boundary/psi core_profiles/profiles_1d/electrons/temperature'). "
+        "ids: Optional IDS prefix for relative paths (e.g., ids='equilibrium', paths='time_slice/boundary/psi'). "
+        "Returns: existence status, data type, units, and typo suggestions for not-found paths."
     )
     async def check_imas_paths(
         self,
@@ -161,9 +160,9 @@ class PathTool(BaseTool):
             return CheckPathsResult(
                 summary={"total": 0, "found": 0, "not_found": 0, "invalid": 0},
                 results=[],
-                error="No paths provided. Provide space-delimited paths like "
-                "'equilibrium/time_slice/boundary/psi' or use the 'ids' parameter "
-                "with relative paths like 'time_slice/boundary/psi'.",
+                error="No paths provided. Examples:\n"
+                "  check_imas_paths('equilibrium/time_slice/boundary/psi')\n"
+                "  check_imas_paths('time_slice/boundary/psi', ids='equilibrium')",
             )
 
         # Initialize counters and results
@@ -304,10 +303,10 @@ class PathTool(BaseTool):
     @handle_errors(fallback=None)
     @mcp_tool(
         "Retrieve full IMAS path data with documentation. "
-        "paths: space-delimited string or list of paths. "
-        "ids: optional IDS prefix applied to all paths. "
-        "Returns detailed documentation, units, coordinates, and validation rules. "
-        "Explicitly lists any paths that were not found with typo suggestions."
+        "paths: Space-delimited paths (e.g., 'equilibrium/time_slice/global_quantities/ip'). "
+        "ids: Optional IDS prefix for relative paths. "
+        "Returns: documentation, units, coordinates, data type, and cluster labels. "
+        "Lists not-found paths with typo suggestions."
     )
     async def fetch_imas_paths(
         self,
@@ -375,9 +374,9 @@ class PathTool(BaseTool):
                 query="",
                 search_mode=SearchMode.LEXICAL,
                 physics_domains=[],
-                error="No paths provided. Provide space-delimited paths like "
-                "'equilibrium/time_slice/boundary/psi' or use the 'ids' parameter "
-                "with relative paths.",
+                error="No paths provided. Examples:\n"
+                "  fetch_imas_paths('equilibrium/time_slice/global_quantities/ip')\n"
+                "  fetch_imas_paths('time_slice/boundary/psi', ids='equilibrium')",
             )
 
         # Initialize tracking
