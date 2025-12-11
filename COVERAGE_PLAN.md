@@ -1,7 +1,7 @@
 # Coverage Improvement Plan
 
-**Current Coverage:** 49.20% (updated Dec 9, 2025)  
-**Previous Coverage:** 45.48%  
+**Current Coverage:** 65.69% (updated Dec 11, 2025)  
+**Previous Coverage:** 49.20%  
 **Target Coverage:** >95%  
 **Date Created:** December 9, 2025
 
@@ -9,172 +9,218 @@
 
 ## Progress Summary
 
-| Phase | Status | Coverage Gain |
-|-------|--------|---------------|
-| Phase 1 | Not started | - |
-| Phase 2 | Not started | - |
-| Phase 3 | **In progress** | +3.72% |
-| Phase 4 | Not started | - |
+| Phase | Status | Est. Lines | Est. Gain |
+|-------|--------|------------|-----------|
+| Phase 1 | ✅ Complete | - | +16.49% |
+| Phase 2 | ✅ Complete | - | - |
+| Phase 3 | ✅ Complete | - | - |
+| Task A | Not started | ~440 | +5% |
+| Task B | Not started | ~280 | +3% |
+| Task C | Not started | ~610 | +6% |
+| Task D | Not started | ~350 | +4% |
+| Task E | Not started | ~400 | +4% |
+| Task F | Not started | ~300 | +3% |
+
+**Test Suite:** 777 passed, 4 skipped (69.40s)
 
 ---
 
-## Phase 1: Quick Wins (Est. +15-20% coverage)
+## Completed Phases
 
-High-impact, relatively straightforward unit tests.
+### Phase 1: Quick Wins ✅ Complete
 
-- [ ] **core/extractors/** - 417 lines at 0%
-  - `base.py` (80 lines)
-  - `coordinate_extractor.py` (21 lines)
-  - `identifier_extractor.py` (137 lines)
-  - `metadata_extractor.py` (98 lines)
-  - `physics_extractor.py` (13 lines)
-  - `semantic_extractor.py` (45 lines)
-  - `validation_extractor.py` (23 lines)
+- [x] **core/extractors/** - 417 lines ✅
+- [x] **search/document_store.py** - 639 lines at 49.14% ✅
+- [x] **search/engines/** ✅
+- [x] **dd_accessor.py** - 189 lines at 79.89% ✅
 
-- [ ] **search/document_store.py** - 443 lines at 31%
-  - Focus on document indexing and retrieval
-  - Test search query building
-  - Test result filtering
+### Phase 2: Medium Effort ✅ Complete
 
-- [ ] **search/engines/** - ~200 lines combined
-  - `lexical_engine.py` (109 lines at 16%)
-  - `hybrid_engine.py` (55 lines at 26%)
-  - `semantic_engine.py` (34 lines at 35%)
+- [x] **clusters/** modules ✅
+- [x] **core/xml_utils.py** - 98.55% ✅
+- [x] **search/decorators/** ✅
 
-- [ ] **dd_accessor.py** - 134 lines at 29%
-  - Test IDS accessors
-  - Test path resolution
-  - Test caching behavior
+### Phase 3: Higher Effort ✅ Complete
+
+- [x] **services/docs_proxy_service.py** - 46.69% ✅
+- [x] **cli.py** - 91.67% ✅
+- [x] **graph_analyzer.py** - 96.51% ✅
+- [x] **core/physics_categorization.py** - 100% ✅
 
 ---
 
-## Phase 2: Medium Effort (Est. +15-20% coverage)
+## Remaining Tasks (Background Agent Sessions)
 
-Requires more setup but still well-defined test boundaries.
+Each task is sized for a single Opus 4.5 background session (~300-500 lines, focused scope).
 
-- [x] **clusters/** modules - ~500 lines combined ✅ (completed 2025-12-10)
-  - [x] `clustering.py` - Tests in `tests/clusters/test_clustering.py`
-  - [x] `labeler.py` - Tests in `tests/clusters/test_labeler.py`
-  - [x] `preprocessing.py` - Tests in `tests/clusters/test_preprocessing.py`
-  - [x] `label_cache.py` - Tests in `tests/clusters/test_label_cache.py`
+### Task A: XML Parser & Clusters Core (~440 lines, +5%)
 
-- [ ] **core/xml_parser.py** - 310 lines at 0%
-  - Test XML element parsing
-  - Test path extraction
-  - Test attribute handling
+**Scope:** Low-coverage core parsing modules requiring XML fixtures.
 
-- [x] **core/xml_utils.py** - 69 lines at 0% ✅ (completed 2025-12-10)
-  - [x] Tests in `tests/core/test_xml_utils.py`
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `core/xml_parser.py` | 291 | 0% | 80% |
+| `core/clusters.py` | 195 | 24.62% | 80% |
 
-- [ ] **tools/list_tool.py** - 122 lines at 16%
-  - Test path listing functionality
-  - Test format options (yaml, list, json, dict)
+**Setup required:**
+- Create sample XML fixtures in `tests/fixtures/`
+- Mock ElementTree parsing where needed
+- Handle session-scoped mock conflicts in conftest.py
 
-- [x] **search/decorators/** - ~130 lines combined ✅ (completed 2025-12-10)
-  - [x] `cache.py` - Tests in `tests/search/decorators/test_cache.py`
-  - [x] `error_handling.py` - Tests in `tests/search/decorators/test_error_handling.py`
-  - [x] `performance.py` - Tests in `tests/search/decorators/test_performance.py`
-  - [x] `tool_recommendations.py` - Tests in `tests/search/decorators/test_tool_recommendations.py`
+**Test file:** `tests/core/test_xml_parser.py`
 
 ---
 
-## Phase 3: Higher Effort (Est. +10-15% coverage)
+### Task B: List Tool & Resource Accessors (~280 lines, +3%)
 
-Requires mocking external services or complex setup.
+**Scope:** Tool and accessor modules with straightforward testing.
 
-- [x] **services/docs_proxy_service.py** - 272 lines at 18% → **46.69%** ✅
-  - Mock HTTP requests
-  - Test document fetching
-  - Test error handling
-  - Tests added: `tests/services/test_docs_proxy_service.py`
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `tools/list_tool.py` | 146 | 16.44% | 85% |
+| `resource_path_accessor.py` | 68 | 60.29% | 90% |
+| `resource_provider.py` | 71 | 61.97% | 90% |
 
-- [ ] **services/docs_server_manager.py** - 198 lines at 55%
-  - Test server lifecycle
-  - Test health monitoring
-  - Mock process management
-  - Note: Existing tests in `tests/test_docs_server_lifecycle.py`
+**Test approach:**
+- Mock DD accessor for list tool tests
+- Test format options (yaml, list, json, dict)
+- Test path resolution and resource loading
 
-- [x] **cli.py** - 60 lines at 0% → **91.67%** ✅
-  - Test CLI argument parsing
-  - Test command execution
-  - Use click testing utilities
-  - Tests added: `tests/test_cli.py`
-
-- [x] **graph_analyzer.py** - 86 lines at 0% → **96.51%** ✅
-  - Test graph construction
-  - Test relationship detection
-  - Tests added: `tests/test_graph_analyzer.py`
-
-- [x] **core/physics_categorization.py** - 57 lines at 0% → **100%** ✅
-  - Test physics domain classification
-  - Tests added: `tests/core/test_physics_categorization.py`
-
-- [ ] **core/clusters.py** - 147 lines at 25%
-  - Test cluster operations
-  - Note: Session-scoped mock in conftest.py prevents direct testing
+**Test files:** `tests/tools/test_list_tool.py`, `tests/test_resource_accessors.py`
 
 ---
 
-## Phase 4: Final Polish (Est. +5% coverage)
+### Task C: Embeddings Suite (~610 lines, +6%)
 
-Edge cases, error paths, and remaining gaps.
+**Scope:** Embeddings and encoder modules with API mocking.
 
-- [ ] **tools/** remaining gaps
-  - `overview_tool.py` (60 lines at 71%)
-  - `identifiers_tool.py` (31 lines at 74%)
-  - `clusters_tool.py` (13 lines at 81%)
-  - `docs_tool.py` (10 lines at 82%)
-  - `search_tool.py` (5 lines at 84%)
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `embeddings/encoder.py` | 225 | 75.11% | 90% |
+| `embeddings/openrouter_client.py` | 133 | 57.14% | 85% |
+| `embeddings/cache.py` | 106 | 77.36% | 92% |
+| `embeddings/embeddings.py` | 85 | 70.59% | 90% |
+| `embeddings/config.py` | 63 | 76.19% | 90% |
 
-- [ ] **embeddings/** remaining gaps
-  - `openrouter_client.py` (62 lines at 53%)
-  - `cache.py` (33 lines at 68%)
-  - `encoder.py` (54 lines at 76%)
+**Test approach:**
+- Mock HTTP requests for OpenRouter client
+- Test cache hit/miss scenarios
+- Test encoder fallback behavior
+- Test configuration validation
 
-- [ ] **settings.py** - 30 lines at 63%
-  - Test environment variable handling
-  - Test configuration loading
+**Test files:** `tests/embeddings/` (expand existing tests)
 
-- [ ] **server.py** - 45 lines at 68%
-  - Test server initialization
-  - Test error handling
+---
 
-- [ ] **mappings/__init__.py** - 42 lines at 62%
-  - Test mapping operations
+### Task D: Search Infrastructure (~350 lines, +4%)
 
-- [ ] **search/semantic_search.py** - 111 lines at 29%
-  - Test semantic search functionality
+**Scope:** Search modules needing semantic/hybrid coverage.
 
-- [ ] **search/cache.py** - 41 lines at 24%
-  - Test cache hit/miss scenarios
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `search/semantic_search.py` | 157 | 34.39% | 85% |
+| `search/search_strategy.py` | 189 | 62.96% | 85% |
 
-- [ ] **search/tool_suggestions.py** - 45 lines at 13%
-  - Test suggestion logic
+**Test approach:**
+- Mock embedding encoder
+- Test query routing and strategy selection
+- Test result ranking and filtering
+
+**Test files:** `tests/search/test_semantic_search.py`, `tests/search/test_search_strategy.py`
+
+---
+
+### Task E: Server & Services (~400 lines, +4%)
+
+**Scope:** Server lifecycle and service manager modules.
+
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `services/docs_server_manager.py` | 441 | 55.10% | 80% |
+| `server.py` | 139 | 72.66% | 88% |
+
+**Test approach:**
+- Mock subprocess/process management
+- Test server initialization and shutdown
+- Test health monitoring
+- Expand existing `test_docs_server_lifecycle.py`
+
+**Test files:** `tests/test_docs_server_lifecycle.py`, `tests/test_server_extended.py`
+
+---
+
+### Task F: Clusters Extractor & Remaining Gaps (~300 lines, +3%)
+
+**Scope:** Low-coverage cluster extraction and miscellaneous gaps.
+
+| Module | Lines | Current | Target |
+|--------|-------|---------|--------|
+| `clusters/extractor.py` | 279 | 11.83% | 75% |
+| `mappings/__init__.py` | 110 | 61.82% | 85% |
+| `settings.py` | 82 | 74.39% | 90% |
+
+**Test approach:**
+- Test feature extraction methods
+- Test mapping operations
+- Test environment variable handling
+
+**Test files:** `tests/clusters/test_extractor.py`, `tests/mappings/test_mappings.py`
 
 ---
 
 ## Modules with Good Coverage (Maintain)
 
-These modules already have good coverage. Only add tests if bugs are found.
+These modules have good coverage. Add tests when fixing bugs.
 
 | Module | Coverage |
 |--------|----------|
 | models/constants.py | 100% |
 | models/context_models.py | 100% |
 | models/error_models.py | 100% |
-| models/result_models.py | 97% |
-| core/data_model.py | 99% |
-| tools/path_tool.py | 93% |
-| tools/base.py | 90% |
-| core/exclusions.py | 88% |
-| health.py | 85% |
-| services/response.py | 84% |
+| clusters/labeling.py | 100% |
+| clusters/preprocessing.py | 100% |
+| core/physics_categorization.py | 100% |
+| core/data_model.py | 99.32% |
+| core/xml_utils.py | 98.55% |
+| clusters/label_cache.py | 97.92% |
+| models/result_models.py | 96.95% |
+| graph_analyzer.py | 96.51% |
+| tools/path_tool.py | 92.99% |
+| search/tool_suggestions.py | 92.31% |
+| cli.py | 91.67% |
+| tools/identifiers_tool.py | 91.60% |
+| tools/base.py | 90.00% |
+| search/cache.py | 88.89% |
+| core/exclusions.py | 88.24% |
+| tools/overview_tool.py | 86.79% |
+| health.py | 85.48% |
+
+---
+
+## Background Task Instructions
+
+Each task above can be run as a single background agent session with this prompt pattern:
+
+```
+Improve test coverage for [Task X] modules in the imas-mcp project.
+
+Target modules:
+- [list modules with current coverage %]
+
+Requirements:
+1. Run `uv sync --extra test` before testing
+2. Create/update test files in the appropriate `tests/` subdirectory
+3. Achieve target coverage (80-90%) for each module
+4. Run `uv run pytest --cov=imas_mcp -q` to verify coverage
+5. Follow project conventions in AGENTS.md
+6. Commit with conventional commit format
+```
 
 ---
 
 ## Testing Strategy Notes
 
-### Fixtures to Create
+### Fixtures Available
 - Mock DD accessor with sample data
 - Mock embedding encoder
 - Sample XML fragments for parser tests
@@ -191,24 +237,30 @@ These modules already have good coverage. Only add tests if bugs are found.
 uv run pytest --cov=imas_mcp --cov-report=term-missing --cov-report=html -q
 ```
 
-### Viewing HTML Report
-Open `htmlcov/index.html` in a browser for detailed line-by-line coverage.
-
 ---
 
 ## Progress Log
 
+### 2025-12-11: Restructured for Background Tasks
+- Reorganized remaining work into 6 focused tasks (A-F)
+- Each task targets ~300-500 lines, suitable for single Opus 4.5 session
+- Total estimated gain: +25% coverage (reaching ~90%)
+
+### 2025-12-11: Phase 1 Complete, Phase 2-4 Progress
+- **Coverage increased from 49.20% → 65.69% (+16.49%)**
+- **Test count increased from 447 → 777 tests (+330 tests)**
+- Phase 1 (Quick Wins) completed:
+  - `core/extractors/` - All modules now have 84-100% coverage
+  - `search/engines/` - All engines now have 58-72% coverage
+  - `dd_accessor.py` - Now at 79.89%
+  - `search/document_store.py` - Now at 49.14%
+- Phase 4 progress:
+  - `search/cache.py` - Now at 88.89%
+  - `search/tool_suggestions.py` - Now at 92.31%
+
 ### 2025-12-10: Phase 2 - Partial Completion
-- Created comprehensive tests for `clusters/` modules:
-  - `test_clustering.py` - 33 tests covering similarity computation, centroid calculation, clustering operations
-  - `test_preprocessing.py` - 18 tests covering path filtering and unit family building
-  - `test_labeler.py` - 7 tests covering cluster label generation
-  - `test_label_cache.py` - 21 tests covering SQLite-based label caching
-- Created comprehensive tests for `search/decorators/`:
-  - `test_cache.py` - 20 tests covering cache entries, SimpleCache, cache keys, decorators
-  - `test_error_handling.py` - 28 tests covering error responses, suggestions, decorators
-  - `test_performance.py` - 17 tests covering metrics, scoring, decorators
-  - `test_tool_recommendations.py` - 16 tests covering search analysis, suggestions
-- Created tests for `core/xml_utils.py` - 10 tests covering documentation building and XML utilities
+- Created comprehensive tests for `clusters/` modules
+- Created comprehensive tests for `search/decorators/`
+- Created tests for `core/xml_utils.py`
 - **Total new tests added:** ~170 tests
 - **All tests passing:** 447 passed, 4 skipped
