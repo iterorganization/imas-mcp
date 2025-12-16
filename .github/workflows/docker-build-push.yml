@@ -157,13 +157,9 @@ jobs:
           uv run build-embeddings --no-rich
           echo "✓ Embeddings built successfully"
           
-          echo "Building relationships..."
-          uv run build-relationships --quiet
-          echo "✓ Relationships built successfully"
-          
-          echo "Building mermaid graphs..."
-          uv run build-mermaid --quiet
-          echo "✓ Mermaid graphs built successfully"
+          echo "Building clusters..."
+          uv run build-clusters --quiet
+          echo "✓ Clusters built successfully"
           
           echo "All IMAS resources built successfully:"
           ls -lh imas_mcp/resources/imas_data_dictionary/

@@ -9,15 +9,16 @@ import os
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import pytest
 from dotenv import load_dotenv
 from fastmcp import Client
 
+from imas_mcp.clusters.search import ClusterSearchResult
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
 from imas_mcp.search.engines.base_engine import MockSearchEngine
 from imas_mcp.server import Server
-from imas_mcp.services.physics import PhysicsService
 
 # Load .env file with override=True to ensure test environment uses .env values
 # This fixes issues where empty or stale shell environment variables persist
@@ -88,7 +89,6 @@ def create_mock_document(path_id: str, ids_name: str = "core_profiles") -> Docum
     return Document(
         metadata=metadata,
         documentation=f"Mock documentation for {path_id}",
-        physics_context={"domain": "transport", "phenomena": ["transport", "plasma"]},
         relationships={},
         raw_data={"data_type": "float", "units": "m"},
     )
@@ -106,6 +106,70 @@ def create_mock_documents() -> list[Document]:
         create_mock_document("equilibrium/time_slice/boundary/psi", "equilibrium"),
         create_mock_document("equilibrium/time_slice/boundary/psi_norm", "equilibrium"),
         create_mock_document("equilibrium/time_slice/boundary/type", "equilibrium"),
+    ]
+
+
+def create_mock_clusters() -> list[dict]:
+    """Create mock cluster data for testing."""
+    return [
+        {
+            "id": 0,
+            "label": "Electron Temperature Profiles",
+            "description": "Temperature measurements for electrons",
+            "is_cross_ids": False,
+            "ids_names": ["core_profiles"],
+            "paths": [
+                "core_profiles/profiles_1d/electrons/temperature",
+                "core_profiles/profiles_1d/electrons/temperature_fit",
+            ],
+            "similarity_score": 0.95,
+            "cluster_similarity": 0.87,
+        },
+        {
+            "id": 1,
+            "label": "Magnetic Field Components",
+            "description": "Magnetic field measurements and derived quantities",
+            "is_cross_ids": True,
+            "ids_names": ["equilibrium", "core_profiles"],
+            "paths": [
+                "equilibrium/time_slice/profiles_2d/b_field_r",
+                "equilibrium/time_slice/profiles_2d/b_field_z",
+            ],
+            "similarity_score": 0.88,
+            "cluster_similarity": 0.82,
+        },
+        {
+            "id": 2,
+            "label": "Boundary Conditions",
+            "description": "Plasma boundary and separatrix data",
+            "is_cross_ids": False,
+            "ids_names": ["equilibrium"],
+            "paths": [
+                "equilibrium/time_slice/boundary/psi",
+                "equilibrium/time_slice/boundary/psi_norm",
+                "equilibrium/time_slice/boundary/type",
+            ],
+            "similarity_score": 0.92,
+            "cluster_similarity": 0.79,
+        },
+    ]
+
+
+def create_mock_cluster_search_results(query: str) -> list[ClusterSearchResult]:
+    """Create mock cluster search results for testing."""
+    mock_clusters = create_mock_clusters()
+    return [
+        ClusterSearchResult(
+            cluster_id=c["id"],
+            label=c["label"],
+            description=c["description"],
+            is_cross_ids=c["is_cross_ids"],
+            ids_names=c["ids_names"],
+            paths=c["paths"],
+            similarity_score=c["similarity_score"],
+            cluster_similarity=c["cluster_similarity"],
+        )
+        for c in mock_clusters[:2]  # Return first 2 clusters
     ]
 
 
@@ -189,52 +253,60 @@ def mock_heavy_operations():
             mock_semantic_instance._initialize.return_value = None
             mock_semantic.return_value = mock_semantic_instance
 
-            # Mock unit accessor to prevent heavy physics integration
-            with patch(
-                "imas_mcp.search.document_store.UnitAccessor"
-            ) as mock_unit_accessor:
-                mock_unit_accessor.return_value.get_all_unit_contexts.return_value = {}
-                mock_unit_accessor.return_value.get_unit_context.return_value = (
-                    "test context"
-                )
-                mock_unit_accessor.return_value.get_category_for_unit.return_value = (
-                    "test_category"
-                )
-                mock_unit_accessor.return_value.get_domains_for_unit.return_value = [
-                    "transport"
-                ]
+            # Mock search engine methods to prevent heavy execution
+            mock_engine = MockSearchEngine()
+            with (
+                patch(
+                    "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+                patch(
+                    "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
+                    side_effect=mock_engine.search,
+                ),
+            ):
+                # Mock Clusters class to prevent loading cluster files
+                mock_clusters = create_mock_clusters()
+                with patch("imas_mcp.core.clusters.Clusters") as mock_clusters_class:
+                    mock_clusters_instance = MagicMock()
+                    mock_clusters_instance.is_available.return_value = True
+                    mock_clusters_instance.get_clusters.return_value = mock_clusters
+                    mock_clusters_class.return_value = mock_clusters_instance
 
-                # Mock search engine methods to prevent heavy execution
-                mock_engine = MockSearchEngine()
-                with (
-                    patch(
-                        "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                    patch(
-                        "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
-                        side_effect=mock_engine.search,
-                    ),
-                ):
-                    # Mock PhysicsService methods to prevent heavy model loading
-                    with patch.multiple(
-                        PhysicsService,
-                        enhance_query=AsyncMock(return_value=None),
-                        get_concept_context=AsyncMock(
-                            return_value={
-                                "domain": "transport",
-                                "description": "Mock physics description",
-                                "phenomena": ["transport"],
-                                "typical_units": ["m"],
-                                "complexity_level": "intermediate",
-                            }
-                        ),
-                    ):
-                        yield
+                    # Also patch in the tools module where it's imported
+                    with patch(
+                        "imas_mcp.tools.clusters_tool.Clusters"
+                    ) as mock_clusters_tool:
+                        mock_clusters_tool.return_value = mock_clusters_instance
+
+                        # Mock ClusterSearcher to return mock results
+                        with patch(
+                            "imas_mcp.tools.clusters_tool.ClusterSearcher"
+                        ) as mock_searcher_class:
+                            mock_searcher = MagicMock()
+                            mock_searcher.search_by_path.return_value = (
+                                create_mock_cluster_search_results("path")
+                            )
+                            mock_searcher.search_by_text.return_value = (
+                                create_mock_cluster_search_results("text")
+                            )
+                            mock_searcher_class.return_value = mock_searcher
+
+                            # Mock Encoder to prevent model loading
+                            with patch(
+                                "imas_mcp.tools.clusters_tool.Encoder"
+                            ) as mock_encoder_class:
+                                mock_encoder = MagicMock()
+                                mock_encoder.encode.return_value = np.zeros(
+                                    (1, 384), dtype=np.float32
+                                )
+                                mock_encoder_class.return_value = mock_encoder
+
+                                yield
 
 
 @pytest.fixture(scope="session")

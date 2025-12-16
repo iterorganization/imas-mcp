@@ -1,0 +1,1 @@
+"""Mappings module tests."""

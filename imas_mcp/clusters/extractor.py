@@ -2,6 +2,7 @@
 Main relationship extractor class.
 """
 
+import hashlib
 import json
 import logging
 from datetime import datetime
@@ -18,6 +19,7 @@ from imas_mcp.search.document_store import DocumentStore
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
 from .config import RelationshipExtractionConfig
+from .label_cache import LabelCache
 from .models import (
     ClusteringParameters,
     ClusteringStatistics,
@@ -213,29 +215,18 @@ class RelationshipExtractor:
     def save_relationships(
         self, relationships: RelationshipSet, output_file: Path | None = None
     ) -> None:
-        """Save relationships to JSON file with additional groupings."""
-        output_file = output_file or self.config.output_file
+        """Save clusters to JSON file with LLM-generated labels.
 
-        # Determine clusters.json path (same directory, new filename)
-        clusters_file = output_file.parent / "clusters.json"
+        Saves a single clusters.json with labels and indexes. Embeddings
+        (centroids and label embeddings) are stored separately in .npz format.
+        """
+        output_file = output_file or self.config.output_file
 
         # Ensure output directory exists
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert to dict for JSON serialization using Pydantic
-        data = relationships.model_dump()
-
-        # Add additional groupings for tool compatibility if they exist
-        if hasattr(relationships, "_unit_families"):
-            data["unit_families"] = relationships._unit_families
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
-        self.logger.info("Saved relationships to %s", output_file)
-
-        # Also save in new clusters.json format with labels
-        self._save_clusters_json(relationships, clusters_file)
+        # Save clusters with labels (embeddings in separate .npz file)
+        self._save_clusters_json(relationships, output_file)
 
     def _save_clusters_json(
         self,
@@ -243,6 +234,9 @@ class RelationshipExtractor:
         output_file: Path,
     ) -> None:
         """Save clusters in optimized format with LLM-generated labels.
+
+        Labels are cached using content-addressed keys (hash of sorted paths).
+        This enables incremental cache growth and reuse across clustering runs.
 
         Args:
             relationships: The extracted relationships
@@ -252,14 +246,20 @@ class RelationshipExtractor:
 
         clusters_list = relationships.clusters
 
-        # Generate labels using LLM
-        labels_map = self._generate_cluster_labels(clusters_list)
+        # Use content-addressed label cache
+        label_cache = LabelCache(output_file.parent / "label_cache.db")
+        labels_map = self._get_labels_with_cache(clusters_list, label_cache)
 
         # Generate label embeddings for semantic search
-        label_embeddings = self._generate_label_embeddings(labels_map)
+        label_embeddings_map = self._generate_label_embeddings(labels_map)
 
-        # Build clusters array with labels
+        # Build clusters array with labels (without embeddings - stored in .npz)
         clusters_data = []
+        centroid_embeddings = []
+        label_embeddings_list = []
+        centroid_cluster_ids = []
+        label_cluster_ids = []
+
         for cluster in clusters_list:
             cluster_id = cluster.id
             label_info = labels_map.get(cluster_id, {})
@@ -272,12 +272,17 @@ class RelationshipExtractor:
                 "similarity": round(cluster.similarity_score, 4),
                 "ids": cluster.ids_names,
                 "paths": cluster.paths,
-                "centroid": cluster.centroid,
+                # Note: centroid and label_embedding now stored in .npz file
             }
 
-            # Add label embedding if available
-            if cluster_id in label_embeddings:
-                cluster_entry["label_embedding"] = label_embeddings[cluster_id]
+            # Collect embeddings for .npz file
+            if cluster.centroid is not None and len(cluster.centroid) > 0:
+                centroid_embeddings.append(cluster.centroid)
+                centroid_cluster_ids.append(cluster_id)
+
+            if cluster_id in label_embeddings_map:
+                label_embeddings_list.append(label_embeddings_map[cluster_id])
+                label_cluster_ids.append(cluster_id)
 
             clusters_data.append(cluster_entry)
 
@@ -309,12 +314,26 @@ class RelationshipExtractor:
             else:
                 intra_ids_list.append(cluster_id)
 
+        # Save embeddings to .npz file (compressed binary format)
+        # Derive embeddings filename from clusters filename to preserve hash suffix
+        embeddings_stem = output_file.stem.replace("clusters", "cluster_embeddings")
+        embeddings_file = output_file.parent / f"{embeddings_stem}.npz"
+        embeddings_hash = self._save_embeddings_npz(
+            embeddings_file,
+            centroid_embeddings,
+            centroid_cluster_ids,
+            label_embeddings_list,
+            label_cluster_ids,
+        )
+
         # Build final structure
         output_data = {
-            "version": "1.0",
+            "version": "2.0",
             "dd_version": dd_version,
             "generated": datetime.now().isoformat(),
             "labeling_model": self._get_labeling_model(),
+            "embeddings_file": embeddings_file.name,
+            "embeddings_hash": embeddings_hash,
             "clusters": clusters_data,
             "indexes": {
                 "path": path_to_cluster,
@@ -327,6 +346,8 @@ class RelationshipExtractor:
                 "cross_ids_count": len(cross_ids_list),
                 "intra_ids_count": len(intra_ids_list),
                 "total_paths": len(path_to_cluster),
+                "centroid_embeddings_count": len(centroid_cluster_ids),
+                "label_embeddings_count": len(label_cluster_ids),
                 "clustering_params": {
                     "cross_ids": {
                         "eps": self.config.cross_ids_eps,
@@ -344,6 +365,64 @@ class RelationshipExtractor:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
         self.logger.info(f"Saved clusters.json to {output_file}")
+        self.logger.info(
+            f"Saved {len(centroid_cluster_ids)} centroid and "
+            f"{len(label_cluster_ids)} label embeddings to {embeddings_file}"
+        )
+
+    def _save_embeddings_npz(
+        self,
+        embeddings_file: Path,
+        centroid_embeddings: list,
+        centroid_cluster_ids: list[int],
+        label_embeddings: list,
+        label_cluster_ids: list[int],
+    ) -> str:
+        """Save embeddings to compressed .npz file and compute hash.
+
+        Args:
+            embeddings_file: Path to output .npz file
+            centroid_embeddings: List of centroid embedding vectors
+            centroid_cluster_ids: List of cluster IDs for centroids
+            label_embeddings: List of label embedding vectors
+            label_cluster_ids: List of cluster IDs for label embeddings
+
+        Returns:
+            SHA256 hash (first 16 chars) of the saved file
+        """
+        # Convert to numpy arrays
+        centroids_array = (
+            np.array(centroid_embeddings, dtype=np.float32)
+            if centroid_embeddings
+            else np.array([], dtype=np.float32)
+        )
+        centroid_ids_array = np.array(centroid_cluster_ids, dtype=np.int32)
+
+        labels_array = (
+            np.array(label_embeddings, dtype=np.float32)
+            if label_embeddings
+            else np.array([], dtype=np.float32)
+        )
+        label_ids_array = np.array(label_cluster_ids, dtype=np.int32)
+
+        # Save compressed
+        np.savez_compressed(
+            embeddings_file,
+            centroids=centroids_array,
+            centroid_cluster_ids=centroid_ids_array,
+            label_embeddings=labels_array,
+            label_cluster_ids=label_ids_array,
+        )
+
+        # Compute hash of saved file
+        file_hash = hashlib.sha256(embeddings_file.read_bytes()).hexdigest()[:16]
+
+        self.logger.debug(
+            f"Saved embeddings: centroids={centroids_array.shape}, "
+            f"labels={labels_array.shape}, hash={file_hash}"
+        )
+
+        return file_hash
 
     def _get_labeling_model(self) -> str:
         """Get the labeling model name."""
@@ -351,11 +430,78 @@ class RelationshipExtractor:
 
         return get_language_model()
 
-    def _generate_cluster_labels(self, clusters: list) -> dict[int, dict[str, str]]:
-        """Generate labels for clusters using LLM.
+    def _get_labels_with_cache(
+        self, clusters: list, label_cache: LabelCache
+    ) -> dict[int, dict[str, str]]:
+        """Get labels for clusters, using cache when available.
+
+        Uses content-addressed caching: each cluster is keyed by a hash of its
+        sorted paths. This enables incremental cache growth and reuse across
+        different clustering runs.
 
         Args:
             clusters: List of ClusterInfo objects
+            label_cache: LabelCache instance for persistence
+
+        Returns:
+            Dict mapping cluster_id to {"label": str, "description": str}
+        """
+        model = self._get_labeling_model()
+
+        # Convert clusters to dicts for cache lookup
+        cluster_dicts = [
+            {
+                "id": c.id,
+                "is_cross_ids": c.is_cross_ids,
+                "ids_names": c.ids_names,
+                "paths": c.paths,
+            }
+            for c in clusters
+        ]
+
+        # Check cache for existing labels
+        cached, uncached = label_cache.get_many(cluster_dicts, model=model)
+
+        # Convert cached labels to the expected format
+        labels_map = {
+            cluster_id: {
+                "label": cached_label.label,
+                "description": cached_label.description,
+            }
+            for cluster_id, cached_label in cached.items()
+        }
+
+        if not uncached:
+            self.logger.info(f"All {len(clusters)} labels retrieved from cache")
+            return labels_map
+
+        # Generate labels for uncached clusters
+        self.logger.info(f"Generating labels for {len(uncached)} uncached clusters")
+        generated = self._generate_cluster_labels_for_batch(uncached)
+
+        # Store generated labels in cache
+        labels_to_cache = []
+        for cluster in uncached:
+            cluster_id = cluster["id"]
+            if cluster_id in generated:
+                info = generated[cluster_id]
+                labels_to_cache.append(
+                    (cluster["paths"], info["label"], info["description"])
+                )
+                labels_map[cluster_id] = info
+
+        if labels_to_cache:
+            label_cache.set_many(labels_to_cache, model=model)
+
+        return labels_map
+
+    def _generate_cluster_labels_for_batch(
+        self, clusters: list[dict]
+    ) -> dict[int, dict[str, str]]:
+        """Generate labels for a batch of clusters using LLM.
+
+        Args:
+            clusters: List of cluster dicts with id, is_cross_ids, ids_names, paths
 
         Returns:
             Dict mapping cluster_id to {"label": str, "description": str}
@@ -368,26 +514,13 @@ class RelationshipExtractor:
             self.logger.warning(
                 "No API key available for LLM labeling. Using fallback labels."
             )
-            return self._generate_fallback_labels(clusters)
+            return self._generate_fallback_labels_from_dicts(clusters)
 
         try:
             from .labeler import ClusterLabeler
 
             labeler = ClusterLabeler()
-
-            # Convert ClusterInfo to dicts for labeler
-            cluster_dicts = []
-            for cluster in clusters:
-                cluster_dicts.append(
-                    {
-                        "id": cluster.id,
-                        "is_cross_ids": cluster.is_cross_ids,
-                        "ids_names": cluster.ids_names,
-                        "paths": cluster.paths,
-                    }
-                )
-
-            labels = labeler.label_clusters(cluster_dicts)
+            labels = labeler.label_clusters(clusters)
 
             return {
                 label.cluster_id: {
@@ -399,7 +532,33 @@ class RelationshipExtractor:
 
         except Exception as e:
             self.logger.error(f"LLM labeling failed: {e}. Using fallback labels.")
-            return self._generate_fallback_labels(clusters)
+            return self._generate_fallback_labels_from_dicts(clusters)
+
+    def _generate_fallback_labels_from_dicts(
+        self, clusters: list[dict]
+    ) -> dict[int, dict[str, str]]:
+        """Generate fallback labels from cluster dicts without LLM."""
+        labels = {}
+        for cluster in clusters:
+            cluster_id = cluster["id"]
+            paths = cluster.get("paths", [])[:5]
+            is_cross_ids = cluster.get("is_cross_ids", False)
+            ids_names = cluster.get("ids_names", [])
+
+            if paths:
+                segments = [p.split("/")[-1] for p in paths]
+                common = " ".join(segments[:2]).replace("_", " ").title()
+                label = common[:50]
+            else:
+                label = f"Cluster {cluster_id}"
+
+            type_str = "cross-IDS" if is_cross_ids else "intra-IDS"
+            ids_str = ", ".join(ids_names[:3])
+            description = f"A {type_str} cluster of related paths from {ids_str}."
+
+            labels[cluster_id] = {"label": label, "description": description}
+
+        return labels
 
     def _generate_fallback_labels(self, clusters: list) -> dict[int, dict[str, str]]:
         """Generate fallback labels without LLM."""
@@ -573,7 +732,7 @@ class RelationshipExtractor:
             embeddings = np.vstack(filtered_embeddings)
 
             self.logger.info(
-                f"Extracted {len(filtered_embeddings)} embeddings for relationship analysis"
+                f"Extracted {len(filtered_embeddings)} embeddings for clustering"
             )
 
             # Store cache for compatibility

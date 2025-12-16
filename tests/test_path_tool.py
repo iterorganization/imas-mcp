@@ -504,16 +504,18 @@ async def test_fetch_mixed_valid_invalid(path_tool):
 
 
 @pytest.mark.asyncio
-async def test_fetch_returns_physics_context(path_tool):
-    """Test that fetch_imas_paths includes physics context."""
+async def test_fetch_returns_cluster_labels(path_tool):
+    """Test that fetch_imas_paths includes cluster labels."""
     result = await path_tool.fetch_imas_paths("equilibrium/time_slice/profiles_1d/psi")
 
     assert result.node_count == 1
     node = result.nodes[0]
 
-    # Check for physics context if available
-    if node.physics_context:
-        assert node.physics_context.domain
+    # Check for cluster_labels field
+    assert hasattr(node, "cluster_labels")
+    # cluster_labels may be None or a list of dicts
+    if node.cluster_labels:
+        assert isinstance(node.cluster_labels, list)
 
     # Check that physics_domains are tracked in result
     assert hasattr(result, "physics_domains")

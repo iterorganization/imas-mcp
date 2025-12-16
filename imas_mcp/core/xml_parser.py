@@ -29,7 +29,6 @@ from imas_mcp.core.extractors import (
     LifecycleExtractor,
     MetadataExtractor,
     PathExtractor,
-    PhysicsExtractor,
     SemanticExtractor,
     ValidationExtractor,
 )
@@ -280,7 +279,6 @@ class DataDictionaryTransformer:
         extractors = [
             MetadataExtractor(context),
             LifecycleExtractor(context),
-            PhysicsExtractor(context),
             ValidationExtractor(context),
             PathExtractor(context),
             IdentifierExtractor(context),
@@ -474,7 +472,6 @@ class DataDictionaryTransformer:
                 "name": ids_name,
                 "description": data["ids_info"]["description"],
                 "path_count": len(data["paths"]),
-                "physics_domain": data["ids_info"]["physics_domain"],
             }
 
         catalog_dict = {
@@ -539,11 +536,6 @@ class DataDictionaryTransformer:
             for path, path_data in paths.items():
                 identifier_schema = path_data.get("identifier_schema")
                 if identifier_schema and identifier_schema.get("options"):
-                    # Extract physics domain if available
-                    physics_domain = None
-                    if "physics_context" in path_data and path_data["physics_context"]:
-                        physics_domain = path_data["physics_context"].get("domain")
-
                     identifier_path = IdentifierPath(
                         path=path,
                         ids_name=ids_name,
@@ -554,7 +546,6 @@ class DataDictionaryTransformer:
                             :200
                         ],  # First 200 chars
                         option_count=len(identifier_schema.get("options", [])),
-                        physics_domain=physics_domain,
                     )
                     identifier_paths.append(identifier_path)
 
@@ -575,15 +566,6 @@ class DataDictionaryTransformer:
             first_path, first_schema = path_schema_list[0]
             schema_name = self._extract_schema_name(schema_path)
 
-            # Collect physics domains
-            physics_domains = list(
-                {
-                    path.physics_domain
-                    for path, _ in path_schema_list
-                    if path.physics_domain
-                }
-            )
-
             # Calculate branching complexity (entropy)
             option_count = len(first_schema.get("options", []))
             branching_complexity = math.log2(option_count) if option_count > 1 else 0.0
@@ -596,39 +578,9 @@ class DataDictionaryTransformer:
                 options=first_schema.get("options", []),
                 usage_count=len(path_schema_list),
                 usage_paths=[path.path for path, _ in path_schema_list],
-                physics_domains=physics_domains,
                 branching_complexity=branching_complexity,
             )
             schemas[schema_name] = schema
-
-        # Build cross-references
-        cross_references = {}
-        for schema_name, schema in schemas.items():
-            related = []
-            for other_name, other_schema in schemas.items():
-                if other_name == schema_name:
-                    continue
-                # Check for physics domain overlap
-                if any(
-                    domain in other_schema.physics_domains
-                    for domain in schema.physics_domains
-                ):
-                    related.append(other_name)
-                # Check for name similarity
-                if any(
-                    word in other_name.lower() for word in schema_name.lower().split()
-                ):
-                    if other_name not in related:
-                        related.append(other_name)
-            cross_references[schema_name] = related
-
-        # Build physics mapping
-        physics_mapping = {}
-        for schema_name, schema in schemas.items():
-            for domain in schema.physics_domains:
-                if domain not in physics_mapping:
-                    physics_mapping[domain] = []
-                physics_mapping[domain].append(schema_name)
 
         # Build branching analytics
         total_enumeration_space = sum(s.total_options for s in schemas.values())
@@ -702,15 +654,13 @@ class DataDictionaryTransformer:
             else "unknown",
             total_ids=len(paths_by_ids),
             total_leaf_nodes=len(identifier_paths),
-            total_relationships=sum(len(refs) for refs in cross_references.values()),
+            total_relationships=0,
         )
 
         catalog = IdentifierCatalog(
             metadata=metadata,
             schemas=schemas,
             paths_by_ids=paths_by_ids,
-            cross_references=cross_references,
-            physics_mapping=physics_mapping,
             branching_analytics=branching_analytics,
         )
 

@@ -1,1 +1,1 @@
-"""Search module tests."""
+"""Tests for search module."""

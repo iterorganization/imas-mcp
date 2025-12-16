@@ -14,6 +14,7 @@ import logging
 from fastmcp import Context
 
 from imas_mcp import dd_version
+from imas_mcp.core.physics_categorization import physics_categorizer
 from imas_mcp.models.error_models import ToolError
 from imas_mcp.models.request_models import OverviewInput
 from imas_mcp.models.result_models import GetOverviewResult
@@ -39,7 +40,7 @@ class OverviewTool(BaseTool):
     IDS structures and physics domains.
 
     Other specialized tools handle:
-    - search_imas_clusters() -> relationships.json
+    - search_imas_clusters() -> clusters.json
     - get_imas_identifiers() -> identifier_catalog.json
     """
 
@@ -144,8 +145,8 @@ class OverviewTool(BaseTool):
         domains = {}
         ids_catalog = self._ids_catalog.get("ids_catalog", {})
 
-        for ids_name, ids_info in ids_catalog.items():
-            physics_domain = ids_info.get("physics_domain", "unclassified")
+        for ids_name in ids_catalog:
+            physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
             if physics_domain not in domains:
                 domains[physics_domain] = []
             domains[physics_domain].append(ids_name)
@@ -174,7 +175,9 @@ class OverviewTool(BaseTool):
                 continue
 
             # Check physics domain match
-            physics_domain = ids_info.get("physics_domain", "").lower()
+            physics_domain = physics_categorizer.get_domain_for_ids(
+                ids_name
+            ).value.lower()
             if query_lower in physics_domain:
                 relevant_ids.append(ids_name)
                 continue
@@ -264,8 +267,11 @@ class OverviewTool(BaseTool):
     @validate_input(schema=OverviewInput)
     @handle_errors(fallback="overview_suggestions")
     @mcp_tool(
-        "Get high-level overview of IMAS data dictionary structure and contents, "
-        "including DD and server version metadata"
+        "Get high-level overview of IMAS data dictionary structure and contents, including DD and server version metadata. "
+        "query: Optional keyword filter for IDS names/descriptions (filters, not semantic search). "
+        "Examples: 'equilibrium', 'diagnostic', 'transport'. "
+        "Returns dataset statistics, IDS list sorted by complexity, physics domains, and next-step recommendations. "
+        "Use this tool first to understand what data structures are available."
     )
     async def get_imas_overview(
         self,
@@ -384,16 +390,13 @@ class OverviewTool(BaseTool):
             for ids_name in relevant_ids:
                 if ids_name in ids_info:
                     ids_data = ids_info[ids_name]
+                    domain = physics_categorizer.get_domain_for_ids(ids_name).value
                     ids_statistics[ids_name] = {
                         "path_count": ids_data.get("path_count", 0),
                         "description": ids_data.get("description", f"{ids_name} IDS"),
-                        "physics_domain": ids_data.get(
-                            "physics_domain", "unclassified"
-                        ),
+                        "physics_domain": domain,
                     }
-                    physics_domains_found.add(
-                        ids_data.get("physics_domain", "unclassified")
-                    )
+                    physics_domains_found.add(domain)
 
             # Generate usage recommendations
             recommendations = self._generate_recommendations(query, relevant_ids)

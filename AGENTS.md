@@ -25,7 +25,9 @@ cd /home/ITER/mcintos/Code/imas-mcp && source .venv/bin/activate && pytest
 - **Package manager**: `uv`
 - **Add dependencies**: `uv add <package>`
 - **Add dev dependencies**: `uv add --dev <package>`
-- **Sync environment**: `uv sync`
+- **Sync environment**: `uv sync --extra test` (includes transformers and pytest-cov)
+
+**IMPORTANT for CLI agents in worktrees**: Always run `uv sync --extra test` before running tests or any Python commands. The `[test]` extra includes `sentence-transformers` and `pytest-cov` which are required for the test suite.
 
 ### Code Quality
 
@@ -37,20 +39,44 @@ cd /home/ITER/mcintos/Code/imas-mcp && source .venv/bin/activate && pytest
 - **Branch naming**: Use `main` as default branch
 - **GitHub CLI**: `gh` is available in PATH
 - **Authentication**: SSH
-- **Commit messages**: Use conventional commit format
+
+#### Commit Messages
+
+Use conventional commit format with a detailed body:
 
 ```bash
 git status                      # Check current state
-git add -A                      # Stage all changes
-git commit -m "message"         # Commit (triggers pre-commit)
+git add <files>                 # Stage specific files (avoid git add -A)
+git commit -m "type: description
+
+Detailed body explaining what changed and why.
+
+BREAKING CHANGE: description (if applicable)"
 git push origin main            # Push to remote
+```
+
+**Commit types**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+
+**Breaking changes**: Use `BREAKING CHANGE:` footer in the body, not `type!:` suffix (the `!` causes shell escaping issues and is redundant when using the footer)
+
+**Shell escaping**: Use single quotes for commit messages containing special characters:
+
+```bash
+# Correct - single quotes avoid bash history expansion issues
+git commit -m 'refactor: description'
+
+# Wrong - double quotes with special chars can fail
+git commit -m "refactor!: description"  # ! causes bash errors
 ```
 
 ### Testing
 
 - **Framework**: `pytest`
-- **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `pytest`
+- **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `uv run pytest`
 - **Async support**: `pytest-asyncio` with auto mode
+- **Coverage**: `uv run pytest --cov=imas_mcp`
+
+**Before running tests**: Ensure dependencies are synced with `uv sync --extra test`
 
 ## Project Structure
 
