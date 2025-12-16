@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from imas_mcp.embeddings.config import EncoderConfig
+from imas_codex.embeddings.config import EncoderConfig
 
 
 class TestEncoderConfig:
@@ -14,7 +14,7 @@ class TestEncoderConfig:
         """Config initializes with default values."""
         with patch.dict("os.environ", {}, clear=True):
             with patch(
-                "imas_mcp.embeddings.config.IMAS_MCP_EMBEDDING_MODEL",
+                "imas_codex.embeddings.config.IMAS_CODEX_EMBEDDING_MODEL",
                 "all-MiniLM-L6-v2",
             ):
                 config = EncoderConfig()
@@ -68,20 +68,21 @@ class TestEncoderConfig:
 
     def test_environment_variable_loading(self, monkeypatch):
         """Config loads values from environment variables."""
-        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "env-model")
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "env-model")
         monkeypatch.setenv("OPENAI_API_KEY", "env-api-key")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://env.api.com")
 
         with patch(
-            "imas_mcp.embeddings.config.IMAS_MCP_EMBEDDING_MODEL", "fallback-model"
+            "imas_codex.embeddings.config.IMAS_CODEX_EMBEDDING_MODEL", "fallback-model"
         ):
             config = EncoderConfig()
 
             assert config.openai_api_key == "env-api-key"
             assert config.openai_base_url == "https://env.api.com"
 
-    def test_validate_api_config_missing_key(self):
+    def test_validate_api_config_missing_key(self, monkeypatch):
         """validate_api_config raises error for missing API key."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         config = EncoderConfig(
             model_name="openai/model",
             use_api_embeddings=True,
@@ -103,8 +104,9 @@ class TestEncoderConfig:
         with pytest.raises(ValueError, match="placeholder"):
             config.validate_api_config()
 
-    def test_validate_api_config_missing_base_url(self):
+    def test_validate_api_config_missing_base_url(self, monkeypatch):
         """validate_api_config raises error for missing base URL."""
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         config = EncoderConfig(
             model_name="openai/model",
             use_api_embeddings=True,
@@ -197,12 +199,12 @@ class TestEncoderConfig:
 
     def test_from_environment_factory(self, monkeypatch):
         """from_environment creates config from environment."""
-        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "env-model")
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "env-model")
         monkeypatch.setenv("OPENAI_API_KEY", "env-key")
         monkeypatch.setenv("OPENAI_BASE_URL", "https://env.api.com")
 
         with patch(
-            "imas_mcp.embeddings.config.IMAS_MCP_EMBEDDING_MODEL", "fallback-model"
+            "imas_codex.embeddings.config.IMAS_CODEX_EMBEDDING_MODEL", "fallback-model"
         ):
             config = EncoderConfig.from_environment()
 
@@ -226,8 +228,9 @@ class TestEncoderConfig:
         assert result["base_url"] == "https://api.test.com"
         assert result["api_key_prefix"] == "sk-1234567..."  # Truncated for safety
 
-    def test_get_api_info_no_key(self):
+    def test_get_api_info_no_key(self, monkeypatch):
         """get_api_info handles missing API key gracefully."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         config = EncoderConfig(
             model_name="all-MiniLM-L6-v2",
             use_api_embeddings=False,

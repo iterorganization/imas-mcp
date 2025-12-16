@@ -44,8 +44,8 @@ jobs:
       - name: Extract embedding model from pyproject.toml
         id: embedding-model
         run: |
-          # Extract docs-embedding-model from pyproject.toml [tool.imas-mcp] section
-          MODEL=$(grep -A5 '\[tool.imas-mcp\]' pyproject.toml | grep 'docs-embedding-model' | cut -d'"' -f2)
+          # Extract docs-embedding-model from pyproject.toml [tool.imas-codex] section
+          MODEL=$(grep -A5 '\[tool.imas-codex\]' pyproject.toml | grep 'docs-embedding-model' | cut -d'"' -f2)
           echo "docs_model=${MODEL:-openai/text-embedding-3-small}" >> $GITHUB_OUTPUT
           echo "Using docs embedding model: ${MODEL:-openai/text-embedding-3-small}"
 
@@ -111,17 +111,17 @@ jobs:
       - name: Extract embedding model from pyproject.toml
         id: embedding-model
         run: |
-          # Extract imas-embedding-model from pyproject.toml [tool.imas-mcp] section
-          MODEL=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
+          # Extract imas-embedding-model from pyproject.toml [tool.imas-codex] section
+          MODEL=$(grep -A10 '\[tool.imas-codex\]' pyproject.toml | grep 'imas-embedding-model' | cut -d'"' -f2)
           echo "imas_model=${MODEL:-openai/text-embedding-3-large}" >> $GITHUB_OUTPUT
           echo "Using IMAS embedding model: ${MODEL:-openai/text-embedding-3-large}"
 
       - name: Extract exclusion settings from pyproject.toml
         id: exclusion-settings
         run: |
-          # Extract include-ggd and include-error-fields from pyproject.toml [tool.imas-mcp] section
-          INCLUDE_GGD=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'include-ggd' | cut -d'=' -f2 | tr -d ' ')
-          INCLUDE_ERROR=$(grep -A10 '\[tool.imas-mcp\]' pyproject.toml | grep 'include-error-fields' | cut -d'=' -f2 | tr -d ' ')
+          # Extract include-ggd and include-error-fields from pyproject.toml [tool.imas-codex] section
+          INCLUDE_GGD=$(grep -A10 '\[tool.imas-codex\]' pyproject.toml | grep 'include-ggd' | cut -d'=' -f2 | tr -d ' ')
+          INCLUDE_ERROR=$(grep -A10 '\[tool.imas-codex\]' pyproject.toml | grep 'include-error-fields' | cut -d'=' -f2 | tr -d ' ')
           echo "include_ggd=${INCLUDE_GGD:-true}" >> $GITHUB_OUTPUT
           echo "include_error_fields=${INCLUDE_ERROR:-false}" >> $GITHUB_OUTPUT
           echo "Using exclusion settings: ggd=${INCLUDE_GGD:-true}, error=${INCLUDE_ERROR:-false}"
@@ -130,8 +130,8 @@ jobs:
         id: cache-imas-resources
         uses: actions/cache@v4
         with:
-          path: imas_mcp/resources/imas_data_dictionary/
-          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-ggd=${{ steps.exclusion-settings.outputs.include_ggd }}-err=${{ steps.exclusion-settings.outputs.include_error_fields }}-${{ hashFiles('imas_mcp/**/*.py', 'scripts/build*.py') }}
+          path: imas_codex/resources/imas_data_dictionary/
+          key: imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-ggd=${{ steps.exclusion-settings.outputs.include_ggd }}-err=${{ steps.exclusion-settings.outputs.include_error_fields }}-${{ hashFiles('imas_codex/**/*.py', 'scripts/build*.py') }}
           restore-keys: |
             imas-resources-${{ env.IMAS_DD_VERSION }}-${{ steps.embedding-model.outputs.imas_model }}-ggd=${{ steps.exclusion-settings.outputs.include_ggd }}-err=${{ steps.exclusion-settings.outputs.include_error_fields }}-
 
@@ -146,7 +146,7 @@ jobs:
           
           echo "Building schema data..."
           # Schemas are built during uv sync via hatch build hook, verify they exist
-          if [ -d "imas_mcp/resources/imas_data_dictionary/" ] && [ -f "imas_mcp/resources/imas_data_dictionary/ids_metadata.json" ]; then
+          if [ -d "imas_codex/resources/imas_data_dictionary/" ] && [ -f "imas_codex/resources/imas_data_dictionary/ids_metadata.json" ]; then
             echo "✓ Schemas already built by hatch build hook"
           else
             echo "Building schemas explicitly..."
@@ -162,13 +162,13 @@ jobs:
           echo "✓ Clusters built successfully"
           
           echo "All IMAS resources built successfully:"
-          ls -lh imas_mcp/resources/imas_data_dictionary/
+          ls -lh imas_codex/resources/imas_data_dictionary/
 
       - name: Upload IMAS resources as artifact
         uses: actions/upload-artifact@v4
         with:
           name: imas-resources
-          path: imas_mcp/resources/imas_data_dictionary/
+          path: imas_codex/resources/imas_data_dictionary/
           retention-days: 30  # Maximum retention - resources change infrequently
           include-hidden-files: true  # Include .pkl cache files (hidden files starting with .)
 
@@ -208,15 +208,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: imas-resources
-          path: imas_mcp/resources/imas_data_dictionary/
+          path: imas_codex/resources/imas_data_dictionary/
 
       - name: Verify downloaded resources exist
         run: |
           echo "Checking for downloaded IMAS resources..."
-          ls -la imas_mcp/resources/imas_data_dictionary/ || echo "Directory not found!"
+          ls -la imas_codex/resources/imas_data_dictionary/ || echo "Directory not found!"
           echo ""
           echo "Checking for embeddings .pkl files:"
-          find imas_mcp/resources/imas_data_dictionary/ -name "*.pkl" -ls 2>/dev/null || echo "No .pkl files found"
+          find imas_codex/resources/imas_data_dictionary/ -name "*.pkl" -ls 2>/dev/null || echo "No .pkl files found"
 
       - name: Verify git state for versioning
         run: |
@@ -336,3 +336,4 @@ jobs:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+

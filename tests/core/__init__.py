@@ -1,1 +1,1 @@
-"""Tests for imas_mcp.core module."""
+"""Tests for imas_codex.core module."""

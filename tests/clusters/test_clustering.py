@@ -3,15 +3,15 @@
 import numpy as np
 import pytest
 
-from imas_mcp.clusters.clustering import (
+from imas_codex.clusters.clustering import (
     EmbeddingClusterer,
     RelationshipBuilder,
     _compute_cluster_centroid,
     _compute_cluster_similarity,
 )
-from imas_mcp.clusters.config import RelationshipExtractionConfig
-from imas_mcp.clusters.models import ClusterInfo
-from imas_mcp.embeddings.config import EncoderConfig
+from imas_codex.clusters.config import RelationshipExtractionConfig
+from imas_codex.clusters.models import ClusterInfo
+from imas_codex.embeddings.config import EncoderConfig
 
 
 class TestComputeClusterSimilarity:
@@ -154,7 +154,7 @@ class TestEmbeddingClusterer:
 
     def test_calculate_statistics(self, clusterer):
         """Test statistics calculation."""
-        from imas_mcp.clusters.models import PathMembership
+        from imas_codex.clusters.models import PathMembership
 
         cross_clusters = [
             ClusterInfo(

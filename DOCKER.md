@@ -11,7 +11,7 @@ This document describes how to build, run, and deploy the IMAS MCP Server contai
 docker-compose up -d
 
 # View logs
-docker-compose logs -f imas-mcp
+docker-compose logs -f imas-codex
 
 # Stop the container
 docker-compose down
@@ -21,14 +21,14 @@ docker-compose down
 
 ```bash
 # Build the image
-docker build -t imas-mcp .
+docker build -t imas-codex .
 
 # Run the container
 docker run -d \
-  --name imas-mcp \
+  --name imas-codex \
   -p 8000:8000 \
   -v ./index:/app/index:ro \
-  imas-mcp
+  imas-codex
 ```
 
 ## GitHub Container Registry
@@ -39,16 +39,16 @@ The container is automatically built and pushed to GitHub Container Registry on 
 
 ```bash
 # Pull the latest image
-docker pull ghcr.io/iterorganization/imas-mcp:latest
+docker pull ghcr.io/iterorganization/imas-codex:latest
 
 # Pull a specific version
-docker pull ghcr.io/iterorganization/imas-mcp:v1.0.0
+docker pull ghcr.io/iterorganization/imas-codex:v1.0.0
 
 # Run the pulled image
 docker run -d \
-  --name imas-mcp \
+  --name imas-codex \
   -p 8000:8000 \
-  ghcr.io/iterorganization/imas-mcp:latest
+  ghcr.io/iterorganization/imas-codex:latest
 ```
 
 ## Available Tags
@@ -86,7 +86,7 @@ curl -f http://localhost:8000/health
 # Example health response
 {
   "status": "healthy",
-  "service": "imas-mcp-server",
+  "service": "imas-codex-server",
   "version": "4.0.1.dev164",
   "index_stats": {
     "total_paths": 15420,
@@ -134,20 +134,20 @@ This will start both the IMAS MCP Server and an Nginx reverse proxy.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: imas-mcp
+  name: imas-codex
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: imas-mcp
+      app: imas-codex
   template:
     metadata:
       labels:
-        app: imas-mcp
+        app: imas-codex
     spec:
       containers:
-        - name: imas-mcp
-          image: ghcr.io/iterorganization/imas-mcp:latest
+        - name: imas-codex
+          image: ghcr.io/iterorganization/imas-codex:latest
           ports:
             - containerPort: 8000
           env:
@@ -177,10 +177,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: imas-mcp-service
+  name: imas-codex-service
 spec:
   selector:
-    app: imas-mcp
+    app: imas-codex
   ports:
     - protocol: TCP
       port: 80
@@ -194,14 +194,14 @@ spec:
 
 ```bash
 # Build the image
-docker build -t imas-mcp:dev .
+docker build -t imas-codex:dev .
 
 # Run with development settings
 docker run -it --rm \
   -p 8000:8000 \
   -v $(pwd):/app \
   -e PYTHONPATH=/app \
-  imas-mcp:dev
+  imas-codex:dev
 ```
 
 ### Debugging
@@ -211,11 +211,11 @@ docker run -it --rm \
 docker run -it --rm \
   -p 8000:8000 \
   -v $(pwd):/app \
-  ghcr.io/iterorganization/imas-mcp:latest \
+  ghcr.io/iterorganization/imas-codex:latest \
   /bin/bash
 
 # View logs
-docker logs -f imas-mcp
+docker logs -f imas-codex
 ```
 
 ## Troubleshooting
@@ -226,7 +226,7 @@ docker logs -f imas-mcp
 
    - Check that port 8000 is available
    - Verify index files are properly mounted
-   - Check logs: `docker-compose logs imas-mcp`
+   - Check logs: `docker-compose logs imas-codex`
 
 2. **Index files not found**
 
@@ -243,11 +243,11 @@ docker logs -f imas-mcp
 ```bash
 # Run with increased memory
 docker run -d \
-  --name imas-mcp \
+  --name imas-codex \
   --memory=2g \
   --cpus=2 \
   -p 8000:8000 \
-  ghcr.io/iterorganization/imas-mcp:latest
+  ghcr.io/iterorganization/imas-codex:latest
 ```
 
 ## CI/CD Pipeline

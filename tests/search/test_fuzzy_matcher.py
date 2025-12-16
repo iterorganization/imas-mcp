@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.search.fuzzy_matcher import (
+from imas_codex.search.fuzzy_matcher import (
     PathFuzzyMatcher,
     reset_fuzzy_matcher,
     suggest_correction,

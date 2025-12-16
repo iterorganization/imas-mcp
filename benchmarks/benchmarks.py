@@ -13,7 +13,7 @@ class BenchmarkFixture:
     @cached_property
     def server(self):
         """Lazy-loaded server instance."""
-        from imas_mcp.server import Server
+        from imas_codex.server import Server
 
         return Server(ids_set=STANDARD_TEST_IDS_SET)
 

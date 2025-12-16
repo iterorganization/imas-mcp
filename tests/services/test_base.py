@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.services.base import BaseService
+from imas_codex.services.base import BaseService
 
 
 class TestBaseService:

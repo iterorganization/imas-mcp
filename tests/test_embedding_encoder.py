@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import Encoder
 
 sentence_transformers = pytest.importorskip(
     "sentence_transformers", reason="Requires sentence-transformers extra"
@@ -66,11 +66,11 @@ def test_api_fallback_to_local():
 
     # Mock OpenRouterClient to fail
     with patch(
-        "imas_mcp.embeddings.encoder.OpenRouterClient",
+        "imas_codex.embeddings.encoder.OpenRouterClient",
         side_effect=Exception("API Error"),
     ):
         # Mock SentenceTransformer to fail for API model name but succeed for fallback
-        with patch("imas_mcp.embeddings.encoder.SentenceTransformer") as mock_st:
+        with patch("imas_codex.embeddings.encoder.SentenceTransformer") as mock_st:
 
             def st_side_effect(model_name, **kwargs):
                 if model_name == "openai/text-embedding-3-small":

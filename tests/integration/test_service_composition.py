@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_mcp.tools.search_tool import SearchTool
+from imas_codex.tools.search_tool import SearchTool
 
 
 class TestServiceComposition:
@@ -12,14 +12,14 @@ class TestServiceComposition:
 
     @pytest.fixture
     def search_tool(self):
-        with patch("imas_mcp.tools.base.DocumentStore"):
+        with patch("imas_codex.tools.base.DocumentStore"):
             return SearchTool()
 
     @pytest.mark.asyncio
     async def test_search_tool_with_services(self, search_tool):
         """Test SearchTool uses core services for search functionality."""
         # Import SearchResponse for proper mocking
-        from imas_mcp.search.search_strategy import SearchResponse
+        from imas_codex.search.search_strategy import SearchResponse
 
         # Mock search execution
         with patch.object(search_tool, "_search_service") as mock_search:
@@ -53,7 +53,7 @@ class TestServiceComposition:
     @pytest.mark.asyncio
     async def test_apply_services_method(self, search_tool):
         """Test the service composition works correctly through decorators."""
-        from imas_mcp.models.result_models import SearchPathsResult
+        from imas_codex.models.result_models import SearchPathsResult
 
         # Mock the search execution to return controlled results
         mock_result = SearchPathsResult(hits=[], query="test")

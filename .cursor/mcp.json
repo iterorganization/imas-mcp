@@ -4,11 +4,11 @@
       "type": "http",
       "url": "http://127.0.0.1:6280/mcp"
     },
-    "imas-mcp": {
+    "imas.codex": {
       "command": "uv",
       "args": [
         "run",
-        "imas-mcp",
+        "imas.codex",
         "--transport",
         "stdio"
       ],

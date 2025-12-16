@@ -1,1 +1,1 @@
-"""Tests for imas_mcp.core.extractors module."""
+"""Tests for imas_codex.core.extractors module."""

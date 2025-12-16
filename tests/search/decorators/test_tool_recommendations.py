@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.search.decorators.tool_recommendations import (
+from imas_codex.search.decorators.tool_recommendations import (
     analyze_search_results,
     generate_concept_suggestions,
     generate_search_suggestions,

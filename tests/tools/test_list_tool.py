@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from imas_mcp.models.result_models import ListPathsResult, ListPathsResultItem
-from imas_mcp.tools.list_tool import ListTool
+from imas_codex.models.result_models import ListPathsResult, ListPathsResultItem
+from imas_codex.tools.list_tool import ListTool
 
 
 class TestListToolInternals:
@@ -178,7 +178,7 @@ class TestListToolExtractPaths:
     @pytest.fixture
     def mock_documents(self):
         """Create mock documents for testing."""
-        from imas_mcp.search.document_store import Document, DocumentMetadata
+        from imas_codex.search.document_store import Document, DocumentMetadata
 
         docs = []
         paths = [
@@ -379,7 +379,7 @@ class TestListToolMCPIntegration:
     @pytest.mark.asyncio
     async def test_list_imas_paths_empty_query(self, list_tool):
         """Empty query handled gracefully."""
-        from imas_mcp.models.error_models import ToolError
+        from imas_codex.models.error_models import ToolError
 
         result = await list_tool.list_imas_paths("   ")
 

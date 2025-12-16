@@ -17,10 +17,10 @@ from pathlib import Path
 import click
 import imas
 
-from imas_mcp import dd_version
-from imas_mcp.core.exclusions import EXCLUSION_REASONS, ExclusionChecker
-from imas_mcp.core.progress_monitor import create_progress_monitor
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
+from imas_codex import dd_version
+from imas_codex.core.exclusions import EXCLUSION_REASONS, ExclusionChecker
+from imas_codex.core.progress_monitor import create_progress_monitor
+from imas_codex.resource_path_accessor import ResourcePathAccessor
 
 logger = logging.getLogger(__name__)
 

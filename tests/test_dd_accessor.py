@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from packaging.version import Version
 
-from imas_mcp.dd_accessor import (
+from imas_codex.dd_accessor import (
     CompositeDataDictionaryAccessor,
     DataDictionaryAccessor,
     EnvironmentDataDictionaryAccessor,
@@ -237,7 +237,7 @@ class TestImasDataDictionaryAccessor:
 
     def test_get_schema_not_available(self):
         """Test schema retrieval when method not available."""
-        with patch("imas_mcp.dd_accessor.ImasDataDictionaryAccessor._load_imas_dd"):
+        with patch("imas_codex.dd_accessor.ImasDataDictionaryAccessor._load_imas_dd"):
             accessor = ImasDataDictionaryAccessor.__new__(ImasDataDictionaryAccessor)
             accessor._imas_dd = MagicMock()
             del accessor._imas_dd.get_schema
@@ -361,7 +361,7 @@ class TestCreateDDAccessor:
         monkeypatch.delenv("IMAS_DD_VERSION", raising=False)
 
         with patch(
-            "imas_mcp.dd_accessor.ImasDataDictionaryAccessor",
+            "imas_codex.dd_accessor.ImasDataDictionaryAccessor",
             side_effect=ImportError(),
         ):
             accessor = create_dd_accessor()
@@ -373,7 +373,7 @@ class TestCreateDDAccessor:
         monkeypatch.setenv("IMAS_DD_VERSION", "4.0.0")
 
         with patch(
-            "imas_mcp.dd_accessor.ImasDataDictionaryAccessor",
+            "imas_codex.dd_accessor.ImasDataDictionaryAccessor",
             side_effect=ImportError(),
         ):
             accessor = create_dd_accessor()
@@ -389,7 +389,7 @@ class TestCreateDDAccessor:
             json.dump({"dd_version": "4.0.0"}, f)
 
         with patch(
-            "imas_mcp.dd_accessor.ImasDataDictionaryAccessor",
+            "imas_codex.dd_accessor.ImasDataDictionaryAccessor",
             side_effect=ImportError(),
         ):
             accessor = create_dd_accessor(metadata_dir=tmp_path)
@@ -401,7 +401,7 @@ class TestCreateDDAccessor:
         monkeypatch.delenv("IMAS_DD_VERSION", raising=False)
 
         with patch(
-            "imas_mcp.dd_accessor.ImasDataDictionaryAccessor",
+            "imas_codex.dd_accessor.ImasDataDictionaryAccessor",
             side_effect=ImportError(),
         ):
             accessor = create_dd_accessor(

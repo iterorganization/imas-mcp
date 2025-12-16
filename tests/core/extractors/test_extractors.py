@@ -5,12 +5,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.extractors.base import ExtractorContext
-from imas_mcp.core.extractors.coordinate_extractor import CoordinateExtractor
-from imas_mcp.core.extractors.metadata_extractor import MetadataExtractor
-from imas_mcp.core.extractors.physics_extractor import LifecycleExtractor
-from imas_mcp.core.extractors.semantic_extractor import PathExtractor, SemanticExtractor
-from imas_mcp.core.extractors.validation_extractor import ValidationExtractor
+from imas_codex.core.extractors.base import ExtractorContext
+from imas_codex.core.extractors.coordinate_extractor import CoordinateExtractor
+from imas_codex.core.extractors.metadata_extractor import MetadataExtractor
+from imas_codex.core.extractors.physics_extractor import LifecycleExtractor
+from imas_codex.core.extractors.semantic_extractor import (
+    PathExtractor,
+    SemanticExtractor,
+)
+from imas_codex.core.extractors.validation_extractor import ValidationExtractor
 
 
 @pytest.fixture
@@ -194,7 +197,7 @@ class TestMetadataExtractor:
         elem.set("documentation", "Direct documentation text")
 
         with patch(
-            "imas_mcp.core.xml_utils.DocumentationBuilder.collect_documentation_hierarchy",
+            "imas_codex.core.xml_utils.DocumentationBuilder.collect_documentation_hierarchy",
             return_value=[],
         ):
             result = extractor.extract(elem)

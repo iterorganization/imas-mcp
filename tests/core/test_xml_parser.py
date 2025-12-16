@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.xml_parser import DataDictionaryTransformer
+from imas_codex.core.xml_parser import DataDictionaryTransformer
 
 
 class MockDDAccessor:
@@ -80,7 +80,7 @@ def transformer(tmp_path, mock_dd_accessor):
     output_dir.mkdir()
 
     with patch(
-        "imas_mcp.core.xml_parser.ResourcePathAccessor"
+        "imas_codex.core.xml_parser.ResourcePathAccessor"
     ) as mock_path_accessor_class:
         mock_path_accessor = MagicMock()
         mock_path_accessor.dd_accessor = mock_dd_accessor
@@ -203,7 +203,7 @@ class TestIdsInfoExtraction:
 
     def test_extract_ids_info(self, transformer):
         """Test extracting IDS-level information."""
-        from imas_mcp.core.extractors import ExtractorContext
+        from imas_codex.core.extractors import ExtractorContext
 
         root = transformer._root
         ids_elem = root.find(".//IDS[@name='equilibrium']")
@@ -426,7 +426,7 @@ class TestPathExtraction:
 
     def test_extract_paths(self, transformer):
         """Test path extraction from IDS element."""
-        from imas_mcp.core.extractors import ExtractorContext
+        from imas_codex.core.extractors import ExtractorContext
 
         root = transformer._root
         ids_elem = root.find(".//IDS[@name='equilibrium']")
@@ -456,7 +456,7 @@ class TestCoordinateSystemExtraction:
 
     def test_extract_coordinate_systems(self, transformer):
         """Test coordinate system extraction."""
-        from imas_mcp.core.extractors import ExtractorContext
+        from imas_codex.core.extractors import ExtractorContext
 
         root = transformer._root
         ids_elem = root.find(".//IDS[@name='equilibrium']")
@@ -482,7 +482,7 @@ class TestSemanticGroupExtraction:
 
     def test_extract_semantic_groups(self, transformer):
         """Test semantic group extraction."""
-        from imas_mcp.core.extractors import ExtractorContext
+        from imas_codex.core.extractors import ExtractorContext
 
         root = transformer._root
         ids_elem = root.find(".//IDS[@name='equilibrium']")
@@ -655,7 +655,9 @@ class TestStructureAnalysis:
 
     def test_generate_structure_analysis_handles_error(self, transformer, caplog):
         """Test structure analysis handles errors gracefully."""
-        with patch("imas_mcp.core.xml_parser.StructureAnalyzer") as mock_analyzer_class:
+        with patch(
+            "imas_codex.core.xml_parser.StructureAnalyzer"
+        ) as mock_analyzer_class:
             mock_analyzer_class.side_effect = Exception("Test error")
 
             root = transformer._root

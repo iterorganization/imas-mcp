@@ -1,4 +1,4 @@
-# Makefile for imas-mcp
+# Makefile for imas.codex
 
 .PHONY: install install-dev clean test run package docker-build docker-run install-bench test-baseline performance-baseline test-current performance-current performance-compare test-and-performance
 
@@ -18,7 +18,7 @@ install-bench:
 
 # Clean up build artifacts and cache
 clean:
-	@if exist imas_mcp\__pycache__ rmdir /s /q imas_mcp\__pycache__
+	@if exist imas.codex\__pycache__ rmdir /s /q imas.codex\__pycache__
 	@if exist tests\__pycache__ rmdir /s /q tests\__pycache__
 	@if exist scripts\__pycache__ rmdir /s /q scripts\__pycache__
 	@if exist benchmarks\__pycache__ rmdir /s /q benchmarks\__pycache__
@@ -32,7 +32,7 @@ clean:
 
 # Run tests with coverage
 test:
-	uv run pytest --cov=imas_mcp --cov-report=html --cov-report=term
+	uv run pytest --cov=imas.codex --cov-report=html --cov-report=term
 
 # Run tests without coverage
 test-fast:
@@ -70,7 +70,7 @@ test-and-performance: test-current performance-current
 
 # Run tests with coverage
 test:
-	uv run pytest --cov=imas_mcp --cov-report=html --cov-report=term
+	uv run pytest --cov=imas.codex --cov-report=html --cov-report=term
 
 # Run tests without coverage
 test-fast:
@@ -78,15 +78,15 @@ test-fast:
 
 # Run the server (default streamable-http transport)
 run:
-	uv run imas-mcp
+	uv run imas.codex
 
 # Run the server with SSE transport
 run-sse:
-	uv run imas-mcp --transport sse --host 0.0.0.0 --port 8000
+	uv run imas.codex --transport sse --host 0.0.0.0 --port 8000
 
 # Run the server with streamable-http transport
 run-http:
-	uv run imas-mcp --transport streamable-http --host 0.0.0.0 --port 8000
+	uv run imas.codex --transport streamable-http --host 0.0.0.0 --port 8000
 
 # Build the package
 package:
@@ -94,20 +94,21 @@ package:
 
 # Docker build
 docker-build:
-	docker build -t imas-mcp .
+	docker build -t imas.codex .
 
 # Docker run
 docker-run:
-	docker run -p 8000:8000 imas-mcp
+	docker run -p 8000:8000 imas.codex
 
 # Format code with black
 format:
-	uv run black imas_mcp tests scripts
+	uv run black imas.codex tests scripts
 
 # Lint with ruff
 lint:
-	uv run ruff check imas_mcp tests scripts
+	uv run ruff check imas.codex tests scripts
 
 # Fix linting issues
 lint-fix:
-	uv run ruff check --fix imas_mcp tests scripts
+	uv run ruff check --fix imas.codex tests scripts
+

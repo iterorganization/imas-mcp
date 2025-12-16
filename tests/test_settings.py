@@ -1,7 +1,7 @@
 """Tests for settings.py module."""
 
-from imas_mcp import settings
-from imas_mcp.settings import _parse_bool
+from imas_codex import settings
+from imas_codex.settings import _parse_bool
 
 
 class TestSettingsFunctions:
@@ -11,7 +11,7 @@ class TestSettingsFunctions:
         """Environment variable overrides embedding model setting."""
         settings._load_pyproject_settings.cache_clear()
 
-        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "test-model")
+        monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "test-model")
         result = settings.get_imas_embedding_model()
 
         assert result == "test-model"
@@ -29,7 +29,7 @@ class TestSettingsFunctions:
         """Environment variable overrides language model setting."""
         settings._load_pyproject_settings.cache_clear()
 
-        monkeypatch.setenv("IMAS_MCP_LANGUAGE_MODEL", "test-llm")
+        monkeypatch.setenv("IMAS_CODEX_LANGUAGE_MODEL", "test-llm")
         result = settings.get_language_model()
 
         assert result == "test-llm"
@@ -38,7 +38,7 @@ class TestSettingsFunctions:
         """Environment variable overrides labeling batch size."""
         settings._load_pyproject_settings.cache_clear()
 
-        monkeypatch.setenv("IMAS_MCP_LABELING_BATCH_SIZE", "100")
+        monkeypatch.setenv("IMAS_CODEX_LABELING_BATCH_SIZE", "100")
         result = settings.get_labeling_batch_size()
 
         assert result == 100
@@ -47,7 +47,7 @@ class TestSettingsFunctions:
         """Environment variable overrides include_ggd setting."""
         settings._load_pyproject_settings.cache_clear()
 
-        monkeypatch.setenv("IMAS_MCP_INCLUDE_GGD", "false")
+        monkeypatch.setenv("IMAS_CODEX_INCLUDE_GGD", "false")
         result = settings.get_include_ggd()
 
         assert result is False
@@ -56,7 +56,7 @@ class TestSettingsFunctions:
         """Environment variable overrides include_error_fields setting."""
         settings._load_pyproject_settings.cache_clear()
 
-        monkeypatch.setenv("IMAS_MCP_INCLUDE_ERROR_FIELDS", "true")
+        monkeypatch.setenv("IMAS_CODEX_INCLUDE_ERROR_FIELDS", "true")
         result = settings.get_include_error_fields()
 
         assert result is True

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
-from imas_mcp.resource_provider import Resources
+from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.resource_provider import Resources
 
 
 class TestResourcePathAccessor:
@@ -119,7 +119,7 @@ class TestResourcePathAccessorDDAccessor:
 
             # Patch the local import in _create_dd_accessor_from_env
             with patch(
-                "imas_mcp.dd_accessor.ImasDataDictionaryAccessor"
+                "imas_codex.dd_accessor.ImasDataDictionaryAccessor"
             ) as mock_accessor:
                 mock_instance = MagicMock()
                 mock_accessor.return_value = mock_instance
@@ -140,7 +140,7 @@ class TestResourcePathAccessorDDAccessor:
             accessor = ResourcePathAccessor(dd_version="3.42.0")
 
             with patch(
-                "imas_mcp.dd_accessor.ImasDataDictionariesAccessor"
+                "imas_codex.dd_accessor.ImasDataDictionariesAccessor"
             ) as mock_accessor:
                 mock_instance = MagicMock()
                 mock_accessor.return_value = mock_instance
@@ -161,7 +161,7 @@ class TestResourcePathAccessorDDAccessor:
             accessor = ResourcePathAccessor(dd_version="4.0.0")
 
             with patch(
-                "imas_mcp.dd_accessor.ImasDataDictionaryAccessor"
+                "imas_codex.dd_accessor.ImasDataDictionaryAccessor"
             ) as mock_accessor:
                 mock_instance = MagicMock()
                 mock_accessor.return_value = mock_instance
@@ -185,7 +185,7 @@ class TestResourcePathAccessorDDAccessor:
             import sys
 
             # Temporarily remove the module if it exists so ImportError is raised
-            original_module = sys.modules.get("imas_mcp.dd_accessor")
+            original_module = sys.modules.get("imas_codex.dd_accessor")
             try:
                 # Create a mock module that raises ImportError for ImasDataDictionaryAccessor
                 mock_module = MagicMock()
@@ -196,13 +196,13 @@ class TestResourcePathAccessorDDAccessor:
                 mock_module.ImasDataDictionariesAccessor = MagicMock(
                     return_value=mock_pypi_accessor
                 )
-                sys.modules["imas_mcp.dd_accessor"] = mock_module
+                sys.modules["imas_codex.dd_accessor"] = mock_module
 
                 # Test would need more complex mocking - skip for now
                 # This test case is complex due to local imports
             finally:
                 if original_module:
-                    sys.modules["imas_mcp.dd_accessor"] = original_module
+                    sys.modules["imas_codex.dd_accessor"] = original_module
 
     def test_dd_accessor_property_creates_on_demand(self, tmp_path):
         """DD accessor property creates accessor on first access."""
@@ -242,7 +242,7 @@ class TestResourcePathAccessorBaseDir:
 
     def test_get_base_resources_dir_development(self):
         """Development mode uses __file__ based path."""
-        with patch("imas_mcp.resource_path_accessor.resources") as mock_res:
+        with patch("imas_codex.resource_path_accessor.resources") as mock_res:
             # Make importlib.resources.files fail
             mock_res.files.side_effect = ImportError
 
@@ -367,7 +367,7 @@ class TestResourcesRegistration:
 
     def test_mcp_resource_decorator(self):
         """MCP resource decorator sets attributes."""
-        from imas_mcp.resource_provider import mcp_resource
+        from imas_codex.resource_provider import mcp_resource
 
         @mcp_resource("Test description", "test://uri")
         def test_func():

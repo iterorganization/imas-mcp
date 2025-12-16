@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_mcp.models.constants import SearchMode
-from imas_mcp.models.result_models import SearchPathsResult
-from imas_mcp.search.search_strategy import SearchResponse
-from imas_mcp.tools.search_tool import SearchTool
+from imas_codex.models.constants import SearchMode
+from imas_codex.models.result_models import SearchPathsResult
+from imas_codex.search.search_strategy import SearchResponse
+from imas_codex.tools.search_tool import SearchTool
 
 
 class TestSearchToolServices:
@@ -15,7 +15,7 @@ class TestSearchToolServices:
 
     @pytest.fixture
     def search_tool(self):
-        with patch("imas_mcp.tools.base.DocumentStore"):
+        with patch("imas_codex.tools.base.DocumentStore"):
             return SearchTool()
 
     @pytest.mark.asyncio
@@ -90,9 +90,9 @@ class TestSearchToolServices:
         """Test response building when search returns results."""
 
         # Import needed classes for proper mock objects
-        from imas_mcp.models.constants import SearchMode
-        from imas_mcp.search.document_store import Document, DocumentMetadata
-        from imas_mcp.search.search_strategy import SearchMatch
+        from imas_codex.models.constants import SearchMode
+        from imas_codex.search.document_store import Document, DocumentMetadata
+        from imas_codex.search.search_strategy import SearchMatch
 
         # Create proper SearchMatch object
         mock_metadata = DocumentMetadata(
@@ -176,7 +176,7 @@ class TestSearchToolServices:
         assert hasattr(search_tool, "search_config")
 
         # Verify service types
-        from imas_mcp.services import (
+        from imas_codex.services import (
             DocumentService,
             ResponseService,
             SearchConfigurationService,

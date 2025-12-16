@@ -1,4 +1,4 @@
-# IMAS MCP Server
+# IMAS Codex Server
 
 [![pre-commit][pre-commit-badge]][pre-commit-link]
 [![Ruff][ruff-badge]][ruff-link]
@@ -57,7 +57,7 @@ Linux: `~/.config/claude/claude_desktop_config.json`
 ```json
 {
   "mcpServers": {
-    "imas-mcp-hosted": {
+    "imas-codex-hosted": {
       "command": "npx",
       "args": ["mcp-remote", "https://imas-dd.iter.org/mcp"]
     }
@@ -75,18 +75,18 @@ Install with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 # Standard installation (requires API key for embeddings)
-uv tool install imas-mcp
+uv tool install imas-codex
 
 # Install with local embedding support (includes sentence-transformers)
-uv tool install "imas-mcp[transformers]"
+uv tool install "imas-codex[transformers]"
 
 # Add to a project env with transformers support
-uv add "imas-mcp[transformers]"
+uv add "imas-codex[transformers]"
 ```
 
 #### Embedding Configuration
 
-The IMAS MCP server supports two modes for generating embeddings:
+The IMAS Codex server supports two modes for generating embeddings:
 
 1. **API-based embeddings** (default): Uses remote embedding APIs via OpenRouter
 
@@ -95,16 +95,16 @@ The IMAS MCP server supports two modes for generating embeddings:
    - Example model: `openai/text-embedding-3-small`
 
 2. **Local embeddings**: Uses sentence-transformers library
-   - Install with `[transformers]` extra: `pip install imas-mcp[transformers]`
+   - Install with `[transformers]` extra: `pip install imas-codex[transformers]`
    - Runs models locally without API calls
    - Example model: `all-MiniLM-L6-v2` (fallback default)
 
 **Configuration:**
 
-Embedding model defaults are configured in `pyproject.toml` under `[tool.imas-mcp]`:
+Embedding model defaults are configured in `pyproject.toml` under `[tool.imas-codex]`:
 
 ```toml
-[tool.imas-mcp]
+[tool.imas-codex]
 imas-embedding-model = "openai/text-embedding-3-large"  # For DD embeddings
 docs-embedding-model = "openai/text-embedding-3-small"  # For documentation
 ```
@@ -115,10 +115,10 @@ Environment variables override pyproject.toml settings:
 # API-based (requires API key)
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
-export IMAS_MCP_EMBEDDING_MODEL="openai/text-embedding-3-small"
+export IMAS_CODEX_EMBEDDING_MODEL="openai/text-embedding-3-small"
 
 # Local transformers (requires [transformers] extra)
-export IMAS_MCP_EMBEDDING_MODEL="all-MiniLM-L6-v2"
+export IMAS_CODEX_EMBEDDING_MODEL="all-MiniLM-L6-v2"
 ```
 
 **Path Inclusion Settings:**
@@ -127,20 +127,20 @@ Control which IMAS paths are indexed and searchable. These settings affect schem
 
 | Setting | pyproject.toml | Environment Variable | Default | Description |
 |---------|----------------|---------------------|---------|-------------|
-| Include GGD | `include-ggd` | `IMAS_MCP_INCLUDE_GGD` | `true` | Include Grid Geometry Description paths |
-| Include Error Fields | `include-error-fields` | `IMAS_MCP_INCLUDE_ERROR_FIELDS` | `false` | Include uncertainty bound fields (`_error_upper`, `_error_lower`, etc.) |
+| Include GGD | `include-ggd` | `IMAS_CODEX_INCLUDE_GGD` | `true` | Include Grid Geometry Description paths |
+| Include Error Fields | `include-error-fields` | `IMAS_CODEX_INCLUDE_ERROR_FIELDS` | `false` | Include uncertainty bound fields (`_error_upper`, `_error_lower`, etc.) |
 
 Example pyproject.toml configuration:
 ```toml
-[tool.imas-mcp]
+[tool.imas-codex]
 include-ggd = true
 include-error-fields = false
 ```
 
 Environment variable overrides:
 ```bash
-export IMAS_MCP_INCLUDE_GGD=false     # Exclude GGD paths
-export IMAS_MCP_INCLUDE_ERROR_FIELDS=true  # Include error fields
+export IMAS_CODEX_INCLUDE_GGD=false     # Exclude GGD paths
+export IMAS_CODEX_INCLUDE_ERROR_FIELDS=true  # Include error fields
 ```
 
 **Error Handling:**
@@ -151,11 +151,11 @@ If you attempt to use local embeddings without the `[transformers]` extra instal
 ImportError: sentence-transformers is required for local embedding models but is not installed.
 
 To fix this, either:
-1. Install with transformers support: pip install imas-mcp[transformers]
+1. Install with transformers support: pip install imas-codex[transformers]
 2. Set an API key to use remote embeddings:
    - Set OPENAI_API_KEY environment variable
    - Set OPENAI_BASE_URL environment variable (e.g., https://openrouter.ai/api/v1)
-   - Set IMAS_MCP_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)
+   - Set IMAS_CODEX_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)
 ```
 
 VS Code:
@@ -163,10 +163,10 @@ VS Code:
 ```json
 {
   "servers": {
-    "imas-mcp-uv": {
+    "imas-codex-uv": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--active", "imas-mcp", "--no-rich"]
+      "args": ["run", "--active", "imas-codex", "--no-rich"]
     }
   }
 }
@@ -177,9 +177,9 @@ Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "imas-mcp-uv": {
+    "imas-codex-uv": {
       "command": "uv",
-      "args": ["run", "--active", "imas-mcp", "--no-rich"]
+      "args": ["run", "--active", "imas-codex", "--no-rich"]
     }
   }
 }
@@ -191,12 +191,12 @@ Run locally in a container (pre-built indexes included):
 
 ```bash
 docker run -d \
-  --name imas-mcp \
+  --name imas-codex \
   -p 8000:8000 \
-  ghcr.io/iterorganization/imas-mcp:latest-streamable-http
+  ghcr.io/iterorganization/imas-codex:latest-streamable-http
 
 # Optional: verify
-docker ps --filter name=imas-mcp --format "table {{.Names}}\t{{.Status}}"
+docker ps --filter name=imas-codex --format "table {{.Names}}\t{{.Status}}"
 ```
 
 VS Code (`.vscode/mcp.json`):
@@ -204,7 +204,7 @@ VS Code (`.vscode/mcp.json`):
 ```json
 {
   "servers": {
-    "imas-mcp-docker": { "type": "http", "url": "http://localhost:8000/mcp" }
+    "imas-codex-docker": { "type": "http", "url": "http://localhost:8000/mcp" }
   }
 }
 ```
@@ -214,7 +214,7 @@ Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "imas-mcp-docker": {
+    "imas-codex-docker": {
       "command": "npx",
       "args": ["mcp-remote", "http://localhost:8000/mcp"]
     }
@@ -224,7 +224,7 @@ Claude Desktop:
 
 ### Slurm / HPC (STDIO)
 
-Helper script: `scripts/imas_mcp_slurm_stdio.sh`
+Helper script: `scripts/imas_codex_slurm_stdio.sh`
 
 VS Code (`.vscode/mcp.json`, JSONC ok):
 
@@ -233,7 +233,7 @@ VS Code (`.vscode/mcp.json`, JSONC ok):
   "servers": {
     "imas-slurm-stdio": {
       "type": "stdio",
-      "command": "scripts/imas_mcp_slurm_stdio.sh"
+      "command": "scripts/imas_codex_slurm_stdio.sh"
     }
   }
 }
@@ -248,27 +248,27 @@ Resource tuning (export before client starts):
 
 | Variable                   | Purpose                                  | Default         |
 | -------------------------- | ---------------------------------------- | --------------- |
-| `IMAS_MCP_SLURM_TIME`      | Walltime                                 | `08:00:00`      |
-| `IMAS_MCP_SLURM_CPUS`      | CPUs per task                            | `1`             |
-| `IMAS_MCP_SLURM_MEM`       | Memory (e.g. `4G`)                       | Slurm default   |
-| `IMAS_MCP_SLURM_PARTITION` | Partition                                | Cluster default |
-| `IMAS_MCP_SLURM_ACCOUNT`   | Account/project                          | User default    |
-| `IMAS_MCP_SLURM_EXTRA`     | Extra raw `srun` flags                   | (empty)         |
-| `IMAS_MCP_USE_ENTRYPOINT`  | Use `imas-mcp` entrypoint vs `python -m` | `0`             |
+| `IMAS_CODEX_SLURM_TIME`      | Walltime                                 | `08:00:00`      |
+| `IMAS_CODEX_SLURM_CPUS`      | CPUs per task                            | `1`             |
+| `IMAS_CODEX_SLURM_MEM`       | Memory (e.g. `4G`)                       | Slurm default   |
+| `IMAS_CODEX_SLURM_PARTITION` | Partition                                | Cluster default |
+| `IMAS_CODEX_SLURM_ACCOUNT`   | Account/project                          | User default    |
+| `IMAS_CODEX_SLURM_EXTRA`     | Extra raw `srun` flags                   | (empty)         |
+| `IMAS_CODEX_USE_ENTRYPOINT`  | Use `imas-codex` entrypoint vs `python -m` | `0`             |
 
 Example:
 
 ```bash
-export IMAS_MCP_SLURM_TIME=02:00:00
-export IMAS_MCP_SLURM_CPUS=4
-export IMAS_MCP_SLURM_MEM=8G
-export IMAS_MCP_SLURM_PARTITION=compute
+export IMAS_CODEX_SLURM_TIME=02:00:00
+export IMAS_CODEX_SLURM_CPUS=4
+export IMAS_CODEX_SLURM_MEM=8G
+export IMAS_CODEX_SLURM_PARTITION=compute
 ```
 
 Direct CLI:
 
 ```bash
-scripts/imas_mcp_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
+scripts/imas_codex_slurm_stdio.sh --ids-filter "core_profiles equilibrium"
 ```
 
 Why STDIO? Avoids opening network ports; all traffic rides the existing `srun` pseudo-TTY.
@@ -277,7 +277,7 @@ Why STDIO? Avoids opening network ports; all traffic rides the existing `srun` p
 
 ## Example IMAS Queries
 
-Once you have the IMAS MCP server configured, you can interact with it using natural language queries. Use the `@imas` prefix to direct queries to the IMAS server:
+Once you have the IMAS Codex server configured, you can interact with it using natural language queries. Use the `@imas` prefix to direct queries to the IMAS server:
 
 ### Basic Search Examples
 
@@ -324,7 +324,7 @@ Show me the branching logic for diagnostic identifier schemas
 Export physics domain data for comprehensive transport analysis
 ```
 
-The IMAS MCP server provides 8 specialized tools for different types of queries:
+The IMAS Codex server provides 8 specialized tools for different types of queries:
 
 - **Search**: Natural language and structured search across IMAS data paths
 - **Explain**: Physics concepts with IMAS context and domain expertise
@@ -409,7 +409,7 @@ docker-compose up --build
 python scripts/start_docs_server.py
 
 # 2. In another terminal, start IMAS-MCP server
-python -m imas_mcp
+python -m imas_codex
 
 # 3. Scraping IMAS-Python documentation (first time only)
 python scripts/scrape_imas_docs.py
@@ -481,8 +481,8 @@ For local development and customization:
 
 ```bash
 # Clone repository
-git clone https://github.com/iterorganization/imas-mcp.git
-cd imas-mcp
+git clone https://github.com/iterorganization/imas-codex.git
+cd imas-codex
 
 # Install development dependencies (search index build takes ~8 minutes first time)
 uv sync --all-extras
@@ -532,10 +532,10 @@ uv run build-schemas
 uv run build-embeddings
 
 # Run the server locally (default: streamable-http on port 8000)
-uv run --active imas-mcp --no-rich
+uv run --active imas-codex --no-rich
 
 # Run with stdio transport for MCP clients
-uv run --active imas-mcp --no-rich --transport stdio
+uv run --active imas-codex --no-rich --transport stdio
 ```
 
 ### Build Scripts
@@ -577,8 +577,8 @@ Add to your config file:
   "mcpServers": {
     "imas-local-dev": {
       "command": "uv",
-      "args": ["run", "--active", "imas-mcp", "--no-rich", "--auto-build"],
-      "cwd": "/path/to/imas-mcp"
+      "args": ["run", "--active", "imas-codex", "--no-rich", "--auto-build"],
+      "cwd": "/path/to/imas-codex"
     }
   }
 }
@@ -590,18 +590,18 @@ Add to your config file:
 2. **Build Process**: The system parses the IMAS data dictionary and creates comprehensive JSON files with structured data
 3. **Embedding Generation**: Creates semantic embeddings using sentence transformers for advanced search capabilities
 4. **Serialization**: The system stores indexes in organized subdirectories:
-   - **JSON data**: `imas_mcp/resources/schemas/` (LLM-optimized structured data)
+   - **JSON data**: `imas_codex/resources/schemas/` (LLM-optimized structured data)
    - **Embeddings cache**: Pre-computed sentence transformer embeddings for semantic search
 5. **Import**: When importing the module, the pre-built index and embeddings load in ~1 second
 
 ## Optional Dependencies and Runtime Requirements
 
-The IMAS MCP server now includes `imas-data-dictionaries` as a core dependency, providing stable DD version access (default: 4.0.0). The git development package (`imas-data-dictionary`) is used during wheel building when parsing latest DD changes.
+The IMAS Codex server now includes `imas-data-dictionaries` as a core dependency, providing stable DD version access (default: 4.0.0). The git development package (`imas-data-dictionary`) is used during wheel building when parsing latest DD changes.
 
 ### Package Installation Options
 
-- **Runtime**: `uv add imas-mcp` - Includes all transports (stdio, sse, streamable-http)
-- **Full installation**: `uv add imas-mcp` - Recommended for all users
+- **Runtime**: `uv add imas-codex` - Includes all transports (stdio, sse, streamable-http)
+- **Full installation**: `uv add imas-codex` - Recommended for all users
 
 ### Data Dictionary Access
 
@@ -740,7 +740,7 @@ The server is available as a pre-built Docker container with the index already b
 
 ```bash
 # Pull and run the latest container
-docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-mcp:latest
+docker run -d -p 8000:8000 ghcr.io/iterorganization/imas-codex:latest
 
 # Or use Docker Compose
 docker-compose up -d
@@ -754,11 +754,11 @@ See [DOCKER.md](DOCKER.md) for detailed container usage, deployment options, and
 [ruff-link]: https://docs.astral.sh/ruff/
 [pre-commit-badge]: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white
 [pre-commit-link]: https://github.com/pre-commit/pre-commit
-[build-deploy-badge]: https://img.shields.io/github/actions/workflow/status/simon-mcintosh/imas-mcp/test.yml?branch=main&color=brightgreen&label=CI%2FCD
-[build-deploy-link]: https://github.com/iterorganization/imas-mcp/actions/workflows/test.yml
-[codecov-badge]: https://codecov.io/gh/simon-mcintosh/imas-mcp/graph/badge.svg
-[codecov-link]: https://codecov.io/gh/simon-mcintosh/imas-mcp
+[build-deploy-badge]: https://img.shields.io/github/actions/workflow/status/simon-mcintosh/imas-codex/test.yml?branch=main&color=brightgreen&label=CI%2FCD
+[build-deploy-link]: https://github.com/iterorganization/imas-codex/actions/workflows/test.yml
+[codecov-badge]: https://codecov.io/gh/simon-mcintosh/imas-codex/graph/badge.svg
+[codecov-link]: https://codecov.io/gh/simon-mcintosh/imas-codex
 [docs-badge]: https://img.shields.io/badge/docs-online-brightgreen
-[docs-link]: https://simon-mcintosh.github.io/imas-mcp/
+[docs-link]: https://simon-mcintosh.github.io/imas-codex/
 [asv-badge]: https://img.shields.io/badge/ASV-Benchmarks-blue?style=flat&logo=speedtest&logoColor=white
-[asv-link]: https://simon-mcintosh.github.io/imas-mcp/benchmarks/
+[asv-link]: https://simon-mcintosh.github.io/imas-codex/benchmarks/

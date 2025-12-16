@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.search.tool_suggestions import suggest_follow_up_tools, tool_suggestions
+from imas_codex.search.tool_suggestions import suggest_follow_up_tools, tool_suggestions
 
 
 class TestSuggestFollowUpTools:

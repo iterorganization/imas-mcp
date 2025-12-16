@@ -11,8 +11,8 @@ import click
 # Add the project root to the path so we can import from benchmarks
 # Get project root using importlib.resources
 try:
-    imas_mcp_package = resources.files("imas_mcp")
-    project_root = Path(str(imas_mcp_package)).parent
+    imas_codex_package = resources.files("imas_codex")
+    project_root = Path(str(imas_codex_package)).parent
     sys.path.insert(0, str(project_root))
 except ImportError:
     # Fallback for development

@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.clusters.labeler import ClusterLabel, ClusterLabeler
+from imas_codex.clusters.labeler import ClusterLabel, ClusterLabeler
 
 
 class TestClusterLabel:

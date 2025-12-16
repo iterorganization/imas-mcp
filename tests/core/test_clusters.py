@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.clusters import Clusters
-from imas_mcp.embeddings.config import EncoderConfig
+from imas_codex.core.clusters import Clusters
+from imas_codex.embeddings.config import EncoderConfig
 
 
 @pytest.fixture
@@ -100,7 +100,7 @@ class TestClustersInit:
 
     def test_initialization_sets_default_file(self, encoder_config):
         """Test default clusters file path is set in __post_init__."""
-        with patch("imas_mcp.core.clusters.ResourcePathAccessor") as mock_accessor:
+        with patch("imas_codex.core.clusters.ResourcePathAccessor") as mock_accessor:
             mock_accessor_instance = MagicMock()
             mock_accessor_instance.clusters_dir = Path("/mock/clusters")
             mock_accessor.return_value = mock_accessor_instance
@@ -115,7 +115,7 @@ class TestClustersInit:
         """Test full dataset uses simple clusters.json name."""
         config = EncoderConfig(model_name="all-MiniLM-L6-v2", ids_set=None)
 
-        with patch("imas_mcp.core.clusters.ResourcePathAccessor") as mock_accessor:
+        with patch("imas_codex.core.clusters.ResourcePathAccessor") as mock_accessor:
             mock_accessor_instance = MagicMock()
             mock_accessor_instance.clusters_dir = Path("/mock/clusters")
             mock_accessor.return_value = mock_accessor_instance
@@ -579,9 +579,11 @@ class TestBuild:
         )
 
         with (
-            patch("imas_mcp.core.clusters.ResourcePathAccessor") as mock_path_accessor,
-            patch("imas_mcp.core.clusters.RelationshipExtractionConfig"),
-            patch("imas_mcp.core.clusters.RelationshipExtractor") as mock_extractor,
+            patch(
+                "imas_codex.core.clusters.ResourcePathAccessor"
+            ) as mock_path_accessor,
+            patch("imas_codex.core.clusters.RelationshipExtractionConfig"),
+            patch("imas_codex.core.clusters.RelationshipExtractor") as mock_extractor,
         ):
             mock_accessor_instance = MagicMock()
             mock_accessor_instance.version_dir = clusters_file.parent
@@ -610,7 +612,7 @@ class TestGetClusterSearcher:
 
         with (
             patch.object(clusters, "_should_check_dependencies", return_value=False),
-            patch("imas_mcp.core.clusters.ClusterSearcher") as mock_searcher_class,
+            patch("imas_codex.core.clusters.ClusterSearcher") as mock_searcher_class,
         ):
             mock_searcher = MagicMock()
             mock_searcher_class.return_value = mock_searcher
@@ -633,7 +635,7 @@ class TestGetEncoder:
             clusters_file=clusters_file,
         )
 
-        with patch("imas_mcp.core.clusters.Encoder") as mock_encoder_class:
+        with patch("imas_codex.core.clusters.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder_class.return_value = mock_encoder
 
@@ -726,7 +728,7 @@ class TestGetEmbeddingCacheFile:
             clusters_file=clusters_file,
         )
 
-        with patch("imas_mcp.core.clusters.Encoder") as mock_encoder_class:
+        with patch("imas_codex.core.clusters.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder._cache_path = clusters_file.parent / "embeddings.npz"
             mock_encoder_class.return_value = mock_encoder
@@ -748,7 +750,7 @@ class TestGetEmbeddingCacheFile:
             clusters_file=clusters_file,
         )
 
-        with patch("imas_mcp.core.clusters.Encoder") as mock_encoder_class:
+        with patch("imas_codex.core.clusters.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder._cache_path = clusters_file.parent / "nonexistent.npz"
             mock_encoder_class.return_value = mock_encoder

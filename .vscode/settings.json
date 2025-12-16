@@ -34,20 +34,20 @@
   "python.envFile": "${workspaceFolder}/.env",
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
-    "imas-mcp/.vscode/mcp.json: imas-debug": {
+    "imas.codex/.vscode/mcp.json: imas-debug": {
       "allowedDuringChat": true
     },
-    "imas-mcp/.vscode/mcp.json: imas": {
+    "imas.codex/.vscode/mcp.json: imas": {
       "allowedDuringChat": true,
       "allowedModels": ["copilot/gemini-3-pro-preview"]
     },
-    "imas-mcp/.vscode/mcp.json: imas-ddv3": {
+    "imas.codex/.vscode/mcp.json: imas-ddv3": {
       "allowedDuringChat": true
     },
-    "imas-mcp/.vscode/mcp.json: imas-ddv4": {
+    "imas.codex/.vscode/mcp.json: imas-ddv4": {
       "allowedDuringChat": true
     },
-    "imas-mcp/.vscode/mcp.json: imas-test": {
+    "imas.codex/.vscode/mcp.json: imas-test": {
       "allowedModels": ["copilot/gpt-4.1"]
     }
   },
@@ -69,3 +69,4 @@
   "markdown-pdf.highlightStyle": "solarized-light.css",
   "markdown-pdf.includeDefaultStyles": false
 }
+

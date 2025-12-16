@@ -16,7 +16,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     # Only run on the main repository, not forks
-    if: github.repository == 'iterorganization/imas-mcp'
+    if: github.repository == 'iterorganization/imas-codex'
 
     steps:
       - name: Checkout
@@ -36,7 +36,7 @@ jobs:
       - name: Verify hatch version matches tag
         run: |
           EXPECTED=${GITHUB_REF_NAME#v}
-            ACTUAL=$(uv run python -c "import importlib.metadata as m; print(m.version('imas-mcp'))")
+            ACTUAL=$(uv run python -c "import importlib.metadata as m; print(m.version('imas-codex'))")
           echo "Expected: $EXPECTED  Actual: $ACTUAL"
           if [ "$EXPECTED" != "$ACTUAL" ]; then
             echo "Version mismatch; aborting release."; exit 1;

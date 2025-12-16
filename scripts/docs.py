@@ -9,11 +9,11 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from imas_mcp.services.docs_cli_helpers import (
+from imas_codex.services.docs_cli_helpers import (
     build_docs_server_command,
     get_npx_executable,
 )
-from imas_mcp.services.docs_server_manager import DocsServerManager
+from imas_codex.services.docs_server_manager import DocsServerManager
 
 # Load environment variables from .env file
 load_dotenv(override=True)

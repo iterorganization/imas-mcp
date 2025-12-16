@@ -9,7 +9,7 @@ from typing import Literal, cast
 import pytest
 import requests
 
-from imas_mcp.server import Server
+from imas_codex.server import Server
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
@@ -43,7 +43,7 @@ def run_server(port: int, transport: str = "streamable-http"):
 @pytest.mark.timeout(30)
 def test_health_basic(transport, monkeypatch):
     # Use free API embeddings by default
-    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     port = 8900 if transport == "streamable-http" else 8901
     with run_server(port=port, transport=transport):
@@ -70,7 +70,7 @@ def test_health_basic(transport, monkeypatch):
 
 def test_health_idempotent_wrapping(monkeypatch):
     # Use free API embeddings by default
-    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     port = 8902
     server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)

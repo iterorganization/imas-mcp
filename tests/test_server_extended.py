@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from imas_mcp.server import Server
+from imas_codex.server import Server
 
 
 class TestServerExtended:

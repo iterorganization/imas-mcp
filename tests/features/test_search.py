@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from imas_mcp.models.error_models import ToolError
-from imas_mcp.models.result_models import SearchPathsResult
+from imas_codex.models.error_models import ToolError
+from imas_codex.models.result_models import SearchPathsResult
 
 
 class TestSearchFeatures:
