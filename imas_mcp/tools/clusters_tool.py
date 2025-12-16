@@ -7,22 +7,20 @@ Provides search over clusters of related paths using:
 - IDS filtering
 """
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from fastmcp import Context
 
-from imas_mcp import dd_version
 from imas_mcp.clusters.search import ClusterSearcher, ClusterSearchResult
+from imas_mcp.core.clusters import Clusters
 from imas_mcp.embeddings.config import EncoderConfig
 from imas_mcp.embeddings.encoder import Encoder
 from imas_mcp.models.error_models import ToolError
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
 from imas_mcp.search.decorators import cache_results, handle_errors, mcp_tool
 
 from .base import BaseTool
+from .utils import normalize_ids_filter, validate_query
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +30,8 @@ class ClustersTool(BaseTool):
     Search tool for discovering related IMAS data paths via semantic clusters.
 
     Clusters group paths with similar physics meaning, enabling discovery of:
-    - Cross-IDS relationships (same concept across different IDS)
-    - Intra-IDS relationships (related paths within an IDS)
+    - Cross-IDS clusters (same concept across different IDS)
+    - Intra-IDS clusters (related paths within an IDS)
     """
 
     def __init__(self, *args, **kwargs):
@@ -57,43 +55,32 @@ class ClustersTool(BaseTool):
             use_rich=False,
         )
 
-        self._clusters_data: dict[str, Any] | None = None
+        # Use the Clusters class for unified management with auto-build
+        self._clusters: Clusters | None = None
         self._searcher: ClusterSearcher | None = None
         self._encoder: Encoder | None = None
 
-        self._load_clusters()
+        self._initialize_clusters()
 
-    def _get_clusters_path(self) -> Path:
-        """Get path to clusters.json file."""
-        path_accessor = ResourcePathAccessor(dd_version=dd_version)
-        return path_accessor.schemas_dir / "clusters.json"
-
-    def _load_clusters(self) -> None:
-        """Load clusters data from clusters.json."""
-        clusters_path = self._get_clusters_path()
-
-        if not clusters_path.exists():
-            # Fall back to relationships.json for backwards compatibility
-            relationships_path = clusters_path.parent / "relationships.json"
-            if relationships_path.exists():
-                logger.info(f"clusters.json not found, using {relationships_path}")
-                clusters_path = relationships_path
-            else:
-                logger.warning("No clusters or relationships file found")
-                self._clusters_data = {"clusters": []}
-                return
-
+    def _initialize_clusters(self) -> None:
+        """Initialize clusters using the Clusters class with auto-build support."""
         try:
-            with open(clusters_path, encoding="utf-8") as f:
-                self._clusters_data = json.load(f)
+            self._clusters = Clusters(encoder_config=self._encoder_config)
 
-            clusters = self._clusters_data.get("clusters", [])
-            self._searcher = ClusterSearcher(clusters=clusters)
-
-            logger.info(f"Loaded {len(clusters)} clusters from {clusters_path.name}")
+            # Check if clusters are available (will auto-build if needed)
+            if self._clusters.is_available():
+                # Use get_cluster_searcher() which properly loads embeddings
+                self._searcher = self._clusters.get_cluster_searcher()
+                logger.info(
+                    f"Loaded {len(self._clusters.get_clusters())} clusters with embeddings"
+                )
+            else:
+                logger.warning("Clusters not available")
+                self._searcher = None
         except Exception as e:
-            logger.error(f"Failed to load clusters: {e}")
-            self._clusters_data = {"clusters": []}
+            logger.error(f"Failed to initialize clusters: {e}")
+            self._clusters = None
+            self._searcher = None
 
     def _get_encoder(self) -> Encoder:
         """Get or create encoder for query embedding."""
@@ -110,12 +97,15 @@ class ClustersTool(BaseTool):
     @handle_errors(fallback="cluster_suggestions")
     @mcp_tool(
         "Search for semantically related IMAS path clusters. "
-        "Accepts paths (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r') "
-        "or natural language queries (e.g., 'electron temperature measurements')."
+        "query (required): Natural language (e.g., 'electron density measurements') or IMAS path (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r'). "
+        "ids_filter: Limit to specific IDS (space/comma-delimited). "
+        "Returns: Clusters of related paths - cross_ids (same concept across IDS) or intra_ids (related within one IDS). "
+        "Use for discovering related data structures across diagnostics."
     )
     async def search_imas_clusters(
         self,
         query: str,
+        ids_filter: str | list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any] | ToolError:
         """
@@ -126,7 +116,11 @@ class ClustersTool(BaseTool):
         - Natural language → semantic search on cluster labels/descriptions
 
         Args:
-            query: Path or natural language query
+            query: Path or natural language query (required)
+            ids_filter: Limit results to specific IDS. Accepts:
+                       - Space-delimited string: "equilibrium transport core_profiles"
+                       - Comma-delimited string: "equilibrium, transport, core_profiles"
+                       - List of IDS names: ["equilibrium", "transport"]
             ctx: MCP context
 
         Returns:
@@ -135,18 +129,40 @@ class ClustersTool(BaseTool):
         Examples:
             search_imas_clusters(query="core_profiles/profiles_1d/electrons/density")
             search_imas_clusters(query="electron temperature measurements")
+            search_imas_clusters(query="magnetic field", ids_filter="equilibrium magnetics")
+            search_imas_clusters(query="transport", ids_filter="equilibrium, core_profiles")
         """
+        # Validate query is not empty
+        is_valid, error_message = validate_query(query, "search_imas_clusters")
+        if not is_valid:
+            return ToolError(
+                error="Query cannot be empty",
+                suggestions=[
+                    "Try 'electron temperature' for temperature-related clusters",
+                    "Try 'magnetic field measurements' for B-field data",
+                    "Try a path like 'equilibrium/time_slice/profiles_2d' for related paths",
+                    "Use get_imas_overview() to explore available IDS structures",
+                ],
+                context={"tool": "search_imas_clusters"},
+            )
+
         if not self._searcher:
             return ToolError(
                 error="Cluster search not available",
                 suggestions=[
-                    "Ensure clusters.json or relationships.json exists",
-                    "Try rebuilding with: build-relationships",
+                    "Ensure clusters.json exists",
+                    "Try rebuilding with: build-clusters",
                 ],
                 context={"tool": "search_imas_clusters"},
             )
 
         try:
+            # Normalize ids_filter using utility function
+            normalized_filter = normalize_ids_filter(ids_filter)
+            ids_set: set[str] | None = (
+                set(normalized_filter) if normalized_filter else None
+            )
+
             # Detect query type and search
             is_path = "/" in query and " " not in query
 
@@ -163,7 +179,18 @@ class ClustersTool(BaseTool):
                     similarity_threshold=0.3,
                 )
 
+            # Apply IDS filter if specified
+            if ids_set and results:
+                results = [
+                    r
+                    for r in results
+                    if any(ids_name in ids_set for ids_name in r.ids_names)
+                ]
+
             if not results:
+                error_context: dict[str, Any] = {"query": query}
+                if ids_set:
+                    error_context["ids_filter"] = list(ids_set)
                 return ToolError(
                     error=f"No clusters found for query: {query}",
                     suggestions=[
@@ -171,11 +198,11 @@ class ClustersTool(BaseTool):
                         "Use search_imas_paths() for direct path search",
                         "Check available IDS with get_imas_overview()",
                     ],
-                    context={"query": query},
+                    context=error_context,
                 )
 
             # Format response
-            return self._format_results(query, results, is_path)
+            return self._format_results(query, results, is_path, ids_set)
 
         except Exception as e:
             logger.error(f"Cluster search failed: {e}")
@@ -193,11 +220,17 @@ class ClustersTool(BaseTool):
         query: str,
         results: list[ClusterSearchResult],
         is_path: bool,
+        ids_filter: set[str] | None = None,
     ) -> dict[str, Any]:
         """Format search results for output."""
         clusters = []
 
         for result in results:
+            # Filter paths to only include those from requested IDS
+            paths = result.paths
+            if ids_filter:
+                paths = [p for p in paths if p.split("/")[0] in ids_filter]
+
             cluster_data = {
                 "id": result.cluster_id,
                 "label": result.label or f"Cluster {result.cluster_id}",
@@ -205,18 +238,23 @@ class ClustersTool(BaseTool):
                 "type": "cross_ids" if result.is_cross_ids else "intra_ids",
                 "ids": result.ids_names,
                 "similarity": round(result.similarity_score, 3),
-                "paths": result.paths[:20],  # Limit paths in response
+                "paths": paths[:20],  # Limit paths in response
             }
 
-            if len(result.paths) > 20:
-                cluster_data["total_paths"] = len(result.paths)
+            if len(paths) > 20:
+                cluster_data["total_paths"] = len(paths)
                 cluster_data["paths_truncated"] = True
 
             clusters.append(cluster_data)
 
-        return {
+        response: dict[str, Any] = {
             "query": query,
             "query_type": "path" if is_path else "semantic",
             "clusters_found": len(clusters),
             "clusters": clusters,
         }
+
+        if ids_filter:
+            response["ids_filter"] = sorted(ids_filter)
+
+        return response

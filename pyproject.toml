@@ -112,11 +112,10 @@ imas-mcp = "imas_mcp.cli:main"
 docs = "scripts.docs:main"
 dd-version = "scripts.dd_version:main"
 build-schemas = "scripts.build_schemas:build_schemas"
-build-relationships = "scripts.build_relationships:build_relationships"
+build-physics = "scripts.build_physics:build_physics"
+build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
-build-mermaid = "scripts.build_mermaid:build_mermaid"
-build-migrations = "scripts.build_migrations:build_migrations"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
 
 [tool.hatch.version]
@@ -197,6 +196,7 @@ markers = [
     "unit: marks tests as unit tests",
     "fast: marks tests as fast-running unit tests",
     "performance: marks tests that focus on performance",
+    "timeout: marks tests with timeout constraints (requires pytest-timeout)",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

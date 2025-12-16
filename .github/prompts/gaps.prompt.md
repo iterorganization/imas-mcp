@@ -42,7 +42,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 
 - Test physics integration with valid concepts
 - Test graceful fallback when physics_search fails
-- Verify physics_context is properly included in response model
+- Verify cluster_labels is properly included in response model
 
 #### Priority 2: Overview Tool Question Analysis
 

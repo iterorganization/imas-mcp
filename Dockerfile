@@ -85,7 +85,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi
 
 # Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
-# This includes schemas, embeddings, relationships, and mermaid graphs built in CI
+# This includes schemas, embeddings, relationships, and clusters built in CI
 # Git sparse checkout would have created the imas_mcp directory but without the generated resources
 # This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
 COPY imas_mcp/resources/ /app/imas_mcp/resources/
@@ -116,43 +116,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Embeddings ready"
 
-# Build relationships (requires embeddings)
+# Build clusters (requires embeddings)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
     export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
-    echo "Building relationships..." && \
+    echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building relationships for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-relationships --ids-filter "${IDS_FILTER}" --quiet; \
+    echo "Building clusters for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-clusters --ids-filter "${IDS_FILTER}" --quiet; \
     else \
-    echo "Building relationships for all IDS" && \
-    uv run --no-dev build-relationships --quiet; \
+    echo "Building clusters for all IDS" && \
+    uv run --no-dev build-clusters --quiet; \
     fi && \
-    echo "✓ Relationships ready"
-
-# Build mermaid graphs (requires schemas)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building mermaid graphs..." && \
-    if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building mermaid graphs for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-mermaid --ids-filter "${IDS_FILTER}" --quiet; \
-    else \
-    echo "Building mermaid graphs for all IDS" && \
-    uv run --no-dev build-mermaid --quiet; \
-    fi && \
-    echo "✓ Mermaid graphs ready"
-
-# Build path mappings for version upgrades (requires schemas)
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building path mappings..." && \
-    if [ -n "${IDS_FILTER}" ]; then \
-    echo "Building path mappings for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
-    else \
-    echo "Building path mappings for all IDS" && \
-    uv run --no-dev build-path-map --no-rich; \
-    fi && \
-    echo "✓ Path mappings ready"
+    echo "✓ Clusters ready"
 
 ## Stage 3: Use pre-scraped documentation (from CI cache)
 FROM python:3.12-slim AS docs-provider

@@ -38,7 +38,8 @@
       "allowedDuringChat": true
     },
     "imas-mcp/.vscode/mcp.json: imas": {
-      "allowedDuringChat": true
+      "allowedDuringChat": true,
+      "allowedModels": ["copilot/gemini-3-pro-preview"]
     },
     "imas-mcp/.vscode/mcp.json: imas-ddv3": {
       "allowedDuringChat": true
@@ -63,5 +64,8 @@
   },
   "chat.mcp.access": "all",
   "cursorpyright.analysis.typeCheckingMode": "basic",
-  "chat.customAgentInSubagent.enabled": true
+  "chat.customAgentInSubagent.enabled": true,
+  "gistpad.mcp.enabled": false,
+  "markdown-pdf.highlightStyle": "solarized-light.css",
+  "markdown-pdf.includeDefaultStyles": false
 }

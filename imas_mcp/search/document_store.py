@@ -22,10 +22,8 @@ from imas_mcp import dd_version
 from imas_mcp.core.data_model import (
     IdentifierSchema,
     IdsNode,
-    PhysicsContext,
     ValidationRules,
 )
-from imas_mcp.core.physics_accessors import UnitAccessor
 from imas_mcp.core.unit_loader import get_unit_dimensionality, get_unit_name
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
@@ -47,23 +45,20 @@ class Units:
     def from_unit_string(
         cls,
         unit_str: str,
-        unit_accessor: UnitAccessor,
     ) -> "Units":
-        """Create Units instance from unit string using UnitAccessor."""
-        # Get unit context from the physics accessor
-        context = unit_accessor.get_unit_context(unit_str) or ""
-        category = unit_accessor.get_category_for_unit(unit_str)
-        physics_domains = unit_accessor.get_domains_for_unit(unit_str)
+        """Create Units instance from unit string.
 
+        Uses pint to get unit name and dimensionality.
+        """
         name = get_unit_name(unit_str)
         dimensionality = get_unit_dimensionality(unit_str)
 
         return cls(
             unit_str=unit_str,
             name=name,
-            context=context,
-            category=category,
-            physics_domains=[domain.value for domain in physics_domains],
+            context="",  # No longer populated from YAML
+            category=None,  # No longer populated from YAML
+            physics_domains=[],  # No longer populated from YAML
             dimensionality=dimensionality,
         )
 
@@ -117,18 +112,14 @@ class Document:
 
     metadata: DocumentMetadata
     documentation: str = ""
-    physics_context: dict[str, Any] = field(default_factory=dict)
     relationships: dict[str, list[str]] = field(default_factory=dict)
     raw_data: dict[str, Any] = field(default_factory=dict)
     units: Units | None = None
 
-    def set_units(self, unit_accessor: UnitAccessor) -> None:
-        """Set units information using UnitAccessor."""
+    def set_units(self) -> None:
+        """Set units information using pint."""
         if self.metadata.units:
-            self.units = Units.from_unit_string(
-                self.metadata.units,
-                unit_accessor,
-            )
+            self.units = Units.from_unit_string(self.metadata.units)
 
     @property
     def embedding_text(self) -> str:
@@ -171,17 +162,6 @@ class Document:
 
     def to_datapath(self) -> IdsNode:
         """Convert Document to DataPath for consistent API responses."""
-        # Build physics context if available
-        physics_context = None
-        if self.metadata.physics_domain:
-            physics_context = PhysicsContext(
-                domain=self.metadata.physics_domain,
-                phenomena=list(self.metadata.physics_phenomena)
-                if self.metadata.physics_phenomena
-                else [],
-                typical_values={},
-            )
-
         # Build identifier schema if available
         identifier_schema = None
         if self.raw_data.get("identifier_schema"):
@@ -220,7 +200,6 @@ class Document:
             introduced_after_version=self.raw_data.get("introduced_after_version"),
             lifecycle_status=self.raw_data.get("lifecycle_status"),
             lifecycle_version=self.raw_data.get("lifecycle_version"),
-            physics_context=physics_context,
             validation_rules=validation_rules,
             identifier_schema=identifier_schema,
             coordinate1=self.raw_data.get("coordinate1"),
@@ -340,15 +319,6 @@ class DocumentStore:
         sqlite_dir = self._get_sqlite_dir()
         sqlite_dir.mkdir(parents=True, exist_ok=True)
         self._sqlite_path = sqlite_dir / self._generate_db_filename()
-
-        # Initialize unit accessor for physics context
-        self._unit_accessor = UnitAccessor()
-
-        # Get all available unit contexts for logging
-        all_unit_contexts = self._unit_accessor.get_all_unit_contexts()
-        logger.info(
-            f"Loaded {len(all_unit_contexts)} unit context definitions via physics integration"
-        )
 
         # Initialize lazy loading state
         self._loaded_ids: set[str] = set()  # Track which IDS are loaded
@@ -664,7 +634,6 @@ Available Options ({schema_data.get("total_options", 0)} total):
 
 Usage: Used in {schema_data.get("usage_count", 0)} paths across IMAS
 Branching Complexity: {schema_data.get("branching_complexity", 0):.2f}
-Physics Domains: {", ".join(schema_data.get("physics_domains", []))}
 
 Paths using this schema:
 {chr(10).join(f"- {path}" for path in schema_data.get("usage_paths", [])[:10])}
@@ -678,10 +647,8 @@ Paths using this schema:
             units="",
             data_type="identifier_schema",
             coordinates=(),
-            physics_domain=schema_data.get("physics_domains", [""])[0]
-            if schema_data.get("physics_domains")
-            else "",
-            physics_phenomena=tuple(schema_data.get("physics_domains", [])),
+            physics_domain="",
+            physics_phenomena=(),
         )
 
         # Create document with enhanced raw_data for MCP tools
@@ -700,16 +667,12 @@ Paths using this schema:
         document = Document(
             metadata=metadata,
             documentation=documentation,
-            physics_context={
-                "domain": metadata.physics_domain,
-                "phenomena": list(metadata.physics_phenomena),
-            },
             relationships={"identifier_paths": schema_data.get("usage_paths", [])},
             raw_data=raw_data,
         )
 
         # Set empty units since this is a schema document
-        document.set_units(self._unit_accessor)
+        document.set_units()
         return document
 
     def _create_identifier_path_document(
@@ -724,7 +687,6 @@ Paths using this schema:
 {path_data.get("description", "")}
 
 Schema: {path_data.get("schema_name", "")} ({path_data.get("option_count", 0)} options)
-Physics Domain: {path_data.get("physics_domain", "unspecified")}
 
 This path uses identifier enumeration logic that defines branching behavior in the {ids_name} IDS.
 See the '{path_data.get("schema_name", "")}' identifier schema for available options.
@@ -738,12 +700,8 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             units="",
             data_type="identifier_path",
             coordinates=(),
-            physics_domain=path_data.get("physics_domain", ""),
-            physics_phenomena=tuple(
-                [path_data.get("physics_domain")]
-                if path_data.get("physics_domain")
-                else []
-            ),
+            physics_domain="",
+            physics_phenomena=(),
         )
 
         # Create document with enhanced raw_data
@@ -758,15 +716,11 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         document = Document(
             metadata=metadata,
             documentation=documentation,
-            physics_context={
-                "domain": metadata.physics_domain,
-                "phenomena": list(metadata.physics_phenomena),
-            },
             relationships={"schema_reference": path_data.get("schema_name", "")},
             raw_data=raw_data,
         )
 
-        document.set_units(self._unit_accessor)
+        document.set_units()
         return document
 
     def _create_document(
@@ -780,14 +734,13 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
             else path_name
         )
 
-        # Extract physics context
-        physics_context = path_data.get("physics_context", {})
+        # Extract physics domain from path_data if available
         physics_domain = ""
-        physics_phenomena = ()
-
-        if isinstance(physics_context, dict):
-            physics_domain = physics_context.get("domain", "")
-            phenomena = physics_context.get("phenomena", [])
+        physics_phenomena: tuple[str, ...] = ()
+        physics_ctx = path_data.get("physics_context", {})
+        if isinstance(physics_ctx, dict):
+            physics_domain = physics_ctx.get("domain", "")
+            phenomena = physics_ctx.get("phenomena", [])
             if isinstance(phenomena, list):
                 physics_phenomena = tuple(phenomena)
 
@@ -814,13 +767,12 @@ See the '{path_data.get("schema_name", "")}' identifier schema for available opt
         document = Document(
             metadata=metadata,
             documentation=path_data.get("documentation", ""),
-            physics_context=physics_context,
             relationships=path_data.get("relationships", {}),
             raw_data=path_data,
         )
 
         # Set unit contexts for this document
-        document.set_units(self._unit_accessor)
+        document.set_units()
 
         return document
 

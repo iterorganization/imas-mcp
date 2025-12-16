@@ -223,5 +223,93 @@ class TestIdentifiersToolValidation:
         print("📊 Tool Status: FULLY FUNCTIONAL")
 
 
+class TestIdentifiersToolInternals:
+    """Tests for internal methods of IdentifiersTool."""
+
+    @pytest.fixture
+    def identifiers_tool(self):
+        """Create identifiers tool instance."""
+        return IdentifiersTool()
+
+    def test_filter_schemas_empty_keywords(self, identifiers_tool):
+        """Empty keywords return empty result."""
+        identifiers_tool._identifier_catalog = {"schemas": {"test": {}}}
+
+        result = identifiers_tool._filter_schemas_by_query("   ")
+
+        assert result == []
+
+    def test_filter_schemas_no_catalog(self, identifiers_tool):
+        """No catalog returns empty result."""
+        identifiers_tool._identifier_catalog = {}
+
+        result = identifiers_tool._filter_schemas_by_query("test")
+
+        assert result == []
+
+    def test_filter_schemas_multiple_keywords_or_logic(self, identifiers_tool):
+        """Multiple keywords use OR logic."""
+        identifiers_tool._identifier_catalog = {
+            "schemas": {
+                "coordinate_type": {
+                    "description": "Coordinate system types",
+                    "options": [],
+                },
+                "material_type": {"description": "Material types", "options": []},
+                "plasma_state": {"description": "Plasma state options", "options": []},
+            }
+        }
+
+        result = identifiers_tool._filter_schemas_by_query("coordinate, material")
+
+        assert len(result) == 2
+
+    def test_filter_schemas_matches_options(self, identifiers_tool):
+        """Query matches option names and descriptions."""
+        identifiers_tool._identifier_catalog = {
+            "schemas": {
+                "test_schema": {
+                    "description": "Some schema",
+                    "options": [
+                        {"name": "tungsten", "description": "Tungsten material"},
+                    ],
+                }
+            }
+        }
+
+        result = identifiers_tool._filter_schemas_by_query("tungsten")
+
+        assert "test_schema" in result
+
+    def test_get_filtered_schemas_no_query_returns_all(self, identifiers_tool):
+        """No query returns all schemas."""
+        identifiers_tool._identifier_catalog = {"schemas": {"a": {}, "b": {}, "c": {}}}
+
+        result = identifiers_tool._get_filtered_schemas(None)
+
+        assert len(result) == 3
+
+    def test_generate_recommendations_with_coordinate_schemas(self, identifiers_tool):
+        """Recommendations include coordinate-specific suggestions."""
+        schemas = {"coordinate_type": {}}
+        recs = identifiers_tool._generate_identifier_recommendations("test", schemas)
+
+        assert len(recs) > 0
+
+    def test_generate_recommendations_with_type_schemas(self, identifiers_tool):
+        """Recommendations include type-specific suggestions."""
+        schemas = {"material_type": {}}
+        recs = identifiers_tool._generate_identifier_recommendations("test", schemas)
+
+        assert len(recs) > 0
+
+    def test_generate_recommendations_limited_to_six(self, identifiers_tool):
+        """Recommendations are limited to 6 items."""
+        schemas = {f"schema_{i}": {} for i in range(5)}
+        recs = identifiers_tool._generate_identifier_recommendations(None, schemas)
+
+        assert len(recs) <= 6
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

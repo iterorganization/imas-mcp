@@ -6,24 +6,29 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from imas_mcp.models.constants import (
-    RelationshipType,
-    SearchMode,
-)
+from imas_mcp.models.constants import SearchMode
 from imas_mcp.models.result_models import (
     GetIdentifiersResult,
     GetOverviewResult,
-    SearchClustersResult,
     SearchPathsResult,
 )
 from imas_mcp.search.search_strategy import SearchMatch
 
 from .base import BaseService
 
-try:
-    VERSION = importlib.metadata.version("imas-mcp")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "development"
+
+def _get_version() -> str:
+    """Get package version with robust fallback."""
+    try:
+        version = importlib.metadata.version("imas-mcp")
+        if version is not None:
+            return version
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    return "development"
+
+
+VERSION = _get_version()
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -38,7 +43,6 @@ class ResponseService(BaseService):
         search_mode: SearchMode,
         ids_filter: str | list[str] | None = None,
         max_results: int | None = None,
-        physics_context: Any | None = None,
         physics_domains: list[str] | None = None,
     ) -> SearchPathsResult:
         """Build SearchPathsResult from search results with complete context."""
@@ -55,7 +59,6 @@ class ResponseService(BaseService):
             query=query,
             ids_filter=ids_filter,
             max_results=max_results,
-            physics_context=physics_context,
             physics_domains=physics_domains or [],
         )
 
@@ -65,7 +68,6 @@ class ResponseService(BaseService):
         available_ids: list[str],
         hits: list[Any],
         query: str | None = None,
-        physics_context: Any | None = None,
         physics_domains: list[str] | None = None,
         ids_statistics: dict[str, Any] | None = None,
         usage_guidance: dict[str, Any] | None = None,
@@ -79,7 +81,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.AUTO,
             max_results=None,
             ids_filter=None,
-            physics_context=physics_context,
             physics_domains=physics_domains or [],
             ids_statistics=ids_statistics or {},
             usage_guidance=usage_guidance or {},
@@ -105,32 +106,6 @@ class ResponseService(BaseService):
             search_mode=SearchMode.AUTO,
             max_results=None,
             ids_filter=None,
-        )
-
-    def build_relationship_response(
-        self,
-        path: str,
-        relationship_type: RelationshipType,
-        max_depth: int,
-        connections: dict[str, list[str]],
-        nodes: list[Any],
-        physics_domains: list[str],
-        query: str,
-        physics_context: Any | None = None,
-    ) -> SearchClustersResult:
-        """Build SearchClustersResult for relationship exploration."""
-        return SearchClustersResult(
-            path=path,
-            relationship_type=relationship_type,
-            max_depth=max_depth,
-            connections=connections,
-            nodes=nodes,
-            physics_domains=physics_domains,
-            query=query,
-            search_mode=SearchMode.SEMANTIC,
-            max_results=None,
-            ids_filter=None,
-            physics_context=physics_context,
         )
 
     def add_standard_metadata(self, response: T, tool_name: str) -> T:

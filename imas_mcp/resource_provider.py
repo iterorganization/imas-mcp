@@ -12,7 +12,7 @@ import logging
 from fastmcp import FastMCP
 
 from imas_mcp import dd_version
-from imas_mcp.core.relationships import Relationships
+from imas_mcp.core.clusters import Clusters
 from imas_mcp.providers import MCPProvider
 from imas_mcp.resource_path_accessor import ResourcePathAccessor
 
@@ -133,23 +133,23 @@ class Resources(MCPProvider):
             )
 
     @mcp_resource(
-        "Physics Relationships - Cross-references and measurement dependencies.",
-        "ids://relationships",
+        "Semantic Clusters - Cross-references and path groupings.",
+        "ids://clusters",
     )
-    async def get_relationships(self) -> str:
-        """Physics Relationships - Cross-references and measurement dependencies.
+    async def get_clusters(self) -> str:
+        """Semantic Clusters - Cross-references and path groupings.
 
         Use this resource to:
-        - Find relationships between different IDS
-        - Understand physics dependencies and connections
+        - Find clusters of related paths across different IDS
+        - Understand semantic connections between data paths
         - Identify measurement correlations
         - Map physics domain interactions
 
-        Contains: Cross-IDS relationships, physics connections, dependency graphs.
+        Contains: Cross-IDS clusters, semantic groupings, dependency graphs.
         Perfect for: Multi-IDS analysis, physics correlation, dependency mapping.
         """
         try:
-            # Use the relationships manager for better cache management
+            # Use the clusters manager for better cache management
             from imas_mcp.embeddings.config import EncoderConfig
 
             encoder_config = EncoderConfig(
@@ -164,29 +164,23 @@ class Resources(MCPProvider):
                 use_rich=False,
             )
 
-            relationships = Relationships(encoder_config=encoder_config)
+            clusters = Clusters(encoder_config=encoder_config)
 
             # Check if rebuild is needed and add warning to output
-            if relationships.needs_rebuild():
-                logger.warning(
-                    "Relationships data may be outdated - consider rebuilding"
-                )
+            if clusters.needs_rebuild():
+                logger.warning("Clusters data may be outdated - consider rebuilding")
 
-            relationships_data = relationships.get_data()
-            return json.dumps(relationships_data, indent=2, ensure_ascii=False)
+            clusters_data = clusters.get_data()
+            return json.dumps(clusters_data, indent=2, ensure_ascii=False)
 
         except Exception as e:
-            logger.error(f"Failed to load relationships data: {e}")
+            logger.error(f"Failed to load clusters data: {e}")
             # Fallback to direct file access
             try:
-                return (self.schema_dir / "relationships.json").read_text(
-                    encoding="utf-8"
-                )
+                return (self.schema_dir / "clusters.json").read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 # Fall back to latin-1 if utf-8 fails
-                return (self.schema_dir / "relationships.json").read_text(
-                    encoding="latin-1"
-                )
+                return (self.schema_dir / "clusters.json").read_text(encoding="latin-1")
 
     @mcp_resource(
         "Resource Usage Examples - How to effectively use IMAS MCP resources.",

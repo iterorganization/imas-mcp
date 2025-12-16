@@ -140,14 +140,14 @@ class ResourcePathAccessor:
         return self._get_subdir_path("database", create=True)
 
     @cached_property
-    def mermaid_dir(self) -> Path:
-        """Get the mermaid graphs directory (imas_data_dictionary/{version}/mermaid/)."""
-        return self._get_subdir_path("mermaid", create=True)
-
-    @cached_property
     def mappings_dir(self) -> Path:
         """Get the path mappings directory (imas_data_dictionary/{version}/mappings/)."""
         return self._get_subdir_path("mappings", create=True)
+
+    @cached_property
+    def clusters_dir(self) -> Path:
+        """Get the clusters directory (imas_data_dictionary/{version}/clusters/)."""
+        return self._get_subdir_path("clusters", create=True)
 
     @property
     def version(self) -> str:

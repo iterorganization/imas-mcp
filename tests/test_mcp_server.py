@@ -159,7 +159,7 @@ class TestMCPProtocolCompliance:
             expected_resources = [
                 "ids://catalog",
                 "ids://identifiers",
-                "ids://relationships",
+                "ids://clusters",
                 "examples://resource-usage",
             ]
 

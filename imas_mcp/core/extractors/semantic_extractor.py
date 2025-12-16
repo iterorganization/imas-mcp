@@ -66,13 +66,6 @@ class SemanticExtractor(BaseExtractor):
 
     def _determine_semantic_group(self, path: str, metadata: dict[str, Any]) -> str:
         """Determine semantic group for a path."""
-        # Extract physics context
-        physics_context = metadata.get("physics_context", {})
-        if isinstance(physics_context, dict):
-            domain = physics_context.get("domain")
-            if domain:
-                return f"physics_{domain}"
-
         # Group by units
         units = metadata.get("units", "")
         if units and units not in ["", "1", "mixed"]:

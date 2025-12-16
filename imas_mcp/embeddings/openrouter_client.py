@@ -1,8 +1,8 @@
-"""OpenRouter API client for embeddings (OpenAI-compatible interface).
+"""OpenRouter API client for embeddings and chat completions.
 
 This module provides an OpenRouterClient class that implements the same
-interface as SentenceTransformer for embedding generation using OpenRouter's
-OpenAI-compatible API.
+interface as SentenceTransformer for embedding generation, plus chat
+completion support for LLM tasks like cluster labeling.
 """
 
 import logging
@@ -71,6 +71,7 @@ class OpenRouterClient:
             raise OpenRouterError("Invalid API key - appears to be placeholder text.")
 
         self.embeddings_url = f"{self.base_url.rstrip('/')}/embeddings"
+        self.chat_url = f"{self.base_url.rstrip('/')}/chat/completions"
 
         # Skip connection test - will fail on first actual request if needed
         # This avoids unnecessary fallback to local models during initialization
@@ -170,6 +171,86 @@ class OpenRouterClient:
 
         raise OpenRouterError(
             f"Failed to make embedding request after {self.max_retries} retries: {last_error}"
+        )
+
+    def make_chat_request(
+        self,
+        messages: list[dict],
+        model: str | None = None,
+        max_tokens: int = 100000,
+        temperature: float = 0.3,
+        timeout: int = 300,
+    ) -> str:
+        """Make a chat completion request to the API with retry logic.
+
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            model: Model to use (defaults to self.model_name)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            timeout: Request timeout in seconds
+
+        Returns:
+            The assistant's response content string
+
+        Raises:
+            OpenRouterError: If the request fails after retries
+        """
+        data = {
+            "model": model or self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = requests.post(
+                    self.chat_url,
+                    headers=self._get_headers(),
+                    json=data,
+                    timeout=(30, timeout),  # (connect_timeout, read_timeout)
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    return result["choices"][0]["message"]["content"]
+
+                elif response.status_code == 429:  # Rate limited
+                    if attempt < self.max_retries:
+                        wait_time = self.retry_delay * (2**attempt)
+                        logger.warning(
+                            f"Rate limited, retrying in {wait_time:.1f} seconds..."
+                        )
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise OpenRouterError(
+                            f"Rate limit exceeded after {self.max_retries} retries"
+                        )
+
+                else:
+                    error_msg = (
+                        f"Chat request failed: {response.status_code} - {response.text}"
+                    )
+                    if attempt < self.max_retries:
+                        logger.warning(f"{error_msg}, retrying...")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        raise OpenRouterError(error_msg)
+
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    logger.warning(f"Request failed: {e}, retrying...")
+                    time.sleep(self.retry_delay)
+                else:
+                    break
+
+        raise OpenRouterError(
+            f"Failed to make chat request after {self.max_retries} retries: {last_error}"
         )
 
     def encode(
