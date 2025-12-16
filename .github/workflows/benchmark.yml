@@ -139,7 +139,7 @@ jobs:
           echo "Checking ASV results directory..."
           ls -la .asv/ || true
           echo "Checking if schema files exist..."
-          ls -la imas_mcp/resources/schemas/ || true
+          ls -la imas_codex/resources/schemas/ || true
 
       - name: Generate HTML report
         run: asv publish

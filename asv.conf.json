@@ -1,6 +1,6 @@
 {
     "version": 1,
-    "project": "imas-mcp",
+    "project": "imas-codex",
     "repo": ".",
     "branches": ["main", "HEAD"],
     "dvcs": "git",
@@ -18,7 +18,7 @@
     ],
     "matrix": {
         "env_nobuild": {
-            "IMAS_MCP_EMBEDDING_MODEL": ["openai/text-embedding-3-small"]
+            "IMAS_CODEX_EMBEDDING_MODEL": ["openai/text-embedding-3-small"]
         }
     },
     "benchmark_dir": "benchmarks",

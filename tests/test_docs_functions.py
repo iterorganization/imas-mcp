@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_mcp.services.docs_server_manager import DocsServerManager
-from imas_mcp.tools.docs_tool import DocsTool
+from imas_codex.services.docs_server_manager import DocsServerManager
+from imas_codex.tools.docs_tool import DocsTool
 
 
 class TestDocsFunctions:
@@ -95,7 +95,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_search_docs_server_unavailable(self, docs_tool, mock_docs_manager):
         """Test search when docs server is unavailable."""
-        from imas_mcp.services.docs_proxy_service import DocsServerUnavailableError
+        from imas_codex.services.docs_proxy_service import DocsServerUnavailableError
 
         mock_docs_manager.proxy_search_docs.side_effect = DocsServerUnavailableError(
             "Server unavailable"
@@ -116,7 +116,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_search_docs_library_not_found(self, docs_tool, mock_docs_manager):
         """Test search when library is not found."""
-        from imas_mcp.services.docs_proxy_service import LibraryNotFoundError
+        from imas_codex.services.docs_proxy_service import LibraryNotFoundError
 
         mock_docs_manager.proxy_search_docs.side_effect = LibraryNotFoundError(
             "unknown-lib", ["imas-python"]
@@ -147,7 +147,7 @@ class TestDocsFunctions:
     @pytest.mark.asyncio
     async def test_list_docs_server_unavailable(self, docs_tool, mock_docs_manager):
         """Test library listing when docs server is unavailable."""
-        from imas_mcp.services.docs_proxy_service import DocsServerUnavailableError
+        from imas_codex.services.docs_proxy_service import DocsServerUnavailableError
 
         mock_docs_manager.proxy_list_libraries.side_effect = DocsServerUnavailableError(
             "Server unavailable"

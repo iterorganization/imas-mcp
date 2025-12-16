@@ -10,8 +10,8 @@ import time
 
 import pytest
 
-from imas_mcp.models.error_models import ToolError
-from imas_mcp.models.result_models import (
+from imas_codex.models.error_models import ToolError
+from imas_codex.models.result_models import (
     GetIdentifiersResult,
     GetOverviewResult,
     SearchClustersResult,

@@ -1,6 +1,6 @@
 """Tests for search/cache.py module."""
 
-from imas_mcp.search.cache import SearchCache
+from imas_codex.search.cache import SearchCache
 
 
 class TestSearchCache:

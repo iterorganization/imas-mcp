@@ -10,7 +10,7 @@ You are an expert Python developer working on the IMAS MCP (Model Context Protoc
 
 - Review IMPLEMENTATION_PLAN.md for the specific priority details
 - Review FEATURE_COMPARISON_REPORT.md for background context
-- Examine existing code in imas_mcp/tools/ directory for current implementation patterns
+- Examine existing code in imas_codex/tools/ directory for current implementation patterns
 
 ## Development Requirements
 
@@ -37,7 +37,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 #### Priority 1: Physics Integration Restoration
 
 **Scope**: Restore `physics_search()` integration in explain_tool.py
-**Files to Modify**: `imas_mcp/tools/explain_tool.py`
+**Files to Modify**: `imas_codex/tools/explain_tool.py`
 **Test Requirements**:
 
 - Test physics integration with valid concepts
@@ -47,7 +47,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 #### Priority 2: Overview Tool Question Analysis
 
 **Scope**: Add question-specific analysis functionality to overview_tool.py
-**Files to Modify**: `imas_mcp/tools/overview_tool.py`
+**Files to Modify**: `imas_codex/tools/overview_tool.py`
 **Test Requirements**:
 
 - Test overview with and without query parameter
@@ -58,7 +58,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 #### Priority 3: Cross-IDS Relationship Analysis
 
 **Scope**: Restore cross-IDS relationship analysis in export_tool.py
-**Files to Modify**: `imas_mcp/tools/export_tool.py`
+**Files to Modify**: `imas_codex/tools/export_tool.py`
 **Test Requirements**:
 
 - Test relationship analysis with multiple IDS
@@ -69,7 +69,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 #### Priority 4: Conditional AI Enhancement
 
 **Scope**: Create conditional sampling decorator system
-**Files to Create**: `imas_mcp/search/decorators/conditional_sampling.py`
+**Files to Create**: `imas_codex/search/decorators/conditional_sampling.py`
 **Files to Modify**: All tool files to use conditional_sample decorator
 **Test Requirements**:
 
@@ -81,7 +81,7 @@ Follow the refactoring instructions from `.github/instructions/refactoring.instr
 #### Priority 5: Document Store Integration Fixes
 
 **Scope**: Replace mock data with real document store integration in overview_tool.py
-**Files to Modify**: `imas_mcp/tools/overview_tool.py`
+**Files to Modify**: `imas_codex/tools/overview_tool.py`
 **Test Requirements**:
 
 - Test real data retrieval from document store

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.embeddings import Embeddings
-from imas_mcp.search.document_store import Document, DocumentMetadata
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.embeddings import Embeddings
+from imas_codex.search.document_store import Document, DocumentMetadata
 
 
 def create_mock_encoder_config(model_name: str = "test-model") -> MagicMock:
@@ -56,7 +56,7 @@ class TestEmbeddings:
 
     def test_initialization_empty_documents(self, mock_document_store):
         """Embeddings initializes with empty document store."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -75,7 +75,7 @@ class TestEmbeddings:
         """Embeddings initializes with documents."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_config = MagicMock()
             mock_config.model_name = "test-model"
             mock_config.generate_cache_key.return_value = None
@@ -107,7 +107,7 @@ class TestEmbeddings:
 
     def test_initialization_deferred_build(self, mock_document_store):
         """Embeddings can defer loading embeddings."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -123,7 +123,7 @@ class TestEmbeddings:
 
     def test_cache_filename_default(self, mock_document_store):
         """cache_filename generates correct default filename."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("all-MiniLM-L6-v2")
             mock_encoder_class.return_value = mock_encoder
@@ -141,7 +141,7 @@ class TestEmbeddings:
 
     def test_cache_filename_with_ids_set(self, mock_document_store):
         """cache_filename includes hash for filtered dataset."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -160,13 +160,13 @@ class TestEmbeddings:
 
     def test_cache_path(self, mock_document_store, tmp_path):
         """cache_path returns correct path."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
 
             with patch(
-                "imas_mcp.embeddings.embeddings.ResourcePathAccessor"
+                "imas_codex.embeddings.embeddings.ResourcePathAccessor"
             ) as mock_accessor:
                 mock_accessor_instance = MagicMock()
                 mock_accessor_instance.embeddings_dir = tmp_path
@@ -184,13 +184,13 @@ class TestEmbeddings:
 
     def test_cache_exists_false(self, mock_document_store, tmp_path):
         """cache_exists returns False when cache doesn't exist."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
 
             with patch(
-                "imas_mcp.embeddings.embeddings.ResourcePathAccessor"
+                "imas_codex.embeddings.embeddings.ResourcePathAccessor"
             ) as mock_accessor:
                 mock_accessor_instance = MagicMock()
                 mock_accessor_instance.embeddings_dir = tmp_path
@@ -206,13 +206,13 @@ class TestEmbeddings:
 
     def test_cache_exists_true(self, mock_document_store, tmp_path):
         """cache_exists returns True when cache exists."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
 
             with patch(
-                "imas_mcp.embeddings.embeddings.ResourcePathAccessor"
+                "imas_codex.embeddings.embeddings.ResourcePathAccessor"
             ) as mock_accessor:
                 mock_accessor_instance = MagicMock()
                 mock_accessor_instance.embeddings_dir = tmp_path
@@ -232,7 +232,7 @@ class TestEmbeddings:
 
     def test_effective_status_always_ready(self, mock_document_store):
         """effective_status always returns ready."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -249,7 +249,7 @@ class TestEmbeddings:
         """get_embeddings_matrix returns the embeddings array."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
@@ -273,7 +273,7 @@ class TestEmbeddings:
         """get_embeddings_matrix triggers lazy load when needed."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
@@ -299,7 +299,7 @@ class TestEmbeddings:
 
     def test_get_path_ids_empty(self, mock_document_store):
         """get_path_ids returns empty list when not loaded."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -316,7 +316,7 @@ class TestEmbeddings:
         """get_path_ids returns path IDs after loading."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
@@ -345,7 +345,7 @@ class TestEmbeddings:
 
     def test_encode_texts(self, mock_document_store):
         """encode_texts delegates to encoder."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.embed_texts.return_value = np.zeros((2, 384))
@@ -364,7 +364,7 @@ class TestEmbeddings:
 
     def test_encoder_config_property(self, mock_document_store):
         """encoder_config property returns encoder's config."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             test_config = EncoderConfig(model_name="test-model", batch_size=100)
             mock_encoder = MagicMock()
             mock_encoder.config = test_config
@@ -383,7 +383,7 @@ class TestEmbeddings:
 
     def test_is_built_false(self, mock_document_store):
         """is_built returns False when embeddings not loaded."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -400,7 +400,7 @@ class TestEmbeddings:
         """is_built returns True when embeddings are loaded."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
@@ -420,7 +420,7 @@ class TestEmbeddings:
 
     def test_is_built_empty_embeddings(self, mock_document_store):
         """is_built returns False for empty embeddings array."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -438,7 +438,7 @@ class TestEmbeddings:
         """materialize_embeddings triggers embedding load."""
         mock_document_store.get_all_documents.return_value = mock_documents
 
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder.build_document_embeddings.return_value = (
@@ -463,7 +463,7 @@ class TestEmbeddings:
 
     def test_ids_set_configuration(self, mock_document_store):
         """Embeddings stores IDS set configuration."""
-        with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+        with patch("imas_codex.embeddings.embeddings.Encoder") as mock_encoder_class:
             mock_encoder = MagicMock()
             mock_encoder.config = create_mock_encoder_config("test-model")
             mock_encoder_class.return_value = mock_encoder
@@ -479,12 +479,16 @@ class TestEmbeddings:
 
     def test_model_name_set_from_config(self, mock_document_store):
         """model_name is set from encoder config after initialization."""
-        with patch("imas_mcp.embeddings.embeddings.EncoderConfig") as mock_config_class:
+        with patch(
+            "imas_codex.embeddings.embeddings.EncoderConfig"
+        ) as mock_config_class:
             mock_config = MagicMock()
             mock_config.model_name = "actual-model-from-env"
             mock_config_class.return_value = mock_config
 
-            with patch("imas_mcp.embeddings.embeddings.Encoder") as mock_encoder_class:
+            with patch(
+                "imas_codex.embeddings.embeddings.Encoder"
+            ) as mock_encoder_class:
                 mock_encoder = MagicMock()
                 mock_encoder.config = mock_config
                 mock_encoder_class.return_value = mock_encoder

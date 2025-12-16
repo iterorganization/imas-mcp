@@ -14,11 +14,11 @@ import pytest
 from dotenv import load_dotenv
 from fastmcp import Client
 
-from imas_mcp.clusters.search import ClusterSearchResult
-from imas_mcp.embeddings.encoder import Encoder
-from imas_mcp.search.document_store import Document, DocumentMetadata, DocumentStore
-from imas_mcp.search.engines.base_engine import MockSearchEngine
-from imas_mcp.server import Server
+from imas_codex.clusters.search import ClusterSearchResult
+from imas_codex.embeddings.encoder import Encoder
+from imas_codex.search.document_store import Document, DocumentMetadata, DocumentStore
+from imas_codex.search.engines.base_engine import MockSearchEngine
+from imas_codex.server import Server
 
 # Load .env file with override=True to ensure test environment uses .env values
 # This fixes issues where empty or stale shell environment variables persist
@@ -51,21 +51,23 @@ def embedding_model_name(request):
 def configure_embedding_model(embedding_model_name):
     """Configure the embedding model environment variable."""
     # Store original value from .env/shell for tests that need the real API config
-    if "IMAS_MCP_EMBEDDING_MODEL" in os.environ:
-        os.environ["IMAS_MCP_ORIGINAL_EMBEDDING_MODEL"] = os.environ[
-            "IMAS_MCP_EMBEDDING_MODEL"
+    if "IMAS_CODEX_EMBEDDING_MODEL" in os.environ:
+        os.environ["IMAS_CODEX_ORIGINAL_EMBEDDING_MODEL"] = os.environ[
+            "IMAS_CODEX_EMBEDDING_MODEL"
         ]
 
     if embedding_model_name:
-        os.environ["IMAS_MCP_EMBEDDING_MODEL"] = embedding_model_name
+        os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
     else:
         # If OPENAI_API_KEY is set, use API model; otherwise use local
         # This allows tests to work with .env configuration
-        if not os.environ.get("IMAS_MCP_EMBEDDING_MODEL"):
+        if not os.environ.get("IMAS_CODEX_EMBEDDING_MODEL"):
             if os.environ.get("OPENAI_API_KEY"):
-                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "openai/text-embedding-3-small"
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = (
+                    "openai/text-embedding-3-small"
+                )
             else:
-                os.environ["IMAS_MCP_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
+                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 
 
 # Standard test IDS set for consistency across all tests
@@ -189,9 +191,9 @@ def temporary_embedding_cache_dir(tmp_path_factory, monkeypatch):
 def disable_caching():
     """Automatically disable caching for all tests by making cache always miss."""
     # Patch the cache get method to always return None (cache miss)
-    with patch("imas_mcp.search.decorators.cache._cache.get", return_value=None):
+    with patch("imas_codex.search.decorators.cache._cache.get", return_value=None):
         # Also patch the set method to do nothing
-        with patch("imas_mcp.search.decorators.cache._cache.set"):
+        with patch("imas_codex.search.decorators.cache._cache.set"):
             yield
 
 
@@ -248,7 +250,7 @@ def mock_heavy_operations():
         get_identifier_schema_by_name=MagicMock(return_value=None),
     ):
         # Mock semantic search initialization to prevent embedding generation
-        with patch("imas_mcp.server.SemanticSearch") as mock_semantic:
+        with patch("imas_codex.server.SemanticSearch") as mock_semantic:
             mock_semantic_instance = MagicMock()
             mock_semantic_instance._initialize.return_value = None
             mock_semantic.return_value = mock_semantic_instance
@@ -257,21 +259,21 @@ def mock_heavy_operations():
             mock_engine = MockSearchEngine()
             with (
                 patch(
-                    "imas_mcp.search.engines.semantic_engine.SemanticSearchEngine.search",
+                    "imas_codex.search.engines.semantic_engine.SemanticSearchEngine.search",
                     side_effect=mock_engine.search,
                 ),
                 patch(
-                    "imas_mcp.search.engines.lexical_engine.LexicalSearchEngine.search",
+                    "imas_codex.search.engines.lexical_engine.LexicalSearchEngine.search",
                     side_effect=mock_engine.search,
                 ),
                 patch(
-                    "imas_mcp.search.engines.hybrid_engine.HybridSearchEngine.search",
+                    "imas_codex.search.engines.hybrid_engine.HybridSearchEngine.search",
                     side_effect=mock_engine.search,
                 ),
             ):
                 # Mock Clusters class to prevent loading cluster files
                 mock_clusters = create_mock_clusters()
-                with patch("imas_mcp.core.clusters.Clusters") as mock_clusters_class:
+                with patch("imas_codex.core.clusters.Clusters") as mock_clusters_class:
                     mock_clusters_instance = MagicMock()
                     mock_clusters_instance.is_available.return_value = True
                     mock_clusters_instance.get_clusters.return_value = mock_clusters
@@ -279,13 +281,13 @@ def mock_heavy_operations():
 
                     # Also patch in the tools module where it's imported
                     with patch(
-                        "imas_mcp.tools.clusters_tool.Clusters"
+                        "imas_codex.tools.clusters_tool.Clusters"
                     ) as mock_clusters_tool:
                         mock_clusters_tool.return_value = mock_clusters_instance
 
                         # Mock ClusterSearcher to return mock results
                         with patch(
-                            "imas_mcp.tools.clusters_tool.ClusterSearcher"
+                            "imas_codex.tools.clusters_tool.ClusterSearcher"
                         ) as mock_searcher_class:
                             mock_searcher = MagicMock()
                             mock_searcher.search_by_path.return_value = (
@@ -298,7 +300,7 @@ def mock_heavy_operations():
 
                             # Mock Encoder to prevent model loading
                             with patch(
-                                "imas_mcp.tools.clusters_tool.Encoder"
+                                "imas_codex.tools.clusters_tool.Encoder"
                             ) as mock_encoder_class:
                                 mock_encoder = MagicMock()
                                 mock_encoder.encode.return_value = np.zeros(

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.core.physics_categorization import (
+from imas_codex.core.data_model import PhysicsDomain
+from imas_codex.core.physics_categorization import (
     PhysicsDomainCategorizer,
     _load_physics_mappings,
     physics_categorizer,
@@ -44,7 +44,7 @@ class TestLoadPhysicsMappings:
             json.dump(mappings_data, f)
 
         with patch(
-            "imas_mcp.core.physics_categorization.ResourcePathAccessor",
+            "imas_codex.core.physics_categorization.ResourcePathAccessor",
             return_value=mock_accessor,
         ):
             # Clear the cache to force reload
@@ -61,7 +61,7 @@ class TestLoadPhysicsMappings:
         mock_accessor.schemas_dir = tmp_path / "nonexistent"
 
         with patch(
-            "imas_mcp.core.physics_categorization.ResourcePathAccessor",
+            "imas_codex.core.physics_categorization.ResourcePathAccessor",
             return_value=mock_accessor,
         ):
             _load_physics_mappings.cache_clear()
@@ -81,7 +81,7 @@ class TestLoadPhysicsMappings:
             f.write("invalid json {")
 
         with patch(
-            "imas_mcp.core.physics_categorization.ResourcePathAccessor",
+            "imas_codex.core.physics_categorization.ResourcePathAccessor",
             return_value=mock_accessor,
         ):
             _load_physics_mappings.cache_clear()
@@ -112,7 +112,7 @@ class TestPhysicsDomainCategorizer:
         cat._mappings = None
 
         with patch(
-            "imas_mcp.core.physics_categorization._load_physics_mappings",
+            "imas_codex.core.physics_categorization._load_physics_mappings",
             return_value={"test": "transport"},
         ) as mock_load:
             result = cat.mappings

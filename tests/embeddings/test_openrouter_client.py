@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import requests
 
-from imas_mcp.embeddings.openrouter_client import (
+from imas_codex.embeddings.openrouter_client import (
     OpenRouterClient,
     OpenRouterError,
     create_openrouter_client,

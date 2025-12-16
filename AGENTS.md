@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This project, `imas-mcp`, is a Model Context Protocol (MCP) server for the IMAS Data Dictionary. It enables AI agents to explore fusion physics data structures, search for relevant IDS (Interface Data Structures) entries, understand relationships between data paths, and access comprehensive physics documentation.
+This project, `imas-codex`, is a Model Context Protocol (MCP) server for the IMAS Data Dictionary. It enables AI agents to explore fusion physics data structures, search for relevant IDS (Interface Data Structures) entries, understand relationships between data paths, and access comprehensive physics documentation.
 
 The server provides semantic search across the IMAS data dictionary, physics domain exploration, path validation, and relationship discovery—all accessible through the MCP protocol.
 
@@ -10,14 +10,14 @@ The server provides semantic search across the IMAS data dictionary, physics dom
 
 ### Terminal Usage
 
-**Working Directory**: All terminal commands assume you're in the project root (`/home/ITER/mcintos/Code/imas-mcp`). Do not prefix commands with `cd /path &&`.
+**Working Directory**: All terminal commands assume you're in the project root (`/home/ITER/mcintos/Code/imas-codex`). Do not prefix commands with `cd /path &&`.
 
 ```bash
 # Correct - use uv run for Python commands
 uv run pytest
 
 # Wrong - unnecessary cd and manual venv activation
-cd /home/ITER/mcintos/Code/imas-mcp && source .venv/bin/activate && pytest
+cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
 ```
 
 ### Package Management
@@ -74,14 +74,14 @@ git commit -m "refactor!: description"  # ! causes bash errors
 - **Framework**: `pytest`
 - **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `uv run pytest`
 - **Async support**: `pytest-asyncio` with auto mode
-- **Coverage**: `uv run pytest --cov=imas_mcp`
+- **Coverage**: `uv run pytest --cov=imas_codex`
 
 **Before running tests**: Ensure dependencies are synced with `uv sync --extra test`
 
 ## Project Structure
 
 ```
-imas_mcp/
+imas_codex/
 ├── core/           # Data models, XML parsing, physics domains
 ├── embeddings/     # Vector embeddings and semantic search
 ├── models/         # Pydantic models for all data structures

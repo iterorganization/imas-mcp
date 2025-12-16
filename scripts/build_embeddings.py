@@ -12,11 +12,11 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from imas_mcp import dd_version
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
-from imas_mcp.search.document_store import DocumentStore
+from imas_codex import dd_version
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import Encoder
+from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.search.document_store import DocumentStore
 
 # Load .env file with override to ensure local .env values take precedence
 load_dotenv(override=True)
@@ -40,7 +40,7 @@ load_dotenv(override=True)
     "--model-name",
     type=str,
     default=None,
-    help="Sentence transformer model name (default: from IMAS_MCP_EMBEDDING_MODEL env var or all-MiniLM-L6-v2)",
+    help="Sentence transformer model name (default: from imas_codex_EMBEDDING_MODEL env var or all-MiniLM-L6-v2)",
 )
 @click.option(
     "--batch-size",

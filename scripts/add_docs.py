@@ -13,11 +13,11 @@ import sys
 import click
 from dotenv import load_dotenv
 
-from imas_mcp.services.docs_cli_helpers import (
+from imas_codex.services.docs_cli_helpers import (
     build_docs_server_command,
     get_npx_executable,
 )
-from imas_mcp.settings import get_docs_embedding_model
+from imas_codex.settings import get_docs_embedding_model
 
 # Load environment variables from .env file
 load_dotenv(override=True)

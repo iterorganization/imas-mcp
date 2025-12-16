@@ -39,8 +39,8 @@ import click
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from imas_mcp import dd_version  # noqa: E402
-from imas_mcp.resource_path_accessor import ResourcePathAccessor  # noqa: E402
+from imas_codex import dd_version  # noqa: E402
+from imas_codex.resource_path_accessor import ResourcePathAccessor  # noqa: E402
 
 
 def get_all_dd_versions():
@@ -618,7 +618,7 @@ def switch_version(target_version: str, force_rebuild: bool = False):
         click.secho(f"  echo 'IMAS_DD_VERSION={target_version}' >> .env", fg="cyan")
 
     click.echo("\nThen start the server:")
-    click.secho("  uv run python -m imas_mcp", fg="cyan")
+    click.secho("  uv run python -m imas_codex", fg="cyan")
     click.echo()
 
     return True

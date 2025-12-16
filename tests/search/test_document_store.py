@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.search.document_store import (
+from imas_codex.search.document_store import (
     Document,
     DocumentMetadata,
     DocumentStore,

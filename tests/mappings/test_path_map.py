@@ -1,6 +1,6 @@
 """Tests for mappings/__init__.py module."""
 
-from imas_mcp.mappings import (
+from imas_codex.mappings import (
     PathMap,
     PathMapping,
     RenameHistoryEntry,

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 # hatchling is a build system for Python projects, and this hook will be used to
-# create JSON data structures for the IMAS MCP server during the wheel build process.
+# create JSON data structures for the IMAS Codex server during the wheel build process.
 from hatchling.builders.hooks.plugin.interface import (
     BuildHookInterface,  # type: ignore[import]
 )
@@ -64,7 +64,7 @@ class CustomBuildHook(BuildHookInterface):
 
         try:
             # Lightweight import for path resolution
-            from imas_mcp.resource_path_accessor import ResourcePathAccessor
+            from imas_codex.resource_path_accessor import ResourcePathAccessor
         finally:
             sys.path[:] = original_path
 
@@ -89,7 +89,7 @@ class CustomBuildHook(BuildHookInterface):
             if str(package_root) not in sys.path:
                 sys.path.insert(0, str(package_root))
             try:
-                from imas_mcp import dd_version
+                from imas_codex import dd_version
 
                 resolved_dd_version = dd_version
             finally:
@@ -119,7 +119,7 @@ class CustomBuildHook(BuildHookInterface):
             sys.path.insert(0, str(package_root))
 
         try:
-            from imas_mcp.core.xml_parser import DataDictionaryTransformer
+            from imas_codex.core.xml_parser import DataDictionaryTransformer
             from scripts.build_path_map import build_path_map
         finally:
             sys.path[:] = original_path
@@ -127,12 +127,12 @@ class CustomBuildHook(BuildHookInterface):
         # Create DD accessor based on version config
         dd_accessor = None
         if dd_version_config:
-            from imas_mcp.dd_accessor import ImasDataDictionariesAccessor
+            from imas_codex.dd_accessor import ImasDataDictionariesAccessor
 
             dd_accessor = ImasDataDictionariesAccessor(dd_version_config)
             self._trace(f"Building with IMAS DD version: {dd_version_config}")
         else:
-            from imas_mcp.dd_accessor import ImasDataDictionaryAccessor
+            from imas_codex.dd_accessor import ImasDataDictionaryAccessor
 
             dd_accessor = ImasDataDictionaryAccessor()
             self._trace(f"Building with IMAS DD version: {dd_accessor.get_version()}")

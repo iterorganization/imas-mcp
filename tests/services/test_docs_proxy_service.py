@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from imas_mcp.exceptions import DocsServerError
-from imas_mcp.services.docs_proxy_service import (
+from imas_codex.exceptions import DocsServerError
+from imas_codex.services.docs_proxy_service import (
     DocsProxyService,
     LibraryNotFoundError,
     Settings,
 )
-from imas_mcp.services.docs_server_manager import (
+from imas_codex.services.docs_server_manager import (
     DocsServerManager,
     DocsServerUnavailableError,
     PortAllocationError,

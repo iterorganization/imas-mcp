@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.tools.overview_tool import OverviewTool
+from imas_codex.core.data_model import PhysicsDomain
+from imas_codex.tools.overview_tool import OverviewTool
 
 
 class TestOverviewToolInternals:
@@ -51,7 +51,7 @@ class TestOverviewToolInternals:
             return domain_map.get(ids_name, PhysicsDomain.GENERAL)
 
         with patch(
-            "imas_mcp.tools.overview_tool.physics_categorizer.get_domain_for_ids",
+            "imas_codex.tools.overview_tool.physics_categorizer.get_domain_for_ids",
             side_effect=mock_get_domain,
         ):
             domains = overview_tool._get_physics_domains()
@@ -116,7 +116,7 @@ class TestOverviewToolInternals:
             return PhysicsDomain.GENERAL
 
         with patch(
-            "imas_mcp.tools.overview_tool.physics_categorizer.get_domain_for_ids",
+            "imas_codex.tools.overview_tool.physics_categorizer.get_domain_for_ids",
             side_effect=mock_get_domain,
         ):
             result = overview_tool._filter_ids_by_query("transport")

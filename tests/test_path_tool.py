@@ -2,10 +2,10 @@
 
 import pytest
 
-from imas_mcp.core.exclusions import EXCLUSION_REASONS, ExclusionChecker
-from imas_mcp.mappings import PathMap, PathMapping, RenameHistoryEntry
-from imas_mcp.search.document_store import DocumentStore
-from imas_mcp.tools import PathTool
+from imas_codex.core.exclusions import EXCLUSION_REASONS, ExclusionChecker
+from imas_codex.mappings import PathMap, PathMapping, RenameHistoryEntry
+from imas_codex.search.document_store import DocumentStore
+from imas_codex.tools import PathTool
 
 # ============================================================================
 # Mock PathMap for testing
@@ -237,7 +237,7 @@ async def test_returns_structured_response(path_tool):
     result = await path_tool.check_imas_paths("equilibrium/time_slice/profiles_1d/psi")
 
     # Should be a CheckPathsResult Pydantic model
-    from imas_mcp.models.result_models import CheckPathsResult
+    from imas_codex.models.result_models import CheckPathsResult
 
     assert isinstance(result, CheckPathsResult)
 
@@ -549,7 +549,7 @@ async def test_fetch_vs_check_difference(path_tool):
     fetch_result = await path_tool.fetch_imas_paths(path)
 
     # Check returns CheckPathsResult with minimal info
-    from imas_mcp.models.result_models import CheckPathsResult
+    from imas_codex.models.result_models import CheckPathsResult
 
     assert isinstance(check_result, CheckPathsResult)
     assert check_result.results[0].exists is True

@@ -11,11 +11,11 @@ import os
 import pytest
 from fastmcp import Client, FastMCP
 
-from imas_mcp import dd_version
-from imas_mcp.models.result_models import GetOverviewResult
-from imas_mcp.resource_provider import Resources
-from imas_mcp.server import Server
-from imas_mcp.tools import Tools
+from imas_codex import dd_version
+from imas_codex.models.result_models import GetOverviewResult
+from imas_codex.resource_provider import Resources
+from imas_codex.server import Server
+from imas_codex.tools import Tools
 from tests.conftest import STANDARD_TEST_IDS_SET
 
 
@@ -99,7 +99,9 @@ class TestMCPServer:
     def test_multiple_server_instances_isolation(self, monkeypatch):
         """Test multiple server instances don't interfere."""
         # Use free API embeddings by default
-        monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+        monkeypatch.setenv(
+            "IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+        )
 
         server1 = Server(ids_set=STANDARD_TEST_IDS_SET)
         server2 = Server(ids_set={"equilibrium"})

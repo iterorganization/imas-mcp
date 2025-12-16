@@ -6,12 +6,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from imas_mcp.clusters import ClusterSearcher, ClusterSearchResult
-from imas_mcp.clusters.clustering import (
+from imas_codex.clusters import ClusterSearcher, ClusterSearchResult
+from imas_codex.clusters.clustering import (
     _compute_cluster_centroid,
     _compute_cluster_similarity,
 )
-from imas_mcp.clusters.models import ClusterInfo
+from imas_codex.clusters.models import ClusterInfo
 
 
 class TestCentroidComputation:

@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from imas_mcp.embeddings.cache import EmbeddingCache
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
+from imas_codex.embeddings.cache import EmbeddingCache
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import Encoder
 
 
 class TestEncoder:
@@ -431,7 +431,7 @@ class TestEncoderAPIModel:
 
         # Patch at the location where it gets imported into the encoder module
         with patch(
-            "imas_mcp.embeddings.openrouter_client.OpenRouterClient"
+            "imas_codex.embeddings.openrouter_client.OpenRouterClient"
         ) as mock_client_class:
             mock_client = MagicMock()
             mock_client.device = "api"
@@ -491,6 +491,6 @@ class TestEncoderAPIModel:
         config.use_api_embeddings = False
         encoder = Encoder(config=config)
 
-        with patch("imas_mcp.embeddings.encoder.HAS_SENTENCE_TRANSFORMERS", False):
+        with patch("imas_codex.embeddings.encoder.HAS_SENTENCE_TRANSFORMERS", False):
             with pytest.raises(ImportError, match="sentence-transformers"):
                 encoder._load_local_model()

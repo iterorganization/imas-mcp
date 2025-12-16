@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.extractors.base import (
+from imas_codex.core.extractors.base import (
     BaseExtractor,
     ComposableExtractor,
     ExtractorContext,

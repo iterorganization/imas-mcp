@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import Encoder
 
 # Define models to test
 LOCAL_MODEL = "all-MiniLM-L6-v2"
@@ -54,7 +54,7 @@ def test_embedding_generation_mocked(model_name):
 
             # Mock requests for OpenRouterClient
             with patch(
-                "imas_mcp.embeddings.openrouter_client.requests.post"
+                "imas_codex.embeddings.openrouter_client.requests.post"
             ) as mock_post:
                 mock_response = MagicMock()
                 mock_response.status_code = 200
@@ -74,7 +74,7 @@ def test_embedding_generation_mocked(model_name):
         # For local model, we can mock SentenceTransformer to avoid downloading models
         config = EncoderConfig(model_name=model_name)
 
-        with patch("imas_mcp.embeddings.encoder.SentenceTransformer") as mock_st:
+        with patch("imas_codex.embeddings.encoder.SentenceTransformer") as mock_st:
             mock_model = MagicMock()
             mock_st.return_value = mock_model
             # Return numpy array to match Encoder.embed_texts return type
@@ -100,7 +100,7 @@ def test_real_api_embedding():
     """
     # Use the original configured model from .env if available (preserved by conftest)
     # otherwise default to the hardcoded API_MODEL
-    model_name = os.getenv("IMAS_MCP_ORIGINAL_EMBEDDING_MODEL", API_MODEL)
+    model_name = os.getenv("IMAS_CODEX_ORIGINAL_EMBEDDING_MODEL", API_MODEL)
 
     # Ensure we are actually testing an API model
     if "/" not in model_name and model_name != API_MODEL:

@@ -21,11 +21,11 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
-from imas_mcp import dd_version
-from imas_mcp.core.data_model import PhysicsDomain
-from imas_mcp.embeddings.openrouter_client import OpenRouterClient
-from imas_mcp.resource_path_accessor import ResourcePathAccessor
-from imas_mcp.settings import get_language_model
+from imas_codex import dd_version
+from imas_codex.core.data_model import PhysicsDomain
+from imas_codex.embeddings.openrouter_client import OpenRouterClient
+from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.settings import get_language_model
 
 # Load environment variables from .env file, overriding any existing values
 load_dotenv(override=True)

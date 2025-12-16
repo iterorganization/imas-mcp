@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_mcp.server import Server
-from imas_mcp.services.docs_proxy_service import DocsProxyService
-from imas_mcp.services.docs_server_manager import (
+from imas_codex.server import Server
+from imas_codex.services.docs_proxy_service import DocsProxyService
+from imas_codex.services.docs_server_manager import (
     DocsServerError,
     DocsServerManager,
     PortAllocationError,
@@ -307,11 +307,11 @@ class TestServerIntegration:
         """Test that Server can be created with docs server management."""
         # Mock dependencies to avoid real server startup
         with (
-            patch("imas_mcp.server.Tools"),
-            patch("imas_mcp.server.Resources"),
-            patch("imas_mcp.server.Embeddings"),
-            patch("imas_mcp.server.Server._validate_schemas_available"),
-            patch("imas_mcp.server.Server._register_components"),
+            patch("imas_codex.server.Tools"),
+            patch("imas_codex.server.Resources"),
+            patch("imas_codex.server.Embeddings"),
+            patch("imas_codex.server.Server._validate_schemas_available"),
+            patch("imas_codex.server.Server._register_components"),
         ):
             server = Server()
 

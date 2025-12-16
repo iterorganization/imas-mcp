@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.search.decorators.performance import (
+from imas_codex.search.decorators.performance import (
     PerformanceMetrics,
     calculate_performance_score,
     get_performance_summary,

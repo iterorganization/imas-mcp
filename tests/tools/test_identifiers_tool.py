@@ -7,8 +7,8 @@ covering all query types and analytics calculations.
 
 import pytest
 
-from imas_mcp.models.result_models import GetIdentifiersResult
-from imas_mcp.tools.identifiers_tool import IdentifiersTool
+from imas_codex.models.result_models import GetIdentifiersResult
+from imas_codex.tools.identifiers_tool import IdentifiersTool
 
 
 class TestExploreIdentifiersTool:

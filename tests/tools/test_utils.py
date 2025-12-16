@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_mcp.tools.utils import (
+from imas_codex.tools.utils import (
     normalize_ids_filter,
     normalize_paths_input,
     validate_query,

@@ -39,9 +39,9 @@ ENV PYTHONPATH="/app" \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Labels for image provenance
-LABEL imas_mcp.git_sha=${GIT_SHA} \
-      imas_mcp.git_tag=${GIT_TAG} \
-      imas_mcp.git_ref=${GIT_REF}
+LABEL imas_codex.git_sha=${GIT_SHA} \
+      imas_codex.git_tag=${GIT_TAG} \
+      imas_codex.git_ref=${GIT_REF}
 
 ## Copy git metadata first so hatch-vcs sees repository state exactly as on tag
 COPY .git/ ./.git/
@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # Expand sparse checkout to include project sources, scripts, and build hooks (phase 2)
 # Include hatch_build_hooks.py even though HATCH_BUILD_NO_HOOKS=true, because
 # hatchling validates file existence before checking the env var
-RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts hatch_build_hooks.py \
+RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_codex scripts hatch_build_hooks.py \
     && git reset --hard HEAD \
     && echo "Sparse checkout (phase 2) paths:" \
     && git sparse-checkout list \
@@ -75,7 +75,7 @@ RUN git sparse-checkout set pyproject.toml uv.lock README.md imas_mcp scripts ha
 ## Install project. Using --reinstall-package to ensure wheel build picks up version.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Pre-install (project) git status (should be clean):" && git status --porcelain && \
-    uv sync --no-dev --reinstall-package imas-mcp --no-editable --frozen && \
+    uv sync --no-dev --reinstall-package imas-codex --no-editable --frozen && \
     if [ -n "$(git status --porcelain uv.lock)" ]; then echo "uv.lock changed during project install (lock out of date). Run 'uv lock' and recommit." >&2; exit 1; fi && \
     echo "Post-install git status (should still be clean):" && git status --porcelain && \
     if [ -n "$(git status --porcelain)" ]; then \
@@ -86,9 +86,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 
 # Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
 # This includes schemas, embeddings, relationships, and clusters built in CI
-# Git sparse checkout would have created the imas_mcp directory but without the generated resources
+# Git sparse checkout would have created the imas_codex directory but without the generated resources
 # This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
-COPY imas_mcp/resources/ /app/imas_mcp/resources/
+COPY imas_codex/resources/ /app/imas_codex/resources/
 
 # Build schema data (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
@@ -174,5 +174,5 @@ ENV PYTHONPATH="/app" \
 EXPOSE 8000
 
 ## Run via uv to ensure the synced environment is activated; additional args appended after CMD
-ENTRYPOINT ["uv", "run", "--no-dev", "imas-mcp"]
+ENTRYPOINT ["uv", "run", "--no-dev", "imas-codex"]
 CMD ["--no-rich", "--host", "0.0.0.0", "--port", "8000"]

@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from imas_mcp.core.xml_utils import DocumentationBuilder, XmlTreeUtils
+from imas_codex.core.xml_utils import DocumentationBuilder, XmlTreeUtils
 
 
 class TestDocumentationBuilderNormalizePunctuation:

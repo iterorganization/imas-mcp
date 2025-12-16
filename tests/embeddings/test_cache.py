@@ -4,7 +4,7 @@ import json
 
 import numpy as np
 
-from imas_mcp.embeddings.cache import EmbeddingCache
+from imas_codex.embeddings.cache import EmbeddingCache
 
 
 class TestEmbeddingCache:

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = "==3.12.*"
 
 [[package]]
@@ -714,19 +714,7 @@ wheels = [
 ]
 
 [[package]]
-name = "imas-data-dictionaries"
-version = "4.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d5/37/dbf8c1db31290c2149532f82d79486680f2508c0ba3f9cd69c364e2877fd/imas_data_dictionaries-4.1.0.tar.gz", hash = "sha256:cd183648bb0ff8caf5ea145fcbbaca5d9165ddabac45ca4e703c0087f35f34d6", size = 30717489, upload-time = "2025-11-14T16:05:17.573Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/c6/cc3a0ff95fa50a5ea6d57cc3ae39304763be3eb1b1939e2f84d6d5a75d2d/imas_data_dictionaries-4.1.0-py3-none-any.whl", hash = "sha256:1e0e986e05cf82265a74b9f456e83e812f66117ff317600d7b4c4db9105f9981", size = 30713704, upload-time = "2025-11-14T16:05:13.751Z" },
-]
-
-[[package]]
-name = "imas-mcp"
+name = "imas-codex"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -836,6 +824,18 @@ dev = [
     { name = "ruff", specifier = ">=0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "tqdm-stubs", specifier = ">=0.2.1" },
+]
+
+[[package]]
+name = "imas-data-dictionaries"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/37/dbf8c1db31290c2149532f82d79486680f2508c0ba3f9cd69c364e2877fd/imas_data_dictionaries-4.1.0.tar.gz", hash = "sha256:cd183648bb0ff8caf5ea145fcbbaca5d9165ddabac45ca4e703c0087f35f34d6", size = 30717489, upload-time = "2025-11-14T16:05:17.573Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/c6/cc3a0ff95fa50a5ea6d57cc3ae39304763be3eb1b1939e2f84d6d5a75d2d/imas_data_dictionaries-4.1.0-py3-none-any.whl", hash = "sha256:1e0e986e05cf82265a74b9f456e83e812f66117ff317600d7b4c4db9105f9981", size = 30713704, upload-time = "2025-11-14T16:05:13.751Z" },
 ]
 
 [[package]]

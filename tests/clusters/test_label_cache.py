@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from imas_mcp.clusters.label_cache import (
+from imas_codex.clusters.label_cache import (
     CachedLabel,
     LabelCache,
     compute_cluster_hash,

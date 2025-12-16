@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_mcp.core.extractors.base import ExtractorContext
-from imas_mcp.core.extractors.identifier_extractor import IdentifierExtractor
+from imas_codex.core.extractors.base import ExtractorContext
+from imas_codex.core.extractors.identifier_extractor import IdentifierExtractor
 
 
 @pytest.fixture

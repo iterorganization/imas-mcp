@@ -1,13 +1,13 @@
 import numpy as np
 import pytest
 
-from imas_mcp.embeddings.config import EncoderConfig
-from imas_mcp.embeddings.encoder import Encoder
+from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.encoder import Encoder
 
 
 def test_encoder_embed_texts_basic(monkeypatch):
     # Use free API embeddings by default
-    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
     config = EncoderConfig(batch_size=8, use_rich=False)
     encoder = Encoder(config)
     texts = ["alpha", "beta", "gamma"]
@@ -22,7 +22,7 @@ def test_encoder_build_document_embeddings_cache(tmp_path, monkeypatch):
     # Use free API embeddings by default
     # Use a temp embeddings cache directory
     monkeypatch.setattr(EncoderConfig, "cache_dir", "embeddings_test")
-    monkeypatch.setenv("IMAS_MCP_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
     config = EncoderConfig(batch_size=16, use_rich=False, enable_cache=True)
     encoder = Encoder(config)
     texts = [f"text {i}" for i in range(10)]
