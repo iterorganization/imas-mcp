@@ -43,9 +43,17 @@ class TestLoadPhysicsMappings:
         with open(mapping_path, "w") as f:
             json.dump(mappings_data, f)
 
-        with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+        # Patch both DOMAINS_FILE (to non-existent) and ResourcePathAccessor
+        fake_domains_file = tmp_path / "nonexistent" / "domains.json"
+        with (
+            patch(
+                "imas_codex.core.physics_categorization.DOMAINS_FILE",
+                fake_domains_file,
+            ),
+            patch(
+                "imas_codex.core.physics_categorization.ResourcePathAccessor",
+                return_value=mock_accessor,
+            ),
         ):
             # Clear the cache to force reload
             _load_physics_mappings.cache_clear()
@@ -60,9 +68,17 @@ class TestLoadPhysicsMappings:
         mock_accessor = MagicMock()
         mock_accessor.schemas_dir = tmp_path / "nonexistent"
 
-        with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+        # Patch both DOMAINS_FILE and ResourcePathAccessor to non-existent paths
+        fake_domains_file = tmp_path / "nonexistent" / "domains.json"
+        with (
+            patch(
+                "imas_codex.core.physics_categorization.DOMAINS_FILE",
+                fake_domains_file,
+            ),
+            patch(
+                "imas_codex.core.physics_categorization.ResourcePathAccessor",
+                return_value=mock_accessor,
+            ),
         ):
             _load_physics_mappings.cache_clear()
             result = _load_physics_mappings()
@@ -80,14 +96,75 @@ class TestLoadPhysicsMappings:
         with open(mapping_path, "w") as f:
             f.write("invalid json {")
 
-        with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+        # Patch both DOMAINS_FILE (to non-existent) and ResourcePathAccessor
+        fake_domains_file = tmp_path / "nonexistent" / "domains.json"
+        with (
+            patch(
+                "imas_codex.core.physics_categorization.DOMAINS_FILE",
+                fake_domains_file,
+            ),
+            patch(
+                "imas_codex.core.physics_categorization.ResourcePathAccessor",
+                return_value=mock_accessor,
+            ),
         ):
             _load_physics_mappings.cache_clear()
             result = _load_physics_mappings()
 
         assert result == {}
+
+    def test_load_mappings_from_definitions_first(self, tmp_path):
+        """Test that definitions file is loaded before resources."""
+        # Create definitions file with version-keyed structure
+        definitions_data = {
+            "4.1.0": {
+                "mappings": {
+                    "equilibrium": "equilibrium",
+                    "core_profiles": "transport",
+                }
+            }
+        }
+        definitions_file = tmp_path / "definitions" / "domains.json"
+        definitions_file.parent.mkdir(parents=True)
+        with open(definitions_file, "w") as f:
+            json.dump(definitions_data, f)
+
+        # Create resources file with different data (should not be loaded)
+        resources_data = {
+            "mappings": {
+                "equilibrium": "general",
+                "wall": "engineering",
+            }
+        }
+        mock_accessor = MagicMock()
+        schemas_dir = tmp_path / "schemas"
+        schemas_dir.mkdir()
+        mock_accessor.schemas_dir = schemas_dir
+        mapping_path = schemas_dir / "physics_domains.json"
+        with open(mapping_path, "w") as f:
+            json.dump(resources_data, f)
+
+        with (
+            patch(
+                "imas_codex.core.physics_categorization.DOMAINS_FILE",
+                definitions_file,
+            ),
+            patch(
+                "imas_codex.core.physics_categorization.ResourcePathAccessor",
+                return_value=mock_accessor,
+            ),
+            patch(
+                "imas_codex.core.physics_categorization.dd_version",
+                "4.1.0",
+            ),
+        ):
+            _load_physics_mappings.cache_clear()
+            result = _load_physics_mappings()
+
+        # Should load from definitions, not resources
+        assert result == definitions_data["4.1.0"]["mappings"]
+        assert result["equilibrium"] == "equilibrium"
+        assert "wall" not in result
 
 
 class TestPhysicsDomainCategorizer:

@@ -9,47 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-class PhysicsDomain(str, Enum):
-    """Physics domains in IMAS with comprehensive categorization."""
-
-    # Core plasma physics domains
-    EQUILIBRIUM = "equilibrium"
-    TRANSPORT = "transport"
-    MHD = "mhd"
-    TURBULENCE = "turbulence"
-
-    # Heating and current drive
-    HEATING = "heating"
-    CURRENT_DRIVE = "current_drive"
-
-    # Plasma-material interactions
-    WALL = "wall"
-    DIVERTOR = "divertor"
-    EDGE_PHYSICS = "edge_physics"
-
-    # Diagnostics and measurements
-    PARTICLE_DIAGNOSTICS = "particle_diagnostics"
-    ELECTROMAGNETIC_DIAGNOSTICS = "electromagnetic_diagnostics"
-    RADIATION_DIAGNOSTICS = "radiation_diagnostics"
-    MAGNETIC_DIAGNOSTICS = "magnetic_diagnostics"
-    MECHANICAL_DIAGNOSTICS = "mechanical_diagnostics"
-
-    # Control and operation
-    CONTROL = "control"
-    OPERATIONAL = "operational"
-
-    # System components
-    COILS = "coils"
-    STRUCTURE = "structure"
-    SYSTEMS = "systems"
-
-    # Data and workflow
-    DATA_MANAGEMENT = "data_management"
-    WORKFLOW = "workflow"
-
-    # Fallback
-    GENERAL = "general"
+# Import generated enum from LinkML schema
+from imas_codex.core.physics_domain import PhysicsDomain
 
 
 class DataLifecycle(str, Enum):

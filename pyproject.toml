@@ -62,6 +62,8 @@ dependencies = [
     "sentence-transformers>=5.0.0",
     "huggingface_hub[hf_xet]>=0.20.0",
     "rapidfuzz>=3.0.0",
+    "linkml>=1.9.3",
+    "linkml-runtime>=1.9.5",
 ]
 
 [project.optional-dependencies]
@@ -115,6 +117,7 @@ build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
+gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 
 [tool.hatch.version]
 source = "vcs"
