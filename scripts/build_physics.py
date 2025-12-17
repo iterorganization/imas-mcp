@@ -20,10 +20,11 @@ from pathlib import Path
 
 import click
 from dotenv import load_dotenv
+from linkml_runtime.utils.schemaview import SchemaView
 
 from imas_codex import dd_version
 from imas_codex.core.data_model import PhysicsDomain
-from imas_codex.definitions.physics import DOMAINS_FILE
+from imas_codex.definitions.physics import DOMAINS_FILE, DOMAINS_SCHEMA
 from imas_codex.embeddings.openrouter_client import OpenRouterClient
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.settings import get_language_model
@@ -57,6 +58,24 @@ def load_ids_catalog() -> dict:
 def get_available_domains() -> list[str]:
     """Get list of available physics domain values."""
     return [domain.value for domain in PhysicsDomain]
+
+
+def get_domain_descriptions() -> dict[str, str]:
+    """Get domain descriptions from the LinkML schema.
+
+    Returns:
+        Dictionary mapping domain values to their descriptions.
+    """
+    sv = SchemaView(str(DOMAINS_SCHEMA))
+    enum_def = sv.get_enum("PhysicsDomain")
+    if not enum_def:
+        # Fallback to simple value list
+        return {domain.value: domain.value for domain in PhysicsDomain}
+
+    descriptions = {}
+    for pv_name, pv in enum_def.permissible_values.items():
+        descriptions[pv_name] = pv.description or pv_name
+    return descriptions
 
 
 def load_cached_mappings() -> dict[str, str]:
@@ -129,12 +148,18 @@ def build_prompt(ids_entries: list[dict], domains: list[str]) -> str:
             }
         )
 
+    # Get domain descriptions from LinkML schema for better categorization
+    domain_descriptions = get_domain_descriptions()
+    domains_with_desc = {
+        domain: domain_descriptions.get(domain, domain) for domain in domains
+    }
+
     return f"""You are an expert in fusion plasma physics and the IMAS (Integrated Modelling & Analysis Suite) data dictionary.
 
 Classify each IDS (Interface Data Structure) into its most appropriate physics domain.
 
-AVAILABLE PHYSICS DOMAINS:
-{json.dumps(domains, indent=2)}
+AVAILABLE PHYSICS DOMAINS (value: description):
+{json.dumps(domains_with_desc, indent=2)}
 
 IDS TO CLASSIFY:
 {json.dumps(ids_data, indent=2)}
@@ -142,8 +167,9 @@ IDS TO CLASSIFY:
 INSTRUCTIONS:
 1. For each IDS, select the SINGLE most appropriate domain from the list above
 2. Consider the IDS name and description to determine the physics area
-3. Use "general" only for IDS that truly don't fit any specific domain
-4. Be consistent - similar IDS should have similar domain assignments
+3. Match IDS to domains based on the domain descriptions provided
+4. Use "general" only for IDS that truly don't fit any specific domain
+5. Be consistent - similar IDS should have similar domain assignments
 
 RESPOND WITH VALID JSON ONLY - no markdown, no explanation:
 {{
@@ -304,9 +330,15 @@ def build_physics(
         logger.info(f"Found {len(ids_entries)} IDS entries")
 
         # Find IDS that need mapping (not in cache)
-        ids_needing_mapping = [
-            entry for entry in ids_entries if entry["name"] not in cached_mappings
-        ]
+        # When --force is used, ignore cache and regenerate all mappings
+        if force:
+            ids_needing_mapping = ids_entries
+            cached_mappings = {}
+            logger.info("Force mode: regenerating all mappings")
+        else:
+            ids_needing_mapping = [
+                entry for entry in ids_entries if entry["name"] not in cached_mappings
+            ]
 
         # Generate mappings
         if fallback:
