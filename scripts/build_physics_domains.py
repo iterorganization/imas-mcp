@@ -24,7 +24,7 @@ from linkml_runtime.utils.schemaview import SchemaView
 
 from imas_codex import dd_version
 from imas_codex.core.data_model import PhysicsDomain
-from imas_codex.definitions.physics import DOMAINS_FILE, DOMAINS_SCHEMA
+from imas_codex.definitions.physics import DOMAINS_SCHEMA
 from imas_codex.embeddings.openrouter_client import OpenRouterClient
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.settings import get_language_model
@@ -33,6 +33,12 @@ from imas_codex.settings import get_language_model
 load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
+
+
+class PhysicsDomainBuildError(Exception):
+    """Raised when physics domain generation fails with all-general fallback."""
+
+    pass
 
 
 def get_physics_mapping_path() -> Path:
@@ -93,66 +99,24 @@ def get_domain_descriptions() -> dict[str, str]:
     return descriptions
 
 
-def load_cached_mappings() -> dict[str, str]:
-    """Load existing mappings from definitions file for current DD version.
+def load_existing_mappings() -> dict[str, str]:
+    """Load existing mappings from resources file if it exists.
 
     Returns:
         Dictionary mapping IDS names to physics domain strings.
-        Returns empty dict if file doesn't exist or no mappings for this version.
+        Returns empty dict if file doesn't exist.
     """
-    if not DOMAINS_FILE.exists():
+    mapping_path = get_physics_mapping_path()
+    if not mapping_path.exists():
         return {}
 
     try:
-        with open(DOMAINS_FILE, encoding="utf-8") as f:
+        with open(mapping_path, encoding="utf-8") as f:
             data = json.load(f)
-        # Get mappings for current DD version
-        version_data = data.get(dd_version, {})
-        return version_data.get("mappings", {})
+        return data.get("ids_domain_mappings", {})
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Failed to load cached mappings: {e}")
+        logger.warning(f"Failed to load existing mappings: {e}")
         return {}
-
-
-def export_to_definitions(mappings: dict[str, str], model: str | None = None) -> None:
-    """Export mappings to definitions file for version control.
-
-    Mappings are keyed by DD version to support multiple versions.
-
-    Args:
-        mappings: Dictionary mapping IDS names to physics domain strings.
-        model: Model that generated the mappings.
-    """
-    # Load existing data to preserve other versions
-    existing_data = {}
-    if DOMAINS_FILE.exists():
-        try:
-            with open(DOMAINS_FILE, encoding="utf-8") as f:
-                existing_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            existing_data = {}
-
-    # Compute domain counts
-    domain_counts = compute_domain_counts(mappings)
-
-    # Update with new version data
-    existing_data[dd_version] = {
-        "domains": domain_counts,
-        "mappings": mappings,
-        "metadata": {
-            "created": datetime.now(UTC).isoformat(),
-            "model": model or get_language_model(),
-            "total_ids": len(mappings),
-        },
-    }
-
-    DOMAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(DOMAINS_FILE, "w", encoding="utf-8") as f:
-        json.dump(existing_data, f, indent=2, sort_keys=True)
-
-    logger.info(
-        f"Exported {len(mappings)} mappings for version {dd_version} to {DOMAINS_FILE}"
-    )
 
 
 def build_prompt(ids_entries: list[dict], domains: list[str]) -> str:
@@ -273,26 +237,54 @@ def generate_fallback_mappings(ids_entries: list[dict]) -> dict[str, str]:
     return {entry["name"]: PhysicsDomain.GENERAL.value for entry in ids_entries}
 
 
+def validate_mappings(mappings: dict[str, str], total_ids: int) -> bool:
+    """Validate that mappings are meaningful (not all general).
+
+    Args:
+        mappings: Dictionary mapping IDS names to domain values.
+        total_ids: Total number of IDS expected.
+
+    Returns:
+        True if mappings are valid, False if all are 'general'.
+    """
+    if not mappings:
+        return False
+
+    general_count = sum(
+        1 for d in mappings.values() if d == PhysicsDomain.GENERAL.value
+    )
+    # Allow up to 10% general or at least 3 general IDS
+    max_general = max(3, int(total_ids * 0.1))
+    return general_count <= max_general
+
+
 def save_physics_mappings(
     mappings: dict[str, str],
     output_path: Path,
     model: str | None = None,
 ) -> None:
-    """Save physics domain mappings to JSON file."""
+    """Save physics domain mappings to JSON file.
+
+    Simplified structure without DD version key since resources
+    are already organized by version.
+    """
+    # Compute domain counts for summary
+    domain_counts = compute_domain_counts(mappings)
+
     output_data = {
         "metadata": {
-            "version": dd_version,
             "created": datetime.now(UTC).isoformat(),
             "description": "LLM-inferred IDS to physics domain mappings",
             "model": model or get_language_model(),
             "total_ids": len(mappings),
         },
-        "mappings": mappings,
+        "physics_domains": domain_counts,
+        "ids_domain_mappings": mappings,
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2)
+        json.dump(output_data, f, indent=2, sort_keys=True)
 
     logger.info(f"Saved physics domain mappings to {output_path}")
 
@@ -312,7 +304,7 @@ def save_physics_mappings(
 @click.option(
     "--fallback",
     is_flag=True,
-    help="Use fallback mappings (all GENERAL) without LLM",
+    help="Use fallback mappings (all GENERAL) without LLM - for testing only",
 )
 def build_physics_domains(
     verbose: bool,
@@ -327,6 +319,9 @@ def build_physics_domains(
     the appropriate domain from IDS names and descriptions using an LLM.
 
     The output is stored in resources/schemas/physics_domains.json.
+
+    Raises PhysicsDomainBuildError if LLM inference fails and all IDS
+    would be assigned to 'general' (unless --fallback is explicitly set).
 
     Examples:
         build-physics-domains                    # Build only if file doesn't exist
@@ -350,19 +345,21 @@ def build_physics_domains(
     try:
         output_path = get_physics_mapping_path()
 
-        # Load existing cached mappings from definitions
-        cached_mappings = load_cached_mappings()
-        if cached_mappings:
-            logger.info(
-                f"Loaded {len(cached_mappings)} cached mappings from definitions"
-            )
+        # Load existing mappings from resources if available
+        existing_mappings = load_existing_mappings()
+        if existing_mappings:
+            logger.info(f"Loaded {len(existing_mappings)} existing mappings")
 
         # Check if we need to build
-        if output_path.exists() and not force and cached_mappings:
-            logger.info(f"Physics domain mappings already exist at {output_path}")
-            click.echo(f"Physics domain mappings already exist at {output_path}")
-            click.echo("Use --force to rebuild")
-            return 0
+        if output_path.exists() and not force:
+            # Validate existing mappings are meaningful
+            if validate_mappings(existing_mappings, len(existing_mappings)):
+                logger.info(f"Physics domain mappings already exist at {output_path}")
+                click.echo(f"Physics domain mappings already exist at {output_path}")
+                click.echo("Use --force to rebuild")
+                return 0
+            else:
+                logger.warning("Existing mappings are all 'general', rebuilding...")
 
         # Load IDS catalog
         logger.info("Loading IDS catalog...")
@@ -374,63 +371,66 @@ def build_physics_domains(
             return 1
 
         logger.info(f"Found {len(ids_entries)} IDS entries")
-
-        # Find IDS that need mapping (not in cache)
-        # When --force is used, ignore cache and regenerate all mappings
-        if force:
-            ids_needing_mapping = ids_entries
-            cached_mappings = {}
-            logger.info("Force mode: regenerating all mappings")
-        else:
-            ids_needing_mapping = [
-                entry for entry in ids_entries if entry["name"] not in cached_mappings
-            ]
+        total_ids = len(ids_entries)
 
         # Generate mappings
         if fallback:
+            # Explicit fallback requested - allow all-general
             mappings = generate_fallback_mappings(ids_entries)
-        elif not ids_needing_mapping and cached_mappings:
-            # All IDS are cached, use cache
-            logger.info("All IDS have cached mappings, using cache")
-            mappings = cached_mappings
+            logger.warning("Using fallback mappings (all GENERAL) as requested")
         else:
-            if ids_needing_mapping:
-                logger.info(f"{len(ids_needing_mapping)} IDS need LLM inference")
             try:
-                # Only infer for unmapped IDS, merge with cache
-                new_mappings = infer_domains_with_llm(
-                    ids_needing_mapping if ids_needing_mapping else ids_entries,
-                    model=model,
-                )
-                mappings = {**cached_mappings, **new_mappings}
+                logger.info("Inferring physics domains via LLM...")
+                mappings = infer_domains_with_llm(ids_entries, model=model)
+
+                # Validate mappings are meaningful
+                if not validate_mappings(mappings, total_ids):
+                    raise PhysicsDomainBuildError(
+                        "LLM inference produced all 'general' mappings. "
+                        "This indicates the LLM failed to classify IDS properly. "
+                        "Check API key and model availability, or use --fallback "
+                        "to explicitly accept all-general mappings."
+                    )
+
+            except PhysicsDomainBuildError:
+                raise
             except Exception as e:
                 logger.error(f"LLM inference failed: {e}")
                 if verbose:
                     logger.exception("Full traceback:")
-                if cached_mappings:
-                    logger.info("Using cached mappings for existing IDS")
-                    mappings = cached_mappings
-                    # Add fallback for unmapped IDS
-                    for entry in ids_needing_mapping:
-                        mappings[entry["name"]] = PhysicsDomain.GENERAL.value
-                else:
-                    logger.info("Falling back to default mappings")
-                    mappings = generate_fallback_mappings(ids_entries)
 
-        # Save to resources (for runtime use)
+                # Check if we have valid existing mappings to fall back to
+                if existing_mappings and validate_mappings(
+                    existing_mappings, total_ids
+                ):
+                    logger.info("Using existing valid mappings as fallback")
+                    mappings = existing_mappings
+                else:
+                    raise PhysicsDomainBuildError(
+                        f"LLM inference failed: {e}. "
+                        "No valid existing mappings available. "
+                        "Set OPENAI_API_KEY and ensure model is accessible, "
+                        "or use --fallback to generate placeholder mappings."
+                    ) from e
+
+        # Save to resources
         save_physics_mappings(mappings, output_path, model=model)
 
-        # Export to definitions (for version control)
-        export_to_definitions(mappings, model=model)
-
+        # Show summary
+        domain_counts = compute_domain_counts(mappings)
         click.echo(f"Built physics domain mappings for {len(mappings)} IDS")
-        click.echo(f"Exported to {DOMAINS_FILE}")
+        click.echo(f"Saved to {output_path}")
+        click.echo(f"Domain distribution: {len(domain_counts)} domains used")
         return 0
 
     except FileNotFoundError as e:
         logger.error(str(e))
         click.echo(f"Error: {e}", err=True)
         click.echo("Run 'build-schemas' first to generate the IDS catalog.", err=True)
+        return 1
+    except PhysicsDomainBuildError as e:
+        logger.error(str(e))
+        click.echo(f"Error: {e}", err=True)
         return 1
     except Exception as e:
         logger.error(f"Error building physics mappings: {e}")
