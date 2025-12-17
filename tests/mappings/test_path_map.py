@@ -1,5 +1,7 @@
 """Tests for mappings/__init__.py module."""
 
+import pytest
+
 from imas_codex.mappings import (
     PathMap,
     PathMapping,
@@ -115,6 +117,85 @@ class TestPathMap:
         path_map = PathMap(mapping_data=mock_data)
 
         assert path_map.is_excluded("excluded/path") is True
+
+    def test_get_mapping_returns_none_when_data_is_none(self):
+        """get_mapping returns None when internal data is None."""
+        path_map = PathMap(mapping_data=None)
+        path_map._loaded = True
+        path_map._data = None
+
+        result = path_map.get_mapping("any/path")
+
+        assert result is None
+
+    def test_get_rename_history_returns_empty_when_data_is_none(self):
+        """get_rename_history returns empty list when internal data is None."""
+        path_map = PathMap(mapping_data=None)
+        path_map._loaded = True
+        path_map._data = None
+
+        result = path_map.get_rename_history("any/path")
+
+        assert result == []
+
+    def test_get_exclusion_reason_returns_none_when_data_is_none(self):
+        """get_exclusion_reason returns None when internal data is None."""
+        path_map = PathMap(mapping_data=None)
+        path_map._loaded = True
+        path_map._data = None
+
+        result = path_map.get_exclusion_reason("any/path")
+
+        assert result is None
+
+    def test_metadata_returns_empty_when_data_is_none(self):
+        """metadata property returns empty dict when data is None."""
+        path_map = PathMap(mapping_data=None)
+        path_map._loaded = True
+        path_map._data = None
+
+        result = path_map.metadata
+
+        assert result == {}
+
+    def test_get_rename_history_empty_for_unknown_path(self):
+        """get_rename_history returns empty list for unknown path."""
+        mock_data = {
+            "old_to_new": {},
+            "new_to_old": {},
+            "metadata": {},
+        }
+        path_map = PathMap(mapping_data=mock_data)
+
+        result = path_map.get_rename_history("unknown/path")
+
+        assert result == []
+
+    def test_get_exclusion_description_fallback(self):
+        """get_exclusion_description falls back to key when not found."""
+        mock_data = {
+            "old_to_new": {},
+            "new_to_old": {},
+            "metadata": {},
+            "exclusion_reasons": {},
+        }
+        path_map = PathMap(mapping_data=mock_data)
+
+        desc = path_map.get_exclusion_description("unknown_reason")
+
+        assert desc == "unknown_reason"
+
+    def test_is_excluded_returns_false_for_non_excluded(self):
+        """is_excluded returns False for non-excluded paths."""
+        mock_data = {
+            "old_to_new": {},
+            "new_to_old": {},
+            "metadata": {},
+            "excluded_paths": {},
+        }
+        path_map = PathMap(mapping_data=mock_data)
+
+        assert path_map.is_excluded("normal/path") is False
 
 
 class TestGetPathMap:
