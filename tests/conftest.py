@@ -36,9 +36,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     """Configure pytest."""
-    config.addinivalue_line(
-        "markers", "api_embedding: mark test as requiring API embedding model"
-    )
+    pass
 
 
 @pytest.fixture(scope="session")
@@ -50,24 +48,12 @@ def embedding_model_name(request):
 @pytest.fixture(scope="session", autouse=True)
 def configure_embedding_model(embedding_model_name):
     """Configure the embedding model environment variable."""
-    # Store original value from .env/shell for tests that need the real API config
-    if "IMAS_CODEX_EMBEDDING_MODEL" in os.environ:
-        os.environ["IMAS_CODEX_ORIGINAL_EMBEDDING_MODEL"] = os.environ[
-            "IMAS_CODEX_EMBEDDING_MODEL"
-        ]
-
     if embedding_model_name:
         os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = embedding_model_name
     else:
-        # If OPENAI_API_KEY is set, use API model; otherwise use local
-        # This allows tests to work with .env configuration
+        # Use local SentenceTransformer model by default
         if not os.environ.get("IMAS_CODEX_EMBEDDING_MODEL"):
-            if os.environ.get("OPENAI_API_KEY"):
-                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = (
-                    "openai/text-embedding-3-small"
-                )
-            else:
-                os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
+            os.environ["IMAS_CODEX_EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 
 
 # Standard test IDS set for consistency across all tests
