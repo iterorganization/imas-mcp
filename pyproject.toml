@@ -117,7 +117,6 @@ build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
-gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 
 [tool.hatch.version]
 source = "vcs"
