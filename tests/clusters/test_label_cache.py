@@ -74,13 +74,18 @@ class TestLabelCache:
         return tmp_path / "test_label_cache.db"
 
     @pytest.fixture
-    def cache(self, cache_file):
-        """Create a LabelCache instance."""
-        return LabelCache(cache_file)
+    def json_file(self, tmp_path):
+        """Create a temporary JSON file path for persistence."""
+        return tmp_path / "test_labels.json"
 
-    def test_initialization_creates_file(self, cache_file):
+    @pytest.fixture
+    def cache(self, cache_file, json_file):
+        """Create a LabelCache instance with isolated file paths."""
+        return LabelCache(cache_file, json_file)
+
+    def test_initialization_creates_file(self, cache_file, json_file):
         """Test that initialization creates the database file."""
-        LabelCache(cache_file)
+        LabelCache(cache_file, json_file)
         assert cache_file.exists()
 
     def test_get_label_nonexistent(self, cache):
@@ -254,14 +259,14 @@ class TestLabelCache:
         assert result.label == "Updated Label"
         assert result.description == "Updated Desc"
 
-    def test_persistence(self, cache_file):
+    def test_persistence(self, cache_file, json_file):
         """Test that labels persist across cache instances."""
         # Create and populate cache
-        cache1 = LabelCache(cache_file)
+        cache1 = LabelCache(cache_file, json_file)
         cache1.set_label(["persist/test"], "Persisted", "Desc", model="test")
 
         # Create new cache instance with same file
-        cache2 = LabelCache(cache_file)
+        cache2 = LabelCache(cache_file, json_file)
         result = cache2.get_label(["persist/test"], model="test")
 
         assert result is not None
@@ -273,8 +278,8 @@ class TestLabelCacheExportImport:
 
     @pytest.fixture
     def cache(self, tmp_path):
-        """Create a LabelCache instance with temp file."""
-        return LabelCache(tmp_path / "test_cache.db")
+        """Create a LabelCache instance with temp files."""
+        return LabelCache(tmp_path / "test_cache.db", tmp_path / "test_labels.json")
 
     @pytest.fixture
     def export_file(self, tmp_path):
@@ -395,7 +400,7 @@ class TestLabelCacheExportImport:
         # Create new empty cache
         import json
 
-        cache2 = LabelCache(tmp_path / "new_cache.db")
+        cache2 = LabelCache(tmp_path / "new_cache.db", tmp_path / "new_labels.json")
         with export_file.open() as f:
             data = json.load(f)
 
