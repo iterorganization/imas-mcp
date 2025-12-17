@@ -1,18 +1,24 @@
 """Fuzzy matching for IMAS path suggestions.
 
 Provides typo correction and path suggestions for invalid or not-found paths.
+Uses rapidfuzz for high-performance fuzzy matching with C++ backend.
 """
 
 import logging
-from difflib import get_close_matches
+
+from rapidfuzz import fuzz, process
 
 logger = logging.getLogger(__name__)
+
+# Score thresholds (rapidfuzz uses 0-100 scale)
+IDS_SCORE_CUTOFF = 60  # 60% similarity for IDS names
+PATH_SCORE_CUTOFF = 50  # 50% similarity for paths
 
 
 class PathFuzzyMatcher:
     """Provides fuzzy matching suggestions for invalid paths.
 
-    Uses difflib.get_close_matches for efficient similarity matching.
+    Uses rapidfuzz for high-performance similarity matching with C++ backend.
     Builds an internal index for faster IDS-scoped lookups.
     """
 
@@ -26,6 +32,11 @@ class PathFuzzyMatcher:
         self.valid_ids_names = valid_ids_names
         self.valid_paths = valid_paths
         self._path_by_ids: dict[str, list[str]] = {}
+        # Pre-compute lowercase versions for faster matching
+        self._ids_lower_map: dict[str, str] = {
+            ids.lower(): ids for ids in valid_ids_names
+        }
+        self._ids_names_lower: list[str] = list(self._ids_lower_map.keys())
         self._build_path_index()
 
     def _build_path_index(self) -> None:
@@ -49,17 +60,17 @@ class PathFuzzyMatcher:
         if not invalid_ids:
             return []
 
-        # Use case-insensitive matching
-        matches = get_close_matches(
+        # Use rapidfuzz for fast fuzzy matching
+        results = process.extract(
             invalid_ids.lower(),
-            [ids.lower() for ids in self.valid_ids_names],
-            n=max_suggestions,
-            cutoff=0.6,
+            self._ids_names_lower,
+            scorer=fuzz.WRatio,
+            limit=max_suggestions,
+            score_cutoff=IDS_SCORE_CUTOFF,
         )
 
         # Return original case versions
-        ids_lower_map = {ids.lower(): ids for ids in self.valid_ids_names}
-        return [ids_lower_map[m] for m in matches if m in ids_lower_map]
+        return [self._ids_lower_map[match[0]] for match in results]
 
     def suggest_paths(self, invalid_path: str, max_suggestions: int = 3) -> list[str]:
         """Suggest valid paths for a typo or partial path.
@@ -88,16 +99,26 @@ class PathFuzzyMatcher:
                     # Try to find paths with the corrected IDS
                     corrected_path = "/".join([corrected_ids] + parts[1:])
                     candidates = self._path_by_ids[corrected_ids]
-                    return get_close_matches(
-                        corrected_path, candidates, n=max_suggestions, cutoff=0.5
+                    results = process.extract(
+                        corrected_path,
+                        candidates,
+                        scorer=fuzz.WRatio,
+                        limit=max_suggestions,
+                        score_cutoff=PATH_SCORE_CUTOFF,
                     )
+                    return [match[0] for match in results]
             return []
 
         # IDS is valid, search within that IDS for better performance
         candidates = self._path_by_ids.get(ids_name, self.valid_paths)
-        return get_close_matches(
-            invalid_path, candidates, n=max_suggestions, cutoff=0.5
+        results = process.extract(
+            invalid_path,
+            candidates,
+            scorer=fuzz.WRatio,
+            limit=max_suggestions,
+            score_cutoff=PATH_SCORE_CUTOFF,
         )
+        return [match[0] for match in results]
 
     def get_suggestion_for_path(self, path: str) -> str | None:
         """Get a single best suggestion for a path, formatted as hint.

@@ -292,6 +292,12 @@ class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
         default=None, description="Error message if query was invalid"
     )
 
+    # Confidence warning for low-quality search results
+    confidence_warning: str | None = Field(
+        default=None,
+        description="Warning when search results have low relevance scores",
+    )
+
 
 class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
     """Overview tool response with physics aggregation."""

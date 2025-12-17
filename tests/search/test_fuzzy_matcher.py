@@ -1,4 +1,7 @@
-"""Tests for fuzzy path matching."""
+"""Tests for fuzzy path matching.
+
+Uses rapidfuzz for high-performance fuzzy matching.
+"""
 
 import pytest
 
