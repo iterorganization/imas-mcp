@@ -61,12 +61,12 @@ dependencies = [
     "psutil>=6.1.1",
     "imas-python>=2.0.1",
     "requests>=2.25.0",
+    "sentence-transformers>=5.0.0",
+    "huggingface_hub[hf_xet]>=0.20.0",
 ]
 
 [project.optional-dependencies]
-transformers = ["sentence-transformers>=5.0.0"]
 test = [
-    "imas-codex[transformers]",  # Tests require embedding models
     "pytest>=8.3.5,<9.0.0",
     "pytest-cov>=6.1.1,<7.0.0",
     "pytest-asyncio>=0.21.0,<1.0.0",
@@ -134,8 +134,7 @@ imas-dd-version = ""
 
 # Embedding model configuration
 [tool.imas-codex]
-imas-embedding-model = "openai/text-embedding-3-large"
-docs-embedding-model = "openai/text-embedding-3-small"
+imas-embedding-model = "all-MiniLM-L6-v2"
 imas-language-model = "google/gemini-3-pro-preview"
 
 [tool.hatch.envs.test]

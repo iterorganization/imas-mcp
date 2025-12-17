@@ -6,12 +6,7 @@
     },
     "imas-codex": {
       "command": "uv",
-      "args": [
-        "run",
-        "imas-codex",
-        "--transport",
-        "stdio"
-      ],
+      "args": ["run", "imas-codex", "--transport", "stdio"],
       "env": {
         "DOCS_SERVER_URL": "http://localhost:6280"
       }
