@@ -104,12 +104,13 @@ export IMAS_CODEX_EMBEDDING_MODEL="all-MiniLM-L6-v2"
 
 Control which IMAS paths are indexed and searchable. These settings affect schema generation, embeddings, and semantic search:
 
-| Setting | pyproject.toml | Environment Variable | Default | Description |
-|---------|----------------|---------------------|---------|-------------|
-| Include GGD | `include-ggd` | `IMAS_CODEX_INCLUDE_GGD` | `true` | Include Grid Geometry Description paths |
+| Setting              | pyproject.toml         | Environment Variable              | Default | Description                                                             |
+| -------------------- | ---------------------- | --------------------------------- | ------- | ----------------------------------------------------------------------- |
+| Include GGD          | `include-ggd`          | `IMAS_CODEX_INCLUDE_GGD`          | `true`  | Include Grid Geometry Description paths                                 |
 | Include Error Fields | `include-error-fields` | `IMAS_CODEX_INCLUDE_ERROR_FIELDS` | `false` | Include uncertainty bound fields (`_error_upper`, `_error_lower`, etc.) |
 
 Example pyproject.toml configuration:
+
 ```toml
 [tool.imas-codex]
 include-ggd = true
@@ -117,6 +118,7 @@ include-error-fields = false
 ```
 
 Environment variable overrides:
+
 ```bash
 export IMAS_CODEX_INCLUDE_GGD=false     # Exclude GGD paths
 export IMAS_CODEX_INCLUDE_ERROR_FIELDS=true  # Include error fields
@@ -214,14 +216,14 @@ Launch behavior:
 
 Resource tuning (export before client starts):
 
-| Variable                   | Purpose                                  | Default         |
-| -------------------------- | ---------------------------------------- | --------------- |
-| `IMAS_CODEX_SLURM_TIME`      | Walltime                                 | `08:00:00`      |
-| `IMAS_CODEX_SLURM_CPUS`      | CPUs per task                            | `1`             |
-| `IMAS_CODEX_SLURM_MEM`       | Memory (e.g. `4G`)                       | Slurm default   |
-| `IMAS_CODEX_SLURM_PARTITION` | Partition                                | Cluster default |
-| `IMAS_CODEX_SLURM_ACCOUNT`   | Account/project                          | User default    |
-| `IMAS_CODEX_SLURM_EXTRA`     | Extra raw `srun` flags                   | (empty)         |
+| Variable                     | Purpose                                    | Default         |
+| ---------------------------- | ------------------------------------------ | --------------- |
+| `IMAS_CODEX_SLURM_TIME`      | Walltime                                   | `08:00:00`      |
+| `IMAS_CODEX_SLURM_CPUS`      | CPUs per task                              | `1`             |
+| `IMAS_CODEX_SLURM_MEM`       | Memory (e.g. `4G`)                         | Slurm default   |
+| `IMAS_CODEX_SLURM_PARTITION` | Partition                                  | Cluster default |
+| `IMAS_CODEX_SLURM_ACCOUNT`   | Account/project                            | User default    |
+| `IMAS_CODEX_SLURM_EXTRA`     | Extra raw `srun` flags                     | (empty)         |
 | `IMAS_CODEX_USE_ENTRYPOINT`  | Use `imas-codex` entrypoint vs `python -m` | `0`             |
 
 Example:
