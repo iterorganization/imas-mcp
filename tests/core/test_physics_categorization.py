@@ -176,10 +176,10 @@ class TestPhysicsDomainCategorizer:
         cat = PhysicsDomainCategorizer()
         cat._mappings = {
             "core_profiles": "transport",
-            "equilibrium": "mhd",
-            "wall": "wall",
-            "edge_profiles": "edge_physics",
-            "waves": "heating",
+            "equilibrium": "magnetohydrodynamics",
+            "wall": "plasma_wall_interactions",
+            "edge_profiles": "edge_plasma_physics",
+            "waves": "auxiliary_heating",
         }
         return cat
 
@@ -202,10 +202,10 @@ class TestPhysicsDomainCategorizer:
         assert result == PhysicsDomain.TRANSPORT
 
         result = categorizer.get_domain_for_ids("equilibrium")
-        assert result == PhysicsDomain.MHD
+        assert result == PhysicsDomain.MAGNETOHYDRODYNAMICS
 
         result = categorizer.get_domain_for_ids("wall")
-        assert result == PhysicsDomain.WALL
+        assert result == PhysicsDomain.PLASMA_WALL_INTERACTIONS
 
     def test_get_domain_for_ids_case_insensitive(self, categorizer):
         """Test that IDS name lookup is case-insensitive."""
@@ -240,8 +240,8 @@ class TestPhysicsDomainCategorizer:
         result = categorizer.analyze_domain_distribution(ids_list)
 
         assert result[PhysicsDomain.TRANSPORT] == 2
-        assert result[PhysicsDomain.MHD] == 1
-        assert result[PhysicsDomain.WALL] == 1
+        assert result[PhysicsDomain.MAGNETOHYDRODYNAMICS] == 1
+        assert result[PhysicsDomain.PLASMA_WALL_INTERACTIONS] == 1
         assert result[PhysicsDomain.GENERAL] == 1
 
     def test_analyze_domain_distribution_empty(self, categorizer):
@@ -255,8 +255,8 @@ class TestPhysicsDomainCategorizer:
 
         assert isinstance(result, dict)
         assert result["core_profiles"] == PhysicsDomain.TRANSPORT
-        assert result["equilibrium"] == PhysicsDomain.MHD
-        assert result["wall"] == PhysicsDomain.WALL
+        assert result["equilibrium"] == PhysicsDomain.MAGNETOHYDRODYNAMICS
+        assert result["wall"] == PhysicsDomain.PLASMA_WALL_INTERACTIONS
 
     def test_get_all_mappings_with_invalid(self, categorizer):
         """Test get_all_mappings handles invalid domain strings."""
@@ -271,12 +271,12 @@ class TestPhysicsDomainCategorizer:
         result = categorizer.get_ids_for_domain(PhysicsDomain.TRANSPORT)
         assert "core_profiles" in result
 
-        result = categorizer.get_ids_for_domain(PhysicsDomain.MHD)
+        result = categorizer.get_ids_for_domain(PhysicsDomain.MAGNETOHYDRODYNAMICS)
         assert "equilibrium" in result
 
     def test_get_ids_for_domain_empty(self, categorizer):
         """Test getting IDS for domain with no matches."""
-        result = categorizer.get_ids_for_domain(PhysicsDomain.COILS)
+        result = categorizer.get_ids_for_domain(PhysicsDomain.MAGNETIC_FIELD_SYSTEMS)
         assert result == []
 
 
