@@ -60,23 +60,25 @@ class LabelCache:
     - Persistence across different clustering runs
     """
 
-    def __init__(self, cache_file: Path | None = None):
+    def __init__(self, cache_file: Path | None = None, json_file: Path | None = None):
         """Initialize the label cache.
 
         Args:
             cache_file: Path to SQLite database. If None, uses default location.
+            json_file: Path to JSON file for persistence. If None, uses LABELS_FILE.
         """
         if cache_file is None:
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
             cache_file = path_accessor.clusters_dir / "label_cache.db"
 
         self.cache_file = cache_file
+        self.json_file = json_file if json_file is not None else LABELS_FILE
         self._ensure_schema()
         self._seed_from_definitions()
 
     def _seed_from_definitions(self) -> None:
         """Seed cache from definitions file if cache is empty."""
-        if not LABELS_FILE.exists():
+        if not self.json_file.exists():
             return
 
         with self._get_connection() as conn:
@@ -85,7 +87,7 @@ class LabelCache:
                 return  # Cache already populated
 
         try:
-            with LABELS_FILE.open() as f:
+            with self.json_file.open() as f:
                 data = json.load(f)
 
             if not data:
@@ -121,6 +123,45 @@ class LabelCache:
                 CREATE INDEX IF NOT EXISTS idx_model ON labels(model)
             """)
             conn.commit()
+
+    def _append_to_json(
+        self,
+        path_hash: str,
+        label: str,
+        description: str,
+        model: str,
+        created_at: str,
+        paths: list[str],
+    ) -> None:
+        """Append a single label entry to the JSON definitions file.
+
+        This enables incremental persistence for version control.
+        """
+        try:
+            # Load existing data
+            existing: dict = {}
+            if self.json_file.exists():
+                with self.json_file.open() as f:
+                    existing = json.load(f)
+
+            # Add/update entry
+            existing[path_hash] = {
+                "label": label,
+                "description": description,
+                "model": model,
+                "created_at": created_at,
+                "paths": paths,
+            }
+
+            # Write atomically
+            self.json_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp_file = self.json_file.with_suffix(".json.tmp")
+            with tmp_file.open("w") as f:
+                json.dump(existing, f, indent=2, sort_keys=True)
+            tmp_file.rename(self.json_file)
+
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to append label to JSON: {e}")
 
     def get_label(
         self, paths: list[str], model: str | None = None
@@ -193,6 +234,11 @@ class LabelCache:
             )
             conn.commit()
 
+        # Persist to JSON for version control
+        self._append_to_json(
+            path_hash, label, description, model, created_at, sorted(paths)
+        )
+
         logger.debug(f"Cached label for cluster {path_hash}: {label}")
         return path_hash
 
@@ -245,6 +291,7 @@ class LabelCache:
         model = model or get_language_model()
         created_at = datetime.now().isoformat()
         count = 0
+        new_entries: list[tuple[str, str, str, str, str, list[str]]] = []
 
         with self._get_connection() as conn:
             for paths, label, description in labels:
@@ -259,9 +306,16 @@ class LabelCache:
                     """,
                     (path_hash, label, description, model, created_at, paths_json),
                 )
+                new_entries.append(
+                    (path_hash, label, description, model, created_at, sorted(paths))
+                )
                 count += 1
 
             conn.commit()
+
+        # Persist all new entries to JSON for version control
+        for entry in new_entries:
+            self._append_to_json(*entry)
 
         logger.info(f"Cached {count} labels")
         return count
@@ -316,12 +370,12 @@ class LabelCache:
         One entry per hash (latest wins if duplicates exist).
 
         Args:
-            output_file: Optional path to write JSON. If None, uses LABELS_FILE.
+            output_file: Optional path to write JSON. If None, uses self.json_file.
 
         Returns:
             Dict of labels keyed by path_hash
         """
-        output_file = output_file or LABELS_FILE
+        output_file = output_file or self.json_file
 
         # Load existing labels to merge with
         existing: dict = {}
