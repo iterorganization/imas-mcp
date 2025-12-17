@@ -484,3 +484,40 @@ class TestEncoderAPIModel:
 
                 mock_local.assert_called_once()
                 assert encoder.config.use_api_embeddings is False
+
+
+@pytest.mark.slow
+def test_encoder_embed_texts_basic(monkeypatch):
+    """Integration test: embed texts with API embeddings."""
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    config = EncoderConfig(batch_size=8, use_rich=False)
+    encoder = Encoder(config)
+    texts = ["alpha", "beta", "gamma"]
+    vecs = encoder.embed_texts(texts)
+    assert isinstance(vecs, np.ndarray)
+    assert vecs.shape[0] == len(texts)
+    assert vecs.shape[1] > 0
+
+
+@pytest.mark.slow
+def test_encoder_build_document_embeddings_cache_integration(tmp_path, monkeypatch):
+    """Integration test: build and cache embeddings with API."""
+    monkeypatch.setattr(EncoderConfig, "cache_dir", "embeddings_test")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    config = EncoderConfig(batch_size=16, use_rich=False, enable_cache=True)
+    encoder = Encoder(config)
+    texts = [f"text {i}" for i in range(10)]
+    ids = [f"id_{i}" for i in range(10)]
+    cache_key = config.generate_cache_key()
+
+    emb1, ids1, was_cached1 = encoder.build_document_embeddings(
+        texts=texts, identifiers=ids, cache_key=cache_key
+    )
+    assert emb1.shape[0] == len(texts)
+
+    emb2, ids2, was_cached2 = encoder.build_document_embeddings(
+        texts=texts, identifiers=ids, cache_key=cache_key
+    )
+    assert was_cached2
+    assert np.array_equal(emb1, emb2)
+    assert ids1 == ids2
