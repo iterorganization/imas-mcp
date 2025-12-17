@@ -76,27 +76,6 @@ def get_imas_embedding_model() -> str:
     return "all-MiniLM-L6-v2"
 
 
-def get_docs_embedding_model() -> str:
-    """Get the docs server embedding model name.
-
-    Priority:
-        1. DOCS_MCP_EMBEDDING_MODEL environment variable
-        2. pyproject.toml [tool.imas-codex] docs-embedding-model
-        3. Fallback default: openai/text-embedding-3-small
-
-    Returns:
-        Model name string.
-    """
-    if env_model := os.getenv("DOCS_MCP_EMBEDDING_MODEL"):
-        return env_model
-
-    settings = _load_pyproject_settings()
-    if model := settings.get("docs-embedding-model"):
-        return model
-
-    return "openai/text-embedding-3-small"
-
-
 def get_language_model() -> str:
     """Get the LLM model for IMAS tasks (labeling, etc).
 
@@ -193,7 +172,6 @@ def get_include_error_fields() -> bool:
 
 # Computed defaults (for use in module-level constants)
 IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
-DOCS_MCP_EMBEDDING_MODEL = get_docs_embedding_model()
 IMAS_CODEX_LANGUAGE_MODEL = get_language_model()
 LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()

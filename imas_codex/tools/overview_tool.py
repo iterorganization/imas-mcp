@@ -105,7 +105,6 @@ class OverviewTool(BaseTool):
         # We need to scan all tool classes for @mcp_tool decorated methods
         from imas_codex.tools import (
             ClustersTool,
-            DocsTool,
             IdentifiersTool,
             ListTool,
             OverviewTool,
@@ -120,7 +119,6 @@ class OverviewTool(BaseTool):
             OverviewTool,
             IdentifiersTool,
             ClustersTool,
-            DocsTool,
         ]
 
         tool_names = []
@@ -257,7 +255,6 @@ class OverviewTool(BaseTool):
             [
                 "🔗 Use get_imas_identifiers() to browse available enumerations",
                 "🌐 Use search_imas_clusters() to find semantically related paths",
-                "📚 Use search_imas_docs() to search IMAS documentation",
             ]
         )
 
@@ -469,8 +466,6 @@ class OverviewTool(BaseTool):
                     "check_imas_paths - Fast batch validation of IMAS paths",
                     "search_imas_clusters - Find semantically related path clusters",
                     "get_imas_identifiers - Browse identifier schemas and enumerations",
-                    "list_imas_docs - List available documentation libraries",
-                    "search_imas_docs - Search documentation content",
                 ],
                 "getting_started": recommendations,
                 "catalog_focus": "This tool serves the IDS catalog - use search_imas_clusters() and get_imas_identifiers() for specialized searches",

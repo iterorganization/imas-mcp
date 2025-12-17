@@ -8,11 +8,9 @@ from fastmcp import FastMCP
 
 from imas_codex.providers import MCPProvider
 from imas_codex.search.document_store import DocumentStore
-from imas_codex.services.docs_server_manager import DocsServerManager
 
 from .base import BaseTool
 from .clusters_tool import ClustersTool
-from .docs_tool import DocsTool
 from .identifiers_tool import IdentifiersTool
 from .list_tool import ListTool
 from .overview_tool import OverviewTool
@@ -29,14 +27,12 @@ class Tools(MCPProvider):
     def __init__(
         self,
         ids_set: set[str] | None = None,
-        docs_manager: DocsServerManager | None = None,
     ):
         """Initialize the IMAS tools provider.
 
         Args:
             ids_set: Optional set of IDS names to limit processing to.
                     If None, will process all available IDS.
-            docs_manager: Optional shared docs server manager for documentation tools.
         """
         self.ids_set = ids_set
 
@@ -51,13 +47,6 @@ class Tools(MCPProvider):
         self.clusters_tool = ClustersTool(self.document_store)
         self.identifiers_tool = IdentifiersTool(self.document_store)
 
-        # Initialize docs tool with injected docs manager
-        if docs_manager is None:
-            from imas_codex.services.docs_server_manager import DocsServerManager
-
-            docs_manager = DocsServerManager()
-        self.docs_tool = DocsTool(docs_manager)
-
         # Store tool instances for dynamic discovery
         self._tool_instances = [
             self.search_tool,
@@ -66,7 +55,6 @@ class Tools(MCPProvider):
             self.overview_tool,
             self.clusters_tool,
             self.identifiers_tool,
-            self.docs_tool,
         ]
 
     @property
@@ -128,15 +116,6 @@ class Tools(MCPProvider):
         """Delegate to clusters tool."""
         return await self.clusters_tool.search_imas_clusters(*args, **kwargs)
 
-    # Documentation search delegation methods
-    async def search_imas_docs(self, *args, **kwargs):
-        """Delegate to docs tool."""
-        return await self.docs_tool.search_imas_docs(*args, **kwargs)
-
-    async def list_imas_docs(self, *args, **kwargs):
-        """Delegate to docs tool."""
-        return await self.docs_tool.list_imas_docs(*args, **kwargs)
-
 
 __all__ = [
     "BaseTool",
@@ -146,6 +125,5 @@ __all__ = [
     "OverviewTool",
     "ClustersTool",
     "IdentifiersTool",
-    "DocsTool",
     "Tools",
 ]

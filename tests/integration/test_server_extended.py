@@ -32,8 +32,3 @@ class TestServerExtended:
         """Server works as async context manager."""
         async with server:
             assert server is not None
-
-    def test_setup_signal_handlers_does_not_raise(self, server):
-        """setup_signal_handlers completes without error."""
-        # Should not raise
-        server.setup_signal_handlers()

@@ -353,11 +353,9 @@ def mcp_test_context():
             "check_imas_paths",
             "fetch_imas_paths",
             "get_imas_overview",
-            "list_imas_docs",
             "get_imas_identifiers",
             "list_imas_paths",
             "search_imas_clusters",
-            "search_imas_docs",
             "search_imas_paths",
         ],
     }
