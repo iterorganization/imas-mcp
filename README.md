@@ -74,50 +74,29 @@ Placeholder: clarify what "op" refers to (e.g. OpenAI, Operator) to add tailored
 Install with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# Standard installation (requires API key for embeddings)
+# Standard installation (includes sentence-transformers)
 uv tool install imas-codex
 
-# Install with local embedding support (includes sentence-transformers)
-uv tool install "imas-codex[transformers]"
-
-# Add to a project env with transformers support
-uv add "imas-codex[transformers]"
+# Add to a project env
+uv add imas-codex
 ```
 
 #### Embedding Configuration
 
-The IMAS Codex server supports two modes for generating embeddings:
-
-1. **API-based embeddings** (default): Uses remote embedding APIs via OpenRouter
-
-   - Requires `OPENAI_API_KEY` and `OPENAI_BASE_URL` environment variables
-   - No local dependencies needed
-   - Example model: `openai/text-embedding-3-small`
-
-2. **Local embeddings**: Uses sentence-transformers library
-   - Install with `[transformers]` extra: `pip install imas-codex[transformers]`
-   - Runs models locally without API calls
-   - Example model: `all-MiniLM-L6-v2` (fallback default)
+The IMAS Codex server uses sentence-transformers for generating embeddings:
 
 **Configuration:**
 
-Embedding model defaults are configured in `pyproject.toml` under `[tool.imas-codex]`:
+The default embedding model is configured in `pyproject.toml` under `[tool.imas-codex]`:
 
 ```toml
 [tool.imas-codex]
-imas-embedding-model = "openai/text-embedding-3-large"  # For DD embeddings
-docs-embedding-model = "openai/text-embedding-3-small"  # For documentation
+imas-embedding-model = "all-MiniLM-L6-v2"  # For DD embeddings
 ```
 
 Environment variables override pyproject.toml settings:
 
 ```bash
-# API-based (requires API key)
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
-export IMAS_CODEX_EMBEDDING_MODEL="openai/text-embedding-3-small"
-
-# Local transformers (requires [transformers] extra)
 export IMAS_CODEX_EMBEDDING_MODEL="all-MiniLM-L6-v2"
 ```
 
@@ -145,18 +124,7 @@ export IMAS_CODEX_INCLUDE_ERROR_FIELDS=true  # Include error fields
 
 **Error Handling:**
 
-If you attempt to use local embeddings without the `[transformers]` extra installed, you'll see:
-
-```
-ImportError: sentence-transformers is required for local embedding models but is not installed.
-
-To fix this, either:
-1. Install with transformers support: pip install imas-codex[transformers]
-2. Set an API key to use remote embeddings:
-   - Set OPENAI_API_KEY environment variable
-   - Set OPENAI_BASE_URL environment variable (e.g., https://openrouter.ai/api/v1)
-   - Set IMAS_CODEX_EMBEDDING_MODEL to an API model (e.g., openai/text-embedding-3-small)
-```
+If model loading fails, the system will fall back to the default `all-MiniLM-L6-v2` model.
 
 VS Code:
 

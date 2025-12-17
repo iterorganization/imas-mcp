@@ -23,8 +23,7 @@
         "IMAS_DD_VERSION": "4.1.0"
       },
       "type": "stdio"
-    },
+    }
   },
   "inputs": []
 }
-

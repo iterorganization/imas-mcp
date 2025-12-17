@@ -484,13 +484,3 @@ class TestEncoderAPIModel:
 
                 mock_local.assert_called_once()
                 assert encoder.config.use_api_embeddings is False
-
-    def test_load_local_model_no_sentence_transformers(self, monkeypatch):
-        """_load_local_model raises ImportError when library missing."""
-        config = EncoderConfig(model_name="all-MiniLM-L6-v2")
-        config.use_api_embeddings = False
-        encoder = Encoder(config=config)
-
-        with patch("imas_codex.embeddings.encoder.HAS_SENTENCE_TRANSFORMERS", False):
-            with pytest.raises(ImportError, match="sentence-transformers"):
-                encoder._load_local_model()

@@ -25,9 +25,9 @@ cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
 - **Package manager**: `uv`
 - **Add dependencies**: `uv add <package>`
 - **Add dev dependencies**: `uv add --dev <package>`
-- **Sync environment**: `uv sync --extra test` (includes transformers and pytest-cov)
+- **Sync environment**: `uv sync --extra test` (includes pytest-cov)
 
-**IMPORTANT for CLI agents in worktrees**: Always run `uv sync --extra test` before running tests or any Python commands. The `[test]` extra includes `sentence-transformers` and `pytest-cov` which are required for the test suite.
+**IMPORTANT for CLI agents in worktrees**: Always run `uv sync --extra test` before running tests or any Python commands. The `[test]` extra includes `pytest-cov` which is required for the test suite.
 
 ### Code Quality
 

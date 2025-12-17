@@ -8,10 +8,6 @@ import pytest
 from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 
-sentence_transformers = pytest.importorskip(
-    "sentence_transformers", reason="Requires sentence-transformers extra"
-)
-
 
 @pytest.mark.slow
 def test_embedding_encoder_build_and_embed(tmp_path: Path):
