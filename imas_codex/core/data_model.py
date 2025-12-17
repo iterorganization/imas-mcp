@@ -164,10 +164,11 @@ class CatalogMetadata(BaseModel):
     generation_date: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat() + "Z"
     )
-    total_ids: int
-    total_leaf_nodes: int
+    total_ids: int = 0  # For IDS catalog: total IDS count; for identifier catalog: IDS using identifiers
+    total_leaf_nodes: int = 0
     total_paths: int = 0  # Total number of paths across all IDS
     total_relationships: int = 0  # Added for relationships metadata
+    total_schemas: int = 0  # Total number of identifier schemas
 
 
 class IdsCatalog(BaseModel):

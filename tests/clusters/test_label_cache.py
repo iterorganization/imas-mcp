@@ -266,3 +266,143 @@ class TestLabelCache:
 
         assert result is not None
         assert result.label == "Persisted"
+
+
+class TestLabelCacheExportImport:
+    """Tests for export/import functionality."""
+
+    @pytest.fixture
+    def cache(self, tmp_path):
+        """Create a LabelCache instance with temp file."""
+        return LabelCache(tmp_path / "test_cache.db")
+
+    @pytest.fixture
+    def export_file(self, tmp_path):
+        """Create a temporary export file path."""
+        return tmp_path / "exported_labels.json"
+
+    def test_export_labels_empty(self, cache, export_file):
+        """Test exporting when cache is empty."""
+        result = cache.export_labels(export_file)
+
+        assert result == {}
+        assert export_file.exists()
+
+    def test_export_labels_with_data(self, cache, export_file):
+        """Test exporting labels to JSON."""
+        cache.set_label(["a/b/c", "d/e/f"], "Label 1", "Desc 1", model="test-model")
+        cache.set_label(["x/y/z"], "Label 2", "Desc 2", model="test-model")
+
+        result = cache.export_labels(export_file)
+
+        assert len(result) == 2
+        # Check that all entries have the expected structure
+        for _path_hash, entry in result.items():
+            assert "label" in entry
+            assert "description" in entry
+            assert "model" in entry
+            assert "paths" in entry
+            assert "created_at" in entry
+
+    def test_export_merges_with_existing(self, cache, export_file):
+        """Test that export merges with existing file content."""
+        import json
+
+        # Write existing content
+        existing = {
+            "existing_hash": {
+                "label": "Existing Label",
+                "description": "Existing Desc",
+                "model": "old-model",
+                "created_at": "2024-01-01T00:00:00",
+                "paths": ["old/path"],
+            }
+        }
+        with export_file.open("w") as f:
+            json.dump(existing, f)
+
+        # Add new labels to cache
+        cache.set_label(["new/path"], "New Label", "New Desc", model="new-model")
+
+        result = cache.export_labels(export_file)
+
+        # Should have both old and new
+        assert len(result) == 2
+        assert "existing_hash" in result
+        assert result["existing_hash"]["label"] == "Existing Label"
+
+    def test_import_labels_empty(self, cache):
+        """Test importing empty data."""
+        count = cache.import_labels({})
+        assert count == 0
+
+    def test_import_labels(self, cache):
+        """Test importing labels from dict."""
+        data = {
+            "hash1": {
+                "label": "Imported Label 1",
+                "description": "Imported Desc 1",
+                "model": "import-model",
+                "created_at": "2025-01-01T00:00:00",
+                "paths": ["a/b/c"],
+            },
+            "hash2": {
+                "label": "Imported Label 2",
+                "description": "Imported Desc 2",
+                "model": "import-model",
+                "created_at": "2025-01-01T00:00:00",
+                "paths": ["x/y/z"],
+            },
+        }
+
+        count = cache.import_labels(data)
+
+        assert count == 2
+        stats = cache.get_stats()
+        assert stats["total_labels"] == 2
+
+    def test_import_skips_existing(self, cache):
+        """Test that import skips existing hashes (additive only)."""
+        # Add a label first
+        cache.set_label(["a/b/c"], "Original", "Original Desc", model="original")
+        original_hash = compute_cluster_hash(["a/b/c"])
+
+        # Try to import with same hash
+        data = {
+            original_hash: {
+                "label": "Should Not Override",
+                "description": "Should Not Override",
+                "model": "import-model",
+                "paths": ["a/b/c"],
+            },
+        }
+
+        count = cache.import_labels(data)
+
+        assert count == 0  # Nothing imported, hash already exists
+        result = cache.get_label(["a/b/c"])
+        assert result.label == "Original"  # Original preserved
+
+    def test_export_import_roundtrip(self, cache, export_file, tmp_path):
+        """Test full roundtrip: export from one cache, import to another."""
+        # Populate first cache
+        cache.set_label(["a/b"], "Label A", "Desc A", model="test")
+        cache.set_label(["c/d"], "Label B", "Desc B", model="test")
+
+        # Export
+        cache.export_labels(export_file)
+
+        # Create new empty cache
+        import json
+
+        cache2 = LabelCache(tmp_path / "new_cache.db")
+        with export_file.open() as f:
+            data = json.load(f)
+
+        count = cache2.import_labels(data)
+
+        assert count == 2
+        # Verify labels are accessible
+        result = cache2.get_label(["a/b"])
+        assert result is not None
+        assert result.label == "Label A"

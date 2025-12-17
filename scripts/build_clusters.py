@@ -18,6 +18,7 @@ import sys
 import click
 from dotenv import load_dotenv
 
+from imas_codex.clusters.label_cache import LabelCache
 from imas_codex.core.clusters import Clusters
 from imas_codex.embeddings.config import EncoderConfig
 
@@ -160,6 +161,11 @@ def build_clusters(
 
             logger.info("Clusters built successfully")
             click.echo(f"Built clusters file: {output_file}")
+
+            # Export labels to definitions for version control
+            label_cache = LabelCache()
+            exported = label_cache.export_labels()
+            click.echo(f"Exported {len(exported)} labels to definitions")
 
         else:
             logger.info("Clusters file already exists at %s", output_file)
