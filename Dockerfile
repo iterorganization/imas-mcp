@@ -130,30 +130,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Clusters ready"
 
-## Stage 3: Use pre-scraped documentation (from CI cache)
-FROM python:3.12-slim AS docs-provider
-
-# Documentation already available in build context from CI
-# No copying needed - will be copied directly to final stage
-
-## Stage 4: Final runtime image (assemble from builder + direct docs copy)
+## Stage 3: Final runtime image (assemble from builder)
 FROM python:3.12-slim
-
-# Install Node.js for runtime docs server support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install docs-mcp-server for runtime
-ARG DOCS_MCP_SERVER_VERSION=1.29.0
-RUN npm install -g @arabold/docs-mcp-server@${DOCS_MCP_SERVER_VERSION}
 
 # Copy Python app from builder stage
 COPY --from=builder /bin/uv /bin/
 COPY --from=builder /app /app
-
-# Copy scraped documentation directly from build context (CI artifacts)
-COPY docs-data/ /app/data
 
 # Set working directory
 WORKDIR /app
@@ -165,9 +147,6 @@ ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HATCH_BUILD_NO_HOOKS=true \
-    DOCS_SERVER_URL=http://localhost:6280 \
-    DOCS_MCP_TELEMETRY=false \
-    DOCS_MCP_STORE_PATH=/app/data \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1
 
 # Expose port (only needed for streamable-http transport)

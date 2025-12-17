@@ -16,15 +16,6 @@ class TestSettingsFunctions:
 
         assert result == "test-model"
 
-    def test_get_docs_embedding_model_env_override(self, monkeypatch):
-        """Environment variable overrides docs embedding model setting."""
-        settings._load_pyproject_settings.cache_clear()
-
-        monkeypatch.setenv("DOCS_MCP_EMBEDDING_MODEL", "docs-test-model")
-        result = settings.get_docs_embedding_model()
-
-        assert result == "docs-test-model"
-
     def test_get_language_model_env_override(self, monkeypatch):
         """Environment variable overrides language model setting."""
         settings._load_pyproject_settings.cache_clear()
