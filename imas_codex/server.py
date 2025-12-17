@@ -6,7 +6,7 @@ composition to combine tools and resources from separate providers.
 This architecture enables clean separation of concerns and better maintainability.
 
 The server integrates
-- Tools: 8 core tools for physics-based search and analysis
+- Tools: 7 core tools for physics-based search and analysis
 - Resources: Static JSON schema resources for reference data
 
 Each component is accessible via server.tools and server.resources properties.
@@ -29,7 +29,6 @@ from imas_codex.health import HealthEndpoint
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.resource_provider import Resources
 from imas_codex.search.semantic_search import SemanticSearch as _ServerSemanticSearch
-from imas_codex.services.docs_server_manager import DocsServerManager
 from imas_codex.tools import Tools
 
 # apply nest_asyncio to allow nested event loops
@@ -70,14 +69,12 @@ class Server:
     # Configuration parameters
     ids_set: set[str] | None = None
     use_rich: bool = True
-    start_docs_server: bool = True  # Flag to control docs server startup
 
     # Internal fields
     mcp: FastMCP = field(init=False, repr=False)
     tools: Tools = field(init=False, repr=False)
     resources: Resources = field(init=False, repr=False)
     embeddings: Embeddings = field(init=False, repr=False)
-    docs_manager: DocsServerManager = field(init=False, repr=False)
     started_at: datetime = field(init=False, repr=False)
     _started_monotonic: float = field(init=False, repr=False)
 
@@ -90,11 +87,8 @@ class Server:
         # Validate schemas exist before initialization (fail fast)
         self._validate_schemas_available()
 
-        # Initialize docs manager first
-        self.docs_manager = DocsServerManager()
-
-        # Initialize components with dependency injection
-        self.tools = Tools(ids_set=self.ids_set, docs_manager=self.docs_manager)
+        # Initialize components
+        self.tools = Tools(ids_set=self.ids_set)
         self.resources = Resources(ids_set=self.ids_set)
         # Compose embeddings manager
         self.embeddings = Embeddings(
@@ -112,43 +106,14 @@ class Server:
         self.started_at = datetime.now(UTC)
         self._started_monotonic = time.monotonic()
 
-    def setup_signal_handlers(self):
-        """Setup signal handlers for graceful shutdown including docs server."""
-        if hasattr(self.docs_manager, "setup_signal_handlers"):
-            self.docs_manager.setup_signal_handlers()
-
-    async def cleanup(self):
-        """Clean up resources including docs server."""
-        try:
-            if hasattr(self, "docs_manager"):
-                await self.docs_manager.stop_server()
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
-
-    def __del__(self):
-        """Cleanup when Server instance is destroyed."""
-        try:
-            if hasattr(self, "docs_manager") and hasattr(self.docs_manager, "process"):
-                # Force terminate the docs server process if it exists
-                # We can't await async cleanup in __del__, so just terminate synchronously
-                if self.docs_manager.process is not None:
-                    try:
-                        # Synchronous termination (no await)
-                        self.docs_manager.process.terminate()
-                        logger.debug("Terminated docs server process in __del__")
-                    except Exception as e:
-                        logger.debug(f"Could not terminate docs server in __del__: {e}")
-        except Exception:
-            pass  # Ignore errors during destruction
-
     # Context manager support
     async def __aenter__(self):
         """Context manager entry."""
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit with cleanup."""
-        await self.cleanup()
+        """Context manager exit."""
+        pass
 
     def _register_components(self):
         """Register tools and resources with the MCP server."""

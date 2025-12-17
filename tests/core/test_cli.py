@@ -143,27 +143,3 @@ class TestCLI:
         mock_server_cls.assert_called_once()
         call_kwargs = mock_server_cls.call_args[1]
         assert call_kwargs["ids_set"] == {"core_profiles", "equilibrium"}
-
-    @patch("imas_codex.cli.Server")
-    def test_docs_server_port_option(self, mock_server_cls, runner):
-        """Test --docs-server-port option."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        runner.invoke(main, ["--docs-server-port", "7000"], catch_exceptions=False)
-
-        mock_server_cls.assert_called_once()
-        # Docs manager port should be set
-        assert mock_server.docs_manager.default_port == 7000
-
-    @patch("imas_codex.cli.Server")
-    def test_disable_docs_server_flag(self, mock_server_cls, runner):
-        """Test --disable-docs-server flag."""
-        mock_server = MagicMock()
-        mock_server_cls.return_value = mock_server
-
-        runner.invoke(main, ["--disable-docs-server"], catch_exceptions=False)
-
-        # Docs manager default_port should not be set when disabled
-        # The flag just prevents auto-start
-        mock_server_cls.assert_called_once()
