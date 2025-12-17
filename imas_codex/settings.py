@@ -16,7 +16,7 @@ except ImportError:
 
 @cache
 def _load_pyproject_settings() -> dict[str, str]:
-    """Load settings from pyproject.toml [tool.imas-mcp] section.
+    """Load settings from pyproject.toml [tool.imas-codex] section.
 
     Returns:
         Dictionary of settings from pyproject.toml, empty dict if not found.

@@ -55,7 +55,7 @@ class ImasDataDictionaryAccessor(DataDictionaryAccessor):
         except ImportError as e:
             raise ImportError(
                 "imas-data-dictionary package is required for index building. "
-                "Install with: pip install imas-mcp[build]"
+                "Install with: pip install imas-codex[build]"
             ) from e
 
     def get_xml_tree(self) -> ET.ElementTree:

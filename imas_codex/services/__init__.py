@@ -1,5 +1,5 @@
 """
-IMAS MCP Services Package.
+IMAS Codex Services Package.
 
 Service layer for business logic separation from cross-cutting concerns.
 """

@@ -1,5 +1,5 @@
 """
-Tool Suggestions Module for IMAS MCP Server.
+Tool Suggestions Module for IMAS Codex Server.
 
 This module provides a decorator for adding suggested follow-up tools to MCP tool responses.
 Separate from AI enhancement to maintain clear separation of concerns.

@@ -1,5 +1,5 @@
 """
-IMAS MCP Server - Composable Integrator.
+IMAS Codex Server - Composable Integrator.
 
 This is the principal MCP server for the IMAS data dictionary that uses
 composition to combine tools and resources from separate providers.
@@ -65,7 +65,7 @@ fastmcp_logger.setLevel(logging.WARNING)
 
 @dataclass
 class Server:
-    """IMAS MCP Server - Composable integrator using composition pattern."""
+    """IMAS Codex Server - Composable integrator using composition pattern."""
 
     # Configuration parameters
     ids_set: set[str] | None = None
@@ -106,7 +106,7 @@ class Server:
         # Register components with MCP server
         self._register_components()
 
-        logger.debug("IMAS MCP Server initialized with tools and resources")
+        logger.debug("IMAS Codex Server initialized with tools and resources")
 
         # Capture start times (wall clock + monotonic for stable uptime)
         self.started_at = datetime.now(UTC)
@@ -270,12 +270,12 @@ class Server:
         # For HTTP transport, allow INFO logs for useful debugging information
         if transport == "stdio":
             logger.setLevel(logging.WARNING)
-            logger.debug("Starting IMAS MCP server with stdio transport")
+            logger.debug("Starting IMAS Codex server with stdio transport")
             self.mcp.run(transport=transport)
         elif transport in ["sse", "streamable-http"]:
             logger.setLevel(logging.INFO)
             logger.info(
-                f"Starting IMAS MCP server with {transport} transport on {host}:{port}"
+                f"Starting IMAS Codex server with {transport} transport on {host}:{port}"
             )
             # Attach minimal /health endpoint (same port) for HTTP transports
             try:

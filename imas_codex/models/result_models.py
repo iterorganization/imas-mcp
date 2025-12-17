@@ -1,4 +1,4 @@
-"""Clean, focused Pydantic models for IMAS MCP tool responses."""
+"""Clean, focused Pydantic models for IMAS Codex tool responses."""
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime

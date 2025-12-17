@@ -1,6 +1,6 @@
 # Docker Container Setup
 
-This document describes how to build, run, and deploy the IMAS MCP Server container.
+This document describes how to build, run, and deploy the IMAS Codex Server container.
 
 ## Quick Start
 
@@ -126,7 +126,7 @@ healthcheck:
 docker-compose --profile production up -d
 ```
 
-This will start both the IMAS MCP Server and an Nginx reverse proxy.
+This will start both the IMAS Codex Server and an Nginx reverse proxy.
 
 ### Kubernetes Deployment
 

@@ -1,7 +1,7 @@
 """
-Search engines for IMAS MCP.
+Search engines for IMAS Codex.
 
-This package contains different search engine implementations for the IMAS MCP system.
+This package contains different search engine implementations for the IMAS Codex system.
 Each engine provides a specific search strategy (semantic, lexical, hybrid).
 """
 

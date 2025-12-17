@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI script for adding documentation libraries to the IMAS MCP server.
+CLI script for adding documentation libraries to the IMAS Codex server.
 
 This script provides a simple wrapper around docs-mcp-server with proper
 environment variable loading.
@@ -57,7 +57,7 @@ def add_docs(
     ignore_errors: bool,
 ):
     """
-    Add documentation library to the IMAS MCP server.
+    Add documentation library to the IMAS Codex server.
 
     LIBRARY: Name of the library to add (e.g., 'udunits', 'pandas')
 

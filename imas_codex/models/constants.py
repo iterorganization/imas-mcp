@@ -1,4 +1,4 @@
-"""Constants for IMAS MCP models.
+"""Constants for IMAS Codex models.
 
 This module contains all constant definitions used across search, response, and physics models.
 """

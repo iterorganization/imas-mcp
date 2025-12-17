@@ -325,7 +325,7 @@ class OverviewTool(BaseTool):
 
             # Get MCP server version
             try:
-                version = importlib.metadata.version("imas-mcp")
+                version = importlib.metadata.version("imas-codex")
             except importlib.metadata.PackageNotFoundError:
                 version = "0.0.0"
 

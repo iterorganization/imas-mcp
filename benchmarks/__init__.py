@@ -1,4 +1,4 @@
-"""IMAS MCP performance benchmarking utilities."""
+"""IMAS Codex performance benchmarking utilities."""
 
 from .benchmark_runner import BenchmarkRunner
 

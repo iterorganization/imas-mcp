@@ -1,4 +1,4 @@
-"""Unit handling for IMAS MCP Server."""
+"""Unit handling for IMAS Codex Server."""
 
 import importlib.resources
 from typing import Any

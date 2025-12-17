@@ -1,4 +1,4 @@
-"""IMAS MCP Tools Package.
+"""IMAS Codex Tools Package.
 
 This package contains the Tools implementation split into focused modules.
 Each module handles a specific tool functionality with clean separation of concerns.

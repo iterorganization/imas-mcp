@@ -1,5 +1,5 @@
 """
-Context models for IMAS MCP tool operations.
+Context models for IMAS Codex tool operations.
 
 These models represent shared context components that can be composed
 into tool result models using multiple inheritance.

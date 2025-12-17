@@ -3,7 +3,7 @@ Docs Server Manager for persistent docs-mcp-server process management.
 
 This module provides lifecycle management for a single persistent docs-mcp-server
 process, handling port allocation, health monitoring, and integration with the
-IMAS MCP server architecture.
+IMAS Codex server architecture.
 """
 
 import asyncio
@@ -56,7 +56,7 @@ class DocsServerManager:
     - Port allocation with conflict detection
     - Health monitoring and auto-recovery
     - Library and version discovery for health endpoints
-    - Integration with IMAS MCP server lifecycle
+    - Integration with IMAS Codex server lifecycle
     - Process cleanup utilities for orphaned docs-mcp-server instances
     """
 

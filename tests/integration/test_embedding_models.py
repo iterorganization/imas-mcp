@@ -114,7 +114,7 @@ def test_real_api_embedding():
     # This will fail if keys are invalid
     encoder = Encoder(config)
 
-    text = "This is a test sentence for IMAS MCP embedding verification."
+    text = "This is a test sentence for IMAS Codex embedding verification."
     embedding = encoder.embed_texts([text])
 
     # Verify we didn't fall back to local model

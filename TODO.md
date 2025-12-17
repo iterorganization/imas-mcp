@@ -1,6 +1,6 @@
 # Coverage Improvement Progress
 
-Tracking progress for IMAS MCP coverage improvement plan.
+Tracking progress for IMAS Codex coverage improvement plan.
 
 ## Phase 4: Final Polish (COMPLETED)
 - [x] `tools/overview_tool.py` coverage

@@ -1,6 +1,6 @@
-# IMAS MCP Tools Priority Gap Implementation Prompt
+# IMAS Codex Tools Priority Gap Implementation Prompt
 
-You are an expert Python developer working on the IMAS MCP (Model Context Protocol) tools codebase. Your task is to implement missing functionality based on a priority number from the implementation plan.
+You are an expert Python developer working on the IMAS Codex (Model Context Protocol) tools codebase. Your task is to implement missing functionality based on a priority number from the implementation plan.
 
 ## Input Parameters
 

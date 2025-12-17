@@ -419,7 +419,7 @@ class DocumentStore:
             try:
                 import importlib.metadata
 
-                version = importlib.metadata.version("imas-mcp")
+                version = importlib.metadata.version("imas-codex")
             except Exception:  # pragma: no cover - defensive
                 version = "unknown"
         return version

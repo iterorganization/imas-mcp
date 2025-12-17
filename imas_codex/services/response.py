@@ -20,7 +20,7 @@ from .base import BaseService
 def _get_version() -> str:
     """Get package version with robust fallback."""
     try:
-        version = importlib.metadata.version("imas-mcp")
+        version = importlib.metadata.version("imas-codex")
         if version is not None:
             return version
     except importlib.metadata.PackageNotFoundError:

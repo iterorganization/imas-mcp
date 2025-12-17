@@ -1,5 +1,5 @@
 """
-Base tool functionality for IMAS MCP tools.
+Base tool functionality for IMAS Codex tools.
 
 This module contains common functionality shared across all tool implementations.
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class BaseTool(ABC):
-    """Base class for all IMAS MCP tools with service injection."""
+    """Base class for all IMAS Codex tools with service injection."""
 
     def __init__(self, document_store: DocumentStore | None = None):
         self.logger = logger

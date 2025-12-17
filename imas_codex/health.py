@@ -1,4 +1,4 @@
-"""Health endpoint integration for IMAS MCP server HTTP transports.
+"""Health endpoint integration for IMAS Codex server HTTP transports.
 
 Provides a lightweight `/health` route exposing basic liveness plus
 data dictionary version and document count metrics without introducing
@@ -37,7 +37,7 @@ class HealthEndpoint:
 
     def _get_version(self) -> str:
         try:
-            return importlib.metadata.version("imas-mcp")
+            return importlib.metadata.version("imas-codex")
         except Exception:  # pragma: no cover - defensive
             return "unknown"
 

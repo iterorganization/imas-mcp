@@ -1,6 +1,6 @@
-# IMAS MCP Performance Benchmarks
+# IMAS Codex Performance Benchmarks
 
-This directory contains the performance benchmarking setup for the IMAS MCP server using [ASV (airspeed velocity)](https://asv.readthedocs.io/).
+This directory contains the performance benchmarking setup for the IMAS Codex server using [ASV (airspeed velocity)](https://asv.readthedocs.io/).
 
 ## Key Design Principles
 
