@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 from imas_codex import dd_version
 from imas_codex.core.data_model import PhysicsDomain
+from imas_codex.definitions.physics import DOMAINS_FILE
 from imas_codex.embeddings.openrouter_client import OpenRouterClient
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.settings import get_language_model
@@ -56,6 +57,64 @@ def load_ids_catalog() -> dict:
 def get_available_domains() -> list[str]:
     """Get list of available physics domain values."""
     return [domain.value for domain in PhysicsDomain]
+
+
+def load_cached_mappings() -> dict[str, str]:
+    """Load existing mappings from definitions file for current DD version.
+
+    Returns:
+        Dictionary mapping IDS names to physics domain strings.
+        Returns empty dict if file doesn't exist or no mappings for this version.
+    """
+    if not DOMAINS_FILE.exists():
+        return {}
+
+    try:
+        with open(DOMAINS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        # Get mappings for current DD version
+        version_data = data.get(dd_version, {})
+        return version_data.get("mappings", {})
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to load cached mappings: {e}")
+        return {}
+
+
+def export_to_definitions(mappings: dict[str, str], model: str | None = None) -> None:
+    """Export mappings to definitions file for version control.
+
+    Mappings are keyed by DD version to support multiple versions.
+
+    Args:
+        mappings: Dictionary mapping IDS names to physics domain strings.
+        model: Model that generated the mappings.
+    """
+    # Load existing data to preserve other versions
+    existing_data = {}
+    if DOMAINS_FILE.exists():
+        try:
+            with open(DOMAINS_FILE, encoding="utf-8") as f:
+                existing_data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            existing_data = {}
+
+    # Update with new version data
+    existing_data[dd_version] = {
+        "metadata": {
+            "created": datetime.now(UTC).isoformat(),
+            "model": model or get_language_model(),
+            "total_ids": len(mappings),
+        },
+        "mappings": mappings,
+    }
+
+    DOMAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(DOMAINS_FILE, "w", encoding="utf-8") as f:
+        json.dump(existing_data, f, indent=2, sort_keys=True)
+
+    logger.info(
+        f"Exported {len(mappings)} mappings for version {dd_version} to {DOMAINS_FILE}"
+    )
 
 
 def build_prompt(ids_entries: list[dict], domains: list[str]) -> str:
@@ -219,8 +278,15 @@ def build_physics(
     try:
         output_path = get_physics_mapping_path()
 
+        # Load existing cached mappings from definitions
+        cached_mappings = load_cached_mappings()
+        if cached_mappings:
+            logger.info(
+                f"Loaded {len(cached_mappings)} cached mappings from definitions"
+            )
+
         # Check if we need to build
-        if output_path.exists() and not force:
+        if output_path.exists() and not force and cached_mappings:
             logger.info(f"Physics domain mappings already exist at {output_path}")
             click.echo(f"Physics domain mappings already exist at {output_path}")
             click.echo("Use --force to rebuild")
@@ -237,23 +303,50 @@ def build_physics(
 
         logger.info(f"Found {len(ids_entries)} IDS entries")
 
+        # Find IDS that need mapping (not in cache)
+        ids_needing_mapping = [
+            entry for entry in ids_entries if entry["name"] not in cached_mappings
+        ]
+
         # Generate mappings
         if fallback:
             mappings = generate_fallback_mappings(ids_entries)
+        elif not ids_needing_mapping and cached_mappings:
+            # All IDS are cached, use cache
+            logger.info("All IDS have cached mappings, using cache")
+            mappings = cached_mappings
         else:
+            if ids_needing_mapping:
+                logger.info(f"{len(ids_needing_mapping)} IDS need LLM inference")
             try:
-                mappings = infer_domains_with_llm(ids_entries, model=model)
+                # Only infer for unmapped IDS, merge with cache
+                new_mappings = infer_domains_with_llm(
+                    ids_needing_mapping if ids_needing_mapping else ids_entries,
+                    model=model,
+                )
+                mappings = {**cached_mappings, **new_mappings}
             except Exception as e:
                 logger.error(f"LLM inference failed: {e}")
                 if verbose:
                     logger.exception("Full traceback:")
-                logger.info("Falling back to default mappings")
-                mappings = generate_fallback_mappings(ids_entries)
+                if cached_mappings:
+                    logger.info("Using cached mappings for existing IDS")
+                    mappings = cached_mappings
+                    # Add fallback for unmapped IDS
+                    for entry in ids_needing_mapping:
+                        mappings[entry["name"]] = PhysicsDomain.GENERAL.value
+                else:
+                    logger.info("Falling back to default mappings")
+                    mappings = generate_fallback_mappings(ids_entries)
 
-        # Save mappings
+        # Save to resources (for runtime use)
         save_physics_mappings(mappings, output_path, model=model)
 
+        # Export to definitions (for version control)
+        export_to_definitions(mappings, model=model)
+
         click.echo(f"Built physics domain mappings for {len(mappings)} IDS")
+        click.echo(f"Exported to {DOMAINS_FILE}")
         return 0
 
     except FileNotFoundError as e:
