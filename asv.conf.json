@@ -11,7 +11,7 @@
         "python -c \"import os,subprocess,sys; os.environ['IDS_FILTER']='core_profiles,equilibrium'; outdir=r'{build_cache_dir}'.replace(chr(92), '/'); builddir=r'{build_dir}'.replace(chr(92), '/'); subprocess.run([sys.executable, '-m', 'build', '--outdir', outdir, builddir], check=True)\""
     ],
     "install_command": [
-        "in-dir={env_dir} python -m pip install {wheel_file}[transformers]"
+        "in-dir={env_dir} python -m pip install {wheel_file}"
     ],
     "uninstall_command": [
         "return-code=any python -m pip uninstall -y {project}"
