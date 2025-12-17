@@ -138,10 +138,12 @@ class CustomBuildHook(BuildHookInterface):
             self._trace(f"Building with IMAS DD version: {dd_accessor.get_version()}")
 
         # Build schemas only if they don't exist
+        # IMPORTANT: Always build ALL schemas (ids_set=None), not a filtered subset.
+        # The ids_set is for runtime filtering, not build-time filtering.
         if not schemas_exist:
             self._trace("Building schemas...")
             json_transformer = DataDictionaryTransformer(
-                dd_accessor=dd_accessor, ids_set=ids_set, use_rich=True
+                dd_accessor=dd_accessor, ids_set=None, use_rich=True
             )
             json_transformer.build()
             self._trace("Schemas built")
