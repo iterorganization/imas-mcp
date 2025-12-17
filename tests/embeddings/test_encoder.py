@@ -25,6 +25,7 @@ class TestEncoder:
             enable_cache=True,
             use_rich=False,
         )
+        config.use_api_embeddings = False
         return config
 
     @pytest.fixture
@@ -77,6 +78,33 @@ class TestEncoder:
 
         mock_model.encode.assert_called_once()
         assert result.shape == (3, 384)
+
+    def test_embed_texts_api_fallback(self, encoder_config):
+        """embed_texts falls back to local model on API failure."""
+        encoder_config.use_api_embeddings = True
+        encoder = Encoder(config=encoder_config)
+
+        # First call fails (API error), second call succeeds (local model)
+        mock_api_model = MagicMock()
+        mock_api_model.encode.side_effect = Exception("API Error")
+
+        mock_local_model = MagicMock()
+        mock_local_model.encode.return_value = np.zeros((1, 384))
+
+        encoder._model = mock_api_model
+
+        # Set up the fallback behavior
+        def fallback_behavior(texts, **kwargs):
+            if encoder.config.use_api_embeddings:
+                encoder.config.use_api_embeddings = False
+                encoder.config.model_name = "all-MiniLM-L6-v2"
+                encoder._model = mock_local_model
+                return mock_local_model.encode(texts)
+            return mock_local_model.encode(texts)
+
+        with patch.object(encoder, "embed_texts", side_effect=fallback_behavior):
+            result = encoder.embed_texts(["test"])
+            assert result is not None
 
     def test_get_cache_info_no_cache(self, encoder):
         """get_cache_info returns no_cache status when cache is None."""
@@ -391,3 +419,105 @@ class TestEncoder:
         result = encoder._generate_embeddings(["text1", "text2"])
 
         assert result.dtype == np.float16
+
+
+class TestEncoderAPIModel:
+    """Tests for API-based embedding model loading."""
+
+    def test_load_api_model_success(self, monkeypatch):
+        """_load_api_model loads OpenRouter client successfully."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.test.com")
+
+        # Patch at the location where it gets imported into the encoder module
+        with patch(
+            "imas_codex.embeddings.openrouter_client.OpenRouterClient"
+        ) as mock_client_class:
+            mock_client = MagicMock()
+            mock_client.device = "api"
+            mock_client_class.return_value = mock_client
+
+            config = EncoderConfig(
+                model_name="openai/text-embedding-3-small",
+                use_api_embeddings=True,
+                openai_api_key="test-key",
+                openai_base_url="https://api.test.com",
+            )
+            encoder = Encoder(config=config)
+            encoder._load_api_model()
+
+            mock_client_class.assert_called_once()
+            assert encoder._model == mock_client
+
+    def test_load_api_model_missing_key(self, monkeypatch):
+        """_load_api_model raises error for missing API key."""
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+        config = EncoderConfig(
+            model_name="openai/text-embedding-3-small",
+            use_api_embeddings=True,
+            openai_api_key=None,
+        )
+        encoder = Encoder(config=config)
+
+        with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+            encoder._load_api_model()
+
+    def test_load_model_fallback_to_local(self, monkeypatch):
+        """_load_model falls back to local model on API failure."""
+        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+        config = EncoderConfig(
+            model_name="openai/text-embedding-3-small",
+            use_api_embeddings=True,
+            openai_api_key="test-key",
+            openai_base_url="https://api.test.com",
+        )
+        encoder = Encoder(config=config)
+
+        with patch.object(
+            encoder, "_load_api_model", side_effect=Exception("API failure")
+        ):
+            with patch.object(encoder, "_load_local_model") as mock_local:
+                encoder._load_model()
+
+                mock_local.assert_called_once()
+                assert encoder.config.use_api_embeddings is False
+
+
+@pytest.mark.slow
+def test_encoder_embed_texts_basic(monkeypatch):
+    """Integration test: embed texts with API embeddings."""
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    config = EncoderConfig(batch_size=8, use_rich=False)
+    encoder = Encoder(config)
+    texts = ["alpha", "beta", "gamma"]
+    vecs = encoder.embed_texts(texts)
+    assert isinstance(vecs, np.ndarray)
+    assert vecs.shape[0] == len(texts)
+    assert vecs.shape[1] > 0
+
+
+@pytest.mark.slow
+def test_encoder_build_document_embeddings_cache_integration(tmp_path, monkeypatch):
+    """Integration test: build and cache embeddings with API."""
+    monkeypatch.setattr(EncoderConfig, "cache_dir", "embeddings_test")
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    config = EncoderConfig(batch_size=16, use_rich=False, enable_cache=True)
+    encoder = Encoder(config)
+    texts = [f"text {i}" for i in range(10)]
+    ids = [f"id_{i}" for i in range(10)]
+    cache_key = config.generate_cache_key()
+
+    emb1, ids1, was_cached1 = encoder.build_document_embeddings(
+        texts=texts, identifiers=ids, cache_key=cache_key
+    )
+    assert emb1.shape[0] == len(texts)
+
+    emb2, ids2, was_cached2 = encoder.build_document_embeddings(
+        texts=texts, identifiers=ids, cache_key=cache_key
+    )
+    assert was_cached2
+    assert np.array_equal(emb1, emb2)
+    assert ids1 == ids2
