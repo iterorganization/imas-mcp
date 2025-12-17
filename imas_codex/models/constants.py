@@ -19,6 +19,15 @@ class SearchMode(Enum):
     AUTO = "auto"  # Automatically choose best mode based on query
 
 
+# Score thresholds for search confidence warnings
+# Calibrated from empirical testing:
+# - Good queries (Te, magnetic field, plasma current): scores >= 0.65
+# - Marginal queries: scores 0.35-0.65
+# - Poor/nonsense queries (xyzzy, qwertyuiop): scores < 0.35
+LOW_CONFIDENCE_THRESHOLD = 0.35  # Warn user results may not be relevant
+VERY_LOW_CONFIDENCE_THRESHOLD = 0.25  # Strongly warn - likely nonsense query
+
+
 # ============================================================================
 # RESPONSE CONSTANTS
 # ============================================================================

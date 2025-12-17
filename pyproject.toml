@@ -61,6 +61,7 @@ dependencies = [
     "requests>=2.25.0",
     "sentence-transformers>=5.0.0",
     "huggingface_hub[hf_xet]>=0.20.0",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.optional-dependencies]
