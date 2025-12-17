@@ -156,12 +156,14 @@ class Server:
             dd_accessor = ImasDataDictionariesAccessor(dd_version)
 
             # Build schemas (this is what the build hook does)
+            # IMPORTANT: Build ALL schemas, not just ids_set - the ids_set filters
+            # what the server loads into memory, not what gets built to disk
             logger.info(
                 f"Building schemas for DD version {dd_version}. This may take a minute..."
             )
 
             json_transformer = DataDictionaryTransformer(
-                dd_accessor=dd_accessor, ids_set=self.ids_set, use_rich=False
+                dd_accessor=dd_accessor, ids_set=None, use_rich=False
             )
             json_transformer.build()
 
