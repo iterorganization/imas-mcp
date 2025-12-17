@@ -5,12 +5,12 @@
       "type": "http"
     },
     "imas-test": {
-      "url": "https://app-imas.codex-server-test-frc.azurewebsites.net/mcp",
+      "url": "https://app-imas-codex-server-test-frc.azurewebsites.net/mcp",
       "type": "http"
     },
     "imas-ddv3": {
       "command": "uv",
-      "args": ["run", "imas.codex", "--transport", "stdio"],
+      "args": ["run", "imas-codex", "--transport", "stdio"],
       "env": {
         "IMAS_DD_VERSION": "3.42.2"
       },
@@ -18,7 +18,7 @@
     },
     "imas-ddv4": {
       "command": "uv",
-      "args": ["run", "imas.codex", "--transport", "stdio"],
+      "args": ["run", "imas-codex", "--transport", "stdio"],
       "env": {
         "IMAS_DD_VERSION": "4.1.0"
       },

@@ -6,8 +6,8 @@ __pycache__/
 
 # Generated index files
 # Ignore all files in resources directory but keep the directory structure
-imas.codex/resources/*
-!imas.codex/resources/.gitkeep
+imas_codex/resources/*
+!imas_codex/resources/.gitkeep
 
 # Distribution / packaging
 dist/
@@ -60,7 +60,7 @@ poetry.lock
 *.log
 .env
 .asv/
-imas.codex/database/imas_fts.db
+imas_codex/database/imas_fts.db
 
 # Documentation data
 docs-data/

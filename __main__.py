@@ -1,5 +1,5 @@
 """
-imas.codex Server - Model Context Protocol Server for IMAS Data Dictionary
+IMAS Codex Server - Model Context Protocol Server for IMAS Data Dictionary
 
 This server provides access to the IMAS (ITER Integrated Modelling & Analysis Suite)
 Data Dictionary through the Model Context Protocol (MCP). It enables AI assistants
@@ -7,8 +7,8 @@ and other MCP clients to search, explore, and query IMAS data structures.
 
 Command Line Interface:
     The server exposes a full CLI with options for transport, host, port, and logging.    Usage:
-      python -m imas.codex [OPTIONS]   # Module execution (recommended)
-      imas.codex [OPTIONS]             # Console script (after pip install)
+      python -m imas_codex [OPTIONS]   # Module execution (recommended)
+      imas-codex [OPTIONS]             # Console script (after pip install)
 
     Options:
       --transport [stdio|sse|streamable-http]
@@ -24,28 +24,28 @@ Command Line Interface:
 
 Usage Examples:
     # Module execution (recommended)
-    python -m imas.codex                          # Default streamable-http transport
-    python -m imas.codex --help                   # Show help
-    python -m imas.codex --log-level DEBUG        # Debug logging
+    python -m imas_codex                          # Default streamable-http transport
+    python -m imas_codex --help                   # Show help
+    python -m imas_codex --log-level DEBUG        # Debug logging
 
     # After installation with pip, use console scripts
-    imas.codex                                     # Default streamable-http transport
-    imas.codex --transport stdio                   # Use stdio for MCP clients
+    imas-codex                                     # Default streamable-http transport
+    imas-codex --transport stdio                   # Use stdio for MCP clients
 
     # Different transport protocols
-    python -m imas.codex --transport streamable-http          # Default: HTTP streaming
-    python -m imas.codex --transport stdio                    # stdio for MCP clients
-    python -m imas.codex --transport sse --port 8080          # Server-Sent Events
+    python -m imas_codex --transport streamable-http          # Default: HTTP streaming
+    python -m imas_codex --transport stdio                    # stdio for MCP clients
+    python -m imas_codex --transport sse --port 8080          # Server-Sent Events
 
     # Different log levels
-    python -m imas.codex --log-level DEBUG        # Verbose debugging output
-    python -m imas.codex --log-level WARNING      # Only warnings and errors
+    python -m imas_codex --log-level DEBUG        # Verbose debugging output
+    python -m imas_codex --log-level WARNING      # Only warnings and errors
 
     # Custom host/port
-    python -m imas.codex --host 0.0.0.0 --port 8080
+    python -m imas_codex --host 0.0.0.0 --port 8080
 
     # Multiple options
-    python -m imas.codex --host 0.0.0.0 --port 8080 --log-level DEBUG
+    python -m imas_codex --host 0.0.0.0 --port 8080 --log-level DEBUG
 
 Available Tools:
     The server provides the following MCP tools for querying IMAS data:
@@ -80,11 +80,11 @@ Transport Protocols:
 Installation & CLI:
     # Install from source
     pip install -e .    # Install from Git repository
-    pip install git+https://github.com/your-repo/imas.codex.git    # After installation, console scripts are available:
-    imas.codex --help
+    pip install git+https://github.com/iterorganization/imas-codex.git    # After installation, console scripts are available:
+    imas-codex --help
 
     # Module execution works without installation:
-    python -m imas.codex --help
+    python -m imas_codex --help
 
     The CLI is built with Click and supports:
     - Full argument validation and type checking
