@@ -7,6 +7,7 @@ intelligent cache management, dependency tracking, and automatic rebuilding.
 
 import json
 import logging
+import pickle
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -18,9 +19,11 @@ from imas_codex.clusters import (
     RelationshipExtractionConfig,
     RelationshipExtractor,
 )
+from imas_codex.embeddings.cache import EmbeddingCache
 from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.search.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
 
@@ -116,12 +119,43 @@ class Clusters:
             logger.debug(f"Could not determine embedding cache file: {e}")
             return None
 
+    def _get_cached_embedding_doc_count(self, cache_file: Path) -> int | None:
+        """
+        Get the document count from a cached embedding file.
+
+        Returns:
+            The document count from the cache, or None if it can't be read.
+        """
+        try:
+            with open(cache_file, "rb") as f:
+                cache = pickle.load(f)
+            if isinstance(cache, EmbeddingCache):
+                return cache.document_count
+        except Exception as e:
+            logger.debug(f"Could not read embedding cache document count: {e}")
+        return None
+
+    def _get_expected_document_count(self) -> int:
+        """
+        Get the expected document count from the document store.
+
+        Returns:
+            The number of documents the document store would produce.
+        """
+        try:
+            store = DocumentStore(ids_set=self.encoder_config.ids_set)
+            store.load_all_documents()
+            return len(store)
+        except Exception as e:
+            logger.debug(f"Could not get expected document count: {e}")
+            return 0
+
     def _check_dependency_freshness(self) -> bool:
         """
         Check if any dependency files are newer than the clusters file.
 
-        Only checks the embedding cache file since clusters are computed from
-        embeddings, not directly from schema files.
+        Checks both file modification times and document count consistency
+        to detect stale caches even when mtime hasn't changed.
 
         Returns:
             True if clusters file should be regenerated, False otherwise.
@@ -136,6 +170,7 @@ class Clusters:
         # Check the specific embedding cache file that will be loaded
         embedding_cache = self._get_embedding_cache_file()
         if embedding_cache:
+            # Check mtime first
             embedding_mtime = self._get_file_mtime(embedding_cache)
             if embedding_mtime > clusters_mtime:
                 embedding_time = datetime.fromtimestamp(embedding_mtime)
@@ -145,11 +180,27 @@ class Clusters:
                     f"(embedding: {embedding_time.isoformat()}, clusters: {clusters_time.isoformat()}, diff: {time_diff:.1f}s)"
                 )
                 return True
-            else:
-                logger.debug(
-                    f"Embedding cache is up-to-date: {embedding_cache.name} "
-                    f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, clusters: {clusters_time.isoformat()})"
-                )
+
+            # Check document count consistency
+            cached_count = self._get_cached_embedding_doc_count(embedding_cache)
+            expected_count = self._get_expected_document_count()
+
+            if cached_count is not None and expected_count > 0:
+                if cached_count != expected_count:
+                    logger.info(
+                        f"Embedding cache document count mismatch: "
+                        f"cached={cached_count}, expected={expected_count}. Clusters rebuild required."
+                    )
+                    return True
+                else:
+                    logger.debug(
+                        f"Embedding cache document count valid: {cached_count} documents"
+                    )
+
+            logger.debug(
+                f"Embedding cache is up-to-date: {embedding_cache.name} "
+                f"(embedding: {datetime.fromtimestamp(embedding_mtime).isoformat()}, clusters: {clusters_time.isoformat()})"
+            )
         else:
             # If no embedding cache exists, we need to rebuild
             logger.info("No embedding cache file found - clusters rebuild required")
