@@ -183,11 +183,11 @@ class Resources(MCPProvider):
                 return (self.schema_dir / "clusters.json").read_text(encoding="latin-1")
 
     @mcp_resource(
-        "Resource Usage Examples - How to effectively use IMAS MCP resources.",
+        "Resource Usage Examples - How to effectively use IMAS Codex resources.",
         "examples://resource-usage",
     )
     async def get_resource_usage_examples(self) -> str:
-        """Resource Usage Examples - How to effectively use IMAS MCP resources.
+        """Resource Usage Examples - How to effectively use IMAS Codex resources.
 
         Use this resource to:
         - Learn when to use resources vs tools

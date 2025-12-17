@@ -1,5 +1,5 @@
 """
-Semantic search engine implementation for IMAS MCP.
+Semantic search engine implementation for IMAS Codex.
 
 This module provid            results = self.semantic_search.search(
                 query=query_str,

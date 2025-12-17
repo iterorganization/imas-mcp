@@ -1,5 +1,5 @@
 """
-Base search engine classes for IMAS MCP.
+Base search engine classes for IMAS Codex.
 
 This module provides the abstract base classes for implementing different
 search engines (semantic, lexical, hybrid) in a clean, composable way.

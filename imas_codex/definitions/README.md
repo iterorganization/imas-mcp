@@ -1,6 +1,6 @@
-# IMAS MCP Definitions
+# IMAS Codex Definitions
 
-This directory contains data definitions and configurations used by the IMAS MCP server.
+This directory contains data definitions and configurations used by the IMAS Codex server.
 
 ## Structure
 
@@ -80,12 +80,12 @@ JSON schemas in the `validation/` directory ensure data integrity.
 
 ## Usage
 
-The definitions are loaded automatically by the respective loader modules in `imas_mcp/core/`.
+The definitions are loaded automatically by the respective loader modules in `imas_codex/core/`.
 
 ### Physics Domains
 
 ```python
-from imas_mcp.core.domain_loader import load_physics_domains_from_yaml
+from imas_codex.core.domain_loader import load_physics_domains_from_yaml
 
 # Load all definitions
 definitions = load_physics_domains_from_yaml()
@@ -100,7 +100,7 @@ validation = definitions["validation"]
 ### Unit Contexts
 
 ```python
-from imas_mcp.core.unit_loader import load_unit_contexts, get_enhanced_unit_context
+from imas_codex.core.unit_loader import load_unit_contexts, get_enhanced_unit_context
 
 # Load unit contexts
 unit_contexts = load_unit_contexts()

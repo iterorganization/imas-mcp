@@ -44,7 +44,7 @@ def main(benchmark_filter) -> int:
     if is_ci:
         print("🔧 Running in CI environment")
 
-    print("🚀 Establishing Performance Baseline for IMAS MCP Tools")
+    print("🚀 Establishing Performance Baseline for IMAS Codex Tools")
     print("=" * 60)
 
     runner = BenchmarkRunner()

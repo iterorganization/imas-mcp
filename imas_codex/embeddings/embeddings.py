@@ -1,4 +1,4 @@
-"""Embeddings lifecycle management for the IMAS MCP server (synchronous version).
+"""Embeddings lifecycle management for the IMAS Codex server (synchronous version).
 
 This refactored implementation performs embedding initialization *synchronously*
 at construction time. The previous asynchronous background task model has been

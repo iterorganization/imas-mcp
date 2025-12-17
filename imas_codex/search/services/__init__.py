@@ -1,5 +1,5 @@
 """
-Search services for IMAS MCP.
+Search services for IMAS Codex.
 
 This package contains business logic services for search orchestration,
 providing clean interfaces for search execution and result processing.

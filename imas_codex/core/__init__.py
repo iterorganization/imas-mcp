@@ -1,1 +1,1 @@
-"""Core IMAS MCP processing modules."""
+"""Core IMAS Codex processing modules."""

@@ -1,5 +1,5 @@
 """
-Search module for IMAS MCP server.
+Search module for IMAS Codex server.
 
 This module provides semantic search capabilities using sentence transformers
 and document storage for efficient IMAS data dictionary querying.

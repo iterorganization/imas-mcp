@@ -180,7 +180,7 @@ class ProgressMonitor:
         else:
             # Use INFO level for normal completion information
             self.logger.info(
-                f"IMAS-MCP: Completed processing "
+                f"IMAS-Codex: Completed processing "
                 f"{self._current_completed}/{self._current_total} items"
             )
 

@@ -1,4 +1,4 @@
-"""Embedding management module for IMAS MCP."""
+"""Embedding management module for IMAS Codex."""
 
 from .cache import EmbeddingCache
 from .config import EncoderConfig

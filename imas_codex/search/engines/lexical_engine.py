@@ -1,5 +1,5 @@
 """
-Lexical search engine implementation for IMAS MCP.
+Lexical search engine implementation for IMAS Codex.
 
 T            if config.ids_filter:
                 # Add IDS filter to query

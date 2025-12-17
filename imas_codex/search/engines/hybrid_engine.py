@@ -1,5 +1,5 @@
 """
-Hybrid search engine implementation for IMAS MCP.
+Hybrid search engine implementation for IMAS Codex.
 
 This module provides hybrid search capabilities that combine semantic
 and lexical search for optimal results in the IMAS data dictionary.

@@ -1,5 +1,5 @@
 """
-Search modes and composition patterns for IMAS MCP server.
+Search modes and composition patterns for IMAS Codex server.
 
 This module provides different search strategies and modes for querying the
 IMAS data dictionary, following composition patterns for maintainability

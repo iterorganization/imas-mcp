@@ -1,1 +1,1 @@
-"""Scripts package for IMAS MCP development and deployment tools."""
+"""Scripts package for IMAS Codex development and deployment tools."""

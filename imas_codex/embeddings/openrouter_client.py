@@ -102,8 +102,8 @@ class OpenRouterClient:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "imas-mcp",  # Optional: identify your application
-            "X-Title": "IMAS MCP Server",  # Optional: application name
+            "HTTP-Referer": "imas-codex",  # Optional: identify your application
+            "X-Title": "IMAS Codex Server",  # Optional: application name
         }
 
     def _make_embedding_request(self, texts: list[str]) -> list[list[float]]:

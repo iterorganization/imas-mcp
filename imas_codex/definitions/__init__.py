@@ -1,7 +1,7 @@
 """
-IMAS MCP Definitions Package
+IMAS Codex Definitions Package
 
-This package contains all data definitions, schemas, and templates used by the IMAS MCP.
+This package contains all data definitions, schemas, and templates used by the IMAS Codex.
 
 Structure:
 - physics/: Physics-related definitions (domains, units, constants)

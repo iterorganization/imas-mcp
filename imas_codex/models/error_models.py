@@ -1,4 +1,4 @@
-"""Error response models for IMAS MCP tools."""
+"""Error response models for IMAS Codex tools."""
 
 from typing import Any
 

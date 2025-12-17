@@ -1,5 +1,5 @@
 """
-Search service for IMAS MCP.
+Search service for IMAS Codex.
 
 This module provides the main search service that orchestrates different
 search engines and handles search requests in a clean, testable way.

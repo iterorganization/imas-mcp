@@ -110,19 +110,19 @@ def main(
 
     Examples:
         # Run with default streamable-http transport
-        imas-mcp
+        imas-codex
 
         # Run with custom host/port
-        imas-mcp --host 0.0.0.0 --port 9000
+        imas-codex --host 0.0.0.0 --port 9000
 
         # Run with stdio transport (for MCP clients)
-        imas-mcp --transport stdio
+        imas-codex --transport stdio
 
         # Run with debug logging
-        imas-mcp --log-level DEBUG
+        imas-codex --log-level DEBUG
 
         # Run without rich progress output
-        imas-mcp --no-rich
+        imas-codex --no-rich
 
     Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.

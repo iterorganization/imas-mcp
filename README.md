@@ -408,7 +408,7 @@ docker-compose up --build
 # 1. Start docs-mcp-server
 python scripts/start_docs_server.py
 
-# 2. In another terminal, start IMAS-MCP server
+# 2. In another terminal, start IMAS Codex server
 python -m imas_codex
 
 # 3. Scraping IMAS-Python documentation (first time only)

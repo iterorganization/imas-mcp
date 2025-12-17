@@ -2,7 +2,7 @@
 Integration tests for docs server lifecycle management.
 
 These tests verify the complete integration of the persistent docs server
-with the IMAS MCP server, including startup, shutdown, health monitoring,
+with the IMAS Codex server, including startup, shutdown, health monitoring,
 and HTTP client communication.
 """
 
