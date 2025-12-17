@@ -6,6 +6,9 @@ Each cluster is identified by a hash of its sorted paths, enabling:
 - Incremental cache growth as new clusters are encountered
 - Cache reuse across different clustering runs with same paths
 - Persistence of labels even when cluster IDs change
+
+Labels can be exported to JSON for version control and sharing, and
+imported to seed fresh caches without expensive LLM regeneration.
 """
 
 import hashlib
@@ -17,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from imas_codex import dd_version
+from imas_codex.definitions.clusters import LABELS_FILE
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.settings import get_language_model
 
@@ -68,6 +72,29 @@ class LabelCache:
 
         self.cache_file = cache_file
         self._ensure_schema()
+        self._seed_from_definitions()
+
+    def _seed_from_definitions(self) -> None:
+        """Seed cache from definitions file if cache is empty."""
+        if not LABELS_FILE.exists():
+            return
+
+        with self._get_connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM labels").fetchone()[0]
+            if count > 0:
+                return  # Cache already populated
+
+        try:
+            with LABELS_FILE.open() as f:
+                data = json.load(f)
+
+            if not data:
+                return
+
+            imported = self.import_labels(data)
+            logger.info(f"Seeded cache with {imported} labels from definitions")
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to seed from definitions: {e}")
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with proper settings."""
@@ -281,4 +308,95 @@ class LabelCache:
             conn.commit()
 
         logger.info(f"Cleared {count} cached labels")
+        return count
+
+    def export_labels(self, output_file: Path | None = None) -> dict:
+        """Export all labels to a flat dict keyed by path_hash.
+
+        One entry per hash (latest wins if duplicates exist).
+
+        Args:
+            output_file: Optional path to write JSON. If None, uses LABELS_FILE.
+
+        Returns:
+            Dict of labels keyed by path_hash
+        """
+        output_file = output_file or LABELS_FILE
+
+        # Load existing labels to merge with
+        existing: dict = {}
+        if output_file.exists():
+            try:
+                with output_file.open() as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT path_hash, label, description, model, created_at, paths_json "
+                "FROM labels"
+            ).fetchall()
+
+        # Merge: cache entries overwrite existing (they're newer)
+        for row in rows:
+            existing[row["path_hash"]] = {
+                "label": row["label"],
+                "description": row["description"],
+                "model": row["model"],
+                "created_at": row["created_at"],
+                "paths": json.loads(row["paths_json"]),
+            }
+
+        # Write atomically
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = output_file.with_suffix(".json.tmp")
+        with tmp_file.open("w") as f:
+            json.dump(existing, f, indent=2, sort_keys=True)
+        tmp_file.rename(output_file)
+
+        logger.info(f"Exported {len(existing)} labels to {output_file}")
+        return existing
+
+    def import_labels(self, data: dict) -> int:
+        """Import labels from a dict, additive only (skip existing hashes).
+
+        Args:
+            data: Dict of labels keyed by path_hash
+
+        Returns:
+            Number of labels imported
+        """
+        count = 0
+
+        with self._get_connection() as conn:
+            for path_hash, entry in data.items():
+                # Skip if already exists
+                existing = conn.execute(
+                    "SELECT 1 FROM labels WHERE path_hash = ?", (path_hash,)
+                ).fetchone()
+                if existing:
+                    continue
+
+                paths_json = json.dumps(entry.get("paths", []))
+                conn.execute(
+                    """
+                    INSERT INTO labels
+                    (path_hash, label, description, model, created_at, paths_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        path_hash,
+                        entry["label"],
+                        entry["description"],
+                        entry.get("model", "unknown"),
+                        entry.get("created_at", datetime.now().isoformat()),
+                        paths_json,
+                    ),
+                )
+                count += 1
+
+            conn.commit()
+
+        logger.info(f"Imported {count} labels (skipped existing)")
         return count

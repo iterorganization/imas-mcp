@@ -317,7 +317,9 @@ class OverviewTool(BaseTool):
             total_leaf_nodes = metadata.get("total_leaf_nodes")
             dd_version = metadata.get("version")
             generation_date = metadata.get("generation_date")
-            identifier_schemas_count = identifier_metadata.get("total_ids", 0)
+            identifier_schemas_count = identifier_metadata.get(
+                "total_schemas", identifier_metadata.get("total_ids", 0)
+            )
             mcp_tools = self._get_mcp_tools()
 
             # Get MCP server version
