@@ -452,3 +452,97 @@ class TestGenerateLabelEmbeddings:
         result = extractor._generate_label_embeddings(labels_map)
 
         assert isinstance(result, dict)
+
+
+class TestSaveRelationships:
+    """Tests for saving relationships."""
+
+    @pytest.fixture
+    def extractor(self, extraction_config):
+        """Create extractor instance."""
+        return RelationshipExtractor(extraction_config)
+
+    @pytest.fixture
+    def sample_relationships(self):
+        """Create sample relationships for testing."""
+        clusters = [
+            ClusterInfo(
+                id=1,
+                similarity_score=0.85,
+                size=3,
+                is_cross_ids=True,
+                ids_names=["equilibrium", "core_profiles"],
+                paths=["equilibrium/a", "equilibrium/b", "core_profiles/c"],
+                centroid=np.array([0.1, 0.2, 0.3]),
+            ),
+        ]
+        return RelationshipSet(
+            metadata=RelationshipMetadata(
+                generation_timestamp="2024-01-01T00:00:00",
+                total_paths_processed=3,
+                clustering_parameters={},
+                statistics=ClusteringStatistics(
+                    cross_ids_clustering={},
+                    intra_ids_clustering={},
+                    multi_membership_paths=0,
+                    isolated_paths=0,
+                ),
+            ),
+            clusters=clusters,
+            path_index={
+                "equilibrium/a": PathMembership(cross_ids_cluster=1),
+                "equilibrium/b": PathMembership(cross_ids_cluster=1),
+                "core_profiles/c": PathMembership(cross_ids_cluster=1),
+            },
+            cross_ids_summary=CrossIDSSummary(
+                cluster_count=1,
+                cluster_index=[1],
+                avg_similarity=0.85,
+                total_paths=3,
+            ),
+            intra_ids_summary=IntraIDSSummary(
+                cluster_count=0,
+                cluster_index=[],
+                by_ids={},
+                avg_similarity=0.0,
+                total_paths=0,
+            ),
+        )
+
+    def test_save_relationships_creates_file(
+        self, extractor, sample_relationships, tmp_path
+    ):
+        """save_relationships creates output file."""
+        output_file = tmp_path / "clusters" / "clusters.json"
+
+        with patch.object(extractor, "_get_labels_with_cache") as mock_labels:
+            mock_labels.return_value = {
+                1: {"label": "Test Cluster", "description": "Test description"}
+            }
+            with patch.object(extractor, "_generate_label_embeddings") as mock_emb:
+                mock_emb.return_value = {}
+
+                extractor.save_relationships(sample_relationships, output_file)
+
+        assert output_file.exists()
+
+    def test_save_clusters_json(self, extractor, sample_relationships, tmp_path):
+        """_save_clusters_json creates valid JSON."""
+        output_file = tmp_path / "clusters" / "clusters.json"
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with patch.object(extractor, "_get_labels_with_cache") as mock_labels:
+            mock_labels.return_value = {
+                1: {"label": "Test Cluster", "description": "Test description"}
+            }
+            with patch.object(extractor, "_generate_label_embeddings") as mock_emb:
+                mock_emb.return_value = {}
+
+                extractor._save_clusters_json(sample_relationships, output_file)
+
+        assert output_file.exists()
+        with open(output_file) as f:
+            data = json.load(f)
+        assert "version" in data
+        assert "clusters" in data
+        assert "indexes" in data
