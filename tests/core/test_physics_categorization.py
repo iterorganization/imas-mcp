@@ -5,9 +5,7 @@ Tests physics domain classification and IDS-to-domain mappings.
 """
 
 import json
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -23,7 +21,7 @@ class TestLoadPhysicsMappings:
     """Tests for _load_physics_mappings function."""
 
     def test_load_mappings_success(self, tmp_path):
-        """Test successful loading of physics mappings from resources."""
+        """Test successful loading of physics mappings from definitions."""
         # Create a mock mappings file
         mappings_data = {
             "ids_domain_mappings": {
@@ -33,19 +31,13 @@ class TestLoadPhysicsMappings:
             }
         }
 
-        # Create mock accessor
-        mock_accessor = MagicMock()
-        schemas_dir = tmp_path / "schemas"
-        schemas_dir.mkdir()
-        mock_accessor.schemas_dir = schemas_dir
-
-        mapping_path = schemas_dir / "physics_domains.json"
+        mapping_path = tmp_path / "ids_domains.json"
         with open(mapping_path, "w") as f:
             json.dump(mappings_data, f)
 
         with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+            "imas_codex.core.physics_categorization.IDS_DOMAINS_FILE",
+            mapping_path,
         ):
             # Clear the cache to force reload
             _load_physics_mappings.cache_clear()
@@ -57,12 +49,11 @@ class TestLoadPhysicsMappings:
 
     def test_load_mappings_file_not_found(self, tmp_path):
         """Test handling of missing mappings file."""
-        mock_accessor = MagicMock()
-        mock_accessor.schemas_dir = tmp_path / "nonexistent"
+        nonexistent_path = tmp_path / "nonexistent" / "ids_domains.json"
 
         with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+            "imas_codex.core.physics_categorization.IDS_DOMAINS_FILE",
+            nonexistent_path,
         ):
             _load_physics_mappings.cache_clear()
             result = _load_physics_mappings()
@@ -71,18 +62,13 @@ class TestLoadPhysicsMappings:
 
     def test_load_mappings_invalid_json(self, tmp_path):
         """Test handling of invalid JSON file."""
-        mock_accessor = MagicMock()
-        schemas_dir = tmp_path / "schemas"
-        schemas_dir.mkdir()
-        mock_accessor.schemas_dir = schemas_dir
-
-        mapping_path = schemas_dir / "physics_domains.json"
+        mapping_path = tmp_path / "ids_domains.json"
         with open(mapping_path, "w") as f:
             f.write("invalid json {")
 
         with patch(
-            "imas_codex.core.physics_categorization.ResourcePathAccessor",
-            return_value=mock_accessor,
+            "imas_codex.core.physics_categorization.IDS_DOMAINS_FILE",
+            mapping_path,
         ):
             _load_physics_mappings.cache_clear()
             result = _load_physics_mappings()

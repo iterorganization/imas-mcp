@@ -1,56 +1,50 @@
 """
 Physics domain categorization for IDS.
 
-This module provides IDS-to-physics-domain mapping loaded from LLM-generated
-JSON file stored in resources/schemas/physics_domains.json.
+This module provides IDS-to-physics-domain mapping loaded from
+the definitions/physics/ids_domains.json file. This file contains
+mappings for all IDS across all DD versions (3.22.0 to 4.1.0+).
 
-The mappings are generated at build time by the build-physics-domains script.
-If the file doesn't exist, it will be auto-generated during build.
+The mappings are version-independent and committed to the repository.
+Unknown IDS (from future versions) gracefully fall back to GENERAL.
 """
 
 import json
 import logging
 from functools import lru_cache
 
-from imas_codex import dd_version
 from imas_codex.core.data_model import PhysicsDomain
-from imas_codex.resource_path_accessor import ResourcePathAccessor
+from imas_codex.definitions.physics import IDS_DOMAINS_FILE
 
 logger = logging.getLogger(__name__)
 
 
-def get_physics_domains_path():
-    """Get the path to the physics domains JSON file."""
-    accessor = ResourcePathAccessor(dd_version)
-    return accessor.schemas_dir / "physics_domains.json"
-
-
 @lru_cache(maxsize=1)
 def _load_physics_mappings() -> dict[str, str]:
-    """Load physics domain mappings from JSON file in resources.
+    """Load physics domain mappings from definitions/physics/ids_domains.json.
 
     Returns:
         Dictionary mapping IDS names to physics domain strings.
         Returns empty dict if no file exists.
     """
     try:
-        mapping_path = get_physics_domains_path()
-
-        if not mapping_path.exists():
+        if not IDS_DOMAINS_FILE.exists():
             logger.warning(
-                "Physics domain mappings not found. Run 'build-physics-domains' to generate."
+                "IDS domain mappings not found at %s. "
+                "Run 'map-ids-domains' to generate.",
+                IDS_DOMAINS_FILE,
             )
             return {}
 
-        with open(mapping_path, encoding="utf-8") as f:
+        with open(IDS_DOMAINS_FILE, encoding="utf-8") as f:
             data = json.load(f)
 
         mappings = data.get("ids_domain_mappings", {})
-        logger.debug(f"Loaded {len(mappings)} physics domain mappings from resources")
+        logger.debug(f"Loaded {len(mappings)} IDS domain mappings from definitions")
         return mappings
 
     except Exception as e:
-        logger.error(f"Failed to load physics domain mappings: {e}")
+        logger.error(f"Failed to load IDS domain mappings: {e}")
         return {}
 
 
