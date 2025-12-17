@@ -96,24 +96,19 @@ class TestMCPServer:
         assert hasattr(server, "run")
         assert callable(server.run)
 
-    def test_multiple_server_instances_isolation(self, monkeypatch):
+    def test_multiple_server_instances_isolation(self, server):
         """Test multiple server instances don't interfere."""
-        # Use free API embeddings by default
-        monkeypatch.setenv(
-            "IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small"
-        )
-
-        server1 = Server(ids_set=STANDARD_TEST_IDS_SET)
+        # Create second server using the same mocked environment as the fixture
         server2 = Server(ids_set={"equilibrium"})
 
         # Should be separate instances
-        assert server1 is not server2
-        assert server1.tools is not server2.tools
-        assert server1.resources is not server2.resources
-        assert server1.mcp is not server2.mcp
+        assert server is not server2
+        assert server.tools is not server2.tools
+        assert server.resources is not server2.resources
+        assert server.mcp is not server2.mcp
 
         # Should have different configurations
-        assert server1.tools.ids_set == STANDARD_TEST_IDS_SET
+        assert server.tools.ids_set == STANDARD_TEST_IDS_SET
         assert server2.tools.ids_set == {"equilibrium"}
 
 

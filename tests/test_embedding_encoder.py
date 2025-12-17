@@ -13,6 +13,7 @@ sentence_transformers = pytest.importorskip(
 )
 
 
+@pytest.mark.slow
 def test_embedding_encoder_build_and_embed(tmp_path: Path):
     # Use a small batch size to exercise batching logic even for few texts
     # Force local embeddings to avoid API calls
@@ -45,6 +46,7 @@ def test_embedding_encoder_build_and_embed(tmp_path: Path):
     assert out_ids2 == out_ids
 
 
+@pytest.mark.slow
 def test_embedding_encoder_ad_hoc_embed():
     config = EncoderConfig(use_rich=False, enable_cache=False)
     encoder = Encoder(config)
@@ -54,6 +56,7 @@ def test_embedding_encoder_ad_hoc_embed():
     assert vecs.dtype in (np.float32, np.float16, np.float64)
 
 
+@pytest.mark.slow
 def test_api_fallback_to_local():
     """Test that Encoder falls back to local model if API fails."""
     config = EncoderConfig(
