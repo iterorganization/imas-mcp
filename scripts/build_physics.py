@@ -60,6 +60,21 @@ def get_available_domains() -> list[str]:
     return [domain.value for domain in PhysicsDomain]
 
 
+def compute_domain_counts(mappings: dict[str, str]) -> dict[str, int]:
+    """Compute the count of IDS in each physics domain.
+
+    Args:
+        mappings: Dictionary mapping IDS names to domain values.
+
+    Returns:
+        Dictionary mapping domain values to their IDS counts.
+    """
+    counts: dict[str, int] = {}
+    for domain in mappings.values():
+        counts[domain] = counts.get(domain, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def get_domain_descriptions() -> dict[str, str]:
     """Get domain descriptions from the LinkML schema.
 
@@ -117,14 +132,18 @@ def export_to_definitions(mappings: dict[str, str], model: str | None = None) ->
         except (json.JSONDecodeError, OSError):
             existing_data = {}
 
+    # Compute domain counts
+    domain_counts = compute_domain_counts(mappings)
+
     # Update with new version data
     existing_data[dd_version] = {
+        "domains": domain_counts,
+        "mappings": mappings,
         "metadata": {
             "created": datetime.now(UTC).isoformat(),
             "model": model or get_language_model(),
             "total_ids": len(mappings),
         },
-        "mappings": mappings,
     }
 
     DOMAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -211,13 +230,40 @@ def infer_domains_with_llm(
         # Handle potential markdown code blocks
         content = response.strip()
         if content.startswith("```"):
-            content = content.split("```")[1]
+            # Extract content between code fences
+            lines = content.split("\n")
+            # Find start and end of code block
+            start_idx = 0
+            end_idx = len(lines)
+            for i, line in enumerate(lines):
+                if line.startswith("```") and i == 0:
+                    start_idx = 1
+                elif line.startswith("```") and i > 0:
+                    end_idx = i
+                    break
+            content = "\n".join(lines[start_idx:end_idx])
+            # Remove json language identifier if present
             if content.startswith("json"):
-                content = content[4:]
-        return json.loads(content)
+                content = content[4:].strip()
+
+        result = json.loads(content)
+
+        # Validate that result is a dict with string values from valid domains
+        valid_domains = set(get_available_domains())
+        validated_result = {}
+        for ids_name, domain in result.items():
+            if domain in valid_domains:
+                validated_result[ids_name] = domain
+            else:
+                logger.warning(
+                    f"Invalid domain '{domain}' for IDS '{ids_name}', using 'general'"
+                )
+                validated_result[ids_name] = PhysicsDomain.GENERAL.value
+
+        return validated_result
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM response: {e}")
-        logger.debug(f"Response was: {response}")
+        logger.error(f"Response was: {response[:500]}...")
         raise
 
 
@@ -268,7 +314,7 @@ def save_physics_mappings(
     is_flag=True,
     help="Use fallback mappings (all GENERAL) without LLM",
 )
-def build_physics(
+def build_physics_domains(
     verbose: bool,
     quiet: bool,
     force: bool,
@@ -283,10 +329,10 @@ def build_physics(
     The output is stored in resources/schemas/physics_domains.json.
 
     Examples:
-        build-physics                    # Build only if file doesn't exist
-        build-physics -f                 # Force rebuild
-        build-physics --fallback         # Generate fallback mappings without LLM
-        build-physics --model "openai/gpt-4o"  # Use specific model
+        build-physics-domains                    # Build only if file doesn't exist
+        build-physics-domains -f                 # Force rebuild
+        build-physics-domains --fallback         # Generate fallback mappings without LLM
+        build-physics-domains --model "openai/gpt-4o"  # Use specific model
     """
     # Set up logging level
     if quiet:
@@ -395,4 +441,4 @@ def build_physics(
 
 
 if __name__ == "__main__":
-    sys.exit(build_physics())
+    sys.exit(build_physics_domains())

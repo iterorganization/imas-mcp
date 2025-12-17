@@ -1,5 +1,29 @@
 {
   "4.1.0": {
+    "domains": {
+      "coils": 6,
+      "control": 3,
+      "current_drive": 1,
+      "data_management": 1,
+      "divertor": 1,
+      "edge_physics": 3,
+      "electromagnetic_diagnostics": 7,
+      "equilibrium": 3,
+      "general": 3,
+      "heating": 6,
+      "magnetic_diagnostics": 3,
+      "mechanical_diagnostics": 3,
+      "mhd": 5,
+      "operational": 1,
+      "particle_diagnostics": 3,
+      "radiation_diagnostics": 11,
+      "structure": 3,
+      "systems": 5,
+      "transport": 10,
+      "turbulence": 2,
+      "wall": 1,
+      "workflow": 1
+    },
     "mappings": {
       "amns_data": "general",
       "b_field_non_axisymmetric": "equilibrium",
@@ -85,7 +109,7 @@
       "workflow": "workflow"
     },
     "metadata": {
-      "created": "2025-12-17T21:55:03.781324+00:00",
+      "created": "2025-12-17T22:06:02.606479+00:00",
       "model": "google/gemini-3-pro-preview",
       "total_ids": 82
     }
