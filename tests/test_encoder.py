@@ -5,6 +5,7 @@ from imas_codex.embeddings.config import EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 
 
+@pytest.mark.slow
 def test_encoder_embed_texts_basic(monkeypatch):
     # Use free API embeddings by default
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
@@ -18,6 +19,7 @@ def test_encoder_embed_texts_basic(monkeypatch):
     assert vecs.shape[1] > 0
 
 
+@pytest.mark.slow
 def test_encoder_build_document_embeddings_cache(tmp_path, monkeypatch):
     # Use free API embeddings by default
     # Use a temp embeddings cache directory
