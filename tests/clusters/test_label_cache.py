@@ -294,34 +294,27 @@ class TestLabelCacheExportImport:
         assert export_file.exists()
 
     def test_export_labels_with_data(self, cache, export_file):
-        """Test exporting labels to JSON."""
+        """Test exporting labels to JSON in slim format."""
         cache.set_label(["a/b/c", "d/e/f"], "Label 1", "Desc 1", model="test-model")
         cache.set_label(["x/y/z"], "Label 2", "Desc 2", model="test-model")
 
         result = cache.export_labels(export_file)
 
         assert len(result) == 2
-        # Check that all entries have the expected structure
+        # Check that all entries have slim format: [label, description]
         for _path_hash, entry in result.items():
-            assert "label" in entry
-            assert "description" in entry
-            assert "model" in entry
-            assert "paths" in entry
-            assert "created_at" in entry
+            assert isinstance(entry, list)
+            assert len(entry) == 2
+            assert isinstance(entry[0], str)  # label
+            assert isinstance(entry[1], str)  # description
 
-    def test_export_merges_with_existing(self, cache, export_file):
-        """Test that export merges with existing file content."""
+    def test_export_overwrites_existing(self, cache, export_file):
+        """Test that export overwrites existing file content (slim format)."""
         import json
 
-        # Write existing content
+        # Write existing content (will be overwritten)
         existing = {
-            "existing_hash": {
-                "label": "Existing Label",
-                "description": "Existing Desc",
-                "model": "old-model",
-                "created_at": "2024-01-01T00:00:00",
-                "paths": ["old/path"],
-            }
+            "existing_hash": ["Existing Label", "Existing Desc"],
         }
         with export_file.open("w") as f:
             json.dump(existing, f)
@@ -331,10 +324,9 @@ class TestLabelCacheExportImport:
 
         result = cache.export_labels(export_file)
 
-        # Should have both old and new
-        assert len(result) == 2
-        assert "existing_hash" in result
-        assert result["existing_hash"]["label"] == "Existing Label"
+        # Should only have new entry (export overwrites, not merges)
+        assert len(result) == 1
+        assert list(result.values())[0] == ["New Label", "New Desc"]
 
     def test_import_labels_empty(self, cache):
         """Test importing empty data."""
