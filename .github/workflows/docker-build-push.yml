@@ -79,6 +79,10 @@ jobs:
             uv run build-schemas --no-rich
           fi
           
+          echo "Building path map..."
+          uv run build-path-map --no-rich
+          echo "✓ Path map built successfully"
+          
           echo "Building embeddings..."
           uv run build-embeddings --no-rich
           echo "✓ Embeddings built successfully"
