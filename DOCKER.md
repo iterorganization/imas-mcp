@@ -271,25 +271,37 @@ The project includes GitHub Actions workflows for:
 
 ### GitHub Secrets Configuration
 
-For automated builds with documentation scraping capabilities, configure GitHub Secrets:
+The `OPENAI_API_KEY` secret is **optional** for Docker builds.
 
+**What runs locally (no API key needed):**
+- Schema building (XML parsing)
+- Path map generation
+- Embeddings (uses local `sentence-transformers` model `all-MiniLM-L6-v2`)
+- Clustering (HDBSCAN algorithm)
+
+**What uses the API key (optional):**
+- **Cluster labeling**: Generates human-readable labels for semantic clusters using an LLM via OpenRouter
+
+**Fallback behavior without API key:**
+1. Uses pre-cached labels from `imas_codex/definitions/clusters/labels.json` (version-controlled)
+2. Falls back to auto-generated labels from path names if no cache exists
+
+**Configuring the secret (optional):**
 1. **Repository Settings**: Go to `Settings` → `Secrets and variables` → `Actions`
 2. **Add Secret**: Create a new repository secret:
    - **Name**: `OPENAI_API_KEY`
    - **Value**: Your OpenRouter API key
 
-**Build Behavior:**
-- **With OPENAI_API_KEY secret**: Documentation scraping occurs during Docker build
-- **Without OPENAI_API_KEY secret**: Documentation scraping is skipped, build continues
-- The container functions normally regardless of scraping status
-
 **Manual Docker Build:**
 ```bash
-# Build with API key
-docker build --build-arg OPENAI_API_KEY=your_key_here .
+# Build without API key (uses cached/fallback labels)
+docker build -t imas-codex .
 
-# Build without API key (scraping will be skipped)
-docker build .
+# Build with API key for fresh LLM-generated labels
+docker build --secret id=OPENAI_API_KEY,env=OPENAI_API_KEY -t imas-codex .
+
+# Build with minimal IDS for faster iteration
+docker build --build-arg IDS_FILTER="equilibrium" -t imas-codex:test .
 ```
 
 ## Security
