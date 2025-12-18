@@ -136,6 +136,9 @@ imas-dd-version = ""
 
 # Embedding model configuration
 [tool.imas-codex]
+# Default DD version - single source of truth for the project
+# Must not exceed the version available in imas-data-dictionaries dependency
+default-dd-version = "4.1.0"
 imas-embedding-model = "all-MiniLM-L6-v2"
 imas-language-model = "google/gemini-3-pro-preview"
 
