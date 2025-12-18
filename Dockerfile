@@ -102,6 +102,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Schema data ready"
 
+# Build path map for version upgrade mappings (will skip if already exists from CI artifacts)
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building path map..." && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building path map for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
+    else \
+    echo "Building path map for all IDS" && \
+    uv run --no-dev build-path-map --no-rich; \
+    fi && \
+    echo "✓ Path map ready"
+
 # Build embeddings (will skip if cache is valid from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=secret,id=OPENAI_API_KEY \
