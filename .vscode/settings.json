@@ -64,5 +64,6 @@
   "gistpad.mcp.enabled": false,
   "markdown-pdf.highlightStyle": "solarized-light.css",
   "markdown-pdf.includeDefaultStyles": false,
-  "chat.mcp.autostart": "never"
+  "chat.mcp.autostart": "never",
+  "github.copilot.chat.cli.mcp.enabled": true
 }
