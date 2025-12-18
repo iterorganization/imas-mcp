@@ -383,7 +383,7 @@ class LabelCache:
         tmp_file = output_file.with_suffix(".json.tmp")
         with tmp_file.open("w") as f:
             json.dump(result, f, indent=2, sort_keys=True)
-        tmp_file.rename(output_file)
+        tmp_file.replace(output_file)
 
         logger.info(f"Exported {len(result)} labels to {output_file}")
         return result
