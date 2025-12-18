@@ -1,6 +1,6 @@
 """Tests for the /health endpoint on HTTP transports."""
 
-import os
+import atexit
 import threading
 import time
 from contextlib import contextmanager
@@ -12,6 +12,18 @@ import requests
 from imas_codex.server import Server
 from tests.conftest import STANDARD_TEST_IDS_SET
 
+# Track server threads for cleanup at exit to avoid daemon thread shutdown errors
+_server_threads: list[threading.Thread] = []
+
+
+def _cleanup_threads():
+    """Cleanup handler to allow daemon threads to finish before interpreter shutdown."""
+    # Give threads a moment to finish their current operation
+    time.sleep(0.1)
+
+
+atexit.register(_cleanup_threads)
+
 
 @contextmanager
 def run_server(port: int, transport: str = "streamable-http"):
@@ -20,13 +32,17 @@ def run_server(port: int, transport: str = "streamable-http"):
     server = Server(ids_set=STANDARD_TEST_IDS_SET, use_rich=False)
 
     def _run():  # type: ignore
-        server.run(
-            transport=cast(Literal["streamable-http", "sse"], transport),
-            host="127.0.0.1",
-            port=port,
-        )
+        try:
+            server.run(
+                transport=cast(Literal["streamable-http", "sse"], transport),
+                host="127.0.0.1",
+                port=port,
+            )
+        except Exception:
+            pass  # Suppress errors during shutdown
 
     thread = threading.Thread(target=_run, daemon=True)
+    _server_threads.append(thread)
     thread.start()
     # Wait for server to start with shorter timeout
     for _ in range(50):
@@ -77,9 +93,13 @@ def test_health_idempotent_wrapping(monkeypatch):
 
     # Ensure multiple calls to HealthEndpoint don't duplicate (implicit by running twice)
     def _run():  # mypy: ignore
-        server.run(transport="streamable-http", host="127.0.0.1", port=port)
+        try:
+            server.run(transport="streamable-http", host="127.0.0.1", port=port)
+        except Exception:
+            pass  # Suppress errors during shutdown
 
     thread = threading.Thread(target=_run, daemon=True)
+    _server_threads.append(thread)
     thread.start()
     for _ in range(60):
         try:
