@@ -141,6 +141,10 @@ imas-dd-version = ""
 default-dd-version = "4.1.0"
 imas-embedding-model = "all-MiniLM-L6-v2"
 imas-language-model = "google/gemini-3-pro-preview"
+# Include GGD (Generalized Grid Description) paths in schema generation
+include-ggd = true
+# Include error fields (_error_upper, _error_lower, _error_index)
+include-error-fields = false
 
 [tool.hatch.envs.test]
 dependencies = [
