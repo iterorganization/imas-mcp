@@ -60,6 +60,7 @@ dependencies = [
     "imas-python>=2.0.1",
     "requests>=2.25.0",
     "sentence-transformers>=5.0.0",
+    "torch>=2.9.1",
     "huggingface_hub[hf_xet]>=0.20.0",
     "rapidfuzz>=3.0.0",
     "linkml>=1.9.3",
@@ -267,16 +268,13 @@ known-first-party = ["imas_codex"]
 force-single-line = false
 combine-as-imports = true
 
-# UV configuration for PyTorch
-# Use CPU-only PyTorch to reduce Docker image size (~6GB savings)
-# The index is configured to be explicit, requiring source mapping
+# UV configuration: CPU-only PyTorch
+# Uses pytorch-cpu index for torch (no nvidia-* deps, ~6GB smaller)
+# GPU users can manually: uv pip install torch --index-url https://download.pytorch.org/whl/cu128
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-# Map torch and triton to use CPU-only builds
-# This reduces image size from ~16GB to ~10GB
 torch = { index = "pytorch-cpu" }
-triton = { index = "pytorch-cpu" }
