@@ -56,11 +56,31 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Free disk space
+        run: |
+          # Remove large pre-installed packages to free disk space
+          # This prevents "No space left on device" errors from PyTorch CUDA deps
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          df -h
+
       - name: Install UV
         uses: astral-sh/setup-uv@v2
 
       - name: Install ASV
         run: uv tool install asv
+
+      - name: Configure pip for CPU-only PyTorch
+        run: |
+          # Create pip config to use CPU-only PyTorch index
+          # This prevents downloading multi-GB CUDA libraries
+          mkdir -p ~/.config/pip
+          cat > ~/.config/pip/pip.conf << 'EOF'
+          [global]
+          extra-index-url = https://download.pytorch.org/whl/cpu
+          EOF
+          echo "Configured pip to prefer CPU-only PyTorch"
 
       - name: Configure ASV for PR context
         if: github.event_name == 'pull_request'
