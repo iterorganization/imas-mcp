@@ -8,16 +8,18 @@ from imas_codex.embeddings.config import EncoderConfig
 
 
 class TestPathFilter:
-    """Tests for PathFilter class."""
+    """Tests for PathFilter class.
+
+    Note: The semantic-first approach trusts embeddings to distinguish
+    meaningful from generic paths, so mechanical filtering is minimal.
+    Only truly empty documentation is filtered.
+    """
 
     @pytest.fixture
     def config(self):
         """Create test configuration with default settings."""
         return RelationshipExtractionConfig(
             encoder_config=EncoderConfig(),
-            min_documentation_length=5,
-            skip_patterns=[r".*ids_properties.*", r".*code\..*"],
-            generic_docs=["Value", "Description", "Index"],
         )
 
     @pytest.fixture
@@ -30,8 +32,8 @@ class TestPathFilter:
         result = path_filter.filter_meaningful_paths({})
         assert result == {}
 
-    def test_filter_meaningful_paths_filters_short_docs(self, path_filter):
-        """Test that paths with short documentation are filtered."""
+    def test_filter_meaningful_paths_keeps_all_documented_paths(self, path_filter):
+        """Test that all paths with any documentation are kept (semantic-first)."""
         ids_data = {
             "test_ids": {
                 "paths": {
@@ -43,27 +45,30 @@ class TestPathFilter:
             }
         }
         result = path_filter.filter_meaningful_paths(ids_data)
+        # Semantic-first: all documented paths are kept
         assert "test_ids/good_path" in result
-        assert "test_ids/short_path" not in result
+        assert "test_ids/short_path" in result
 
-    def test_filter_meaningful_paths_filters_generic_docs(self, path_filter):
-        """Test that paths with generic documentation are filtered."""
+    def test_filter_meaningful_paths_filters_empty_docs(self, path_filter):
+        """Test that paths with empty documentation are filtered."""
         ids_data = {
             "test_ids": {
                 "paths": {
                     "test_ids/good_path": {
                         "documentation": "Electron temperature in Kelvin"
                     },
-                    "test_ids/generic_path": {"documentation": "Value"},
+                    "test_ids/empty_path": {"documentation": ""},
+                    "test_ids/whitespace_path": {"documentation": "   "},
                 }
             }
         }
         result = path_filter.filter_meaningful_paths(ids_data)
         assert "test_ids/good_path" in result
-        assert "test_ids/generic_path" not in result
+        assert "test_ids/empty_path" not in result
+        assert "test_ids/whitespace_path" not in result
 
-    def test_filter_meaningful_paths_filters_skip_patterns(self, path_filter):
-        """Test that paths matching skip patterns are filtered."""
+    def test_filter_meaningful_paths_includes_all_documented(self, path_filter):
+        """Test that all paths with documentation are included (semantic-first)."""
         ids_data = {
             "test_ids": {
                 "paths": {
@@ -75,8 +80,9 @@ class TestPathFilter:
             }
         }
         result = path_filter.filter_meaningful_paths(ids_data)
+        # Semantic-first: no skip patterns, all documented paths kept
         assert "test_ids/good_path" in result
-        assert "test_ids/ids_properties/version" not in result
+        assert "test_ids/ids_properties/version" in result
 
     def test_filter_meaningful_paths_includes_description(self, path_filter):
         """Test that filtered paths include semantic description."""
@@ -96,18 +102,6 @@ class TestPathFilter:
         assert "description" in path_info
         assert "data" in path_info
         assert path_info["ids"] == "core_profiles"
-
-    def test_should_skip_path_empty_doc(self, path_filter):
-        """Test skipping paths with empty documentation."""
-        result = path_filter._should_skip_path("test/path", {"documentation": ""})
-        assert result is True
-
-    def test_should_skip_path_with_match_pattern(self, path_filter):
-        """Test skipping paths matching skip patterns."""
-        result = path_filter._should_skip_path(
-            "test/ids_properties/name", {"documentation": "Some valid doc text"}
-        )
-        assert result is True
 
     def test_build_semantic_description_with_doc(self, path_filter):
         """Test building semantic description with documentation."""

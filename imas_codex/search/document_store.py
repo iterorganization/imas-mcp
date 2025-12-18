@@ -123,42 +123,53 @@ class Document:
 
     @property
     def embedding_text(self) -> str:
-        """Generate text optimized for sentence transformer embedding."""
-        components = [
-            f"IDS: {self.metadata.ids_name}",
-            f"Path: {self.metadata.path_name}",
-        ]
+        """Generate natural language text optimized for sentence transformer embedding.
 
-        # Prioritize primary documentation and units for better semantic distinction
+        Produces coherent prose describing the data path, its physics context,
+        and measurement characteristics for better semantic clustering.
+        """
+        sentences = []
+
+        # Core identity as a natural sentence
+        path_name = self.metadata.path_name.replace("_", " ").replace("/", " in ")
+        ids_readable = self.metadata.ids_name.replace("_", " ")
+        sentences.append(f"The {path_name} field in the {ids_readable} IDS")
+
+        # Primary documentation
         if self.documentation:
-            # Extract the primary description (first sentence before hierarchical context)
-            primary_doc = self.documentation.split(".")[0].strip()
-            if primary_doc:
-                components.append(f"Description: {primary_doc}")
+            doc_clean = self.documentation.strip()
+            if doc_clean and not doc_clean.endswith("."):
+                doc_clean += "."
+            sentences.append(doc_clean)
 
-        # Add unit-related components
-        if self.units:
-            components.extend(self.units.get_embedding_components())
+        # Units and physical quantity context
+        if self.units and self.units.has_meaningful_units():
+            unit_parts = []
+            if self.units.name:
+                unit_parts.append(f"measured in {self.units.name}")
+            elif self.units.unit_str:
+                unit_parts.append(f"with units {self.units.unit_str}")
+            if (
+                self.units.dimensionality
+                and self.units.dimensionality != "dimensionless"
+            ):
+                unit_parts.append(f"representing {self.units.dimensionality}")
+            if unit_parts:
+                unit_sentence = " ".join(unit_parts)
+                # Capitalize first letter without lowercasing the rest (preserves eV, Pa, etc.)
+                sentences.append(unit_sentence[0].upper() + unit_sentence[1:] + ".")
 
-        # Add full documentation after primary description and units
-        if self.documentation:
-            components.append(f"Documentation: {self.documentation}")
-
+        # Physics domain context
         if self.metadata.physics_domain:
-            components.append(f"Physics domain: {self.metadata.physics_domain}")
+            domain_readable = self.metadata.physics_domain.replace("_", " ")
+            sentences.append(f"Related to {domain_readable} physics.")
 
-        if self.metadata.physics_phenomena:
-            components.append(
-                f"Physics phenomena: {' '.join(self.metadata.physics_phenomena)}"
-            )
-
+        # Coordinate system
         if self.metadata.coordinates:
-            components.append(f"Coordinates: {' '.join(self.metadata.coordinates)}")
+            coords = ", ".join(self.metadata.coordinates)
+            sentences.append(f"Indexed by coordinates: {coords}.")
 
-        if self.metadata.data_type:
-            components.append(f"Data type: {self.metadata.data_type}")
-
-        return " | ".join(components)
+        return " ".join(sentences)
 
     def to_datapath(self) -> IdsNode:
         """Convert Document to DataPath for consistent API responses."""
