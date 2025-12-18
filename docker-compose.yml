@@ -7,6 +7,8 @@ services:
         - BUILDKIT_INLINE_CACHE=1
         - IDS_FILTER=${IDS_FILTER}
         - TRANSPORT=${TRANSPORT:-streamable-http}
+      secrets:
+        - openai_api_key
     ports:
       - "8000:8000"
     environment:
@@ -34,3 +36,6 @@ services:
     restart: unless-stopped
     profiles:
       - production
+secrets:
+  openai_api_key:
+    environment: OPENAI_API_KEY

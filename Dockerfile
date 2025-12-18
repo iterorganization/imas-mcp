@@ -96,8 +96,14 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # This ensures consistency and avoids copying stale or multi-version data.
 # In CI, resources may be pre-generated as artifacts and copied separately.
 
+# Cache bust: Explicit ARG ensures rebuild when DD version changes.
+# IDS_FILTER is tracked automatically via its use in RUN commands.
+# IMAS_DD_VERSION needs explicit tracking since it may be empty (default from pyproject.toml).
+ARG CACHE_BUST_DD="${IMAS_DD_VERSION}"
+
 # Build schema data (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "DD version cache key: ${CACHE_BUST_DD:-default}" && \
     echo "Building schema data..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building schema data for IDS: ${IDS_FILTER}" && \
@@ -138,9 +144,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # If no key is provided, falls back to:
 #   1. Cached labels from definitions/clusters/labels.json (version-controlled)
 #   2. Auto-generated fallback labels from path names
+# Note: Secret id=openai_api_key for docker-compose, id=OPENAI_API_KEY for manual builds
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=openai_api_key \
     --mount=type=secret,id=OPENAI_API_KEY \
-    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
+    export OPENAI_API_KEY=$(cat /run/secrets/openai_api_key 2>/dev/null || cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
     echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building clusters for IDS: ${IDS_FILTER}" && \
