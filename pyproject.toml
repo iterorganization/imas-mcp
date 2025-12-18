@@ -55,14 +55,17 @@ dependencies = [
     "numpy>=2.3.1",
     "cachetools>=5.3.0,<6.0.0",
     "imas-data-dictionaries>=4.1.0",
-    "aiohttp>=3.8.0,<4.0.0",
     "anyio>=4.0.0,<5.0.0",
     "scikit-learn>=1.7.2",
-    "psutil>=6.1.1",
     "imas-python>=2.0.1",
     "requests>=2.25.0",
     "sentence-transformers>=5.0.0",
+    "torch>=2.9.1",
     "huggingface_hub[hf_xet]>=0.20.0",
+    "rapidfuzz>=3.0.0",
+    "linkml>=1.9.3",
+    "linkml-runtime>=1.9.5",
+    "hdbscan>=0.8.41",
 ]
 
 [project.optional-dependencies]
@@ -109,10 +112,9 @@ Documentation = "https://github.com/iterorganization/imas-codex#readme"
 
 [project.scripts]
 imas-codex = "imas_codex.cli:main"
-docs = "scripts.docs:main"
 dd-version = "scripts.dd_version:main"
 build-schemas = "scripts.build_schemas:build_schemas"
-build-physics = "scripts.build_physics:build_physics"
+map-ids-domains = "scripts.map_ids_domains:map_ids_domains"
 build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
@@ -134,8 +136,15 @@ imas-dd-version = ""
 
 # Embedding model configuration
 [tool.imas-codex]
+# Default DD version - single source of truth for the project
+# Must not exceed the version available in imas-data-dictionaries dependency
+default-dd-version = "4.1.0"
 imas-embedding-model = "all-MiniLM-L6-v2"
 imas-language-model = "google/gemini-3-pro-preview"
+# Include GGD (Generalized Grid Description) paths in schema generation
+include-ggd = true
+# Include error fields (_error_upper, _error_lower, _error_index)
+include-error-fields = false
 
 [tool.hatch.envs.test]
 dependencies = [
@@ -265,3 +274,14 @@ ignore = [
 known-first-party = ["imas_codex"]
 force-single-line = false
 combine-as-imports = true
+
+# UV configuration: CPU-only PyTorch
+# Uses pytorch-cpu index for torch (no nvidia-* deps, ~6GB smaller)
+# GPU users can manually: uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

@@ -30,11 +30,17 @@ jobs:
           fetch-depth: 0 # Need full history for ASV
 
       - name: Checkout gh-pages branch for benchmark history
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: gh-pages-data
-        continue-on-error: true  # First run won't have gh-pages yet
+        run: |
+          # Try to fetch gh-pages branch - it may not exist on first run
+          if git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages branch exists, checking out..."
+            git fetch origin gh-pages:gh-pages
+            git worktree add gh-pages-data gh-pages
+          else
+            echo "gh-pages branch does not exist yet (first run)"
+            mkdir -p gh-pages-data
+          fi
+        continue-on-error: true
 
       - name: Restore previous benchmark results from gh-pages
         run: |
@@ -56,11 +62,33 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Free disk space
+        run: |
+          # Remove large pre-installed packages to free disk space
+          # This prevents "No space left on device" errors from PyTorch CUDA deps
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          df -h
+
       - name: Install UV
-        uses: astral-sh/setup-uv@v2
+        uses: astral-sh/setup-uv@v5
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install ASV
         run: uv tool install asv
+
+      - name: Configure pip for CPU-only PyTorch
+        run: |
+          # Create pip config to use CPU-only PyTorch index
+          # This prevents downloading multi-GB CUDA libraries
+          mkdir -p ~/.config/pip
+          cat > ~/.config/pip/pip.conf << 'EOF'
+          [global]
+          extra-index-url = https://download.pytorch.org/whl/cpu
+          EOF
+          echo "Configured pip to prefer CPU-only PyTorch"
 
       - name: Configure ASV for PR context
         if: github.event_name == 'pull_request'
@@ -103,8 +131,8 @@ jobs:
           OS_VERSION=$(lsb_release -ds 2>/dev/null | tr -d '"' || echo "Unknown")
 
           # Create machine name from key specs to detect hardware changes
-          # Format: {arch}-{cores}c-{ram}gb
-          MACHINE_NAME="${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
+          # Format: ghactions-{arch}-{cores}c-{ram}gb
+          MACHINE_NAME="ghactions-${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
           echo "Machine name: $MACHINE_NAME"
 
           # Configure machine with detected specs
@@ -174,6 +202,8 @@ jobs:
           cd gh-pages-deploy
           git init
           git checkout -b gh-pages
+          # Force add .asv directory which is normally gitignored
+          git add -f .asv/
           git add -A
           git commit -m "deploy: ${{ github.sha }}"
           

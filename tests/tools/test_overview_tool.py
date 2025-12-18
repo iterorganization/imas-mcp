@@ -44,7 +44,7 @@ class TestOverviewToolInternals:
         # Mock the physics_categorizer to return specific domains
         def mock_get_domain(ids_name):
             domain_map = {
-                "equilibrium": PhysicsDomain.MHD,
+                "equilibrium": PhysicsDomain.MAGNETOHYDRODYNAMICS,
                 "core_profiles": PhysicsDomain.TRANSPORT,
                 "edge_profiles": PhysicsDomain.TRANSPORT,
             }
@@ -56,7 +56,7 @@ class TestOverviewToolInternals:
         ):
             domains = overview_tool._get_physics_domains()
 
-        assert "mhd" in domains
+        assert "magnetohydrodynamics" in domains
         assert "transport" in domains
         assert len(domains["transport"]) == 2
 

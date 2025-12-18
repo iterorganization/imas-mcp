@@ -6,6 +6,12 @@ Each cluster is identified by a hash of its sorted paths, enabling:
 - Incremental cache growth as new clusters are encountered
 - Cache reuse across different clustering runs with same paths
 - Persistence of labels even when cluster IDs change
+
+The JSON file uses a slim format for version control efficiency:
+    {path_hash: [label, description], ...}
+
+The SQLite database stores full metadata (model, timestamps, paths)
+for runtime use. The JSON seed file is expanded on first access.
 """
 
 import hashlib
@@ -17,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from imas_codex import dd_version
+from imas_codex.definitions.clusters import LABELS_FILE
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 from imas_codex.settings import get_language_model
 
@@ -29,8 +36,8 @@ class CachedLabel:
 
     label: str
     description: str
-    model: str
-    created_at: str
+    model: str = ""
+    created_at: str = ""
 
 
 def compute_cluster_hash(paths: list[str]) -> str:
@@ -56,18 +63,47 @@ class LabelCache:
     - Persistence across different clustering runs
     """
 
-    def __init__(self, cache_file: Path | None = None):
+    def __init__(self, cache_file: Path | None = None, json_file: Path | None = None):
         """Initialize the label cache.
 
         Args:
             cache_file: Path to SQLite database. If None, uses default location.
+            json_file: Path to JSON file for persistence. If None, uses LABELS_FILE.
         """
         if cache_file is None:
             path_accessor = ResourcePathAccessor(dd_version=dd_version)
             cache_file = path_accessor.clusters_dir / "label_cache.db"
 
         self.cache_file = cache_file
+        self.json_file = json_file if json_file is not None else LABELS_FILE
         self._ensure_schema()
+        self._seed_from_definitions()
+
+    def _seed_from_definitions(self) -> None:
+        """Seed cache from definitions file if cache is empty.
+
+        Supports both slim format: {hash: [label, desc], ...}
+        and legacy format: {hash: {label, description, model, ...}, ...}
+        """
+        if not self.json_file.exists():
+            return
+
+        with self._get_connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM labels").fetchone()[0]
+            if count > 0:
+                return  # Cache already populated
+
+        try:
+            with self.json_file.open() as f:
+                data = json.load(f)
+
+            if not data:
+                return
+
+            imported = self._import_slim_labels(data)
+            logger.info(f"Seeded cache with {imported} labels from definitions")
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to seed from definitions: {e}")
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get a database connection with proper settings."""
@@ -94,6 +130,37 @@ class LabelCache:
                 CREATE INDEX IF NOT EXISTS idx_model ON labels(model)
             """)
             conn.commit()
+
+    def _append_to_json(
+        self,
+        path_hash: str,
+        label: str,
+        description: str,
+    ) -> None:
+        """Append a single label entry to the JSON definitions file (slim format).
+
+        This enables incremental persistence for version control.
+        Slim format: {path_hash: [label, description], ...}
+        """
+        try:
+            # Load existing data
+            existing: dict = {}
+            if self.json_file.exists():
+                with self.json_file.open() as f:
+                    existing = json.load(f)
+
+            # Add/update entry in slim format
+            existing[path_hash] = [label, description]
+
+            # Write atomically
+            self.json_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp_file = self.json_file.with_suffix(".json.tmp")
+            with tmp_file.open("w") as f:
+                json.dump(existing, f, indent=2, sort_keys=True)
+            tmp_file.rename(self.json_file)
+
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to append label to JSON: {e}")
 
     def get_label(
         self, paths: list[str], model: str | None = None
@@ -166,6 +233,9 @@ class LabelCache:
             )
             conn.commit()
 
+        # Persist to JSON for version control (slim format)
+        self._append_to_json(path_hash, label, description)
+
         logger.debug(f"Cached label for cluster {path_hash}: {label}")
         return path_hash
 
@@ -218,6 +288,7 @@ class LabelCache:
         model = model or get_language_model()
         created_at = datetime.now().isoformat()
         count = 0
+        new_entries: list[tuple[str, str, str]] = []
 
         with self._get_connection() as conn:
             for paths, label, description in labels:
@@ -232,9 +303,14 @@ class LabelCache:
                     """,
                     (path_hash, label, description, model, created_at, paths_json),
                 )
+                new_entries.append((path_hash, label, description))
                 count += 1
 
             conn.commit()
+
+        # Persist all new entries to JSON for version control (slim format)
+        for path_hash, label, description in new_entries:
+            self._append_to_json(path_hash, label, description)
 
         logger.info(f"Cached {count} labels")
         return count
@@ -282,3 +358,104 @@ class LabelCache:
 
         logger.info(f"Cleared {count} cached labels")
         return count
+
+    def export_labels(self, output_file: Path | None = None) -> dict:
+        """Export all labels to slim format: {path_hash: [label, description], ...}.
+
+        Args:
+            output_file: Optional path to write JSON. If None, uses self.json_file.
+
+        Returns:
+            Dict of labels in slim format
+        """
+        output_file = output_file or self.json_file
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT path_hash, label, description FROM labels"
+            ).fetchall()
+
+        # Slim format: {hash: [label, description], ...}
+        result = {row["path_hash"]: [row["label"], row["description"]] for row in rows}
+
+        # Write atomically
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = output_file.with_suffix(".json.tmp")
+        with tmp_file.open("w") as f:
+            json.dump(result, f, indent=2, sort_keys=True)
+        tmp_file.replace(output_file)
+
+        logger.info(f"Exported {len(result)} labels to {output_file}")
+        return result
+
+    def _import_slim_labels(self, data: dict) -> int:
+        """Import labels from slim or legacy format, additive only.
+
+        Supports:
+        - Slim format: {hash: [label, description], ...}
+        - Legacy format: {hash: {label, description, model, paths, ...}, ...}
+
+        Args:
+            data: Dict of labels keyed by path_hash
+
+        Returns:
+            Number of labels imported
+        """
+        count = 0
+
+        with self._get_connection() as conn:
+            for path_hash, entry in data.items():
+                # Skip if already exists
+                existing = conn.execute(
+                    "SELECT 1 FROM labels WHERE path_hash = ?", (path_hash,)
+                ).fetchone()
+                if existing:
+                    continue
+
+                # Handle both slim [label, desc] and legacy {label, description, ...}
+                if isinstance(entry, list):
+                    # Slim format
+                    label, description = entry[0], entry[1] if len(entry) > 1 else ""
+                    model = "unknown"
+                    paths_json = "[]"
+                else:
+                    # Legacy format
+                    label = entry["label"]
+                    description = entry["description"]
+                    model = entry.get("model", "unknown")
+                    paths_json = json.dumps(entry.get("paths", []))
+
+                conn.execute(
+                    """
+                    INSERT INTO labels
+                    (path_hash, label, description, model, created_at, paths_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        path_hash,
+                        label,
+                        description,
+                        model,
+                        datetime.now().isoformat(),
+                        paths_json,
+                    ),
+                )
+                count += 1
+
+            conn.commit()
+
+        logger.info(f"Imported {count} labels (skipped existing)")
+        return count
+
+    def import_labels(self, data: dict) -> int:
+        """Import labels from a dict, additive only (skip existing hashes).
+
+        Supports both slim and legacy formats.
+
+        Args:
+            data: Dict of labels keyed by path_hash
+
+        Returns:
+            Number of labels imported
+        """
+        return self._import_slim_labels(data)

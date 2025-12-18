@@ -66,3 +66,6 @@ imas_codex/database/imas_fts.db
 docs-data/
 docs/TOOL_IMPROVEMENT_PLAN.md
 
+
+# Temporary files
+*.tmp

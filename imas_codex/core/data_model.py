@@ -9,47 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-class PhysicsDomain(str, Enum):
-    """Physics domains in IMAS with comprehensive categorization."""
-
-    # Core plasma physics domains
-    EQUILIBRIUM = "equilibrium"
-    TRANSPORT = "transport"
-    MHD = "mhd"
-    TURBULENCE = "turbulence"
-
-    # Heating and current drive
-    HEATING = "heating"
-    CURRENT_DRIVE = "current_drive"
-
-    # Plasma-material interactions
-    WALL = "wall"
-    DIVERTOR = "divertor"
-    EDGE_PHYSICS = "edge_physics"
-
-    # Diagnostics and measurements
-    PARTICLE_DIAGNOSTICS = "particle_diagnostics"
-    ELECTROMAGNETIC_DIAGNOSTICS = "electromagnetic_diagnostics"
-    RADIATION_DIAGNOSTICS = "radiation_diagnostics"
-    MAGNETIC_DIAGNOSTICS = "magnetic_diagnostics"
-    MECHANICAL_DIAGNOSTICS = "mechanical_diagnostics"
-
-    # Control and operation
-    CONTROL = "control"
-    OPERATIONAL = "operational"
-
-    # System components
-    COILS = "coils"
-    STRUCTURE = "structure"
-    SYSTEMS = "systems"
-
-    # Data and workflow
-    DATA_MANAGEMENT = "data_management"
-    WORKFLOW = "workflow"
-
-    # Fallback
-    GENERAL = "general"
+# Import generated enum from LinkML schema
+from imas_codex.core.physics_domain import PhysicsDomain
 
 
 class DataLifecycle(str, Enum):
@@ -164,10 +125,11 @@ class CatalogMetadata(BaseModel):
     generation_date: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat() + "Z"
     )
-    total_ids: int
-    total_leaf_nodes: int
+    total_ids: int = 0  # For IDS catalog: total IDS count; for identifier catalog: IDS using identifiers
+    total_leaf_nodes: int = 0
     total_paths: int = 0  # Total number of paths across all IDS
     total_relationships: int = 0  # Added for relationships metadata
+    total_schemas: int = 0  # Total number of identifier schemas
 
 
 class IdsCatalog(BaseModel):

@@ -109,7 +109,7 @@ class HealthEndpoint:
             return JSONResponse(
                 {
                     "status": "ok",
-                    "mcp_server_version": self._get_version(),
+                    "imas_codex_version": self._get_version(),
                     "imas_dd_version": dd_version,
                     "ids_count": ids_count,
                     "document_count": documents,

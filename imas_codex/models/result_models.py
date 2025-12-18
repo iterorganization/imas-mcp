@@ -292,6 +292,12 @@ class SearchPathsResult(WithPhysics, ToolResult, SearchHits):
         default=None, description="Error message if query was invalid"
     )
 
+    # Confidence warning for low-quality search results
+    confidence_warning: str | None = Field(
+        default=None,
+        description="Warning when search results have low relevance scores",
+    )
+
 
 class GetOverviewResult(WithPhysics, ToolResult, SearchHits):
     """Overview tool response with physics aggregation."""
@@ -446,49 +452,3 @@ class CheckPathsResult(BaseModel):
     error: str | None = Field(
         default=None, description="Error message if input was invalid"
     )
-
-
-# ============================================================================
-# DOCUMENTATION SEARCH
-# ============================================================================
-
-
-class SearchDocsResultItem(BaseModel):
-    """A single documentation search result."""
-
-    title: str | None = Field(default=None, description="Document title")
-    url: str | None = Field(default=None, description="URL to documentation")
-    content: str | None = Field(default=None, description="Content excerpt")
-    score: float | None = Field(default=None, description="Relevance score")
-
-
-class SearchDocsResult(BaseModel):
-    """Result from search_imas_docs tool."""
-
-    results: list[SearchDocsResultItem] = Field(
-        default_factory=list, description="Search results"
-    )
-    count: int = Field(default=0, description="Number of results returned")
-    query: str | None = Field(default=None, description="Search query")
-    library: str | None = Field(default=None, description="Library searched")
-    version: str | None = Field(default=None, description="Library version")
-    success: bool = Field(default=True, description="Whether search succeeded")
-    error: str | None = Field(default=None, description="Error message if failed")
-    available_libraries: list[str] | None = Field(
-        default=None, description="Available libraries if library not specified"
-    )
-
-
-class ListDocsResult(BaseModel):
-    """Result from list_imas_docs tool."""
-
-    libraries: list[str] = Field(
-        default_factory=list, description="Available library names"
-    )
-    count: int = Field(default=0, description="Number of libraries available")
-    success: bool = Field(default=True, description="Whether listing succeeded")
-    error: str | None = Field(default=None, description="Error message if failed")
-    library: str | None = Field(
-        default=None, description="Specific library queried (if any)"
-    )
-    note: str | None = Field(default=None, description="Additional information")

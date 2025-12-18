@@ -1,13 +1,15 @@
 """
 Clustering functionality for relationship extraction.
+
+Uses HDBSCAN for semantic-first clustering that adapts to varying density
+in the embedding space without requiring epsilon tuning.
 """
 
 import logging
-from collections import defaultdict
-from typing import Any
+from typing import Any, Literal
 
+import hdbscan
 import numpy as np
-from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import cosine_similarity
 
 from .models import ClusterInfo, PathMembership
@@ -57,12 +59,31 @@ def _compute_cluster_centroid(
 
 
 class EmbeddingClusterer:
-    """Performs multi-membership clustering with separate cross-IDS and intra-IDS stages."""
+    """Performs semantic clustering using HDBSCAN.
 
-    def __init__(self, config, logger: logging.Logger | None = None):
-        """Initialize the clusterer with configuration."""
+    HDBSCAN automatically adapts to varying density in the embedding space,
+    eliminating the need for epsilon tuning. Uses a single-pass approach
+    that lets semantic similarity naturally determine cluster membership,
+    deriving cross-IDS vs intra-IDS properties post-hoc from results.
+    """
+
+    def __init__(
+        self,
+        config,
+        logger: logging.Logger | None = None,
+        cluster_selection_method: Literal["eom", "leaf"] = "eom",
+    ):
+        """Initialize the clusterer with configuration.
+
+        Args:
+            config: Clustering configuration
+            logger: Optional logger instance
+            cluster_selection_method: HDBSCAN method - 'eom' for broader clusters,
+                                      'leaf' for finer-grained clusters
+        """
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
+        self.cluster_selection_method = cluster_selection_method
 
     def cluster_embeddings(
         self,
@@ -71,392 +92,155 @@ class EmbeddingClusterer:
         filtered_paths: dict[str, dict[str, Any]],
     ) -> tuple[list[ClusterInfo], dict[str, PathMembership], dict[str, Any]]:
         """
-        Perform multi-membership clustering with separate cross-IDS and intra-IDS stages.
+        Perform semantic clustering using HDBSCAN.
+
+        Uses a single-pass approach that clusters all paths based on embedding
+        similarity, then derives cross-IDS/intra-IDS properties post-hoc.
 
         Returns:
-            - List of all clusters (both cross-IDS and intra-IDS)
-            - Path index mapping each path to its cluster memberships
+            - List of all clusters with is_cross_ids derived from membership
+            - Path index mapping each path to its cluster membership
             - Statistics about the clustering process
         """
-        # Stage 1: Cross-IDS clustering
-        cross_clusters, cross_memberships = self._cluster_cross_ids(
-            embeddings, path_list, filtered_paths
-        )
+        if len(path_list) < 2:
+            self.logger.warning("Not enough paths for clustering")
+            return [], {}, {"error": "insufficient_paths"}
 
-        # Stage 2: Intra-IDS clustering
-        intra_clusters, intra_memberships = self._cluster_intra_ids(
-            embeddings, path_list, filtered_paths
-        )
-
-        # Combine clusters
-        all_clusters = cross_clusters + intra_clusters
-
-        # Build unified path index
-        path_index = self._build_unified_path_index(
-            path_list, cross_memberships, intra_memberships
-        )
-
-        # Calculate statistics
-        statistics = self._calculate_statistics(
-            cross_clusters, intra_clusters, path_index
-        )
-
+        # Convert embeddings to distance matrix for HDBSCAN
+        # HDBSCAN works with distances, use 1 - cosine_similarity
         self.logger.info(
-            f"Multi-membership clustering complete: "
-            f"{len(cross_clusters)} cross-IDS clusters, "
-            f"{len(intra_clusters)} intra-IDS clusters"
+            f"Clustering {len(path_list)} paths with HDBSCAN "
+            f"(min_cluster_size=2, method={self.cluster_selection_method})"
         )
 
-        return all_clusters, path_index, statistics
-
-    def _cluster_cross_ids(
-        self,
-        embeddings: np.ndarray,
-        path_list: list[str],
-        filtered_paths: dict[str, dict[str, Any]],
-    ) -> tuple[list[ClusterInfo], dict[str, int]]:
-        """Cluster paths that span multiple IDS."""
-        # Filter for cross-IDS candidates - only paths that have potential cross-IDS relationships
-        cross_candidates = self._get_cross_ids_candidates(path_list, filtered_paths)
-        if len(cross_candidates) < self.config.cross_ids_min_samples:
-            self.logger.info("Not enough cross-IDS candidates for clustering")
-            return [], {}
-
-        cross_indices = [
-            i for i, path in enumerate(path_list) if path in cross_candidates
-        ]
-        cross_embeddings = embeddings[cross_indices]
-        cross_paths = [path_list[i] for i in cross_indices]
-
-        self.logger.info(f"Clustering {len(cross_candidates)} cross-IDS candidates")
-
-        # DEBUG: Log the exact parameters being used
-        self.logger.debug(
-            f"Cross-IDS DBSCAN parameters - eps={self.config.cross_ids_eps}, min_samples={self.config.cross_ids_min_samples}, metric=cosine"
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=2,
+            min_samples=2,
+            metric="euclidean",  # Use euclidean on normalized embeddings
+            cluster_selection_method=self.cluster_selection_method,
         )
 
-        # Cluster cross-IDS paths with stricter parameters
-        clustering = DBSCAN(
-            eps=self.config.cross_ids_eps,
-            min_samples=self.config.cross_ids_min_samples,
-            metric="cosine",
-        )
-        cluster_labels = clustering.fit_predict(cross_embeddings)
+        # Normalize embeddings for cosine-like behavior with euclidean metric
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        normalized_embeddings = embeddings / np.where(norms > 0, norms, 1)
 
-        # DEBUG: Log clustering results before validation
+        cluster_labels = clusterer.fit_predict(normalized_embeddings)
+        probabilities = clusterer.probabilities_
+
+        # Build clusters from labels
+        clusters = []
+        path_memberships: dict[str, PathMembership] = {}
+
         unique_labels = set(cluster_labels)
         noise_count = list(cluster_labels).count(-1)
-        cluster_count_before_validation = len(unique_labels) - (
-            1 if -1 in unique_labels else 0
-        )
-        self.logger.debug(
-            f"Cross-IDS raw clustering results - {cluster_count_before_validation} clusters, {noise_count} noise points"
+        cluster_count = len(unique_labels) - (1 if -1 in unique_labels else 0)
+
+        self.logger.info(
+            f"HDBSCAN found {cluster_count} clusters, {noise_count} noise points"
         )
 
-        # Build clusters - ONLY accept clusters that actually span multiple IDS
-        clusters = []
-        path_memberships = {}
-        cluster_id = 0
-        rejected_single_ids = 0
-
-        for label in set(cluster_labels):
+        for label in sorted(unique_labels):
             if label == -1:  # Skip noise
                 continue
 
             cluster_indices = [
-                i for i, label_val in enumerate(cluster_labels) if label_val == label
+                i for i, lbl in enumerate(cluster_labels) if lbl == label
             ]
-            cluster_paths = [cross_paths[i] for i in cluster_indices]
+            cluster_paths = [path_list[i] for i in cluster_indices]
+            cluster_probs = [probabilities[i] for i in cluster_indices]
 
-            # Validate that this cluster actually spans multiple IDS
-            ids_in_cluster = {
-                path.split("/")[0] for path in cluster_paths
-            }  # Use "/" not "." for separator
+            # Compute cluster properties
+            similarity_score = _compute_cluster_similarity(cluster_indices, embeddings)
+            centroid = _compute_cluster_centroid(cluster_indices, embeddings)
 
-            if len(ids_in_cluster) < 2:
-                rejected_single_ids += 1
-                continue
-
-            similarity_score = _compute_cluster_similarity(
-                [cross_indices[i] for i in cluster_indices], embeddings
-            )
-
-            # Compute centroid embedding for semantic search
-            centroid = _compute_cluster_centroid(
-                [cross_indices[i] for i in cluster_indices], embeddings
-            )
+            # Derive IDS membership from paths (post-hoc)
+            ids_names = sorted({self._extract_ids_name(p) for p in cluster_paths})
+            is_cross_ids = len(ids_names) > 1
 
             cluster = ClusterInfo(
-                id=cluster_id,
+                id=label,
                 similarity_score=similarity_score,
                 size=len(cluster_paths),
-                is_cross_ids=True,
-                ids_names=sorted(ids_in_cluster),
+                is_cross_ids=is_cross_ids,
+                ids_names=ids_names,
                 paths=cluster_paths,
                 centroid=centroid,
             )
             clusters.append(cluster)
 
-            # Record memberships
-            for path in cluster_paths:
-                path_memberships[path] = cluster_id
+            # Record memberships (probability available for future confidence scoring)
+            for path, _prob in zip(cluster_paths, cluster_probs, strict=True):
+                if is_cross_ids:
+                    path_memberships[path] = PathMembership(
+                        cross_ids_cluster=label, intra_ids_cluster=None
+                    )
+                else:
+                    path_memberships[path] = PathMembership(
+                        cross_ids_cluster=None, intra_ids_cluster=label
+                    )
 
-            cluster_id += 1
+        # Add noise paths with no membership
+        for i, label in enumerate(cluster_labels):
+            if label == -1:
+                path_memberships[path_list[i]] = PathMembership()
 
+        # Calculate statistics
+        statistics = self._calculate_statistics(clusters, path_memberships)
+
+        cross_count = sum(1 for c in clusters if c.is_cross_ids)
+        intra_count = len(clusters) - cross_count
         self.logger.info(
-            f"Cross-IDS clustering: {len(clusters)} valid cross-IDS clusters, {rejected_single_ids} rejected single-IDS clusters"
+            f"Clustering complete: {cross_count} cross-IDS, {intra_count} intra-IDS clusters"
         )
-        return clusters, path_memberships
 
-    def _cluster_intra_ids(
-        self,
-        embeddings: np.ndarray,
-        path_list: list[str],
-        filtered_paths: dict[str, dict[str, Any]],
-    ) -> tuple[list[ClusterInfo], dict[str, int]]:
-        """Cluster paths within each IDS separately."""
-        clusters = []
-        path_memberships = {}
-        cluster_id = 1000  # Start from high number to distinguish from cross-IDS
+        return clusters, path_memberships, statistics
 
-        # Group paths by IDS
-        ids_groups = defaultdict(list)
-        for i, path in enumerate(path_list):
-            ids_name = path.split("/")[0]  # Use "/" not "." for separator
-            ids_groups[ids_name].append((i, path))
-
-        # Cluster each IDS separately
-        for ids_name, path_data in ids_groups.items():
-            if len(path_data) < self.config.intra_ids_min_samples:
-                continue
-
-            indices = [idx for idx, _ in path_data]
-            ids_paths = [path for _, path in path_data]
-            ids_embeddings = embeddings[indices]
-
-            # DEBUG: Log the exact parameters being used for this IDS (only for first few)
-            if len(clusters) < 5:  # Only log first few IDS to avoid spam
-                self.logger.debug(
-                    f"Intra-IDS DBSCAN for {ids_name} - eps={self.config.intra_ids_eps}, min_samples={self.config.intra_ids_min_samples}, metric=cosine, paths={len(ids_paths)}"
-                )
-
-            # Cluster this IDS
-            clustering = DBSCAN(
-                eps=self.config.intra_ids_eps,
-                min_samples=self.config.intra_ids_min_samples,
-                metric="cosine",
-            )
-            cluster_labels = clustering.fit_predict(ids_embeddings)
-
-            # DEBUG: Log clustering results for this IDS (only for first few)
-            if len(clusters) < 5:
-                unique_labels = set(cluster_labels)
-                noise_count = list(cluster_labels).count(-1)
-                cluster_count_for_ids = len(unique_labels) - (
-                    1 if -1 in unique_labels else 0
-                )
-                self.logger.debug(
-                    f"Intra-IDS {ids_name} clustering results - {cluster_count_for_ids} clusters, {noise_count} noise points"
-                )
-
-            # Create cluster objects
-            for label in set(cluster_labels):
-                if label == -1:  # Skip noise
-                    continue
-
-                cluster_indices = [
-                    i
-                    for i, label_val in enumerate(cluster_labels)
-                    if label_val == label
-                ]
-                cluster_paths = [ids_paths[i] for i in cluster_indices]
-
-                similarity_score = _compute_cluster_similarity(
-                    [indices[i] for i in cluster_indices], embeddings
-                )
-
-                # Compute centroid embedding for semantic search
-                centroid = _compute_cluster_centroid(
-                    [indices[i] for i in cluster_indices], embeddings
-                )
-
-                cluster = ClusterInfo(
-                    id=cluster_id,
-                    similarity_score=similarity_score,
-                    size=len(cluster_paths),
-                    is_cross_ids=False,
-                    ids_names=[ids_name],
-                    paths=cluster_paths,
-                    centroid=centroid,
-                )
-                clusters.append(cluster)
-
-                # Record memberships
-                for path in cluster_paths:
-                    path_memberships[path] = cluster_id
-
-                cluster_id += 1
-
-        self.logger.info(f"Intra-IDS clustering: {len(clusters)} clusters")
-        return clusters, path_memberships
-
-    def _get_cross_ids_candidates(
-        self, path_list: list[str], filtered_paths: dict[str, dict[str, Any]]
-    ) -> set[str]:
-        """Identify paths that could potentially form cross-IDS relationships."""
-        candidates = set()
-
-        # Group paths by semantic concept (more sophisticated approach)
-        concept_to_paths = defaultdict(list)
-        for path in path_list:
-            concept = self._extract_concept(path)
-            if len(concept) > 3:  # Skip very short concepts
-                concept_to_paths[concept].append(path)
-
-        # Find concepts that appear in multiple IDS
-        for _concept, paths in concept_to_paths.items():
-            if len(paths) < 2:
-                continue
-
-            ids_in_concept = {
-                path.split("/")[0] for path in paths
-            }  # Use "/" not "." for separator
-            if len(ids_in_concept) > 1:  # Appears in multiple IDS
-                candidates.update(paths)
-
-        # Additional filtering: look for physics-related terms that are likely to be cross-IDS
-        physics_terms = {
-            "temperature",
-            "density",
-            "pressure",
-            "current",
-            "magnetic",
-            "field",
-            "flux",
-            "psi",
-            "phi",
-            "radius",
-            "rho",
-            "profile",
-            "boundary",
-            "outline",
-        }
-
-        for path in path_list:
-            path_lower = path.lower()
-            if any(term in path_lower for term in physics_terms):
-                # Check if this type of path exists in other IDS
-                path_concept = self._extract_concept(path)
-                other_ids_paths = [
-                    p for p in path_list if p.split("/")[0] != path.split("/")[0]
-                ]  # Use "/" not "." for separator
-                if any(
-                    self._extract_concept(other_path) == path_concept
-                    for other_path in other_ids_paths
-                ):
-                    candidates.add(path)
-
-        self.logger.info(
-            f"Found {len(candidates)} cross-IDS candidates from {len(path_list)} total paths"
-        )
-        return candidates
-
-    def _extract_concept(self, path: str) -> str:
-        """Extract the core concept from a path."""
-        parts = path.split("/")  # Use "/" not "." for separator
-        # Remove IDS name and array indices, focus on semantic components
-        filtered_parts = []
-        for part in parts[1:]:  # Skip IDS name
-            if not part.isdigit() and "time_slice" not in part:
-                filtered_parts.append(part)
-        return ".".join(filtered_parts[-2:])  # Last 2 components for concept
-
-    def _build_unified_path_index(
-        self,
-        path_list: list[str],
-        cross_memberships: dict[str, int],
-        intra_memberships: dict[str, int],
-    ) -> dict[str, PathMembership]:
-        """Build unified path index combining both clustering results."""
-        path_index = {}
-
-        for path in path_list:
-            cross_cluster = cross_memberships.get(path)
-            intra_cluster = intra_memberships.get(path)
-
-            path_index[path] = PathMembership(
-                cross_ids_cluster=cross_cluster,
-                intra_ids_cluster=intra_cluster,
-            )
-
-        return path_index
+    def _extract_ids_name(self, path: str) -> str:
+        """Extract IDS name from path."""
+        return path.split("/")[0]
 
     def _calculate_statistics(
         self,
-        cross_clusters: list[ClusterInfo],
-        intra_clusters: list[ClusterInfo],
+        clusters: list[ClusterInfo],
         path_index: dict[str, PathMembership],
     ) -> dict[str, Any]:
-        """Calculate clustering statistics based on final validated clusters."""
-        # Count membership types from final results
-        multi_membership = 0
-        isolated = 0
-        paths_in_cross_clusters = 0
-        paths_in_intra_clusters = 0
+        """Calculate clustering statistics."""
+        cross_clusters = [c for c in clusters if c.is_cross_ids]
+        intra_clusters = [c for c in clusters if not c.is_cross_ids]
 
-        for membership in path_index.values():
-            if (
-                membership.cross_ids_cluster is not None
-                and membership.intra_ids_cluster is not None
-            ):
-                multi_membership += 1
-            elif (
-                membership.cross_ids_cluster is None
-                and membership.intra_ids_cluster is None
-            ):
-                isolated += 1
-
-        # Calculate paths in clusters from validated clusters
-        # Re-validate cross-IDS clusters to ensure statistics match reality
-        actual_cross_clusters = [c for c in cross_clusters if len(c.ids_names) > 1]
-        actual_intra_clusters = [
-            c for c in cross_clusters if len(c.ids_names) == 1
-        ] + intra_clusters
-
-        paths_in_cross_clusters = sum(c.size for c in actual_cross_clusters)
-        paths_in_intra_clusters = sum(c.size for c in actual_intra_clusters)
-
-        # Calculate noise points
-        total_paths = len(path_index)
-        cross_noise = total_paths - paths_in_cross_clusters
-        intra_noise = total_paths - paths_in_intra_clusters
-
-        # Calculate averages from validated clusters
-        cross_similarities = [c.similarity_score for c in actual_cross_clusters]
-        intra_similarities = [c.similarity_score for c in actual_intra_clusters]
+        multi_membership = sum(
+            1
+            for m in path_index.values()
+            if m.cross_ids_cluster is not None and m.intra_ids_cluster is not None
+        )
+        isolated = sum(
+            1
+            for m in path_index.values()
+            if m.cross_ids_cluster is None and m.intra_ids_cluster is None
+        )
 
         cross_avg_sim = (
-            sum(cross_similarities) / len(cross_similarities)
-            if cross_similarities
+            sum(c.similarity_score for c in cross_clusters) / len(cross_clusters)
+            if cross_clusters
             else 0.0
         )
         intra_avg_sim = (
-            sum(intra_similarities) / len(intra_similarities)
-            if intra_similarities
+            sum(c.similarity_score for c in intra_clusters) / len(intra_clusters)
+            if intra_clusters
             else 0.0
         )
 
         return {
             "cross_ids_clustering": {
-                "total_clusters": len(actual_cross_clusters),
-                "paths_in_clusters": paths_in_cross_clusters,
-                "noise_points": cross_noise,
+                "total_clusters": len(cross_clusters),
+                "paths_in_clusters": sum(c.size for c in cross_clusters),
+                "noise_points": isolated,
                 "avg_similarity": cross_avg_sim,
             },
             "intra_ids_clustering": {
-                "total_clusters": len(actual_intra_clusters),
-                "paths_in_clusters": paths_in_intra_clusters,
-                "noise_points": intra_noise,
+                "total_clusters": len(intra_clusters),
+                "paths_in_clusters": sum(c.size for c in intra_clusters),
+                "noise_points": isolated,
                 "avg_similarity": intra_avg_sim,
             },
             "multi_membership_paths": multi_membership,
