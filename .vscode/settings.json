@@ -26,11 +26,6 @@
   "python.testing.cwd": "${workspaceFolder}",
   "python.testing.autoTestDiscoverOnSaveEnabled": true,
   "python.analysis.typeCheckingMode": "basic",
-  "terminal.integrated.env.windows": {
-    "ANTHROPIC_API_KEY": "your-anthropic-key-here",
-    "OPENAI_API_KEY": "your-openai-key-here",
-    "GEMINI_API_KEY": "your-gemini-key-here"
-  },
   "python.envFile": "${workspaceFolder}/.env",
   "chat.agent.enabled": true,
   "chat.mcp.serverSampling": {
@@ -67,5 +62,6 @@
   "chat.customAgentInSubagent.enabled": true,
   "gistpad.mcp.enabled": false,
   "markdown-pdf.highlightStyle": "solarized-light.css",
-  "markdown-pdf.includeDefaultStyles": false
+  "markdown-pdf.includeDefaultStyles": false,
+  "chat.mcp.autostart": "never"
 }
