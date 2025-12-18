@@ -157,44 +157,42 @@ class ClusterSearchBenchmarks:
                     },
                 )
 
-    def time_search_clusters_depth_1(self):
-        """Benchmark cluster search with depth 1."""
+    def time_search_clusters_path_lookup(self):
+        """Benchmark cluster search with path lookup."""
 
         async def run_explore():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
                     "search_imas_clusters",
                     {
-                        "path": "core_profiles/profiles_1d/electrons/temperature",
-                        "max_depth": 1,
+                        "query": "core_profiles/profiles_1d/electrons/temperature",
                     },
                 )
 
         return asyncio.run(run_explore())
 
-    def time_search_clusters_depth_2(self):
-        """Benchmark cluster search with depth 2."""
+    def time_search_clusters_semantic(self):
+        """Benchmark cluster search with semantic query."""
 
         async def run_explore():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
                     "search_imas_clusters",
                     {
-                        "path": "core_profiles/profiles_1d/electrons/density",
-                        "max_depth": 2,
+                        "query": "electron density measurements",
                     },
                 )
 
         return asyncio.run(run_explore())
 
-    def time_search_clusters_depth_3(self):
-        """Benchmark cluster search with depth 3."""
+    def time_search_clusters_with_filter(self):
+        """Benchmark cluster search with IDS filter."""
 
         async def run_explore():
             async with self.fixture.client:
                 return await self.fixture.client.call_tool(
                     "search_imas_clusters",
-                    {"path": "equilibrium/time_slice/profiles_2d/psi", "max_depth": 3},
+                    {"query": "magnetic field", "ids_filter": "equilibrium"},
                 )
 
         return asyncio.run(run_explore())

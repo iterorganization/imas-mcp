@@ -2,13 +2,12 @@
 
 import logging
 import os
-from pathlib import Path
 from typing import Literal, cast
 
 import click
 from dotenv import load_dotenv
 
-from imas_codex import __version__, dd_version
+from imas_codex import __version__, _get_dd_version
 from imas_codex.server import Server
 
 # Load environment variables from .env file
@@ -78,22 +77,15 @@ def _print_version(
     ),
 )
 @click.option(
-    "--docs-server-port",
-    envvar="DOCS_SERVER_PORT",
-    default=6280,
-    type=int,
-    help="Port for docs-mcp-server (env: DOCS_SERVER_PORT) (default: 6280)",
-)
-@click.option(
-    "--docs-store-path",
-    envvar="DOCS_MCP_STORE_PATH",
-    type=click.Path(path_type=Path),
-    help="Path for docs-mcp-server data storage (env: DOCS_MCP_STORE_PATH) (default: ./docs-data)",
-)
-@click.option(
-    "--disable-docs-server",
-    is_flag=True,
-    help="Disable automatic startup of docs-mcp-server",
+    "--dd-version",
+    "dd_version_opt",
+    envvar="IMAS_DD_VERSION",
+    type=str,
+    default=None,
+    help=(
+        "IMAS Data Dictionary version to use (env: IMAS_DD_VERSION). "
+        "Defaults to [tool.imas-codex].default-dd-version in pyproject.toml."
+    ),
 )
 def main(
     transport: str,
@@ -102,9 +94,7 @@ def main(
     log_level: str,
     no_rich: bool,
     ids_filter: str,
-    docs_server_port: int,
-    docs_store_path: Path | None,
-    disable_docs_server: bool,
+    dd_version_opt: str | None,
 ) -> None:
     """Run the AI-enhanced MCP server with configurable transport options.
 
@@ -124,17 +114,25 @@ def main(
         # Run without rich progress output
         imas-codex --no-rich
 
+        # Run with specific DD version
+        imas-codex --dd-version 3.42.2
+
+    DD Version Priority (highest to lowest):
+        1. --dd-version CLI option
+        2. IMAS_DD_VERSION environment variable
+        3. [tool.imas-codex].default-dd-version in pyproject.toml
+
     Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.
-
-    To set DD version, use the IMAS_DD_VERSION environment variable.
-
-    For documentation management, use the separate 'docs' command:
-        docs list
-        docs add <library> <url>
-        docs remove <library> --force
-        docs clear-all --force
     """
+    # Resolve DD version with CLI option taking precedence
+    if dd_version_opt:
+        # Set env var so _get_dd_version picks it up (CLI overrides env)
+        os.environ["IMAS_DD_VERSION"] = dd_version_opt
+
+    # Re-resolve dd_version with the updated env (if CLI option was provided)
+    effective_dd_version = _get_dd_version(dd_version_opt)
+
     # Configure logging based on the provided level
     # Force reconfigure logging by getting the root logger and setting its level
     root_logger = logging.getLogger()
@@ -147,20 +145,18 @@ def main(
     logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
 
-    dd_version_env = os.environ.get("IMAS_DD_VERSION")
-    ids_filter_env = os.environ.get("IDS_FILTER")
-
-    if dd_version_env:
-        logger.info(f"IMAS DD version: {dd_version} (IMAS_DD_VERSION={dd_version_env})")
+    # Log DD version with source indication
+    if dd_version_opt:
+        logger.info(f"IMAS DD version: {effective_dd_version} (--dd-version)")
+    elif os.environ.get("IMAS_DD_VERSION"):
+        logger.info(f"IMAS DD version: {effective_dd_version} (IMAS_DD_VERSION env)")
     else:
-        logger.info(f"IMAS DD version: {dd_version}")
+        logger.info(f"IMAS DD version: {effective_dd_version} (default)")
+
+    ids_filter_env = os.environ.get("IDS_FILTER")
 
     if ids_filter_env:
         logger.info(f"IDS filter: {ids_filter_env}")
-
-    # Configure docs server
-    if disable_docs_server:
-        logger.info("Docs server auto-start disabled")
 
     # Parse ids_filter string into a set if provided
     ids_set: set | None = set(ids_filter.split()) if ids_filter else None
@@ -186,20 +182,6 @@ def main(
         )
 
     server = Server(use_rich=use_rich, ids_set=ids_set)
-
-    # Configure docs server if not disabled
-    if not disable_docs_server:
-        server.docs_manager.default_port = docs_server_port
-        # Override store path if provided via CLI
-        if docs_store_path:
-            server.docs_manager.store_path = docs_store_path
-            server.docs_manager.store_path.mkdir(parents=True, exist_ok=True)
-            logger.info(
-                f"Using CLI-specified docs store path: {docs_store_path.absolute()}"
-            )
-
-    # Setup signal handlers for clean shutdown
-    server.setup_signal_handlers()
 
     server.run(
         transport=cast(Literal["stdio", "sse", "streamable-http"], transport),

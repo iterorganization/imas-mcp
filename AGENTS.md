@@ -105,11 +105,11 @@ tests/
 
 ```python
 # Correct
-if isinstance(e, DocsServerError | PortAllocationError):
+if isinstance(e, ValueError | TypeError):
     raise
 
 # Wrong (ruff UP038)
-if isinstance(e, (DocsServerError, PortAllocationError)):
+if isinstance(e, (ValueError, TypeError)):
     raise
 ```
 

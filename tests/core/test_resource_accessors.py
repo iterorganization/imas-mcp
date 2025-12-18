@@ -149,7 +149,7 @@ class TestResourcePathAccessorDDAccessor:
                 assert result == mock_instance
 
     def test_dd_accessor_from_env_no_version(self, tmp_path):
-        """No version tries ImasDataDictionaryAccessor first."""
+        """No env version uses instance dd_version with PyPI accessor."""
         with (
             patch.object(
                 ResourcePathAccessor,
@@ -161,12 +161,12 @@ class TestResourcePathAccessorDDAccessor:
             accessor = ResourcePathAccessor(dd_version="4.0.0")
 
             with patch(
-                "imas_codex.dd_accessor.ImasDataDictionaryAccessor"
+                "imas_codex.dd_accessor.ImasDataDictionariesAccessor"
             ) as mock_accessor:
                 mock_instance = MagicMock()
                 mock_accessor.return_value = mock_instance
                 result = accessor._create_dd_accessor_from_env()
-                mock_accessor.assert_called_once()
+                mock_accessor.assert_called_once_with("4.0.0")
                 assert result == mock_instance
 
     def test_dd_accessor_from_env_fallback_to_pypi(self, tmp_path):

@@ -92,7 +92,9 @@ class PathTool(BaseTool):
 
     def _get_valid_paths(self) -> list[str]:
         """Get list of valid paths from document store."""
-        return list(self.document_store._documents.keys())
+        # Ensure documents are loaded before accessing the index
+        self.document_store._ensure_loaded()
+        return list(self.document_store._index.by_path_id.keys())
 
     def _get_suggestion_for_path(self, path: str) -> str | None:
         """Get a typo suggestion for a not-found path."""

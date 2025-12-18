@@ -43,7 +43,8 @@ class ResourcePathAccessor:
 
     def _create_dd_accessor_from_env(self) -> DataDictionaryAccessor:
         """Create DD accessor based on IMAS_DD_VERSION environment variable."""
-        dd_version = os.environ.get("IMAS_DD_VERSION", "")
+        # Use environment variable if set, otherwise use instance dd_version
+        dd_version = os.environ.get("IMAS_DD_VERSION", "") or self._dd_version
 
         if dd_version:
             # Check if this is a dev version (contains 'dev' in version string)
@@ -70,10 +71,10 @@ class ResourcePathAccessor:
 
                 return ImasDataDictionaryAccessor()
             except ImportError:
-                # Fall back to PyPI package with default version
+                # Fall back to PyPI package with instance version
                 from imas_codex.dd_accessor import ImasDataDictionariesAccessor
 
-                return ImasDataDictionariesAccessor("4.0.0")
+                return ImasDataDictionariesAccessor(self._dd_version)
 
     def _get_base_resources_dir(self) -> Path:
         """Get the base resources directory (imas_codex/resources/)."""

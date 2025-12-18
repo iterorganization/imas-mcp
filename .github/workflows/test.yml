@@ -50,12 +50,13 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra test --extra transformers
+        run: uv sync --extra test
         env:
           HATCH_BUILD_NO_HOOKS: true
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}

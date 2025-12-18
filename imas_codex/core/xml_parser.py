@@ -652,9 +652,12 @@ class DataDictionaryTransformer:
             version=self.dd_accessor.get_version().public
             if self.dd_accessor
             else "unknown",
-            total_ids=len(paths_by_ids),
+            total_ids=len(
+                ids_data
+            ),  # Total IDS in DD, not just those using identifiers
             total_leaf_nodes=len(identifier_paths),
             total_relationships=0,
+            total_schemas=len(schemas),
         )
 
         catalog = IdentifierCatalog(

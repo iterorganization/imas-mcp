@@ -6,10 +6,14 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 FROM python:3.12-slim AS builder
 
 # Install system dependencies including git for git dependencies
+# and gcc/build tools for packages with C extensions (hdbscan, etc.)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     git \
+    gcc \
+    g++ \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv binary
@@ -21,7 +25,9 @@ WORKDIR /app
 # Add build args for IDS filter and transport
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
-ARG IMAS_DD_VERSION="4.0.0"
+# IMAS_DD_VERSION: Optional. If empty, Python code reads default from pyproject.toml [tool.imas-codex].default-dd-version
+# This ensures a single source of truth. Pass explicitly only to override.
+ARG IMAS_DD_VERSION=""
 
 # Additional build-time metadata for cache busting & traceability
 ARG GIT_SHA=""
@@ -57,6 +63,7 @@ RUN git config core.sparseCheckout true \
     && git sparse-checkout list
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
+# Lock file already specifies CPU-only PyTorch (no nvidia-* CUDA deps)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project --frozen || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
@@ -84,14 +91,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         echo "Repository clean; hatch-vcs should emit tag version"; \
     fi
 
-# Copy pre-built IMAS resources from build context (CI artifacts) AFTER git operations
-# This includes schemas, embeddings, relationships, and clusters built in CI
-# Git sparse checkout would have created the imas_codex directory but without the generated resources
-# This overlay replaces any placeholder/tracked resources with the pre-built ones from CI
-COPY imas_codex/resources/ /app/imas_codex/resources/
+# Note: We do NOT copy pre-built resources from local filesystem.
+# The build scripts below generate all resources for the specific DD version.
+# This ensures consistency and avoids copying stale or multi-version data.
+# In CI, resources may be pre-generated as artifacts and copied separately.
+
+# Cache bust: Explicit ARG ensures rebuild when DD version changes.
+# IDS_FILTER is tracked automatically via its use in RUN commands.
+# IMAS_DD_VERSION needs explicit tracking since it may be empty (default from pyproject.toml).
+ARG CACHE_BUST_DD="${IMAS_DD_VERSION}"
 
 # Build schema data (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "DD version cache key: ${CACHE_BUST_DD:-default}" && \
     echo "Building schema data..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building schema data for IDS: ${IDS_FILTER}" && \
@@ -102,10 +114,21 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Schema data ready"
 
-# Build embeddings (will skip if cache is valid from CI artifacts)
+# Build path map for version upgrade mappings (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    --mount=type=secret,id=OPENAI_API_KEY \
-    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY) && \
+    echo "Building path map..." && \
+    if [ -n "${IDS_FILTER}" ]; then \
+    echo "Building path map for IDS: ${IDS_FILTER}" && \
+    uv run --no-dev build-path-map --ids-filter "${IDS_FILTER}" --no-rich; \
+    else \
+    echo "Building path map for all IDS" && \
+    uv run --no-dev build-path-map --no-rich; \
+    fi && \
+    echo "✓ Path map ready"
+
+# Build embeddings using local sentence-transformers model (all-MiniLM-L6-v2)
+# NO API key required - runs entirely locally
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building embeddings..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building embeddings for IDS: ${IDS_FILTER}" && \
@@ -116,10 +139,16 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Embeddings ready"
 
-# Build clusters (requires embeddings)
+# Build clusters using HDBSCAN (local algorithm)
+# OPENAI_API_KEY is OPTIONAL - used only for LLM-generated cluster labels
+# If no key is provided, falls back to:
+#   1. Cached labels from definitions/clusters/labels.json (version-controlled)
+#   2. Auto-generated fallback labels from path names
+# Note: Secret id=openai_api_key for docker-compose, id=OPENAI_API_KEY for manual builds
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=openai_api_key \
     --mount=type=secret,id=OPENAI_API_KEY \
-    export OPENAI_API_KEY=$(cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
+    export OPENAI_API_KEY=$(cat /run/secrets/openai_api_key 2>/dev/null || cat /run/secrets/OPENAI_API_KEY 2>/dev/null || echo "") && \
     echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building clusters for IDS: ${IDS_FILTER}" && \
@@ -130,49 +159,32 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Clusters ready"
 
-## Stage 3: Use pre-scraped documentation (from CI cache)
-FROM python:3.12-slim AS docs-provider
-
-# Documentation already available in build context from CI
-# No copying needed - will be copied directly to final stage
-
-## Stage 4: Final runtime image (assemble from builder + direct docs copy)
+## Stage 3: Final runtime image (assemble from builder)
 FROM python:3.12-slim
-
-# Install Node.js for runtime docs server support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install docs-mcp-server for runtime
-ARG DOCS_MCP_SERVER_VERSION=1.29.0
-RUN npm install -g @arabold/docs-mcp-server@${DOCS_MCP_SERVER_VERSION}
 
 # Copy Python app from builder stage
 COPY --from=builder /bin/uv /bin/
 COPY --from=builder /app /app
 
-# Copy scraped documentation directly from build context (CI artifacts)
-COPY docs-data/ /app/data
-
 # Set working directory
 WORKDIR /app
 
+# Re-declare build args for runtime stage
+ARG IDS_FILTER=""
+
 # Set runtime environment variables
 # Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
-# HATCH_BUILD_NO_HOOKS prevents build hooks from running if uv triggers a sync
+# IDS_FILTER is persisted from build time to ensure runtime uses same subset
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HATCH_BUILD_NO_HOOKS=true \
-    DOCS_SERVER_URL=http://localhost:6280 \
-    DOCS_MCP_TELEMETRY=false \
-    DOCS_MCP_STORE_PATH=/app/data \
-    OPENAI_BASE_URL=https://openrouter.ai/api/v1
+    OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+    PATH="/app/.venv/bin:$PATH" \
+    IDS_FILTER=${IDS_FILTER}
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
 
-## Run via uv to ensure the synced environment is activated; additional args appended after CMD
-ENTRYPOINT ["uv", "run", "--no-dev", "imas-codex"]
+## Run the installed CLI directly from venv (avoids uv sync at runtime)
+ENTRYPOINT ["imas-codex"]
 CMD ["--no-rich", "--host", "0.0.0.0", "--port", "8000"]

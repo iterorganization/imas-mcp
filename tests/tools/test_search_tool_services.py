@@ -4,9 +4,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_codex.models.constants import SearchMode
+from imas_codex.models.constants import (
+    LOW_CONFIDENCE_THRESHOLD,
+    VERY_LOW_CONFIDENCE_THRESHOLD,
+    SearchMode,
+)
 from imas_codex.models.result_models import SearchPathsResult
-from imas_codex.search.search_strategy import SearchResponse
+from imas_codex.search.search_strategy import SearchHit, SearchResponse
 from imas_codex.tools.search_tool import SearchTool
 
 
@@ -221,3 +225,95 @@ class TestSearchToolServices:
         # Physics is now always enabled at the core level, no longer a config parameter
         # Boolean query should be optimized to lexical
         assert config.search_mode == SearchMode.LEXICAL
+
+
+class TestSearchConfidenceWarnings:
+    """Tests for search result confidence warnings."""
+
+    @pytest.fixture
+    def search_tool(self):
+        with patch("imas_codex.tools.base.DocumentStore"):
+            return SearchTool()
+
+    def _create_mock_hit(self, score: float, path: str = "test/path") -> SearchHit:
+        """Create a mock SearchHit with given score."""
+        return SearchHit(
+            score=score,
+            rank=0,
+            search_mode=SearchMode.HYBRID,
+            highlights="",
+            path=path,
+            documentation="Test documentation",
+            ids_name="test_ids",
+        )
+
+    def test_check_confidence_no_warning_high_score(self, search_tool):
+        """Test no warning when scores are high."""
+        result = SearchPathsResult(
+            hits=[self._create_mock_hit(0.85)],
+            search_mode=SearchMode.HYBRID,
+            query="electron temperature",
+        )
+
+        checked = search_tool._check_confidence(result, "electron temperature")
+
+        assert checked.confidence_warning is None
+
+    def test_check_confidence_low_warning(self, search_tool):
+        """Test low confidence warning for marginal scores."""
+        # Score between VERY_LOW and LOW thresholds
+        score = (LOW_CONFIDENCE_THRESHOLD + VERY_LOW_CONFIDENCE_THRESHOLD) / 2
+        result = SearchPathsResult(
+            hits=[self._create_mock_hit(score)],
+            search_mode=SearchMode.HYBRID,
+            query="marginal query",
+        )
+
+        checked = search_tool._check_confidence(result, "marginal query")
+
+        assert checked.confidence_warning is not None
+        assert "Low confidence" in checked.confidence_warning
+        assert "refining" in checked.confidence_warning.lower()
+
+    def test_check_confidence_very_low_warning(self, search_tool):
+        """Test very low confidence warning for poor scores."""
+        result = SearchPathsResult(
+            hits=[self._create_mock_hit(0.15)],
+            search_mode=SearchMode.HYBRID,
+            query="xyzzy gibberish",
+        )
+
+        checked = search_tool._check_confidence(result, "xyzzy gibberish")
+
+        assert checked.confidence_warning is not None
+        assert "Very low confidence" in checked.confidence_warning
+        assert "xyzzy gibberish" in checked.confidence_warning
+
+    def test_check_confidence_empty_results(self, search_tool):
+        """Test no warning for empty results (different from low scores)."""
+        result = SearchPathsResult(
+            hits=[],
+            search_mode=SearchMode.HYBRID,
+            query="empty query",
+        )
+
+        checked = search_tool._check_confidence(result, "empty query")
+
+        assert checked.confidence_warning is None
+
+    def test_check_confidence_uses_max_score(self, search_tool):
+        """Test that max score across all hits is used for threshold."""
+        result = SearchPathsResult(
+            hits=[
+                self._create_mock_hit(0.10),  # Low score
+                self._create_mock_hit(0.75),  # High score - should prevent warning
+                self._create_mock_hit(0.20),  # Low score
+            ],
+            search_mode=SearchMode.HYBRID,
+            query="multi hit query",
+        )
+
+        checked = search_tool._check_confidence(result, "multi hit query")
+
+        # Max score 0.75 is above threshold, so no warning
+        assert checked.confidence_warning is None

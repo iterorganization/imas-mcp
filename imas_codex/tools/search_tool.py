@@ -9,7 +9,12 @@ import logging
 
 from fastmcp import Context
 
-from imas_codex.models.constants import ResponseProfile, SearchMode
+from imas_codex.models.constants import (
+    LOW_CONFIDENCE_THRESHOLD,
+    VERY_LOW_CONFIDENCE_THRESHOLD,
+    ResponseProfile,
+    SearchMode,
+)
 from imas_codex.models.request_models import SearchInput
 from imas_codex.models.result_models import SearchPathsResult
 from imas_codex.search.decorators import (
@@ -115,6 +120,9 @@ class SearchTool(BaseTool):
         if hasattr(result, "summary") and result.summary:
             result.summary.update({"query": query, "search_mode": str(search_mode)})
 
+        # Check confidence based on top score and add warning if needed
+        result = self._check_confidence(result, query)
+
         # Apply response profile formatting if requested
         profile = str(response_profile)
         if profile == ResponseProfile.MINIMAL.value or profile == "minimal":
@@ -124,6 +132,41 @@ class SearchTool(BaseTool):
         logger.info(
             f"Search completed: {len(result.hits)} hits returned with profile {response_profile}"
         )
+        return result
+
+    def _check_confidence(
+        self, result: SearchPathsResult, query: str
+    ) -> SearchPathsResult:
+        """Check search result confidence and add warning if scores are low.
+
+        Args:
+            result: The search result to check
+            query: The original query for context in warnings
+
+        Returns:
+            SearchPathsResult with confidence_warning set if needed
+        """
+        if not result.hits:
+            return result
+
+        # Get the maximum score from results
+        max_score = max(hit.score for hit in result.hits)
+
+        if max_score < VERY_LOW_CONFIDENCE_THRESHOLD:
+            result.confidence_warning = (
+                f"Very low confidence results (max score: {max_score:.2f}). "
+                f"The query '{query}' may not match any IMAS concepts. "
+                "Consider using get_imas_overview() to explore available data structures, "
+                "or try more specific physics terms like 'electron temperature', "
+                "'magnetic field', or 'plasma current'."
+            )
+        elif max_score < LOW_CONFIDENCE_THRESHOLD:
+            result.confidence_warning = (
+                f"Low confidence results (max score: {max_score:.2f}). "
+                "Consider refining your search query with more specific terms. "
+                "Use search_imas_clusters() to discover related concepts."
+            )
+
         return result
 
     def _format_minimal(self, result: SearchPathsResult) -> SearchPathsResult:

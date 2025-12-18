@@ -1,0 +1,345 @@
+id: https://imas.iter.org/codex/physics-domains
+name: physics_domains
+title: IMAS Physics Domain Definitions
+description: >-
+  LinkML schema defining physics domains for categorizing IMAS IDS entries.
+  This schema is the source of truth for the PhysicsDomain enum used throughout
+  the IMAS Codex system. Version and license inherited from project pyproject.toml.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas: https://imas.iter.org/codex/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+types:
+  DomainIdentifier:
+    typeof: string
+    description: A valid physics domain identifier
+
+slots:
+  domain_name:
+    range: PhysicsDomain
+    description: The physics domain identifier
+
+  category:
+    range: DomainCategory
+    description: High-level category grouping related domains
+
+  characteristics:
+    range: string
+    multivalued: true
+    description: Key characteristics and phenomena associated with this domain
+
+  related_domains:
+    range: PhysicsDomain
+    multivalued: true
+    description: Other physics domains that frequently interact with this domain
+
+  domain_description:
+    range: string
+    description: Human-readable description of the domain
+
+classes:
+  PhysicsDomainDefinition:
+    description: Complete definition of a physics domain with its relationships and characteristics
+    slots:
+      - domain_name
+      - domain_description
+      - category
+      - characteristics
+      - related_domains
+    slot_usage:
+      domain_name:
+        required: true
+      category:
+        required: true
+
+enums:
+  DomainCategory:
+    description: >-
+      High-level categories for grouping physics domains. Categories provide
+      a coarse classification for filtering and organizing domains.
+    permissible_values:
+      core_plasma_physics:
+        description: Fundamental plasma physics phenomena including equilibrium, transport, and instabilities
+        meaning: imas:core_plasma_physics
+      heating_and_current_drive:
+        description: Auxiliary heating systems and non-inductive current drive methods
+        meaning: imas:heating_and_current_drive
+      plasma_material_interactions:
+        description: Physics at the plasma boundary including wall, divertor, and edge phenomena
+        meaning: imas:plasma_material_interactions
+      diagnostics:
+        description: Measurement and analysis systems for plasma and machine parameters
+        meaning: imas:diagnostics
+      control_and_operations:
+        description: Plasma control, feedback systems, and operational parameters
+        meaning: imas:control_and_operations
+      engineering_systems:
+        description: Machine components, structural elements, and plant systems
+        meaning: imas:engineering_systems
+      data_and_workflow:
+        description: Data organization, metadata management, and computational workflows
+        meaning: imas:data_and_workflow
+      uncategorized:
+        description: General purpose or uncategorized data structures
+        meaning: imas:uncategorized
+
+  PhysicsDomain:
+    description: >-
+      Physics domains for categorizing IMAS Interface Data Structures (IDS).
+      Each domain represents a distinct area of fusion plasma physics or
+      tokamak engineering.
+    permissible_values:
+      # Core Plasma Physics
+      equilibrium:
+        description: Magnetohydrodynamic equilibrium and magnetic field configuration
+        meaning: imas:equilibrium
+        annotations:
+          category: core_plasma_physics
+          characteristics: >-
+            Magnetic flux surfaces and geometry,
+            Pressure and current density profiles,
+            Shafranov shift and elongation
+          related_domains: magnetohydrodynamics, transport, magnetic_field_systems
+
+      transport:
+        description: Particle, energy, and momentum transport processes
+        meaning: imas:transport
+        annotations:
+          category: core_plasma_physics
+          characteristics: >-
+            Diffusion coefficients,
+            Heat and particle fluxes,
+            Confinement time scaling
+          related_domains: turbulence, equilibrium, auxiliary_heating
+
+      magnetohydrodynamics:
+        description: Magnetohydrodynamic instabilities and plasma modes
+        meaning: imas:magnetohydrodynamics
+        annotations:
+          category: core_plasma_physics
+          characteristics: >-
+            Tearing modes and islands,
+            Sawteeth and edge localized modes,
+            Resistive wall modes
+          related_domains: equilibrium, plasma_control, magnetic_field_diagnostics
+
+      turbulence:
+        description: Microscopic turbulence and anomalous transport phenomena
+        meaning: imas:turbulence
+        annotations:
+          category: core_plasma_physics
+          characteristics: >-
+            Ion temperature gradient and trapped electron modes,
+            Zonal flows and geodesic acoustic modes,
+            Fluctuation measurements
+          related_domains: transport, electromagnetic_wave_diagnostics
+
+      # Heating and Current Drive
+      auxiliary_heating:
+        description: Auxiliary heating systems including neutral beam injection and radiofrequency heating
+        meaning: imas:auxiliary_heating
+        annotations:
+          category: heating_and_current_drive
+          characteristics: >-
+            Power deposition profiles,
+            Heating efficiency,
+            Fast particle generation
+          related_domains: current_drive, transport, particle_measurement_diagnostics
+
+      current_drive:
+        description: Non-inductive current drive methods
+        meaning: imas:current_drive
+        annotations:
+          category: heating_and_current_drive
+          characteristics: >-
+            Driven current profiles,
+            Current drive efficiency,
+            Bootstrap current
+          related_domains: auxiliary_heating, equilibrium, plasma_control
+
+      # Plasma-Material Interactions
+      plasma_wall_interactions:
+        description: Plasma-wall interactions and first wall components
+        meaning: imas:plasma_wall_interactions
+        annotations:
+          category: plasma_material_interactions
+          characteristics: >-
+            Heat loads and erosion,
+            Material migration,
+            Recycling and retention
+          related_domains: divertor_physics, edge_plasma_physics, radiation_measurement_diagnostics
+
+      divertor_physics:
+        description: Divertor physics and power exhaust mechanisms
+        meaning: imas:divertor_physics
+        annotations:
+          category: plasma_material_interactions
+          characteristics: >-
+            Target heat flux,
+            Detachment and radiation,
+            Neutral dynamics
+          related_domains: plasma_wall_interactions, edge_plasma_physics, particle_measurement_diagnostics
+
+      edge_plasma_physics:
+        description: Edge plasma and scrape-off layer physics
+        meaning: imas:edge_plasma_physics
+        annotations:
+          category: plasma_material_interactions
+          characteristics: >-
+            Scrape-off layer width and decay lengths,
+            Pedestal structure,
+            Edge localized mode dynamics
+          related_domains: divertor_physics, plasma_wall_interactions, magnetohydrodynamics
+
+      # Diagnostics
+      particle_measurement_diagnostics:
+        description: Particle measurement and analysis diagnostic systems
+        meaning: imas:particle_measurement_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Neutral particle analyzers,
+            Mass spectrometry,
+            Thomson scattering particle measurements
+          related_domains: transport, auxiliary_heating, edge_plasma_physics
+
+      electromagnetic_wave_diagnostics:
+        description: Electromagnetic wave and field diagnostic systems
+        meaning: imas:electromagnetic_wave_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Reflectometry,
+            Electron cyclotron emission and microwave diagnostics,
+            Interferometry
+          related_domains: turbulence, equilibrium, magnetohydrodynamics
+
+      radiation_measurement_diagnostics:
+        description: Radiation-based diagnostic systems
+        meaning: imas:radiation_measurement_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Bolometry and radiometry,
+            X-ray diagnostics,
+            Spectroscopy
+          related_domains: transport, plasma_wall_interactions, edge_plasma_physics
+
+      magnetic_field_diagnostics:
+        description: Magnetic field measurement diagnostic systems
+        meaning: imas:magnetic_field_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Magnetic probes and flux loops,
+            Rogowski coils,
+            Motional Stark effect
+          related_domains: equilibrium, magnetohydrodynamics, plasma_control
+
+      mechanical_measurement_diagnostics:
+        description: Mechanical and pressure measurement diagnostic systems
+        meaning: imas:mechanical_measurement_diagnostics
+        annotations:
+          category: diagnostics
+          characteristics: >-
+            Pressure gauges,
+            Strain and force sensors,
+            Vibration monitoring
+          related_domains: structural_components, plasma_wall_interactions, machine_operations
+
+      # Control and Operation
+      plasma_control:
+        description: Plasma control and feedback systems
+        meaning: imas:plasma_control
+        annotations:
+          category: control_and_operations
+          characteristics: >-
+            Shape and position control,
+            Instability suppression,
+            Scenario development
+          related_domains: equilibrium, magnetohydrodynamics, magnetic_field_systems
+
+      machine_operations:
+        description: Operational parameters and machine status monitoring
+        meaning: imas:machine_operations
+        annotations:
+          category: control_and_operations
+          characteristics: >-
+            Pulse scheduling,
+            Interlocks and limits,
+            Machine state
+          related_domains: plasma_control, plant_systems, data_management
+
+      # System Components
+      magnetic_field_systems:
+        description: Magnetic field coil systems and field generation equipment
+        meaning: imas:magnetic_field_systems
+        annotations:
+          category: engineering_systems
+          characteristics: >-
+            Poloidal and toroidal field coils,
+            Superconducting magnets,
+            Power supplies
+          related_domains: equilibrium, plasma_control, structural_components
+
+      structural_components:
+        description: Structural components and mechanical systems
+        meaning: imas:structural_components
+        annotations:
+          category: engineering_systems
+          characteristics: >-
+            Vacuum vessel,
+            Support structures,
+            Thermal shields
+          related_domains: magnetic_field_systems, plasma_wall_interactions, mechanical_measurement_diagnostics
+
+      plant_systems:
+        description: Engineering plant systems and auxiliary components
+        meaning: imas:plant_systems
+        annotations:
+          category: engineering_systems
+          characteristics: >-
+            Cryogenics,
+            Vacuum systems,
+            Cooling systems
+          related_domains: structural_components, machine_operations, plasma_control
+
+      # Data and Workflow
+      data_management:
+        description: Data organization, metadata, and information management
+        meaning: imas:data_management
+        annotations:
+          category: data_and_workflow
+          characteristics: >-
+            Pulse databases,
+            Data provenance,
+            Signal definitions
+          related_domains: computational_workflow, machine_operations
+
+      computational_workflow:
+        description: Computational workflows and process management
+        meaning: imas:computational_workflow
+        annotations:
+          category: data_and_workflow
+          characteristics: >-
+            Simulation pipelines,
+            Analysis chains,
+            Reproducibility
+          related_domains: data_management
+
+      # Fallback
+      general:
+        description: General purpose or uncategorized data structures
+        meaning: imas:general
+        annotations:
+          category: uncategorized
+          characteristics: >-
+            Common utilities,
+            Generic structures
+          related_domains: ""

@@ -81,6 +81,47 @@ uv tool install imas-codex
 uv add imas-codex
 ```
 
+#### Data Dictionary Version
+
+The IMAS Data Dictionary version determines which schema definitions are used. The version is resolved in priority order:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | `--dd-version` CLI option | Highest priority, explicit override |
+| 2 | `IMAS_DD_VERSION` env var | Environment-based override |
+| 3 | `pyproject.toml` default | Configured default from `[tool.imas-codex].default-dd-version` |
+
+**Configuration:**
+
+Set the default DD version in `pyproject.toml`:
+
+```toml
+[tool.imas-codex]
+default-dd-version = "4.1.0"
+```
+
+**Runtime Override:**
+
+```bash
+# Via CLI option
+imas-codex --dd-version 3.42.2
+
+# Via environment variable
+IMAS_DD_VERSION=3.42.2 imas-codex
+
+# Docker build
+docker build --build-arg IMAS_DD_VERSION=3.42.2 ...
+```
+
+**Version Validation:**
+
+The server validates that the requested DD version does not exceed the maximum version available in the installed `imas-data-dictionaries` package. If you request a version that's not available, you'll see:
+
+```
+ValueError: Requested DD version 5.0.0 exceeds maximum available version 4.1.0.
+Update imas-data-dictionaries dependency or use a lower version.
+```
+
 #### Embedding Configuration
 
 The IMAS Codex server uses sentence-transformers for generating embeddings:
@@ -366,8 +407,6 @@ add-docs imas-python https://imas-python.readthedocs.io/en/stable/ --no-ignore-e
 
 #### Production (Docker)
 
-IMAS-Python documentation is automatically scraped during build.
-
 ```bash
 docker-compose up --build
 ```
@@ -375,19 +414,13 @@ docker-compose up --build
 #### Local Development
 
 ```bash
-# 1. Start docs-mcp-server
-python scripts/start_docs_server.py
-
-# 2. In another terminal, start IMAS Codex server
+# Start IMAS Codex server
 python -m imas_codex
-
-# 3. Scraping IMAS-Python documentation (first time only)
-python scripts/scrape_imas_docs.py
 ```
 
 #### API Key Configuration
 
-For documentation scraping capabilities, you'll need an OpenRouter API key:
+For embedding generation capabilities (during build), you'll need an OpenRouter API key:
 
 **For Local Development:**
 
@@ -408,40 +441,19 @@ cp env.example .env
 
 **Build Behavior:**
 
-- **With OPENAI_API_KEY**: Full documentation scraping during build
-- **Without OPENAI_API_KEY**: Documentation scraping is skipped, build continues
-- The container works normally regardless of scraping status
+- **With OPENAI_API_KEY**: Full embedding generation during build
+- **Without OPENAI_API_KEY**: Uses local embedding model (all-MiniLM-L6-v2)
+- The container works normally in both cases
 
 **Local Docker Build:**
 
 ```bash
-# Build with API key
+# Build with API key (for API-based embeddings)
 docker build --build-arg OPENAI_API_KEY=your_key_here .
 
-# Build without API key (scraping will be skipped)
+# Build without API key (uses local model)
 docker build .
 ```
-
-#### Adding New Documentation Libraries
-
-Use the `add-docs` CLI command to add new documentation:
-
-```bash
-# Add documentation libraries
-add-docs udunits https://docs.unidata.ucar.edu/udunits/current/
-add-docs numpy https://numpy.org/doc/stable/ --max-pages 500 --max-depth 3
-```
-
-**Note:** Requires OPENAI_API_KEY environment variable to be set (see API Key Configuration above).
-
-#### Troubleshooting
-
-If documentation search is unavailable:
-
-- Check docs-mcp-server is running: `curl http://localhost:6280/api/ping`
-- Verify environment: `echo $DOCS_SERVER_URL`
-- Check logs for connection errors
-- Follow setup instructions in error messages
 
 ## Development
 
