@@ -7,7 +7,7 @@ from typing import Literal, cast
 import click
 from dotenv import load_dotenv
 
-from imas_codex import __version__, dd_version
+from imas_codex import __version__, _get_dd_version
 from imas_codex.server import Server
 
 # Load environment variables from .env file
@@ -76,6 +76,17 @@ def _print_version(
         "e.g., 'core_profiles equilibrium'"
     ),
 )
+@click.option(
+    "--dd-version",
+    "dd_version_opt",
+    envvar="IMAS_DD_VERSION",
+    type=str,
+    default=None,
+    help=(
+        "IMAS Data Dictionary version to use (env: IMAS_DD_VERSION). "
+        "Defaults to [tool.imas-codex].default-dd-version in pyproject.toml."
+    ),
+)
 def main(
     transport: str,
     host: str,
@@ -83,6 +94,7 @@ def main(
     log_level: str,
     no_rich: bool,
     ids_filter: str,
+    dd_version_opt: str | None,
 ) -> None:
     """Run the AI-enhanced MCP server with configurable transport options.
 
@@ -102,11 +114,25 @@ def main(
         # Run without rich progress output
         imas-codex --no-rich
 
+        # Run with specific DD version
+        imas-codex --dd-version 3.42.2
+
+    DD Version Priority (highest to lowest):
+        1. --dd-version CLI option
+        2. IMAS_DD_VERSION environment variable
+        3. [tool.imas-codex].default-dd-version in pyproject.toml
+
     Note: streamable-http transport (default) uses stateful mode to support
     MCP sampling functionality for enhanced AI interactions.
-
-    To set DD version, use the IMAS_DD_VERSION environment variable.
     """
+    # Resolve DD version with CLI option taking precedence
+    if dd_version_opt:
+        # Set env var so _get_dd_version picks it up (CLI overrides env)
+        os.environ["IMAS_DD_VERSION"] = dd_version_opt
+
+    # Re-resolve dd_version with the updated env (if CLI option was provided)
+    effective_dd_version = _get_dd_version(dd_version_opt)
+
     # Configure logging based on the provided level
     # Force reconfigure logging by getting the root logger and setting its level
     root_logger = logging.getLogger()
@@ -119,13 +145,15 @@ def main(
     logger.debug(f"Set logging level to {log_level}")
     logger.debug(f"Starting MCP server with transport={transport}")
 
-    dd_version_env = os.environ.get("IMAS_DD_VERSION")
-    ids_filter_env = os.environ.get("IDS_FILTER")
-
-    if dd_version_env:
-        logger.info(f"IMAS DD version: {dd_version} (IMAS_DD_VERSION={dd_version_env})")
+    # Log DD version with source indication
+    if dd_version_opt:
+        logger.info(f"IMAS DD version: {effective_dd_version} (--dd-version)")
+    elif os.environ.get("IMAS_DD_VERSION"):
+        logger.info(f"IMAS DD version: {effective_dd_version} (IMAS_DD_VERSION env)")
     else:
-        logger.info(f"IMAS DD version: {dd_version}")
+        logger.info(f"IMAS DD version: {effective_dd_version} (default)")
+
+    ids_filter_env = os.environ.get("IDS_FILTER")
 
     if ids_filter_env:
         logger.info(f"IDS filter: {ids_filter_env}")

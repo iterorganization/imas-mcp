@@ -81,6 +81,47 @@ uv tool install imas-codex
 uv add imas-codex
 ```
 
+#### Data Dictionary Version
+
+The IMAS Data Dictionary version determines which schema definitions are used. The version is resolved in priority order:
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 | `--dd-version` CLI option | Highest priority, explicit override |
+| 2 | `IMAS_DD_VERSION` env var | Environment-based override |
+| 3 | `pyproject.toml` default | Configured default from `[tool.imas-codex].default-dd-version` |
+
+**Configuration:**
+
+Set the default DD version in `pyproject.toml`:
+
+```toml
+[tool.imas-codex]
+default-dd-version = "4.1.0"
+```
+
+**Runtime Override:**
+
+```bash
+# Via CLI option
+imas-codex --dd-version 3.42.2
+
+# Via environment variable
+IMAS_DD_VERSION=3.42.2 imas-codex
+
+# Docker build
+docker build --build-arg IMAS_DD_VERSION=3.42.2 ...
+```
+
+**Version Validation:**
+
+The server validates that the requested DD version does not exceed the maximum version available in the installed `imas-data-dictionaries` package. If you request a version that's not available, you'll see:
+
+```
+ValueError: Requested DD version 5.0.0 exceeds maximum available version 4.1.0.
+Update imas-data-dictionaries dependency or use a lower version.
+```
+
 #### Embedding Configuration
 
 The IMAS Codex server uses sentence-transformers for generating embeddings:

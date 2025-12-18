@@ -25,7 +25,9 @@ WORKDIR /app
 # Add build args for IDS filter and transport
 ARG IDS_FILTER=""
 ARG TRANSPORT="streamable-http"
-ARG IMAS_DD_VERSION="4.0.0"
+# IMAS_DD_VERSION: Optional. If empty, Python code reads default from pyproject.toml [tool.imas-codex].default-dd-version
+# This ensures a single source of truth. Pass explicitly only to override.
+ARG IMAS_DD_VERSION=""
 
 # Additional build-time metadata for cache busting & traceability
 ARG GIT_SHA=""
@@ -159,13 +161,18 @@ COPY --from=builder /app /app
 # Set working directory
 WORKDIR /app
 
+# Re-declare build args for runtime stage
+ARG IDS_FILTER=""
+
 # Set runtime environment variables
 # Note: OPENAI_API_KEY should be passed at runtime via docker run -e or docker-compose
+# IDS_FILTER is persisted from build time to ensure runtime uses same subset
 ENV PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    IDS_FILTER=${IDS_FILTER}
 
 # Expose port (only needed for streamable-http transport)
 EXPOSE 8000
