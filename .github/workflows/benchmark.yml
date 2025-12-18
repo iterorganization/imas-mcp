@@ -123,8 +123,8 @@ jobs:
           OS_VERSION=$(lsb_release -ds 2>/dev/null | tr -d '"' || echo "Unknown")
 
           # Create machine name from key specs to detect hardware changes
-          # Format: {arch}-{cores}c-{ram}gb
-          MACHINE_NAME="${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
+          # Format: ghactions-{arch}-{cores}c-{ram}gb
+          MACHINE_NAME="ghactions-${ARCH}-${CPU_COUNT}c-${RAM_GB}gb"
           echo "Machine name: $MACHINE_NAME"
 
           # Configure machine with detected specs
@@ -194,6 +194,8 @@ jobs:
           cd gh-pages-deploy
           git init
           git checkout -b gh-pages
+          # Force add .asv directory which is normally gitignored
+          git add -f .asv/
           git add -A
           git commit -m "deploy: ${{ github.sha }}"
           
