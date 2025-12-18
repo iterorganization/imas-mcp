@@ -1,5 +1,6 @@
 services:
   imas-codex:
+    image: imas-codex:${IDS_FILTER:-latest}
     build:
       context: .
       dockerfile: Dockerfile

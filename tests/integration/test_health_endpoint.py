@@ -54,7 +54,7 @@ def test_health_basic(transport, monkeypatch):
                 if resp.status_code == 200:
                     data = resp.json()
                     assert data["status"] == "ok"
-                    assert "mcp_server_version" in data
+                    assert "imas_codex_version" in data
                     assert "imas_dd_version" in data
                     assert "document_count" in data
                     assert "embedding_model_name" in data
@@ -87,7 +87,7 @@ def test_health_idempotent_wrapping(monkeypatch):
             if resp.status_code == 200:
                 data = resp.json()
                 assert data["status"] == "ok"
-                assert "mcp_server_version" in data
+                assert "imas_codex_version" in data
                 assert "embedding_model_name" in data
                 assert "started_at" in data
                 assert "ids_count" in data
