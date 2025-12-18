@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Build semantic clusters of IMAS data paths using optimized DBSCAN clustering.
-This script takes the detailed JSON schemas as input and generates clusters.json.
+Build semantic clusters of IMAS data paths using HDBSCAN clustering.
 
-OPTIMAL CLUSTERING PARAMETERS (Latin Hypercube Optimization):
-- cross_ids_eps = 0.0751 (cross-IDS clustering epsilon)
-- cross_ids_min_samples = 2 (cross-IDS minimum samples)
-- intra_ids_eps = 0.0319 (intra-IDS clustering epsilon)
-- intra_ids_min_samples = 2 (intra-IDS minimum samples)
+This script uses a semantic-first approach with HDBSCAN, which automatically
+adapts to varying density in the embedding space without requiring epsilon tuning.
+Cross-IDS vs intra-IDS cluster properties are derived post-hoc from results.
 
-Optimization achieved 79% improvement over initial parameters (Score: 5436.17)
+HDBSCAN Parameters:
+- min_cluster_size = 2 (allows pairs of related paths)
+- min_samples = 2 (core sample threshold)
+- cluster_selection_method = 'eom' or 'leaf' ('eom' for broader, 'leaf' for finer)
 """
 
 import logging
 import sys
+from typing import Literal
 
 import click
 from dotenv import load_dotenv
@@ -33,28 +34,22 @@ load_dotenv(override=True)
     "--force", "-f", is_flag=True, help="Force rebuild even if files already exist"
 )
 @click.option(
-    "--cross-ids-eps",
-    type=float,
-    default=0.0751,
-    help="Epsilon parameter for cross-IDS DBSCAN clustering (default: 0.0751, optimized via LHC)",
-)
-@click.option(
-    "--cross-ids-min-samples",
+    "--min-cluster-size",
     type=int,
     default=2,
-    help="Minimum samples for cross-IDS DBSCAN clustering (default: 2)",
+    help="Minimum cluster size for HDBSCAN (default: 2, allows pairs)",
 )
 @click.option(
-    "--intra-ids-eps",
-    type=float,
-    default=0.0319,
-    help="Epsilon parameter for intra-IDS DBSCAN clustering (default: 0.0319, optimized via LHC)",
-)
-@click.option(
-    "--intra-ids-min-samples",
+    "--min-samples",
     type=int,
     default=2,
-    help="Minimum samples for intra-IDS DBSCAN clustering (default: 2, optimized)",
+    help="Minimum samples for HDBSCAN core points (default: 2)",
+)
+@click.option(
+    "--cluster-method",
+    type=click.Choice(["eom", "leaf"]),
+    default="eom",
+    help="HDBSCAN cluster selection method: 'eom' for broader clusters, 'leaf' for finer (default: eom)",
 )
 @click.option(
     "--ids-filter",
@@ -65,26 +60,25 @@ def build_clusters(
     verbose: bool,
     quiet: bool,
     force: bool,
-    cross_ids_eps: float,
-    cross_ids_min_samples: int,
-    intra_ids_eps: float,
-    intra_ids_min_samples: int,
+    min_cluster_size: int,
+    min_samples: int,
+    cluster_method: Literal["eom", "leaf"],
     ids_filter: str,
 ) -> int:
-    """Build semantic clusters of IMAS data paths using multi-membership DBSCAN clustering.
+    """Build semantic clusters of IMAS data paths using HDBSCAN clustering.
 
     This command reads detailed IDS JSON files and generates semantic clusters
-    using embedding-based clustering. It performs separate clustering
-    for cross-IDS clusters (paths that span multiple IDS) and intra-IDS
-    clusters (paths within the same IDS).
+    using embedding-based HDBSCAN clustering. The algorithm automatically adapts
+    to varying density without epsilon tuning. Cross-IDS vs intra-IDS properties
+    are derived from cluster membership after clustering completes.
 
     Examples:
         build-clusters                              # Build with default settings
         build-clusters -v                           # Build with verbose logging
         build-clusters -f                           # Force rebuild even if exists
         build-clusters --ids-filter "core_profiles equilibrium"  # Build specific IDS only
-        build-clusters --cross-ids-eps 0.0751 --intra-ids-eps 0.0319  # Optimized clustering parameters
-        build-clusters --cross-ids-min-samples 2   # Custom minimum samples for cross-IDS
+        build-clusters --cluster-method leaf        # Use finer-grained clustering
+        build-clusters --min-cluster-size 3         # Require at least 3 paths per cluster
     """
     # Set up logging level
     if quiet:
@@ -150,10 +144,9 @@ def build_clusters(
                 logger.info("Clusters file does not exist, building new file...")
 
             config_overrides = {
-                "cross_ids_eps": cross_ids_eps,
-                "cross_ids_min_samples": cross_ids_min_samples,
-                "intra_ids_eps": intra_ids_eps,
-                "intra_ids_min_samples": intra_ids_min_samples,
+                "min_cluster_size": min_cluster_size,
+                "min_samples": min_samples,
+                "cluster_selection_method": cluster_method,
                 "use_rich": not quiet,
             }
 
