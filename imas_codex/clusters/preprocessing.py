@@ -1,5 +1,8 @@
 """
 Path filtering and preprocessing for relationship extraction.
+
+Uses semantic-first approach - minimal mechanical filtering, trusting
+embeddings to distinguish meaningful from generic paths.
 """
 
 import re
@@ -7,17 +10,24 @@ from typing import Any
 
 
 class PathFilter:
-    """Filters and preprocesses paths for relationship extraction."""
+    """Filters and preprocesses paths for relationship extraction.
+
+    Semantic-first approach: minimal mechanical filtering, trusting
+    the embedding model to distinguish meaningful paths from generic ones.
+    """
 
     def __init__(self, config):
         """Initialize the path filter with configuration."""
         self.config = config
-        self.skip_patterns = [re.compile(pattern) for pattern in config.skip_patterns]
 
     def filter_meaningful_paths(
         self, ids_data: dict[str, Any]
     ) -> dict[str, dict[str, Any]]:
-        """Filter paths to include only meaningful ones for relationship extraction."""
+        """Filter paths, keeping all paths with any documentation.
+
+        Trusts embeddings to distinguish meaningful from generic paths.
+        Only excludes paths with truly empty documentation.
+        """
         filtered = {}
         total_paths = 0
 
@@ -26,7 +36,9 @@ class PathFilter:
             total_paths += len(paths)
 
             for path, path_data in paths.items():
-                if self._should_skip_path(path, path_data):
+                # Only skip paths with no documentation at all
+                doc = path_data.get("documentation", "")
+                if not doc.strip():
                     continue
 
                 description = self._build_semantic_description(path, path_data)
@@ -38,23 +50,6 @@ class PathFilter:
                 }
 
         return filtered
-
-    def _should_skip_path(self, path: str, path_data: dict[str, Any]) -> bool:
-        """Check if a path should be skipped during filtering."""
-        # Skip if matches skip patterns
-        if any(pattern.match(path) for pattern in self.skip_patterns):
-            return True
-
-        # Skip if documentation too short
-        doc = path_data.get("documentation", "")
-        if len(doc.strip()) < self.config.min_documentation_length:
-            return True
-
-        # Skip if generic documentation
-        if doc.strip() in self.config.generic_docs:
-            return True
-
-        return False
 
     def _build_semantic_description(self, path: str, path_data: dict[str, Any]) -> str:
         """Build semantic description from path and documentation."""

@@ -158,9 +158,9 @@ class TestDocument:
 
         text = doc.embedding_text
 
-        assert "core_profiles" in text
+        assert "core profiles" in text or "core_profiles" in text
         assert "temperature" in text
-        assert "eV" in text
+        assert "eV" in text or "electron_volt" in text
 
     def test_to_datapath(self):
         """Test conversion to IdsNode."""

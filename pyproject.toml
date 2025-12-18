@@ -64,6 +64,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "linkml>=1.9.3",
     "linkml-runtime>=1.9.5",
+    "hdbscan>=0.8.41",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from imas_codex.embeddings.config import EncoderConfig
 
@@ -13,34 +14,24 @@ class RelationshipExtractionConfig:
     # Embedding configuration - single source of truth (required)
     encoder_config: EncoderConfig
 
-    # Cross-IDS clustering configuration (optimized via Latin Hypercube)
-    cross_ids_eps: float = (
-        0.0751  # Optimized epsilon for cross-IDS clustering (LHC Round 2)
+    # HDBSCAN clustering configuration
+    min_cluster_size: int = 2  # Minimum cluster size (allows pairs)
+    min_samples: int = 2  # Core sample threshold
+    cluster_selection_method: Literal["eom", "leaf"] = (
+        "eom"  # 'eom' for broader, 'leaf' for finer clusters
     )
-    cross_ids_min_samples: int = 2  # Minimum samples for cross-IDS clusters
 
-    # Intra-IDS clustering configuration (optimized via Latin Hypercube)
-    intra_ids_eps: float = (
-        0.0319  # Optimized epsilon for intra-IDS clustering (LHC Round 2)
-    )
-    intra_ids_min_samples: int = 2  # Optimized minimum samples for intra-IDS clusters
+    # Legacy DBSCAN parameters (deprecated, kept for backward compatibility)
+    cross_ids_eps: float = 0.0751
+    cross_ids_min_samples: int = 2
+    intra_ids_eps: float = 0.0319
+    intra_ids_min_samples: int = 2
+    eps: float = 0.25
+    similarity_threshold: float = 0.7
 
-    # Legacy clustering configuration (for backward compatibility)
-    eps: float = 0.25  # DBSCAN epsilon parameter
-    min_samples: int = 3  # DBSCAN minimum samples
-    similarity_threshold: float = 0.7  # Threshold for relationship creation
-
-    # Path filtering configuration
-    min_documentation_length: int = 30
-    skip_patterns: list[str] = field(
-        default_factory=lambda: [
-            r".*/(name|index|description|identifier)$",
-            r".*/time_slice/\d+/(global_quantities|profiles_\dd)",
-            r".*_index$",
-            r".*_name$",
-            r".*_description$",
-        ]
-    )
+    # Path filtering configuration (deprecated - semantic filtering preferred)
+    min_documentation_length: int = 0  # Disabled - trust embeddings
+    skip_patterns: list[str] = field(default_factory=list)  # Disabled
 
     # Generic documentation terms to skip
     generic_docs: list[str] = field(
