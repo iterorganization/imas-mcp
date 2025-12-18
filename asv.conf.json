@@ -18,9 +18,7 @@
         "return-code=any python -m pip uninstall -y {project}"
     ],
     "matrix": {
-        "env_nobuild": {
-            "IMAS_CODEX_EMBEDDING_MODEL": ["openai/text-embedding-3-small"]
-        }
+        "IMAS_CODEX_EMBEDDING_MODEL": ["all-MiniLM-L6-v2"]
     },
     "benchmark_dir": "benchmarks",
     "env_dir": ".asv/env",
