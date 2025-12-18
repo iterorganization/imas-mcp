@@ -61,7 +61,7 @@ RUN git config core.sparseCheckout true \
     && git sparse-checkout list
 
 ## Install only dependencies without installing the local project (frozen = must match committed lock)
-# CPU-only PyTorch is configured in pyproject.toml [tool.uv.sources] to reduce image size
+# Lock file already specifies CPU-only PyTorch (no nvidia-* CUDA deps)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv sync --no-dev --no-install-project --frozen || \
     (echo "Dependency sync failed (lock mismatch). Run 'uv lock' locally and commit changes." >&2; exit 1) && \
