@@ -30,11 +30,17 @@ jobs:
           fetch-depth: 0 # Need full history for ASV
 
       - name: Checkout gh-pages branch for benchmark history
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: gh-pages-data
-        continue-on-error: true  # First run won't have gh-pages yet
+        run: |
+          # Try to fetch gh-pages branch - it may not exist on first run
+          if git ls-remote --exit-code origin gh-pages >/dev/null 2>&1; then
+            echo "gh-pages branch exists, checking out..."
+            git fetch origin gh-pages:gh-pages
+            git worktree add gh-pages-data gh-pages
+          else
+            echo "gh-pages branch does not exist yet (first run)"
+            mkdir -p gh-pages-data
+          fi
+        continue-on-error: true
 
       - name: Restore previous benchmark results from gh-pages
         run: |
