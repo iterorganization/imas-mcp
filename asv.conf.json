@@ -18,9 +18,7 @@
     "uninstall_command": [
         "return-code=any python -m pip uninstall -y {project}"
     ],
-    "matrix": {
-        "IMAS_CODEX_EMBEDDING_MODEL": ["all-MiniLM-L6-v2"]
-    },
+    "matrix": {},
     "benchmark_dir": "benchmarks",
     "env_dir": ".asv/env",
     "results_dir": ".asv/results",
