@@ -79,6 +79,49 @@ uv run pytest --cov=imas_codex
 uv run pytest tests/path/to/test.py::test_function
 ```
 
+### Working in Worktrees
+
+Cursor remote agents often work in auto-created worktrees. Follow this workflow for clean commits:
+
+**Step 1: Commit in the worktree**
+```bash
+cd /path/to/worktree
+
+# Lint and format
+uv run ruff check --fix .
+uv run ruff format .
+
+# Stage and commit
+git add <file1> <file2> ...
+git commit -m 'type: description'
+```
+
+**Step 2: Cherry-pick to main workspace**
+
+The `main` branch is typically checked out in the primary workspace, so cherry-pick:
+```bash
+cd /home/ITER/mcintos/Code/imas-codex
+git cherry-pick <commit-hash-from-worktree>
+git push origin main
+```
+
+**Step 3: Clean up worktree**
+```bash
+cd /path/to/worktree
+git checkout -- .  # Discard any remaining changes
+```
+
+**Testing in worktrees**: Use restricted IDS filters for faster iteration:
+```bash
+uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
+```
+
+**Why this workflow?**
+- Worktrees share the same `.git` directory, so commits are visible across all worktrees
+- `main` cannot be checked out in multiple places simultaneously
+- Cherry-picking preserves commit metadata and allows focused commits
+- Clean worktrees prevent stale files from appearing in Cursor's review panel
+
 ## Rules
 
 ### DO
