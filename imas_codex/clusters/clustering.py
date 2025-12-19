@@ -6,6 +6,7 @@ in the embedding space without requiring epsilon tuning.
 """
 
 import logging
+import uuid
 from typing import Any, Literal
 
 import hdbscan
@@ -157,14 +158,18 @@ class EmbeddingClusterer:
             ids_names = sorted({self._extract_ids_name(p) for p in cluster_paths})
             is_cross_ids = len(ids_names) > 1
 
+            # Generate UUID for cluster identification
+            cluster_uuid = str(uuid.uuid4())
+
             cluster = ClusterInfo(
-                id=label,
+                id=cluster_uuid,
                 similarity_score=similarity_score,
                 size=len(cluster_paths),
                 is_cross_ids=is_cross_ids,
                 ids_names=ids_names,
                 paths=cluster_paths,
                 centroid=centroid,
+                scope="global",  # Legacy clusterer is global-only
             )
             clusters.append(cluster)
 
@@ -172,11 +177,11 @@ class EmbeddingClusterer:
             for path, _prob in zip(cluster_paths, cluster_probs, strict=True):
                 if is_cross_ids:
                     path_memberships[path] = PathMembership(
-                        cross_ids_cluster=label, intra_ids_cluster=None
+                        cross_ids_cluster=cluster_uuid, intra_ids_cluster=None
                     )
                 else:
                     path_memberships[path] = PathMembership(
-                        cross_ids_cluster=None, intra_ids_cluster=label
+                        cross_ids_cluster=None, intra_ids_cluster=cluster_uuid
                     )
 
         # Add noise paths with no membership

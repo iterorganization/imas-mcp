@@ -1,5 +1,9 @@
 """
 Main relationship extractor class.
+
+Uses hierarchical clustering (global/domain/IDS levels) to discover
+clusters that may be hidden by density competition in the global
+embedding space.
 """
 
 import hashlib
@@ -19,6 +23,7 @@ from imas_codex.search.document_store import DocumentStore
 
 from .clustering import EmbeddingClusterer, RelationshipBuilder
 from .config import RelationshipExtractionConfig
+from .hierarchical import HierarchicalClusterer
 from .label_cache import LabelCache
 from .models import (
     ClusteringParameters,
@@ -35,8 +40,13 @@ class RelationshipExtractor:
     """
     Main class for extracting relationships between IMAS data paths.
 
-    Uses semantic embeddings and multi-membership clustering to identify
-    related paths both within and across different IDS structures.
+    Uses hierarchical clustering at three levels:
+    - Global: Full embedding space (all IDS)
+    - Domain: Per physics domain (e.g., transport, equilibrium)
+    - IDS: Per individual IDS (e.g., core_profiles, magnetics)
+
+    All clusters are stored in a flat index with UUID identifiers
+    and enrichment metadata.
     """
 
     def __init__(self, config: RelationshipExtractionConfig | None = None):
@@ -53,7 +63,14 @@ class RelationshipExtractor:
         # Initialize components
         self.path_filter = PathFilter(self.config)
         self.unit_builder = UnitFamilyBuilder()
+        # Legacy single-level clusterer (kept for compatibility)
         self.clusterer = EmbeddingClusterer(self.config, self.logger)
+        # New hierarchical clusterer
+        self.hierarchical_clusterer = HierarchicalClusterer(
+            min_cluster_size=self.config.min_cluster_size,
+            min_samples=self.config.min_samples,
+            cluster_selection_method=self.config.cluster_selection_method,
+        )
         self.relationship_builder = RelationshipBuilder(self.config, self.logger)
 
         # Use shared embedding infrastructure
@@ -65,6 +82,9 @@ class RelationshipExtractor:
         """
         Extract cluster-based relationships from IDS data.
 
+        Uses hierarchical clustering at global, domain, and IDS levels
+        to discover clusters that may be hidden by density competition.
+
         Args:
             input_dir: Directory containing detailed IDS JSON files
             force_rebuild: Force rebuilding even if cache exists
@@ -74,7 +94,7 @@ class RelationshipExtractor:
         """
         input_dir = input_dir or self.config.input_dir
 
-        self.logger.info("Starting relationship extraction process...")
+        self.logger.info("Starting hierarchical relationship extraction...")
 
         # Load IDS data
         self.logger.info("Loading IDS data from %s", input_dir)
@@ -88,11 +108,21 @@ class RelationshipExtractor:
         self.logger.info("Generating embeddings for %d paths...", len(filtered_paths))
         embeddings, path_list = self._generate_embeddings(filtered_paths)
 
-        # Cluster embeddings using multi-membership approach
-        self.logger.info("Clustering embeddings...")
-        all_clusters, path_index, statistics = self.clusterer.cluster_embeddings(
-            embeddings, path_list, filtered_paths
+        # Cluster embeddings using hierarchical approach
+        self.logger.info("Running hierarchical clustering (global/domain/IDS)...")
+        all_clusters = self.hierarchical_clusterer.cluster_all_levels(
+            embeddings=embeddings,
+            paths=path_list,
+            include_global=True,
+            include_domain=True,
+            include_ids=True,
         )
+
+        # Build path index for multi-membership
+        path_index = self._build_path_index(all_clusters)
+
+        # Compute statistics
+        statistics = self._compute_hierarchical_statistics(all_clusters, path_index)
 
         # Build additional groupings for tool compatibility
         self.logger.info("Building unit families...")
@@ -149,6 +179,75 @@ class RelationshipExtractor:
             f"{len([c for c in all_clusters if not c.is_cross_ids])} intra-IDS"
         )
         return relationships
+
+    def _build_path_index(self, clusters: list) -> dict[str, list[str]]:
+        """Build path-to-cluster index for multi-membership lookup.
+
+        Args:
+            clusters: List of ClusterInfo objects
+
+        Returns:
+            Dict mapping path to list of cluster UUIDs
+        """
+        path_index: dict[str, list[str]] = {}
+        for cluster in clusters:
+            for path in cluster.paths:
+                if path not in path_index:
+                    path_index[path] = []
+                path_index[path].append(cluster.id)
+        return path_index
+
+    def _compute_hierarchical_statistics(
+        self, clusters: list, path_index: dict[str, list[str]]
+    ) -> dict[str, Any]:
+        """Compute statistics for hierarchical clustering.
+
+        Args:
+            clusters: List of ClusterInfo objects
+            path_index: Path-to-cluster index
+
+        Returns:
+            Dict with clustering statistics
+        """
+        # Count by scope
+        global_clusters = [c for c in clusters if c.scope == "global"]
+        domain_clusters = [c for c in clusters if c.scope == "domain"]
+        ids_clusters = [c for c in clusters if c.scope == "ids"]
+
+        # Count cross-IDS vs intra-IDS
+        cross_ids_clusters = [c for c in clusters if c.is_cross_ids]
+        intra_ids_clusters = [c for c in clusters if not c.is_cross_ids]
+
+        # Multi-membership paths (in more than one cluster)
+        multi_membership_paths = sum(
+            1 for paths in path_index.values() if len(paths) > 1
+        )
+        isolated_paths = sum(1 for paths in path_index.values() if len(paths) == 1)
+
+        return {
+            "total_clusters": len(clusters),
+            "global_count": len(global_clusters),
+            "domain_count": len(domain_clusters),
+            "ids_count": len(ids_clusters),
+            "cross_ids_clustering": {
+                "total_clusters": len(cross_ids_clusters),
+                "avg_cluster_size": (
+                    sum(c.size for c in cross_ids_clusters) / len(cross_ids_clusters)
+                    if cross_ids_clusters
+                    else 0
+                ),
+            },
+            "intra_ids_clustering": {
+                "total_clusters": len(intra_ids_clusters),
+                "avg_cluster_size": (
+                    sum(c.size for c in intra_ids_clusters) / len(intra_ids_clusters)
+                    if intra_ids_clusters
+                    else 0
+                ),
+            },
+            "multi_membership_paths": multi_membership_paths,
+            "isolated_paths": isolated_paths,
+        }
 
     def _build_cross_ids_summary(self, all_clusters: list) -> CrossIDSSummary:
         """Build summary for cross-IDS clusters."""
@@ -233,10 +332,12 @@ class RelationshipExtractor:
         relationships: RelationshipSet,
         output_file: Path,
     ) -> None:
-        """Save clusters in optimized format with LLM-generated labels.
+        """Save clusters with enrichment metadata and hierarchical scope.
 
-        Labels are cached using content-addressed keys (hash of sorted paths).
-        This enables incremental cache growth and reuse across clustering runs.
+        Uses UUID-based cluster IDs and includes:
+        - Hierarchical scope (global/domain/ids)
+        - Enrichment fields (physics_concepts, data_type, tags, mapping_relevance)
+        - Composite ranking support
 
         Args:
             relationships: The extracted relationships
@@ -253,27 +354,41 @@ class RelationshipExtractor:
         # Generate label embeddings for semantic search
         label_embeddings_map = self._generate_label_embeddings(labels_map)
 
-        # Build clusters array with labels (without embeddings - stored in .npz)
+        # Build clusters array with labels and enrichment
         clusters_data = []
         centroid_embeddings = []
         label_embeddings_list = []
-        centroid_cluster_ids = []
-        label_cluster_ids = []
+        centroid_cluster_ids: list[str] = []
+        label_cluster_ids: list[str] = []
 
         for cluster in clusters_list:
-            cluster_id = cluster.id
+            cluster_id = cluster.id  # UUID string
             label_info = labels_map.get(cluster_id, {})
 
-            cluster_entry = {
+            cluster_entry: dict[str, Any] = {
                 "id": cluster_id,
-                "label": label_info.get("label", f"Cluster {cluster_id}"),
+                "label": label_info.get("label", f"Cluster {cluster_id[:8]}"),
                 "description": label_info.get("description", ""),
                 "type": "cross_ids" if cluster.is_cross_ids else "intra_ids",
+                "scope": cluster.scope,
                 "similarity": round(cluster.similarity_score, 4),
                 "ids": cluster.ids_names,
                 "paths": cluster.paths,
-                # Note: centroid and label_embedding now stored in .npz file
             }
+
+            # Add scope_detail if present
+            if cluster.scope_detail:
+                cluster_entry["scope_detail"] = cluster.scope_detail
+
+            # Add enrichment fields from labels
+            if label_info.get("physics_concepts"):
+                cluster_entry["physics_concepts"] = label_info["physics_concepts"]
+            if label_info.get("data_type"):
+                cluster_entry["data_type"] = label_info["data_type"]
+            if label_info.get("tags"):
+                cluster_entry["tags"] = label_info["tags"]
+            if label_info.get("mapping_relevance"):
+                cluster_entry["mapping_relevance"] = label_info["mapping_relevance"]
 
             # Collect embeddings for .npz file
             if cluster.centroid is not None and len(cluster.centroid) > 0:
@@ -286,11 +401,16 @@ class RelationshipExtractor:
 
             clusters_data.append(cluster_entry)
 
-        # Build indexes
-        path_to_cluster: dict[str, list[int]] = {}
-        ids_to_clusters: dict[str, list[int]] = {}
-        cross_ids_list: list[int] = []
-        intra_ids_list: list[int] = []
+        # Build indexes with string IDs
+        path_to_cluster: dict[str, list[str]] = {}
+        ids_to_clusters: dict[str, list[str]] = {}
+        scope_to_clusters: dict[str, list[str]] = {
+            "global": [],
+            "domain": [],
+            "ids": [],
+        }
+        cross_ids_list: list[str] = []
+        intra_ids_list: list[str] = []
 
         for cluster in clusters_list:
             cluster_id = cluster.id
@@ -308,14 +428,16 @@ class RelationshipExtractor:
                 if cluster_id not in ids_to_clusters[ids_name]:
                     ids_to_clusters[ids_name].append(cluster_id)
 
+            # Scope index
+            scope_to_clusters[cluster.scope].append(cluster_id)
+
             # Type lists
             if cluster.is_cross_ids:
                 cross_ids_list.append(cluster_id)
             else:
                 intra_ids_list.append(cluster_id)
 
-        # Save embeddings to .npz file (compressed binary format)
-        # Derive embeddings filename from clusters filename to preserve hash suffix
+        # Save embeddings to .npz file
         embeddings_stem = output_file.stem.replace("clusters", "cluster_embeddings")
         embeddings_file = output_file.parent / f"{embeddings_stem}.npz"
         embeddings_hash = self._save_embeddings_npz(
@@ -328,7 +450,7 @@ class RelationshipExtractor:
 
         # Build final structure
         output_data = {
-            "version": "2.0",
+            "version": "3.0",  # New version for hierarchical + enrichment
             "dd_version": dd_version,
             "generated": datetime.now().isoformat(),
             "labeling_model": self._get_labeling_model(),
@@ -338,26 +460,20 @@ class RelationshipExtractor:
             "indexes": {
                 "path": path_to_cluster,
                 "ids": ids_to_clusters,
+                "scope": scope_to_clusters,
                 "cross_ids": cross_ids_list,
                 "intra_ids": intra_ids_list,
             },
             "statistics": {
                 "total_clusters": len(clusters_list),
+                "global_count": len(scope_to_clusters["global"]),
+                "domain_count": len(scope_to_clusters["domain"]),
+                "ids_count": len(scope_to_clusters["ids"]),
                 "cross_ids_count": len(cross_ids_list),
                 "intra_ids_count": len(intra_ids_list),
                 "total_paths": len(path_to_cluster),
                 "centroid_embeddings_count": len(centroid_cluster_ids),
                 "label_embeddings_count": len(label_cluster_ids),
-                "clustering_params": {
-                    "cross_ids": {
-                        "eps": self.config.cross_ids_eps,
-                        "min_samples": self.config.cross_ids_min_samples,
-                    },
-                    "intra_ids": {
-                        "eps": self.config.intra_ids_eps,
-                        "min_samples": self.config.intra_ids_min_samples,
-                    },
-                },
             },
         }
 
@@ -366,26 +482,27 @@ class RelationshipExtractor:
 
         self.logger.info(f"Saved clusters.json to {output_file}")
         self.logger.info(
-            f"Saved {len(centroid_cluster_ids)} centroid and "
-            f"{len(label_cluster_ids)} label embeddings to {embeddings_file}"
+            f"Statistics: {len(scope_to_clusters['global'])} global, "
+            f"{len(scope_to_clusters['domain'])} domain, "
+            f"{len(scope_to_clusters['ids'])} ids-level clusters"
         )
 
     def _save_embeddings_npz(
         self,
         embeddings_file: Path,
         centroid_embeddings: list,
-        centroid_cluster_ids: list[int],
+        centroid_cluster_ids: list[str],
         label_embeddings: list,
-        label_cluster_ids: list[int],
+        label_cluster_ids: list[str],
     ) -> str:
         """Save embeddings to compressed .npz file and compute hash.
 
         Args:
             embeddings_file: Path to output .npz file
             centroid_embeddings: List of centroid embedding vectors
-            centroid_cluster_ids: List of cluster IDs for centroids
+            centroid_cluster_ids: List of cluster UUIDs for centroids
             label_embeddings: List of label embedding vectors
-            label_cluster_ids: List of cluster IDs for label embeddings
+            label_cluster_ids: List of cluster UUIDs for label embeddings
 
         Returns:
             SHA256 hash (first 16 chars) of the saved file
@@ -396,14 +513,16 @@ class RelationshipExtractor:
             if centroid_embeddings
             else np.array([], dtype=np.float32)
         )
-        centroid_ids_array = np.array(centroid_cluster_ids, dtype=np.int32)
+        # Store UUIDs as string array
+        centroid_ids_array = np.array(centroid_cluster_ids, dtype=object)
 
         labels_array = (
             np.array(label_embeddings, dtype=np.float32)
             if label_embeddings
             else np.array([], dtype=np.float32)
         )
-        label_ids_array = np.array(label_cluster_ids, dtype=np.int32)
+        # Store UUIDs as string array
+        label_ids_array = np.array(label_cluster_ids, dtype=object)
 
         # Save compressed
         np.savez_compressed(
@@ -432,8 +551,8 @@ class RelationshipExtractor:
 
     def _get_labels_with_cache(
         self, clusters: list, label_cache: LabelCache
-    ) -> dict[int, dict[str, str]]:
-        """Get labels for clusters, using cache when available.
+    ) -> dict[str, dict[str, Any]]:
+        """Get labels and enrichment for clusters, using cache when available.
 
         Uses content-addressed caching: each cluster is keyed by a hash of its
         sorted paths. This enables incremental cache growth and reuse across
@@ -444,17 +563,21 @@ class RelationshipExtractor:
             label_cache: LabelCache instance for persistence
 
         Returns:
-            Dict mapping cluster_id to {"label": str, "description": str}
+            Dict mapping cluster_id (UUID) to enrichment dict with:
+            - label, description
+            - physics_concepts, data_type, tags, mapping_relevance
         """
         model = self._get_labeling_model()
 
-        # Convert clusters to dicts for cache lookup
+        # Convert clusters to dicts for cache lookup, including scope info
         cluster_dicts = [
             {
                 "id": c.id,
                 "is_cross_ids": c.is_cross_ids,
                 "ids_names": c.ids_names,
                 "paths": c.paths,
+                "scope": c.scope,
+                "scope_detail": c.scope_detail,
             }
             for c in clusters
         ]
@@ -463,7 +586,7 @@ class RelationshipExtractor:
         cached, uncached = label_cache.get_many(cluster_dicts, model=model)
 
         # Convert cached labels to the expected format
-        labels_map = {
+        labels_map: dict[str, dict[str, Any]] = {
             cluster_id: {
                 "label": cached_label.label,
                 "description": cached_label.description,
@@ -475,7 +598,7 @@ class RelationshipExtractor:
             self.logger.info(f"All {len(clusters)} labels retrieved from cache")
             return labels_map
 
-        # Generate labels for uncached clusters
+        # Generate labels for uncached clusters with enrichment
         self.logger.info(f"Generating labels for {len(uncached)} uncached clusters")
         generated = self._generate_cluster_labels_for_batch(uncached)
 
@@ -497,14 +620,14 @@ class RelationshipExtractor:
 
     def _generate_cluster_labels_for_batch(
         self, clusters: list[dict]
-    ) -> dict[int, dict[str, str]]:
-        """Generate labels for a batch of clusters using LLM.
+    ) -> dict[str, dict[str, Any]]:
+        """Generate labels and enrichment for a batch of clusters using LLM.
 
         Args:
-            clusters: List of cluster dicts with id, is_cross_ids, ids_names, paths
+            clusters: List of cluster dicts with id, is_cross_ids, ids_names, paths, scope
 
         Returns:
-            Dict mapping cluster_id to {"label": str, "description": str}
+            Dict mapping cluster_id (UUID) to enrichment dict
         """
         import os
 
@@ -519,13 +642,20 @@ class RelationshipExtractor:
         try:
             from .labeler import ClusterLabeler
 
-            labeler = ClusterLabeler()
+            labeler = ClusterLabeler(enable_enrichment=True)
             labels = labeler.label_clusters(clusters)
+
+            # Save any proposed new vocabulary terms
+            labeler.save_proposed_terms()
 
             return {
                 label.cluster_id: {
                     "label": label.label,
                     "description": label.description,
+                    "physics_concepts": label.physics_concepts,
+                    "data_type": label.data_type,
+                    "tags": label.tags,
+                    "mapping_relevance": label.mapping_relevance,
                 }
                 for label in labels
             }
@@ -536,9 +666,17 @@ class RelationshipExtractor:
 
     def _generate_fallback_labels_from_dicts(
         self, clusters: list[dict]
-    ) -> dict[int, dict[str, str]]:
-        """Generate fallback labels from cluster dicts without LLM."""
-        labels = {}
+    ) -> dict[str, dict[str, Any]]:
+        """Generate fallback labels with basic enrichment from cluster dicts."""
+        from .labeler import ClusterLabeler
+
+        # Use the labeler's inference methods for basic enrichment
+        temp_labeler = ClusterLabeler.__new__(ClusterLabeler)
+        temp_labeler._concepts = []
+        temp_labeler._data_types = []
+        temp_labeler._tags = []
+
+        labels: dict[str, dict[str, Any]] = {}
         for cluster in clusters:
             cluster_id = cluster["id"]
             paths = cluster.get("paths", [])[:5]
@@ -550,40 +688,65 @@ class RelationshipExtractor:
                 common = " ".join(segments[:2]).replace("_", " ").title()
                 label = common[:50]
             else:
-                label = f"Cluster {cluster_id}"
+                label = f"Cluster {cluster_id[:8]}"
 
             type_str = "cross-IDS" if is_cross_ids else "intra-IDS"
+            scope = cluster.get("scope", "global")
             ids_str = ", ".join(ids_names[:3])
-            description = f"A {type_str} cluster of related paths from {ids_str}."
+            description = (
+                f"A {type_str} {scope}-level cluster of related paths from {ids_str}."
+            )
 
-            labels[cluster_id] = {"label": label, "description": description}
+            # Basic enrichment from path patterns
+            all_paths = cluster.get("paths", [])
+            data_type = temp_labeler._infer_data_type_from_paths(all_paths)
+            tags = temp_labeler._infer_tags_from_paths(all_paths)
+
+            labels[cluster_id] = {
+                "label": label,
+                "description": description,
+                "physics_concepts": [],
+                "data_type": data_type,
+                "tags": tags,
+                "mapping_relevance": "medium",
+            }
 
         return labels
 
-    def _generate_fallback_labels(self, clusters: list) -> dict[int, dict[str, str]]:
+    def _generate_fallback_labels(self, clusters: list) -> dict[str, dict[str, Any]]:
         """Generate fallback labels without LLM."""
-        labels = {}
+        labels: dict[str, dict[str, Any]] = {}
         for cluster in clusters:
             # Extract common terms from paths
             paths = cluster.paths[:5]
+            cluster_id_display = (
+                cluster.id[:8] if isinstance(cluster.id, str) else cluster.id
+            )
             if paths:
                 segments = [p.split("/")[-1] for p in paths]
                 common = " ".join(segments[:2]).replace("_", " ").title()
                 label = common[:50]  # Truncate
             else:
-                label = f"Cluster {cluster.id}"
+                label = f"Cluster {cluster_id_display}"
 
             type_str = "cross-IDS" if cluster.is_cross_ids else "intra-IDS"
             ids_str = ", ".join(cluster.ids_names[:3])
             description = f"A {type_str} cluster of related paths from {ids_str}."
 
-            labels[cluster.id] = {"label": label, "description": description}
+            labels[cluster.id] = {
+                "label": label,
+                "description": description,
+                "physics_concepts": [],
+                "data_type": None,
+                "tags": [],
+                "mapping_relevance": "medium",
+            }
 
         return labels
 
     def _generate_label_embeddings(
-        self, labels_map: dict[int, dict[str, str]]
-    ) -> dict[int, list[float]]:
+        self, labels_map: dict[str, dict[str, Any]]
+    ) -> dict[str, list[float]]:
         """Generate embeddings for cluster labels+descriptions.
 
         Args:

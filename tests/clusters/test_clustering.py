@@ -193,7 +193,7 @@ class TestEmbeddingClusterer:
 
         clusters = [
             ClusterInfo(
-                id=0,
+                id="uuid-0",
                 similarity_score=0.9,
                 size=3,
                 is_cross_ids=True,
@@ -201,7 +201,7 @@ class TestEmbeddingClusterer:
                 paths=["a/x", "a/y", "b/z"],
             ),
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=2,
                 is_cross_ids=False,
@@ -210,8 +210,8 @@ class TestEmbeddingClusterer:
             ),
         ]
         path_index = {
-            "a/x": PathMembership(cross_ids_cluster=0, intra_ids_cluster=None),
-            "a/m": PathMembership(cross_ids_cluster=None, intra_ids_cluster=1),
+            "a/x": PathMembership(cross_ids_cluster="uuid-0", intra_ids_cluster=None),
+            "a/m": PathMembership(cross_ids_cluster=None, intra_ids_cluster="uuid-1"),
             "a/p": PathMembership(cross_ids_cluster=None, intra_ids_cluster=None),
         }
 
@@ -247,7 +247,7 @@ class TestRelationshipBuilder:
         """Test building path index with clusters."""
         cluster_infos = {
             0: ClusterInfo(
-                id=0,
+                id="uuid-0",
                 similarity_score=0.9,
                 size=2,
                 is_cross_ids=True,
@@ -255,7 +255,7 @@ class TestRelationshipBuilder:
                 paths=["a/x", "b/y"],
             ),
             1: ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.8,
                 size=2,
                 is_cross_ids=False,

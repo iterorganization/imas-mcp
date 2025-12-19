@@ -1,0 +1,442 @@
+id: https://imas.iter.org/codex/physics-concepts
+name: physics_concepts
+title: IMAS Physics Concept Vocabulary
+description: >-
+  Controlled vocabulary of physics concepts for cluster classification.
+  Used by LLM labeling to normalize concept extraction across clusters.
+  This enables cross-cluster linking by physics concept.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas: https://imas.iter.org/codex/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+enums:
+  PhysicsConcept:
+    description: >-
+      Normalized physics concepts for cross-cluster linking.
+      Each concept represents a fundamental plasma physics quantity
+      or measurement that may appear across multiple IDS.
+    permissible_values:
+      # Temperature quantities
+      electron_temperature:
+        description: Electron kinetic temperature (Te)
+        meaning: imas:electron_temperature
+        annotations:
+          symbol: Te
+          units: eV, keV
+          related: ion_temperature, thermal_energy
+
+      ion_temperature:
+        description: Ion kinetic temperature (Ti)
+        meaning: imas:ion_temperature
+        annotations:
+          symbol: Ti
+          units: eV, keV
+          related: electron_temperature
+
+      neutral_temperature:
+        description: Neutral particle temperature
+        meaning: imas:neutral_temperature
+        annotations:
+          units: eV
+
+      impurity_temperature:
+        description: Impurity species temperature
+        meaning: imas:impurity_temperature
+
+      # Density quantities
+      electron_density:
+        description: Electron number density (ne)
+        meaning: imas:electron_density
+        annotations:
+          symbol: ne
+          units: m^-3
+
+      ion_density:
+        description: Ion number density
+        meaning: imas:ion_density
+        annotations:
+          symbol: ni
+          units: m^-3
+
+      neutral_density:
+        description: Neutral particle density
+        meaning: imas:neutral_density
+        annotations:
+          units: m^-3
+
+      impurity_density:
+        description: Impurity species density
+        meaning: imas:impurity_density
+
+      # Pressure quantities
+      electron_pressure:
+        description: Electron pressure
+        meaning: imas:electron_pressure
+        annotations:
+          symbol: pe
+          units: Pa
+
+      ion_pressure:
+        description: Ion pressure
+        meaning: imas:ion_pressure
+        annotations:
+          symbol: pi
+          units: Pa
+
+      total_pressure:
+        description: Total plasma pressure
+        meaning: imas:total_pressure
+        annotations:
+          units: Pa
+
+      # Velocity and rotation
+      toroidal_velocity:
+        description: Toroidal rotation velocity
+        meaning: imas:toroidal_velocity
+        annotations:
+          units: m/s
+
+      poloidal_velocity:
+        description: Poloidal rotation velocity
+        meaning: imas:poloidal_velocity
+        annotations:
+          units: m/s
+
+      parallel_velocity:
+        description: Velocity parallel to magnetic field
+        meaning: imas:parallel_velocity
+        annotations:
+          units: m/s
+
+      radial_velocity:
+        description: Radial velocity component
+        meaning: imas:radial_velocity
+
+      # Momentum quantities
+      toroidal_momentum:
+        description: Toroidal angular momentum
+        meaning: imas:toroidal_momentum
+
+      poloidal_momentum:
+        description: Poloidal momentum
+        meaning: imas:poloidal_momentum
+
+      parallel_momentum:
+        description: Momentum parallel to magnetic field
+        meaning: imas:parallel_momentum
+
+      # Flux quantities
+      particle_flux:
+        description: Particle flux (particles/m^2/s)
+        meaning: imas:particle_flux
+
+      energy_flux:
+        description: Energy flux
+        meaning: imas:energy_flux
+        annotations:
+          units: W/m^2
+
+      heat_flux:
+        description: Heat flux to surfaces
+        meaning: imas:heat_flux
+        annotations:
+          units: W/m^2
+
+      momentum_flux:
+        description: Momentum flux
+        meaning: imas:momentum_flux
+
+      # Magnetic quantities
+      magnetic_field:
+        description: Magnetic field strength and components
+        meaning: imas:magnetic_field
+        annotations:
+          symbol: B
+          units: T
+
+      toroidal_field:
+        description: Toroidal magnetic field component
+        meaning: imas:toroidal_field
+        annotations:
+          symbol: Bt
+          units: T
+
+      poloidal_field:
+        description: Poloidal magnetic field component
+        meaning: imas:poloidal_field
+        annotations:
+          symbol: Bp
+          units: T
+
+      magnetic_flux:
+        description: Magnetic flux (poloidal or toroidal)
+        meaning: imas:magnetic_flux
+        annotations:
+          symbol: psi, phi
+          units: Wb
+
+      poloidal_flux:
+        description: Poloidal magnetic flux
+        meaning: imas:poloidal_flux
+        annotations:
+          symbol: psi
+          units: Wb
+
+      safety_factor:
+        description: Magnetic safety factor (q-profile)
+        meaning: imas:safety_factor
+        annotations:
+          symbol: q
+
+      magnetic_shear:
+        description: Magnetic shear profile
+        meaning: imas:magnetic_shear
+        annotations:
+          symbol: s
+
+      # Current quantities
+      plasma_current:
+        description: Total plasma current
+        meaning: imas:plasma_current
+        annotations:
+          symbol: Ip
+          units: A
+
+      current_density:
+        description: Current density profile
+        meaning: imas:current_density
+        annotations:
+          symbol: j
+          units: A/m^2
+
+      bootstrap_current:
+        description: Bootstrap current
+        meaning: imas:bootstrap_current
+
+      driven_current:
+        description: Externally driven current
+        meaning: imas:driven_current
+
+      halo_current:
+        description: Halo current during disruptions
+        meaning: imas:halo_current
+
+      # Electric field
+      electric_field:
+        description: Electric field
+        meaning: imas:electric_field
+        annotations:
+          symbol: E
+          units: V/m
+
+      radial_electric_field:
+        description: Radial electric field
+        meaning: imas:radial_electric_field
+        annotations:
+          symbol: Er
+
+      loop_voltage:
+        description: Loop voltage
+        meaning: imas:loop_voltage
+        annotations:
+          units: V
+
+      # Transport coefficients
+      diffusion_coefficient:
+        description: Particle or momentum diffusion coefficient
+        meaning: imas:diffusion_coefficient
+        annotations:
+          symbol: D
+          units: m^2/s
+
+      thermal_conductivity:
+        description: Thermal conductivity (chi)
+        meaning: imas:thermal_conductivity
+        annotations:
+          symbol: chi
+          units: m^2/s
+
+      viscosity:
+        description: Plasma viscosity
+        meaning: imas:viscosity
+
+      convective_velocity:
+        description: Convective velocity (pinch)
+        meaning: imas:convective_velocity
+
+      # Equilibrium quantities
+      plasma_boundary:
+        description: Plasma boundary shape and position
+        meaning: imas:plasma_boundary
+
+      separatrix:
+        description: Separatrix geometry
+        meaning: imas:separatrix
+
+      magnetic_axis:
+        description: Magnetic axis position
+        meaning: imas:magnetic_axis
+
+      elongation:
+        description: Plasma elongation
+        meaning: imas:elongation
+        annotations:
+          symbol: kappa
+
+      triangularity:
+        description: Plasma triangularity
+        meaning: imas:triangularity
+        annotations:
+          symbol: delta
+
+      beta:
+        description: Plasma beta (pressure/magnetic pressure ratio)
+        meaning: imas:beta
+        annotations:
+          symbol: beta
+
+      poloidal_beta:
+        description: Poloidal beta
+        meaning: imas:poloidal_beta
+        annotations:
+          symbol: beta_p
+
+      stored_energy:
+        description: Plasma stored energy
+        meaning: imas:stored_energy
+        annotations:
+          units: J
+
+      # Power and heating
+      heating_power:
+        description: Total heating power
+        meaning: imas:heating_power
+        annotations:
+          units: W
+
+      radiated_power:
+        description: Radiated power
+        meaning: imas:radiated_power
+        annotations:
+          units: W
+
+      power_deposition:
+        description: Power deposition profile
+        meaning: imas:power_deposition
+
+      nbi_power:
+        description: Neutral beam injection power
+        meaning: imas:nbi_power
+
+      rf_power:
+        description: Radio-frequency heating power
+        meaning: imas:rf_power
+
+      # Confinement
+      energy_confinement_time:
+        description: Energy confinement time
+        meaning: imas:energy_confinement_time
+        annotations:
+          symbol: tau_E
+          units: s
+
+      particle_confinement_time:
+        description: Particle confinement time
+        meaning: imas:particle_confinement_time
+
+      # Effective charge
+      effective_charge:
+        description: Effective ion charge (Zeff)
+        meaning: imas:effective_charge
+        annotations:
+          symbol: Zeff
+
+      # Radiation
+      radiance:
+        description: Spectral or line radiance
+        meaning: imas:radiance
+
+      emissivity:
+        description: Radiation emissivity
+        meaning: imas:emissivity
+
+      bremsstrahlung:
+        description: Bremsstrahlung radiation
+        meaning: imas:bremsstrahlung
+
+      line_radiation:
+        description: Spectral line radiation
+        meaning: imas:line_radiation
+
+      # MHD and instabilities
+      mhd_mode:
+        description: MHD mode structure and amplitude
+        meaning: imas:mhd_mode
+
+      tearing_mode:
+        description: Tearing mode / magnetic island
+        meaning: imas:tearing_mode
+
+      sawtooth:
+        description: Sawtooth instability
+        meaning: imas:sawtooth
+
+      elm:
+        description: Edge localized mode
+        meaning: imas:elm
+
+      # Pedestal
+      pedestal_height:
+        description: Pedestal top value
+        meaning: imas:pedestal_height
+
+      pedestal_width:
+        description: Pedestal width
+        meaning: imas:pedestal_width
+
+      pedestal_gradient:
+        description: Pedestal gradient
+        meaning: imas:pedestal_gradient
+
+      # SOL and divertor
+      scrape_off_layer:
+        description: Scrape-off layer parameters
+        meaning: imas:scrape_off_layer
+
+      decay_length:
+        description: SOL decay length
+        meaning: imas:decay_length
+        annotations:
+          symbol: lambda
+
+      target_flux:
+        description: Divertor target particle/heat flux
+        meaning: imas:target_flux
+
+      recycling:
+        description: Particle recycling
+        meaning: imas:recycling
+
+      detachment:
+        description: Divertor detachment
+        meaning: imas:detachment
+
+      # Coordinates
+      radial_coordinate:
+        description: Radial coordinate (rho, psi_norm, etc.)
+        meaning: imas:radial_coordinate
+
+      flux_surface:
+        description: Magnetic flux surface geometry
+        meaning: imas:flux_surface
+
+      grid_geometry:
+        description: Computational grid geometry
+        meaning: imas:grid_geometry
+
