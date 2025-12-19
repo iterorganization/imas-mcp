@@ -1,0 +1,142 @@
+# Core configuration for IMAS Codex Discovery Engine
+# This file contains universal settings shared across all facilities
+
+discovery:
+  # Default LLM model for agentic exploration
+  model: anthropic/claude-opus-4.5
+  
+  # Maximum iterations in the generate-execute-refine loop
+  max_iterations: 5
+  
+  # Command execution timeout in seconds
+  timeout_seconds: 60
+  
+  # Maximum output bytes to capture per command
+  max_output_bytes: 102400  # 100KB
+
+# Universal directory and file exclusions
+excludes:
+  directories:
+    - .git
+    - __pycache__
+    - .cache
+    - .venv
+    - venv
+    - node_modules
+    - tmp
+    - temp
+    - .tmp
+    - .temp
+    - .pytest_cache
+    - .mypy_cache
+    - .ruff_cache
+    - __MACOSX
+    - .DS_Store
+    
+  patterns:
+    - "*.pyc"
+    - "*.pyo"
+    - "*.o"
+    - "*.so"
+    - "*.a"
+    - "*.dll"
+    - "*.exe"
+    - "*.bin"
+    - "*.dat.bak"
+    - "*.swp"
+    - "*.swo"
+    - "*~"
+    - ".#*"
+
+# Tools to probe for on remote systems
+tools:
+  search:
+    - rg        # ripgrep - preferred
+    - ag        # silver searcher
+    - grep      # universal fallback
+    - ack       # another grep alternative
+    
+  tree:
+    - tree      # tree view
+    - find      # POSIX find
+    - fd        # modern find alternative
+    - exa       # modern ls
+    - ls        # fallback
+    
+  code_analysis:
+    - ctags     # tag generation
+    - cscope    # C code browser
+    
+  python:
+    - python3
+    - python
+    - pip3
+    - pip
+    - uv
+    - conda
+    
+  data:
+    - h5dump    # HDF5 inspection
+    - h5ls      # HDF5 listing
+    - ncdump    # NetCDF inspection
+    
+  system:
+    - file      # file type detection
+    - stat      # file statistics
+    - du        # disk usage
+    - df        # filesystem info
+    - lsb_release  # OS info
+    - uname     # system info
+    
+  version_control:
+    - git
+    - svn
+    - hg
+
+# Safety constraints for script generation and execution
+safety:
+  # Commands that must never appear in generated scripts
+  forbidden_commands:
+    - rm
+    - rmdir
+    - mv
+    - cp
+    - chmod
+    - chown
+    - chgrp
+    - sudo
+    - su
+    - dd
+    - mkfs
+    - fdisk
+    - parted
+    - kill
+    - pkill
+    - killall
+    - reboot
+    - shutdown
+    - halt
+    - poweroff
+    - init
+    - systemctl
+    - service
+    
+  # Maximum lines allowed in a generated script
+  max_script_lines: 200
+  
+  # Patterns that should never appear in scripts
+  forbidden_patterns:
+    - "> /dev/"      # Writing to devices
+    - ">> /dev/"
+    - ":(){:|:&};:"  # Fork bomb
+    - "wget "        # Downloading
+    - "curl -o"      # Downloading to file
+    - "curl --output"
+    
+  # Allowed output redirections (stderr handling)
+  allowed_redirections:
+    - "2>/dev/null"
+    - "2>&1"
+    - ">/dev/null"
+
+
