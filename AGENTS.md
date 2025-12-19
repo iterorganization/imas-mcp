@@ -77,6 +77,9 @@ uv run pytest --cov=imas_codex
 
 # Run specific test
 uv run pytest tests/path/to/test.py::test_function
+
+# Fast iteration: use restricted IDS filters for build scripts
+uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
 ```
 
 ### Working in Worktrees
@@ -109,11 +112,6 @@ git push origin main
 ```bash
 cd /path/to/worktree
 git checkout -- .  # Discard any remaining changes
-```
-
-**Testing in worktrees**: Use restricted IDS filters for faster iteration:
-```bash
-uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
 ```
 
 **Why this workflow?**
