@@ -13,7 +13,7 @@ import hdbscan
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
-from .models import ClusterInfo, PathMembership
+from .models import ClusterInfo
 
 
 def _compute_cluster_similarity(
@@ -91,7 +91,7 @@ class EmbeddingClusterer:
         embeddings: np.ndarray,
         path_list: list[str],
         filtered_paths: dict[str, dict[str, Any]],
-    ) -> tuple[list[ClusterInfo], dict[str, PathMembership], dict[str, Any]]:
+    ) -> tuple[list[ClusterInfo], dict[str, list[str]], dict[str, Any]]:
         """
         Perform semantic clustering using HDBSCAN.
 
@@ -100,7 +100,7 @@ class EmbeddingClusterer:
 
         Returns:
             - List of all clusters with is_cross_ids derived from membership
-            - Path index mapping each path to its cluster membership
+            - Path index mapping each path to list of cluster UUIDs
             - Statistics about the clustering process
         """
         if len(path_list) < 2:
@@ -130,7 +130,7 @@ class EmbeddingClusterer:
 
         # Build clusters from labels
         clusters = []
-        path_memberships: dict[str, PathMembership] = {}
+        path_index: dict[str, list[str]] = {}
 
         unique_labels = set(cluster_labels)
         noise_count = list(cluster_labels).count(-1)
@@ -169,28 +169,23 @@ class EmbeddingClusterer:
                 ids_names=ids_names,
                 paths=cluster_paths,
                 centroid=centroid,
-                scope="global",  # Legacy clusterer is global-only
+                scope="global",
             )
             clusters.append(cluster)
 
-            # Record memberships (probability available for future confidence scoring)
+            # Record memberships (multi-membership via list)
             for path, _prob in zip(cluster_paths, cluster_probs, strict=True):
-                if is_cross_ids:
-                    path_memberships[path] = PathMembership(
-                        cross_ids_cluster=cluster_uuid, intra_ids_cluster=None
-                    )
-                else:
-                    path_memberships[path] = PathMembership(
-                        cross_ids_cluster=None, intra_ids_cluster=cluster_uuid
-                    )
+                if path not in path_index:
+                    path_index[path] = []
+                path_index[path].append(cluster_uuid)
 
-        # Add noise paths with no membership
+        # Add noise paths with empty membership
         for i, label in enumerate(cluster_labels):
             if label == -1:
-                path_memberships[path_list[i]] = PathMembership()
+                path_index[path_list[i]] = []
 
         # Calculate statistics
-        statistics = self._calculate_statistics(clusters, path_memberships)
+        statistics = self._calculate_statistics(clusters, path_index)
 
         cross_count = sum(1 for c in clusters if c.is_cross_ids)
         intra_count = len(clusters) - cross_count
@@ -198,7 +193,7 @@ class EmbeddingClusterer:
             f"Clustering complete: {cross_count} cross-IDS, {intra_count} intra-IDS clusters"
         )
 
-        return clusters, path_memberships, statistics
+        return clusters, path_index, statistics
 
     def _extract_ids_name(self, path: str) -> str:
         """Extract IDS name from path."""
@@ -207,22 +202,16 @@ class EmbeddingClusterer:
     def _calculate_statistics(
         self,
         clusters: list[ClusterInfo],
-        path_index: dict[str, PathMembership],
+        path_index: dict[str, list[str]],
     ) -> dict[str, Any]:
         """Calculate clustering statistics."""
         cross_clusters = [c for c in clusters if c.is_cross_ids]
         intra_clusters = [c for c in clusters if not c.is_cross_ids]
 
-        multi_membership = sum(
-            1
-            for m in path_index.values()
-            if m.cross_ids_cluster is not None and m.intra_ids_cluster is not None
-        )
-        isolated = sum(
-            1
-            for m in path_index.values()
-            if m.cross_ids_cluster is None and m.intra_ids_cluster is None
-        )
+        # Multi-membership: paths in more than one cluster
+        multi_membership = sum(1 for ids in path_index.values() if len(ids) > 1)
+        # Isolated: paths in no clusters
+        isolated = sum(1 for ids in path_index.values() if len(ids) == 0)
 
         cross_avg_sim = (
             sum(c.similarity_score for c in cross_clusters) / len(cross_clusters)
@@ -262,16 +251,18 @@ class RelationshipBuilder:
         self.logger = logger or logging.getLogger(__name__)
 
     def build_path_index(self, cluster_infos: dict[int, ClusterInfo]) -> dict[str, Any]:
-        """Build path-to-cluster index for fast lookups (backward compatibility)."""
-        path_to_cluster = {}
-        cluster_to_paths = {}
+        """Build path-to-cluster index for fast lookups."""
+        path_to_cluster: dict[str, list[str]] = {}
+        cluster_to_paths: dict[str, list[str]] = {}
 
         for cluster_id, cluster_info in cluster_infos.items():
             cluster_paths = cluster_info.paths
-            cluster_to_paths[cluster_id] = cluster_paths
+            cluster_to_paths[str(cluster_id)] = cluster_paths
 
             for path in cluster_info.paths:
-                path_to_cluster[path] = cluster_id
+                if path not in path_to_cluster:
+                    path_to_cluster[path] = []
+                path_to_cluster[path].append(str(cluster_id))
 
         return {
             "path_to_cluster": path_to_cluster,
