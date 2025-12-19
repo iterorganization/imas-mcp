@@ -40,6 +40,45 @@ cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
 - **GitHub CLI**: `gh` is available in PATH
 - **Authentication**: SSH
 
+#### Container Image Tagging
+
+This project uses a tag-based separation strategy for container images published to GitHub Container Registry (ghcr.io) and Azure Container Registry.
+
+**Tag Types**:
+
+| Tag | Purpose | When Used |
+|-----|---------|-----------|
+| `latest` | Production-ready stable release | After full release verification |
+| `X.Y.Z` | Immutable version tag | On each release (e.g., `1.2.0`) |
+| `X.Y.Z-rcN` | Release candidate for testing | Pre-release testing (e.g., `1.2.0-rc1`, `1.2.0-rc2`) |
+
+**Release Candidate (RC) Strategy**:
+
+1. **Creating an RC**: When preparing a test build for validation, tag with `-rcN` suffix:
+   ```bash
+   # Build and push release candidate
+   docker build -t ghcr.io/iterorganization/imas-codex:1.2.0-rc1 .
+   docker push ghcr.io/iterorganization/imas-codex:1.2.0-rc1
+   ```
+
+2. **Iterating on RCs**: Increment the RC number for each iteration to avoid cache issues:
+   - `1.2.0-rc1` → `1.2.0-rc2` → `1.2.0-rc3`
+   - Never reuse an RC tag; always increment
+
+3. **Promoting to Release**: Once validated, create the final release tag:
+   ```bash
+   docker tag ghcr.io/iterorganization/imas-codex:1.2.0-rc3 ghcr.io/iterorganization/imas-codex:1.2.0
+   docker tag ghcr.io/iterorganization/imas-codex:1.2.0 ghcr.io/iterorganization/imas-codex:latest
+   docker push ghcr.io/iterorganization/imas-codex:1.2.0
+   docker push ghcr.io/iterorganization/imas-codex:latest
+   ```
+
+**Why RC over dev/edge tags**:
+- Each RC tag is unique and immutable, preventing cache-related issues
+- Clear progression toward release (`rc1` → `rc2` → final)
+- Follows semantic versioning conventions
+- Easy to identify which test build is deployed
+
 #### Commit Messages
 
 Use conventional commit format with a detailed body:
