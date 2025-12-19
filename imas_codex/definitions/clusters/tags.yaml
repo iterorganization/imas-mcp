@@ -1,0 +1,150 @@
+id: https://imas.iter.org/codex/cluster-tags
+name: cluster_tags
+title: IMAS Cluster Tag Vocabulary
+description: >-
+  Tags for cluster classification and filtering.
+  Enable faceted search and filtering of clusters by various attributes.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas: https://imas.iter.org/codex/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+enums:
+  ClusterTag:
+    description: >-
+      Tags for cluster classification. Clusters may have multiple tags.
+      Tags enable filtering and faceted search.
+    permissible_values:
+      # Spatial region
+      core:
+        description: Core plasma region (inside pedestal)
+        meaning: imas:core
+
+      edge:
+        description: Edge plasma region (pedestal and near-SOL)
+        meaning: imas:edge
+
+      separatrix:
+        description: Separatrix and LCFS region
+        meaning: imas:separatrix
+
+      sol:
+        description: Scrape-off layer
+        meaning: imas:sol
+
+      divertor:
+        description: Divertor region
+        meaning: imas:divertor
+
+      wall:
+        description: First wall and plasma-facing components
+        meaning: imas:wall
+
+      # Species
+      electron:
+        description: Electron-related quantities
+        meaning: imas:electron
+
+      ion:
+        description: Ion-related quantities (thermal ions)
+        meaning: imas:ion
+
+      neutral:
+        description: Neutral particle quantities
+        meaning: imas:neutral
+
+      impurity:
+        description: Impurity species quantities
+        meaning: imas:impurity
+
+      fast_particle:
+        description: Fast/energetic particle quantities
+        meaning: imas:fast_particle
+
+      # Data provenance
+      measured:
+        description: Directly measured experimental data
+        meaning: imas:measured
+
+      fitted:
+        description: Result of fitting procedure
+        meaning: imas:fitted
+
+      reconstructed:
+        description: Reconstructed from multiple sources
+        meaning: imas:reconstructed
+
+      simulated:
+        description: Output from simulation codes
+        meaning: imas:simulated
+
+      derived:
+        description: Computed from other quantities
+        meaning: imas:derived
+
+      # Quality attributes
+      has_uncertainty:
+        description: Includes error bars or uncertainty estimates
+        meaning: imas:has_uncertainty
+
+      validated:
+        description: Cross-validated against independent measurements
+        meaning: imas:validated
+
+      # Temporal characteristics
+      time_dependent:
+        description: Time-evolving or transient quantity
+        meaning: imas:time_dependent
+
+      steady_state:
+        description: Equilibrium or time-averaged quantity
+        meaning: imas:steady_state
+
+      # Diagnostic categories (high-level)
+      spectroscopy:
+        description: Spectroscopic measurements
+        meaning: imas:spectroscopy
+
+      magnetics:
+        description: Magnetic field measurements
+        meaning: imas:magnetics
+
+      imaging:
+        description: Imaging and camera-based measurements
+        meaning: imas:imaging
+
+      interferometry:
+        description: Interferometric measurements
+        meaning: imas:interferometry
+
+      reflectometry:
+        description: Reflectometry measurements
+        meaning: imas:reflectometry
+
+      # Usage context
+      control_relevant:
+        description: Used in real-time plasma control
+        meaning: imas:control_relevant
+
+      scenario_input:
+        description: Commonly used as simulation input
+        meaning: imas:scenario_input
+
+      comparison_target:
+        description: Standard quantity for code-experiment comparison
+        meaning: imas:comparison_target
+
+      # Grid and coordinate related
+      ggd:
+        description: General Grid Description (unstructured mesh)
+        meaning: imas:ggd
+
+      structured_grid:
+        description: Structured/regular grid data
+        meaning: imas:structured_grid
+

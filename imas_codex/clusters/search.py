@@ -6,6 +6,9 @@ a query embedding to cluster centroids or label embeddings.
 
 Embeddings are loaded from a compressed .npz file (cluster_embeddings.npz)
 for efficiency, rather than being stored in the JSON clusters file.
+
+Supports hierarchical clusters (global/domain/IDS levels) with composite
+ranking that blends semantic similarity with mapping relevance.
 """
 
 import hashlib
@@ -16,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from .models import ClusterScope
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 class ClusterSearchResult:
     """Result from semantic cluster search."""
 
-    cluster_id: int
+    cluster_id: str  # UUID
     similarity_score: float
     is_cross_ids: bool
     ids_names: list[str]
@@ -31,6 +36,56 @@ class ClusterSearchResult:
     cluster_similarity: float  # Internal cluster similarity
     label: str = ""
     description: str = ""
+
+    # Hierarchical scope (NEW)
+    scope: ClusterScope = "global"
+    scope_detail: str | None = None
+
+    # Enrichment fields (NEW)
+    physics_concepts: list[str] = field(default_factory=list)
+    data_type: str | None = None
+    tags: list[str] = field(default_factory=list)
+    mapping_relevance: str = "medium"
+
+    # Composite ranking score (NEW)
+    relevance_score: float | None = None
+
+    def compute_relevance_score(self, query_similarity: float | None = None) -> float:
+        """Compute composite relevance score for ranking.
+
+        Blends semantic similarity with mapping relevance, cluster type,
+        and scope to produce a unified ranking score.
+
+        Args:
+            query_similarity: Override similarity score (uses self.similarity_score if None)
+
+        Returns:
+            Composite relevance score (0-1)
+        """
+        sim = (
+            query_similarity if query_similarity is not None else self.similarity_score
+        )
+
+        # Base: semantic similarity (50% weight)
+        score = sim * 0.5
+
+        # Mapping relevance boost (up to 25%)
+        relevance_weights = {"high": 0.25, "medium": 0.15, "low": 0.0}
+        score += relevance_weights.get(self.mapping_relevance, 0.1)
+
+        # Cross-IDS boost (10%) - broader applicability
+        if self.is_cross_ids:
+            score += 0.1
+
+        # Scope boost - higher abstraction levels
+        scope_weights: dict[str, float] = {"global": 0.1, "domain": 0.05, "ids": 0.0}
+        score += scope_weights.get(self.scope, 0.0)
+
+        # Internal coherence boost (5%)
+        score += self.cluster_similarity * 0.05
+
+        self.relevance_score = min(1.0, score)
+        return self.relevance_score
 
 
 @dataclass
@@ -46,8 +101,8 @@ class ClusterSearcher:
     expected_embeddings_hash: str | None = None
     centroids: np.ndarray | None = field(default=None, init=False)
     label_embeddings: np.ndarray | None = field(default=None, init=False)
-    cluster_ids: list[int] = field(default_factory=list, init=False)
-    label_cluster_ids: list[int] = field(default_factory=list, init=False)
+    cluster_ids: list[str] = field(default_factory=list, init=False)  # UUIDs
+    label_cluster_ids: list[str] = field(default_factory=list, init=False)  # UUIDs
     _indexes: dict[str, Any] = field(default_factory=dict, init=False)
     _embeddings_loaded: bool = field(default=False, init=False)
 
@@ -80,8 +135,9 @@ class ClusterSearcher:
                 )
 
         # Load embeddings from .npz
+        # allow_pickle=True is needed for string UUID cluster IDs
         try:
-            data = np.load(self.embeddings_file)
+            data = np.load(self.embeddings_file, allow_pickle=True)
 
             # Load centroids
             if "centroids" in data and data["centroids"].size > 0:
@@ -203,6 +259,8 @@ class ClusterSearcher:
         similarity_threshold: float = 0.3,
         cross_ids_only: bool = False,
         use_labels: bool = False,
+        scope: ClusterScope | None = None,
+        use_relevance_ranking: bool = True,
     ) -> list[ClusterSearchResult]:
         """Search for clusters most similar to the query embedding.
 
@@ -212,9 +270,11 @@ class ClusterSearcher:
             similarity_threshold: Minimum similarity score to include
             cross_ids_only: If True, only return cross-IDS clusters
             use_labels: If True, search label embeddings instead of centroids
+            scope: Filter by scope level ("global", "domain", "ids")
+            use_relevance_ranking: If True, rank by composite relevance score
 
         Returns:
-            List of ClusterSearchResult sorted by similarity
+            List of ClusterSearchResult sorted by relevance or similarity
         """
         # Lazy-load embeddings on first semantic search
         self._load_embeddings()
@@ -253,10 +313,18 @@ class ClusterSearcher:
             if cross_ids_only and not is_cross:
                 continue
 
+            # Filter by scope if specified
+            if scope is not None and cluster.get("scope") != scope:
+                continue
+
             results.append(self._cluster_to_result(cluster, float(sim)))
 
-        # Sort by similarity and limit
-        results.sort(key=lambda r: r.similarity_score, reverse=True)
+        # Sort by relevance score or similarity
+        if use_relevance_ranking:
+            results.sort(key=lambda r: r.relevance_score or 0, reverse=True)
+        else:
+            results.sort(key=lambda r: r.similarity_score, reverse=True)
+
         return results[:top_k]
 
     def search_by_text(
@@ -266,12 +334,13 @@ class ClusterSearcher:
         top_k: int = 10,
         similarity_threshold: float = 0.3,
         cross_ids_only: bool = False,
+        scope: ClusterScope | None = None,
     ) -> list[ClusterSearchResult]:
         """Search clusters using a text query.
 
         Automatically detects if query is a path (contains '/') or natural language.
         For paths, uses exact lookup. For natural language, searches both
-        centroids and label embeddings.
+        centroids and label embeddings with composite relevance ranking.
 
         Args:
             query: Text query to search for (path or natural language)
@@ -279,9 +348,10 @@ class ClusterSearcher:
             top_k: Maximum number of results
             similarity_threshold: Minimum similarity
             cross_ids_only: Only return cross-IDS clusters
+            scope: Filter by scope level ("global", "domain", "ids")
 
         Returns:
-            List of ClusterSearchResult
+            List of ClusterSearchResult sorted by relevance score
         """
         # Detect if query is a path
         if "/" in query and " " not in query:
@@ -289,6 +359,8 @@ class ClusterSearcher:
             results = self.search_by_path(query)
             if cross_ids_only:
                 results = [r for r in results if r.is_cross_ids]
+            if scope is not None:
+                results = [r for r in results if r.scope == scope]
             return results[:top_k]
 
         # Natural language query - search both centroids and labels
@@ -301,6 +373,8 @@ class ClusterSearcher:
             similarity_threshold=similarity_threshold,
             cross_ids_only=cross_ids_only,
             use_labels=False,
+            scope=scope,
+            use_relevance_ranking=True,
         )
 
         # Search label embeddings if available
@@ -312,15 +386,17 @@ class ClusterSearcher:
                 similarity_threshold=similarity_threshold,
                 cross_ids_only=cross_ids_only,
                 use_labels=True,
+                scope=scope,
+                use_relevance_ranking=True,
             )
 
         # Merge and deduplicate results
-        seen_ids = set()
+        seen_ids: set[str] = set()
         merged = []
 
-        # Interleave results, preferring higher similarity
+        # Interleave results, preferring higher relevance score
         all_results = centroid_results + label_results
-        all_results.sort(key=lambda r: r.similarity_score, reverse=True)
+        all_results.sort(key=lambda r: r.relevance_score or 0, reverse=True)
 
         for result in all_results:
             if result.cluster_id not in seen_ids:
@@ -331,8 +407,8 @@ class ClusterSearcher:
 
         return merged
 
-    def _get_cluster_by_id(self, cluster_id: int) -> dict[str, Any] | None:
-        """Get cluster by ID."""
+    def _get_cluster_by_id(self, cluster_id: str) -> dict[str, Any] | None:
+        """Get cluster by UUID."""
         for cluster in self.clusters:
             if cluster["id"] == cluster_id:
                 return cluster
@@ -346,7 +422,7 @@ class ClusterSearcher:
         ids_names = cluster.get("ids_names", cluster.get("ids", []))
         cluster_sim = cluster.get("similarity_score", cluster.get("similarity", 0.0))
 
-        return ClusterSearchResult(
+        result = ClusterSearchResult(
             cluster_id=cluster["id"],
             similarity_score=similarity_score,
             is_cross_ids=is_cross,
@@ -355,18 +431,31 @@ class ClusterSearcher:
             cluster_similarity=cluster_sim,
             label=cluster.get("label", ""),
             description=cluster.get("description", ""),
+            # Hierarchical scope
+            scope=cluster.get("scope", "global"),
+            scope_detail=cluster.get("scope_detail"),
+            # Enrichment fields
+            physics_concepts=cluster.get("physics_concepts", []),
+            data_type=cluster.get("data_type"),
+            tags=cluster.get("tags", []),
+            mapping_relevance=cluster.get("mapping_relevance", "medium"),
         )
+
+        # Compute composite relevance score
+        result.compute_relevance_score()
+
+        return result
 
     def get_similar_clusters(
         self,
-        cluster_id: int,
+        cluster_id: str,
         top_k: int = 5,
         similarity_threshold: float = 0.5,
     ) -> list[ClusterSearchResult]:
         """Find clusters similar to a given cluster.
 
         Args:
-            cluster_id: ID of the source cluster
+            cluster_id: UUID of the source cluster
             top_k: Maximum number of results
             similarity_threshold: Minimum similarity
 

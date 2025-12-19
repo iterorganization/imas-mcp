@@ -164,7 +164,7 @@ class TestBuildSummaries:
         """_build_cross_ids_summary summarizes cross-IDS clusters."""
         clusters = [
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=5,
                 is_cross_ids=True,
@@ -178,7 +178,7 @@ class TestBuildSummaries:
                 ],
             ),
             ClusterInfo(
-                id=2,
+                id="uuid-2",
                 similarity_score=0.75,
                 size=3,
                 is_cross_ids=True,
@@ -186,7 +186,7 @@ class TestBuildSummaries:
                 paths=["mhd/x", "mhd/y", "stability/z"],
             ),
             ClusterInfo(
-                id=3,
+                id="uuid-3",
                 similarity_score=0.90,
                 size=2,
                 is_cross_ids=False,  # Not cross-IDS
@@ -198,7 +198,7 @@ class TestBuildSummaries:
         summary = extractor._build_cross_ids_summary(clusters)
 
         assert summary.cluster_count == 2  # Only cross-IDS
-        assert summary.cluster_index == [1, 2]
+        assert summary.cluster_index == ["uuid-1", "uuid-2"]
         assert summary.avg_similarity == pytest.approx(0.8)  # (0.85 + 0.75) / 2
         assert summary.total_paths == 8  # 5 + 3
 
@@ -217,7 +217,7 @@ class TestBuildSummaries:
         """_build_intra_ids_summary summarizes intra-IDS clusters."""
         clusters = [
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.90,
                 size=3,
                 is_cross_ids=False,
@@ -225,7 +225,7 @@ class TestBuildSummaries:
                 paths=["equilibrium/a", "equilibrium/b", "equilibrium/c"],
             ),
             ClusterInfo(
-                id=2,
+                id="uuid-2",
                 similarity_score=0.85,
                 size=2,
                 is_cross_ids=False,
@@ -233,7 +233,7 @@ class TestBuildSummaries:
                 paths=["equilibrium/x", "equilibrium/y"],
             ),
             ClusterInfo(
-                id=3,
+                id="uuid-3",
                 similarity_score=0.80,
                 size=2,
                 is_cross_ids=False,
@@ -241,7 +241,7 @@ class TestBuildSummaries:
                 paths=["core_profiles/m", "core_profiles/n"],
             ),
             ClusterInfo(
-                id=4,
+                id="uuid-4",
                 similarity_score=0.95,
                 size=5,
                 is_cross_ids=True,  # Cross-IDS, should be excluded
@@ -253,9 +253,9 @@ class TestBuildSummaries:
         summary = extractor._build_intra_ids_summary(clusters)
 
         assert summary.cluster_count == 3  # Only intra-IDS
-        assert 1 in summary.cluster_index
-        assert 2 in summary.cluster_index
-        assert 3 in summary.cluster_index
+        assert "uuid-1" in summary.cluster_index
+        assert "uuid-2" in summary.cluster_index
+        assert "uuid-3" in summary.cluster_index
         assert 4 not in summary.cluster_index  # Cross-IDS excluded
         assert "equilibrium" in summary.by_ids
         assert "core_profiles" in summary.by_ids
@@ -274,7 +274,7 @@ class TestFallbackLabels:
         """_generate_fallback_labels creates labels from paths."""
         clusters = [
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=3,
                 is_cross_ids=True,
@@ -289,16 +289,16 @@ class TestFallbackLabels:
 
         labels = extractor._generate_fallback_labels(clusters)
 
-        assert 1 in labels
-        assert "label" in labels[1]
-        assert "description" in labels[1]
-        assert "cross-IDS" in labels[1]["description"]
+        assert "uuid-1" in labels
+        assert "label" in labels["uuid-1"]
+        assert "description" in labels["uuid-1"]
+        assert "cross-IDS" in labels["uuid-1"]["description"]
 
     def test_generate_fallback_labels_with_single_path(self, extractor):
         """_generate_fallback_labels handles minimal paths (size must be >= 1)."""
         clusters = [
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=1,
                 is_cross_ids=False,
@@ -309,22 +309,22 @@ class TestFallbackLabels:
 
         labels = extractor._generate_fallback_labels(clusters)
 
-        assert 1 in labels
-        assert "label" in labels[1]
+        assert "uuid-1" in labels
+        assert "label" in labels["uuid-1"]
         # Single path should generate label from that path
-        assert labels[1]["label"] != ""
+        assert labels["uuid-1"]["label"] != ""
 
     def test_generate_fallback_labels_from_dicts(self, extractor):
         """_generate_fallback_labels_from_dicts creates labels from dicts."""
         cluster_dicts = [
             {
-                "id": 1,
+                "id": "uuid-1",
                 "is_cross_ids": True,
                 "ids_names": ["equilibrium", "transport"],
                 "paths": ["equilibrium/flux", "transport/conductivity"],
             },
             {
-                "id": 2,
+                "id": "uuid-2",
                 "is_cross_ids": False,
                 "ids_names": ["mhd"],
                 "paths": [],
@@ -333,12 +333,12 @@ class TestFallbackLabels:
 
         labels = extractor._generate_fallback_labels_from_dicts(cluster_dicts)
 
-        assert 1 in labels
-        assert 2 in labels
-        assert "label" in labels[1]
-        assert "description" in labels[1]
-        assert "cross-IDS" in labels[1]["description"]
-        assert labels[2]["label"] == "Cluster 2"  # Empty paths
+        assert "uuid-1" in labels
+        assert "uuid-2" in labels
+        assert "label" in labels["uuid-1"]
+        assert "description" in labels["uuid-1"]
+        assert "cross-IDS" in labels["uuid-1"]["description"]
+        assert labels["uuid-2"]["label"] == "Cluster uuid-2"  # Empty paths
 
 
 class TestLabelGeneration:
@@ -355,13 +355,18 @@ class TestLabelGeneration:
         mock_getenv.return_value = None
 
         clusters = [
-            {"id": 1, "is_cross_ids": False, "ids_names": ["eq"], "paths": ["eq/path"]}
+            {
+                "id": "uuid-1",
+                "is_cross_ids": False,
+                "ids_names": ["eq"],
+                "paths": ["eq/path"],
+            }
         ]
 
         labels = extractor._generate_cluster_labels_for_batch(clusters)
 
-        assert 1 in labels
-        assert "label" in labels[1]
+        assert "uuid-1" in labels
+        assert "label" in labels["uuid-1"]
 
     @patch("os.getenv")
     def test_generate_cluster_labels_placeholder_key(self, mock_getenv, extractor):
@@ -369,12 +374,17 @@ class TestLabelGeneration:
         mock_getenv.return_value = "your_api_key_here"
 
         clusters = [
-            {"id": 1, "is_cross_ids": False, "ids_names": ["eq"], "paths": ["eq/path"]}
+            {
+                "id": "uuid-1",
+                "is_cross_ids": False,
+                "ids_names": ["eq"],
+                "paths": ["eq/path"],
+            }
         ]
 
         labels = extractor._generate_cluster_labels_for_batch(clusters)
 
-        assert 1 in labels
+        assert "uuid-1" in labels
 
     def test_get_labeling_model(self, extractor):
         """_get_labeling_model returns model name."""
@@ -395,9 +405,9 @@ class TestSaveEmbeddingsNpz:
         embeddings_file = tmp_path / "embeddings.npz"
 
         centroid_embeddings = [np.array([0.1, 0.2, 0.3]), np.array([0.4, 0.5, 0.6])]
-        centroid_ids = [1, 2]
+        centroid_ids = ["uuid-1", "uuid-2"]
         label_embeddings = [np.array([0.7, 0.8, 0.9])]
-        label_ids = [1]
+        label_ids = ["uuid-1"]
 
         file_hash = extractor._save_embeddings_npz(
             embeddings_file,
@@ -467,7 +477,7 @@ class TestSaveRelationships:
         """Create sample relationships for testing."""
         clusters = [
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=3,
                 is_cross_ids=True,
@@ -490,13 +500,13 @@ class TestSaveRelationships:
             ),
             clusters=clusters,
             path_index={
-                "equilibrium/a": PathMembership(cross_ids_cluster=1),
-                "equilibrium/b": PathMembership(cross_ids_cluster=1),
-                "core_profiles/c": PathMembership(cross_ids_cluster=1),
+                "equilibrium/a": PathMembership(cross_ids_cluster="uuid-1"),
+                "equilibrium/b": PathMembership(cross_ids_cluster="uuid-1"),
+                "core_profiles/c": PathMembership(cross_ids_cluster="uuid-1"),
             },
             cross_ids_summary=CrossIDSSummary(
                 cluster_count=1,
-                cluster_index=[1],
+                cluster_index=["uuid-1"],
                 avg_similarity=0.85,
                 total_paths=3,
             ),

@@ -11,11 +11,11 @@ class TestClusterLabel:
     def test_cluster_label_creation(self):
         """Test creating a ClusterLabel."""
         label = ClusterLabel(
-            cluster_id=1,
+            cluster_id="uuid-1",
             label="Temperature Profiles",
             description="A cluster of temperature-related paths.",
         )
-        assert label.cluster_id == 1
+        assert label.cluster_id == "uuid-1"
         assert label.label == "Temperature Profiles"
         assert label.description == "A cluster of temperature-related paths."
 

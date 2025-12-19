@@ -1,0 +1,55 @@
+id: https://imas.iter.org/codex/mapping-relevance
+name: mapping_relevance
+title: IMAS Mapping Relevance Classification
+description: >-
+  Classification of how useful a cluster is as a target for
+  experimental data mapping activities.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas: https://imas.iter.org/codex/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+enums:
+  MappingRelevance:
+    description: >-
+      How useful is this cluster as a target for mapping experimental data?
+      Used to prioritize clusters in search results for mapping workflows.
+    permissible_values:
+      high:
+        description: >-
+          Core physics quantities commonly measured in experiments.
+          These are primary targets for data mapping activities.
+          Examples: Te, Ti, ne, Ip, Bt, q-profile, boundary shape,
+          magnetic flux, plasma current, heating power.
+        meaning: imas:high_relevance
+        annotations:
+          priority: 1
+          boost_factor: 0.25
+
+      medium:
+        description: >-
+          Secondary or derived quantities, diagnostic-specific data,
+          transport coefficients, fitting parameters.
+          Examples: diffusion coefficients, reconstructed profiles,
+          fit quality metrics, derived transport fluxes.
+        meaning: imas:medium_relevance
+        annotations:
+          priority: 2
+          boost_factor: 0.15
+
+      low:
+        description: >-
+          Metadata, indices, coordinate definitions, rarely-populated fields,
+          internal code parameters, provenance information.
+          Examples: code identifiers, grid indices, method descriptions,
+          source references.
+        meaning: imas:low_relevance
+        annotations:
+          priority: 3
+          boost_factor: 0.0
+
