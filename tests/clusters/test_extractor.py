@@ -14,7 +14,6 @@ from imas_codex.clusters.models import (
     ClusteringStatistics,
     CrossIDSSummary,
     IntraIDSSummary,
-    PathMembership,
     RelationshipMetadata,
     RelationshipSet,
 )
@@ -500,9 +499,9 @@ class TestSaveRelationships:
             ),
             clusters=clusters,
             path_index={
-                "equilibrium/a": PathMembership(cross_ids_cluster="uuid-1"),
-                "equilibrium/b": PathMembership(cross_ids_cluster="uuid-1"),
-                "core_profiles/c": PathMembership(cross_ids_cluster="uuid-1"),
+                "equilibrium/a": ["uuid-1"],
+                "equilibrium/b": ["uuid-1"],
+                "core_profiles/c": ["uuid-1"],
             },
             cross_ids_summary=CrossIDSSummary(
                 cluster_count=1,

@@ -103,6 +103,10 @@
     "GGD Electric Fields",
     "Radial, parallel, and geometric (R, Z) components of the electric field on the general grid."
   ],
+  "022642e11e096195": [
+    "Pressure Rotational Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "0229ccf22d97f575": [
     "Sawtooth Profile Grid Coordinates",
     "Radial grid coordinates (normalized poloidal flux and psi values) for sawtooth 1D profiles."
@@ -547,6 +551,10 @@
     "Turbulence Grid And Time Coordinates",
     "Definitions of the spatial grid dimensions and time vectors associated with 2D turbulence profiles."
   ],
+  "084a8b133a75302a": [
+    "Time Measurement Slice Method Name",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "084d93f975b40eeb": [
     "Edge/ITB Te Data Sources",
     "Metadata indicating the data sources for electron temperature at the separatrix and internal transport barrier."
@@ -907,6 +915,10 @@
     "Voltage And Current Phase Containers",
     "Structures holding the phase components of the voltage and current signals on antenna modules."
   ],
+  "0d3ad2c337c8e738": [
+    "Psi Psi Axis",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
+  ],
   "0d4d19c798f1afd0": [
     "Toroidal Torque Sources",
     "Global quantities representing the toroidal torque input from plasma sources."
@@ -1010,6 +1022,10 @@
   "0eeba5e507ed6657": [
     "Transport Equation Quantity Indices",
     "Indices identifying the ion, neutral, or state associated with the primary quantities in the 1D transport solver equations."
+  ],
+  "0ef874fd93c30c9e": [
+    "Pf Current Measured",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "0f01d07d1077fd49": [
     "Edge Electric Field Components",
@@ -1322,6 +1338,10 @@
   "11cfb2e77d3ef328": [
     "Plasma Profile And Current Constraints",
     "Groups measured, weighted, and reconstructed values for plasma current, density, and pressure constraints used in equilibrium reconstruction."
+  ],
+  "11d275578aeb8f85": [
+    "Rho Tor Norm Rho Volume Norm",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "11d3741439943d43": [
     "Neutral Vertical Momentum Coefficients",
@@ -1803,6 +1823,10 @@
     "Bolometer Component Dimensions",
     "Physical dimensions (widths) of bolometer detectors and apertures along their local axes."
   ],
+  "18126e4eb45c1e82": [
+    "Density Density Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "181c69d52ac3be58": [
     "Component Center R-Z Coordinates",
     "Radial and vertical coordinates defining the geometric center of spectrometer components like detectors and apertures."
@@ -1839,6 +1863,10 @@
     "Poloidal Momentum Flux Limiters",
     "Poloidal components of flux limiters applied to momentum transport for ions, neutrals, and individual charge states."
   ],
+  "1888c886ade75e10": [
+    "Zeff Fit Measured",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "18955cc43f42d2fc": [
     "Pedestal Geometry Structures",
     "Groups the data structures defining the width and position of the pedestal for density, temperature, and pressure profiles."
@@ -1870,6 +1898,10 @@
   "18e3b1d141168d1d": [
     "Full Wave B-Field Coefficients",
     "Basis function coefficients representing the magnetic field components in full-wave simulations."
+  ],
+  "18f82b5e75089408": [
+    "Density Density Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "1907a6ecc8983659": [
     "Ion GGD Momentum Components",
@@ -1910,6 +1942,10 @@
   "194fd3f06a146e8c": [
     "MSE Detector Normal Vector",
     "Cartesian components of the unit vector defining the normal (x3) direction of the MSE detector."
+  ],
+  "196d120ef6cc2188": [
+    "Current Centre Z",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "1973515851bdfa4d": [
     "X-ray Aperture Orientation X1",
@@ -1991,6 +2027,10 @@
     "GGD Molecular Vibrational States",
     "Vibrational levels and modes for molecular ions and neutrals."
   ],
+  "1a4731f80d28ebba": [
+    "Profiles 1D Time",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "1a687a52c71af8e2": [
     "IR Camera Calibration Window",
     "Information regarding the transmission window used in the calibration of an infrared camera."
@@ -2014,6 +2054,10 @@
   "1a9c6fb58b553e04": [
     "Ion Density Profile Fits",
     "Data related to the fitting process of 1D ion density profiles, including measured values, weights, and reconstructed curves."
+  ],
+  "1aaef5f452c5e1fd": [
+    "B Field Tor Vacuum R Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "1ab78592630ebc49": [
     "Edge Grid Coordinate Definitions",
@@ -2096,8 +2140,8 @@
     "Physical width dimensions and surface area of the emission and detection antennas for profile reflectometry."
   ],
   "1b4fcad7365986de": [
-    "Grad-Shafranov Convergence Metrics",
-    "Metrics and expressions quantifying the deviation or error in the solution of the Grad-Shafranov equilibrium equation."
+    "Grad Shafranov Deviation Expression Name",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "1b53afd29676dff3": [
     "Ion Toroidal Velocity",
@@ -2110,6 +2154,10 @@
   "1b5f6b9a2234d22d": [
     "GGD Toroidal Vector Fields",
     "Toroidal (phi) components of current density, electric field, and magnetic field on a general grid."
+  ],
+  "1b87a4e75b3d6030": [
+    "Time Measurement Time Measurement",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "1b880ce8c4f1ca1e": [
     "Divertor Ion Density Structures",
@@ -2575,6 +2623,10 @@
     "Visible Spectrometer Intensity Spectrum",
     "The intensity spectrum recorded by the visible spectrometer grating channels."
   ],
+  "21a094f9cc48e8be": [
+    "Z Ion Z Ion 1D",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "21a1eb2fcdc43295": [
     "MHD Grid Object Geometry",
     "Geometric properties, measures (lengths, areas, volumes), and 2D representations of MHD grid objects."
@@ -2632,8 +2684,8 @@
     "Specifies the type of geometry used to model the emission and detection antennas of the reflectometer."
   ],
   "226a81b53205335e": [
-    "1D Ion Pressure Components",
-    "1D radial profiles of various ion pressure components (total, thermal, fast anisotropic) for aggregates and specific states."
+    "Pressure Pressure Thermal",
+    "A intra-IDS global-level cluster of related paths from core_profiles."
   ],
   "227ff2d1d5e08469": [
     "Separatrix Average Helium Properties",
@@ -2722,6 +2774,10 @@
   "239c745910abe2ef": [
     "Divertor Component Textual Descriptions",
     "Provides descriptive text for divertor units, targets, and tiles to explain their function or configuration."
+  ],
+  "23aa3e1284a4e88e": [
+    "Ip Current Non Inductive",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "23ba7c10b2a177e9": [
     "Viscosity Tensor Coefficients",
@@ -2819,6 +2875,10 @@
     "Edge Anomalous Current Density",
     "Anomalous current density profiles and associated grid subset indices in the edge region."
   ],
+  "24b5f0c16f1b7c9f": [
+    "Object Space",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "24c3b9af35aefaa4": [
     "Fibre Bundle Outline Coordinates",
     "Coordinates defining the 2D cross-sectional outline of the fibre bundle."
@@ -2842,6 +2902,10 @@
   "2514253df2d62e80": [
     "Edge Electron Fit Validity",
     "Validity flags and local fit indicators for electron temperature and density profiles in the edge region."
+  ],
+  "2529e0826f84ed28": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "2532d89138ae9535": [
     "Halo Current Wall Contact",
@@ -2959,6 +3023,10 @@
     "Edge Neutral State General Momentum Grid",
     "Grid subset indices for general momentum transport coefficients and flux of neutral states in the edge."
   ],
+  "26e4aaabeb3dd19d": [
+    "B0 Vacuum Toroidal Field",
+    "A cross-IDS global-level cluster of related paths from core_profiles, equilibrium."
+  ],
   "26ed2deeea77a7e7": [
     "Wall Recombination Flux Grid Subsets",
     "Indices identifying specific subsets of the grid for neutral recombination energy fluxes at the wall interface."
@@ -2995,6 +3063,10 @@
     "Plasma Species Nuclear Charge",
     "The nuclear charge number (Z) for ion and neutral elements defined in the plasma profiles."
   ],
+  "279ff2a076605c81": [
+    "Z Average Z Square Average",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "27a3d4f6574cd071": [
     "Helium Gas Injection Rates",
     "Flow rate values for the injection of Helium-3 and Helium-4 isotopes."
@@ -3002,6 +3074,10 @@
   "27a69f1aaa63a74e": [
     "Zeff Control LOS Vertical Coordinates",
     "Vertical (Z) coordinates defining the line-of-sight chords for Zeff control."
+  ],
+  "27aefc206e594623": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "27c3ffad410cf852": [
     "SXR LOS Toroidal Angles",
@@ -3519,6 +3595,10 @@
     "EM Coupling Metric Tensors",
     "Covariant and contravariant tensors defining the metric and basis properties of the electromagnetic coupling grid subsets."
   ],
+  "2f4e8b9a7686ee7a": [
+    "Pressure Ion Total Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "2f55d4a16108242e": [
     "Nonlinear Controller Signal Data",
     "Time-series data values for the input signals fed into and output signals generated by the nonlinear controller."
@@ -3807,6 +3887,10 @@
     "Ion and Neutral Density Coefficients",
     "Coefficients representing the spatial distribution of densities for ions and neutrals, including fast and thermal populations."
   ],
+  "3371693652e0ac0c": [
+    "Density Density Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "3376775b77fcb774": [
     "Optical Element X1 Vector",
     "Defines the first unit vector of the local coordinate system for the optical element."
@@ -3874,6 +3958,10 @@
   "341b61356777bbf7": [
     "Wall Grid Subset Dimensions",
     "Specifies the dimensionality of grid subsets and their constituent elements within the GGD."
+  ],
+  "3428961be43d52b0": [
+    "Pf Current Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "34430f31ee7d34b6": [
     "X-ray Diagnostic Timing and Status",
@@ -4231,6 +4319,10 @@
     "Full Wave K-Perpendicular Grid Indices",
     "Indices linking the perpendicular wavenumber data to the underlying spatial grid in full wave simulations."
   ],
+  "395f940d20617d15": [
+    "X Point Position Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "39621ef3f2dd529e": [
     "Edge Current Density Profiles",
     "1D profiles of various current density components (total, toroidal, ohmic, non-inductive, bootstrap) in the plasma edge region."
@@ -4380,8 +4472,8 @@
     "Fitted 1D radial profiles of the average ion temperature in the core plasma."
   ],
   "3b7a66f95f833101": [
-    "General Grid Magnetic Field Coefficients",
-    "Stores the coefficients required to reconstruct the magnetic field vector components within the General Grid Description formalism."
+    "Coefficients Coefficients",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "3b7c68c07ec0f136": [
     "2D Collision Min Charge State",
@@ -4434,6 +4526,10 @@
   "3c4fbbcd6ab44a36": [
     "R-Component Momentum Flux Coefficients",
     "R-component coefficients for momentum flux vectors represented on the general grid."
+  ],
+  "3c52435194b3432d": [
+    "State Name",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "3c5a4bde139bded7": [
     "Edge Ion Toroidal Coefficients",
@@ -4680,8 +4776,8 @@
     "Time-dependent toroidal current density flowing within the cryostat structural elements."
   ],
   "3fa4e2c6bda817ec": [
-    "GGD Metric Tensors",
-    "Covariant and contravariant components of the base vectors and metric tensor defined on the grid subset."
+    "Tensor Covariant Tensor Contravariant",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "3fb059d28181386d": [
     "X-Ray Binned LOS R-Z",
@@ -4718,6 +4814,10 @@
   "400d8967f2bb1aa5": [
     "Hydrogen Fraction Data Sources",
     "Metadata indicating the origin or method used to determine the hydrogen isotope fractions."
+  ],
+  "4020ffe814fbf634": [
+    "B Field Pol Probe Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "4034670b162c66b0": [
     "Source Midplane Metadata",
@@ -5211,6 +5311,10 @@
     "Visible Spectrometer Isotope Ratios",
     "Contains derived isotope density ratios and neutral fractions (cold/hot) with associated temperatures from visible spectrometer channels."
   ],
+  "46b7ca0a926f7fab": [
+    "Grids Ggd Grid",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "46bfdfdce02e2f8d": [
     "EC Mirror Unit Vector X2",
     "Components of the second unit vector defining the local coordinate system of the EC mirror surface."
@@ -5338,6 +5442,10 @@
   "4822cd34982681b9": [
     "HXR Outline Coordinates",
     "Local coordinates defining the vertices of the polygonal outlines for detectors and apertures."
+  ],
+  "485264ab32c6e920": [
+    "J Phi Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "48683f90cd411d75": [
     "Passive Element Thick Line Coordinates",
@@ -5543,6 +5651,10 @@
     "Ethane Gas Injection Stats",
     "Rates, accumulated values, and prefill quantities for ethane gas injection sources."
   ],
+  "4b214753137f742f": [
+    "Strike Point Position Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "4b55e5bbad1951a7": [
     "Edge Momentum Flux Directional Coefficients",
     "Coefficients for the radial, poloidal, and parallel components of momentum flux in the edge."
@@ -5596,8 +5708,8 @@
     "Density values for thermal and fast electron populations in the plasma profiles. This is the fundamental scalar field for the electron fluid."
   ],
   "4c3fd5bee7cd4818": [
-    "Equilibrium GGD Expansion Coefficients",
-    "Contains the coefficients for the basis function expansion of equilibrium quantities (R, Z, psi, phi, J) on the general grid."
+    "Coefficients Coefficients",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "4c78fa9125cfeae5": [
     "Magnetic Field Angle Validity",
@@ -5939,6 +6051,10 @@
     "Visible Bremsstrahlung Zeff Data",
     "Time-dependent data for the line-averaged effective charge (Zeff) derived from visible bremsstrahlung measurements."
   ],
+  "50fc8d5cc61c39b8": [
+    "Gap Name",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "510970789cf68a5f": [
     "Plasma Neutral Parallel Momentum Grid",
     "Grid subset indices for parallel momentum transport of aggregate neutrals in the plasma transport model."
@@ -6131,6 +6247,10 @@
     "Trapped Particle Distribution Profiles",
     "Structures containing distribution function data specifically for magnetically trapped particles."
   ],
+  "53d92277c05376a8": [
+    "Density Density Fit",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "53dbbd14ce00b057": [
     "Local Magnetic Shear Values",
     "Magnetic shear calculated at key plasma locations such as the magnetic axis, separatrix, pedestal top, and internal transport barriers."
@@ -6178,6 +6298,10 @@
   "544b71c37d995db5": [
     "Ion Recycling Numerical Coefficients",
     "Contains the numerical coefficient arrays characterizing ion recycling processes and states."
+  ],
+  "54562bac11f32aac": [
+    "Dr Dz Zero Point R",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "5483d4fc2386fd41": [
     "Neutral State Directional Energy Fluxes",
@@ -6287,6 +6411,10 @@
     "UV Spectrometer Moving Mode",
     "Configuration settings describing the moving mode of the line of sight for a UV spectrometer."
   ],
+  "565996195bffa042": [
+    "Q Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "5664964258916ed8": [
     "Species Electron Configuration 2",
     "Electronic configuration descriptions for ion and neutral species states."
@@ -6376,8 +6504,8 @@
     "Metadata specifying the type of reference signal used for Electron Cyclotron beam steering control."
   ],
   "57890ef94911e3a6": [
-    "Constraint Radial Positions",
-    "Normalized toroidal flux coordinates defining the radial positions where profile constraints (density, pressure, current density) are applied."
+    "Rho Tor Norm Rho Tor Norm",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "57a2314eed145c49": [
     "Alfven Frequency Spectrum",
@@ -6466,6 +6594,10 @@
   "590700b862a9d936": [
     "Global Power and Current Sources",
     "Sources and values for key global quantities including plasma current, ohmic power, and total power loss."
+  ],
+  "593c807e8e7fccae": [
+    "B Field R Grid Index",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "593ed308831f265b": [
     "Boundary Condition Type Definition",
@@ -6919,6 +7051,10 @@
     "Transport Grid Surface Areas",
     "Surface area values of magnetic flux surfaces defined on various 1D transport grids."
   ],
+  "5f7c7072b6a1de5b": [
+    "Quantity 2D Path",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "5fa5a9101d901e44": [
     "GGD Pfirsch-Schlueter Current",
     "Pfirsch-Schlueter current density and its vector components represented on a general grid."
@@ -7006,6 +7142,10 @@
   "607e4367ec58809c": [
     "2D Ion Velocity Components",
     "Components of ion velocity (radial, diamagnetic, parallel, poloidal) represented in 2D plasma profiles."
+  ],
+  "6081256dbdabe251": [
+    "Outline R",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "60830902c0fabf2d": [
     "ECE Radiation Temperature 2",
@@ -7411,6 +7551,10 @@
     "NBI Power Structures",
     "Data structures containing the total power coupled to the plasma by Neutral Beam Injection."
   ],
+  "665ea91eb5941de7": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS global-level cluster of related paths from core_profiles."
+  ],
   "666a1edd84748e65": [
     "X-Ray Filter Material",
     "Compositional information regarding the material used for the X-ray camera filter window."
@@ -7486,6 +7630,10 @@
   "67bc4f3647dd6d45": [
     "Plasma A-Field Imaginary",
     "Imaginary components of the perturbed vector potential inside the plasma."
+  ],
+  "67bd40bc2fef7ab9": [
+    "Velocity Radial",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "67d4c09eb8f0d6f2": [
     "Radial Momentum Diffusion Coefficients",
@@ -7611,9 +7759,13 @@
     "Embedded Probe Measurement Validity",
     "Validity flags and time vectors for plasma parameters measured by embedded Langmuir probes."
   ],
+  "69b5137fb79dae53": [
+    "Time Measurement Slice Method Name",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "69cdc7bfb0e40f76": [
-    "Flux Surface Magnetic Fields",
-    "Average, minimum, and maximum values of the magnetic field modulus on flux surfaces."
+    "B Field Average B Field Min",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "69d510cafc765ee1": [
     "2D Species Nuclear Charge",
@@ -7662,6 +7814,10 @@
   "6acc654968804c61": [
     "Ion State Particle Parallel Transport",
     "Diffusion, convection, and flux coefficients for specific ion charge state particles in the parallel direction."
+  ],
+  "6b00b69304399ed9": [
+    "Object Space",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "6b0326bb00576d6c": [
     "Ion Diamagnetic Momentum Profiles",
@@ -7736,8 +7892,8 @@
     "Physical widths of the NBI source along its defined local axes."
   ],
   "6c650a2a588659fa": [
-    "Equilibrium Magnetic Topology Tree",
-    "Hierarchical tree structure describing critical points (X-points, O-points) and level sets in the magnetic equilibrium topology."
+    "Contour Tree Node",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "6c6c3d1e5c140c9a": [
     "1D Vibrational State Profiles",
@@ -7854,6 +8010,10 @@
   "6da3581257505fbc": [
     "Optical Element Dimensions 2",
     "Widths of the IR camera optical element along its principal axes."
+  ],
+  "6da410da92ef652c": [
+    "Density Density Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "6da9c010b44481a2": [
     "Plasma B-Field Real",
@@ -8203,6 +8363,10 @@
     "Diamagnetic Viscosity Current Coefficients",
     "Diamagnetic coefficients for viscosity-driven current density components."
   ],
+  "712eb444ba9ee1b6": [
+    "Profiles 1D Pressure",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
+  ],
   "713fcf1c6a88ab17": [
     "Thomson Separatrix Distance",
     "Measures the distance of the Thomson scattering volumes from the magnetic separatrix mapped to the outer midplane."
@@ -8519,6 +8683,10 @@
     "PF Coil Oblique Geometry Angles",
     "Defines the alpha and beta angles characterizing the oblique geometry of poloidal field coils or elements."
   ],
+  "7540024656183226": [
+    "Objects Per Dimension Object",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "756843030b2b6167": [
     "Temporary Scalar Constants",
     "Generic temporary storage for 0D constant values (floats, integers, strings) and 1D integer arrays used for intermediate processing."
@@ -8692,8 +8860,8 @@
     "Time coordinate vectors for the frequency and amplitude components (if applicable) or dynamic measurements of the temperature sensors."
   ],
   "780f131ba7aa17ce": [
-    "Boundary Triangularity Parameters",
-    "Shaping parameters describing the triangularity (delta) of the plasma boundary, including upper and lower values."
+    "Triangularity Triangularity Upper",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "78104a53acbc9f6e": [
     "Edge Ion Flux Coefficients",
@@ -8947,6 +9115,10 @@
     "Electron Particle Transport Grids",
     "Grid indices for general electron particle transport coefficients (diffusion, convection) and fluxes."
   ],
+  "7b77378e21a28cf7": [
+    "Diamagnetic Flux Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "7b7a515fdd2542a7": [
     "Edge Ion Directional Energy Flux Values",
     "Numerical values for total and state-resolved ion energy fluxes in radial, poloidal, and parallel directions."
@@ -9058,6 +9230,10 @@
   "7cefa1f1087a53d1": [
     "Passive Element Annulus Geometry",
     "Specifies the position and inner/outer radii defining an annular cross-section for a passive conductor element."
+  ],
+  "7cefb86d846628fd": [
+    "Beta Tor Norm Beta Pol",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "7cf52d9c5d2533e2": [
     "NBI Aperture Normal Vector",
@@ -9279,6 +9455,10 @@
     "Limiter Electron Parameters",
     "Values for electron temperature and density measured at the limiter surface."
   ],
+  "8061a02ba1f897d2": [
+    "J Parallel Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "8063f86b27e07f50": [
     "ECE Radiation Temperature",
     "Measured central radiation temperatures derived from ECE, including specific X-mode and O-mode polarizations."
@@ -9414,6 +9594,10 @@
   "82cf38345b2589a8": [
     "MHD Zeff Grid Indices",
     "Indices linking effective charge (Zeff) data to specific grids and subsets within the MHD module."
+  ],
+  "82d36e09d4367475": [
+    "Pf Passive Current Measured",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "82d5594c61061b88": [
     "MHD Linear Plasma Perturbed Field",
@@ -9560,8 +9744,8 @@
     "Structural nodes specifically for neutron rates resulting from beam-thermal and beam-beam fusion reactions."
   ],
   "84facc93672132d8": [
-    "Core Ion Species Time Widths",
-    "Time measurement integration widths for specific ion species temperature and density profiles in the core."
+    "Time Measurement Width Time Measurement Width",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "84fcd83320f39cd2": [
     "TF Field Map Geometry",
@@ -9594,6 +9778,10 @@
   "8536df0b21fd65e9": [
     "UV Spectrometer Grating Orientation",
     "Defines the y-component of the local coordinate system for the UV spectrometer grating."
+  ],
+  "853c8e6fa762a5f7": [
+    "Index Index",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "854f42d83274f7b1": [
     "AMNS Data Release Information",
@@ -9991,6 +10179,10 @@
     "Integrated Ion Source Power Profiles",
     "Cumulative integrated heating power deposited to ions within a given flux surface for core and general plasma sources."
   ],
+  "8a6e4156141be6b6": [
+    "Beta Pol Beta Tor",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "8a76709ccd1ce590": [
     "2D Distribution Spatial Grid",
     "Radial and vertical coordinates defining the spatial grid for 2D distribution function profiles."
@@ -10163,6 +10355,10 @@
     "Density Control Ion Properties",
     "Defines the atomic properties of the ion species being controlled or fueled within the density control schedule."
   ],
+  "8cd01b6f00f4f40a": [
+    "Radial Parallel",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "8ce53780219aa5a9": [
     "Ion Electron Configuration",
     "String describing the electron configuration of the specific ion state."
@@ -10238,6 +10434,10 @@
   "8da9a8e865855668": [
     "Fibre Image Outline Coordinates",
     "Coordinates defining the outline of the image projected onto the fibre bundle."
+  ],
+  "8db55f00aa8f8768": [
+    "Temperature Temperature Fit",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "8dbabaf8f6caf46d": [
     "Flux Loop Constraint",
@@ -10578,6 +10778,10 @@
   "92677ab50d3945eb": [
     "LH Frequency and Current Values",
     "Frequency of the Lower Hybrid waves and the current driven by the LH system."
+  ],
+  "926b0c9095478c79": [
+    "Geometry Type Name",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "926e4aa0ab32b01e": [
     "Ion Toroidal Rotation Velocity",
@@ -10955,6 +11159,10 @@
     "Grid Dimension Definitions",
     "Definitions of geometric objects and measures per dimension in the general grid description."
   ],
+  "96d19563e290a543": [
+    "Index Index",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
+  ],
   "96df04b12a1275d6": [
     "2D Distribution Poloidal Angles",
     "Straight field line and geometric poloidal angle coordinates for the 2D distribution function grid."
@@ -11007,6 +11215,10 @@
     "Ion Profile Coefficients",
     "Basis function coefficients representing ion and neutral quantities such as density, temperature, pressure, and velocity."
   ],
+  "97761ebb429c8573": [
+    "Time Measurement Pf Passive Current",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "977629ff7bf71b78": [
     "Distribution Source Vibrational Mode",
     "Vibrational mode of the ion or neutral species state in the distribution source."
@@ -11026,6 +11238,10 @@
   "978f096513deaa0f": [
     "Neutral State Momentum Transport Profiles",
     "1D profiles of diffusion coefficients and flux values representing momentum transport for specific neutral states."
+  ],
+  "9795e869c845b9b4": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "97a0659297606fdf": [
     "Refractometer Density Profile Approximation",
@@ -11234,6 +11450,10 @@
   "9b19af280c80b190": [
     "Xenon Injection Sources",
     "Metadata identifying the source of data for xenon gas injection rates and amounts."
+  ],
+  "9b3c9e57b1312960": [
+    "Rotation Frequency Tor Toroidal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "9b5ec19de6d5edff": [
     "GGD Expansion Values",
@@ -11479,6 +11699,10 @@
     "Collision Target Charge Range",
     "Range of charge states for the target ion species involved in collisional interactions across various profiles."
   ],
+  "9ebb7a3a88107cf9": [
+    "E Field Radial",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "9ec719f67536547c": [
     "X-ray Filter Outline Coordinates",
     "Planar coordinates defining the outline of filter windows for X-ray diagnostics."
@@ -11622,6 +11846,10 @@
   "a09c01d2aa03f67f": [
     "Collision Operator Max Charge State",
     "Maximum charge state of ion species used in the collision operator for various distribution profiles."
+  ],
+  "a09d6ab5a9459c00": [
+    "Convergence Iterations N",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "a0bfe583ce497762": [
     "Parallel Energy Fluxes",
@@ -11991,6 +12219,10 @@
     "Magnetic Probe Field Measurements",
     "Time-dependent measurements of poloidal and toroidal magnetic fields."
   ],
+  "a564af50024fa606": [
+    "Coordinate System Grid Type",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "a56e9326613c2478": [
     "FOCS Stokes Parameters",
     "Initial and output Stokes parameters (S0, S1, S2) describing the polarization state of light in the Fiber Optic Current Sensor."
@@ -12062,6 +12294,10 @@
   "a669a2c930b8f235": [
     "MSE Spatial Resolution Toroidal Angle",
     "Toroidal angle coordinates defining the center position and spatial extent of the MSE active measurement volume."
+  ],
+  "a6771d6f379e49bc": [
+    "Pressure Dpressure Dpsi",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "a6910268ab9a2b33": [
     "Helium Particle Confinement Times",
@@ -12222,6 +12458,10 @@
   "a8e5aa657621aeb1": [
     "Ion Momentum Flux Profiles",
     "Radial profiles of momentum flux for ions, separated into components like toroidal, poloidal, and parallel."
+  ],
+  "a8fbe795fec91293": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "a9055697bc61ef75": [
     "Edge Source Scalar Coefficients",
@@ -12451,6 +12691,10 @@
     "Ion State Energy Transport Tensors",
     "General transport coefficients and fluxes for specific ion charge state energy."
   ],
+  "ab8d6a6600e8d9cc": [
+    "Psi Psi Axis",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "ab937b7ad0af4c3a": [
     "Edge Pressure Profile Coefficients",
     "Basis function coefficients representing pressure profiles (thermal and fast anisotropic) for ions and neutrals in the edge."
@@ -12558,6 +12802,10 @@
   "ad288a7256bf24e6": [
     "Total Momentum Flux Values",
     "Numerical values of the total plasma momentum flux in radial, poloidal, and parallel directions."
+  ],
+  "ad2ab0c7837a9697": [
+    "Ion Element",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "ad2dbf4b9ec56055": [
     "Wall EM Field Vectors",
@@ -12751,6 +12999,10 @@
     "Ion Poloidal Velocity",
     "Poloidal velocity profiles for aggregate ions and specific ion states."
   ],
+  "b00e88f55d2382d3": [
+    "Time Measurement Time Measurement Slice Method",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "b015061a866407f9": [
     "Nitrogen Injection Data Sources",
     "Source provenance for nitrogen gas injection rates and accumulated quantities."
@@ -12802,6 +13054,10 @@
   "b0e765eaef784586": [
     "Marker Orbit Integrals",
     "Values and expressions for integrals calculated along particle orbits, derived from marker-based simulations."
+  ],
+  "b0e93c7512fc1d8b": [
+    "Q Min Psi",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "b11993d84172cc73": [
     "Bootstrap Critical Alpha Structures",
@@ -12895,6 +13151,10 @@
     "Filter Window Secondary Orientation",
     "Cartesian components of the secondary unit vector (x2) for the filter window."
   ],
+  "b21837172ff86f73": [
+    "Type Name",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "b22b7c16eb68d158": [
     "PFC Thick Line Coordinates",
     "Radial and vertical coordinates for the start and end points of a thick line component geometry."
@@ -12930,6 +13190,10 @@
   "b279e0ac1cb3ffe2": [
     "Edge Momentum Diffusion Phi Coefficients",
     "Contains coefficients for the toroidal (phi) component of momentum diffusion in edge transport."
+  ],
+  "b27eaaced01238c5": [
+    "Magnetic Axis R",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "b280959af78ac999": [
     "Bolometer Detector And Aperture Dimensions",
@@ -13111,6 +13375,10 @@
     "Reflectometer Density Profile",
     "Time-dependent electron density profile derived from reflectometer measurements."
   ],
+  "b48f7da6799aef9b": [
+    "Grid Index Grid Subset Index",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "b49b09be1a4090e6": [
     "Edge Source Vibrational Mode",
     "Specific vibrational modes associated with the species states."
@@ -13143,6 +13411,10 @@
     "1D Grid Magnetic Flux",
     "Poloidal magnetic flux at the magnetic axis and the plasma boundary for the 1D grid."
   ],
+  "b4feb66a0258279d": [
+    "Theta Theta",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "b5002b8d895f5504": [
     "MSE Component Toroidal Angles",
     "Toroidal angle coordinates defining the geometric centers of the MSE detector and aperture."
@@ -13154,6 +13426,10 @@
   "b51130a348268ecd": [
     "Stress And NTV Components",
     "Real and imaginary components of Maxwell stress, Reynolds stress, and Neoclassical Toroidal Viscosity (NTV) torque."
+  ],
+  "b531e21fc93c27bc": [
+    "Boundary Outline",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "b5397b3a78c08f6f": [
     "Density Control Envelopes",
@@ -13360,8 +13636,8 @@
     "Total power radiated by the plasma via bremsstrahlung emission."
   ],
   "b80c40ce53ee66b3": [
-    "Boundary Squareness Parameters",
-    "Shaping parameters describing the squareness (zeta) of the plasma boundary in four quadrants."
+    "Squareness Upper Inner Squareness Upper Outer",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "b827039894ab36ca": [
     "Crystal Outline Coordinates",
@@ -13539,6 +13815,10 @@
     "Strike Point Envelope Types",
     "Metadata defining the type of envelopes for strike point position control."
   ],
+  "ba995ba36e3f8dc9": [
+    "J Parallel Grid Index",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "ba9d2b74f1164535": [
     "Wall Flux Atomic Properties",
     "Atomic mass number and number of atoms for species involved in particle and energy fluxes at the wall."
@@ -13622,6 +13902,10 @@
   "bb736b0689044192": [
     "Edge Electron Density Subsets",
     "Grid subset indices for electron density, fast density, and distribution function profiles in the edge."
+  ],
+  "bb7f66749c83d1c8": [
+    "Time Measurement Time Measurement Slice Method",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "bb978c4e0b85d955": [
     "Flux Surface Geometric Moments",
@@ -13740,8 +14024,8 @@
     "The spatial dimension associated with specific subsets of the grid elements."
   ],
   "bcdfe8a7f8c32754": [
-    "Boundary Flux Coordinates",
-    "Values of toroidal flux coordinate and toroidal angle associated with the boundary definition."
+    "Rho Tor Phi",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "bcead73e0fb87d86": [
     "GGD ExB Velocity Components",
@@ -13927,6 +14211,10 @@
     "Radiation Grid Geometry Content",
     "Metadata describing the geometric objects defined for each dimension within the general grid description for radiation measurements."
   ],
+  "bf694d7158442b04": [
+    "Time Measurement Slice Method Name",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "bf722d645c034256": [
     "ExB Diamagnetic Component",
     "The component of the ExB drift velocity in the diamagnetic direction."
@@ -13934,6 +14222,10 @@
   "bf746779eec6f3db": [
     "Component Orientation Vector X3",
     "The third unit vector (usually normal to the surface) defining the local coordinate system orientation."
+  ],
+  "bf9c2654fe4871d4": [
+    "Ion Element",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "bfbf62bae20f21a3": [
     "IC Antenna Module Pressure",
@@ -14463,6 +14755,10 @@
     "Diamagnetic Transport Coefficients 2",
     "Coefficients representing diamagnetic contributions to momentum transport and conductivity for various plasma species."
   ],
+  "c666f3d2f00745a7": [
+    "Pressure Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "c6684b58d0dbf376": [
     "Species Electron Configuration",
     "The electronic configuration string describing the quantum state of the species."
@@ -14470,6 +14766,10 @@
   "c668fd14a816789e": [
     "Chemical Element Reference",
     "Reference to the chemical element properties for ion and neutral species in the distribution."
+  ],
+  "c67f7ddc7d13639b": [
+    "J Total J Phi",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "c69259e6f3a3aa10": [
     "Coherent Wave Time Frequency",
@@ -14518,6 +14818,10 @@
   "c72794895e8b2f91": [
     "Initiation Ion Charge State",
     "Time evolution of the average ion charge state during the plasma initiation phase."
+  ],
+  "c747e2e323ed1aae": [
+    "Grid Rho Tor Norm",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "c7494aacc85998b4": [
     "AMNS Charge State Range",
@@ -14639,6 +14943,10 @@
     "GGD Toroidal Component Coefficients",
     "Coefficients for the toroidal (phi) components of velocities, currents, and electric fields on a general grid."
   ],
+  "c8a1199a19e9a21e": [
+    "N E Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "c8ad2be61fd26c88": [
     "Conducted and Convected Power Structures",
     "Structures defining the power reaching the divertor via thermal conduction and particle convection."
@@ -14694,6 +15002,10 @@
   "c8ff943339862e76": [
     "EC Mirror Center Coordinates",
     "Radial and vertical coordinates defining the geometric center of the EC launcher mirrors."
+  ],
+  "c91e76a36b1d1f47": [
+    "Mse Polarization Angle Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "c92113b4109b319f": [
     "GGD Ion-Neutral Friction Current",
@@ -14839,6 +15151,10 @@
     "Plasma Electron Cross-Field Grid",
     "Grid subset indices for electron particle and energy transport in radial and poloidal directions."
   ],
+  "cab8fa2256291be2": [
+    "Pressure Pressure Thermal",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "cac05b63d7a038fe": [
     "Wave Ion Molecular Atom Count",
     "Number of atoms per molecule for ion species in wave profiles."
@@ -14910,6 +15226,10 @@
   "cb791339289df32f": [
     "LH Power And Phase Data",
     "Time-dependent data for forward power, average phase, and module-specific phase settings in the LH system."
+  ],
+  "cb7e6348f68c16e1": [
+    "Faraday Angle Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "cbaeb2115cee4412": [
     "Electron and Thermal Pressure",
@@ -15102,6 +15422,10 @@
   "cf0e52c9f7006009": [
     "ECE Timed Validity Flags",
     "Time-dependent flags indicating the validity of the ECE radiation temperature measurements."
+  ],
+  "cf229e2dd6037030": [
+    "Time Measurement Width Time Measurement Width",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "cf3468597ad36a0b": [
     "FOCS Stokes Parameters",
@@ -15367,9 +15691,17 @@
     "Equilibrium Pressure Density Constraints",
     "Constraints used in equilibrium reconstruction related to electron density, static pressure, and rotational pressure components."
   ],
+  "d2ef1d383350705c": [
+    "Iron Core Segment Magnetization R",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "d2f8e77fcf01ebef": [
     "Plasma Ion Parallel Transport Grid",
     "Grid subset indices for parallel particle and energy transport of ions in the plasma transport model."
+  ],
+  "d2fa5b22460c8549": [
+    "Boundary Triangularity",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "d31078456d23f296": [
     "Component Outline Coordinates",
@@ -15492,8 +15824,8 @@
     "Total radiated power separated into components originating inside and outside the Last Closed Flux Surface (LCFS)."
   ],
   "d47c6238de151a6a": [
-    "Equilibrium Grid Coordinate Types",
-    "Specifies the type, name, and description of the coordinate system used in the equilibrium General Grid Description."
+    "Coordinates Type Name",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "d47e1cb89c0f89f9": [
     "Calorimetry Loop Measurements",
@@ -15743,6 +16075,10 @@
     "Linear MHD Model Metadata",
     "Metadata defining the type of linear MHD model and equations used, including whether ideal MHD is assumed."
   ],
+  "d82abaab2db8cb8c": [
+    "Covariance Description",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "d82c98ac3843256b": [
     "Wall Magnetic Fields",
     "Data structures defining the magnetic field and magnetic vector potential at the wall."
@@ -15899,6 +16235,10 @@
     "Magnetic Field Profile Components",
     "Various components (radial, diamagnetic, parallel, R, Z) of the magnetic field vector in plasma profiles."
   ],
+  "da63faa6ca35b72c": [
+    "Gm1 Gm2",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "da6c6fe4b9c81b51": [
     "SXR Filter Dimensions",
     "Physical widths of the soft X-ray filter window along its local coordinate axes."
@@ -15983,6 +16323,10 @@
     "Decomposed Ion Source Structures",
     "Container structures for the implicit and explicit components of ion particle and energy sources."
   ],
+  "dc00dfa7d45044d8": [
+    "Phi Phi",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "dc1f19a036fc04af": [
     "Potential And Toroidal Current Coefficients",
     "Coefficients for the electric potential and the toroidal current density weighted by radius."
@@ -16018,6 +16362,10 @@
   "dc793ea28536c503": [
     "Ion Profile Validity",
     "Flags indicating the validity of ion temperature and density profiles."
+  ],
+  "dc7e2c35cecc5280": [
+    "R Grid Index",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "dc86ae543d3b1523": [
     "Distribution Function Expansion Coefficients",
@@ -16171,6 +16519,10 @@
     "Multi-Temp Fit Timed Validity",
     "Time-dependent validity flags for temperatures derived from multi-temperature fits."
   ],
+  "dec1bdf736d01824": [
+    "R Inboard R Outboard",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "dec399238152bf75": [
     "Edge Neutral Directional Diffusion Values",
     "Numerical values for particle and energy diffusion coefficients for neutrals in radial, poloidal, and parallel directions."
@@ -16254,6 +16606,10 @@
   "dffcbb98207593e8": [
     "Edge Ion State Directional Fluxes",
     "Values of particle fluxes for ion charge states in radial, poloidal, and parallel directions."
+  ],
+  "e00f8595c4df68aa": [
+    "Objects Per Dimension Object",
+    "A intra-IDS global-level cluster of related paths from equilibrium."
   ],
   "e016caf96bebbfe1": [
     "Pellet Path Geometry Structure",
@@ -16499,6 +16855,10 @@
     "CXRS Aperture Normal Vectors",
     "Unit vectors defining the orientation (specifically the x3 axis) of the apertures for the charge exchange diagnostic system."
   ],
+  "e3218930aa245487": [
+    "Closest Wall Point R",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "e36a1f6d2639ba92": [
     "Vertical Momentum Flux Coefficients",
     "Vertical (Z) component coefficients for momentum flux vectors represented on the general grid."
@@ -16662,6 +17022,10 @@
   "e530c776b8cb450b": [
     "Radial Momentum Diffusion Coefficients 2",
     "Coefficients defining the radial diffusion for momentum transport of ions and neutrals."
+  ],
+  "e534760f9f6857f3": [
+    "Time Slice Global Quantities",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "e543ee0c3ac5f453": [
     "Incident Divertor Current",
@@ -16903,6 +17267,10 @@
     "Ion Species Definition",
     "Definition of ion elements and atomic numbers involved in core profile instantaneous changes."
   ],
+  "e80b0175eea1a801": [
+    "T I Average T I Average Fit",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "e80f554974d64202": [
     "Total Vessel Radiated Power",
     "Total radiated power and its components (ions, neutrals, electrons) integrated over the entire vessel volume."
@@ -16950,6 +17318,10 @@
   "e870f8cb7230c73c": [
     "IR Optics Curvature",
     "Metadata describing the curvature type (e.g., spherical, aspheric) of IR camera optical surfaces."
+  ],
+  "e87679a213084c13": [
+    "Psi Magnetic Axis Magnetic Axis",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "e8798caeedf15550": [
     "Divertor Electron Data Sources",
@@ -17030,6 +17402,10 @@
   "e96965b8103008de": [
     "Plasma Sources Grid Element Objects",
     "Definitions of objects and their associated space within grid subsets for plasma sources."
+  ],
+  "e970fb0296727edd": [
+    "Grid Type Name",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "e98fbec9e670263e": [
     "Neutral And Total Momentum Sources",
@@ -17607,6 +17983,10 @@
     "Ion Vibrational Mode",
     "Label or identifier for the vibrational mode of molecular ions."
   ],
+  "f188e0cc6223bbc9": [
+    "Element A",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "f18ee68a320ab9b7": [
     "Ion Kinetic Energy Fluxes",
     "Kinetic energy fluxes delivered by ions impacting the wall surface."
@@ -17720,8 +18100,8 @@
     "Poloidal flux at the magnetic axis and boundary defining the 1D grid for sources."
   ],
   "f3320bbe79f91afb": [
-    "Squareness Profile",
-    "1D profiles of the squareness of the flux surfaces in the four quadrants."
+    "Squareness Upper Inner Squareness Upper Outer",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "f3362b843f98494f": [
     "Edge Momentum Diffusion Coefficients 2",
@@ -17866,6 +18246,10 @@
   "f4a83d5e698597c2": [
     "Plasma General Momentum Grid",
     "Grid subset indices for general momentum transport coefficients and flux in the plasma transport model."
+  ],
+  "f4c5228ff962f196": [
+    "Ip Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "f4c9d63620de467e": [
     "Ion Boundary Condition Definitions",
@@ -18307,6 +18691,10 @@
     "Deuterium Ion Density Averages",
     "Line-averaged and volume-averaged density values specifically for deuterium ions."
   ],
+  "fbdd5f8bf7a02291": [
+    "Density Fit Measured",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
+  ],
   "fbf1c42e9b90152c": [
     "Etendue Calculation Method",
     "Specification of the method or code used to calculate the etendue for the X-ray channels."
@@ -18346,6 +18734,10 @@
   "fc8fb012d92d6778": [
     "MSE Line of Sight Toroidal Angles",
     "Toroidal angle coordinates defining the start and end points of the MSE channel's line of sight."
+  ],
+  "fc944a383dc3c802": [
+    "Flux Loop Measured",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "fca2880fc00b9c4a": [
     "ICRH Antenna Strap Geometry",
@@ -18391,9 +18783,17 @@
     "2D Wave Electric Field",
     "2D profiles of the coherent wave electric field components (plus, minus, parallel) decomposed by toroidal mode number."
   ],
+  "fd346fe7dceebf53": [
+    "Measured Source",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
+  ],
   "fd491962abd7cced": [
     "Edge Species Nuclear Charge",
     "Nuclear charge numbers for ion and neutral species in edge plasma profiles."
+  ],
+  "fd4ec619b50f69e3": [
+    "Temperature Temperature Fit",
+    "A intra-IDS ids-level cluster of related paths from core_profiles."
   ],
   "fd56ca2b6c393a06": [
     "X-Ray Channel Energy Bounds",
@@ -18534,6 +18934,10 @@
   "ff1ebb3e8d5e9b5c": [
     "Electron Velocity Profiles",
     "Electron velocity vector components in radial, parallel, poloidal, and geometric (R, Z) directions."
+  ],
+  "ff323f80b51aa0f5": [
+    "Vacuum Toroidal Field R0",
+    "A intra-IDS ids-level cluster of related paths from equilibrium."
   ],
   "ff3ff904bc608fe8": [
     "Incident Power Structure",

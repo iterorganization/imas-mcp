@@ -189,8 +189,6 @@ class TestEmbeddingClusterer:
 
     def test_calculate_statistics(self, clusterer):
         """Test statistics calculation."""
-        from imas_codex.clusters.models import PathMembership
-
         clusters = [
             ClusterInfo(
                 id="uuid-0",
@@ -210,9 +208,9 @@ class TestEmbeddingClusterer:
             ),
         ]
         path_index = {
-            "a/x": PathMembership(cross_ids_cluster="uuid-0", intra_ids_cluster=None),
-            "a/m": PathMembership(cross_ids_cluster=None, intra_ids_cluster="uuid-1"),
-            "a/p": PathMembership(cross_ids_cluster=None, intra_ids_cluster=None),
+            "a/x": ["uuid-0"],
+            "a/m": ["uuid-1"],
+            "a/p": [],  # isolated path
         }
 
         stats = clusterer._calculate_statistics(clusters, path_index)
@@ -266,8 +264,9 @@ class TestRelationshipBuilder:
 
         result = builder.build_path_index(cluster_infos)
 
-        assert result["path_to_cluster"]["a/x"] == 0
-        assert result["path_to_cluster"]["b/y"] == 0
-        assert result["path_to_cluster"]["a/m"] == 1
-        assert result["cluster_to_paths"][0] == ["a/x", "b/y"]
-        assert result["cluster_to_paths"][1] == ["a/m", "a/n"]
+        # path_to_cluster now returns list of cluster IDs (multi-membership support)
+        assert result["path_to_cluster"]["a/x"] == ["0"]
+        assert result["path_to_cluster"]["b/y"] == ["0"]
+        assert result["path_to_cluster"]["a/m"] == ["1"]
+        assert result["cluster_to_paths"]["0"] == ["a/x", "b/y"]
+        assert result["cluster_to_paths"]["1"] == ["a/m", "a/n"]

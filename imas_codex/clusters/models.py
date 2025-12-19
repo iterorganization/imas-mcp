@@ -5,7 +5,6 @@ This module defines the core data structures for cluster-based
 semantic groupings of IMAS paths, including:
 - ClusterInfo: Individual cluster with scope and enrichment metadata
 - ClusterScope: Hierarchical scope (global, domain, ids)
-- PathMembership: Multi-cluster membership tracking
 - RelationshipSet: Complete clustering results
 """
 
@@ -110,13 +109,6 @@ class ClusterInfo(BaseModel):
         return self.relevance_score
 
 
-class PathMembership(BaseModel):
-    """Tracks which clusters a path belongs to."""
-
-    cross_ids_cluster: str | None = None  # UUID
-    intra_ids_cluster: str | None = None  # UUID
-
-
 class CrossIDSSummary(BaseModel):
     """Summary of cross-IDS clustering results."""
 
@@ -199,7 +191,7 @@ class RelationshipSet(BaseModel):
 
     metadata: RelationshipMetadata
     clusters: list[ClusterInfo]
-    path_index: dict[str, PathMembership]
+    path_index: dict[str, list[str]]  # path -> list of cluster UUIDs (multi-membership)
     cross_ids_summary: CrossIDSSummary
     intra_ids_summary: IntraIDSSummary
 
@@ -208,43 +200,51 @@ class RelationshipSet(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def get_cluster_for_path(self, path: str) -> ClusterInfo | None:
-        """Get the cluster containing the given path."""
-        membership = self.path_index.get(path)
-        if not membership:
-            return None
+    def get_clusters_for_path(self, path: str) -> list[ClusterInfo]:
+        """Get all clusters containing the given path (supports multi-membership)."""
+        cluster_ids = self.path_index.get(path, [])
+        if not cluster_ids:
+            return []
 
-        # Try cross-IDS first, then intra-IDS
-        cluster_id = membership.cross_ids_cluster or membership.intra_ids_cluster
-        if cluster_id is not None:
-            for cluster in self.clusters:
-                if cluster.id == cluster_id:
-                    return cluster
-        return None
+        clusters = []
+        for cluster in self.clusters:
+            if cluster.id in cluster_ids:
+                clusters.append(cluster)
+        return clusters
+
+    def get_cluster_for_path(self, path: str) -> ClusterInfo | None:
+        """Get the first cluster containing the given path.
+
+        For multi-membership support, use get_clusters_for_path() instead.
+        """
+        clusters = self.get_clusters_for_path(path)
+        return clusters[0] if clusters else None
 
     def get_related_paths(
         self, path: str, exclude_same_ids: bool = False, max_results: int | None = None
     ) -> list[str]:
-        """Get all paths related to the given path (in same cluster)."""
-        cluster = self.get_cluster_for_path(path)
-        if cluster is None:
+        """Get all paths related to the given path (in same clusters)."""
+        clusters = self.get_clusters_for_path(path)
+        if not clusters:
             return []
 
-        related_paths = []
-        path_ids = None
+        related_paths_set: set[str] = set()
+        path_ids = path.split("/")[0] if "/" in path else path.split(".")[0]
 
-        # Find the IDS of the query path
-        if path in cluster.paths:
-            path_ids = path.split(".")[0]
+        for cluster in clusters:
+            for cluster_path in cluster.paths:
+                if cluster_path != path:
+                    if exclude_same_ids:
+                        cluster_path_ids = (
+                            cluster_path.split("/")[0]
+                            if "/" in cluster_path
+                            else cluster_path.split(".")[0]
+                        )
+                        if cluster_path_ids == path_ids:
+                            continue
+                    related_paths_set.add(cluster_path)
 
-        for cluster_path in cluster.paths:
-            if cluster_path != path:
-                if exclude_same_ids and path_ids:
-                    cluster_path_ids = cluster_path.split(".")[0]
-                    if cluster_path_ids == path_ids:
-                        continue
-                related_paths.append(cluster_path)
-
+        related_paths = list(related_paths_set)
         if max_results:
             related_paths = related_paths[:max_results]
 
