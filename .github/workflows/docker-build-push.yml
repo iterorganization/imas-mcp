@@ -3,8 +3,7 @@ name: Build and Push Container
 on:
   push:
     tags:
-      - "v*"
-      - "latest*"
+      - "v*"      # Semantic version releases (v1.0.0) and release candidates (v1.0.0-rc1)
   pull_request:
     branches:
       - main
@@ -161,7 +160,7 @@ jobs:
             network=host
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/latest')
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.GHCR_REGISTRY }}
@@ -178,9 +177,9 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
           logout: false
 
-      - name: Extract metadata for GHCR
+      - name: Extract metadata for GHCR (releases only)
         id: meta-ghcr
-        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/latest')
+        if: github.event_name != 'pull_request' && !contains(github.ref, '-rc')
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -188,9 +187,8 @@ jobs:
             type=semver,pattern={{version}}-${{ matrix.transport }}
             type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
             type=semver,pattern={{major}}-${{ matrix.transport }}
-            type=raw,value=latest-${{ matrix.transport }}
           flavor: |
-            latest=auto
+            latest=false
 
       - name: Extract metadata for ACR
         id: meta-acr
@@ -201,18 +199,41 @@ jobs:
             type=semver,pattern={{version}}-${{ matrix.transport }}
             type=semver,pattern={{major}}.{{minor}}-${{ matrix.transport }}
             type=semver,pattern={{major}}-${{ matrix.transport }}
-            type=raw,value=prod-${{ matrix.transport }},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=latest-${{ matrix.transport }},enable=${{ startsWith(github.ref, 'refs/tags/latest') }}
+            type=raw,value=prod-${{ matrix.transport }},enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc') }}
+            type=raw,value=latest-${{ matrix.transport }},enable=${{ contains(github.ref, '-rc') }}
           flavor: |
             latest=false
 
-      - name: Build and push Docker image
-        id: build
+      - name: Build and push Docker image (RC builds - ACR only)
+        id: build-rc
+        if: github.event_name != 'pull_request' && contains(github.ref, '-rc')
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
+          tags: ${{ steps.meta-acr.outputs.tags }}
+          labels: ${{ steps.meta-acr.outputs.labels }}
+          build-args: |
+            IDS_FILTER=
+            TRANSPORT=${{ matrix.transport }}
+            IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
+            GIT_SHA=${{ github.sha }}
+            GIT_TAG=${{ github.ref_name }}
+            GIT_REF=${{ github.ref }}
+          secrets: |
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          cache-from: type=gha,scope=build-${{ github.ref_name }}
+          cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
+
+      - name: Build and push Docker image (releases - both registries)
+        id: build-release
+        if: github.event_name != 'pull_request' && !contains(github.ref, '-rc')
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
           tags: |
             ${{ steps.meta-ghcr.outputs.tags }}
             ${{ steps.meta-acr.outputs.tags }}
@@ -224,15 +245,15 @@ jobs:
             TRANSPORT=${{ matrix.transport }}
             IMAS_DD_VERSION=${{ env.IMAS_DD_VERSION }}
             GIT_SHA=${{ github.sha }}
-            GIT_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+            GIT_TAG=${{ github.ref_name }}
             GIT_REF=${{ github.ref }}
           secrets: |
             OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           cache-from: type=gha,scope=build-${{ github.ref_name }}
           cache-to: type=gha,mode=max,scope=build-${{ github.ref_name }}
 
-      - name: Verify version inside image (tag builds)
-        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+      - name: Verify version inside image (release builds)
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
         run: |
           set -euo pipefail
           EXPECTED=${GITHUB_REF_NAME#v}
@@ -253,11 +274,33 @@ jobs:
           fi
           echo "Version check passed"
 
-      - name: Generate artifact attestation for GHCR
-        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+      - name: Verify version inside image (RC builds)
+        if: github.event_name != 'pull_request' && contains(github.ref, '-rc')
+        run: |
+          set -euo pipefail
+          EXPECTED=${GITHUB_REF_NAME#v}
+          # Pick one tag to test (first ACR tag)
+          IMAGE=$(echo "${{ steps.meta-acr.outputs.tags }}" | head -n1)
+          echo "Testing image: $IMAGE expecting version: $EXPECTED"
+          docker pull "$IMAGE"
+          # Ask the CLI for its raw version (CLI prints only version string)
+          ACTUAL=$(docker run --rm "$IMAGE" --version || true)
+          echo "Version reported by image: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "ERROR: No version output from CLI" >&2
+            exit 1
+          fi
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: Expected $EXPECTED got $ACTUAL" >&2
+            exit 1
+          fi
+          echo "Version check passed"
+
+      - name: Generate artifact attestation for GHCR (releases only)
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-rc')
         uses: actions/attest-build-provenance@v1
         with:
           subject-name: ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.build-release.outputs.digest }}
           push-to-registry: true
 
