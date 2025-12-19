@@ -1,133 +1,105 @@
 # Agent Guidelines
 
-## Introduction
+> **TL;DR**: Use `uv run` for Python commands, `ruff` for linting, conventional commits with single quotes, and `pytest` for testing. No backward compatibility constraints.
 
-This project, `imas-codex`, is a Model Context Protocol (MCP) server for the IMAS Data Dictionary. It enables AI agents to explore fusion physics data structures, search for relevant IDS (Interface Data Structures) entries, understand relationships between data paths, and access comprehensive physics documentation.
+## Quick Reference
 
-The server provides semantic search across the IMAS data dictionary, physics domain exploration, path validation, and relationship discovery—all accessible through the MCP protocol.
+| Task | Command |
+|------|---------|
+| Run Python | `uv run <script>` |
+| Run tests | `uv run pytest` |
+| Run tests with coverage | `uv run pytest --cov=imas_codex` |
+| Lint/format | `uv run ruff check --fix . && uv run ruff format .` |
+| Sync dependencies | `uv sync --extra test` |
+| Add dependency | `uv add <package>` |
+| Add dev dependency | `uv add --dev <package>` |
 
-## Project Setup
+## Project Overview
 
-### Terminal Usage
+`imas-codex` is an MCP server for the IMAS Data Dictionary enabling:
+- Semantic search across fusion physics data structures
+- IDS (Interface Data Structures) exploration
+- Path validation and relationship discovery
+- Physics domain exploration
 
-**Working Directory**: All terminal commands assume you're in the project root (`/home/ITER/mcintos/Code/imas-codex`). Do not prefix commands with `cd /path &&`.
+## Agent Workflows
 
-```bash
-# Correct - use uv run for Python commands
-uv run pytest
+### Committing Changes
 
-# Wrong - unnecessary cd and manual venv activation
-cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
-```
-
-### Package Management
-
-- **Package manager**: `uv`
-- **Add dependencies**: `uv add <package>`
-- **Add dev dependencies**: `uv add --dev <package>`
-- **Sync environment**: `uv sync --extra test` (includes pytest-cov)
-
-**IMPORTANT for CLI agents in worktrees**: Always run `uv sync --extra test` before running tests or any Python commands. The `[test]` extra includes `pytest-cov` which is required for the test suite.
-
-### Code Quality
-
-- **Pre-commit hooks**: Enabled for all commits
-- **Linting & formatting**: `ruff` (configuration in `pyproject.toml`)
-
-### Version Control
-
-- **Branch naming**: Use `main` as default branch
-- **GitHub CLI**: `gh` is available in PATH
-- **Authentication**: SSH
-
-#### Container Image Tagging
-
-This project uses a tag-based separation strategy for container images published to GitHub Container Registry (ghcr.io) and Azure Container Registry (ACR).
-
-**Registry Strategy**:
-
-| Registry | Purpose | Tags |
-|----------|---------|------|
-| ACR | Test server (RC builds) | `latest-{transport}`, `X.Y.Z-rcN-{transport}` |
-| ACR | Production server | `prod-{transport}`, `X.Y.Z-{transport}` |
-| GHCR | Public releases only | `X.Y.Z-{transport}`, `X.Y-{transport}`, `X-{transport}` |
-
-**Tag Types**:
-
-| Tag | Purpose | Registry |
-|-----|---------|----------|
-| `X.Y.Z-{transport}` | Immutable version tag | Both (releases only) |
-| `X.Y.Z-rcN-{transport}` | Release candidate for testing | ACR only |
-| `latest-{transport}` | Current RC for test server | ACR only |
-| `prod-{transport}` | Production-ready release | ACR only |
-
-**Workflow**:
-
-1. **Creating an RC**: Push a git tag with `-rcN` suffix to trigger ACR build:
-   ```bash
-   git tag v1.2.0-rc1
-   git push origin v1.2.0-rc1
-   # Builds and pushes to ACR with latest-{transport} tag
-   ```
-
-2. **Iterating on RCs**: Increment the RC number for each iteration:
-   - `v1.2.0-rc1` → `v1.2.0-rc2` → `v1.2.0-rc3`
-   - Each RC overwrites `latest-{transport}` on ACR for test server
-
-3. **Promoting to Release**: Push the final release tag:
-   ```bash
-   git tag v1.2.0
-   git push origin v1.2.0
-   # Builds and pushes to both GHCR and ACR
-   # ACR gets prod-{transport} tag, all RCs are cleaned up
-   ```
-
-**RC Cleanup**: All RC images for a version are automatically deleted from ACR when the final release is published.
-
-**Why RC Strategy**:
-- Each RC tag is unique and immutable, preventing cache-related issues
-- Clear progression toward release (`rc1` → `rc2` → final)
-- Test server always has `latest-{transport}` pointing to current RC
-- Production server uses `prod-{transport}` for stable deployments
-- GHCR only receives verified releases
-
-#### Commit Messages
-
-Use conventional commit format with a detailed body:
+**Step-by-step procedure:**
 
 ```bash
-git status                      # Check current state
-git add <files>                 # Stage specific files (avoid git add -A)
-git commit -m "type: description
+# 1. Check current state
+git status
 
-Detailed body explaining what changed and why.
+# 2. Run linting on Python files only
+uv run ruff check --fix .
+uv run ruff format .
 
-BREAKING CHANGE: description (if applicable)"
-git push origin main            # Push to remote
+# 3. Stage specific files (NEVER use git add -A)
+git add <file1> <file2> ...
+
+# 4. Commit with conventional format (use single quotes)
+git commit -m 'type: brief description
+
+Detailed body explaining what changed and why.'
+
+# 5. Fix pre-commit errors and repeat steps 3-4 until clean
+
+# 6. Push
+git push origin main
 ```
 
-**Commit types**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+**Commit message format:**
 
-**Breaking changes**: Use `BREAKING CHANGE:` footer in the body, not `type!:` suffix (the `!` causes shell escaping issues and is redundant when using the footer)
+| Type | Purpose |
+|------|---------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `refactor` | Code restructuring |
+| `docs` | Documentation |
+| `test` | Test changes |
+| `chore` | Maintenance |
 
-**Shell escaping**: Use single quotes for commit messages containing special characters:
-
-```bash
-# Correct - single quotes avoid bash history expansion issues
-git commit -m 'refactor: description'
-
-# Wrong - double quotes with special chars can fail
-git commit -m "refactor!: description"  # ! causes bash errors
-```
+**Breaking changes**: Add `BREAKING CHANGE:` footer in the body (not `type!:` suffix).
 
 ### Testing
 
-- **Framework**: `pytest`
-- **Run tests**: Use VS Code Test Explorer (Ctrl+Shift+T) or `uv run pytest`
-- **Async support**: `pytest-asyncio` with auto mode
-- **Coverage**: `uv run pytest --cov=imas_codex`
+```bash
+# Sync dependencies first (required in worktrees)
+uv sync --extra test
 
-**Before running tests**: Ensure dependencies are synced with `uv sync --extra test`
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=imas_codex
+
+# Run specific test
+uv run pytest tests/path/to/test.py::test_function
+```
+
+## Rules
+
+### DO
+
+- Use `uv run` for all Python commands
+- Use single quotes for commit messages
+- Stage files individually (`git add <file>`)
+- Use modern Python 3.12 syntax: `list[str]`, `X | Y`
+- Use `pydantic` for schemas, `dataclasses` for other data classes
+- Use `anyio` for async operations
+- Use exception chaining with `from`
+
+### DON'T
+
+- Don't prefix commands with `cd /path &&`
+- Don't manually activate venv (`.venv/bin/activate`)
+- Don't use `git add -A`
+- Don't use `type!:` suffix for breaking changes
+- Don't use double quotes with special characters in commits
+- Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
+- Don't use "new", "refactored", "enhanced" in names
 
 ## Project Structure
 
@@ -135,55 +107,72 @@ git commit -m "refactor!: description"  # ! causes bash errors
 imas_codex/
 ├── core/           # Data models, XML parsing, physics domains
 ├── embeddings/     # Vector embeddings and semantic search
-├── models/         # Pydantic models for all data structures
+├── models/         # Pydantic models
 ├── search/         # Search functionality
-├── services/       # External services (docs server)
+├── services/       # External services
 ├── tools/          # MCP tool implementations
 └── resources/      # Generated data files
 
-tests/
-├── conftest.py     # Shared fixtures
-└── */              # Mirror source structure
+tests/              # Mirror source structure
 ```
 
-## Python Style Guide
+## Version Control
 
-### Version & Syntax
+- **Default branch**: `main`
+- **GitHub CLI**: `gh` available in PATH
+- **Authentication**: SSH
 
-- **Python version**: 3.12
-- Use modern type syntax: `list[str]` not `List[str]`
-- Use union syntax: `X | Y` not `Union[X, Y]` or `(X, Y)` in isinstance
+### Container Image Tags
+
+| Registry | Purpose | Tags |
+|----------|---------|------|
+| ACR | Test server | `latest-{transport}`, `X.Y.Z-rcN-{transport}` |
+| ACR | Production | `prod-{transport}`, `X.Y.Z-{transport}` |
+| GHCR | Public releases | `X.Y.Z-{transport}`, `X.Y-{transport}` |
+
+**RC Workflow:**
+
+```bash
+# Create RC
+git tag v1.2.0-rc1 && git push origin v1.2.0-rc1
+
+# Iterate: v1.2.0-rc1 → v1.2.0-rc2 → v1.2.0-rc3
+
+# Release
+git tag v1.2.0 && git push origin v1.2.0
+```
+
+## Code Style
+
+### Type Annotations
 
 ```python
 # Correct
-if isinstance(e, ValueError | TypeError):
-    raise
+def process(items: list[str]) -> dict[str, int]: ...
+if isinstance(e, ValueError | TypeError): ...
 
-# Wrong (ruff UP038)
-if isinstance(e, (ValueError, TypeError)):
-    raise
+# Wrong
+def process(items: List[str]) -> Dict[str, int]: ...
+if isinstance(e, (ValueError, TypeError)): ...
 ```
-
-### Data Structures
-
-- **Schemas**: Use `pydantic` models
-- **Data classes**: Use `dataclasses` for non-schema classes
-
-### Asynchronous Programming
-
-- **Library**: Use `anyio` for async operations
-- **When to use**: All I/O-bound operations (network, file, database)
 
 ### Error Handling
 
-- Use specific exception types
-- Include context in error messages
-- Use exception chaining with `from`
+```python
+# Correct - chain exceptions
+try:
+    operation()
+except IOError as e:
+    raise ProcessingError("failed to process") from e
 
-## Code Philosophy
+# Wrong - loses context
+except IOError:
+    raise ProcessingError("failed to process")
+```
 
-### Green Field Project
+## Philosophy
 
+This is a **green field project**:
 - No backward compatibility constraints
-- Avoid "new", "refactored", "enhanced" in names
 - Write code as if it's always been this way
+- Avoid legacy naming patterns
