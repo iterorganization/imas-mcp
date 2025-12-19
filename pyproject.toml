@@ -66,6 +66,8 @@ dependencies = [
     "linkml>=1.9.3",
     "linkml-runtime>=1.9.5",
     "hdbscan>=0.8.41",
+    "fabric>=3.0.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
@@ -119,6 +121,8 @@ build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
+build-discovery-models = "scripts.build_discovery_models:build_discovery_models"
+probe-facility = "scripts.probe_facility:probe_facility"
 
 [tool.hatch.version]
 source = "vcs"

@@ -1,0 +1,79 @@
+# EPFL / Swiss Plasma Center (TCV) Facility Configuration
+# SSH host: epfl (configured in ~/.ssh/config)
+
+facility: epfl
+ssh_host: epfl
+description: Swiss Plasma Center - TCV Tokamak
+
+# Contact information
+contact:
+  organization: École Polytechnique Fédérale de Lausanne
+  department: Swiss Plasma Center (SPC)
+  machine: TCV (Tokamak à Configuration Variable)
+
+# Known filesystem paths
+paths:
+  # Data storage locations
+  data:
+    - /common/tcv/data
+    - /common/tcv/results
+    
+  # Code repositories and analysis scripts  
+  code:
+    - /common/tcv/codes
+    - /home/*/diagnostics
+    - /home/*/analysis
+    
+  # Documentation locations
+  docs:
+    - /common/tcv/docs
+    - /common/tcv/wiki
+
+# Facility-specific exclusions (in addition to core.yaml)
+excludes:
+  directories:
+    - /scratch
+    - /tmp
+    - /var/tmp
+    
+  patterns:
+    - "*.dat.old"
+    - "*.backup"
+
+# Known data systems at this facility
+known_systems:
+  # MDSplus configuration
+  mdsplus:
+    server: tcvdata.epfl.ch
+    trees:
+      - tcv
+      - tcv_shot
+      - results
+      - magnetics
+      - diagnostics
+      
+  # Known diagnostic systems
+  diagnostics:
+    - ece       # Electron Cyclotron Emission
+    - fir       # Far-Infrared Interferometer
+    - mse       # Motional Stark Effect
+    - thomson   # Thomson Scattering
+    - bolometry
+    - soft_xray
+    - hard_xray
+    - neutron
+    
+  # Key analysis codes
+  codes:
+    - liuqe     # Equilibrium reconstruction
+    - raptor    # Real-time transport
+    - chease    # Equilibrium solver
+
+# Hints for the LLM investigator
+exploration_hints:
+  - "MDSplus is the primary data access system"
+  - "LIUQE is used for equilibrium reconstruction"
+  - "Python 3 with MDSplus bindings is commonly available"
+  - "Look for diagnostic codes in /common/tcv/codes/diagnostics/"
+
+

@@ -123,7 +123,151 @@ class Server:
         logger.debug("Registering resources component")
         self.resources.register(self.mcp)
 
+        logger.debug("Registering discovery prompts")
+        self._register_discovery_prompts()
+
         logger.debug("Successfully registered all components")
+
+    def _register_discovery_prompts(self):
+        """Register discovery prompts for facility exploration."""
+        from imas_codex.discovery import get_config, list_facilities
+        from imas_codex.discovery.prompts import get_prompt_loader
+
+        @self.mcp.prompt()
+        def explore_facility(facility: str) -> str:
+            """
+            Explore a remote fusion facility's environment.
+
+            Generates a prompt for discovering system capabilities, available tools,
+            Python libraries, and data access methods at the specified facility.
+
+            Args:
+                facility: Facility identifier (e.g., 'epfl', 'jet')
+            """
+            try:
+                config = get_config(facility)
+                prompts = get_prompt_loader()
+                system_msg, user_msg = prompts.render(
+                    "explore_environment",
+                    **config.to_context(),
+                )
+                return f"{system_msg}\n\n---\n\n{user_msg}"
+            except ValueError as e:
+                available = list_facilities()
+                return (
+                    f"Error: {e}\n\n"
+                    f"Available facilities: {', '.join(available) if available else 'none configured'}"
+                )
+
+        @self.mcp.prompt()
+        def survey_directory(facility: str, path: str, max_depth: int = 3) -> str:
+            """
+            Survey a directory structure on a remote facility.
+
+            Generates a prompt for exploring filesystem structure, file types,
+            and notable directories at the specified path.
+
+            Args:
+                facility: Facility identifier (e.g., 'epfl')
+                path: Directory path to survey
+                max_depth: Maximum directory depth to explore
+            """
+            try:
+                config = get_config(facility)
+                prompts = get_prompt_loader()
+                system_msg, user_msg = prompts.render(
+                    "directory_survey",
+                    **config.to_context(),
+                    target_path=path,
+                    max_depth=max_depth,
+                )
+                return f"{system_msg}\n\n---\n\n{user_msg}"
+            except ValueError as e:
+                return f"Error: {e}"
+
+        @self.mcp.prompt()
+        def search_code(
+            facility: str,
+            pattern: str,
+            file_types: str = "*.py",
+        ) -> str:
+            """
+            Search for code patterns on a remote facility.
+
+            Generates a prompt for finding code patterns, understanding dependencies,
+            and mapping data access methods.
+
+            Args:
+                facility: Facility identifier (e.g., 'epfl')
+                pattern: Regex pattern to search for
+                file_types: File type pattern (e.g., '*.py', '*.m')
+            """
+            try:
+                config = get_config(facility)
+                prompts = get_prompt_loader()
+                system_msg, user_msg = prompts.render(
+                    "code_search",
+                    **config.to_context(),
+                    pattern=pattern,
+                    file_types=[file_types],
+                )
+                return f"{system_msg}\n\n---\n\n{user_msg}"
+            except ValueError as e:
+                return f"Error: {e}"
+
+        @self.mcp.prompt()
+        def investigate_facility(facility: str, question: str) -> str:
+            """
+            Ask a freeform question about a facility.
+
+            Generates a prompt for investigating any aspect of a remote facility
+            using an agentic exploration approach.
+
+            Args:
+                facility: Facility identifier (e.g., 'epfl')
+                question: Natural language question about the facility
+            """
+            try:
+                config = get_config(facility)
+                context = config.to_context()
+                hints = "\n".join(
+                    f"- {h}" for h in context.get("exploration_hints", [])
+                )
+
+                return f"""You are an expert system administrator exploring a remote fusion research facility.
+
+Facility: {config.facility}
+Description: {config.description}
+SSH Host: {config.ssh_host}
+
+Known information:
+{hints}
+
+Known data paths: {context.get("paths", {}).get("data", [])}
+Known code paths: {context.get("paths", {}).get("code", [])}
+
+## Your Task
+
+{question}
+
+## Agentic Loop Instructions
+
+You operate in an iterative loop:
+1. Generate a bash script to gather information
+2. The user will execute it and show you the results
+3. You may generate follow-up scripts to explore further
+4. When done, output JSON: {{"done": true, "findings": {{...}}}}
+
+## Safety Rules
+
+- All scripts must be READ-ONLY
+- Never use: rm, mv, cp, chmod, sudo, dd, or destructive commands
+- Handle errors gracefully
+
+Generate your first exploration script.
+"""
+            except ValueError as e:
+                return f"Error: {e}"
 
     def _build_schemas_if_missing(self) -> bool:
         """Automatically build schemas if they're missing.
