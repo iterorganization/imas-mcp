@@ -5,7 +5,7 @@
       "type": "http"
     },
     "imas-test": {
-      "url": "https://app-imas-codex-server-test-frc.azurewebsites.net/mcp",
+      "url": "https://app-imas-mcp-server-test-frc.azurewebsites.net/mcp",
       "type": "http"
     },
     "imas-ddv3": {
