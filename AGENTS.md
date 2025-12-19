@@ -42,42 +42,54 @@ cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
 
 #### Container Image Tagging
 
-This project uses a tag-based separation strategy for container images published to GitHub Container Registry (ghcr.io) and Azure Container Registry.
+This project uses a tag-based separation strategy for container images published to GitHub Container Registry (ghcr.io) and Azure Container Registry (ACR).
+
+**Registry Strategy**:
+
+| Registry | Purpose | Tags |
+|----------|---------|------|
+| ACR | Test server (RC builds) | `latest-{transport}`, `X.Y.Z-rcN-{transport}` |
+| ACR | Production server | `prod-{transport}`, `X.Y.Z-{transport}` |
+| GHCR | Public releases only | `X.Y.Z-{transport}`, `X.Y-{transport}`, `X-{transport}` |
 
 **Tag Types**:
 
-| Tag | Purpose | When Used |
-|-----|---------|-----------|
-| `latest` | Production-ready stable release | After full release verification |
-| `X.Y.Z` | Immutable version tag | On each release (e.g., `1.2.0`) |
-| `X.Y.Z-rcN` | Release candidate for testing | Pre-release testing (e.g., `1.2.0-rc1`, `1.2.0-rc2`) |
+| Tag | Purpose | Registry |
+|-----|---------|----------|
+| `X.Y.Z-{transport}` | Immutable version tag | Both (releases only) |
+| `X.Y.Z-rcN-{transport}` | Release candidate for testing | ACR only |
+| `latest-{transport}` | Current RC for test server | ACR only |
+| `prod-{transport}` | Production-ready release | ACR only |
 
-**Release Candidate (RC) Strategy**:
+**Workflow**:
 
-1. **Creating an RC**: When preparing a test build for validation, tag with `-rcN` suffix:
+1. **Creating an RC**: Push a git tag with `-rcN` suffix to trigger ACR build:
    ```bash
-   # Build and push release candidate
-   docker build -t ghcr.io/iterorganization/imas-codex:1.2.0-rc1 .
-   docker push ghcr.io/iterorganization/imas-codex:1.2.0-rc1
+   git tag v1.2.0-rc1
+   git push origin v1.2.0-rc1
+   # Builds and pushes to ACR with latest-{transport} tag
    ```
 
-2. **Iterating on RCs**: Increment the RC number for each iteration to avoid cache issues:
-   - `1.2.0-rc1` → `1.2.0-rc2` → `1.2.0-rc3`
-   - Never reuse an RC tag; always increment
+2. **Iterating on RCs**: Increment the RC number for each iteration:
+   - `v1.2.0-rc1` → `v1.2.0-rc2` → `v1.2.0-rc3`
+   - Each RC overwrites `latest-{transport}` on ACR for test server
 
-3. **Promoting to Release**: Once validated, create the final release tag:
+3. **Promoting to Release**: Push the final release tag:
    ```bash
-   docker tag ghcr.io/iterorganization/imas-codex:1.2.0-rc3 ghcr.io/iterorganization/imas-codex:1.2.0
-   docker tag ghcr.io/iterorganization/imas-codex:1.2.0 ghcr.io/iterorganization/imas-codex:latest
-   docker push ghcr.io/iterorganization/imas-codex:1.2.0
-   docker push ghcr.io/iterorganization/imas-codex:latest
+   git tag v1.2.0
+   git push origin v1.2.0
+   # Builds and pushes to both GHCR and ACR
+   # ACR gets prod-{transport} tag, all RCs are cleaned up
    ```
 
-**Why RC over dev/edge tags**:
+**RC Cleanup**: All RC images for a version are automatically deleted from ACR when the final release is published.
+
+**Why RC Strategy**:
 - Each RC tag is unique and immutable, preventing cache-related issues
 - Clear progression toward release (`rc1` → `rc2` → final)
-- Follows semantic versioning conventions
-- Easy to identify which test build is deployed
+- Test server always has `latest-{transport}` pointing to current RC
+- Production server uses `prod-{transport}` for stable deployments
+- GHCR only receives verified releases
 
 #### Commit Messages
 

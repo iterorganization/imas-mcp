@@ -1,0 +1,107 @@
+name: Cleanup RC Container Images
+
+on:
+  # Triggered after a release tag is pushed (not RC)
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"  # Only final releases (v1.0.0), not RC (v1.0.0-rc1)
+
+  # Allow manual trigger for cleanup
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run - list images without deleting"
+        required: false
+        default: "true"
+        type: boolean
+
+env:
+  ACR_REGISTRY: crcommonallfrc.azurecr.io
+  IMAGE_NAME: iterorganization/imas-codex
+
+jobs:
+  cleanup-rc-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Log in to Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Extract version from tag
+        id: version
+        if: github.event_name == 'push'
+        run: |
+          # Extract major.minor from tag (e.g., v1.2.3 -> 1.2)
+          VERSION=${GITHUB_REF_NAME#v}
+          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1,2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
+          echo "Cleaning up RC images for version: $VERSION (major.minor: $MAJOR_MINOR)"
+
+      - name: List RC images to delete
+        id: list-rc
+        run: |
+          echo "Listing RC images in ACR..."
+          
+          # Get all tags matching RC pattern for this major.minor version
+          if [ "${{ github.event_name }}" == "push" ]; then
+            PATTERN="${{ steps.version.outputs.major_minor }}.*-rc"
+          else
+            # For manual runs, list all RC images
+            PATTERN=".*-rc"
+          fi
+          
+          echo "Looking for tags matching pattern: $PATTERN"
+          
+          # List tags and filter for RC pattern
+          TAGS=$(az acr repository show-tags \
+            --name $(echo $ACR_REGISTRY | cut -d. -f1) \
+            --repository $IMAGE_NAME \
+            --output tsv 2>/dev/null | grep -E "$PATTERN" || true)
+          
+          if [ -z "$TAGS" ]; then
+            echo "No RC images found matching pattern: $PATTERN"
+            echo "tags=" >> $GITHUB_OUTPUT
+          else
+            echo "Found RC images to delete:"
+            echo "$TAGS"
+            # Convert to comma-separated for next step
+            TAGS_CSV=$(echo "$TAGS" | tr '\n' ',' | sed 's/,$//')
+            echo "tags=$TAGS_CSV" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Delete RC images from ACR
+        if: steps.list-rc.outputs.tags != '' && (github.event_name == 'push' || inputs.dry_run == 'false')
+        run: |
+          ACR_NAME=$(echo $ACR_REGISTRY | cut -d. -f1)
+          
+          echo "Deleting RC images from ACR..."
+          IFS=',' read -ra TAGS <<< "${{ steps.list-rc.outputs.tags }}"
+          
+          for TAG in "${TAGS[@]}"; do
+            echo "Deleting: $IMAGE_NAME:$TAG"
+            az acr repository delete \
+              --name $ACR_NAME \
+              --image "$IMAGE_NAME:$TAG" \
+              --yes
+          done
+          
+          echo "✓ RC image cleanup complete"
+
+      - name: Dry run summary
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true'
+        run: |
+          echo "=== DRY RUN - No images were deleted ==="
+          if [ -n "${{ steps.list-rc.outputs.tags }}" ]; then
+            echo "The following images would be deleted:"
+            IFS=',' read -ra TAGS <<< "${{ steps.list-rc.outputs.tags }}"
+            for TAG in "${TAGS[@]}"; do
+              echo "  - $IMAGE_NAME:$TAG"
+            done
+          else
+            echo "No RC images found to delete."
+          fi
