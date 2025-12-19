@@ -40,6 +40,57 @@ cd /home/ITER/mcintos/Code/imas-codex && source .venv/bin/activate && pytest
 - **GitHub CLI**: `gh` is available in PATH
 - **Authentication**: SSH
 
+#### Container Image Tagging
+
+This project uses a tag-based separation strategy for container images published to GitHub Container Registry (ghcr.io) and Azure Container Registry (ACR).
+
+**Registry Strategy**:
+
+| Registry | Purpose | Tags |
+|----------|---------|------|
+| ACR | Test server (RC builds) | `latest-{transport}`, `X.Y.Z-rcN-{transport}` |
+| ACR | Production server | `prod-{transport}`, `X.Y.Z-{transport}` |
+| GHCR | Public releases only | `X.Y.Z-{transport}`, `X.Y-{transport}`, `X-{transport}` |
+
+**Tag Types**:
+
+| Tag | Purpose | Registry |
+|-----|---------|----------|
+| `X.Y.Z-{transport}` | Immutable version tag | Both (releases only) |
+| `X.Y.Z-rcN-{transport}` | Release candidate for testing | ACR only |
+| `latest-{transport}` | Current RC for test server | ACR only |
+| `prod-{transport}` | Production-ready release | ACR only |
+
+**Workflow**:
+
+1. **Creating an RC**: Push a git tag with `-rcN` suffix to trigger ACR build:
+   ```bash
+   git tag v1.2.0-rc1
+   git push origin v1.2.0-rc1
+   # Builds and pushes to ACR with latest-{transport} tag
+   ```
+
+2. **Iterating on RCs**: Increment the RC number for each iteration:
+   - `v1.2.0-rc1` → `v1.2.0-rc2` → `v1.2.0-rc3`
+   - Each RC overwrites `latest-{transport}` on ACR for test server
+
+3. **Promoting to Release**: Push the final release tag:
+   ```bash
+   git tag v1.2.0
+   git push origin v1.2.0
+   # Builds and pushes to both GHCR and ACR
+   # ACR gets prod-{transport} tag, all RCs are cleaned up
+   ```
+
+**RC Cleanup**: All RC images for a version are automatically deleted from ACR when the final release is published.
+
+**Why RC Strategy**:
+- Each RC tag is unique and immutable, preventing cache-related issues
+- Clear progression toward release (`rc1` → `rc2` → final)
+- Test server always has `latest-{transport}` pointing to current RC
+- Production server uses `prod-{transport}` for stable deployments
+- GHCR only receives verified releases
+
 #### Commit Messages
 
 Use conventional commit format with a detailed body:
