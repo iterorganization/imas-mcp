@@ -60,9 +60,10 @@ When you have gathered enough information, signal completion with:
   "findings": {
     // Your structured findings here
   },
-  "knowledge": [
-    // New learnings about this facility (optional)
+  "learnings": [
+    // Discoveries about this facility (optional)
     // e.g., "ripgrep not available, use grep -r instead"
+    // These may be persisted as knowledge by the Commander
   ]
 }
 ```

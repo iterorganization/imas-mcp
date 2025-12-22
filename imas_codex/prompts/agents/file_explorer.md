@@ -94,7 +94,7 @@ When complete, structure your findings as:
       ".h5": 12
     }
   },
-  "knowledge": [
+  "learnings": [
     "Main analysis codes are in /common/tcv/codes",
     "MDSplus data stored in /common/tcv/data/shots"
   ]
