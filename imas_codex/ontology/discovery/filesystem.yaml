@@ -26,6 +26,7 @@ classes:
     description: >-
       Filesystem exploration results. Contains discovered paths,
       directory structure, and organization patterns.
+      Supports partial updates for incremental discovery.
     attributes:
       facility:
         description: Facility identifier (e.g., epfl, jet, iter)
@@ -39,7 +40,6 @@ classes:
         description: Root paths that were explored
         range: string
         multivalued: true
-        required: true
       tree:
         description: Root filesystem node (tree structure)
         range: FilesystemNode
@@ -91,6 +91,10 @@ classes:
       symlink_target:
         description: Target path for symlinks
         range: string
+      notes:
+        description: Observations about this node
+        range: string
+        multivalued: true
 
   ScanStatistics:
     description: Statistics about a filesystem exploration
@@ -128,6 +132,10 @@ classes:
       path_type:
         description: Type of path (data, code, docs, config)
         range: PathType
+      notes:
+        description: Additional observations about this path
+        range: string
+        multivalued: true
 
 enums:
   NodeType:

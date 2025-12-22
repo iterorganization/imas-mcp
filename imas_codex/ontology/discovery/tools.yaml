@@ -25,7 +25,7 @@ classes:
   ToolsArtifact:
     description: >-
       Collection of available CLI tools on the remote facility.
-      Organized by category for easy reference.
+      Supports partial updates - tools can be added incrementally.
     attributes:
       facility:
         description: Facility identifier (e.g., epfl, jet, iter)
@@ -40,7 +40,6 @@ classes:
         range: ToolInfo
         multivalued: true
         inlined_as_list: true
-        required: true
       notes:
         description: Freeform observations about tool availability
         range: string
@@ -66,6 +65,10 @@ classes:
       category:
         description: Tool category for organization
         range: ToolCategory
+      notes:
+        description: Observations about this tool
+        range: string
+        multivalued: true
 
 enums:
   ToolCategory:
