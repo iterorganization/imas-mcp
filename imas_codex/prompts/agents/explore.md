@@ -164,7 +164,32 @@ When you have gathered enough information, signal completion with:
 }
 ```
 
+## Efficiency Guidelines
+
+**Minimize iterations** by batching related operations:
+
+- Combine environment probes (tool availability, paths, Python version) in one script
+- Search multiple patterns or paths in a single `find` or `grep` invocation
+- Include fallback commands with `||` for resilience
+- Use structured output with `echo "=== Section ==="` for clarity
+
+**Example of efficient exploration:**
+
+```bash
+#!/bin/bash
+# Probe environment and find code in one go
+echo "=== Environment ==="
+python3 --version 2>/dev/null || echo "python3 not found"
+command -v rg && echo "ripgrep available" || echo "use grep -r"
+
+echo "=== Code search ==="
+find /target/path -type f \( -name "*.py" -o -name "*.m" \) 2>/dev/null | head -30
+
+echo "=== README files ==="
+find /target/path -iname "readme*" -type f 2>/dev/null | head -10
+```
+
 ## Begin
 
-Generate your first bash script to start exploring. Explain your reasoning briefly before the script.
+Generate your first bash script to start exploring. Explain your reasoning briefly before the script. **Batch multiple checks together to minimize round-trips.**
 

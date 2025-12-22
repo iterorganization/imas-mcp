@@ -4,9 +4,13 @@ Exploration Agent for natural language facility exploration.
 This agent runs a ReAct loop to explore remote facilities via SSH,
 using a frontier LLM for decision making and tracking novelty to
 know when exploration is complete.
+
+Supports progress streaming via callback for real-time visibility
+into the agent's train of thought.
 """
 
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +25,14 @@ from imas_codex.discovery.llm import (
     user_message,
 )
 from imas_codex.discovery.prompts import get_prompt_loader
+
+# Type alias for progress callback
+# Args: (progress, total, message)
+ProgressCallback = Callable[[float, float, str], Awaitable[None]]
+
+# Type alias for detailed log callback
+# Args: (level, title, content) where level is "thought", "script", "output", "error"
+LogCallback = Callable[[str, str, str], Awaitable[None]]
 
 
 @dataclass
@@ -157,6 +169,8 @@ class ExplorationAgent:
         task: str,
         mode: str = "auto",
         max_iterations: int = 10,
+        on_progress: ProgressCallback | None = None,
+        on_log: LogCallback | None = None,
     ) -> ExplorationResult:
         """
         Execute a natural language exploration task.
@@ -165,6 +179,14 @@ class ExplorationAgent:
             task: Natural language description of what to find/explore
             mode: Exploration mode - "auto", "code", "data", "env", "filesystem"
             max_iterations: Maximum ReAct loop iterations
+            on_progress: Optional async callback for progress updates.
+                Called with (current, total, message) during each ReAct step.
+            on_log: Optional async callback for detailed logs.
+                Called with (level, title, content) for full visibility into:
+                - "thought": Agent's reasoning
+                - "script": Bash script being executed
+                - "output": Script stdout/stderr
+                - "error": Errors encountered
 
         Returns:
             ExplorationResult with findings and learnings
@@ -177,6 +199,16 @@ class ExplorationAgent:
             task=task,
             mode=mode,
         )
+
+        async def emit_progress(current: float, total: float, message: str) -> None:
+            """Emit progress if callback is registered."""
+            if on_progress:
+                await on_progress(current, total, message)
+
+        async def emit_log(level: str, title: str, content: str) -> None:
+            """Emit detailed log if callback is registered."""
+            if on_log:
+                await on_log(level, title, content)
 
         # Initialize exploration state for novelty tracking
         state = ExplorationState()
@@ -210,21 +242,63 @@ class ExplorationAgent:
         with self.connection.session():
             for iteration in range(max_iterations):
                 result.iterations = iteration + 1
+                iter_label = f"[{iteration + 1}/{max_iterations}]"
 
-                # Get LLM response
+                # Emit progress: starting iteration
+                await emit_progress(
+                    iteration,
+                    max_iterations,
+                    f"{iter_label} Thinking...",
+                )
+
+                # Create streaming callback if logging is enabled
+                stream_callback = None
+                if on_log:
+                    # Capture iter_label value for this iteration
+                    current_iter_label = iter_label
+                    last_streamed_len = 0
+
+                    async def stream_callback(
+                        content: str, label: str = current_iter_label
+                    ) -> None:
+                        nonlocal last_streamed_len
+                        # Only emit new content (delta)
+                        if len(content) > last_streamed_len:
+                            # Emit periodically as content grows
+                            await emit_log(
+                                "stream",
+                                f"{label} Generating...",
+                                content,
+                            )
+                            last_streamed_len = len(content)
+
+                # Get LLM response with optional streaming
                 try:
-                    response = await self.llm.chat(messages)
+                    response = await self.llm.chat(messages, on_stream=stream_callback)
                 except Exception as e:
                     result.errors.append(f"LLM error: {e}")
+                    await emit_log("error", f"{iter_label} LLM Error", str(e))
                     break
+
+                # Emit the agent's full reasoning (final, after streaming)
+                if response.reasoning:
+                    await emit_log(
+                        "thought",
+                        f"{iter_label} Agent Reasoning",
+                        response.reasoning,
+                    )
 
                 # Check if done
                 if response.done:
                     result.success = True
                     result.findings = response.findings or {}
-                    # Extract learnings from findings if present
                     if "learnings" in result.findings:
                         result.learnings = result.findings.pop("learnings", [])
+                    await emit_progress(
+                        max_iterations,
+                        max_iterations,
+                        f"Complete ({iteration + 1} iterations)",
+                    )
                     break
 
                 # No script generated - prompt for action
@@ -236,7 +310,19 @@ class ExplorationAgent:
                             "or signal completion with a JSON block containing your findings."
                         )
                     )
+                    await emit_log(
+                        "error",
+                        f"{iter_label} No Script",
+                        "Agent did not generate a script, prompting for action.",
+                    )
                     continue
+
+                # Emit the full script being executed
+                await emit_log(
+                    "script",
+                    f"{iter_label} Executing Script",
+                    response.script,
+                )
 
                 # Execute the script
                 try:
@@ -251,6 +337,11 @@ class ExplorationAgent:
                             "Please generate a safer script that only reads data."
                         )
                     )
+                    await emit_log(
+                        "error",
+                        f"{iter_label} Script Rejected",
+                        str(e),
+                    )
                     continue
                 except Exception as e:
                     result.errors.append(f"Execution error: {e}")
@@ -261,11 +352,31 @@ class ExplorationAgent:
                             "Please try a different approach."
                         )
                     )
+                    await emit_log(
+                        "error",
+                        f"{iter_label} Execution Error",
+                        str(e),
+                    )
                     continue
 
                 # Assess novelty of the observation
                 novelty = state.assess_novelty(script_result.stdout)
                 result.novelty_scores.append(novelty)
+
+                # Emit the full output
+                output_summary = (
+                    f"Exit code: {script_result.return_code} | "
+                    f"Novelty: {novelty:.0%} | "
+                    f"Lines: {len(script_result.stdout.splitlines())}"
+                )
+                full_output = script_result.stdout
+                if script_result.stderr:
+                    full_output += f"\n\n--- stderr ---\n{script_result.stderr}"
+                await emit_log(
+                    "output",
+                    f"{iter_label} Output ({output_summary})",
+                    full_output,
+                )
 
                 # Build observation with progress update
                 observation = self._format_observation(

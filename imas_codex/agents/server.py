@@ -3,13 +3,16 @@ Agents MCP Server - Server for facility exploration tools and prompts.
 
 This server provides MCP tools that dispatch autonomous subagents for
 remote facility exploration, plus prompts for documentation.
+
+Supports streaming progress notifications for real-time visibility
+into the subagent's train of thought during exploration.
 """
 
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 
 from imas_codex.agents.exploration import ExplorationAgent
 from imas_codex.agents.knowledge import persist_learnings
@@ -47,6 +50,7 @@ class AgentsServer:
             task: str,
             mode: str = "auto",
             max_iterations: int = 10,
+            ctx: Context | None = None,
         ) -> dict[str, Any]:
             """
             Explore a remote facility with a natural language task.
@@ -57,6 +61,9 @@ class AgentsServer:
 
             The agent uses accumulated knowledge from previous explorations and
             persists new discoveries for future runs.
+
+            Progress notifications are streamed in real-time, showing the agent's
+            train of thought (reasoning, script execution, observations).
 
             Args:
                 facility: Facility identifier (e.g., 'epfl', 'ipp')
@@ -72,6 +79,7 @@ class AgentsServer:
                     - "env": Focus on system capabilities and tools
                     - "filesystem": Focus on directory structure mapping
                 max_iterations: Maximum ReAct loop iterations (default: 10)
+                ctx: MCP context for progress reporting (injected automatically)
 
             Returns:
                 Dictionary containing:
@@ -93,12 +101,50 @@ class AgentsServer:
                         "available_facilities": available,
                     }
 
-                # Dispatch the exploration agent
+                # Create progress callback if context available
+                async def on_progress(
+                    progress: float, total: float, message: str
+                ) -> None:
+                    """Report progress to the MCP client."""
+                    if ctx:
+                        await ctx.report_progress(progress, total, message)
+
+                async def on_log(level: str, title: str, content: str) -> None:
+                    """Stream detailed logs to the MCP client."""
+                    if ctx:
+                        # Format as markdown for readability
+                        if level == "stream":
+                            # Streaming tokens - show as-is with truncation
+                            # Only show last portion to avoid flooding
+                            if len(content) > 500:
+                                preview = "..." + content[-500:]
+                            else:
+                                preview = content
+                            formatted = f"**{title}**\n```\n{preview}\n```"
+                        elif level == "thought":
+                            # Agent reasoning - show full text
+                            formatted = f"**{title}**\n\n{content}"
+                        elif level == "script":
+                            # Script - show as code block
+                            formatted = f"**{title}**\n\n```bash\n{content}\n```"
+                        elif level == "output":
+                            # Output - show as code block (truncate if huge)
+                            if len(content) > 5000:
+                                content = content[:5000] + "\n... (truncated)"
+                            formatted = f"**{title}**\n\n```\n{content}\n```"
+                        else:
+                            # Error or other
+                            formatted = f"**{title}**: {content}"
+                        await ctx.info(formatted)
+
+                # Dispatch the exploration agent with progress callback
                 agent = ExplorationAgent(facility)
                 result = await agent.run(
                     task=task,
                     mode=mode,
                     max_iterations=max_iterations,
+                    on_progress=on_progress,
+                    on_log=on_log,
                 )
 
                 # Persist any learnings
