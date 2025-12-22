@@ -50,39 +50,53 @@ class AgentsServer:
             """
             Explore a remote fusion facility via SSH.
 
-            Returns minimal bootstrap with CLI entry point and file locations.
-            The LLM infers facility from user query and reads configs/schemas as needed.
+            Returns guidance pointer and facility list with SSH hosts.
             """
             facilities = list_facilities()
-            facility_list = ", ".join(sorted(facilities)) if facilities else "none"
 
-            return f"""# Facility Exploration
+            lines = [
+                "# Facility Exploration",
+                "",
+                "Read `imas_codex/config/README.md` for comprehensive guidance on:",
+                "- Batch command patterns (critical for performance)",
+                "- Category-specific exploration scripts",
+                "- Safety rules",
+                "- Capture syntax and examples",
+                "",
+                "## Available Facilities",
+                "",
+            ]
 
-## Entry Point
-```bash
-uv run imas-codex <facility> "command"
-uv run imas-codex --help
-```
+            if facilities:
+                for name in sorted(facilities):
+                    try:
+                        config = get_config(name)
+                        lines.append(f"### {name}")
+                        lines.append(f"**{config.description}**")
+                        lines.append("```bash")
+                        lines.append(f'ssh {config.ssh_host} "your commands here"')
+                        lines.append("```")
+                        lines.append("")
+                    except Exception:
+                        lines.append(f"### {name}")
+                        lines.append("(config error)")
+                        lines.append("")
+            else:
+                lines.append("No facilities configured.")
 
-## Discovery Artifacts
+            lines.extend(
+                [
+                    "## Artifact Schemas",
+                    "",
+                    "See `imas_codex/discovery/models/*.py` for Pydantic models:",
+                    "- `environment.py` - Python, OS, compilers, modules",
+                    "- `tools.py` - CLI tool availability",
+                    "- `filesystem.py` - Directory structure, paths",
+                    "- `data.py` - MDSplus, HDF5, NetCDF patterns",
+                ]
+            )
 
-### Ontology (LinkML source)
-`imas_codex/ontology/discovery/*.yaml`
-
-### Models (generated Pydantic)
-`imas_codex/discovery/models/*.py`
-
-Regenerate models from ontology:
-```bash
-uv run build-models --force
-```
-
-## Facility Configs
-`imas_codex/config/facilities/*.yaml`
-
-## Available Facilities
-{facility_list}
-"""
+            return "\n".join(lines)
 
         @self.mcp.prompt()
         def list_facilities_prompt() -> str:

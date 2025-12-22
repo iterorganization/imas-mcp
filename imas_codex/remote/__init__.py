@@ -1,36 +1,30 @@
 """
-Remote facility exploration via SSH.
+Remote facility artifact capture.
 
-This package provides LLM-driven exploration of remote fusion facilities.
-The Cursor chat LLM orchestrates exploration via terminal commands,
-with session logging and artifact capture.
+This package provides artifact capture for remote fusion facility exploration.
+The LLM explores facilities via direct SSH, then captures findings here.
 
 Usage:
-    uv run imas-codex epfl "python --version"
-    uv run imas-codex epfl --status
+    # Explore via SSH directly (faster than CLI)
+    ssh epfl "python --version; pip list | head"
+
+    # Capture findings
     uv run imas-codex epfl --capture environment << 'EOF'
     python:
       version: "3.9.21"
     EOF
+
+See imas_codex/config/README.md for comprehensive exploration guidance.
 """
 
-from imas_codex.remote.capture import capture_artifact
-from imas_codex.remote.executor import run_command, run_script
-from imas_codex.remote.session import (
-    CommandRecord,
-    discard_session,
-    get_session_log_path,
-    get_session_status,
-    read_session_log,
+from imas_codex.remote.capture import (
+    capture_artifact,
+    list_artifacts,
+    load_artifact,
 )
 
 __all__ = [
-    "CommandRecord",
     "capture_artifact",
-    "discard_session",
-    "get_session_log_path",
-    "get_session_status",
-    "read_session_log",
-    "run_command",
-    "run_script",
+    "list_artifacts",
+    "load_artifact",
 ]

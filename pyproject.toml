@@ -122,7 +122,6 @@ build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
 build-models = "scripts.build_models:build_models"
-probe-facility = "scripts.probe_facility:probe_facility"
 
 [tool.hatch.version]
 source = "vcs"
