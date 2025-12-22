@@ -63,7 +63,7 @@ The discovery process uses a **Command/Deploy** agent architecture where a Comma
 flowchart TB
     subgraph command [Command Layer - Cursor Chat]
         Human[Human] -->|prompts| Commander[Commander LLM]
-        Commander -->|findings + knowledge| Human
+        Commander -->|findings + learnings| Human
         Commander -->|reads| Instructions[Agent Instructions]
     end
     
@@ -116,8 +116,8 @@ sequenceDiagram
         R-->>A: Observation: stdout/stderr
     end
     
-    A-->>C: {findings, knowledge}
-    C->>H: "Found X. Learned: rg unavailable. Persist?"
+    A-->>C: {findings, learnings}
+    C->>H: "Found X. Learned: rg unavailable. Persist as knowledge?"
     H->>C: "Yes"
     C->>K: Update epfl.yaml knowledge section
 ```

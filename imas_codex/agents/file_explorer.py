@@ -26,7 +26,7 @@ class ExplorationResult:
 
     success: bool
     findings: dict[str, Any]
-    knowledge: list[str]  # Learnings to potentially persist
+    learnings: list[str]  # Discoveries to potentially persist as knowledge
     iterations: int
     scripts_executed: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -38,7 +38,7 @@ class ExplorationResult:
         return {
             "success": self.success,
             "findings": self.findings,
-            "knowledge": self.knowledge,
+            "learnings": self.learnings,
             "iterations": self.iterations,
             "scripts_executed": len(self.scripts_executed),
             "errors": self.errors,
@@ -102,7 +102,7 @@ class FileExplorerAgent:
         result = ExplorationResult(
             success=False,
             findings={},
-            knowledge=[],
+            learnings=[],
             iterations=0,
         )
 
@@ -140,9 +140,9 @@ class FileExplorerAgent:
                 if response.done:
                     result.success = True
                     result.findings = response.findings or {}
-                    # Extract knowledge from findings if present
-                    if "knowledge" in result.findings:
-                        result.knowledge = result.findings.pop("knowledge", [])
+                    # Extract learnings from findings if present
+                    if "learnings" in result.findings:
+                        result.learnings = result.findings.pop("learnings", [])
                     break
 
                 # No script generated - prompt for action
@@ -204,7 +204,7 @@ You operate in a ReAct loop:
 When done, output JSON with:
 - "done": true
 - "findings": structured filesystem data
-- "knowledge": list of learnings about this facility (e.g., "rg not available, use grep")
+- "learnings": list of discoveries about this facility (e.g., "rg not available, use grep")
 
 Safety rules:
 - All scripts must be READ-ONLY
@@ -246,7 +246,7 @@ Generate your first exploration script.
             "\nAnalyze these results. You may:\n"
             "- Generate another script to explore further\n"
             "- Refine your approach if there were errors\n"
-            '- Signal completion with `{"done": true, "findings": {...}, "knowledge": [...]}`'
+            '- Signal completion with `{"done": true, "findings": {...}, "learnings": [...]}`'
         )
 
         return "\n\n".join(parts)
