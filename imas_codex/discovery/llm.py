@@ -3,16 +3,24 @@ LLM client for the Discovery Engine agentic loop.
 
 Uses OpenRouter API to communicate with Claude Opus 4.5 for
 generating exploration scripts and analyzing results.
+
+Supports both blocking and streaming modes for real-time
+visibility into the agent's train of thought.
 """
 
 import json
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
+
+# Type alias for stream callback
+# Called with accumulated content as tokens arrive
+StreamCallback = Callable[[str], Awaitable[None]]
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -85,6 +93,7 @@ class AgentLLM:
         self,
         messages: list[Message],
         max_tokens: int | None = None,
+        on_stream: StreamCallback | None = None,
     ) -> AgentResponse:
         """
         Send messages to the LLM and get a parsed response.
@@ -92,27 +101,23 @@ class AgentLLM:
         Args:
             messages: List of chat messages
             max_tokens: Override default max_tokens
+            on_stream: Optional callback for streaming tokens.
+                Called periodically with accumulated content as it arrives.
+                Enables real-time visibility into the agent's thinking.
 
         Returns:
             AgentResponse with parsed script or findings
         """
+        # Use streaming if callback provided
+        if on_stream:
+            return await self._chat_streaming(messages, max_tokens, on_stream)
+
+        # Non-streaming path
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 self.OPENROUTER_API_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/iterorganization/imas-codex",
-                    "X-Title": "IMAS Codex Discovery Engine",
-                },
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": m.role, "content": m.content} for m in messages
-                    ],
-                    "max_tokens": max_tokens or self.max_tokens,
-                    "temperature": 0.1,  # Low temperature for deterministic scripts
-                },
+                headers=self._headers(),
+                json=self._request_body(messages, max_tokens, stream=False),
             )
 
             response.raise_for_status()
@@ -121,6 +126,80 @@ class AgentLLM:
         # Extract content from response
         content = data["choices"][0]["message"]["content"]
         return self.parse_response(content)
+
+    async def _chat_streaming(
+        self,
+        messages: list[Message],
+        max_tokens: int | None,
+        on_stream: StreamCallback,
+    ) -> AgentResponse:
+        """
+        Streaming version of chat that calls on_stream as tokens arrive.
+        """
+        content = ""
+        last_emit_len = 0
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream(
+                "POST",
+                self.OPENROUTER_API_URL,
+                headers=self._headers(),
+                json=self._request_body(messages, max_tokens, stream=True),
+            ) as response:
+                response.raise_for_status()
+
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+
+                    data_str = line[6:]  # Remove "data: " prefix
+                    if data_str == "[DONE]":
+                        break
+
+                    try:
+                        data = json.loads(data_str)
+                        delta = data.get("choices", [{}])[0].get("delta", {})
+                        chunk = delta.get("content", "")
+                        if chunk:
+                            content += chunk
+                            # Emit every ~100 chars or on newlines for responsiveness
+                            if len(content) - last_emit_len > 100 or "\n" in chunk:
+                                await on_stream(content)
+                                last_emit_len = len(content)
+                    except json.JSONDecodeError:
+                        continue
+
+        # Final emit with complete content
+        if len(content) > last_emit_len:
+            await on_stream(content)
+
+        return self.parse_response(content)
+
+    def _headers(self) -> dict[str, str]:
+        """Return standard headers for OpenRouter API."""
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/iterorganization/imas-codex",
+            "X-Title": "IMAS Codex Discovery Engine",
+        }
+
+    def _request_body(
+        self,
+        messages: list[Message],
+        max_tokens: int | None,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        """Build request body for OpenRouter API."""
+        body: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "max_tokens": max_tokens or self.max_tokens,
+            "temperature": 0.1,  # Low temperature for deterministic scripts
+        }
+        if stream:
+            body["stream"] = True
+        return body
 
     def chat_sync(
         self,
