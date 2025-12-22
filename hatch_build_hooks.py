@@ -27,6 +27,53 @@ class CustomBuildHook(BuildHookInterface):
         """Print trace message for debugging build hook execution."""
         print(f"[BUILD HOOK] {message}", flush=True)
 
+    def _check_discovery_models_exist(self) -> bool:
+        """Check if discovery models exist and are up to date."""
+        package_root = Path(__file__).parent
+        schema_dir = package_root / "imas_codex" / "ontology" / "discovery"
+        models_dir = package_root / "imas_codex" / "discovery" / "models"
+
+        # If schema directory doesn't exist yet, nothing to generate
+        if not schema_dir.exists():
+            return True
+
+        # Check if models directory exists
+        if not models_dir.exists():
+            return False
+
+        # Check if any schema file is newer than its corresponding model
+        for schema_file in schema_dir.glob("*.yaml"):
+            if schema_file.name.startswith("_"):
+                continue
+            model_file = models_dir / f"{schema_file.stem}.py"
+            if not model_file.exists():
+                return False
+            if schema_file.stat().st_mtime > model_file.stat().st_mtime:
+                return False
+
+        return True
+
+    def _generate_discovery_models(self, package_root: Path) -> None:
+        """Generate discovery Pydantic models and schema docs from LinkML."""
+        original_path = sys.path[:]
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
+
+        try:
+            from scripts.build_discovery import build_all
+
+            models, docs = build_all(force=False)
+            if models > 0 or docs > 0:
+                self._trace(
+                    f"Generated {models} discovery models and {docs} schema docs"
+                )
+            else:
+                self._trace("Discovery models up to date")
+        except Exception as e:
+            self._trace(f"Failed to generate discovery models: {e}")
+        finally:
+            sys.path[:] = original_path
+
     def _check_physics_domain_exists(self) -> bool:
         """Check if physics domain enum file exists and is up to date."""
         package_root = Path(__file__).parent
@@ -148,6 +195,14 @@ class CustomBuildHook(BuildHookInterface):
         if not physics_domain_exists:
             self._trace("Generating physics domain enum from LinkML schema...")
             self._generate_physics_domain(package_root)
+
+        # Check if discovery models need generation
+        discovery_models_exist = self._check_discovery_models_exist()
+        self._trace(f"discovery_models_exist={discovery_models_exist}")
+
+        if not discovery_models_exist:
+            self._trace("Generating discovery models from LinkML schemas...")
+            self._generate_discovery_models(package_root)
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)

@@ -335,18 +335,33 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
     @click.option("--status", is_flag=True, help="Show session history")
     @click.option(
         "--finish",
-        "finish_learnings",
+        "finish_arg",
         nargs=1,
         default=None,
         required=False,
-        help="Persist learnings and clear session. Use - to read from stdin.",
+        help=(
+            "Persist learnings. Optionally specify artifact type "
+            "(environment, tools, filesystem, data) or use - to read from stdin."
+        ),
     )
     @click.option("--discard", is_flag=True, help="Clear session without persisting")
+    @click.option(
+        "--artifacts", is_flag=True, help="List all artifacts for this facility"
+    )
+    @click.option(
+        "--artifact",
+        "artifact_view",
+        type=str,
+        default=None,
+        help="View a specific artifact (environment, tools, filesystem, data)",
+    )
     def facility_cmd(
         command: str | None,
         status: bool,
-        finish_learnings: str | None,
+        finish_arg: str | None,
         discard: bool,
+        artifacts: bool,
+        artifact_view: str | None,
     ) -> None:
         """Execute commands on a remote facility or manage session.
 
@@ -364,21 +379,65 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
             pip list | head -10
             EOF
 
-            # Persist learnings
-            imas-codex epfl --finish << 'EOF'
+            # Persist typed artifact (environment, tools, filesystem, data)
+            imas-codex epfl --finish environment - << 'EOF'
+            python:
+              version: "3.9.21"
+              path: "/usr/bin/python3"
+            os:
+              name: "RHEL"
+              version: "9.6"
+            EOF
+
+            # Auto-detect artifact type from keys
+            imas-codex epfl --finish - << 'EOF'
             python:
               version: "3.9.21"
             EOF
+
+            # View artifacts
+            imas-codex epfl --artifacts
+            imas-codex epfl --artifact environment
         """
+        import json
         import sys
 
         from imas_codex.remote import (
             discard_session,
-            finish_session,
             get_session_status,
             run_command,
             run_script,
         )
+        from imas_codex.remote.finish import (
+            finish_session,
+            list_artifacts,
+            load_artifact,
+        )
+
+        # Handle --artifacts
+        if artifacts:
+            manifest = list_artifacts(facility_name)
+            if manifest.get("artifacts"):
+                click.echo(f"Artifacts for {facility_name}:")
+                for name, info in manifest["artifacts"].items():
+                    status_str = info.get("status", "unknown")
+                    updated = info.get("updated", "")
+                    click.echo(f"  - {name}: {status_str} (updated: {updated})")
+            else:
+                click.echo(f"No artifacts found for {facility_name}")
+            return
+
+        # Handle --artifact TYPE
+        if artifact_view:
+            artifact_data = load_artifact(facility_name, artifact_view)
+            if artifact_data:
+                click.echo(json.dumps(artifact_data, indent=2))
+            else:
+                click.echo(
+                    f"No {artifact_view} artifact found for {facility_name}", err=True
+                )
+                raise SystemExit(1)
+            return
 
         # Handle --status
         if status:
@@ -394,22 +453,42 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 click.echo(f"No active session for {facility_name}")
             return
 
-        # Handle --finish (persist learnings)
-        if finish_learnings is not None:
-            learnings_input = finish_learnings
+        # Handle --finish [TYPE] [LEARNINGS]
+        if finish_arg is not None:
+            artifact_type: str | None = None
+            learnings_input: str | None = None
 
-            # Read from stdin if --finish - was given
-            if finish_learnings == "-":
+            # Check if finish_arg is an artifact type
+            valid_types = {"environment", "tools", "filesystem", "data"}
+            if finish_arg in valid_types:
+                # Artifact type specified, read learnings from stdin
+                artifact_type = finish_arg
+                if sys.stdin.isatty():
+                    click.echo(
+                        f"Error: --finish {artifact_type} requires input via stdin",
+                        err=True,
+                    )
+                    raise SystemExit(1)
+                learnings_input = sys.stdin.read()
+            elif finish_arg == "-":
+                # Read from stdin, auto-detect type
                 if sys.stdin.isatty():
                     click.echo("Error: --finish - requires input via stdin", err=True)
                     raise SystemExit(1)
                 learnings_input = sys.stdin.read()
+            else:
+                # Inline YAML/JSON
+                learnings_input = finish_arg
 
             if not learnings_input or not learnings_input.strip():
                 click.echo("Error: --finish requires learnings", err=True)
                 raise SystemExit(1)
 
-            success, message = finish_session(facility_name, learnings_input)
+            success, message = finish_session(
+                facility_name,
+                artifact_type=artifact_type,
+                learnings=learnings_input,
+            )
             if success:
                 click.echo(message)
             else:

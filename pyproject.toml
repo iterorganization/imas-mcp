@@ -122,6 +122,7 @@ build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
 build-discovery-models = "scripts.build_discovery_models:build_discovery_models"
+build-discovery = "scripts.build_discovery:build_discovery"
 probe-facility = "scripts.probe_facility:probe_facility"
 
 [tool.hatch.version]

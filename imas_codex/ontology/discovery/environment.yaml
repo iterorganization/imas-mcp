@@ -1,0 +1,121 @@
+# Discovery Engine - Environment Schema
+# Captures Python, OS, compilers, and module system information.
+#
+# Generated models: discovery/models/environment.py
+# Generated docs: prompts/agents/schemas/environment_schema.md
+
+id: https://iter.org/imas-codex/discovery/environment
+name: discovery_environment
+title: Environment Discovery Schema
+description: >-
+  Schema for environment exploration artifacts. Captures Python installation,
+  operating system, compilers, and environment module system information.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  discovery: https://iter.org/imas-codex/discovery/
+
+default_prefix: discovery
+default_range: string
+
+imports:
+  - linkml:types
+
+classes:
+  EnvironmentArtifact:
+    description: >-
+      Complete environment snapshot from facility exploration.
+      Includes Python, OS, compilers, and module system details.
+    attributes:
+      facility:
+        description: Facility identifier (e.g., epfl, jet, iter)
+        range: string
+        required: true
+      explored_at:
+        description: Timestamp when this artifact was created
+        range: datetime
+        required: true
+      python:
+        description: Python installation details
+        range: PythonInfo
+        inlined: true
+        required: true
+      os:
+        description: Operating system information
+        range: OSInfo
+        inlined: true
+        required: true
+      compilers:
+        description: Available compilers on the system
+        range: CompilerInfo
+        multivalued: true
+        inlined_as_list: true
+      module_system:
+        description: Environment module system (Lmod, Environment Modules)
+        range: ModuleSystemInfo
+        inlined: true
+      notes:
+        description: Freeform observations about the environment
+        range: string
+        multivalued: true
+
+  PythonInfo:
+    description: Python installation details
+    attributes:
+      version:
+        description: Python version string (e.g., 3.9.21)
+        range: string
+        required: true
+      path:
+        description: Absolute path to Python binary
+        range: string
+        required: true
+      packages:
+        description: Installed Python packages (format name==version)
+        range: string
+        multivalued: true
+
+  OSInfo:
+    description: Operating system information
+    attributes:
+      name:
+        description: OS distribution name (e.g., RHEL, Ubuntu, CentOS)
+        range: string
+        required: true
+      version:
+        description: OS version (e.g., 9.6, 22.04)
+        range: string
+        required: true
+      kernel:
+        description: Kernel version string
+        range: string
+
+  CompilerInfo:
+    description: Compiler installation details
+    attributes:
+      name:
+        description: Compiler name (e.g., gcc, gfortran, icx, ifx)
+        range: string
+        required: true
+      version:
+        description: Compiler version string
+        range: string
+      path:
+        description: Absolute path to compiler binary
+        range: string
+
+  ModuleSystemInfo:
+    description: Environment module system information
+    attributes:
+      available:
+        description: Whether a module system is available
+        range: boolean
+        required: true
+      type:
+        description: Module system type (lmod, environment-modules, none)
+        range: string
+      loaded_modules:
+        description: Currently loaded modules
+        range: string
+        multivalued: true
+
