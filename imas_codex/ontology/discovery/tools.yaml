@@ -1,0 +1,100 @@
+# Discovery Engine - Tools Schema
+# Captures available CLI tools on the remote system.
+#
+# Generated models: discovery/models/tools.py
+# Generated docs: prompts/agents/schemas/tools_schema.md
+
+id: https://iter.org/imas-codex/discovery/tools
+name: discovery_tools
+title: Tools Discovery Schema
+description: >-
+  Schema for tools exploration artifacts. Captures availability and
+  versions of command-line tools on the remote facility.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  discovery: https://iter.org/imas-codex/discovery/
+
+default_prefix: discovery
+default_range: string
+
+imports:
+  - linkml:types
+
+classes:
+  ToolsArtifact:
+    description: >-
+      Collection of available CLI tools on the remote facility.
+      Organized by category for easy reference.
+    attributes:
+      facility:
+        description: Facility identifier (e.g., epfl, jet, iter)
+        range: string
+        required: true
+      explored_at:
+        description: Timestamp when this artifact was created
+        range: datetime
+        required: true
+      tools:
+        description: List of discovered tools
+        range: ToolInfo
+        multivalued: true
+        inlined_as_list: true
+        required: true
+      notes:
+        description: Freeform observations about tool availability
+        range: string
+        multivalued: true
+
+  ToolInfo:
+    description: Information about a single CLI tool
+    attributes:
+      name:
+        description: Tool name (e.g., rg, grep, h5dump)
+        range: string
+        required: true
+      available:
+        description: Whether the tool is available and executable
+        range: boolean
+        required: true
+      path:
+        description: Absolute path to the tool binary (if available)
+        range: string
+      version:
+        description: Tool version string (if available)
+        range: string
+      category:
+        description: Tool category for organization
+        range: ToolCategory
+
+enums:
+  ToolCategory:
+    description: Categories of CLI tools
+    permissible_values:
+      search:
+        description: Search tools (rg, ag, grep, find)
+      text:
+        description: Text processing (awk, sed, jq)
+      file:
+        description: File utilities (tree, file, stat, ls)
+      editor:
+        description: Text editors (vim, nano, emacs)
+      vcs:
+        description: Version control (git, svn, hg)
+      network:
+        description: Network tools (wget, curl, rsync, ssh)
+      build:
+        description: Build tools (make, cmake, ninja)
+      compiler:
+        description: Compilers (gcc, gfortran, icc, icx)
+      mpi:
+        description: MPI tools (mpirun, mpicc, srun)
+      scheduler:
+        description: Job schedulers (sbatch, qsub, bsub)
+      data:
+        description: Data tools (h5dump, ncdump, mdstcl)
+      python:
+        description: Python tools (pip, conda, jupyter)
+      other:
+        description: Other/uncategorized tools
+

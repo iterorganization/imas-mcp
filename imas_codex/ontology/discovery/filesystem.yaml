@@ -1,0 +1,160 @@
+# Discovery Engine - Filesystem Schema
+# Captures directory structure and file organization patterns.
+#
+# Generated models: discovery/models/filesystem.py
+# Generated docs: prompts/agents/schemas/filesystem_schema.md
+
+id: https://iter.org/imas-codex/discovery/filesystem
+name: discovery_filesystem
+title: Filesystem Discovery Schema
+description: >-
+  Schema for filesystem exploration artifacts. Captures directory
+  structure, file organization, and important paths.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  discovery: https://iter.org/imas-codex/discovery/
+
+default_prefix: discovery
+default_range: string
+
+imports:
+  - linkml:types
+
+classes:
+  FilesystemArtifact:
+    description: >-
+      Filesystem exploration results. Contains discovered paths,
+      directory structure, and organization patterns.
+    attributes:
+      facility:
+        description: Facility identifier (e.g., epfl, jet, iter)
+        range: string
+        required: true
+      explored_at:
+        description: Timestamp when this artifact was created
+        range: datetime
+        required: true
+      root_paths:
+        description: Root paths that were explored
+        range: string
+        multivalued: true
+        required: true
+      tree:
+        description: Root filesystem node (tree structure)
+        range: FilesystemNode
+        inlined: true
+      statistics:
+        description: Exploration statistics
+        range: ScanStatistics
+        inlined: true
+      important_paths:
+        description: Notable paths discovered during exploration
+        range: ImportantPath
+        multivalued: true
+        inlined_as_list: true
+      notes:
+        description: Freeform observations about filesystem organization
+        range: string
+        multivalued: true
+
+  FilesystemNode:
+    description: >-
+      A node in the filesystem tree. Can represent files, directories,
+      or symlinks. Forms a recursive tree structure.
+    attributes:
+      path:
+        description: Absolute path to this node
+        range: string
+        required: true
+      name:
+        description: Basename of the path
+        range: string
+      node_type:
+        description: Type of filesystem node
+        range: NodeType
+        required: true
+      size:
+        description: Size in bytes (for files)
+        range: integer
+      modified:
+        description: Last modification timestamp
+        range: datetime
+      permissions:
+        description: Unix permission string (e.g., rwxr-xr-x)
+        range: string
+      children:
+        description: Child nodes (for directories)
+        range: FilesystemNode
+        multivalued: true
+        inlined_as_list: true
+      symlink_target:
+        description: Target path for symlinks
+        range: string
+
+  ScanStatistics:
+    description: Statistics about a filesystem exploration
+    attributes:
+      total_files:
+        description: Total number of files discovered
+        range: integer
+      total_directories:
+        description: Total number of directories discovered
+        range: integer
+      total_symlinks:
+        description: Total number of symlinks discovered
+        range: integer
+      total_size_bytes:
+        description: Total size of all files in bytes
+        range: integer
+      scan_duration_seconds:
+        description: How long the exploration took
+        range: float
+      excluded_paths:
+        description: Number of paths excluded by filters
+        range: integer
+
+  ImportantPath:
+    description: A notable path with description of its purpose
+    attributes:
+      path:
+        description: Absolute path
+        range: string
+        required: true
+      purpose:
+        description: What this path contains or is used for
+        range: string
+        required: true
+      path_type:
+        description: Type of path (data, code, docs, config)
+        range: PathType
+
+enums:
+  NodeType:
+    description: Types of filesystem nodes
+    permissible_values:
+      file:
+        description: Regular file
+      directory:
+        description: Directory
+      symlink:
+        description: Symbolic link
+      other:
+        description: Other node types (sockets, devices, etc.)
+
+  PathType:
+    description: Categories of important paths
+    permissible_values:
+      data:
+        description: Data storage paths
+      code:
+        description: Source code and scripts
+      docs:
+        description: Documentation and wikis
+      config:
+        description: Configuration files
+      output:
+        description: Output and results
+      scratch:
+        description: Temporary or scratch space
+
