@@ -91,3 +91,4 @@ knowledge:
   environment:
     intel_oneapi: 2025.2 (auto-loaded via /etc/profile.d/intel.sh)
     mdsplus: auto-loaded via /etc/profile.d/mdsplus.sh
+  test: value

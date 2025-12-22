@@ -1,195 +1,157 @@
 ---
 name: explore
-description: General-purpose exploration agent for natural language tasks
-model: anthropic/claude-opus-4.5
-max_iterations: 10
-tags: [agent, exploration, natural-language]
+description: Cursor chat-driven facility exploration via CLI
+tags: [mcp, exploration, cursor, cli]
 ---
 
-# Exploration Task
+# Exploring {{ description }}
 
-**Mission**: {{ task }}
-**Facility**: {{ facility }} ({{ description }})
-**Mode**: {{ mode }}
+You are exploring the **{{ facility }}** facility via SSH. Use terminal commands to discover the environment and persist what you learn.
 
-## Facility Context
+## Commands
 
-You are exploring **{{ facility }}** via SSH (host: `{{ ssh_host }}`).
+Execute commands on the remote facility:
+```bash
+uv run imas-codex {{ facility }} "your command here"
+```
+
+### Batch Commands (Preferred)
+
+**Minimize round-trips by combining commands.** Use semicolons, `&&`, `||`, and pipes:
+
+```bash
+# Good: batch multiple checks in one call
+uv run imas-codex {{ facility }} "which python3; python3 --version; pip list 2>/dev/null | head -20"
+
+# Good: check tool availability with fallbacks
+uv run imas-codex {{ facility }} "which rg || which grep; module avail 2>&1 | head -30"
+
+# Good: environment and package info together
+uv run imas-codex {{ facility }} "cat /etc/os-release; rpm -qa | grep -E 'python|numpy' | head -20"
+```
+
+### Multi-line Scripts (For Complex Exploration)
+
+For comprehensive discovery, use a heredoc:
+
+```bash
+uv run imas-codex {{ facility }} << 'EOF'
+echo "=== System ==="
+cat /etc/os-release | head -5
+uname -a
+
+echo "=== Python ==="
+which python3 && python3 --version
+pip list 2>/dev/null | head -15
+
+echo "=== Environment Modules ==="
+module avail 2>&1 | head -30 || echo "modules not available"
+
+echo "=== Package Query ==="
+rpm -qa 2>/dev/null | grep -E 'python|hdf5|netcdf' | sort | head -20
+EOF
+```
+
+**Avoid:** Making separate calls for each simple check.
+
+### Session Management
+
+Check what you've run in this session:
+```bash
+uv run imas-codex {{ facility }} --status
+```
+
+When done, persist your learnings:
+```bash
+uv run imas-codex {{ facility }} --finish - << 'EOF'
+python:
+  version: "3.9.21"
+  path: "/usr/bin/python3"
+tools:
+  rg: unavailable
+  grep: available
+paths:
+  data_dir: /path/to/data
+notes:
+  - "Any freeform observations"
+EOF
+```
+
+Or inline for simple updates:
+```bash
+uv run imas-codex {{ facility }} --finish 'tools: {rg: unavailable}'
+```
+
+Or discard the session without saving:
+```bash
+uv run imas-codex {{ facility }} --discard
+```
+
+## Current Knowledge
+
+{% if knowledge %}
+```yaml
+{{ knowledge | yaml }}
+```
+{% else %}
+None yet - you're the first to explore!
+{% endif %}
+
+## Known Paths
+
+{% if paths %}
+```yaml
+{{ paths | yaml }}
+```
+{% else %}
+No paths configured.
+{% endif %}
+
+## Known Systems
+
+{% if known_systems %}
+```yaml
+{{ known_systems | yaml }}
+```
+{% else %}
+No systems configured.
+{% endif %}
+
+## Exploration Hints
 
 {% if exploration_hints %}
-### Facility Hints
 {% for hint in exploration_hints %}
 - {{ hint }}
 {% endfor %}
-{% endif %}
-
-{% if knowledge %}
-### Accumulated Knowledge
-
-Previous explorations have discovered:
-{% if knowledge.tools %}
-**Tools**:
-{% for item in knowledge.tools %}
-- {{ item }}
-{% endfor %}
-{% endif %}
-{% if knowledge.paths %}
-**Paths**:
-{% for item in knowledge.paths %}
-- {{ item }}
-{% endfor %}
-{% endif %}
-{% if knowledge.python %}
-**Python**:
-{% for item in knowledge.python %}
-- {{ item }}
-{% endfor %}
-{% endif %}
-{% if knowledge.data %}
-**Data**:
-{% for item in knowledge.data %}
-- {{ item }}
-{% endfor %}
-{% endif %}
-{% endif %}
-
-{% if paths %}
-### Known Paths
-
-{% if paths.code %}
-**Code locations**:
-{% for p in paths.code %}
-- `{{ p }}`
-{% endfor %}
-{% endif %}
-
-{% if paths.data %}
-**Data locations**:
-{% for p in paths.data %}
-- `{{ p }}`
-{% endfor %}
-{% endif %}
-
-{% if paths.docs %}
-**Documentation**:
-{% for p in paths.docs %}
-- `{{ p }}`
-{% endfor %}
-{% endif %}
-{% endif %}
-
-## Exploration Progress
-
-- **Iteration**: {{ iteration }} / {{ max_iterations }}
-- **Novelty Score**: {{ novelty_score }}
-
-{% if novelty_score < 0.3 %}
-**⚠️ Diminishing Returns**: You've had {{ iterations_without_novelty }} iterations without discovering new paths or patterns. Consider wrapping up unless you have a specific lead to follow.
-{% endif %}
-
-{% if explored_paths %}
-### Already Explored
-
-These paths have been examined (don't re-explore unless necessary):
-{% for path in explored_paths %}
-- `{{ path }}`
-{% endfor %}
-{% endif %}
-
-## Mode-Specific Guidance
-
-{% if mode == "code" %}
-### Code Search Mode
-
-Focus on finding source code:
-- Look for `.py`, `.m`, `.f90`, `.f`, `.c`, `.cpp` files
-- Identify Python packages (look for `__init__.py`, `setup.py`, `pyproject.toml`)
-- Find imports and dependencies
-- Look for documentation in docstrings, README files
-- Check for version control (`.git` directories)
-
-{% elif mode == "data" %}
-### Data Inspection Mode
-
-Focus on understanding data organization:
-- Look for HDF5 (`.h5`, `.hdf5`), NetCDF (`.nc`, `.cdf`), MDSplus trees
-- Sample file headers with `h5ls`, `h5dump -H`, `ncdump -h`
-- Understand directory structure (by shot number, date, diagnostic?)
-- Find data format documentation
-
-{% elif mode == "env" %}
-### Environment Probe Mode
-
-Focus on system capabilities:
-- Check available Python version(s): `python3 --version`, `which python3`
-- Check for module system: `module avail` (if available)
-- Probe for common tools: `rg`, `tree`, `h5dump`, etc.
-- Check shell environment: `echo $PATH`, `env | grep -i imas`
-
-{% elif mode == "filesystem" %}
-### Filesystem Mapping Mode
-
-Focus on directory structure:
-- Use `tree` or `find` to map directories
-- Identify patterns in naming conventions
-- Note permissions and ownership
-- Find README files and documentation
-
 {% else %}
-### Auto Mode
-
-Use your judgment based on the task. Consider:
-- What information would best answer the mission?
-- What's the most efficient exploration strategy?
-- Are there clues in the known paths or hints?
-
+No hints available.
 {% endif %}
 
-## Output Format
+## Exploration Guidelines
 
-When you have gathered enough information, signal completion with:
+1. **Start with environment basics**: Python version, available tools (rg, grep, tree, find, h5dump, ncdump)
+2. **Check environment modules**: `module avail 2>&1 | head -50` (if available)
+3. **Explore known paths**: Check what's in the data/code directories listed above
+4. **Look for documentation**: README files, wikis, important scripts
+5. **Test data access**: Try listing MDSplus trees, HDF5 files, etc.
+6. **Note anything useful**: Paths, tool availability, data organization patterns
 
-```json
-{
-  "done": true,
-  "findings": {
-    // Structured findings relevant to the task
-    // Include paths, descriptions, patterns discovered
-  },
-  "learnings": [
-    // New discoveries about this facility that should be remembered
-    // e.g., "ripgrep (rg) not available; use grep -r instead"
-    // e.g., "/common/tcv/codes requires group membership to access"
-  ]
-}
-```
+## Learning Categories
 
-## Efficiency Guidelines
+Use these categories in your `--finish` YAML:
 
-**Minimize iterations** by batching related operations:
+- `python`: version, path, available packages
+- `tools`: available/unavailable CLI tools (rg, grep, tree, h5dump, etc.)
+- `paths`: important directories discovered
+- `data`: data organization patterns, file formats
+- `mdsplus`: tree names, server info, signal structure
+- `environment`: module system, conda, loaded modules
+- `notes`: freeform observations (as a list)
 
-- Combine environment probes (tool availability, paths, Python version) in one script
-- Search multiple patterns or paths in a single `find` or `grep` invocation
-- Include fallback commands with `||` for resilience
-- Use structured output with `echo "=== Section ==="` for clarity
+## Allowed Operations
 
-**Example of efficient exploration:**
-
-```bash
-#!/bin/bash
-# Probe environment and find code in one go
-echo "=== Environment ==="
-python3 --version 2>/dev/null || echo "python3 not found"
-command -v rg && echo "ripgrep available" || echo "use grep -r"
-
-echo "=== Code search ==="
-find /target/path -type f \( -name "*.py" -o -name "*.m" \) 2>/dev/null | head -30
-
-echo "=== README files ==="
-find /target/path -iname "readme*" -type f 2>/dev/null | head -10
-```
-
-## Begin
-
-Generate your first bash script to start exploring. Explain your reasoning briefly before the script. **Batch multiple checks together to minimize round-trips.**
-
+- Command chaining: `;`, `&&`, `||`, `|`
+- Environment modules: `module avail/list/load/show/spider`
+- Package queries: `rpm -qa`, `dnf list`, `pip list`
+- System info: `cat /etc/os-release`, `uname -a`
+- Destructive commands (rm, mv, chmod, sudo) are blocked
