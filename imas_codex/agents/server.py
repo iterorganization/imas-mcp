@@ -1,11 +1,12 @@
 """
 Agents MCP Server - Prompts for LLM-driven facility exploration.
 
-This server provides MCP prompts that inject context and instructions
-for exploring remote fusion facilities. The Cursor chat LLM orchestrates
-exploration via terminal commands.
+This server provides MCP prompts that inject context and pointers
+for exploring remote fusion facilities. The LLM orchestrates
+exploration via terminal commands and reads source files for details.
 
-No subagents. No tools. Just prompt-driven LLM orchestration.
+Minimal prompt approach: provide entry points and file locations,
+let the agent discover details via --help and read_file.
 """
 
 import logging
@@ -15,7 +16,6 @@ from typing import Literal
 from fastmcp import FastMCP
 
 from imas_codex.discovery import get_config, list_facilities
-from imas_codex.discovery.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +25,13 @@ class AgentsServer:
     """
     MCP server for remote facility exploration prompts.
 
-    Provides prompts that teach the Cursor chat LLM how to explore
+    Provides minimal prompts that teach the LLM how to explore
     remote facilities via terminal commands. The LLM:
 
     1. Runs commands via `uv run imas-codex <facility> "cmd"`
-    2. Observes outputs
-    3. Decides what's worth learning
-    4. Persists learnings via `--finish`
+    2. Uses --help to discover CLI options
+    3. Reads Pydantic models for artifact schemas
+    4. Captures learnings via `--capture`
     """
 
     mcp: FastMCP = field(init=False, repr=False)
@@ -46,57 +46,43 @@ class AgentsServer:
         """Register exploration prompts."""
 
         @self.mcp.prompt()
-        def explore(facility: str) -> str:
+        def explore() -> str:
             """
             Explore a remote fusion facility via SSH.
 
-            Injects facility context and instructions for LLM-driven exploration.
-            The LLM runs terminal commands to discover the environment and
-            persists learnings when done.
-
-            Args:
-                facility: Facility identifier (e.g., 'epfl', 'ipp')
+            Returns minimal bootstrap with CLI entry point and file locations.
+            The LLM infers facility from user query and reads configs/schemas as needed.
             """
-            # Validate facility exists
-            available = list_facilities()
-            if facility not in available:
-                return f"""# Error: Unknown Facility
+            facilities = list_facilities()
+            facility_list = ", ".join(sorted(facilities)) if facilities else "none"
 
-Facility '{facility}' not found.
+            return f"""# Facility Exploration
 
-Available facilities: {", ".join(available)}
+## Entry Point
+```bash
+uv run imas-codex <facility> "command"
+uv run imas-codex --help
+```
 
-Use one of the available facilities, e.g., `/explore epfl`
+## Discovery Artifacts
+
+### Ontology (LinkML source)
+`imas_codex/ontology/discovery/*.yaml`
+
+### Models (generated Pydantic)
+`imas_codex/discovery/models/*.py`
+
+Regenerate models from ontology:
+```bash
+uv run build-models --force
+```
+
+## Facility Configs
+`imas_codex/config/facilities/*.yaml`
+
+## Available Facilities
+{facility_list}
 """
-
-            config = get_config(facility)
-
-            # Load knowledge from facility config
-            knowledge = None
-            try:
-                from imas_codex.remote.finish import load_facility_yaml
-
-                raw_config = load_facility_yaml(facility)
-                knowledge = raw_config.get("knowledge", {})
-                if not knowledge or not any(v for v in knowledge.values() if v):
-                    knowledge = None
-            except Exception:
-                pass
-
-            # Build context for template
-            context = {
-                "facility": facility,
-                "description": config.description,
-                "ssh_host": config.ssh_host,
-                "knowledge": knowledge,
-                "paths": config.paths.model_dump(),
-                "known_systems": config.known_systems.model_dump(),
-                "exploration_hints": config.exploration_hints,
-            }
-
-            # Load and render the explore template
-            prompt = load_prompt("agents/explore")
-            return prompt.render(**context)
 
         @self.mcp.prompt()
         def list_facilities_prompt() -> str:
@@ -116,7 +102,6 @@ Use one of the available facilities, e.g., `/explore epfl`
                     lines.append(f"## {name}")
                     lines.append(f"**{config.description}**\n")
                     lines.append(f"SSH Host: `{config.ssh_host}`\n")
-                    lines.append(f"To explore: `/explore {name}`\n")
                 except Exception as e:
                     lines.append(f"## {name}")
                     lines.append(f"Error loading config: {e}\n")

@@ -334,14 +334,14 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
     @click.argument("command", required=False)
     @click.option("--status", is_flag=True, help="Show session history")
     @click.option(
-        "--finish",
-        "finish_arg",
+        "--capture",
+        "capture_arg",
         nargs=1,
         default=None,
         required=False,
         help=(
-            "Persist learnings. Optionally specify artifact type "
-            "(environment, tools, filesystem, data) or use - to read from stdin."
+            "Capture learnings to artifact. Specify artifact type "
+            "(environment, tools, filesystem, data). Session remains open."
         ),
     )
     @click.option("--discard", is_flag=True, help="Clear session without persisting")
@@ -358,7 +358,7 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
     def facility_cmd(
         command: str | None,
         status: bool,
-        finish_arg: str | None,
+        capture_arg: str | None,
         discard: bool,
         artifacts: bool,
         artifact_view: str | None,
@@ -379,8 +379,8 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
             pip list | head -10
             EOF
 
-            # Persist typed artifact (environment, tools, filesystem, data)
-            imas-codex epfl --finish environment - << 'EOF'
+            # Capture typed artifact (environment, tools, filesystem, data)
+            imas-codex epfl --capture environment << 'EOF'
             python:
               version: "3.9.21"
               path: "/usr/bin/python3"
@@ -389,10 +389,11 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
               version: "9.6"
             EOF
 
-            # Auto-detect artifact type from keys
-            imas-codex epfl --finish - << 'EOF'
-            python:
-              version: "3.9.21"
+            # Capture tools artifact
+            imas-codex epfl --capture tools << 'EOF'
+            cli_tools:
+              rg: unavailable
+              grep: available
             EOF
 
             # View artifacts
@@ -408,8 +409,8 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
             run_command,
             run_script,
         )
-        from imas_codex.remote.finish import (
-            finish_session,
+        from imas_codex.remote.capture import (
+            capture_artifact,
             list_artifacts,
             load_artifact,
         )
@@ -453,38 +454,36 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 click.echo(f"No active session for {facility_name}")
             return
 
-        # Handle --finish [TYPE] [LEARNINGS]
-        if finish_arg is not None:
+        # Handle --capture TYPE
+        if capture_arg is not None:
             artifact_type: str | None = None
             learnings_input: str | None = None
 
-            # Check if finish_arg is an artifact type
+            # Check if capture_arg is an artifact type
             valid_types = {"environment", "tools", "filesystem", "data"}
-            if finish_arg in valid_types:
+            if capture_arg in valid_types:
                 # Artifact type specified, read learnings from stdin
-                artifact_type = finish_arg
+                artifact_type = capture_arg
                 if sys.stdin.isatty():
                     click.echo(
-                        f"Error: --finish {artifact_type} requires input via stdin",
+                        f"Error: --capture {artifact_type} requires input via stdin",
                         err=True,
                     )
                     raise SystemExit(1)
                 learnings_input = sys.stdin.read()
-            elif finish_arg == "-":
-                # Read from stdin, auto-detect type
-                if sys.stdin.isatty():
-                    click.echo("Error: --finish - requires input via stdin", err=True)
-                    raise SystemExit(1)
-                learnings_input = sys.stdin.read()
             else:
-                # Inline YAML/JSON
-                learnings_input = finish_arg
-
-            if not learnings_input or not learnings_input.strip():
-                click.echo("Error: --finish requires learnings", err=True)
+                # Must be artifact type
+                click.echo(
+                    f"Error: --capture requires artifact type: {', '.join(sorted(valid_types))}",
+                    err=True,
+                )
                 raise SystemExit(1)
 
-            success, message = finish_session(
+            if not learnings_input or not learnings_input.strip():
+                click.echo("Error: --capture requires learnings via stdin", err=True)
+                raise SystemExit(1)
+
+            success, message = capture_artifact(
                 facility_name,
                 artifact_type=artifact_type,
                 learnings=learnings_input,

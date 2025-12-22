@@ -1,11 +1,9 @@
 """
-Learning persistence for facility exploration.
+Artifact capture for facility exploration.
 
-Supports two modes:
-1. Legacy mode: Merges untyped YAML into facility config knowledge section
-2. Artifact mode: Validates against Pydantic models and stores typed JSON artifacts
-
-Artifact mode is triggered when an artifact_type is specified.
+Validates learnings against Pydantic models and stores typed JSON artifacts.
+Supports partial updates - new learnings are merged into existing artifacts.
+Session remains open after capture to allow multiple writes.
 """
 
 import json
@@ -17,11 +15,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from imas_codex.discovery.config import get_facilities_dir
-from imas_codex.remote.session import discard_session, get_session_status
 
-
-# Lazy import of artifact models to avoid circular imports
 def _get_artifact_models() -> dict[str, type[BaseModel]]:
     """Get mapping of artifact type names to Pydantic model classes."""
     from imas_codex.discovery.models import (
@@ -39,29 +33,6 @@ def _get_artifact_models() -> dict[str, type[BaseModel]]:
     }
 
 
-# Keys that indicate which artifact type the data belongs to
-ARTIFACT_KEY_HINTS = {
-    "python": "environment",
-    "os": "environment",
-    "compilers": "environment",
-    "module_system": "environment",
-    "tools": "tools",
-    "root_paths": "filesystem",
-    "tree": "filesystem",
-    "important_paths": "filesystem",
-    "mdsplus": "data",
-    "hdf5": "data",
-    "netcdf": "data",
-    "data_formats": "data",
-    "shot_ranges": "data",
-}
-
-
-def get_facility_config_path(facility: str) -> Path:
-    """Get the path to a facility's config file."""
-    return get_facilities_dir() / f"{facility}.yaml"
-
-
 def get_artifacts_dir(facility: str) -> Path:
     """Get the artifacts directory for a facility."""
     cache_dir = Path.home() / ".cache" / "imas-codex" / facility / "artifacts"
@@ -69,31 +40,11 @@ def get_artifacts_dir(facility: str) -> Path:
     return cache_dir
 
 
-def load_facility_yaml(facility: str) -> dict[str, Any]:
-    """Load raw facility YAML config."""
-    config_path = get_facility_config_path(facility)
-    if not config_path.exists():
-        raise ValueError(f"Facility config not found: {config_path}")
-
-    with open(config_path) as f:
-        return yaml.safe_load(f) or {}
-
-
-def save_facility_yaml(facility: str, data: dict[str, Any]) -> None:
-    """Save facility YAML config."""
-    config_path = get_facility_config_path(facility)
-
-    with open(config_path, "w") as f:
-        yaml.dump(
-            data, f, default_flow_style=False, sort_keys=False, allow_unicode=True
-        )
-
-
 def deep_merge(base: dict, updates: dict) -> dict:
     """
     Deep merge updates into base dictionary.
 
-    For lists, extends rather than replaces.
+    For lists, extends rather than replaces (avoiding duplicates).
     For dicts, recursively merges.
     For other values, replaces.
     """
@@ -104,7 +55,6 @@ def deep_merge(base: dict, updates: dict) -> dict:
             if isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = deep_merge(result[key], value)
             elif isinstance(result[key], list) and isinstance(value, list):
-                # Extend list, avoiding duplicates
                 existing = {str(x) for x in result[key]}
                 for item in value:
                     if str(item) not in existing:
@@ -128,14 +78,12 @@ def parse_learnings(input_str: str) -> dict[str, Any]:
     if not input_str:
         return {}
 
-    # Try JSON first (for inline arguments)
     if input_str.startswith("{"):
         try:
             return json.loads(input_str)
         except json.JSONDecodeError:
             pass
 
-    # Try YAML
     try:
         result = yaml.safe_load(input_str)
         if isinstance(result, dict):
@@ -149,7 +97,6 @@ def read_stdin_if_available() -> str:
     """Read from stdin if data is available (non-blocking check)."""
     import select
 
-    # Check if stdin has data (Unix only)
     if hasattr(select, "select"):
         readable, _, _ = select.select([sys.stdin], [], [], 0)
         if readable:
@@ -157,16 +104,19 @@ def read_stdin_if_available() -> str:
     return ""
 
 
-def detect_artifact_type(data: dict[str, Any]) -> str | None:
+def load_artifact(facility: str, artifact_type: str) -> dict[str, Any] | None:
     """
-    Detect artifact type from data keys.
+    Load a specific artifact for a facility.
 
-    Returns the artifact type name or None if no match.
+    Returns artifact data or None if not found.
     """
-    for key in data.keys():
-        if key in ARTIFACT_KEY_HINTS:
-            return ARTIFACT_KEY_HINTS[key]
-    return None
+    artifacts_dir = get_artifacts_dir(facility)
+    artifact_path = artifacts_dir / f"{artifact_type}.json"
+
+    if not artifact_path.exists():
+        return None
+
+    return json.loads(artifact_path.read_text())
 
 
 def save_artifact(
@@ -175,12 +125,15 @@ def save_artifact(
     data: dict[str, Any],
 ) -> tuple[bool, str, BaseModel | None]:
     """
-    Validate and save a typed artifact.
+    Validate and save a typed artifact with partial update support.
+
+    Loads existing artifact (if any), merges new data, validates the merged
+    result against the Pydantic model, and saves.
 
     Args:
         facility: Facility identifier
         artifact_type: Type of artifact (environment, tools, filesystem, data)
-        data: Artifact data to validate and save
+        data: Artifact data to merge and validate
 
     Returns:
         Tuple of (success, message, validated_artifact)
@@ -197,26 +150,33 @@ def save_artifact(
 
     model_class = models[artifact_type]
 
-    # Add metadata fields
-    data["facility"] = facility
-    data["explored_at"] = datetime.now(UTC).isoformat()
+    existing = load_artifact(facility, artifact_type)
+    if existing:
+        if "facility" in existing:
+            del existing["facility"]
+        if "explored_at" in existing:
+            del existing["explored_at"]
+        merged_data = deep_merge(existing, data)
+    else:
+        merged_data = data
 
-    # Validate against Pydantic model
+    merged_data["facility"] = facility
+    merged_data["explored_at"] = datetime.now(UTC).isoformat()
+
     try:
-        artifact = model_class.model_validate(data)
+        artifact = model_class.model_validate(merged_data)
     except ValidationError as e:
         error_msg = _format_validation_error(e)
         return False, f"Validation failed for {artifact_type}:\n{error_msg}", None
 
-    # Save to cache
     artifacts_dir = get_artifacts_dir(facility)
     artifact_path = artifacts_dir / f"{artifact_type}.json"
     artifact_path.write_text(artifact.model_dump_json(indent=2))
 
-    # Update manifest
     _update_manifest(facility, artifact_type)
 
-    return True, f"Saved {artifact_type} artifact to {artifact_path}", artifact
+    action = "Updated" if existing else "Created"
+    return True, f"{action} {artifact_type} artifact: {artifact_path}", artifact
 
 
 def _format_validation_error(e: ValidationError) -> str:
@@ -234,7 +194,6 @@ def _update_manifest(facility: str, artifact_type: str) -> None:
     artifacts_dir = get_artifacts_dir(facility)
     manifest_path = artifacts_dir / "manifest.json"
 
-    # Load existing manifest or create new
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
     else:
@@ -243,7 +202,6 @@ def _update_manifest(facility: str, artifact_type: str) -> None:
             "artifacts": {},
         }
 
-    # Update artifact entry
     manifest["artifacts"][artifact_type] = {
         "status": "explored",
         "updated": datetime.now(UTC).isoformat(),
@@ -253,29 +211,25 @@ def _update_manifest(facility: str, artifact_type: str) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
 
-def finish_session(
+def capture_artifact(
     facility: str,
-    artifact_type: str | None = None,
+    artifact_type: str,
     learnings: dict[str, Any] | str | None = None,
 ) -> tuple[bool, str]:
     """
-    Persist learnings to artifact storage or facility config.
+    Capture learnings to typed artifact storage.
+
+    Session remains open after capture to allow multiple writes.
+    Use --discard to clear the session when done exploring.
 
     Args:
         facility: Facility identifier
         artifact_type: Type of artifact (environment, tools, filesystem, data)
-                      If None, uses legacy mode (merges to facility YAML)
         learnings: Dict of learnings, YAML/JSON string, or None to read from stdin
 
     Returns:
         Tuple of (success, message)
     """
-    # Check session exists
-    status = get_session_status(facility)
-    if not status.exists:
-        return False, f"No active session for {facility}"
-
-    # Parse learnings
     if learnings is None:
         stdin_content = read_stdin_if_available()
         if stdin_content:
@@ -286,35 +240,10 @@ def finish_session(
         learnings = parse_learnings(learnings)
 
     if not learnings:
-        discard_session(facility)
-        return True, f"Session cleared for {facility} (no learnings provided)"
+        return False, "No learnings provided"
 
-    # Auto-detect artifact type if not specified
-    if artifact_type is None:
-        artifact_type = detect_artifact_type(learnings)
-
-    # If we have an artifact type, use artifact mode
-    if artifact_type is not None:
-        success, message, _artifact = save_artifact(facility, artifact_type, learnings)
-        if success:
-            discard_session(facility)
-        return success, message
-
-    # Legacy mode: merge into facility YAML
-    try:
-        config = load_facility_yaml(facility)
-    except ValueError as e:
-        return False, str(e)
-
-    if "knowledge" not in config:
-        config["knowledge"] = {}
-
-    config["knowledge"] = deep_merge(config["knowledge"], learnings)
-    save_facility_yaml(facility, config)
-    discard_session(facility)
-
-    categories = list(learnings.keys())
-    return True, f"Persisted learnings to {facility}: {', '.join(categories)}"
+    success, message, _artifact = save_artifact(facility, artifact_type, learnings)
+    return success, message
 
 
 def list_artifacts(facility: str) -> dict[str, Any]:
@@ -330,18 +259,3 @@ def list_artifacts(facility: str) -> dict[str, Any]:
         return {"facility": facility, "artifacts": {}}
 
     return json.loads(manifest_path.read_text())
-
-
-def load_artifact(facility: str, artifact_type: str) -> dict[str, Any] | None:
-    """
-    Load a specific artifact for a facility.
-
-    Returns artifact data or None if not found.
-    """
-    artifacts_dir = get_artifacts_dir(facility)
-    artifact_path = artifacts_dir / f"{artifact_type}.json"
-
-    if not artifact_path.exists():
-        return None
-
-    return json.loads(artifact_path.read_text())
