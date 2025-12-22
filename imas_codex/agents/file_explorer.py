@@ -17,7 +17,7 @@ from imas_codex.discovery.llm import (
     system_message,
     user_message,
 )
-from imas_codex.discovery.prompts import get_prompt_loader
+from imas_codex.discovery.prompts import PromptLoader, get_prompt_loader
 
 
 @dataclass
@@ -55,13 +55,13 @@ class FileExplorerAgent:
     File Explorer subagent for filesystem exploration.
 
     Uses a ReAct loop with a frontier LLM to explore remote filesystems
-    via SSH, returning structured findings and accumulated knowledge.
+    via SSH, returning structured findings and accumulated learnings.
 
     Example:
         agent = FileExplorerAgent("epfl")
         result = await agent.explore("/common/tcv/codes")
         print(result.findings)
-        print(result.knowledge)  # Learnings for Commander to persist
+        print(result.learnings)  # Discoveries for Commander to persist
     """
 
     facility: str
@@ -73,7 +73,7 @@ class FileExplorerAgent:
     config: MergedConfig = field(init=False, repr=False)
     connection: FacilityConnection = field(init=False, repr=False)
     llm: AgentLLM = field(init=False, repr=False)
-    prompts: Any = field(init=False, repr=False)
+    prompts: PromptLoader = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the agent."""
@@ -97,7 +97,7 @@ class FileExplorerAgent:
             max_depth: Maximum directory depth
 
         Returns:
-            ExplorationResult with findings and knowledge
+            ExplorationResult with findings and learnings
         """
         result = ExplorationResult(
             success=False,
@@ -106,24 +106,18 @@ class FileExplorerAgent:
             iterations=0,
         )
 
-        # Build initial messages from prompts
-        try:
-            common_prompt = self.prompts.load("common")
-            explorer_prompt = self.prompts.load("file_explorer")
-        except ValueError:
-            # Fall back to inline prompts if files don't exist yet
-            system_msg = self._build_system_prompt()
-            user_msg = self._build_user_prompt(path, max_depth)
-            messages = [system_message(system_msg), user_message(user_msg)]
-        else:
-            context = self.config.to_context()
-            system_msg = common_prompt.render(**context)
-            user_msg = explorer_prompt.render(
-                **context,
-                target_path=path,
-                max_depth=max_depth,
-            )
-            messages = [system_message(system_msg), user_message(user_msg)]
+        # Load prompts from markdown files
+        context = self.config.to_context()
+        common_prompt = self.prompts.load("common")
+        explorer_prompt = self.prompts.load("file_explorer")
+
+        system_msg = common_prompt.render(**context)
+        user_msg = explorer_prompt.render(
+            **context,
+            target_path=path,
+            max_depth=max_depth,
+        )
+        messages = [system_message(system_msg), user_message(user_msg)]
 
         with self.connection.session():
             for iteration in range(self.max_iterations):
@@ -183,70 +177,26 @@ class FileExplorerAgent:
 
                 # Feed results back to LLM
                 messages.append(assistant_message(response.raw))
-                messages.append(user_message(self._format_result(script_result)))
+                messages.append(user_message(self._format_observation(script_result)))
 
         result.completed_at = datetime.now(UTC)
         return result
 
-    def _build_system_prompt(self) -> str:
-        """Build fallback system prompt."""
-        return f"""You are a File Explorer agent exploring a remote fusion facility.
+    def _format_observation(self, result: ScriptResult) -> str:
+        """Format script result as an observation using the observation template."""
+        # Truncate output if too long
+        stdout = result.stdout
+        if len(stdout) > 10000:
+            stdout = stdout[:10000] + "\n...[truncated]..."
 
-Facility: {self.config.facility}
-Description: {self.config.description}
-SSH Host: {self.config.ssh_host}
+        stderr = result.stderr
+        if stderr and len(stderr) > 2000:
+            stderr = stderr[:2000] + "\n...[truncated]..."
 
-You operate in a ReAct loop:
-1. Thought: Analyze what you know and what to explore next
-2. Action: Generate a bash script to gather information
-3. Observation: I will execute it and show you the results
-
-When done, output JSON with:
-- "done": true
-- "findings": structured filesystem data
-- "learnings": list of discoveries about this facility (e.g., "rg not available, use grep")
-
-Safety rules:
-- All scripts must be READ-ONLY
-- Never use: rm, mv, cp, chmod, sudo, dd
-"""
-
-    def _build_user_prompt(self, path: str, max_depth: int) -> str:
-        """Build fallback user prompt."""
-        return f"""Explore the filesystem starting at: {path}
-
-Goals:
-1. Map the directory structure (max depth: {max_depth})
-2. Identify file types and patterns
-3. Find code repositories and data locations
-4. Note any facility-specific learnings
-
-Known paths at this facility: {self.config.paths.code}
-
-Generate your first exploration script.
-"""
-
-    def _format_result(self, result: ScriptResult) -> str:
-        """Format script result for LLM feedback."""
-        parts = [f"**Exit code:** {result.return_code}"]
-
-        if result.stdout:
-            stdout = result.stdout
-            if len(stdout) > 10000:
-                stdout = stdout[:10000] + "\n...[truncated]..."
-            parts.append(f"**stdout:**\n```\n{stdout}\n```")
-
-        if result.stderr:
-            stderr = result.stderr
-            if len(stderr) > 2000:
-                stderr = stderr[:2000] + "\n...[truncated]..."
-            parts.append(f"**stderr:**\n```\n{stderr}\n```")
-
-        parts.append(
-            "\nAnalyze these results. You may:\n"
-            "- Generate another script to explore further\n"
-            "- Refine your approach if there were errors\n"
-            '- Signal completion with `{"done": true, "findings": {...}, "learnings": [...]}`'
+        # Load and render the observation template
+        observation_prompt = self.prompts.load("observation")
+        return observation_prompt.render(
+            exit_code=result.return_code,
+            stdout=stdout if stdout else None,
+            stderr=stderr if stderr else None,
         )
-
-        return "\n\n".join(parts)
