@@ -148,6 +148,18 @@ Use these categories in your `--finish` YAML:
 - `environment`: module system, conda, loaded modules
 - `notes`: freeform observations (as a list)
 
+## Tool Preferences
+
+When searching, prefer in order:
+1. `rg` (ripgrep) - fastest, if available
+2. `ag` (silver searcher) - fast alternative
+3. `grep -r` - universal fallback
+
+When listing directories, prefer:
+1. `tree` - structured output, if available
+2. `find` - POSIX compatible
+3. `ls -la` - basic fallback
+
 ## Allowed Operations
 
 - Command chaining: `;`, `&&`, `||`, `|`

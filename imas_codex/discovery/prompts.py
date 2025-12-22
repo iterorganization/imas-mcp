@@ -1,5 +1,5 @@
 """
-Runtime prompt loading and rendering for the Discovery Engine.
+Prompt loading and rendering for facility exploration.
 
 Loads prompt templates from markdown files with YAML frontmatter,
 renders them with Jinja2 using facility-specific context.
@@ -26,9 +26,6 @@ class PromptMetadata:
 
     name: str
     description: str = ""
-    model: str = "anthropic/claude-opus-4.5"
-    max_iterations: int = 5
-    output_schema: str | None = None
     tags: list[str] = field(default_factory=list)
 
 
@@ -105,9 +102,6 @@ class PromptLoader:
                         metadata=PromptMetadata(
                             name=prompt_name,
                             description=frontmatter.get("description", ""),
-                            model=frontmatter.get("model", "anthropic/claude-opus-4.5"),
-                            max_iterations=frontmatter.get("max_iterations", 5),
-                            output_schema=frontmatter.get("output_schema"),
                             tags=frontmatter.get("tags", []),
                         ),
                         template=body,
@@ -140,9 +134,6 @@ class PromptLoader:
             metadata=PromptMetadata(
                 name=prompt_name,
                 description=frontmatter.get("description", ""),
-                model=frontmatter.get("model", "anthropic/claude-opus-4.5"),
-                max_iterations=frontmatter.get("max_iterations", 5),
-                output_schema=frontmatter.get("output_schema"),
                 tags=frontmatter.get("tags", []),
             ),
             template=body,
@@ -150,94 +141,6 @@ class PromptLoader:
         )
         self._cache[prompt_name] = prompt
         return prompt
-
-    def list_prompts(self) -> list[PromptMetadata]:
-        """List all available prompts."""
-        prompts = []
-        for md_file in self.prompts_dir.rglob("*.md"):
-            try:
-                content = md_file.read_text(encoding="utf-8")
-                frontmatter, _ = self._parse_frontmatter(content)
-
-                prompts.append(
-                    PromptMetadata(
-                        name=frontmatter.get("name", md_file.stem),
-                        description=frontmatter.get("description", ""),
-                        model=frontmatter.get("model", "anthropic/claude-opus-4.5"),
-                        max_iterations=frontmatter.get("max_iterations", 5),
-                        output_schema=frontmatter.get("output_schema"),
-                        tags=frontmatter.get("tags", []),
-                    )
-                )
-            except Exception:
-                continue
-
-        return prompts
-
-    def render(
-        self,
-        name: str,
-        **context: Any,
-    ) -> tuple[str, str]:
-        """
-        Load and render a prompt, returning system and user messages.
-
-        Args:
-            name: Prompt name
-            **context: Template context variables
-
-        Returns:
-            Tuple of (system_message, user_message)
-        """
-        prompt = self.load(name)
-        rendered = prompt.render(**context)
-
-        # Build system message with safety rules
-        system_message = self._build_system_message(prompt.metadata)
-
-        return system_message, rendered
-
-    def _build_system_message(self, metadata: PromptMetadata) -> str:
-        """Build the system message for the LLM."""
-        return f"""You are an expert system administrator and code analyst exploring remote fusion research facilities.
-
-Your role: {metadata.description}
-
-## Response Format
-
-You operate in an agentic loop. Each turn you must respond with ONE of:
-
-### Option 1: Generate a bash script
-When you need to gather information, wrap your script in a bash code block:
-
-```bash
-#!/bin/bash
-# Your script here
-```
-
-I will execute this script on the remote system and show you the results.
-
-### Option 2: Signal completion
-When you have gathered enough information, respond with a JSON block:
-
-```json
-{{"done": true, "findings": {{...}}}}
-```
-
-## Safety Rules
-
-- All scripts must be READ-ONLY - no file modifications
-- Never use: rm, mv, cp, chmod, sudo, dd, or any destructive commands
-- Handle errors gracefully - don't fail on permission denied
-- Limit output size - use head/tail when appropriate
-
-## Guidelines
-
-- Be systematic and thorough
-- Explain your reasoning before each script
-- If a script fails, analyze the error and try a different approach
-- You may generate multiple scripts iteratively to explore
-"""
 
 
 @lru_cache(maxsize=1)
@@ -249,8 +152,3 @@ def get_prompt_loader() -> PromptLoader:
 def load_prompt(name: str) -> Prompt:
     """Convenience function to load a prompt."""
     return get_prompt_loader().load(name)
-
-
-def render_prompt(name: str, **context: Any) -> tuple[str, str]:
-    """Convenience function to render a prompt."""
-    return get_prompt_loader().render(name, **context)
