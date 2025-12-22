@@ -1,12 +1,9 @@
 facility: epfl
 ssh_host: epfl
 description: Swiss Plasma Center - TCV Tokamak
-
-# Hostnames for local execution detection
-# If running on any of these hosts, SSH is skipped
 hostnames:
-  - lac5.epfl.ch
-  - lac5
+- lac5.epfl.ch
+- lac5
 contact:
   organization: École Polytechnique Fédérale de Lausanne
   department: Swiss Plasma Center (SPC)
@@ -60,14 +57,37 @@ exploration_hints:
 knowledge:
   tools:
     tree: available
+    modules: unavailable
+    conda: unavailable
+    pyenv: unavailable
+    uv: unavailable
+    virtualenv: unavailable
+    scl: unavailable
+    rg: unavailable
+    grep: available
   paths: []
   python:
     version: 3.9.21
+    path: /usr/bin/python3
+    packages:
+    - numpy==1.23.5
+    - matplotlib==3.4.3
+    - ipython==8.5.0
+    - MDSplus (bindings available)
   data: []
   notes:
   - this is a test note
+  - No environment modules system (Lmod) installed
+  - Only Python 3.9.21 available - no alternative versions
+  - Intel oneAPI 2025.2 includes MPI, MKL, TBB, compilers, debugger
+  - MDSplus Python bindings work (import MDSplus succeeds)
+  - Intel debugger bundles Python 3.13 internally but not user-accessible
+  - OS is RHEL 9.6 (Plow)
   mdsplus:
     server: tcvdata.epfl.ch
     trees:
     - tcv
     - tcv_shot
+  environment:
+    intel_oneapi: 2025.2 (auto-loaded via /etc/profile.d/intel.sh)
+    mdsplus: auto-loaded via /etc/profile.d/mdsplus.sh
