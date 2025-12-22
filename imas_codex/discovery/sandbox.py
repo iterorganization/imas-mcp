@@ -147,7 +147,9 @@ class CommandSandbox:
             re.compile(r";"),  # Command chaining with semicolon
             re.compile(r"`"),  # Backtick command substitution
             re.compile(r"\$\("),  # Command substitution $(...)
-            re.compile(r"(?<![|])&(?![&1])"),  # Background (&) but allow && and >&1
+            re.compile(
+                r"(?<![|&>])&(?![&1])"
+            ),  # Background (&) but allow &&, >&1, and &>
             re.compile(r"\brm\s"),  # Remove command
             re.compile(r"\bmv\s"),  # Move command
             re.compile(r"\bcp\s"),  # Copy command
