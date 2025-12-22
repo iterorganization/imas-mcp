@@ -16,11 +16,18 @@
 
 ## Project Overview
 
-`imas-codex` is an MCP server for the IMAS Data Dictionary enabling:
+`imas-codex` provides two MCP servers:
+
+**IMAS DD Server** (`imas-codex serve imas`):
 - Semantic search across fusion physics data structures
 - IDS (Interface Data Structures) exploration
 - Path validation and relationship discovery
 - Physics domain exploration
+
+**Agents Server** (`imas-codex serve agents`):
+- Remote facility exploration via subagents
+- File system mapping, code search, data inspection
+- Command/Deploy architecture with specialist agents
 
 ## Agent Workflows
 
@@ -146,15 +153,72 @@ git checkout -- .  # Discard any remaining changes
 
 ```
 imas_codex/
+├── agents/         # Subagent implementations (file_explorer, etc.)
+├── config/         # Facility and core configuration (YAML)
 ├── core/           # Data models, XML parsing, physics domains
+├── discovery/      # SSH connection, sandbox, LLM client
 ├── embeddings/     # Vector embeddings and semantic search
 ├── models/         # Pydantic models
+├── prompts/        # Agent instruction templates (Markdown)
+│   └── agents/     # Subagent-specific prompts
 ├── search/         # Search functionality
 ├── services/       # External services
 ├── tools/          # MCP tool implementations
 └── resources/      # Generated data files
 
 tests/              # Mirror source structure
+```
+
+## Remote Facility Exploration
+
+The Agents MCP server enables exploration of remote fusion facilities.
+
+### Architecture
+
+The system uses a **Command/Deploy** pattern:
+1. **Commander** (you, the LLM in chat) reads instructions and orchestrates
+2. **Subagents** (specialist LLMs) execute tasks via ReAct loops
+3. **SSH execution** via `FacilityConnection` with safety sandbox
+
+### Using the Agents Server
+
+Start the agents server:
+```bash
+uv run imas-codex serve agents
+```
+
+In Cursor, use the `/explore_files` prompt to explore a facility:
+```
+/explore_files facility:epfl path:/common/tcv/codes
+```
+
+### Knowledge Hierarchy
+
+Agent instructions are organized in three levels:
+
+| Level | Location | Content |
+|-------|----------|---------|
+| Common | `prompts/agents/common.md` | Safety, ReAct pattern, SSH |
+| Facility | `config/facilities/*.yaml` | Paths, tools, knowledge |
+| Specialist | `prompts/agents/*.md` | Agent-specific behavior |
+
+### Persisting Knowledge
+
+When a subagent discovers facility-specific information (e.g., "rg not available"), 
+the Commander should update the facility config:
+
+```yaml
+# config/facilities/epfl.yaml
+knowledge:
+  tools:
+    - "ripgrep (rg) not available; use grep -r instead"
+```
+
+### Available Facilities
+
+```bash
+uv run imas-codex facilities list
+uv run imas-codex facilities show epfl
 ```
 
 ## Version Control
