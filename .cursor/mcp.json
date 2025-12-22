@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "imas-codex": {
+    "codex": {
       "command": "uv",
-      "args": ["run", "imas-codex", "--transport", "stdio"]
+      "args": ["run", "imas-codex", "serve", "agents"]
     },
     "imas": {
       "url": "https://imas-dd.iter.org/mcp",
