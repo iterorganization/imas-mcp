@@ -334,25 +334,42 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
     @click.argument("command", required=False)
     @click.option("--status", is_flag=True, help="Show session history")
     @click.option(
-        "--script",
-        is_flag=True,
-        help="Read multiline script from stdin and execute via bash -s",
-    )
-    @click.option(
         "--finish",
         "finish_learnings",
+        nargs=1,
         default=None,
-        help="Persist learnings and clear session. Pass JSON/YAML or pipe via stdin.",
+        required=False,
+        help="Persist learnings and clear session. Use - to read from stdin.",
     )
     @click.option("--discard", is_flag=True, help="Clear session without persisting")
     def facility_cmd(
         command: str | None,
         status: bool,
-        script: bool,
         finish_learnings: str | None,
         discard: bool,
     ) -> None:
-        """Execute commands on a remote facility or manage session."""
+        """Execute commands on a remote facility or manage session.
+
+        Examples:
+            # Single command
+            imas-codex epfl "python3 --version"
+
+            # Batch commands with chaining
+            imas-codex epfl "which python3; python3 --version; pip list | head"
+
+            # Multi-line script via heredoc
+            imas-codex epfl << 'EOF'
+            echo "=== Python ==="
+            python3 --version
+            pip list | head -10
+            EOF
+
+            # Persist learnings
+            imas-codex epfl --finish << 'EOF'
+            python:
+              version: "3.9.21"
+            EOF
+        """
         import sys
 
         from imas_codex.remote import (
@@ -369,42 +386,6 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
             click.echo(session_status.format())
             return
 
-        # Handle --script (read multiline script from stdin)
-        if script:
-            if sys.stdin.isatty():
-                click.echo("Error: --script requires input via stdin", err=True)
-                click.echo("Usage: imas-codex epfl --script << 'EOF'", err=True)
-                click.echo("  python --version", err=True)
-                click.echo("  which python", err=True)
-                click.echo("  pip list | head -5", err=True)
-                click.echo("EOF", err=True)
-                raise SystemExit(1)
-
-            script_content = sys.stdin.read()
-            if not script_content.strip():
-                click.echo("Error: Empty script", err=True)
-                raise SystemExit(1)
-
-            try:
-                result = run_script(facility_name, script_content)
-                if result.stdout:
-                    click.echo(result.stdout, nl=False)
-                    if not result.stdout.endswith("\n"):
-                        click.echo()
-                if result.stderr:
-                    click.echo(result.stderr, err=True, nl=False)
-                    if not result.stderr.endswith("\n"):
-                        click.echo(err=True)
-                if result.exit_code != 0:
-                    raise SystemExit(result.exit_code)
-            except ValueError as e:
-                click.echo(f"Error: {e}", err=True)
-                raise SystemExit(1) from e
-            except Exception as e:
-                click.echo(f"Connection error: {e}", err=True)
-                raise SystemExit(1) from e
-            return
-
         # Handle --discard
         if discard:
             if discard_session(facility_name):
@@ -413,16 +394,20 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 click.echo(f"No active session for {facility_name}")
             return
 
-        # Handle --finish (either with argument or via stdin)
-        if finish_learnings is not None or (not command and not sys.stdin.isatty()):
+        # Handle --finish (persist learnings)
+        if finish_learnings is not None:
             learnings_input = finish_learnings
 
-            # Read from stdin only if --finish was given with empty value
-            # or if no command was given and stdin has data
-            if finish_learnings == "" or (
-                finish_learnings is None and not command and not sys.stdin.isatty()
-            ):
+            # Read from stdin if --finish - was given
+            if finish_learnings == "-":
+                if sys.stdin.isatty():
+                    click.echo("Error: --finish - requires input via stdin", err=True)
+                    raise SystemExit(1)
                 learnings_input = sys.stdin.read()
+
+            if not learnings_input or not learnings_input.strip():
+                click.echo("Error: --finish requires learnings", err=True)
+                raise SystemExit(1)
 
             success, message = finish_session(facility_name, learnings_input)
             if success:
@@ -432,10 +417,24 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 raise SystemExit(1)
             return
 
-        # Handle command execution
+        # Handle command execution (argument or stdin)
+        script_content = None
+
         if command:
+            # Single command from argument
+            script_content = command
+        elif not sys.stdin.isatty():
+            # Multi-line script from stdin (heredoc)
+            script_content = sys.stdin.read()
+
+        if script_content and script_content.strip():
             try:
-                result = run_command(facility_name, command)
+                # Use run_script for multi-line, run_command for single-line
+                if "\n" in script_content.strip():
+                    result = run_script(facility_name, script_content)
+                else:
+                    result = run_command(facility_name, script_content)
+
                 # Print stdout
                 if result.stdout:
                     click.echo(result.stdout, nl=False)
