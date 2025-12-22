@@ -123,6 +123,9 @@ knowledge:
   - CRPP toolbox (crpptbx-9.6.0) auto-loads with MATLAB
   - No HDF5/NetCDF tools in PATH (h5dump, ncdump unavailable)
   - No job scheduler - this is likely a shared login node, not HPC cluster
+  - System python is 3.9.21 at /usr/bin/python3
+  - No other python versions found in /opt, /common, or /usr/local
+  - No virtual environments (pyvenv.cfg) found in /common
   mdsplus:
     server: tcvdata.epfl.ch
     trees:

@@ -23,6 +23,10 @@
         "IMAS_DD_VERSION": "4.1.0"
       },
       "type": "stdio"
+    },
+    "codex": {
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve", "agents"]
     }
   },
   "inputs": []

@@ -24,8 +24,8 @@ imports:
 classes:
   EnvironmentArtifact:
     description: >-
-      Complete environment snapshot from facility exploration.
-      Includes Python, OS, compilers, and module system details.
+      Environment snapshot from facility exploration.
+      Supports partial updates - each field is optional for incremental discovery.
     attributes:
       facility:
         description: Facility identifier (e.g., epfl, jet, iter)
@@ -39,12 +39,10 @@ classes:
         description: Python installation details
         range: PythonInfo
         inlined: true
-        required: true
       os:
         description: Operating system information
         range: OSInfo
         inlined: true
-        required: true
       compilers:
         description: Available compilers on the system
         range: CompilerInfo
@@ -74,6 +72,10 @@ classes:
         description: Installed Python packages (format name==version)
         range: string
         multivalued: true
+      notes:
+        description: Observations about Python environment
+        range: string
+        multivalued: true
 
   OSInfo:
     description: Operating system information
@@ -89,6 +91,10 @@ classes:
       kernel:
         description: Kernel version string
         range: string
+      notes:
+        description: Observations about operating system
+        range: string
+        multivalued: true
 
   CompilerInfo:
     description: Compiler installation details
@@ -103,6 +109,10 @@ classes:
       path:
         description: Absolute path to compiler binary
         range: string
+      notes:
+        description: Observations about this compiler
+        range: string
+        multivalued: true
 
   ModuleSystemInfo:
     description: Environment module system information
@@ -116,6 +126,10 @@ classes:
         range: string
       loaded_modules:
         description: Currently loaded modules
+        range: string
+        multivalued: true
+      notes:
+        description: Observations about module system
         range: string
         multivalued: true
 
