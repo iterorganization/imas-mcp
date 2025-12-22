@@ -1,18 +1,19 @@
 """
-Agents MCP Server - Lightweight server for facility exploration prompts.
+Agents MCP Server - Server for facility exploration tools and prompts.
 
-This server provides MCP prompts that enable the Commander LLM to orchestrate
-specialist subagents for remote facility exploration.
+This server provides MCP tools that dispatch autonomous subagents for
+remote facility exploration, plus prompts for documentation.
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from imas_codex.agents.exploration import ExplorationAgent
+from imas_codex.agents.knowledge import persist_learnings
 from imas_codex.discovery import get_config, list_facilities
-from imas_codex.discovery.prompts import get_prompt_loader
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +21,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AgentsServer:
     """
-    MCP server providing prompts for remote facility exploration.
+    MCP server for remote facility exploration.
 
-    This is a lightweight server that serves prompts only - no tools.
-    The prompts guide the Commander LLM to orchestrate subagents.
+    Provides:
+    - `explore` tool: Dispatches autonomous subagents for natural language tasks
+    - `list_facilities` tool: Lists available facility configurations
+    - Prompts for documentation and guidance
     """
 
     mcp: FastMCP = field(init=False, repr=False)
@@ -31,103 +34,240 @@ class AgentsServer:
     def __post_init__(self):
         """Initialize the MCP server."""
         self.mcp = FastMCP(name="imas-codex-agents")
+        self._register_tools()
         self._register_prompts()
         logger.debug("Agents MCP server initialized")
 
-    def _register_prompts(self):
-        """Register exploration prompts."""
+    def _register_tools(self):
+        """Register exploration tools."""
 
-        @self.mcp.prompt()
-        def explore_files(facility: str, path: str = "/") -> str:
+        @self.mcp.tool()
+        async def explore(
+            facility: str,
+            task: str,
+            mode: str = "auto",
+            max_iterations: int = 10,
+        ) -> dict[str, Any]:
             """
-            Explore filesystem structure on a remote facility.
+            Explore a remote facility with a natural language task.
 
-            Generates a prompt that guides the Commander LLM to orchestrate
-            the File Explorer subagent for mapping directory structures.
+            Dispatches an autonomous subagent that connects to the facility via SSH,
+            runs a ReAct loop with a frontier LLM (Claude Opus 4.5), and returns
+            structured findings.
+
+            The agent uses accumulated knowledge from previous explorations and
+            persists new discoveries for future runs.
 
             Args:
-                facility: Facility identifier (e.g., 'epfl')
-                path: Starting path to explore (default: /)
+                facility: Facility identifier (e.g., 'epfl', 'ipp')
+                task: Natural language description of what to find/explore.
+                    Examples:
+                    - "find Python code related to equilibrium reconstruction"
+                    - "identify all HDF5 data files and their structure"
+                    - "what analysis tools are available?"
+                mode: Exploration mode hint (optional):
+                    - "auto": Let the agent decide based on the task (default)
+                    - "code": Focus on finding source code and packages
+                    - "data": Focus on inspecting data files and formats
+                    - "env": Focus on system capabilities and tools
+                    - "filesystem": Focus on directory structure mapping
+                max_iterations: Maximum ReAct loop iterations (default: 10)
+
+            Returns:
+                Dictionary containing:
+                - success: Whether the exploration completed successfully
+                - findings: Structured findings from the exploration
+                - learnings: New discoveries that were persisted
+                - iterations: Number of ReAct iterations used
+                - errors: Any errors encountered
             """
             try:
-                config = get_config(facility)
-                prompts = get_prompt_loader()
+                # Validate facility exists
+                try:
+                    get_config(facility)
+                except ValueError as e:
+                    available = list_facilities()
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "available_facilities": available,
+                    }
 
-                # Load common agent instructions
-                common_prompt = prompts.load("common")
-                common_instructions = common_prompt.render(**config.to_context())
-
-                # Load file explorer specialist instructions
-                explorer_prompt = prompts.load("file_explorer")
-                specialist_instructions = explorer_prompt.render(
-                    **config.to_context(),
-                    target_path=path,
+                # Dispatch the exploration agent
+                agent = ExplorationAgent(facility)
+                result = await agent.run(
+                    task=task,
+                    mode=mode,
+                    max_iterations=max_iterations,
                 )
 
-                # Compose the full prompt
-                return f"""# File Explorer Agent Task
+                # Persist any learnings
+                if result.learnings:
+                    persist_learnings(facility, result.learnings)
+                    logger.info(
+                        f"Persisted {len(result.learnings)} learnings for {facility}"
+                    )
 
-## Facility
-- **Name**: {config.facility}
-- **Description**: {config.description}
-- **SSH Host**: {config.ssh_host}
+                return result.to_dict()
 
-## Target Path
-{path}
+            except Exception as e:
+                logger.exception(f"Exploration failed: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "task": task,
+                    "facility": facility,
+                }
 
----
+        @self.mcp.tool()
+        def get_facilities() -> dict[str, Any]:
+            """
+            List available facility configurations.
 
-{common_instructions}
+            Returns:
+                Dictionary with list of facility names and their descriptions
+            """
+            facilities = list_facilities()
+            result = {"facilities": []}
 
----
+            for name in facilities:
+                try:
+                    config = get_config(name)
+                    result["facilities"].append(
+                        {
+                            "name": name,
+                            "description": config.description,
+                            "ssh_host": config.ssh_host,
+                        }
+                    )
+                except Exception:
+                    result["facilities"].append(
+                        {
+                            "name": name,
+                            "description": "(error loading config)",
+                        }
+                    )
 
-{specialist_instructions}
+            return result
+
+    def _register_prompts(self):
+        """Register documentation prompts."""
+
+        @self.mcp.prompt()
+        def exploration_guide() -> str:
+            """
+            Guide for using the exploration tools.
+
+            Provides documentation on how to use the explore tool effectively.
+            """
+            return """# Facility Exploration Guide
+
+## The `explore` Tool
+
+Use the `explore` tool to dispatch an autonomous subagent that will:
+1. Connect to a remote fusion facility via SSH
+2. Run a ReAct loop with Claude Opus 4.5 to execute your task
+3. Generate bash scripts, observe results, and iterate
+4. Return structured findings and persist learnings
+
+### Basic Usage
+
+```
+explore(facility="epfl", task="find Python code related to equilibrium")
+```
+
+### Parameters
+
+- **facility** (required): The facility identifier (e.g., "epfl", "ipp")
+- **task** (required): Natural language description of what to explore
+- **mode** (optional): Hint for exploration focus
+  - `"auto"` (default): Agent decides based on task
+  - `"code"`: Focus on source code and packages
+  - `"data"`: Focus on data files and formats
+  - `"env"`: Focus on system capabilities
+  - `"filesystem"`: Focus on directory structure
+- **max_iterations** (optional): Max ReAct iterations (default: 10)
+
+### Example Tasks
+
+**Code exploration:**
+- "find Python code related to equilibrium reconstruction"
+- "identify all MATLAB scripts in /common/tcv/codes"
+- "what packages are available for Thomson scattering analysis?"
+
+**Data exploration:**
+- "what HDF5 files exist and what's their structure?"
+- "how is shot data organized in this facility?"
+- "find MDSplus trees and list their signals"
+
+**Environment exploration:**
+- "what Python version and modules are available?"
+- "is ripgrep (rg) installed? what search tools exist?"
+- "what data analysis tools are available?"
+
+### Parallel Exploration
+
+You can run multiple explorations in parallel:
+
+```
+# These run concurrently
+explore(facility="epfl", task="find equilibrium code")
+explore(facility="epfl", task="find diagnostic data")
+explore(facility="ipp", task="find equilibrium code")
+```
+
+### Knowledge Persistence
+
+The agent automatically:
+- Loads knowledge from previous explorations
+- Persists new discoveries (e.g., "rg not available, use grep -r")
+- Tracks novelty to avoid redundant exploration
+
+## Available Facilities
+
+Use `get_facilities()` to list configured facilities.
 """
-            except ValueError as e:
-                available = list_facilities()
-                return (
-                    f"Error: {e}\n\n"
-                    f"Available facilities: {', '.join(available) if available else 'none configured'}"
-                )
 
         @self.mcp.prompt()
         def list_agents() -> str:
             """
             List available exploration agents and their capabilities.
-
-            Returns information about the specialist subagents that can be
-            dispatched for remote facility exploration.
             """
-            return """# Available Exploration Agents
+            return """# Exploration Agents
 
-## File Explorer Agent
-**Status**: Available
-**Purpose**: Map filesystem structure on remote facilities
-**Prompt**: `/explore_files`
-**Capabilities**:
-- Navigate directory hierarchies
-- Identify file types and patterns
-- Discover code repositories and data locations
-- Report filesystem structure as JSON
+## General Exploration Agent
 
-## Code Search Agent
-**Status**: Planned
-**Purpose**: Search for code patterns across facility codebases
-**Prompt**: `/search_code` (coming soon)
+**Tool**: `explore(facility, task, mode?, max_iterations?)`
+**Status**: ✅ Available
 
-## Data Inspector Agent
-**Status**: Planned
-**Purpose**: Inspect data files (HDF5, NetCDF, MDSplus)
-**Prompt**: `/inspect_data` (coming soon)
+A general-purpose agent that accepts natural language tasks and autonomously
+explores remote facilities. The agent:
 
-## Environment Probe Agent
-**Status**: Planned
-**Purpose**: Discover system capabilities and installed tools
-**Prompt**: `/probe_environment` (coming soon)
+- Connects via SSH to the target facility
+- Runs a ReAct loop with Claude Opus 4.5
+- Generates and executes bash scripts
+- Tracks novelty to know when to stop
+- Persists learnings for future runs
 
----
+### Modes
 
-To use an agent, invoke its prompt with the facility name and parameters.
+| Mode | Focus |
+|------|-------|
+| `auto` | Agent decides based on task |
+| `code` | Source files, packages, imports |
+| `data` | HDF5, NetCDF, MDSplus files |
+| `env` | System tools, Python, modules |
+| `filesystem` | Directory structure |
+
+## Planned Specializations
+
+Future versions may add specialized agents for:
+- Deep code analysis with AST parsing
+- Interactive MDSplus tree exploration
+- Dependency graph mapping
+- Documentation extraction
+
+For now, the general `explore` tool handles all these via natural language.
 """
 
     def run(
