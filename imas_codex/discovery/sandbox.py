@@ -39,6 +39,7 @@ class CommandSandbox:
             "realpath",
             "dirname",
             "basename",
+            "pwd",  # Current working directory
             # File reading (content inspection)
             "cat",
             "head",
@@ -77,16 +78,38 @@ class CommandSandbox:
             # Process information (read-only)
             "ps",
             "pgrep",
+            # Package/module queries (read-only)
+            "rpm",  # Package queries
+            "dpkg",  # Debian package queries
+            "dnf",  # DNF queries (restricted to query subcommands)
+            "yum",  # YUM queries (restricted to query subcommands)
+            "apt",  # APT queries (restricted to query subcommands)
+            "module",  # Environment modules
+            "modulecmd",  # Environment modules internal
+            "ml",  # Lmod shortcut
+            "alternatives",  # RHEL alternatives system
+            "update-alternatives",  # Debian alternatives
+            "scl",  # Software Collections
             # Python and version checks
             "python",
             "python3",
+            "python3.9",
+            "python3.10",
+            "python3.11",
             "python3.12",
             "pip",
             "pip3",
+            "conda",  # Conda environment manager
+            "mamba",  # Faster conda
+            "uv",  # Modern Python package manager
+            "pyenv",  # Python version manager
+            "virtualenv",  # Virtual environments
             # Data tools
             "h5dump",
             "h5ls",
             "ncdump",
+            "mdstcl",  # MDSplus TCL interface
+            "mdsvalue",  # MDSplus value query
             # Text processing
             "awk",
             "sed",
@@ -104,14 +127,21 @@ class CommandSandbox:
             "zipinfo",
             "gzip",
             "zcat",
+            "bzcat",
+            "xzcat",
             # Version control (read-only operations)
             "git",
+            "svn",
+            "hg",
             # Misc utilities
             "true",
             "false",
             "test",
             "expr",
             "seq",
+            "timeout",
+            "time",
+            "getconf",  # System configuration
         }
     )
 
@@ -136,17 +166,127 @@ class CommandSandbox:
             },
             # tar: only allow list/extract, not create
             "tar": {"t", "tf", "tvf", "x", "xf", "xvf", "--list"},
+            # dnf/yum: only allow query operations
+            "dnf": {
+                "list",
+                "info",
+                "search",
+                "provides",
+                "repolist",
+                "repoinfo",
+                "module",  # module list/info
+                "config-manager",  # for listing repos
+            },
+            "yum": {
+                "list",
+                "info",
+                "search",
+                "provides",
+                "repolist",
+            },
+            # apt: only allow query operations
+            "apt": {
+                "list",
+                "show",
+                "search",
+                "policy",
+            },
+            # module: all standard operations (session-scoped, non-destructive)
+            # These only modify environment variables for the current session
+            "module": {
+                # Query operations
+                "avail",
+                "av",
+                "list",
+                "li",
+                "show",
+                "display",
+                "whatis",
+                "spider",
+                "keyword",
+                "help",
+                "is-loaded",
+                "is-avail",
+                # Environment management (session-scoped)
+                "load",
+                "add",
+                "unload",
+                "rm",
+                "del",
+                "swap",
+                "switch",
+                "purge",
+                "refresh",
+                "update",
+                "restore",
+                "save",
+                "savelist",
+                "describe",
+                "use",
+                "unuse",
+            },
+            # ml (Lmod): all standard operations
+            "ml": {
+                # Query
+                "avail",
+                "av",
+                "list",
+                "li",
+                "show",
+                "display",
+                "whatis",
+                "spider",
+                # Environment management
+                "load",
+                "unload",
+                "purge",
+                "swap",
+                "restore",
+                "save",
+            },
+            # scl: only enable (to show available) and list
+            "scl": {
+                "enable",
+                "--list",
+            },
+            # svn: only allow read-only subcommands
+            "svn": {
+                "info",
+                "log",
+                "ls",
+                "list",
+                "cat",
+                "diff",
+                "status",
+                "st",
+            },
+            # hg: only allow read-only subcommands
+            "hg": {
+                "log",
+                "diff",
+                "status",
+                "cat",
+                "manifest",
+                "branches",
+                "tags",
+            },
+            # conda: only allow info/list operations
+            "conda": {
+                "info",
+                "list",
+                "env",
+                "config",
+                "search",
+            },
         }
     )
 
     # Dangerous patterns that should never be allowed
-    # Note: We allow | (pipe), || (or), $VAR for environment variables,
-    # and 2>/dev/null or 2>&1 for stderr redirection
+    # Note: We allow | (pipe), || (or), && (and), ; (chaining),
+    # $VAR, $(...), and stderr redirection (2>/dev/null, 2>&1)
     forbidden_patterns: list[re.Pattern] = field(
         default_factory=lambda: [
-            re.compile(r";"),  # Command chaining with semicolon
-            re.compile(r"`"),  # Backtick command substitution
-            re.compile(r"\$\("),  # Command substitution $(...)
+            re.compile(r"`"),  # Backtick command substitution (use $() instead)
             re.compile(
                 r"(?<![|&>])&(?![&1])"
             ),  # Background (&) but allow &&, >&1, and &>
@@ -176,6 +316,9 @@ class CommandSandbox:
         """
         Validate a command against the sandbox rules.
 
+        Supports command chaining with ;, &&, ||, and pipes |.
+        Each command in the chain is validated independently.
+
         Args:
             command: The shell command to validate
 
@@ -183,19 +326,121 @@ class CommandSandbox:
             Tuple of (is_valid, error_message)
             If valid, error_message is empty string.
         """
-        # Check for forbidden patterns
+        # Check for empty command first
+        if not command or not command.strip():
+            return False, "Empty command"
+
+        # Check for forbidden patterns first (these apply to the whole command)
         for pattern in self.forbidden_patterns:
             if pattern.search(command):
                 return False, f"Command contains forbidden pattern: {pattern.pattern}"
 
+        # Split on command separators (; && ||) to validate each command
+        # We need to be careful with pipes - they're allowed but each side
+        # needs validation
+        simple_commands = self._split_command_chain(command)
+
+        # Ensure we have at least one non-empty command
+        non_empty = [c.strip() for c in simple_commands if c.strip()]
+        if not non_empty:
+            return False, "Empty command"
+
+        for simple_cmd in non_empty:
+            is_valid, error = self._validate_simple_command(simple_cmd)
+            if not is_valid:
+                return False, error
+
+        return True, ""
+
+    def _split_command_chain(self, command: str) -> list[str]:
+        """
+        Split a command chain into individual simple commands.
+
+        Handles ;, &&, ||, and | separators while respecting quotes.
+        """
+        # Split on ; && || but keep quoted strings together
+        # This is a simplified approach - for complex commands, use script mode
+        result = []
+        current = []
+        in_single_quote = False
+        in_double_quote = False
+        i = 0
+
+        while i < len(command):
+            char = command[i]
+
+            # Handle quotes
+            if char == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+                current.append(char)
+            elif char == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+                current.append(char)
+            # Handle escape sequences
+            elif char == "\\" and i + 1 < len(command):
+                current.append(char)
+                current.append(command[i + 1])
+                i += 1
+            # Handle separators (only outside quotes)
+            elif not in_single_quote and not in_double_quote:
+                if char == ";":
+                    result.append("".join(current))
+                    current = []
+                elif char == "|":
+                    # Check for || (or) vs | (pipe)
+                    if i + 1 < len(command) and command[i + 1] == "|":
+                        result.append("".join(current))
+                        current = []
+                        i += 1  # Skip second |
+                    else:
+                        # Pipe - split here too, both sides need validation
+                        result.append("".join(current))
+                        current = []
+                elif char == "&":
+                    # Check for && (and)
+                    if i + 1 < len(command) and command[i + 1] == "&":
+                        result.append("".join(current))
+                        current = []
+                        i += 1  # Skip second &
+                    else:
+                        current.append(char)
+                else:
+                    current.append(char)
+            else:
+                current.append(char)
+
+            i += 1
+
+        # Don't forget the last command
+        if current:
+            result.append("".join(current))
+
+        return result
+
+    def _validate_simple_command(self, command: str) -> tuple[bool, str]:
+        """
+        Validate a single simple command (no chaining operators).
+
+        Args:
+            command: A simple shell command
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Strip common redirections for parsing
+        cmd_for_parse = command
+        for redir in ["2>/dev/null", "2>&1", ">/dev/null", "&>/dev/null"]:
+            cmd_for_parse = cmd_for_parse.replace(redir, "")
+
         # Parse command to get the executable
         try:
-            parts = shlex.split(command)
+            parts = shlex.split(cmd_for_parse.strip())
         except ValueError as e:
             return False, f"Invalid command syntax: {e}"
 
         if not parts:
-            return False, "Empty command"
+            # Empty command is okay (e.g., result of stripping)
+            return True, ""
 
         executable = parts[0]
 
@@ -213,6 +458,19 @@ class CommandSandbox:
                 return False, f"Command '{executable}' requires a subcommand"
 
             subcommand = parts[1]
+            # Handle flags before subcommand (e.g., rpm -qa)
+            if subcommand.startswith("-"):
+                # For rpm, -q* flags are queries
+                if executable == "rpm" and subcommand.startswith("-q"):
+                    return True, ""
+                # Otherwise check next arg
+                if len(parts) > 2:
+                    subcommand = parts[2]
+                else:
+                    # Just flags, allow for some commands
+                    if executable in {"rpm", "dpkg"}:
+                        return True, ""
+
             allowed_subcommands = self.restricted_commands[executable]
 
             if subcommand not in allowed_subcommands:
