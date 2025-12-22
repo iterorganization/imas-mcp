@@ -322,5 +322,169 @@ def facilities_show(name: str, fmt: str) -> None:
         raise SystemExit(1) from e
 
 
+# ============================================================================
+# Dynamic Facility Commands
+# ============================================================================
+
+
+def _create_facility_command(facility_name: str, description: str) -> click.Command:
+    """Create a CLI command for a specific facility."""
+
+    @click.command(name=facility_name, help=f"Explore {description}")
+    @click.argument("command", required=False)
+    @click.option("--status", is_flag=True, help="Show session history")
+    @click.option(
+        "--script",
+        is_flag=True,
+        help="Read multiline script from stdin and execute via bash -s",
+    )
+    @click.option(
+        "--finish",
+        "finish_learnings",
+        default=None,
+        help="Persist learnings and clear session. Pass JSON/YAML or pipe via stdin.",
+    )
+    @click.option("--discard", is_flag=True, help="Clear session without persisting")
+    def facility_cmd(
+        command: str | None,
+        status: bool,
+        script: bool,
+        finish_learnings: str | None,
+        discard: bool,
+    ) -> None:
+        """Execute commands on a remote facility or manage session."""
+        import sys
+
+        from imas_codex.remote import (
+            discard_session,
+            finish_session,
+            get_session_status,
+            run_command,
+            run_script,
+        )
+
+        # Handle --status
+        if status:
+            session_status = get_session_status(facility_name)
+            click.echo(session_status.format())
+            return
+
+        # Handle --script (read multiline script from stdin)
+        if script:
+            if sys.stdin.isatty():
+                click.echo("Error: --script requires input via stdin", err=True)
+                click.echo("Usage: imas-codex epfl --script << 'EOF'", err=True)
+                click.echo("  python --version", err=True)
+                click.echo("  which python", err=True)
+                click.echo("  pip list | head -5", err=True)
+                click.echo("EOF", err=True)
+                raise SystemExit(1)
+
+            script_content = sys.stdin.read()
+            if not script_content.strip():
+                click.echo("Error: Empty script", err=True)
+                raise SystemExit(1)
+
+            try:
+                result = run_script(facility_name, script_content)
+                if result.stdout:
+                    click.echo(result.stdout, nl=False)
+                    if not result.stdout.endswith("\n"):
+                        click.echo()
+                if result.stderr:
+                    click.echo(result.stderr, err=True, nl=False)
+                    if not result.stderr.endswith("\n"):
+                        click.echo(err=True)
+                if result.exit_code != 0:
+                    raise SystemExit(result.exit_code)
+            except ValueError as e:
+                click.echo(f"Error: {e}", err=True)
+                raise SystemExit(1) from e
+            except Exception as e:
+                click.echo(f"Connection error: {e}", err=True)
+                raise SystemExit(1) from e
+            return
+
+        # Handle --discard
+        if discard:
+            if discard_session(facility_name):
+                click.echo(f"Session cleared for {facility_name}")
+            else:
+                click.echo(f"No active session for {facility_name}")
+            return
+
+        # Handle --finish (either with argument or via stdin)
+        if finish_learnings is not None or (not command and not sys.stdin.isatty()):
+            learnings_input = finish_learnings
+
+            # Read from stdin only if --finish was given with empty value
+            # or if no command was given and stdin has data
+            if finish_learnings == "" or (
+                finish_learnings is None and not command and not sys.stdin.isatty()
+            ):
+                learnings_input = sys.stdin.read()
+
+            success, message = finish_session(facility_name, learnings_input)
+            if success:
+                click.echo(message)
+            else:
+                click.echo(f"Error: {message}", err=True)
+                raise SystemExit(1)
+            return
+
+        # Handle command execution
+        if command:
+            try:
+                result = run_command(facility_name, command)
+                # Print stdout
+                if result.stdout:
+                    click.echo(result.stdout, nl=False)
+                    if not result.stdout.endswith("\n"):
+                        click.echo()
+                # Print stderr to stderr
+                if result.stderr:
+                    click.echo(result.stderr, err=True, nl=False)
+                    if not result.stderr.endswith("\n"):
+                        click.echo(err=True)
+                # Exit with command's exit code
+                if result.exit_code != 0:
+                    raise SystemExit(result.exit_code)
+            except ValueError as e:
+                click.echo(f"Error: {e}", err=True)
+                raise SystemExit(1) from e
+            except Exception as e:
+                click.echo(f"Connection error: {e}", err=True)
+                raise SystemExit(1) from e
+            return
+
+        # No command or option - show help
+        ctx = click.get_current_context()
+        click.echo(ctx.get_help())
+
+    return facility_cmd
+
+
+def _register_facility_commands() -> None:
+    """Register a CLI command for each configured facility."""
+    try:
+        from imas_codex.discovery import get_config, list_facilities
+
+        for facility_name in list_facilities():
+            try:
+                config = get_config(facility_name)
+                cmd = _create_facility_command(facility_name, config.description)
+                main.add_command(cmd)
+            except Exception:
+                # Skip facilities with invalid configs
+                pass
+    except Exception:
+        # Don't fail CLI startup if facility loading fails
+        pass
+
+
+# Register facility commands at import time
+_register_facility_commands()
+
+
 if __name__ == "__main__":
     main()

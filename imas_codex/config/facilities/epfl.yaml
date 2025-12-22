@@ -1,89 +1,73 @@
-# EPFL / Swiss Plasma Center (TCV) Facility Configuration
-# SSH host: epfl (configured in ~/.ssh/config)
-
 facility: epfl
 ssh_host: epfl
 description: Swiss Plasma Center - TCV Tokamak
 
-# Contact information
+# Hostnames for local execution detection
+# If running on any of these hosts, SSH is skipped
+hostnames:
+  - lac5.epfl.ch
+  - lac5
 contact:
   organization: École Polytechnique Fédérale de Lausanne
   department: Swiss Plasma Center (SPC)
   machine: TCV (Tokamak à Configuration Variable)
-
-# Known filesystem paths
 paths:
-  # Data storage locations
   data:
-    - /common/tcv/data
-    - /common/tcv/results
-    
-  # Code repositories and analysis scripts  
+  - /common/tcv/data
+  - /common/tcv/results
   code:
-    - /common/tcv/codes
-    - /home/*/diagnostics
-    - /home/*/analysis
-    
-  # Documentation locations
+  - /common/tcv/codes
+  - /home/*/diagnostics
+  - /home/*/analysis
   docs:
-    - /common/tcv/docs
-    - /common/tcv/wiki
-
-# Facility-specific exclusions (in addition to core.yaml)
+  - /common/tcv/docs
+  - /common/tcv/wiki
 excludes:
   directories:
-    - /scratch
-    - /tmp
-    - /var/tmp
-    
+  - /scratch
+  - /tmp
+  - /var/tmp
   patterns:
-    - "*.dat.old"
-    - "*.backup"
-
-# Known data systems at this facility
+  - '*.dat.old'
+  - '*.backup'
 known_systems:
-  # MDSplus configuration
   mdsplus:
     server: tcvdata.epfl.ch
     trees:
-      - tcv
-      - tcv_shot
-      - results
-      - magnetics
-      - diagnostics
-      
-  # Known diagnostic systems
+    - tcv
+    - tcv_shot
+    - results
+    - magnetics
+    - diagnostics
   diagnostics:
-    - ece       # Electron Cyclotron Emission
-    - fir       # Far-Infrared Interferometer
-    - mse       # Motional Stark Effect
-    - thomson   # Thomson Scattering
-    - bolometry
-    - soft_xray
-    - hard_xray
-    - neutron
-    
-  # Key analysis codes
+  - ece
+  - fir
+  - mse
+  - thomson
+  - bolometry
+  - soft_xray
+  - hard_xray
+  - neutron
   codes:
-    - liuqe     # Equilibrium reconstruction
-    - raptor    # Real-time transport
-    - chease    # Equilibrium solver
-
-# Hints for the LLM investigator
+  - liuqe
+  - raptor
+  - chease
 exploration_hints:
-  - "MDSplus is the primary data access system"
-  - "LIUQE is used for equilibrium reconstruction"
-  - "Python 3 with MDSplus bindings is commonly available"
-  - "Look for diagnostic codes in /common/tcv/codes/diagnostics/"
-
-# Accumulated knowledge from agent explorations
-# This section is updated by the Commander LLM when agents discover new information
+- MDSplus is the primary data access system
+- LIUQE is used for equilibrium reconstruction
+- Python 3 with MDSplus bindings is commonly available
+- Look for diagnostic codes in /common/tcv/codes/diagnostics/
 knowledge:
-  tools: []
-    # Example: "ripgrep (rg) not available; use grep -r instead"
+  tools:
+    tree: available
   paths: []
-    # Example: "/common/tcv/codes is readable but /scratch requires special permissions"
-  python: []
-    # Example: "Python 3.11 is default; MDSplus available via 'module load mdsplus'"
+  python:
+    version: 3.9.21
   data: []
-    # Example: "Shot data organized by year in /common/tcv/data/shots/YYYY/"
+  notes:
+  - this is a test note
+  mdsplus:
+    server: tcvdata.epfl.ch
+    trees:
+    - tcv
+    - tcv_shot

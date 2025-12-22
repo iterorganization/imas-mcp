@@ -223,7 +223,77 @@ VS Code (`.vscode/mcp.json`):
 }
 ```
 
-This provides prompts like `/explore_files` for orchestrating subagents that explore remote facilities via SSH.
+This provides the `/explore` prompt for LLM-driven exploration of remote facilities via SSH.
+
+#### SSH ControlMaster Setup (Recommended)
+
+For fast repeated SSH connections during facility exploration, configure SSH ControlMaster. This keeps connections alive, reducing latency from ~1-2 seconds to ~100ms for subsequent commands.
+
+```bash
+# Create socket directory
+mkdir -p ~/.ssh/sockets
+chmod 700 ~/.ssh/sockets
+```
+
+Add to `~/.ssh/config`:
+
+```
+# EPFL / Swiss Plasma Center
+Host epfl
+    HostName spcepfl.epfl.ch
+    User your_username
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+
+# Add other facilities as needed
+Host ipp
+    HostName gateway.ipp.mpg.de
+    User your_username
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+```
+
+**How it works:**
+- First connection: ~1-2 seconds (establishes master connection)
+- Subsequent connections: ~100ms (reuses existing socket)
+- `ControlPersist 600`: Keep connection alive for 10 minutes after last use
+
+**Verify setup:**
+```bash
+# Check if master connection is active
+ssh -O check epfl
+
+# Manually close master connection
+ssh -O exit epfl
+```
+
+#### Facility Exploration Commands
+
+Once SSH is configured, explore facilities directly from the terminal:
+
+```bash
+# Execute commands on remote facility
+uv run imas-codex epfl "python --version"
+uv run imas-codex epfl "ls /common/tcv/codes"
+
+# View session history
+uv run imas-codex epfl --status
+
+# Persist learnings when done
+uv run imas-codex epfl --finish << 'EOF'
+python:
+  version: "3.9.21"
+tools:
+  rg: unavailable
+paths:
+  codes: /common/tcv/codes
+EOF
+
+# Or discard session
+uv run imas-codex epfl --discard
+```
 
 ### Docker Setup
 

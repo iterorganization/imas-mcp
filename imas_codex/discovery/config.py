@@ -113,6 +113,8 @@ class FacilityConfig(BaseModel):
     facility: str
     ssh_host: str
     description: str = ""
+    hostnames: list[str] = Field(default_factory=list)
+    """Hostnames that identify this facility (for local execution detection)."""
     paths: PathConfig = Field(default_factory=PathConfig)
     excludes: ExcludeSettings = Field(default_factory=ExcludeSettings)
     known_systems: KnownSystems = Field(default_factory=KnownSystems)
@@ -131,6 +133,7 @@ class MergedConfig(BaseModel):
     facility: str
     ssh_host: str
     description: str
+    hostnames: list[str] = Field(default_factory=list)
     paths: PathConfig
     known_systems: KnownSystems
     exploration_hints: list[str]
@@ -219,6 +222,7 @@ def get_config(facility: str) -> MergedConfig:
         facility=fac.facility,
         ssh_host=fac.ssh_host,
         description=fac.description,
+        hostnames=fac.hostnames,
         paths=fac.paths,
         known_systems=fac.known_systems,
         exploration_hints=fac.exploration_hints,
