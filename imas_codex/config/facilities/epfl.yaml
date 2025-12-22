@@ -65,6 +65,42 @@ knowledge:
     scl: unavailable
     rg: unavailable
     grep: available
+    ag: unavailable
+    awk: available
+    sed: available
+    find: available
+    file: available
+    stat: available
+    h5dump: unavailable
+    ncdump: unavailable
+    vim: available
+    nano: available
+    emacs: available
+    git: available
+    svn: available
+    wget: available
+    curl: available
+    rsync: available
+    ssh: available
+    make: available
+    cmake: available
+    gcc: 11.5.0
+    gfortran: 11.5.0
+    icx: 2025.2.1
+    icpx: available
+    ifx: 2025.2.1
+    dpcpp: available
+    mpicc: available
+    mpiicc: available
+    mpirun: available
+    slurm: unavailable
+    srun: unavailable
+    sbatch: unavailable
+    qsub: unavailable
+    octave: unavailable
+    julia: unavailable
+    R: unavailable
+    jupyter: unavailable
   paths: []
   python:
     version: 3.9.21
@@ -83,6 +119,10 @@ knowledge:
   - MDSplus Python bindings work (import MDSplus succeeds)
   - Intel debugger bundles Python 3.13 internally but not user-accessible
   - OS is RHEL 9.6 (Plow)
+  - MATLAB R2019a is default; R2025b-devel is newest available
+  - CRPP toolbox (crpptbx-9.6.0) auto-loads with MATLAB
+  - No HDF5/NetCDF tools in PATH (h5dump, ncdump unavailable)
+  - No job scheduler - this is likely a shared login node, not HPC cluster
   mdsplus:
     server: tcvdata.epfl.ch
     trees:
@@ -92,3 +132,15 @@ knowledge:
     intel_oneapi: 2025.2 (auto-loaded via /etc/profile.d/intel.sh)
     mdsplus: auto-loaded via /etc/profile.d/mdsplus.sh
   test: value
+  matlab:
+    default_version: R2019a (9.6.0.1099231 Update 1)
+    path: /usr/local/bin/matlab
+    available_versions:
+    - R2017a
+    - R2019a
+    - R2021a
+    - R2022a
+    - R2023a
+    - R2025b-devel
+    install_path: /usr/local/MATLAB
+    crpp_toolbox: crpptbx-9.6.0
