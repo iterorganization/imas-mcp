@@ -76,4 +76,14 @@ exploration_hints:
   - "Python 3 with MDSplus bindings is commonly available"
   - "Look for diagnostic codes in /common/tcv/codes/diagnostics/"
 
-
+# Accumulated knowledge from agent explorations
+# This section is updated by the Commander LLM when agents discover new information
+knowledge:
+  tools: []
+    # Example: "ripgrep (rg) not available; use grep -r instead"
+  paths: []
+    # Example: "/common/tcv/codes is readable but /scratch requires special permissions"
+  python: []
+    # Example: "Python 3.11 is default; MDSplus available via 'module load mdsplus'"
+  data: []
+    # Example: "Shot data organized by year in /common/tcv/data/shots/YYYY/"

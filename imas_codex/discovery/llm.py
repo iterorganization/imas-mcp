@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(override=True)
 
 
 @dataclass
@@ -65,14 +69,16 @@ class AgentLLM:
             max_tokens: Maximum tokens in response
         """
         self.model = model
-        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
+        self.api_key = api_key or os.environ.get(
+            "OPENROUTER_API_KEY", os.environ.get("OPENAI_API_KEY")
+        )
         self.timeout = timeout
         self.max_tokens = max_tokens
 
         if not self.api_key:
             raise ValueError(
-                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable "
-                "or pass api_key parameter."
+                "OpenRouter API key required. Set OPENROUTER_API_KEY or OPENAI_API_KEY "
+                "environment variable (or in .env file), or pass api_key parameter."
             )
 
     async def chat(
