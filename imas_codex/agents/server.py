@@ -113,6 +113,47 @@ Execute commands on the remote facility:
 uv run imas-codex {facility} "your command here"
 ```
 
+### Batch Commands (Preferred)
+
+**Minimize round-trips by combining commands.** Use semicolons, `&&`, `||`, and pipes:
+
+```bash
+# Good: batch multiple checks in one call
+uv run imas-codex {facility} "which python3; python3 --version; pip list 2>/dev/null | head -20"
+
+# Good: check tool availability with fallbacks
+uv run imas-codex {facility} "which rg || which grep; module avail 2>&1 | head -30"
+
+# Good: environment and package info together
+uv run imas-codex {facility} "cat /etc/os-release; rpm -qa | grep -E 'python|numpy' | head -20"
+```
+
+### Multi-line Scripts (For Complex Exploration)
+
+For comprehensive discovery, use `--script` with a heredoc:
+
+```bash
+uv run imas-codex {facility} --script << 'EOF'
+echo "=== System ==="
+cat /etc/os-release | head -5
+uname -a
+
+echo "=== Python ==="
+which python3 && python3 --version
+pip list 2>/dev/null | head -15
+
+echo "=== Environment Modules ==="
+module avail 2>&1 | head -30 || echo "modules not available"
+
+echo "=== Package Query ==="
+rpm -qa 2>/dev/null | grep -E 'python|hdf5|netcdf' | sort | head -20
+EOF
+```
+
+**Avoid:** Making separate calls for each simple check.
+
+### Session Management
+
 Check what you've run in this session:
 ```bash
 uv run imas-codex {facility} --status
@@ -158,10 +199,11 @@ uv run imas-codex {facility} --discard
 ## Exploration Guidelines
 
 1. **Start with environment basics**: Python version, available tools (rg, grep, tree, find, h5dump, ncdump)
-2. **Explore known paths**: Check what's in the data/code directories listed above
-3. **Look for documentation**: README files, wikis, important scripts
-4. **Test data access**: Try listing MDSplus trees, HDF5 files, etc.
-5. **Note anything useful**: Paths, tool availability, data organization patterns
+2. **Check environment modules**: `module avail 2>&1 | head -50` (if available)
+3. **Explore known paths**: Check what's in the data/code directories listed above
+4. **Look for documentation**: README files, wikis, important scripts
+5. **Test data access**: Try listing MDSplus trees, HDF5 files, etc.
+6. **Note anything useful**: Paths, tool availability, data organization patterns
 
 ## Learning Categories
 
@@ -172,13 +214,16 @@ Use these categories in your `--finish` YAML:
 - `paths`: important directories discovered
 - `data`: data organization patterns, file formats
 - `mdsplus`: tree names, server info, signal structure
+- `environment`: module system, conda, loaded modules
 - `notes`: freeform observations (as a list)
 
-## Safety Notes
+## Allowed Operations
 
-- All commands are validated for read-only operations
-- Destructive commands (rm, mv, chmod, etc.) are blocked
-- Large outputs are automatically truncated in logs
+- Command chaining: `;`, `&&`, `||`, `|`
+- Environment modules: `module avail/list/load/show/spider`
+- Package queries: `rpm -qa`, `dnf list`, `pip list`
+- System info: `cat /etc/os-release`, `uname -a`
+- Destructive commands (rm, mv, chmod, sudo) are blocked
 """
 
         @self.mcp.prompt()
