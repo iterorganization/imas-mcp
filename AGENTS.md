@@ -153,14 +153,13 @@ git checkout -- .  # Discard any remaining changes
 
 ```
 imas_codex/
-├── agents/         # Subagent implementations (file_explorer, etc.)
+├── agents/         # MCP server for exploration prompts
 ├── config/         # Facility and core configuration (YAML)
 ├── core/           # Data models, XML parsing, physics domains
-├── discovery/      # SSH connection, sandbox, LLM client
+├── discovery/      # Facility config loading
 ├── embeddings/     # Vector embeddings and semantic search
 ├── models/         # Pydantic models
-├── prompts/        # Agent instruction templates (Markdown)
-│   └── agents/     # Subagent-specific prompts
+├── remote/         # Artifact capture for exploration findings
 ├── search/         # Search functionality
 ├── services/       # External services
 ├── tools/          # MCP tool implementations
@@ -177,30 +176,38 @@ The Agents MCP server enables exploration of remote fusion facilities.
 
 The system uses a **Command/Deploy** pattern:
 1. **Commander** (you, the LLM in chat) reads instructions and orchestrates
-2. **Subagents** (specialist LLMs) execute tasks via ReAct loops
-3. **SSH execution** via `FacilityConnection` with safety sandbox
+2. **Direct SSH** for exploration (faster than CLI wrapper)
+3. **Artifact capture** via CLI for validated persistence
 
-### Using the Agents Server
+### Exploring Facilities
 
-Start the agents server:
+Read the exploration guide:
 ```bash
-uv run imas-codex serve agents
+cat imas_codex/config/README.md
 ```
 
-In Cursor, use the `/explore_files` prompt to explore a facility:
+SSH directly using host aliases from `~/.ssh/config`:
+```bash
+ssh epfl "which python3; python3 --version; pip list | head"
 ```
-/explore_files facility:epfl path:/common/tcv/codes
+
+Capture findings:
+```bash
+uv run imas-codex epfl --capture environment << 'EOF'
+python:
+  version: "3.9.21"
+EOF
 ```
 
 ### Knowledge Hierarchy
 
-Agent instructions are organized in three levels:
+Agent instructions are organized in levels:
 
 | Level | Location | Content |
 |-------|----------|---------|
-| Common | `prompts/agents/common.md` | Safety, ReAct pattern, SSH |
+| Guide | `config/README.md` | Batch patterns, safety, capture |
 | Facility | `config/facilities/*.yaml` | Paths, tools, knowledge |
-| Specialist | `prompts/agents/*.md` | Agent-specific behavior |
+| Schema | `discovery/models/*.py` | Artifact structure |
 
 ### Persisting Knowledge
 

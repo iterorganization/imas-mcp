@@ -330,9 +330,7 @@ def facilities_show(name: str, fmt: str) -> None:
 def _create_facility_command(facility_name: str, description: str) -> click.Command:
     """Create a CLI command for a specific facility."""
 
-    @click.command(name=facility_name, help=f"Explore {description}")
-    @click.argument("command", required=False)
-    @click.option("--status", is_flag=True, help="Show session history")
+    @click.command(name=facility_name, help=f"Manage artifacts for {description}")
     @click.option(
         "--capture",
         "capture_arg",
@@ -341,10 +339,9 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
         required=False,
         help=(
             "Capture learnings to artifact. Specify artifact type "
-            "(environment, tools, filesystem, data). Session remains open."
+            "(environment, tools, filesystem, data)."
         ),
     )
-    @click.option("--discard", is_flag=True, help="Clear session without persisting")
     @click.option(
         "--artifacts", is_flag=True, help="List all artifacts for this facility"
     )
@@ -356,30 +353,19 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
         help="View a specific artifact (environment, tools, filesystem, data)",
     )
     def facility_cmd(
-        command: str | None,
-        status: bool,
         capture_arg: str | None,
-        discard: bool,
         artifacts: bool,
         artifact_view: str | None,
     ) -> None:
-        """Execute commands on a remote facility or manage session.
+        """Manage exploration artifacts for a facility.
+
+        Use SSH directly for exploration (faster than CLI):
+            ssh epfl "which python3; python3 --version"
+
+        See imas_codex/config/README.md for comprehensive exploration guidance.
 
         Examples:
-            # Single command
-            imas-codex epfl "python3 --version"
-
-            # Batch commands with chaining
-            imas-codex epfl "which python3; python3 --version; pip list | head"
-
-            # Multi-line script via heredoc
-            imas-codex epfl << 'EOF'
-            echo "=== Python ==="
-            python3 --version
-            pip list | head -10
-            EOF
-
-            # Capture typed artifact (environment, tools, filesystem, data)
+            # Capture environment artifact
             imas-codex epfl --capture environment << 'EOF'
             python:
               version: "3.9.21"
@@ -389,26 +375,15 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
               version: "9.6"
             EOF
 
-            # Capture tools artifact
-            imas-codex epfl --capture tools << 'EOF'
-            cli_tools:
-              rg: unavailable
-              grep: available
-            EOF
-
-            # View artifacts
+            # List artifacts
             imas-codex epfl --artifacts
+
+            # View specific artifact
             imas-codex epfl --artifact environment
         """
         import json
         import sys
 
-        from imas_codex.remote import (
-            discard_session,
-            get_session_status,
-            run_command,
-            run_script,
-        )
         from imas_codex.remote.capture import (
             capture_artifact,
             list_artifacts,
@@ -440,52 +415,31 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 raise SystemExit(1)
             return
 
-        # Handle --status
-        if status:
-            session_status = get_session_status(facility_name)
-            click.echo(session_status.format())
-            return
-
-        # Handle --discard
-        if discard:
-            if discard_session(facility_name):
-                click.echo(f"Session cleared for {facility_name}")
-            else:
-                click.echo(f"No active session for {facility_name}")
-            return
-
         # Handle --capture TYPE
         if capture_arg is not None:
-            artifact_type: str | None = None
-            learnings_input: str | None = None
-
-            # Check if capture_arg is an artifact type
             valid_types = {"environment", "tools", "filesystem", "data"}
-            if capture_arg in valid_types:
-                # Artifact type specified, read learnings from stdin
-                artifact_type = capture_arg
-                if sys.stdin.isatty():
-                    click.echo(
-                        f"Error: --capture {artifact_type} requires input via stdin",
-                        err=True,
-                    )
-                    raise SystemExit(1)
-                learnings_input = sys.stdin.read()
-            else:
-                # Must be artifact type
+            if capture_arg not in valid_types:
                 click.echo(
                     f"Error: --capture requires artifact type: {', '.join(sorted(valid_types))}",
                     err=True,
                 )
                 raise SystemExit(1)
 
+            if sys.stdin.isatty():
+                click.echo(
+                    f"Error: --capture {capture_arg} requires input via stdin",
+                    err=True,
+                )
+                raise SystemExit(1)
+
+            learnings_input = sys.stdin.read()
             if not learnings_input or not learnings_input.strip():
                 click.echo("Error: --capture requires learnings via stdin", err=True)
                 raise SystemExit(1)
 
             success, message = capture_artifact(
                 facility_name,
-                artifact_type=artifact_type,
+                artifact_type=capture_arg,
                 learnings=learnings_input,
             )
             if success:
@@ -495,46 +449,7 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
                 raise SystemExit(1)
             return
 
-        # Handle command execution (argument or stdin)
-        script_content = None
-
-        if command:
-            # Single command from argument
-            script_content = command
-        elif not sys.stdin.isatty():
-            # Multi-line script from stdin (heredoc)
-            script_content = sys.stdin.read()
-
-        if script_content and script_content.strip():
-            try:
-                # Use run_script for multi-line, run_command for single-line
-                if "\n" in script_content.strip():
-                    result = run_script(facility_name, script_content)
-                else:
-                    result = run_command(facility_name, script_content)
-
-                # Print stdout
-                if result.stdout:
-                    click.echo(result.stdout, nl=False)
-                    if not result.stdout.endswith("\n"):
-                        click.echo()
-                # Print stderr to stderr
-                if result.stderr:
-                    click.echo(result.stderr, err=True, nl=False)
-                    if not result.stderr.endswith("\n"):
-                        click.echo(err=True)
-                # Exit with command's exit code
-                if result.exit_code != 0:
-                    raise SystemExit(result.exit_code)
-            except ValueError as e:
-                click.echo(f"Error: {e}", err=True)
-                raise SystemExit(1) from e
-            except Exception as e:
-                click.echo(f"Connection error: {e}", err=True)
-                raise SystemExit(1) from e
-            return
-
-        # No command or option - show help
+        # No option - show help
         ctx = click.get_current_context()
         click.echo(ctx.get_help())
 
