@@ -1,37 +1,55 @@
 """
-Agents MCP Server - Prompts for LLM-driven facility exploration.
+Agents MCP Server - Tools for LLM-driven facility exploration.
 
-This server provides MCP prompts that inject context and pointers
-for exploring remote fusion facilities. The LLM orchestrates
-exploration via terminal commands and reads source files for details.
+This server provides MCP tools for:
+- Executing Cypher queries (mutations restricted to _Discovery nodes)
+- Ingesting validated nodes to the knowledge graph
+- Reading/updating sensitive infrastructure files
 
-Minimal prompt approach: provide entry points and file locations,
-let the agent discover details via --help and read_file.
+Local use only - provides full graph access for trusted agents.
 """
 
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
+import yaml
 from fastmcp import FastMCP
 
 from imas_codex.discovery import get_config, list_facilities
+from imas_codex.discovery.config import get_facilities_dir
+from imas_codex.graph import GraphClient, get_schema
+from imas_codex.graph.schema import to_cypher_props
 
 logger = logging.getLogger(__name__)
+
+
+def _deep_merge(base: dict, updates: dict) -> dict:
+    """Deep merge updates into base dict."""
+    result = base.copy()
+    for key, value in updates.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
 
 
 @dataclass
 class AgentsServer:
     """
-    MCP server for remote facility exploration prompts.
+    MCP server for facility exploration and knowledge graph management.
 
-    Provides minimal prompts that teach the LLM how to explore
-    remote facilities via terminal commands. The LLM:
+    Provides tools for:
+    - cypher: Execute Cypher queries (read any, write only _Discovery)
+    - ingest_node: Schema-validated node creation
+    - read_infrastructure: Read sensitive infrastructure files
+    - update_infrastructure: Merge updates to infrastructure files
 
-    1. Runs commands via `uv run imas-codex <facility> "cmd"`
-    2. Uses --help to discover CLI options
-    3. Reads Pydantic models for artifact schemas
-    4. Captures learnings via `--capture`
+    And prompts for:
+    - graph_schema: Schema guidance for Cypher generation
+    - explore: Exploration guidance and facility list
     """
 
     mcp: FastMCP = field(init=False, repr=False)
@@ -39,29 +57,309 @@ class AgentsServer:
     def __post_init__(self):
         """Initialize the MCP server."""
         self.mcp = FastMCP(name="imas-codex-agents")
+        self._register_tools()
         self._register_prompts()
         logger.debug("Agents MCP server initialized")
+
+    def _register_tools(self):
+        """Register exploration and graph tools."""
+
+        @self.mcp.tool()
+        def cypher(query: str, params: dict[str, Any] | None = None) -> list[dict]:
+            """
+            Execute Cypher query against the knowledge graph.
+
+            Read queries: unrestricted access to all nodes
+            Write queries: restricted to _Discovery nodes only
+
+            For schema-validated writes to proper nodes, use ingest_node().
+
+            Args:
+                query: Cypher query string
+                params: Optional query parameters
+
+            Returns:
+                List of result records as dicts
+
+            Examples:
+                # Read query - explore the graph
+                cypher("MATCH (f:Facility)-[:FACILITY_ID]-(d:Diagnostic) RETURN f.id, d.name")
+
+                # Write to _Discovery - stage unstructured findings
+                cypher('''
+                    CREATE (d:_Discovery {
+                        facility: 'epfl',
+                        type: 'unknown_tree',
+                        name: 'tcv_raw',
+                        notes: 'Found on spcsrv1',
+                        discovered_at: datetime()
+                    })
+                ''')
+            """
+            upper = query.upper()
+            mutation_keywords = ["CREATE", "MERGE", "SET", "DELETE", "REMOVE"]
+            has_mutation = any(kw in upper for kw in mutation_keywords)
+
+            if has_mutation and "_DISCOVERY" not in upper:
+                msg = (
+                    "Write operations restricted to _Discovery nodes. "
+                    "Use ingest_node() for schema-validated writes to proper nodes, "
+                    "or write to _Discovery for staging unstructured findings."
+                )
+                raise ValueError(msg)
+
+            try:
+                with GraphClient() as client:
+                    return client.query(query, **(params or {}))
+            except Exception as e:
+                logger.exception("Cypher query failed")
+                raise RuntimeError(f"Cypher query failed: {e}") from e
+
+        @self.mcp.tool()
+        def ingest_node(
+            node_type: str,
+            data: dict[str, Any],
+            create_facility_relationship: bool = True,
+        ) -> str:
+            """
+            Ingest a node with schema validation.
+
+            Validates data against the Pydantic model for the node type,
+            then creates/updates the node in the graph.
+
+            Args:
+                node_type: Node label (must be valid LinkML class)
+                data: Properties matching the Pydantic model
+                create_facility_relationship: Auto-create FACILITY_ID relationship
+
+            Returns:
+                Success message with node identifier
+
+            Examples:
+                # Add a diagnostic
+                ingest_node("Diagnostic", {
+                    "name": "XRCS",
+                    "facility_id": "epfl",
+                    "category": "spectroscopy",
+                    "description": "X-ray crystal spectrometer"
+                })
+
+                # Add an MDSplus tree
+                ingest_node("MDSplusTree", {
+                    "name": "tcv_raw",
+                    "facility_id": "epfl",
+                    "description": "Raw diagnostic data"
+                })
+            """
+            schema = get_schema()
+
+            # Validate node type
+            if node_type not in schema.node_labels:
+                msg = f"Unknown node type: {node_type}. Valid: {schema.node_labels}"
+                raise ValueError(msg)
+
+            # Get and validate against Pydantic model
+            model_class = schema.get_model(node_type)
+            try:
+                validated = model_class.model_validate(data)
+            except Exception as e:
+                msg = f"Validation failed for {node_type}: {e}"
+                raise ValueError(msg) from e
+
+            # Get identifier field
+            id_field = schema.get_identifier(node_type)
+            if not id_field:
+                msg = f"No identifier field found for {node_type}"
+                raise ValueError(msg)
+
+            node_id = getattr(validated, id_field)
+            props = to_cypher_props(validated)
+
+            try:
+                with GraphClient() as client:
+                    # Create/update the node
+                    client.create_node(node_type, node_id, props, id_field=id_field)
+
+                    # Create facility relationship if applicable
+                    if (
+                        create_facility_relationship
+                        and "facility_id" in props
+                        and node_type != "Facility"
+                    ):
+                        client.create_relationship(
+                            node_type,
+                            node_id,
+                            "Facility",
+                            props["facility_id"],
+                            "FACILITY_ID",
+                            from_id_field=id_field,
+                        )
+
+                return f"Created/updated {node_type} node: {node_id}"
+            except Exception as e:
+                logger.exception("Failed to ingest node")
+                raise RuntimeError(f"Failed to ingest node: {e}") from e
+
+        @self.mcp.tool()
+        def read_infrastructure(facility: str) -> dict[str, Any] | None:
+            """
+            Read sensitive infrastructure data for a facility.
+
+            Infrastructure files contain sensitive data (OS versions, paths,
+            tool availability) that is NOT stored in the public graph.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl")
+
+            Returns:
+                Infrastructure data dict, or None if file doesn't exist
+            """
+            infra_path = get_facilities_dir() / f"{facility}_infrastructure.yaml"
+            if not infra_path.exists():
+                return None
+
+            try:
+                return yaml.safe_load(infra_path.read_text())
+            except Exception as e:
+                logger.exception(f"Failed to read infrastructure for {facility}")
+                raise RuntimeError(f"Failed to read infrastructure: {e}") from e
+
+        @self.mcp.tool()
+        def update_infrastructure(
+            facility: str,
+            data: dict[str, Any],
+        ) -> str:
+            """
+            Merge updates into facility infrastructure file.
+
+            Deep-merges the provided data into the existing infrastructure
+            file, creating it if it doesn't exist.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl")
+                data: Data to merge (will be deep-merged with existing)
+
+            Returns:
+                Success message
+
+            Examples:
+                # Update tool availability
+                update_infrastructure("epfl", {
+                    "tools": {
+                        "rg": {"status": "unavailable"},
+                        "grep": {"status": "available", "path": "/usr/bin/grep"}
+                    }
+                })
+
+                # Add exploration notes
+                update_infrastructure("epfl", {
+                    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+                })
+            """
+            infra_path = get_facilities_dir() / f"{facility}_infrastructure.yaml"
+
+            # Load existing or start fresh
+            if infra_path.exists():
+                existing = yaml.safe_load(infra_path.read_text()) or {}
+            else:
+                existing = {"facility_id": facility}
+
+            # Deep merge
+            merged = _deep_merge(existing, data)
+
+            # Add timestamp
+            merged["last_updated"] = datetime.now(UTC).isoformat()
+
+            try:
+                infra_path.write_text(yaml.dump(merged, default_flow_style=False))
+                return f"Updated infrastructure for {facility}"
+            except Exception as e:
+                logger.exception(f"Failed to update infrastructure for {facility}")
+                raise RuntimeError(f"Failed to update infrastructure: {e}") from e
 
     def _register_prompts(self):
         """Register exploration prompts."""
 
         @self.mcp.prompt()
+        def graph_schema() -> str:
+            """
+            Get graph schema for Cypher query generation.
+
+            Returns node labels, relationships, and identifier fields
+            derived from the LinkML schema.
+            """
+            schema = get_schema()
+
+            lines = [
+                "# Knowledge Graph Schema",
+                "",
+                "Use this schema when writing Cypher queries.",
+                "",
+                "## Node Labels (valid for ingest_node)",
+                "",
+            ]
+
+            for label in sorted(schema.node_labels):
+                id_field = schema.get_identifier(label)
+                required = schema.get_required_fields(label)
+                lines.append(f"- **{label}**")
+                lines.append(f"  - Identifier: `{id_field}`")
+                lines.append(f"  - Required: {required}")
+                lines.append("")
+
+            lines.extend(
+                [
+                    "## Relationship Types",
+                    "",
+                    "Derived from schema (SCREAMING_SNAKE_CASE):",
+                    "",
+                ]
+            )
+            for rel_type in sorted(schema.relationship_types):
+                lines.append(f"- `{rel_type}`")
+
+            lines.extend(
+                [
+                    "",
+                    "## Special Nodes",
+                    "",
+                    "- `_Discovery`: Staging area for unstructured findings",
+                    "  - Write freely via cypher() tool",
+                    "  - Not validated against schema",
+                    "  - Review periodically and promote to proper nodes",
+                    "",
+                    "- `_GraphMeta`: Graph metadata (version, facilities)",
+                    "",
+                ]
+            )
+
+            return "\n".join(lines)
+
+        @self.mcp.prompt()
         def explore() -> str:
             """
-            Explore a remote fusion facility via SSH.
+            Get exploration guidance and facility list.
 
-            Returns guidance pointer and facility list with SSH hosts.
+            Returns SSH hosts, graph tools usage, and configuration file locations.
             """
             facilities = list_facilities()
 
             lines = [
                 "# Facility Exploration",
                 "",
-                "Read `imas_codex/config/README.md` for comprehensive guidance on:",
-                "- Batch command patterns (critical for performance)",
-                "- Category-specific exploration scripts",
-                "- Safety rules",
-                "- Capture syntax and examples",
+                "## Tools Available",
+                "",
+                "- `cypher(query)`: Execute Cypher (read any, write _Discovery only)",
+                "- `ingest_node(type, data)`: Schema-validated node creation",
+                "- `read_infrastructure(facility)`: Read sensitive local data",
+                "- `update_infrastructure(facility, data)`: Update sensitive local data",
+                "",
+                "## Configuration Files",
+                "",
+                "- Public: `imas_codex/config/facilities/<facility>.yaml` (graphed)",
+                "- Private: `imas_codex/config/facilities/<facility>_infrastructure.yaml` (local only)",
+                "",
+                "Read `imas_codex/config/README.md` for sensitive data policy.",
                 "",
                 "## Available Facilities",
                 "",
@@ -83,42 +381,6 @@ class AgentsServer:
                         lines.append("")
             else:
                 lines.append("No facilities configured.")
-
-            lines.extend(
-                [
-                    "## Artifact Schemas",
-                    "",
-                    "See `imas_codex/discovery/models/*.py` for Pydantic models:",
-                    "- `environment.py` - Python, OS, compilers, modules",
-                    "- `tools.py` - CLI tool availability",
-                    "- `filesystem.py` - Directory structure, paths",
-                    "- `data.py` - MDSplus, HDF5, NetCDF patterns",
-                ]
-            )
-
-            return "\n".join(lines)
-
-        @self.mcp.prompt()
-        def list_facilities_prompt() -> str:
-            """
-            List all available facilities for exploration.
-            """
-            facilities = list_facilities()
-
-            if not facilities:
-                return "No facilities configured."
-
-            lines = ["# Available Facilities\n"]
-
-            for name in sorted(facilities):
-                try:
-                    config = get_config(name)
-                    lines.append(f"## {name}")
-                    lines.append(f"**{config.description}**\n")
-                    lines.append(f"SSH Host: `{config.ssh_host}`\n")
-                except Exception as e:
-                    lines.append(f"## {name}")
-                    lines.append(f"Error loading config: {e}\n")
 
             return "\n".join(lines)
 

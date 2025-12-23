@@ -132,16 +132,34 @@ ssh epfl "which python3; python3 --version; pip list | head -10"
 
 ### 3. Persist Findings
 
-Save infrastructure discoveries to the `_infrastructure.yaml` file:
+Use the Agents MCP server tools:
 
-```bash
-# Capture updates infrastructure file (validates against schema)
-uv run imas-codex epfl --capture tools << 'EOF'
-tools:
-  rg: unavailable
-  grep: available
-  h5dump: unavailable
-EOF
+```python
+# For sensitive data (local only, never graphed)
+update_infrastructure("epfl", {
+    "tools": {
+        "rg": {"status": "unavailable"},
+        "grep": {"status": "available"}
+    },
+    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+})
+
+# For public data semantics (goes to graph)
+ingest_node("Diagnostic", {
+    "name": "XRCS",
+    "facility_id": "epfl",
+    "category": "spectroscopy"
+})
+
+# For unstructured discoveries (staging area)
+cypher('''
+    CREATE (d:_Discovery {
+        facility: 'epfl',
+        type: 'unknown_tree',
+        name: 'tcv_raw',
+        discovered_at: datetime()
+    })
+''')
 ```
 
 ## Safety Rules

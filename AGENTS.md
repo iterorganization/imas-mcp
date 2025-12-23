@@ -413,14 +413,46 @@ config/facilities/
 | MDSplus tree names | `<facility>.yaml` | Data semantics (safe) |
 | Diagnostic/code names | `<facility>.yaml` | Data semantics (safe) |
 
-When discovering infrastructure details, persist to the `_infrastructure.yaml` file:
+### Agents MCP Server Tools
 
-```bash
-uv run imas-codex epfl --capture tools << 'EOF'
-tools:
-  rg: unavailable
-  grep: available
-EOF
+The agents server (`imas-codex serve agents`) provides tools for exploration:
+
+| Tool | Purpose |
+|------|---------|
+| `cypher(query)` | Execute Cypher (read any, write `_Discovery` only) |
+| `ingest_node(type, data)` | Schema-validated node creation |
+| `read_infrastructure(facility)` | Read sensitive local data |
+| `update_infrastructure(facility, data)` | Update sensitive local data |
+
+**Prompts:**
+- `graph_schema` - Schema guidance for Cypher generation
+- `explore` - Exploration guidance and facility list
+
+**Usage Examples:**
+
+```python
+# Persist sensitive infrastructure data (local only)
+update_infrastructure("epfl", {
+    "tools": {"rg": {"status": "unavailable"}},
+    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+})
+
+# Persist public data semantics (to graph)
+ingest_node("Diagnostic", {
+    "name": "XRCS",
+    "facility_id": "epfl",
+    "category": "spectroscopy"
+})
+
+# Stage unstructured discoveries
+cypher('''
+    CREATE (d:_Discovery {
+        facility: 'epfl',
+        type: 'unknown_tree',
+        name: 'tcv_raw',
+        discovered_at: datetime()
+    })
+''')
 ```
 
 ### Exploring Facilities
