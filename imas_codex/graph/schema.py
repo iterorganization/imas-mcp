@@ -193,8 +193,35 @@ class GraphSchema:
     # Cypher Generation Helpers
     # =========================================================================
 
+    def needs_composite_constraint(self, class_name: str) -> bool:
+        """Check if a class needs a composite (identifier, facility_id) constraint.
+
+        Classes that have both an identifier field AND a required facility_id
+        field need composite uniqueness to support multi-facility graphs.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            True if the class needs a composite constraint.
+        """
+        id_field = self.get_identifier(class_name)
+        required = self.get_required_fields(class_name)
+        # Needs composite if has identifier, has required facility_id,
+        # and identifier is not facility_id itself
+        return (
+            id_field is not None
+            and "facility_id" in required
+            and id_field != "facility_id"
+        )
+
     def constraint_statements(self) -> list[str]:
         """Generate Neo4j constraint statements for all node types.
+
+        For facility-owned nodes (those with required facility_id), creates
+        composite uniqueness constraints on (identifier, facility_id) to
+        support multi-facility graphs where the same logical entity can
+        exist at different facilities.
 
         Returns:
             List of Cypher CREATE CONSTRAINT statements.
@@ -202,9 +229,21 @@ class GraphSchema:
         statements = []
         for label in self.node_labels:
             id_field = self.get_identifier(label)
-            if id_field:
-                # Use lowercase label for constraint name
-                constraint_name = f"{label.lower()}_{id_field}"
+            if not id_field:
+                continue
+
+            constraint_name = f"{label.lower()}_{id_field}"
+
+            if self.needs_composite_constraint(label):
+                # Composite constraint: (identifier, facility_id)
+                # Allows same identifier at different facilities
+                statements.append(
+                    f"CREATE CONSTRAINT {constraint_name} IF NOT EXISTS "
+                    f"FOR (n:{label}) REQUIRE (n.{id_field}, n.facility_id) IS UNIQUE"
+                )
+            else:
+                # Simple constraint: just the identifier
+                # For Facility, IMASPath, and 1:1 facility mappings
                 statements.append(
                     f"CREATE CONSTRAINT {constraint_name} IF NOT EXISTS "
                     f"FOR (n:{label}) REQUIRE n.{id_field} IS UNIQUE"
@@ -215,6 +254,10 @@ class GraphSchema:
         self, indexes: dict[str, list[str]] | None = None
     ) -> list[str]:
         """Generate Neo4j index statements.
+
+        Creates indexes for:
+        - facility_id on all facility-owned nodes (for fast facility-scoped queries)
+        - Common lookup patterns (category, role, etc.)
 
         Args:
             indexes: Optional dict mapping label to list of fields to index.
@@ -235,6 +278,17 @@ class GraphSchema:
             }
 
         statements = []
+
+        # Add facility_id index for all facility-owned nodes
+        for label in self.node_labels:
+            if "facility_id" in self.get_required_fields(label):
+                index_name = f"{label.lower()}_facility_id"
+                statements.append(
+                    f"CREATE INDEX {index_name} IF NOT EXISTS "
+                    f"FOR (n:{label}) ON (n.facility_id)"
+                )
+
+        # Add custom indexes
         for label, fields in indexes.items():
             if label in self.node_labels:
                 for field_name in fields:

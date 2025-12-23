@@ -378,6 +378,117 @@ class GraphClient:
             )
             return [dict(record["t"]) for record in result]
 
+    # =========================================================================
+    # Cross-Facility Query Methods
+    # =========================================================================
+
+    def get_nodes_by_facility(
+        self, label: str, facility_id: str
+    ) -> list[dict[str, Any]]:
+        """Get all nodes of a type for a specific facility.
+
+        Args:
+            label: Node label (e.g., "Diagnostic", "Tool", "TreeNode")
+            facility_id: Facility identifier
+
+        Returns:
+            List of node properties as dicts.
+        """
+        with self.session() as sess:
+            result = sess.run(
+                f"MATCH (n:{label} {{facility_id: $facility_id}}) RETURN n",
+                facility_id=facility_id,
+            )
+            return [dict(record["n"]) for record in result]
+
+    def get_nodes_across_facilities(
+        self, label: str, **filters: Any
+    ) -> list[dict[str, Any]]:
+        """Get nodes of a type across all facilities with optional filters.
+
+        Args:
+            label: Node label (e.g., "Diagnostic", "Tool")
+            **filters: Property filters (e.g., category="magnetics")
+
+        Returns:
+            List of dicts with node properties and facility_id.
+        """
+        where_clause = ""
+        if filters:
+            conditions = [f"n.{k} = ${k}" for k in filters]
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        query = f"""
+            MATCH (n:{label})-[:FACILITY_ID]->(f:Facility)
+            {where_clause}
+            RETURN n, f.id as facility_id
+            ORDER BY f.id, n.name
+        """
+        with self.session() as sess:
+            result = sess.run(query, **filters)
+            return [
+                {**dict(record["n"]), "facility_id": record["facility_id"]}
+                for record in result
+            ]
+
+    def compare_facilities(
+        self, label: str, facility_ids: list[str]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Compare nodes of a type across multiple facilities.
+
+        Args:
+            label: Node label (e.g., "Tool", "Diagnostic")
+            facility_ids: List of facility IDs to compare
+
+        Returns:
+            Dict mapping facility_id to list of nodes.
+        """
+        result: dict[str, list[dict[str, Any]]] = {fid: [] for fid in facility_ids}
+        with self.session() as sess:
+            query_result = sess.run(
+                f"""
+                MATCH (n:{label})-[:FACILITY_ID]->(f:Facility)
+                WHERE f.id IN $facility_ids
+                RETURN n, f.id as facility_id
+                ORDER BY f.id
+                """,
+                facility_ids=facility_ids,
+            )
+            for record in query_result:
+                fid = record["facility_id"]
+                if fid in result:
+                    result[fid].append(dict(record["n"]))
+        return result
+
+    def find_shared_imas_mappings(
+        self, facility_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Find IMAS paths that are mapped at multiple facilities.
+
+        Args:
+            facility_ids: Optional list of facilities to check.
+                         If None, checks all facilities.
+
+        Returns:
+            List of dicts with IMAS path and facilities that map to it.
+        """
+        where_clause = ""
+        if facility_ids:
+            where_clause = "WHERE m.facility_id IN $facility_ids"
+
+        query = f"""
+            MATCH (m:IMASMapping)-[:TARGET_PATH]->(imas:IMASPath)
+            {where_clause}
+            WITH imas, collect(DISTINCT m.facility_id) as facilities
+            WHERE size(facilities) > 1
+            RETURN imas.path as path, imas.ids as ids, facilities
+            ORDER BY size(facilities) DESC, imas.path
+        """
+        params = {"facility_ids": facility_ids} if facility_ids else {}
+        with self.session() as sess:
+            result = sess.run(query, **params)
+            return [dict(record) for record in result]
+
     def query(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
         """Execute a Cypher query and return results as dicts."""
         with self.session() as sess:

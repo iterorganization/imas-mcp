@@ -2,33 +2,132 @@
 
 This module provides Neo4j-based storage for facility knowledge discovered through exploration.
 
-## Architecture: Schema-Driven Graph Ontology
+## Architecture Overview
 
-### Single Source of Truth: LinkML
+```mermaid
+graph TB
+    subgraph "Single Source of Truth"
+        LINKML["LinkML Schema<br/>(facility.yaml)"]
+    end
+    
+    LINKML --> PYDANTIC["Pydantic Models<br/>(models.py)<br/>For validation"]
+    LINKML --> SCHEMA["GraphSchema<br/>(schema.py)<br/>Node labels<br/>Relationships<br/>Constraints"]
+    
+    SCHEMA --> CLIENT["GraphClient<br/>- High-level CRUD<br/>- query() for Cypher"]
+    
+    CLIENT --> SCRIPTS["Python scripts"]
+    CLIENT --> LLM["LLM agents<br/>(Cypher queries)"]
+    CLIENT --> MCP["MCP tools<br/>(hybrid)"]
+    
+    style LINKML fill:#e1f5fe
+    style SCHEMA fill:#fff3e0
+    style CLIENT fill:#e8f5e9
+```
 
-The **LinkML schema** (`imas_codex/schemas/facility.yaml`) is the authoritative source for:
-- Class definitions → Neo4j **node labels**
-- Slots with class ranges → Neo4j **relationships**
-- Enumerations → Constrained property values
-- Identifier/required fields → Database constraints
+## Design Philosophy: LLM-First Cypher
 
-### Module Structure
+Modern LLMs are excellent at writing Cypher queries. The architecture supports:
+
+1. **Direct Cypher via `client.query()`** - Primary interface for LLM agents
+2. **High-level Python methods** - Convenience for scripts and common operations
+3. **Schema enforcement** - GraphSchema generates constraints from LinkML
+
+```python
+# LLM-generated Cypher (recommended for complex queries)
+result = client.query("""
+    MATCH (code:AnalysisCode {name: $name})-[:FACILITY_ID]->(f:Facility)
+    RETURN f.id, f.name, code.version
+    ORDER BY f.id
+""", name="EFIT")
+
+# High-level method (convenience for common patterns)
+tools = client.get_tools("epfl")
+```
+
+## Multi-Facility Support
+
+### Understanding `id` vs `facility_id`
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| `id`/`name`/`path` | **Identifier** - uniquely identifies entity type | `"LIUQE"`, `"Thomson"` |
+| `facility_id` | **Owner** - which facility this belongs to | `"epfl"`, `"jet"` |
+
+**Both are required** to uniquely identify most nodes:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ AnalysisCode nodes in the graph:                            │
+├─────────────────────────────────────────────────────────────┤
+│ name: "EFIT"     facility_id: "epfl"  ← EPFL's EFIT         │
+│ name: "EFIT"     facility_id: "jet"   ← JET's EFIT          │
+│ name: "EFIT"     facility_id: "iter"  ← ITER's EFIT         │
+└─────────────────────────────────────────────────────────────┘
+
+Constraint: (name, facility_id) IS UNIQUE
+```
+
+### Cross-Facility Query Examples
+
+**Find all facilities using a specific analysis code:**
+```python
+# Using Python accessor
+efit_instances = client.get_nodes_across_facilities("AnalysisCode", name="EFIT")
+facilities = [e["facility_id"] for e in efit_instances]
+# ["epfl", "jet", "iter"]
+
+# Using direct Cypher
+facilities = client.query("""
+    MATCH (c:AnalysisCode {name: $name})-[:FACILITY_ID]->(f:Facility)
+    RETURN f.id, f.name, c.code_type, c.version
+""", name="EFIT")
+```
+
+**Compare diagnostics across facilities:**
+```python
+comparison = client.compare_facilities(
+    "Diagnostic", 
+    facility_ids=["epfl", "jet", "iter"]
+)
+# {"epfl": [...], "jet": [...], "iter": [...]}
+```
+
+**Find shared IMAS mappings:**
+```python
+shared = client.find_shared_imas_mappings()
+# [{"path": "equilibrium/time_slice/global_quantities/ip", 
+#   "facilities": ["epfl", "jet", "iter"]}]
+```
+
+## Module Structure
 
 ```
 graph/
 ├── __init__.py      # Public API exports
 ├── client.py        # Neo4j client for CRUD operations
-├── schema.py        # ✅ Schema-driven graph ontology
-└── models.py        # ✅ Auto-generated Pydantic models
+├── schema.py        # Schema-driven graph ontology
+└── models.py        # Auto-generated Pydantic models
 ```
 
-### Generated from Schema
+## Schema-Driven Generation
 
-From the LinkML schema, we auto-generate:
-- **Pydantic models** (`models.py`) via `gen-pydantic`
-- **Node labels** derived at runtime from class names
-- **Relationship types** derived from slot names with class ranges
-- **Constraints** derived from identifier fields
+From the LinkML schema (`schemas/facility.yaml`), we derive at runtime:
+
+| Artifact | Source | Method |
+|----------|--------|--------|
+| Node labels | Class names | `schema.node_labels` |
+| Relationships | Slots with class ranges | `schema.relationships` |
+| Constraints | Identifier + facility_id | `schema.constraint_statements()` |
+| Indexes | facility_id + common filters | `schema.index_statements()` |
+
+### Composite Constraints for Multi-Facility
+
+For facility-owned nodes, constraints are composite:
+```cypher
+-- Allows same name at different facilities
+CREATE CONSTRAINT diagnostic_name IF NOT EXISTS 
+FOR (n:Diagnostic) REQUIRE (n.name, n.facility_id) IS UNIQUE
+```
 
 ## Usage
 
@@ -37,29 +136,19 @@ From the LinkML schema, we auto-generate:
 ```python
 from imas_codex.graph import GraphSchema, get_schema
 
-# Get schema singleton (lazy-loaded)
 schema = get_schema()
 
-# Get all node labels (non-abstract classes)
+# Node labels (non-abstract classes)
 print(schema.node_labels)
-# ['Facility', 'MDSplusServer', 'MDSplusTree', 'TreeNode', ...]
+# ['Facility', 'MDSplusServer', 'MDSplusTree', ...]
 
-# Get all relationships (slots with class ranges)
+# Relationships (slots with class ranges)
 for rel in schema.relationships:
     print(f"{rel.from_class} -[:{rel.cypher_type}]-> {rel.to_class}")
-# MDSplusServer -[:FACILITY_ID]-> Facility
-# MDSplusTree -[:FACILITY_ID]-> Facility
-# ...
 
-# Get identifier field for a class
-print(schema.get_identifier("Facility"))  # 'id'
-print(schema.get_identifier("MDSplusServer"))  # 'hostname'
-
-# Generate constraint statements
-for stmt in schema.constraint_statements():
-    print(stmt)
-# CREATE CONSTRAINT facility_id IF NOT EXISTS FOR (n:Facility) REQUIRE n.id IS UNIQUE
-# CREATE CONSTRAINT mdsplusserver_hostname IF NOT EXISTS FOR (n:MDSplusServer) REQUIRE n.hostname IS UNIQUE
+# Check if class needs composite constraint
+schema.needs_composite_constraint("Diagnostic")  # True
+schema.needs_composite_constraint("Facility")     # False (no facility_id)
 ```
 
 ### GraphClient - Neo4j Operations
@@ -71,45 +160,21 @@ with GraphClient() as client:
     # Initialize schema (creates constraints and indexes)
     client.initialize_schema()
     
-    # Create nodes using string labels (derived from schema)
-    client.create_node("Facility", "epfl", {"name": "EPFL/TCV", "ssh_host": "epfl"})
-    
-    # Create relationships using SCREAMING_SNAKE_CASE types
-    client.create_relationship(
-        "MDSplusServer", "tcv.epfl.ch",
-        "Facility", "epfl",
-        "FACILITY_ID",
-        from_id_field="hostname"
-    )
-    
-    # High-level methods
-    client.create_facility("iter", name="ITER", machine="ITER")
+    # High-level CRUD
+    client.create_facility("epfl", name="EPFL/TCV", machine="TCV")
     client.create_tool("epfl", name="git", available=True, category="vcs")
     
-    # Query
-    facilities = client.get_facilities()
-    tools = client.get_tools("epfl")
+    # Direct Cypher for complex queries
+    result = client.query("""
+        MATCH (t:Tool)-[:FACILITY_ID]->(f:Facility)
+        WHERE t.available = true
+        RETURN f.id, collect(t.name) as tools
+    """)
 ```
 
-### Utility Functions
+## Schema Patterns
 
-```python
-from imas_codex.graph import to_cypher_props, merge_node_query, merge_relationship_query
-
-# Convert Pydantic model to Neo4j-safe dict
-props = to_cypher_props(my_model, exclude={"internal_field"})
-
-# Generate Cypher MERGE queries
-node_query = merge_node_query("Facility", id_field="id")
-# "MERGE (n:Facility {id: $id}) SET n += $props"
-
-rel_query = merge_relationship_query("Tool", "Facility", "FACILITY_ID")
-# "MATCH (a:Tool {id: $from_id}), (b:Facility {id: $to_id}) MERGE (a)-[r:FACILITY_ID]->(b)"
-```
-
-## Schema Patterns for Neo4j
-
-### Defining Relationships in LinkML
+### Relationships from LinkML
 
 Slots with class ranges automatically become relationships:
 
@@ -122,30 +187,22 @@ classes:
         required: true
 ```
 
-At runtime, `GraphSchema` detects this and exposes:
-```python
-Relationship(from_class="MDSplusServer", slot_name="facility_id", to_class="Facility")
-```
-
-### Identifier Fields → Unique Constraints
-
-Fields marked `identifier: true` automatically get unique constraints:
+### Identifier Fields → Constraints
 
 ```yaml
 classes:
   Facility:
     attributes:
       id:
-        identifier: true    # → UNIQUE constraint on Facility.id
+        identifier: true    # → Simple UNIQUE constraint
+        
+  Diagnostic:
+    attributes:
+      name:
+        identifier: true    # → Composite constraint with facility_id
+      facility_id:
         required: true
 ```
-
-### Indexes
-
-Common query patterns get indexes via `schema.index_statements()`:
-- `Facility.ssh_host`
-- `Tool.category`, `Tool.available`
-- `Diagnostic.category`
 
 ## Regenerating Models
 
@@ -155,21 +212,15 @@ When the LinkML schema changes:
 uv run build-models --force
 ```
 
-This regenerates `models.py` from `schemas/facility.yaml`.
-
 ## Testing
 
 ```bash
-# Start Neo4j
 docker-compose up neo4j -d
-
-# Run graph tests
 uv run pytest tests/graph/ -v
 ```
 
 ## References
 
 - [LinkML Schema](../schemas/facility.yaml) - Source of truth
-- [linkml-store docs](https://linkml.io/linkml-store/) - Alternative abstraction
-- [LinkML Runtime SchemaView](https://linkml.io/linkml/developers/schemaview.html)
-- [Neo4j Python Driver](https://neo4j.com/docs/python-manual/current/)
+- [Neo4j Cypher Manual](https://neo4j.com/docs/cypher-manual/current/)
+- [linkml-store](https://linkml.io/linkml-store/) - Alternative abstraction
