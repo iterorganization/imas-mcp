@@ -130,6 +130,31 @@ class GraphSchema:
                 return slot.name
         return None
 
+    def get_model(self, class_name: str) -> type:
+        """Get the Pydantic model class for a node label.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            Pydantic model class
+
+        Raises:
+            ValueError: If class_name is not a valid node label
+        """
+        if class_name not in self.node_labels:
+            msg = f"Unknown node type: {class_name}. Valid: {self.node_labels}"
+            raise ValueError(msg)
+
+        # Import models dynamically to avoid circular imports
+        from imas_codex.graph import models
+
+        model_class = getattr(models, class_name, None)
+        if model_class is None:
+            msg = f"Model class not found for {class_name}"
+            raise ValueError(msg)
+        return model_class
+
     def get_required_fields(self, class_name: str) -> list[str]:
         """Get required fields for a class.
 

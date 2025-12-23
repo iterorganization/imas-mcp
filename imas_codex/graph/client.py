@@ -244,70 +244,6 @@ class GraphClient:
             from_id_field="hostname",
         )
 
-    def create_tool(
-        self,
-        facility_id: str,
-        name: str,
-        available: bool,
-        path: str | None = None,
-        version: str | None = None,
-        category: str | None = None,
-        **extra: Any,
-    ) -> None:
-        """Create Tool node and link to Facility."""
-        tool_id = f"{facility_id}:{name}"
-        props = {
-            "id": tool_id,
-            "facility_id": facility_id,
-            "name": name,
-            "available": available,
-        }
-        if path:
-            props["path"] = path
-        if version:
-            props["version"] = version
-        if category:
-            props["category"] = category
-        props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node("Tool", tool_id, props)
-        self.create_relationship(
-            "Tool",
-            tool_id,
-            "Facility",
-            facility_id,
-            "FACILITY_ID",
-        )
-
-    def create_python_environment(
-        self,
-        facility_id: str,
-        version: str,
-        path: str,
-        is_default: bool = False,
-        packages: list[str] | None = None,
-        **extra: Any,
-    ) -> None:
-        """Create PythonEnvironment node and link to Facility."""
-        env_id = f"{facility_id}:python:{version}"
-        props = {
-            "id": env_id,
-            "facility_id": facility_id,
-            "version": version,
-            "path": path,
-            "is_default": is_default,
-        }
-        if packages:
-            props["packages"] = packages
-        props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node("PythonEnvironment", env_id, props)
-        self.create_relationship(
-            "PythonEnvironment",
-            env_id,
-            "Facility",
-            facility_id,
-            "FACILITY_ID",
-        )
-
     def create_diagnostic(
         self,
         facility_id: str,
@@ -367,15 +303,6 @@ class GraphClient:
         with self.session() as sess:
             result = sess.run("MATCH (n:Facility) RETURN n ORDER BY n.id")
             return [dict(record["n"]) for record in result]
-
-    def get_tools(self, facility_id: str) -> list[dict[str, Any]]:
-        """Get all tools for a facility."""
-        with self.session() as sess:
-            result = sess.run(
-                "MATCH (t:Tool {facility_id: $facility_id}) RETURN t ORDER BY t.name",
-                facility_id=facility_id,
-            )
-            return [dict(record["t"]) for record in result]
 
     # =========================================================================
     # Cross-Facility Query Methods
