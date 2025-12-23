@@ -739,17 +739,11 @@ def neo4j_dump(output: str | None, data_dir: str | None, image: str | None) -> N
     envvar="GHCR_TOKEN",
     help="GHCR authentication token (env: GHCR_TOKEN)",
 )
-@click.option(
-    "--username",
-    envvar="GHCR_USERNAME",
-    help="GHCR username (env: GHCR_USERNAME)",
-)
 def neo4j_push(
     version: str,
     dump_file: str | None,
     registry: str,
     token: str | None,
-    username: str | None,
 ) -> None:
     """Push graph dump to GHCR as an OCI artifact.
 
@@ -787,9 +781,9 @@ def neo4j_push(
         click.echo("Run 'imas-codex neo4j dump' first")
         raise SystemExit(1)
 
-    # Login to GHCR if credentials provided
-    if token and username:
-        login_cmd = ["oras", "login", "ghcr.io", "-u", username, "--password-stdin"]
+    # Login to GHCR if token provided
+    if token:
+        login_cmd = ["oras", "login", "ghcr.io", "-u", "token", "--password-stdin"]
         login_proc = subprocess.run(
             login_cmd,
             input=token,
@@ -855,17 +849,11 @@ def neo4j_push(
     envvar="GHCR_TOKEN",
     help="GHCR authentication token (env: GHCR_TOKEN)",
 )
-@click.option(
-    "--username",
-    envvar="GHCR_USERNAME",
-    help="GHCR username (env: GHCR_USERNAME)",
-)
 def neo4j_pull(
     version: str,
     output: str | None,
     registry: str,
     token: str | None,
-    username: str | None,
 ) -> None:
     """Pull graph dump from GHCR.
 
@@ -887,9 +875,9 @@ def neo4j_pull(
         click.echo("Error: oras not found in PATH", err=True)
         raise SystemExit(1)
 
-    # Login to GHCR if credentials provided
-    if token and username:
-        login_cmd = ["oras", "login", "ghcr.io", "-u", username, "--password-stdin"]
+    # Login to GHCR if token provided
+    if token:
+        login_cmd = ["oras", "login", "ghcr.io", "-u", "token", "--password-stdin"]
         login_proc = subprocess.run(
             login_cmd,
             input=token,
@@ -1411,7 +1399,7 @@ def release(
                 )
                 if result.returncode != 0:
                     click.echo(f"Error pushing graph: {result.stderr}", err=True)
-                    click.echo("  You may need to set GHCR_TOKEN and GHCR_USERNAME")
+                    click.echo("  You may need to set GHCR_TOKEN")
                     raise SystemExit(1)
                 click.echo(
                     f"  Pushed to ghcr.io/iterorganization/imas-codex-graph:{version}"

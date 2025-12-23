@@ -1,0 +1,249 @@
+# Facility Infrastructure Schema (SENSITIVE - LOCAL ONLY)
+#
+# This schema defines infrastructure data that is:
+# - Stored locally in <facility>_infrastructure.yaml files
+# - NEVER committed to version control (gitignored)
+# - NEVER loaded into the public graph
+#
+# Use this schema for:
+# - OS versions, kernel info (CVE risk if public)
+# - Tool availability (reconnaissance value)
+# - File paths, NFS mounts (network topology)
+# - Python environments, compilers
+# - Exploration notes and agent guidance
+#
+# The models are generated for local validation and LLM-assisted
+# persistence, but nodes are not created in Neo4j.
+#
+# Generated models: imas_codex/discovery/infrastructure_models.py
+# To regenerate: uv run build-models --infrastructure
+
+id: https://imas.iter.org/schemas/facility_infrastructure
+name: facility_infrastructure
+title: Facility Infrastructure Schema (Sensitive)
+description: >-
+  Schema for sensitive facility infrastructure data.
+  Used for local exploration files, never graphed or committed.
+
+license: MIT
+version: 0.1.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  infra: https://imas.iter.org/schemas/facility_infrastructure/
+
+default_prefix: infra
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+enums:
+  ToolCategory:
+    description: Categories of command-line tools
+    permissible_values:
+      search:
+        description: Search tools (rg, ag, grep, find)
+      text:
+        description: Text processing (awk, sed, jq)
+      file:
+        description: File utilities (tree, file, stat)
+      editor:
+        description: Text editors (vim, nano, emacs)
+      vcs:
+        description: Version control (git, svn)
+      network:
+        description: Network tools (wget, curl, rsync, ssh)
+      build:
+        description: Build tools (make, cmake, ninja)
+      compiler:
+        description: Compilers (gcc, gfortran, icc)
+      mpi:
+        description: MPI tools (mpirun, mpicc, srun)
+      scheduler:
+        description: Job schedulers (sbatch, qsub)
+      data:
+        description: Data tools (h5dump, ncdump, mdstcl)
+      python:
+        description: Python tools (pip, conda, jupyter)
+      container:
+        description: Container tools (apptainer, docker)
+      other:
+        description: Other/uncategorized tools
+
+  ToolStatus:
+    description: Availability status of a tool
+    permissible_values:
+      available:
+        description: Tool is installed and accessible
+      unavailable:
+        description: Tool is not installed
+      restricted:
+        description: Tool exists but requires special access
+
+# =============================================================================
+# Infrastructure Classes (NEVER GRAPHED)
+# =============================================================================
+
+classes:
+  FacilityInfrastructure:
+    description: >-
+      Root container for all sensitive infrastructure data.
+      One instance per facility, stored in <facility>_infrastructure.yaml.
+    attributes:
+      facility_id:
+        identifier: true
+        description: Facility identifier (must match public facility.yaml)
+        required: true
+      last_explored:
+        description: ISO timestamp of last exploration
+      explored_by:
+        description: Agent/model that performed exploration
+
+  OperatingSystem:
+    description: Operating system information (sensitive - CVE matching risk)
+    attributes:
+      name:
+        description: OS distribution name (e.g., "RHEL", "Ubuntu")
+        required: true
+      version:
+        description: OS version (e.g., "9.6", "22.04")
+        required: true
+      kernel:
+        description: Kernel version string
+      codename:
+        description: Release codename
+      notes:
+        description: Additional notes
+        multivalued: true
+
+  PythonEnvironment:
+    description: A Python installation (sensitive - version info)
+    attributes:
+      version:
+        description: Python version (e.g., "3.9.21")
+        required: true
+      path:
+        description: Path to Python executable
+        required: true
+      is_default:
+        description: Whether this is the default Python
+        range: boolean
+      packages:
+        description: Installed packages (format "name==version")
+        multivalued: true
+      virtual_env:
+        description: Path to virtual environment if applicable
+      notes:
+        description: Notes about this environment
+        multivalued: true
+
+  Compiler:
+    description: A compiler available at the facility
+    attributes:
+      name:
+        description: Compiler name (e.g., "gcc", "gfortran", "ifort")
+        required: true
+      version:
+        description: Compiler version
+      path:
+        description: Path to compiler executable
+      notes:
+        description: Notes about this compiler
+        multivalued: true
+
+  Tool:
+    description: A command-line tool available at the facility
+    attributes:
+      name:
+        description: Tool name (e.g., "rg", "h5dump", "git")
+        required: true
+      status:
+        description: Availability status
+        range: ToolStatus
+        required: true
+      version:
+        description: Tool version string
+      path:
+        description: Path to the tool executable
+      category:
+        description: Tool category
+        range: ToolCategory
+      notes:
+        description: Notes about this tool
+        multivalued: true
+
+  ModuleSystem:
+    description: Environment module system (Lmod, Environment Modules)
+    attributes:
+      available:
+        description: Whether a module system is available
+        range: boolean
+        required: true
+      type:
+        description: Module system type (e.g., "lmod", "environment-modules")
+      default_modules:
+        description: Modules loaded by default
+        multivalued: true
+      notes:
+        description: Notes about the module system
+        multivalued: true
+
+  FilePath:
+    description: An important file system path
+    attributes:
+      path:
+        description: Absolute file system path
+        required: true
+      purpose:
+        description: What this path is used for
+      writable:
+        description: Whether the path is writable
+        range: boolean
+      notes:
+        description: Additional notes
+
+  NFSMount:
+    description: An NFS mount point (sensitive - network topology)
+    attributes:
+      source:
+        description: NFS source (server:/path)
+        required: true
+      target:
+        description: Local mount point
+        required: true
+      options:
+        description: Mount options (e.g., "ro")
+      notes:
+        description: Additional notes
+
+  ContainerImage:
+    description: A container image available at the facility
+    attributes:
+      name:
+        description: Image name
+        required: true
+      path:
+        description: Path to image file
+        required: true
+      version:
+        description: Image version
+      runtime:
+        description: Container runtime (apptainer, docker)
+      notes:
+        description: Additional notes
+
+  ExplorationNotes:
+    description: Free-form exploration notes for agent guidance
+    attributes:
+      category:
+        description: Note category
+      content:
+        description: Note content
+        required: true
+      discovered_at:
+        description: When this was discovered

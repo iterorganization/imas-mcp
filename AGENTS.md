@@ -238,15 +238,15 @@ uv run imas-codex neo4j load imas-codex-graph.dump
 uv run imas-codex neo4j stop
 uv run imas-codex neo4j dump
 
-# Push to GHCR (requires GHCR_TOKEN and GHCR_USERNAME in .env)
+# Push to GHCR (requires GHCR_TOKEN in .env)
 uv run imas-codex neo4j push v1.0.0
 ```
 
 **GHCR Authentication:**
 ```bash
-# Add to .env (gitignored)
+# Add to .env (gitignored) - required for pushing
+# Graph is public, so pulling doesn't require auth
 GHCR_TOKEN=ghp_your_token_here
-GHCR_USERNAME=your_github_username
 ```
 
 ### Release Workflow
@@ -384,6 +384,45 @@ The system uses a **Command/Deploy** pattern:
 2. **Direct SSH** for exploration (faster than CLI wrapper)
 3. **Artifact capture** via CLI for validated persistence
 
+### Facility Configuration Files
+
+Each facility has two config files:
+
+| File | Visibility | Content |
+|------|------------|---------|
+| `<facility>.yaml` | ✅ Git tracked | Public data (machine, data systems) |
+| `<facility>_infrastructure.yaml` | ❌ Gitignored | Sensitive data (paths, tools, OS) |
+
+**Example:**
+```
+config/facilities/
+├── epfl.yaml                    # Public - goes to graph
+└── epfl_infrastructure.yaml     # Private - agent guidance only
+```
+
+### Sensitive Data Policy
+
+**Never commit or graph sensitive infrastructure data:**
+
+| Data Type | Where to Store | Why |
+|-----------|----------------|-----|
+| Hostnames, IPs, NFS mounts | `_infrastructure.yaml` | Network reconnaissance |
+| OS/kernel versions | `_infrastructure.yaml` | CVE matching |
+| File paths | `_infrastructure.yaml` | Filesystem enumeration |
+| Tool availability | `_infrastructure.yaml` | Reconnaissance |
+| MDSplus tree names | `<facility>.yaml` | Data semantics (safe) |
+| Diagnostic/code names | `<facility>.yaml` | Data semantics (safe) |
+
+When discovering infrastructure details, persist to the `_infrastructure.yaml` file:
+
+```bash
+uv run imas-codex epfl --capture tools << 'EOF'
+tools:
+  rg: unavailable
+  grep: available
+EOF
+```
+
 ### Exploring Facilities
 
 Read the exploration guide:
@@ -394,36 +433,6 @@ cat imas_codex/config/README.md
 SSH directly using host aliases from `~/.ssh/config`:
 ```bash
 ssh epfl "which python3; python3 --version; pip list | head"
-```
-
-Capture findings:
-```bash
-uv run imas-codex epfl --capture environment << 'EOF'
-python:
-  version: "3.9.21"
-EOF
-```
-
-### Knowledge Hierarchy
-
-Agent instructions are organized in levels:
-
-| Level | Location | Content |
-|-------|----------|---------|
-| Guide | `config/README.md` | Batch patterns, safety, capture |
-| Facility | `config/facilities/*.yaml` | Paths, tools, knowledge |
-| Schema | `discovery/models/*.py` | Artifact structure |
-
-### Persisting Knowledge
-
-When a subagent discovers facility-specific information (e.g., "rg not available"), 
-the Commander should update the facility config:
-
-```yaml
-# config/facilities/epfl.yaml
-knowledge:
-  tools:
-    - "ripgrep (rg) not available; use grep -r instead"
 ```
 
 ### Available Facilities
