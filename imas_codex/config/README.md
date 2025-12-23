@@ -149,14 +149,12 @@ ssh epfl "which python3; python3 --version; pip list | head -10"
 | Discovery Type | Where to Persist | Tool |
 |----------------|------------------|------|
 | Analysis codes (name, version, type) | Graph | `ingest_node("AnalysisCode", {...})` |
-| Code installation paths | Graph | `ingest_node("AnalysisCode", {path: ...})` |
+| Directory paths for exploration | Graph | `ingest_node("FacilityPath", {...})` |
 | Diagnostics | Graph | `ingest_node("Diagnostic", {...})` |
 | MDSplus trees | Graph | `ingest_node("MDSplusTree", {...})` |
 | TDI functions | Graph | `ingest_node("TDIFunction", {...})` |
-| Rich directory paths (e.g., `/home/codes`) | Infrastructure | `update_infrastructure(...)` |
 | OS/kernel versions | Infrastructure | `update_infrastructure(...)` |
 | Tool availability | Infrastructure | `update_infrastructure(...)` |
-| SVN/Git repos discovered | Infrastructure | `update_infrastructure(...)` |
 | Unstructured findings | `_Discovery` nodes | `cypher("CREATE (:_Discovery {...})")` |
 
 #### Examples
@@ -206,54 +204,71 @@ cypher('''
 
 ## Structured Exploration Approach
 
+### FacilityPath Nodes
+
+Use `FacilityPath` nodes to track exploration state in the graph:
+
+```python
+# Before exploring, call get_facility() to see pending paths
+result = get_facility("epfl")
+# Returns: pending_paths, recent_paths, excluded_paths, tools, etc.
+
+# Create a path for future exploration
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "facility_id": "epfl",
+    "path": "/home/codes/transport",
+    "path_type": "code_directory",
+    "status": "pending",
+    "description": "Transport codes",
+    "parent_path_id": "epfl:/home/codes",
+    "depth": 1
+})
+
+# After exploring, update status
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "explored",
+    "explored_at": "2025-01-15T10:30:00Z"
+})
+
+# Mark paths to skip
+ingest_node("FacilityPath", {
+    "id": "epfl:/home",
+    "facility_id": "epfl",
+    "path": "/home",
+    "path_type": "data_directory",
+    "status": "excluded",
+    "description": "User home directories - skip"
+})
+```
+
+### Path Status Values
+
+| Status | Meaning |
+|--------|---------|
+| `pending` | Discovered but not yet explored |
+| `exploring` | Currently being explored |
+| `explored` | Contents listed, child paths created |
+| `ingested` | Code content ingested into graph |
+| `excluded` | Skip this path |
+| `stale` | May no longer exist |
+
 ### Tool Preferences
 
-Before exploring, check infrastructure for available tools:
+Check `get_facility(facility)` for available tools:
+- `tools.rg` - ripgrep version (if installed)
+- `tools.fd` - fd version (if installed)
+- `paths.user_tools.bin` - where user tools are installed
 
-```yaml
-# In infrastructure file
-exploration:
-  agent_instructions:
-    search_tools:
-      preferred: [rg, fd]  # Use these if available
-      system: [grep, find]  # Fallback
-      commands:
-        - ~/bin/rg   # User-installed ripgrep
-        - ~/bin/fd   # User-installed fd
-      notes: "Use rg (ripgrep) and fd from $HOME/bin for fast searching"
+Use fast tools when available:
+```bash
+# If rg available at ~/bin/rg
+ssh epfl "~/bin/rg -l 'pattern' /path --max-depth 4 -g '*.py'"
+
+# Fallback to grep
+ssh epfl "grep -r 'pattern' /path --include='*.py'"
 ```
-
-Always read `infrastructure.knowledge.tools` first to know what's available:
-- If `rg` is available, use `~/bin/rg` instead of `grep -r`
-- If `fd` is available, use `~/bin/fd` instead of `find`
-
-### Tracking Explored Paths
-
-Avoid re-treading searched paths by recording them:
-
-```yaml
-# In infrastructure file
-exploration:
-  explored_paths:
-    codes:
-      searched: true
-      equilibrium:
-        paths: [/home/codes/liuqe, /home/codes/helena]
-        searched: true
-  search_queries_run:
-    - "rg -l 'equilibrium' /home/codes --max-depth 4 -g '*.py'"
-```
-
-Before starting exploration:
-1. Read infrastructure to see what's already been explored
-2. Check `explored_paths` for directories already searched
-3. Check `search_queries_run` for queries already executed
-4. Focus on unexplored areas
-
-After exploration:
-1. Update `explored_paths` with new directories searched
-2. Append new queries to `search_queries_run`
-3. Persist all discoveries immediately (don't batch for later)
 
 ## Graph vs Local Storage
 
