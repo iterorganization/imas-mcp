@@ -432,7 +432,7 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 | Tool | Purpose |
 |------|---------|
 | `cypher(query)` | Execute Cypher (read any, write `_Discovery` only) |
-| `ingest_node(type, data)` | Schema-validated node creation (single or batch) |
+| `ingest_nodes(type, data)` | Schema-validated batch node creation (always use list) |
 | `read_infrastructure(facility)` | Read sensitive local data |
 | `update_infrastructure(facility, data)` | Update sensitive local data |
 | `get_graph_schema()` | Get complete schema for Cypher generation |
@@ -440,7 +440,7 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 
 > **Before writing Cypher queries**, call `get_graph_schema()` to get node labels, properties, enums, and relationship types.
 
-> **IMPORTANT**: Always use MCP tools (`update_infrastructure`, `ingest_node`, `cypher`) to persist discoveries. Never directly edit YAML files.
+> **IMPORTANT**: Always use MCP tools (`update_infrastructure`, `ingest_nodes`, `cypher`) to persist discoveries. Never directly edit YAML files.
 
 **Usage Examples:**
 
@@ -452,19 +452,18 @@ update_infrastructure("epfl", {
     "paths": {"user_tools": {"bin": "$HOME/bin"}}
 })
 
-# Persist single node (to graph)
-ingest_node("Diagnostic", {
-    "name": "XRCS",
-    "facility_id": "epfl",
-    "category": "spectroscopy"
-})
-# Returns: {"processed": 1, "skipped": 0, "errors": []}
+# Persist nodes (ALWAYS use list, even for single items)
+ingest_nodes("Diagnostic", [
+    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
+    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+])
+# Returns: {"processed": 2, "skipped": 0, "errors": []}
 
-# Batch persist multiple nodes (uses UNWIND for efficiency)
-ingest_node("FacilityPath", [
-    {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
-    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
-    {"id": "epfl:/usr/local/CRPP", "path": "/usr/local/CRPP", "facility_id": "epfl"},
+# Batch persist paths (uses UNWIND for efficiency)
+ingest_nodes("FacilityPath", [
+    {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl", "path_type": "code_directory"},
+    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl", "path_type": "code_directory"},
+    {"id": "epfl:/data", "path": "/data", "facility_id": "epfl", "path_type": "data_directory"},
 ])
 # Returns: {"processed": 3, "skipped": 0, "errors": []}
 # Supports partial success - valid items ingested even if some fail validation
@@ -498,9 +497,9 @@ ssh epfl "which python3; python3 --version; pip list | head"
 
 | Discovery Type | Destination | Tool |
 |----------------|-------------|------|
-| Analysis codes (name, version, path) | Graph | `ingest_node("AnalysisCode", {...})` |
-| Diagnostics, MDSplus trees, TDI functions | Graph | `ingest_node(...)` |
-| Rich directory paths (e.g., `/home/codes`) | Graph | `ingest_node("FacilityPath", {...})` |
+| Analysis codes (name, version, path) | Graph | `ingest_nodes("AnalysisCode", [...])` |
+| Diagnostics, MDSplus trees, TDI functions | Graph | `ingest_nodes(...)` |
+| Rich directory paths (e.g., `/home/codes`) | Graph | `ingest_nodes("FacilityPath", [...])` |
 | OS/kernel versions, tool availability | Infrastructure | `update_infrastructure(...)` |
 | SVN/Git repo URLs discovered | Infrastructure | `update_infrastructure(...)` |
 | Unstructured findings to review later | Graph staging | `cypher("CREATE (:_Discovery {...})")` |
@@ -542,31 +541,33 @@ result = get_facility("epfl")
 for path in result["actionable_paths"]:
     print(f"{path['status']}: {path['path']} (score: {path['interest_score']})")
 
-# 2. After pattern search, update status
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "scanned",
-    "patterns_found": ["equilibrium", "IMAS", "write_ids"],
-    "last_examined": "2025-01-15T10:30:00Z"
-})
+# 2. After pattern search, batch update status
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "scanned",
+        "patterns_found": ["equilibrium", "IMAS", "write_ids"],
+        "last_examined": "2025-01-15T10:30:00Z"
+    }
+])
 ```
 
 **Triage Pass Example:**
 ```python
-# Flag interesting paths with priority
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "flagged",
-    "interest_score": 0.9,
-    "notes": "Found IMAS integration, multiple IDS writes"
-})
-
-# Skip uninteresting paths
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/old_backup",
-    "status": "skipped",
-    "notes": "Stale backup, no active development"
-})
+# Batch update paths after triage
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "flagged",
+        "interest_score": 0.9,
+        "notes": "Found IMAS integration, multiple IDS writes"
+    },
+    {
+        "id": "epfl:/home/codes/old_backup",
+        "status": "skipped",
+        "notes": "Stale backup, no active development"
+    }
+])
 ```
 
 **Interest Score Guidelines:**
@@ -643,12 +644,15 @@ ssh epfl "~/bin/fd -t f --max-depth 3 /home/codes | wc -l"
 # Known large dirs: skip counting, use pattern search instead
 SKIP_COUNTING = ["/home", "/usr/local"]
 
-if path in SKIP_COUNTING:
-    ingest_node("FacilityPath", {
+paths_to_update = [
+    {
         "id": f"epfl:{path}",
         "status": "scanned",
         "notes": "Large directory - skipped file counting"
-    })
+    }
+    for path in SKIP_COUNTING
+]
+ingest_nodes("FacilityPath", paths_to_update)
 ```
 
 **Performance-safe pattern search:**

@@ -57,15 +57,25 @@ Use this when:
    | Generic code, no IMAS | 0.4 | scanned |
    | No code files | 0.1 | skipped |
 
-4. **Update path nodes**:
+4. **Batch update all scored paths**:
    ```python
-   ingest_node("FacilityPath", {
-       "id": "{facility}:<path>",
-       "status": "<new_status>",
-       "interest_score": <score>,
-       "patterns_found": ["imas", "equilibrium"],
-       "last_examined": "<timestamp>"
-   })
+   ingest_nodes("FacilityPath", [
+       {
+           "id": "{facility}:<path1>",
+           "status": "flagged",
+           "interest_score": 0.9,
+           "patterns_found": ["imas", "write_ids"],
+           "last_examined": "<timestamp>"
+       },
+       {
+           "id": "{facility}:<path2>",
+           "status": "scanned",
+           "interest_score": 0.4,
+           "patterns_found": [],
+           "last_examined": "<timestamp>"
+       },
+       # ... all paths in one call
+   ])
    ```
 
 5. **Report summary**:

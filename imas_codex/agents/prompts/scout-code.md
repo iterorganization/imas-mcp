@@ -46,14 +46,16 @@ Find Python files with IMAS/MDSplus usage at **{facility}** and ingest them as c
    ], description="IMAS integration examples from <path>")
    ```
 
-5. **Update path status**:
+5. **Update path status** (batch all updates):
    ```python
-   ingest_node("FacilityPath", {{
-       "id": "{facility}:{path}",
-       "status": "ingested",
-       "files_ingested": <count>,
-       "last_examined": "<timestamp>"
-   }})
+   ingest_nodes("FacilityPath", [
+       {
+           "id": "{facility}:{path}",
+           "status": "ingested",
+           "files_ingested": <count>,
+           "last_examined": "<timestamp>"
+       }
+   ])
    ```
 
 6. **Report**:

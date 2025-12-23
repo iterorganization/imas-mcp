@@ -148,11 +148,11 @@ ssh epfl "which python3; python3 --version; pip list | head -10"
 
 | Discovery Type | Where to Persist | Tool |
 |----------------|------------------|------|
-| Analysis codes (name, version, type) | Graph | `ingest_node("AnalysisCode", {...})` |
-| Directory paths for exploration | Graph | `ingest_node("FacilityPath", {...})` |
-| Diagnostics | Graph | `ingest_node("Diagnostic", {...})` |
-| MDSplus trees | Graph | `ingest_node("MDSplusTree", {...})` |
-| TDI functions | Graph | `ingest_node("TDIFunction", {...})` |
+| Analysis codes (name, version, type) | Graph | `ingest_nodes("AnalysisCode", [...])` |
+| Directory paths for exploration | Graph | `ingest_nodes("FacilityPath", [...])` |
+| Diagnostics | Graph | `ingest_nodes("Diagnostic", [...])` |
+| MDSplus trees | Graph | `ingest_nodes("MDSplusTree", [...])` |
+| TDI functions | Graph | `ingest_nodes("TDIFunction", [...])` |
 | OS/kernel versions | Infrastructure | `update_infrastructure(...)` |
 | Tool availability | Infrastructure | `update_infrastructure(...)` |
 | Unstructured findings | `_Discovery` nodes | `cypher("CREATE (:_Discovery {...})")` |
@@ -171,12 +171,11 @@ update_infrastructure("epfl", {
     "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
 })
 
-# For public data semantics (goes to graph)
-ingest_node("Diagnostic", {
-    "name": "XRCS",
-    "facility_id": "epfl",
-    "category": "spectroscopy"
-})
+# For public data semantics (goes to graph, always use list)
+ingest_nodes("Diagnostic", [
+    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
+    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+])
 
 # For unstructured discoveries (staging area)
 cypher('''
@@ -228,57 +227,61 @@ Use `FacilityPath` nodes to track exploration state in the graph.
 result = get_facility("epfl")
 # actionable_paths sorted by interest_score
 
-# After listing contents
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "listed",
-    "file_count": 42,
-    "dir_count": 8,
-    "last_examined": "2025-01-15T10:30:00Z"
-})
-
-# After pattern search
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "scanned",
-    "files_scanned": 15,
-    "patterns_found": ["equilibrium", "IMAS", "write_ids"]
-})
+# After pattern search, batch update all paths
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "scanned",
+        "files_scanned": 15,
+        "patterns_found": ["equilibrium", "IMAS", "write_ids"],
+        "last_examined": "2025-01-15T10:30:00Z"
+    },
+    {
+        "id": "epfl:/home/codes/helena",
+        "status": "scanned",
+        "files_scanned": 8,
+        "patterns_found": ["equilibrium"]
+    }
+])
 ```
 
 **Triage Pass**: Prioritize interesting paths
 ```python
-# Flag interesting paths with interest_score
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "flagged",
-    "interest_score": 0.9,  # High priority
-    "notes": "Found IMAS integration, multiple IDS writes"
-})
-
-# Skip uninteresting paths
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/old_backup",
-    "status": "skipped",
-    "notes": "Stale backup, no active development"
-})
+# Batch update paths after triage
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "flagged",
+        "interest_score": 0.9,
+        "notes": "Found IMAS integration, multiple IDS writes"
+    },
+    {
+        "id": "epfl:/home/codes/old_backup",
+        "status": "skipped",
+        "notes": "Stale backup, no active development"
+    }
+])
 ```
 
 **Ingest Pass**: Extract code to graph
 ```python
 # After reading and understanding code
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "analyzed",
-    "notes": "Main entry: run_transport.py, uses ASTRA"
-})
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "analyzed",
+        "notes": "Main entry: run_transport.py, uses ASTRA"
+    }
+])
 
 # After code ingestion complete
-ingest_node("FacilityPath", {
-    "id": "epfl:/home/codes/transport",
-    "status": "ingested",
-    "files_ingested": 12
-})
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "ingested",
+        "files_ingested": 12
+    }
+])
 ```
 
 ### Path Status Values
