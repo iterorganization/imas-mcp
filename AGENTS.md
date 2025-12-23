@@ -569,33 +569,71 @@ ingest_node("FacilityPath", {
 | 0.3+ | Utilities, helpers |
 | <0.3 | Config files, documentation |
 
+### Fast Analysis Tools
+
+Pre-installed Rust tools at `~/bin/` for fast directory analysis:
+
+| Tool | Purpose | Speed | Output |
+|------|---------|-------|--------|
+| `dust` | Disk usage tree | ~10x faster than `du` | Visual tree |
+| `tokei` | Lines of code by language | Parallel, language-aware | JSON/table |
+| `scc` | SLOC + complexity metrics | Very fast | JSON with complexity |
+| `fd` | Find files | ~5x faster than `find` | File paths |
+| `rg` | Search content | ~10x faster than `grep` | Matching lines |
+
+**Quick directory assessment:**
+```bash
+# Disk usage tree (depth 2)
+ssh epfl "~/bin/dust -d 2 /home/codes"
+
+# Code statistics with complexity (JSON for parsing)
+ssh epfl "~/bin/scc /home/codes/liuqe --format json"
+
+# Lines of code by language
+ssh epfl "~/bin/tokei /home/codes/liuqe"
+
+# Count Python files quickly
+ssh epfl "~/bin/fd -e py /home/codes | wc -l"
+```
+
+**Prioritizing paths with scc:**
+```bash
+# Get complexity score to prioritize paths
+ssh epfl '~/bin/scc /home/codes/liuqe --format json' | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); \
+  print(sum(l['Code'] for l in d), 'lines,', sum(l['Complexity'] for l in d), 'complexity')"
+# Output: 4858 lines, 487 complexity
+```
+
 ### Coverage Tracking (Optional)
 
 The schema includes optional coverage fields. Use them judiciously:
 
 | Field | When to Use | Performance Risk |
 |-------|-------------|------------------|
-| `file_count` | Small dirs (<1000 files) | High for large dirs |
-| `dir_count` | Small dirs | High for large dirs |
+| `file_count` | Small dirs (<1000 files) | Low with fd |
+| `dir_count` | Small dirs | Low with fd |
 | `files_scanned` | After pattern search | Safe (rg limits) |
 | `files_ingested` | After ingestion | Safe (we control) |
 
-**Safe counting (with timeout):**
+**Safe counting with fast tools:**
 ```bash
-# Count with timeout - abort if too slow
-ssh epfl "timeout 5s find /home/codes/transport -type f | wc -l"
+# fd is fast even on large directories
+ssh epfl "~/bin/fd -t f /home/codes/transport | wc -l"
 
-# Or use fd with depth limit
-ssh epfl "~/bin/fd -t f --max-depth 3 . /home/codes/transport | wc -l"
+# With timeout as failsafe for unknown dirs
+ssh epfl "timeout 10s ~/bin/fd -t f /home | wc -l"
+
+# Or limit depth
+ssh epfl "~/bin/fd -t f --max-depth 3 /home/codes | wc -l"
 ```
 
-**Skip counting for known large paths:**
+**Skip counting for known massive paths:**
 ```python
-# Large dirs: skip counting, go straight to pattern search
+# Known large dirs: skip counting, use pattern search instead
 SKIP_COUNTING = ["/home", "/usr/local"]
 
 if path in SKIP_COUNTING:
-    # Go directly to scanned status
     ingest_node("FacilityPath", {
         "id": f"epfl:{path}",
         "status": "scanned",
