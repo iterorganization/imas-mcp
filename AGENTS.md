@@ -432,7 +432,7 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 | Tool | Purpose |
 |------|---------|
 | `cypher(query)` | Execute Cypher (read any, write `_Discovery` only) |
-| `ingest_node(type, data)` | Schema-validated node creation |
+| `ingest_node(type, data)` | Schema-validated node creation (single or batch) |
 | `read_infrastructure(facility)` | Read sensitive local data |
 | `update_infrastructure(facility, data)` | Update sensitive local data |
 | `get_graph_schema()` | Get complete schema for Cypher generation |
@@ -452,12 +452,22 @@ update_infrastructure("epfl", {
     "paths": {"user_tools": {"bin": "$HOME/bin"}}
 })
 
-# Persist public data semantics (to graph)
+# Persist single node (to graph)
 ingest_node("Diagnostic", {
     "name": "XRCS",
     "facility_id": "epfl",
     "category": "spectroscopy"
 })
+# Returns: {"processed": 1, "skipped": 0, "errors": []}
+
+# Batch persist multiple nodes (uses UNWIND for efficiency)
+ingest_node("FacilityPath", [
+    {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
+    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
+    {"id": "epfl:/usr/local/CRPP", "path": "/usr/local/CRPP", "facility_id": "epfl"},
+])
+# Returns: {"processed": 3, "skipped": 0, "errors": []}
+# Supports partial success - valid items ingested even if some fail validation
 
 # Stage unstructured discoveries
 cypher('''
