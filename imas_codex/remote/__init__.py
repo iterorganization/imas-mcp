@@ -1,30 +1,8 @@
 """
-Remote facility artifact capture.
+Remote facility exploration utilities.
 
-This package provides artifact capture for remote fusion facility exploration.
-The LLM explores facilities via direct SSH, then captures findings here.
+This package provides utilities for remote fusion facility exploration.
+Facility knowledge is now stored in the graph database, not flat artifacts.
 
-Usage:
-    # Explore via SSH directly (faster than CLI)
-    ssh epfl "python --version; pip list | head"
-
-    # Capture findings
-    uv run imas-codex epfl --capture environment << 'EOF'
-    python:
-      version: "3.9.21"
-    EOF
-
-See imas_codex/config/README.md for comprehensive exploration guidance.
+See imas_codex/config/README.md for exploration guidance.
 """
-
-from imas_codex.remote.capture import (
-    capture_artifact,
-    list_artifacts,
-    load_artifact,
-)
-
-__all__ = [
-    "capture_artifact",
-    "list_artifacts",
-    "load_artifact",
-]
