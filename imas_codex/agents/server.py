@@ -14,7 +14,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from fastmcp import FastMCP
+import anyio
+from fastmcp import Context, FastMCP
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
@@ -479,9 +480,10 @@ class AgentsServer:
         # =====================================================================
 
         @self.mcp.tool()
-        def ingest_code_files(
+        async def ingest_code_files(
             facility: str,
             remote_paths: list[str],
+            ctx: Context,
             description: str | None = None,
         ) -> dict[str, int]:
             """
@@ -490,6 +492,10 @@ class AgentsServer:
             Fetches files via SCP, chunks them into searchable segments,
             generates embeddings, extracts IMAS IDS references, and stores
             in Neo4j with relationships to facility and IMAS paths.
+
+            Progress is reported during ingestion so you can monitor long
+            operations. Each file fetch, chunk generation, and graph write
+            step is reported.
 
             Args:
                 facility: Facility SSH host alias (e.g., "epfl")
@@ -509,11 +515,36 @@ class AgentsServer:
                     "/home/athorn/python/equilibrium.py"
                 ], description="Equilibrium visualization examples")
             """
+            # Track last reported progress to send updates via Context
+            last_message: list[str] = [""]
+
+            def progress_callback(current: int, total: int, message: str) -> None:
+                """Synchronous callback that stores progress for async reporting."""
+                last_message[0] = message
+
+            async def run_ingestion() -> dict[str, int]:
+                """Run the blocking ingestion in a thread."""
+                ingester = CodeExampleIngester(progress_callback=progress_callback)
+                return await anyio.to_thread.run_sync(
+                    lambda: ingester.ingest_files(facility, remote_paths, description)
+                )
+
             try:
-                ingester = CodeExampleIngester()
-                return ingester.ingest_files(facility, remote_paths, description)
+                await ctx.info(
+                    f"Starting ingestion of {len(remote_paths)} files from {facility}"
+                )
+
+                # Run ingestion with progress reporting
+                result = await run_ingestion()
+
+                await ctx.info(
+                    f"Completed: {result['files']} files, "
+                    f"{result['chunks']} chunks, {result['ids_found']} IDS refs"
+                )
+                return result
             except Exception as e:
                 logger.exception("Failed to ingest code files")
+                await ctx.error(f"Ingestion failed: {e}")
                 raise RuntimeError(f"Failed to ingest code files: {e}") from e
 
         @self.mcp.tool()
