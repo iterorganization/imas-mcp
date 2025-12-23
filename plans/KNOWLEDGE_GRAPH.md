@@ -10,10 +10,27 @@
 
 Build a Neo4j-based knowledge graph that captures facility-specific knowledge discovered through exploration. The graph schema is defined in **LinkML** (`schemas/facility.yaml`) as the single source of truth.
 
-**Architecture Decision**: Use LinkML schema to auto-generate all graph artifacts:
-- Pydantic models via `gen-pydantic`
-- Neo4j node labels derived from class names
-- Relationships derived from slots with class ranges
+### Architecture Decision
+
+```mermaid
+graph TB
+    subgraph "Single Source of Truth"
+        LINKML["LinkML Schema<br/>(facility.yaml)"]
+    end
+    
+    LINKML --> PYDANTIC["Pydantic Models<br/>(models.py)<br/>For validation"]
+    LINKML --> SCHEMA["GraphSchema<br/>(schema.py)<br/>Node labels<br/>Relationships<br/>Constraints"]
+    
+    SCHEMA --> CLIENT["GraphClient<br/>- High-level CRUD<br/>- query() for Cypher"]
+    
+    CLIENT --> SCRIPTS["Python scripts"]
+    CLIENT --> LLM["LLM agents<br/>(Cypher queries)"]
+    CLIENT --> MCP["MCP tools<br/>(hybrid)"]
+    
+    style LINKML fill:#e1f5fe
+    style SCHEMA fill:#fff3e0
+    style CLIENT fill:#e8f5e9
+```
 
 **Key insight from EPFL exploration**: The real value isn't in file paths—it's in the semantic relationships between:
 - MDSplus trees and their node hierarchies
@@ -23,9 +40,114 @@ Build a Neo4j-based knowledge graph that captures facility-specific knowledge di
 
 ---
 
-## 2. Schema-First Approach
+## 2. Design Philosophy: LLM-First Cypher
 
-### 2.1 LinkML as Single Source of Truth
+Modern LLMs are excellent at writing Cypher queries. The architecture supports:
+
+1. **Direct Cypher via `client.query()`** - Primary interface for LLM agents
+2. **High-level Python methods** - Convenience for scripts and common operations  
+3. **Schema enforcement** - GraphSchema generates constraints from LinkML
+
+### Why This Approach?
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Python-only accessors | Type-safe, IDE completion | Every query pattern needs code |
+| Direct Cypher (LLM) | Infinite flexibility, LLMs excel at this | No compile-time checks |
+| **Hybrid (chosen)** | Best of both worlds | Slightly more API surface |
+
+### Query Pattern Examples
+
+```python
+from imas_codex.graph import GraphClient
+
+with GraphClient() as client:
+    # LLM-generated Cypher (recommended for complex/ad-hoc queries)
+    result = client.query("""
+        MATCH (code:AnalysisCode)-[:FACILITY_ID]->(f:Facility)
+        WHERE code.code_type = 'equilibrium'
+        RETURN f.id, collect(code.name) as equilibrium_codes
+        ORDER BY size(equilibrium_codes) DESC
+    """)
+    
+    # High-level method (convenience for common patterns)
+    tools = client.get_tools("epfl")
+    
+    # Cross-facility comparison
+    comparison = client.compare_facilities(
+        "Diagnostic", 
+        facility_ids=["epfl", "jet", "iter"]
+    )
+```
+
+---
+
+## 3. Multi-Facility Support
+
+### Understanding `id` vs `facility_id`
+
+Every facility-owned node has two key fields:
+
+| Field | Purpose | Example |
+|-------|---------|---------|
+| `id`/`name`/`path` | **Identifier** - uniquely identifies within type | `"LIUQE"`, `"Thomson"` |
+| `facility_id` | **Owner** - which facility this belongs to | `"epfl"`, `"jet"` |
+
+**Both are required** to uniquely identify most nodes:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ AnalysisCode nodes in the graph:                            │
+├─────────────────────────────────────────────────────────────┤
+│ name: "EFIT"     facility_id: "epfl"  ← EPFL's EFIT         │
+│ name: "EFIT"     facility_id: "jet"   ← JET's EFIT          │
+│ name: "EFIT"     facility_id: "iter"  ← ITER's EFIT         │
+└─────────────────────────────────────────────────────────────┘
+
+Constraint: (name, facility_id) IS UNIQUE
+```
+
+### Composite Constraints
+
+The GraphSchema automatically generates composite constraints for facility-owned nodes:
+
+```cypher
+-- Simple constraint (Facility, IMASPath - not facility-owned)
+CREATE CONSTRAINT facility_id FOR (n:Facility) REQUIRE n.id IS UNIQUE
+
+-- Composite constraint (AnalysisCode, Diagnostic, etc.)
+CREATE CONSTRAINT analysiscode_name FOR (n:AnalysisCode) 
+REQUIRE (n.name, n.facility_id) IS UNIQUE
+```
+
+### Cross-Facility Query Patterns
+
+**Find all facilities using a specific analysis code:**
+```cypher
+MATCH (c:AnalysisCode {name: "EFIT"})-[:FACILITY_ID]->(f:Facility)
+RETURN f.id, f.name, c.version, c.code_type
+```
+
+**Compare Python environments across facilities:**
+```cypher
+MATCH (p:PythonEnvironment)-[:FACILITY_ID]->(f:Facility)
+RETURN f.id, p.version, p.is_default
+ORDER BY f.id, p.version
+```
+
+**Find diagnostics that exist at multiple facilities:**
+```cypher
+MATCH (d:Diagnostic)
+WITH d.name as diag_name, collect(DISTINCT d.facility_id) as facilities
+WHERE size(facilities) > 1
+RETURN diag_name, facilities
+```
+
+---
+
+## 4. Schema-First Approach
+
+### LinkML as Single Source of Truth
 
 The schema at `imas_codex/schemas/facility.yaml` defines:
 
@@ -33,94 +155,54 @@ The schema at `imas_codex/schemas/facility.yaml` defines:
 classes:
   Facility:           # → Neo4j label: Facility
     attributes:
-      id: ...
+      id: ...         # identifier: true → simple constraint
       name: ...
       
-  MDSplusServer:      # → Neo4j label: MDSplusServer
+  AnalysisCode:       # → Neo4j label: AnalysisCode  
     attributes:
-      hostname: ...
-      facility_id:    # → Relationship: -[:FACILITY_ID]->
+      name: ...       # identifier: true
+      facility_id:    # required: true → composite constraint
         range: Facility
-        
-  TreeNode:           # → Neo4j label: TreeNode
-    attributes:
-      path: ...
-      tree_name:      # → Relationship: -[:TREE_NAME]->
-        range: MDSplusTree
+      code_type:
+        range: AnalysisCodeType
 ```
 
-### 2.2 Deriving Graph Structure
+### Deriving Graph Structure at Runtime
 
-**Node Labels** = Class names from LinkML:
-- `Facility`, `MDSplusServer`, `MDSplusTree`, `TreeNode`, `TDIFunction`, etc.
+```python
+from imas_codex.graph import get_schema
 
-**Relationships** = Slots with class ranges:
-- `facility_id: Facility` → Creates relationship to Facility node
-- `tree_name: MDSplusTree` → Creates relationship to Tree node
-- `accesses: TreeNode[]` → Creates multiple ACCESSES relationships
+schema = get_schema()
 
-### 2.3 Current vs Target State
+# Node labels from class names
+print(schema.node_labels)
+# ['Facility', 'MDSplusServer', 'AnalysisCode', 'Diagnostic', ...]
 
-| Component | Current | Target |
-|-----------|---------|--------|
-| Schema | `schemas/facility.yaml` ✅ | Same |
-| Pydantic models | Auto-generated ✅ | Same |
-| Neo4j labels | Hard-coded in `cypher.py` ⚠️ | Derived from schema |
-| Relationships | Hard-coded in `cypher.py` ⚠️ | Derived from schema |
-| Client | Manual CRUD ✅ | Consider linkml-store |
+# Relationships from slots with class ranges
+for rel in schema.relationships:
+    print(f"{rel.from_class} -[:{rel.cypher_type}]-> {rel.to_class}")
+# AnalysisCode -[:FACILITY_ID]-> Facility
+# Diagnostic -[:FACILITY_ID]-> Facility
+# TreeNode -[:TREE_NAME]-> MDSplusTree
+
+# Automatic constraint detection
+schema.needs_composite_constraint("AnalysisCode")  # True
+schema.needs_composite_constraint("Facility")      # False
+```
+
+### Current Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| LinkML Schema | ✅ Complete | `schemas/facility.yaml` |
+| Pydantic Models | ✅ Auto-generated | `graph/models.py` |
+| GraphSchema | ✅ Complete | Runtime introspection via SchemaView |
+| GraphClient | ✅ Complete | High-level CRUD + `query()` |
+| ~~cypher.py~~ | 🗑️ Deleted | Replaced by schema-driven approach |
 
 ---
 
-## 3. Recommended Tools
-
-### Option A: linkml-store (Preferred for Future)
-
-[linkml-store](https://github.com/linkml/linkml-store) provides unified abstraction:
-
-```python
-from linkml_store import Client
-
-client = Client()
-db = client.attach_database(
-    "neo4j://localhost:7687",
-    schema="schemas/facility.yaml"
-)
-
-# Schema-aware operations
-facilities = db.get_collection("Facility")
-facilities.insert({"id": "epfl", "name": "EPFL/TCV", "machine": "TCV"})
-facilities.query(where={"machine": "TCV"})
-```
-
-**Benefits**:
-- Schema validation built-in
-- Backend-agnostic (swap Neo4j for DuckDB in dev)
-- Semantic search with embeddings
-- No manual label/relationship mapping
-
-### Option B: SchemaView Introspection (Current Direction)
-
-Use `linkml_runtime` to derive structure at runtime:
-
-```python
-from linkml_runtime.utils.schemaview import SchemaView
-
-sv = SchemaView("schemas/facility.yaml")
-
-# Derive labels
-node_labels = list(sv.all_classes().keys())
-
-# Derive relationships
-for cls_name, cls_def in sv.all_classes().items():
-    for slot_name in sv.class_induced_slots(cls_name):
-        slot = sv.get_slot(slot_name)
-        if slot.range in node_labels:
-            print(f"{cls_name} -[:{slot_name.upper()}]-> {slot.range}")
-```
-
----
-
-## 6. Questions to Resolve
+## 5. Questions to Resolve
 
 1. **Granularity**: Do we ingest every TreeNode or just "interesting" ones?
    - Full ingest: millions of nodes
@@ -142,13 +224,13 @@ for cls_name, cls_def in sv.all_classes().items():
 
 ---
 
-## 7. Immediate Next Steps
+## 6. Immediate Next Steps
 
-1. **Set up Neo4j locally** (30 min)
-2. **Write minimal ingest script** for current epfl.yaml (2 hrs)
-3. **Test queries** in Neo4j browser (1 hr)
-4. **Walk one MDSplus tree** from EPFL and ingest (4 hrs)
-5. **Evaluate and decide** on Phase 2 scope
+1. ✅ **Schema-driven graph ontology** - Implemented
+2. ✅ **Multi-facility composite constraints** - Implemented
+3. ⏳ **Set up Neo4j locally** and test ingestion
+4. ⏳ **Write minimal ingest script** for EPFL data
+5. ⏳ **Test cross-facility queries** in Neo4j browser
 
 ---
 
