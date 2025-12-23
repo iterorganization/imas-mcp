@@ -490,12 +490,127 @@ ssh epfl "which python3; python3 --version; pip list | head"
 |----------------|-------------|------|
 | Analysis codes (name, version, path) | Graph | `ingest_node("AnalysisCode", {...})` |
 | Diagnostics, MDSplus trees, TDI functions | Graph | `ingest_node(...)` |
-| Rich directory paths (e.g., `/home/codes`) | Infrastructure | `update_infrastructure(...)` |
+| Rich directory paths (e.g., `/home/codes`) | Graph | `ingest_node("FacilityPath", {...})` |
 | OS/kernel versions, tool availability | Infrastructure | `update_infrastructure(...)` |
 | SVN/Git repo URLs discovered | Infrastructure | `update_infrastructure(...)` |
 | Unstructured findings to review later | Graph staging | `cypher("CREATE (:_Discovery {...})")` |
 
 **Key principle**: If you `find` or `ls` a useful path during exploration, persist it immediately.
+
+### FacilityPath Multi-Pass Workflow
+
+Track exploration progress using `FacilityPath` nodes with status progression:
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  SCOUT PASS │   │ TRIAGE PASS │   │ INGEST PASS │
+│             │   │             │   │             │
+│ discovered  │   │ scanned     │   │ flagged     │
+│     ↓       │   │     ↓       │   │     ↓       │
+│  listed     │   │  flagged    │   │ analyzed    │
+│     ↓       │   │    or       │   │     ↓       │
+│  scanned    │   │  skipped    │   │ ingested    │
+└─────────────┘   └─────────────┘   └─────────────┘
+```
+
+| Status | Pass | Meaning |
+|--------|------|---------|
+| `discovered` | Scout | Found but not examined |
+| `listed` | Scout | Contents counted (optional) |
+| `scanned` | Scout | Pattern search complete |
+| `flagged` | Triage | Interesting, should analyze |
+| `skipped` | Triage | Not interesting enough |
+| `analyzed` | Ingest | Structure understood |
+| `ingested` | Ingest | Code extracted to graph |
+| `excluded` | Any | Permanently skip (e.g., /tmp) |
+| `stale` | Any | May no longer exist |
+
+**Scout Pass Example:**
+```python
+# 1. Get actionable paths (sorted by interest_score)
+result = get_facility("epfl")
+for path in result["actionable_paths"]:
+    print(f"{path['status']}: {path['path']} (score: {path['interest_score']})")
+
+# 2. After pattern search, update status
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "scanned",
+    "patterns_found": ["equilibrium", "IMAS", "write_ids"],
+    "last_examined": "2025-01-15T10:30:00Z"
+})
+```
+
+**Triage Pass Example:**
+```python
+# Flag interesting paths with priority
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "flagged",
+    "interest_score": 0.9,
+    "notes": "Found IMAS integration, multiple IDS writes"
+})
+
+# Skip uninteresting paths
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/old_backup",
+    "status": "skipped",
+    "notes": "Stale backup, no active development"
+})
+```
+
+**Interest Score Guidelines:**
+
+| Score | Use Case |
+|-------|----------|
+| 0.9+ | IMAS integration, IDS read/write |
+| 0.7+ | MDSplus access, equilibrium codes |
+| 0.5+ | General analysis codes |
+| 0.3+ | Utilities, helpers |
+| <0.3 | Config files, documentation |
+
+### Coverage Tracking (Optional)
+
+The schema includes optional coverage fields. Use them judiciously:
+
+| Field | When to Use | Performance Risk |
+|-------|-------------|------------------|
+| `file_count` | Small dirs (<1000 files) | High for large dirs |
+| `dir_count` | Small dirs | High for large dirs |
+| `files_scanned` | After pattern search | Safe (rg limits) |
+| `files_ingested` | After ingestion | Safe (we control) |
+
+**Safe counting (with timeout):**
+```bash
+# Count with timeout - abort if too slow
+ssh epfl "timeout 5s find /home/codes/transport -type f | wc -l"
+
+# Or use fd with depth limit
+ssh epfl "~/bin/fd -t f --max-depth 3 . /home/codes/transport | wc -l"
+```
+
+**Skip counting for known large paths:**
+```python
+# Large dirs: skip counting, go straight to pattern search
+SKIP_COUNTING = ["/home", "/usr/local"]
+
+if path in SKIP_COUNTING:
+    # Go directly to scanned status
+    ingest_node("FacilityPath", {
+        "id": f"epfl:{path}",
+        "status": "scanned",
+        "notes": "Large directory - skipped file counting"
+    })
+```
+
+**Performance-safe pattern search:**
+```bash
+# Use rg with limits to prevent hangs
+ssh epfl "~/bin/rg -l --max-count 1 --max-depth 4 'equilibrium|IMAS' /path -g '*.py' 2>/dev/null | head -50"
+
+# With timeout as failsafe
+ssh epfl "timeout 30s ~/bin/rg -l 'pattern' /path --max-depth 3"
+```
 
 ### Available Facilities
 
