@@ -1,14 +1,19 @@
 # Federated Fusion Knowledge Graph - Implementation Plan
 
-**Status**: Draft  
-**Date**: 2024-12-22  
-**Based on**: EPFL/TCV exploration findings
+**Status**: Active  
+**Date**: 2024-12-23  
+**Based on**: EPFL/TCV exploration findings, LinkML ecosystem research
 
 ---
 
 ## 1. Executive Summary
 
-Build a Neo4j-based knowledge graph that captures facility-specific knowledge discovered through exploration. Start with EPFL/TCV as the proving ground, then generalize.
+Build a Neo4j-based knowledge graph that captures facility-specific knowledge discovered through exploration. The graph schema is defined in **LinkML** (`schemas/facility.yaml`) as the single source of truth.
+
+**Architecture Decision**: Use LinkML schema to auto-generate all graph artifacts:
+- Pydantic models via `gen-pydantic`
+- Neo4j node labels derived from class names
+- Relationships derived from slots with class ranges
 
 **Key insight from EPFL exploration**: The real value isn't in file paths—it's in the semantic relationships between:
 - MDSplus trees and their node hierarchies
@@ -18,196 +23,99 @@ Build a Neo4j-based knowledge graph that captures facility-specific knowledge di
 
 ---
 
-## 2. Discovered Data Model (from EPFL)
+## 2. Schema-First Approach
 
-### 2.1 What We Found
+### 2.1 LinkML as Single Source of Truth
 
-```
-TCV Data Access Architecture
-============================
-
-User Query (Python)
-    ↓
-TDI Functions (213 .fun files)
-    ├── tcv_ip()          → Plasma current
-    ├── tcv_eq("kappa")   → Equilibrium via LIUQE
-    ├── ts_te()           → Thomson Te
-    └── ...
-    ↓
-MDSplus Trees
-    ├── tcv_shot (primary)
-    │   ├── ATLAS, BASE, DIAGZ, MAGNETICS, ECRH, HYBRID...
-    │   └── RAW_TREES → links to raw data
-    │
-    ├── results (analysis outputs)
-    │   ├── LIUQE (EQ_RECON, EQ_RECON_2, EQ_RECON_3)
-    │   ├── ASTRA, CQL3D, TORAY (transport codes)
-    │   ├── THOMSON, ECE, FIR (diagnostics)
-    │   └── ...
-    │
-    └── (distributed across servers)
-        ├── tcvdata     - Main data
-        ├── spcsrv1     - Legacy
-        ├── spcsrv8     - HXR, video
-        ├── mantis4     - Thomson scattering
-        └── ...
-```
-
-### 2.2 Sample Data Retrieved
-
-```python
-# Shot 89031 with LIUQE reconstruction
-tcv_ip()           → 62,718 points, t=[-2.2, 4.0]s
-tcv_eq("kappa")    → 500 points, t=[0.0, 1.0]s
-tcv_eq("r_contour")→ (500, 129) boundary shape
-```
-
----
-
-## 3. Proposed Node Types
-
-### Phase 1: Core Nodes (Week 1-2)
-
-| Node Type | Properties | Example |
-|-----------|------------|---------|
-| `Facility` | name, description, ssh_host | EPFL/TCV |
-| `MDSplusServer` | hostname, role | tcvdata (main), spcsrv8 (video) |
-| `MDSplusTree` | name, description | tcv_shot, results, magnetics |
-| `TreeNode` | path, type, units, description | \RESULTS::LIUQE |
-| `TDIFunction` | name, file_path, description | tcv_eq, tcv_ip |
-| `Diagnostic` | name, category | Thomson, ECE, Bolometry |
-| `AnalysisCode` | name, type | LIUQE, ASTRA, TORAY |
-
-### Phase 2: Relationships
-
-```cypher
-(TDIFunction)-[:ACCESSES]->(TreeNode)
-(TDIFunction)-[:CALLS]->(TDIFunction)
-(TreeNode)-[:CHILD_OF]->(TreeNode)
-(TreeNode)-[:STORED_ON]->(MDSplusServer)
-(AnalysisCode)-[:PRODUCES]->(TreeNode)
-(Diagnostic)-[:WRITES_TO]->(TreeNode)
-```
-
-### Phase 3: IMAS Mapping
-
-| Relationship | Description |
-|--------------|-------------|
-| `(TreeNode)-[:MAPS_TO]->(IMASPath)` | Source→Target mapping |
-| `(TDIFunction)-[:EQUIVALENT_TO]->(IMASAccessor)` | Function equivalence |
-
----
-
-## 4. Implementation Phases
-
-### Phase 1: Local Neo4j Spike (2-3 days)
-
-**Goal**: Prove we can ingest EPFL data into Neo4j and query it.
-
-```bash
-# Start Neo4j
-docker run -d --name neo4j -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/password neo4j:latest
-
-# Create Python ingest script
-uv run python scripts/ingest_facility.py epfl
-```
-
-**Deliverables**:
-- `scripts/ingest_facility.py` - reads YAML, writes Cypher
-- Sample queries working in Neo4j browser
-
-### Phase 2: MDSplus Tree Ingestion (1 week)
-
-**Goal**: Automatically discover and ingest MDSplus tree structure.
-
-```python
-# Pseudo-code for tree walker
-def walk_tree(connection, tree_name, shot):
-    nodes = connection.get(f'getnci("\\\\{tree_name}::*", "FULLPATH")')
-    for node in nodes:
-        # Create TreeNode in Neo4j
-        # Recurse into children
-```
-
-**Deliverables**:
-- `imas_codex/discovery/mdsplus_walker.py`
-- TreeNode population for TCV shot
-
-### Phase 3: TDI Function Analysis (1 week)
-
-**Goal**: Parse TDI functions to extract data access patterns.
-
-```
-Input:  /usr/local/CRPP/tdi/tcv/tcv_eq.fun
-Output: 
-  - Function: tcv_eq
-  - Parameters: _var, _mode, _keyword
-  - Accesses: \RESULTS::EQ_RECON, \RESULTS::LIUQE, ...
-  - Calls: tcv_eq_profile, ...
-```
-
-**Deliverables**:
-- `imas_codex/discovery/tdi_parser.py`
-- TDIFunction and relationship edges
-
-### Phase 4: MCP Tools (3-5 days)
-
-**Goal**: Query the graph from agents.
-
-```python
-@server.tool()
-async def facility_config(
-    action: Literal["read", "write", "validate", "list", "query"],
-    facility: str | None = None,
-    cypher: str | None = None,  # For action="query"
-    ...
-):
-    """
-    Manage facility knowledge graph.
-    
-    Actions:
-        query - Execute Cypher query against facility subgraph
-    
-    Example:
-        facility_config(action="query", facility="epfl",
-            cypher="MATCH (t:TDIFunction)-[:ACCESSES]->(n:TreeNode) RETURN t.name, n.path")
-    """
-```
-
----
-
-## 5. Schema Evolution Strategy
-
-### LinkML-Driven
+The schema at `imas_codex/schemas/facility.yaml` defines:
 
 ```yaml
-# ontology/facility.yaml
 classes:
-  Facility:
+  Facility:           # → Neo4j label: Facility
     attributes:
-      name: {identifier: true}
-      ssh_host: string
+      id: ...
+      name: ...
       
-  MDSplusServer:
+  MDSplusServer:      # → Neo4j label: MDSplusServer
     attributes:
-      hostname: {identifier: true}
-      facility: {range: Facility}
-      role: string
-      
-  TreeNode:
+      hostname: ...
+      facility_id:    # → Relationship: -[:FACILITY_ID]->
+        range: Facility
+        
+  TreeNode:           # → Neo4j label: TreeNode
     attributes:
-      path: {identifier: true}
-      tree: {range: MDSplusTree}
-      node_type: {enum: [STRUCTURE, SIGNAL, AXIS, ...]}
+      path: ...
+      tree_name:      # → Relationship: -[:TREE_NAME]->
+        range: MDSplusTree
 ```
 
-### Validation Pipeline
+### 2.2 Deriving Graph Structure
 
+**Node Labels** = Class names from LinkML:
+- `Facility`, `MDSplusServer`, `MDSplusTree`, `TreeNode`, `TDIFunction`, etc.
+
+**Relationships** = Slots with class ranges:
+- `facility_id: Facility` → Creates relationship to Facility node
+- `tree_name: MDSplusTree` → Creates relationship to Tree node
+- `accesses: TreeNode[]` → Creates multiple ACCESSES relationships
+
+### 2.3 Current vs Target State
+
+| Component | Current | Target |
+|-----------|---------|--------|
+| Schema | `schemas/facility.yaml` ✅ | Same |
+| Pydantic models | Auto-generated ✅ | Same |
+| Neo4j labels | Hard-coded in `cypher.py` ⚠️ | Derived from schema |
+| Relationships | Hard-coded in `cypher.py` ⚠️ | Derived from schema |
+| Client | Manual CRUD ✅ | Consider linkml-store |
+
+---
+
+## 3. Recommended Tools
+
+### Option A: linkml-store (Preferred for Future)
+
+[linkml-store](https://github.com/linkml/linkml-store) provides unified abstraction:
+
+```python
+from linkml_store import Client
+
+client = Client()
+db = client.attach_database(
+    "neo4j://localhost:7687",
+    schema="schemas/facility.yaml"
+)
+
+# Schema-aware operations
+facilities = db.get_collection("Facility")
+facilities.insert({"id": "epfl", "name": "EPFL/TCV", "machine": "TCV"})
+facilities.query(where={"machine": "TCV"})
 ```
-Discovery → JSON → Pydantic (from LinkML) → Valid? → Neo4j Ingest
-                        ↓ Invalid
-                   Flag for schema extension
+
+**Benefits**:
+- Schema validation built-in
+- Backend-agnostic (swap Neo4j for DuckDB in dev)
+- Semantic search with embeddings
+- No manual label/relationship mapping
+
+### Option B: SchemaView Introspection (Current Direction)
+
+Use `linkml_runtime` to derive structure at runtime:
+
+```python
+from linkml_runtime.utils.schemaview import SchemaView
+
+sv = SchemaView("schemas/facility.yaml")
+
+# Derive labels
+node_labels = list(sv.all_classes().keys())
+
+# Derive relationships
+for cls_name, cls_def in sv.all_classes().items():
+    for slot_name in sv.class_induced_slots(cls_name):
+        slot = sv.get_slot(slot_name)
+        if slot.range in node_labels:
+            print(f"{cls_name} -[:{slot_name.upper()}]-> {slot.range}")
 ```
 
 ---
