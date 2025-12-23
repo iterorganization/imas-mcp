@@ -1043,9 +1043,15 @@ def neo4j_load(
     help="Release message (used for git tag annotation)",
 )
 @click.option(
+    "--remote",
+    type=click.Choice(["origin", "upstream"]),
+    default="upstream",
+    help="Target remote: 'origin' prepares PR, 'upstream' finalizes release",
+)
+@click.option(
     "--skip-graph",
     is_flag=True,
-    help="Skip graph dump and push",
+    help="Skip graph dump and push (upstream mode only)",
 )
 @click.option(
     "--skip-git",
@@ -1060,30 +1066,41 @@ def neo4j_load(
 def release(
     version: str,
     message: str,
+    remote: str,
     skip_graph: bool,
     skip_git: bool,
     dry_run: bool,
 ) -> None:
-    """Create a new release with synced schema, graph, and git tag.
+    """Create a new release with two modes based on remote.
 
     VERSION should be a semantic version with 'v' prefix (e.g., v1.0.0).
 
-    This command:
-    1. Updates all LinkML schema versions in schemas/
-    2. Regenerates Pydantic models from schemas
-    3. Adds _GraphMeta node with version info
-    4. Dumps and pushes graph to GHCR
-    5. Creates annotated git tag
-    6. Pushes tag to trigger CI release
+    MODE: --remote origin (prepare PR)
+    - Updates schema versions to match release version
+    - Commits changes and pushes branch to origin
+    - Creates and pushes tag to origin
+    - No graph operations (graph is local-only data)
+
+    MODE: --remote upstream (finalize release - default)
+    - Pre-flight: clean tree, synced with upstream, schema versions match
+    - Updates _GraphMeta node with version
+    - Dumps and pushes graph to GHCR
+    - Creates and pushes tag to upstream (triggers CI)
+
+    Workflow:
+    1. imas-codex release vX.Y.Z -m 'message' --remote origin
+    2. Create PR on GitHub, merge to upstream
+    3. git pull upstream main
+    4. imas-codex release vX.Y.Z -m 'message' --remote upstream
 
     Examples:
-        # Full release
-        imas-codex release v1.0.0 -m 'Initial EPFL facility knowledge'
+        # Prepare PR (updates schemas, commits, pushes to fork)
+        imas-codex release v1.0.0 -m 'Add EPFL' --remote origin
 
-        # Release without graph (schema-only changes)
-        imas-codex release v1.0.1 -m 'Fix schema typo' --skip-graph
+        # Finalize release (graph to GHCR, tag to upstream)
+        imas-codex release v1.0.0 -m 'Add EPFL' --remote upstream
 
-        # Dry run to preview changes
+        # Dry run
         imas-codex release v1.0.0 -m 'Test' --dry-run
     """
     import re
@@ -1099,196 +1116,352 @@ def release(
     version_number = version.lstrip("v")
     schemas_dir = Path("imas_codex/schemas")
 
-    click.echo(f"{'[DRY RUN] ' if dry_run else ''}Preparing release {version}")
+    # Determine mode
+    is_origin_mode = remote == "origin"
+    mode_desc = "PR preparation" if is_origin_mode else "release finalization"
+
+    click.echo(f"{'[DRY RUN] ' if dry_run else ''}Release {version} ({mode_desc})")
     click.echo(f"Message: {message}")
+    click.echo(f"Remote: {remote}")
     click.echo()
 
-    # Step 1: Update schema versions
-    click.echo("Step 1: Updating schema versions...")
-    schema_files = list(schemas_dir.glob("*.yaml"))
-    for schema_file in schema_files:
-        if schema_file.name.startswith("_"):
-            continue
-        click.echo(f"  - {schema_file.name}")
-        if not dry_run:
-            content = schema_file.read_text()
-            # Update version field
-            updated = re.sub(
-                r"^version:\s*['\"]?[\d.]+['\"]?",
-                f"version: {version_number}",
-                content,
-                flags=re.MULTILINE,
-            )
-            schema_file.write_text(updated)
+    # Pre-flight checks
+    click.echo("Pre-flight checks...")
 
-    # Step 2: Regenerate models
-    click.echo("\nStep 2: Regenerating Pydantic models...")
-    if not dry_run:
-        result = subprocess.run(
-            ["uv", "run", "build-models", "--force"],
+    # Check 1: On main branch
+    branch_result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+    )
+    current_branch = branch_result.stdout.strip()
+    if current_branch != "main":
+        click.echo(f"  ✗ Not on main branch (current: {current_branch})", err=True)
+        click.echo("    Switch to main: git checkout main")
+        raise SystemExit(1)
+    click.echo("  ✓ On main branch")
+
+    # Check 2: Remote exists
+    remote_result = subprocess.run(
+        ["git", "remote", "get-url", remote],
+        capture_output=True,
+        text=True,
+    )
+    if remote_result.returncode != 0:
+        click.echo(f"  ✗ Remote '{remote}' not found", err=True)
+        click.echo(f"    Add it: git remote add {remote} <url>")
+        raise SystemExit(1)
+    click.echo(f"  ✓ Remote '{remote}' exists")
+
+    # For upstream mode: stricter checks
+    if not is_origin_mode:
+        # Check 3: Clean working tree (required for upstream)
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
             capture_output=True,
             text=True,
         )
-        if result.returncode != 0:
-            click.echo(f"Error regenerating models: {result.stderr}", err=True)
-            raise SystemExit(1)
-        click.echo("  Models regenerated")
-    else:
-        click.echo("  [would run: uv run build-models --force]")
-
-    # Step 3: Update _GraphMeta node
-    if not skip_graph:
-        click.echo("\nStep 3: Updating graph metadata...")
-        if not dry_run:
-            try:
-                from imas_codex.graph import GraphClient
-
-                with GraphClient() as client:
-                    # Get list of facilities in graph
-                    facilities_result = client.query(
-                        "MATCH (f:Facility) RETURN collect(f.id) as facilities"
-                    )
-                    facilities = (
-                        facilities_result[0]["facilities"] if facilities_result else []
-                    )
-
-                    # Update _GraphMeta node
-                    client.query(
-                        """
-                        MERGE (m:_GraphMeta {id: 'meta'})
-                        SET m.version = $version,
-                            m.message = $message,
-                            m.updated_at = datetime(),
-                            m.facilities = $facilities
-                        """,
-                        version=version_number,
-                        message=message,
-                        facilities=facilities,
-                    )
-                    click.echo(f"  _GraphMeta updated: version={version_number}")
-                    click.echo(f"  Facilities: {', '.join(facilities)}")
-            except Exception as e:
-                click.echo(f"Warning: Could not update graph metadata: {e}", err=True)
-                click.echo("  Is Neo4j running? Check with: imas-codex neo4j status")
-        else:
-            click.echo("  [would update _GraphMeta node in graph]")
-
-        # Step 4: Dump graph
-        click.echo("\nStep 4: Dumping graph...")
-        if not dry_run:
-            # First stop Neo4j for dump
-            click.echo("  Stopping Neo4j for dump...")
-            subprocess.run(
-                ["uv", "run", "imas-codex", "neo4j", "stop"],
-                capture_output=True,
-            )
-
-            # Dump
-            dump_file = f"imas-codex-graph-{version_number}.dump"
-            result = subprocess.run(
-                ["uv", "run", "imas-codex", "neo4j", "dump", "-o", dump_file],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error dumping graph: {result.stderr}", err=True)
+        if status_result.stdout.strip():
+            click.echo("  ✗ Working tree has uncommitted changes", err=True)
+            click.echo("    Commit or stash changes first")
+            if not dry_run:
                 raise SystemExit(1)
-            click.echo(f"  Dumped to: {dump_file}")
         else:
-            click.echo(f"  [would dump to: imas-codex-graph-{version_number}.dump]")
+            click.echo("  ✓ Working tree is clean")
 
-        # Step 5: Push to GHCR
-        click.echo("\nStep 5: Pushing graph to GHCR...")
-        if not dry_run:
-            result = subprocess.run(
-                ["uv", "run", "imas-codex", "neo4j", "push", version],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error pushing graph: {result.stderr}", err=True)
-                click.echo("  You may need to set GHCR_TOKEN and GHCR_USERNAME")
-                raise SystemExit(1)
-            click.echo(
-                f"  Pushed to ghcr.io/iterorganization/imas-codex-graph:{version}"
-            )
-        else:
-            click.echo(
-                f"  [would push to ghcr.io/iterorganization/imas-codex-graph:{version}]"
-            )
-    else:
-        click.echo("\nStep 3-5: Skipped (--skip-graph)")
-
-    # Step 6: Git operations
-    if not skip_git:
-        click.echo("\nStep 6: Git tag and push...")
-        if not dry_run:
-            # Stage schema changes
-            subprocess.run(
-                ["git", "add", "imas_codex/schemas/", "imas_codex/graph/models.py"],
-                capture_output=True,
-            )
-
-            # Check if there are changes to commit
-            status = subprocess.run(
-                ["git", "diff", "--cached", "--quiet"],
-                capture_output=True,
-            )
-            if status.returncode != 0:
-                # There are staged changes
-                subprocess.run(
-                    [
-                        "git",
-                        "commit",
-                        "-m",
-                        f"chore: bump schema version to {version_number}",
-                    ],
-                    capture_output=True,
-                )
-                click.echo("  Committed schema version bump")
-
-            # Create annotated tag
-            result = subprocess.run(
-                ["git", "tag", "-a", version, "-m", message],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                if "already exists" in result.stderr:
-                    click.echo(f"  Warning: Tag {version} already exists")
-                else:
-                    click.echo(f"Error creating tag: {result.stderr}", err=True)
-                    raise SystemExit(1)
-            else:
-                click.echo(f"  Created tag: {version}")
-
-            # Push tag
-            result = subprocess.run(
-                ["git", "push", "origin", version],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                click.echo(f"Error pushing tag: {result.stderr}", err=True)
-                raise SystemExit(1)
-            click.echo("  Pushed tag to origin")
-
-            # Push branch (with schema changes)
-            subprocess.run(
-                ["git", "push", "origin", "main"],
-                capture_output=True,
-            )
-        else:
-            click.echo(f"  [would create and push tag: {version}]")
-    else:
-        click.echo("\nStep 6: Skipped (--skip-git)")
+        # Check 4: Synced with upstream
+        subprocess.run(["git", "fetch", remote, "main"], capture_output=True)
+        ahead_behind = subprocess.run(
+            ["git", "rev-list", "--left-right", "--count", f"main...{remote}/main"],
+            capture_output=True,
+            text=True,
+        )
+        if ahead_behind.returncode == 0:
+            parts = ahead_behind.stdout.strip().split()
+            if len(parts) == 2:
+                ahead, behind = int(parts[0]), int(parts[1])
+                if behind > 0:
+                    click.echo(
+                        f"  ✗ Local is {behind} commits behind {remote}/main", err=True
+                    )
+                    click.echo(f"    Pull first: git pull {remote} main")
+                    if not dry_run:
+                        raise SystemExit(1)
+                if ahead > 0:
+                    click.echo(
+                        f"  ✗ Local is {ahead} commits ahead of {remote}/main",
+                        err=True,
+                    )
+                    click.echo("    Ensure PR is merged first")
+                    if not dry_run:
+                        raise SystemExit(1)
+                if ahead == 0 and behind == 0:
+                    click.echo(f"  ✓ Synced with {remote}/main")
 
     click.echo()
-    if dry_run:
-        click.echo("[DRY RUN] No changes made. Run without --dry-run to execute.")
+
+    # =========================================================================
+    # ORIGIN MODE: Update schemas, commit, push branch + tag
+    # =========================================================================
+    if is_origin_mode:
+        # Step 1: Update schema versions
+        click.echo("Step 1: Updating schema versions...")
+        schema_files = list(schemas_dir.glob("*.yaml"))
+        for schema_file in schema_files:
+            if schema_file.name.startswith("_"):
+                continue
+            click.echo(f"  - {schema_file.name}")
+            if not dry_run:
+                content = schema_file.read_text()
+                updated = re.sub(
+                    r"^version:\s*['\"]?[\d.]+['\"]?",
+                    f"version: {version_number}",
+                    content,
+                    flags=re.MULTILINE,
+                )
+                schema_file.write_text(updated)
+
+        # Step 2: Commit changes
+        click.echo("\nStep 2: Committing schema changes...")
+        if not dry_run:
+            subprocess.run(
+                ["git", "add", "imas_codex/schemas/"],
+                capture_output=True,
+            )
+            result = subprocess.run(
+                [
+                    "git",
+                    "commit",
+                    "-m",
+                    f"chore: bump schema version to {version_number}",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                click.echo("  Committed schema version bump")
+            elif "nothing to commit" in result.stdout + result.stderr:
+                click.echo("  No changes to commit (schemas already at version)")
+            else:
+                click.echo(f"Error committing: {result.stderr}", err=True)
+                raise SystemExit(1)
+        else:
+            click.echo(
+                f"  [would commit: chore: bump schema version to {version_number}]"
+            )
+
+        # Step 3: Push branch
+        click.echo("\nStep 3: Pushing branch to origin...")
+        if not dry_run:
+            result = subprocess.run(
+                ["git", "push", "origin", "main"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                click.echo(f"Error pushing branch: {result.stderr}", err=True)
+                raise SystemExit(1)
+            click.echo("  Pushed to origin/main")
+        else:
+            click.echo("  [would push to origin/main]")
+
+        # Step 4: Create and push tag
+        if not skip_git:
+            click.echo("\nStep 4: Creating and pushing tag...")
+            if not dry_run:
+                # Create tag
+                result = subprocess.run(
+                    ["git", "tag", "-a", version, "-m", message],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    if "already exists" in result.stderr:
+                        click.echo(f"  Warning: Tag {version} already exists")
+                    else:
+                        click.echo(f"Error creating tag: {result.stderr}", err=True)
+                        raise SystemExit(1)
+                else:
+                    click.echo(f"  Created tag: {version}")
+
+                # Push tag to origin
+                result = subprocess.run(
+                    ["git", "push", "origin", version],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    click.echo(f"Error pushing tag: {result.stderr}", err=True)
+                    raise SystemExit(1)
+                click.echo("  Pushed tag to origin")
+            else:
+                click.echo(f"  [would create and push tag {version} to origin]")
+        else:
+            click.echo("\nStep 4: Skipped (--skip-git)")
+
+        click.echo()
+        if dry_run:
+            click.echo("[DRY RUN] No changes made.")
+        else:
+            click.echo(f"PR preparation complete for {version}!")
+            click.echo("\nNext steps:")
+            click.echo("  1. Create PR on GitHub from origin/main to upstream/main")
+            click.echo("  2. After merge: git pull upstream main")
+            click.echo(f"  3. Run: imas-codex release {version} -m '{message}'")
+
+    # =========================================================================
+    # UPSTREAM MODE: Verify schemas, graph operations, push tag
+    # =========================================================================
     else:
-        click.echo(f"Release {version} complete!")
-        click.echo("CI will now build and publish the package.")
+        # Step 1: Verify schema versions match release version
+        click.echo("Step 1: Verifying schema versions...")
+        schema_files = list(schemas_dir.glob("*.yaml"))
+        version_mismatches = []
+        for schema_file in schema_files:
+            if schema_file.name.startswith("_"):
+                continue
+            content = schema_file.read_text()
+            version_match = re.search(
+                r"^version:\s*['\"]?([\d.]+)['\"]?", content, flags=re.MULTILINE
+            )
+            if version_match:
+                schema_version = version_match.group(1)
+                if schema_version != version_number:
+                    version_mismatches.append((schema_file.name, schema_version))
+                    click.echo(
+                        f"  ✗ {schema_file.name}: {schema_version} != {version_number}"
+                    )
+                else:
+                    click.echo(f"  ✓ {schema_file.name}: {schema_version}")
+
+        if version_mismatches and not dry_run:
+            click.echo("\nSchema versions don't match release version.", err=True)
+            click.echo("Run origin mode first to prepare PR:")
+            click.echo(f"  imas-codex release {version} -m '{message}' --remote origin")
+            raise SystemExit(1)
+
+        # Step 2: Update _GraphMeta node
+        if not skip_graph:
+            click.echo("\nStep 2: Updating graph metadata...")
+            if not dry_run:
+                try:
+                    from imas_codex.graph import GraphClient
+
+                    with GraphClient() as client:
+                        facilities_result = client.query(
+                            "MATCH (f:Facility) RETURN collect(f.id) as facilities"
+                        )
+                        facilities = (
+                            facilities_result[0]["facilities"]
+                            if facilities_result
+                            else []
+                        )
+                        client.query(
+                            """
+                            MERGE (m:_GraphMeta {id: 'meta'})
+                            SET m.version = $version,
+                                m.message = $message,
+                                m.updated_at = datetime(),
+                                m.facilities = $facilities
+                            """,
+                            version=version_number,
+                            message=message,
+                            facilities=facilities,
+                        )
+                        click.echo(f"  _GraphMeta updated: version={version_number}")
+                        click.echo(f"  Facilities: {', '.join(facilities)}")
+                except Exception as e:
+                    click.echo(
+                        f"Warning: Could not update graph metadata: {e}", err=True
+                    )
+                    click.echo(
+                        "  Is Neo4j running? Check with: imas-codex neo4j status"
+                    )
+            else:
+                click.echo("  [would update _GraphMeta node in graph]")
+
+            # Step 3: Dump graph
+            click.echo("\nStep 3: Dumping graph...")
+            if not dry_run:
+                click.echo("  Stopping Neo4j for dump...")
+                subprocess.run(
+                    ["uv", "run", "imas-codex", "neo4j", "stop"],
+                    capture_output=True,
+                )
+                dump_file = f"imas-codex-graph-{version_number}.dump"
+                result = subprocess.run(
+                    ["uv", "run", "imas-codex", "neo4j", "dump", "-o", dump_file],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    click.echo(f"Error dumping graph: {result.stderr}", err=True)
+                    raise SystemExit(1)
+                click.echo(f"  Dumped to: {dump_file}")
+            else:
+                click.echo(f"  [would dump to: imas-codex-graph-{version_number}.dump]")
+
+            # Step 4: Push to GHCR
+            click.echo("\nStep 4: Pushing graph to GHCR...")
+            if not dry_run:
+                result = subprocess.run(
+                    ["uv", "run", "imas-codex", "neo4j", "push", version],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    click.echo(f"Error pushing graph: {result.stderr}", err=True)
+                    click.echo("  You may need to set GHCR_TOKEN and GHCR_USERNAME")
+                    raise SystemExit(1)
+                click.echo(
+                    f"  Pushed to ghcr.io/iterorganization/imas-codex-graph:{version}"
+                )
+            else:
+                click.echo(
+                    f"  [would push to ghcr.io/iterorganization/imas-codex-graph:{version}]"
+                )
+        else:
+            click.echo("\nStep 2-4: Skipped (--skip-graph)")
+
+        # Step 5: Git tag
+        if not skip_git:
+            click.echo("\nStep 5: Create and push git tag...")
+            if not dry_run:
+                result = subprocess.run(
+                    ["git", "tag", "-a", version, "-m", message],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    if "already exists" in result.stderr:
+                        click.echo(f"  Warning: Tag {version} already exists")
+                    else:
+                        click.echo(f"Error creating tag: {result.stderr}", err=True)
+                        raise SystemExit(1)
+                else:
+                    click.echo(f"  Created tag: {version}")
+
+                result = subprocess.run(
+                    ["git", "push", "upstream", version],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    click.echo(f"Error pushing tag: {result.stderr}", err=True)
+                    raise SystemExit(1)
+                click.echo("  Pushed tag to upstream")
+            else:
+                click.echo(f"  [would create tag: {version}]")
+                click.echo("  [would push tag to: upstream]")
+        else:
+            click.echo("\nStep 5: Skipped (--skip-git)")
+
+        click.echo()
+        if dry_run:
+            click.echo("[DRY RUN] No changes made.")
+        else:
+            click.echo(f"Release {version} complete!")
+            click.echo("Tag pushed to upstream. CI will build and publish the package.")
 
 
 # ============================================================================
