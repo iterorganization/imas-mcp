@@ -214,9 +214,16 @@ classes:
     description: >-
       A filesystem path at a remote facility for structured exploration.
       
+      REQUIRED TOOLS (install at ~/bin before exploration):
+      - rg (ripgrep): Fast pattern search with --max-depth, --max-count limits
+      - fd: Fast file finder, safer than find for large directories
+      - dust: Disk usage visualization (~10x faster than du)
+      - tokei: Lines of code by language (parallel, very fast)
+      - scc: SLOC + complexity metrics for prioritization
+      
       MULTI-PASS EXPLORATION WORKFLOW:
-      1. Scout: discovered → listed → scanned (pattern search)
-      2. Triage: scanned → flagged (interesting) or skipped (not)
+      1. Scout: discovered → listed → scanned (pattern search with rg)
+      2. Triage: scanned → flagged (use scc complexity for interest_score) or skipped
       3. Analyze: flagged → analyzed (read files, understand structure)
       4. Ingest: analyzed → ingested (create CodeExample nodes)
       
