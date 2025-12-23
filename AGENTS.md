@@ -400,18 +400,30 @@ config/facilities/
 └── epfl_infrastructure.yaml     # Private - agent guidance only
 ```
 
-### Sensitive Data Policy
+### Data Classification Policy
 
-**Never commit or graph sensitive infrastructure data:**
+**Rule**: If the LinkML schema has a property for it, store it in the graph. Otherwise, use infrastructure files.
 
-| Data Type | Where to Store | Why |
-|-----------|----------------|-----|
-| Hostnames, IPs, NFS mounts | `_infrastructure.yaml` | Network reconnaissance |
-| OS/kernel versions | `_infrastructure.yaml` | CVE matching |
-| File paths | `_infrastructure.yaml` | Filesystem enumeration |
-| Tool availability | `_infrastructure.yaml` | Reconnaissance |
-| MDSplus tree names | `<facility>.yaml` | Data semantics (safe) |
-| Diagnostic/code names | `<facility>.yaml` | Data semantics (safe) |
+**Graph (Public)** - Data access semantics:
+
+| Data Type | Schema Property | Purpose |
+|-----------|-----------------|---------|
+| MDSplus tree names | `MDSplusTree.name` | Data discovery |
+| Diagnostic names | `Diagnostic.name` | Data discovery |
+| Analysis code names | `AnalysisCode.name` | Code discovery |
+| Code versions | `AnalysisCode.version` | Reproducibility |
+| Code paths | `AnalysisCode.path` | Data access |
+| TDI function names | `TDIFunction.name` | Data access |
+
+**Infrastructure (Private)** - Operational/security data:
+
+| Data Type | Why Private |
+|-----------|-------------|
+| Hostnames, IPs, NFS mounts | Network reconnaissance risk |
+| OS/kernel versions | CVE matching risk |
+| System tool availability | Reconnaissance risk |
+| User home directories | Privacy |
+| Credentials, tokens | Security |
 
 ### Agents MCP Server Tools
 
@@ -423,10 +435,10 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 | `ingest_node(type, data)` | Schema-validated node creation |
 | `read_infrastructure(facility)` | Read sensitive local data |
 | `update_infrastructure(facility, data)` | Update sensitive local data |
+| `get_graph_schema()` | Get complete schema for Cypher generation |
+| `get_facilities()` | List available facilities with SSH hosts |
 
-**Prompts:**
-- `graph_schema` - Schema guidance for Cypher generation
-- `explore` - Exploration guidance and facility list
+> **Before writing Cypher queries**, call `get_graph_schema()` to get node labels, properties, enums, and relationship types.
 
 **Usage Examples:**
 
@@ -466,6 +478,21 @@ SSH directly using host aliases from `~/.ssh/config`:
 ```bash
 ssh epfl "which python3; python3 --version; pip list | head"
 ```
+
+### Exploration Persistence Checklist
+
+**After every exploration session, persist ALL discoveries:**
+
+| Discovery Type | Destination | Tool |
+|----------------|-------------|------|
+| Analysis codes (name, version, path) | Graph | `ingest_node("AnalysisCode", {...})` |
+| Diagnostics, MDSplus trees, TDI functions | Graph | `ingest_node(...)` |
+| Rich directory paths (e.g., `/home/codes`) | Infrastructure | `update_infrastructure(...)` |
+| OS/kernel versions, tool availability | Infrastructure | `update_infrastructure(...)` |
+| SVN/Git repo URLs discovered | Infrastructure | `update_infrastructure(...)` |
+| Unstructured findings to review later | Graph staging | `cypher("CREATE (:_Discovery {...})")` |
+
+**Key principle**: If you `find` or `ls` a useful path during exploration, persist it immediately.
 
 ### Available Facilities
 

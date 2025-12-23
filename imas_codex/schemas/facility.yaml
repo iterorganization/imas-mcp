@@ -312,6 +312,8 @@ classes:
         description: Code description
       version:
         description: Code version if known
+      path:
+        description: Executable or installation path (for data access)
 
 # =============================================================================
 # IMAS Mapping Classes
