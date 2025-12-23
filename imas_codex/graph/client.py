@@ -92,6 +92,7 @@ class GraphClient:
         Constraints and indexes are derived from the LinkML schema:
         - Unique constraints on identifier fields
         - Indexes for common query patterns
+        - Vector indexes for semantic search
         """
         # Get constraints from schema (derived from identifier fields)
         constraints = self.schema.constraint_statements()
@@ -102,6 +103,44 @@ class GraphClient:
         with self.session() as sess:
             for stmt in constraints + indexes:
                 sess.run(stmt)
+
+        # Create vector indexes for semantic search
+        self.ensure_vector_indexes()
+
+    def ensure_vector_indexes(self) -> None:
+        """Create vector indexes for semantic search if they don't exist.
+
+        Creates a vector index on CodeChunk.embedding for similarity search.
+        Requires Neo4j 5.x+ with vector index support.
+        """
+        # Check if vector index exists
+        with self.session() as sess:
+            result = sess.run(
+                "SHOW INDEXES YIELD name WHERE name = 'code_chunk_embedding' RETURN name"
+            )
+            if result.single():
+                return  # Index already exists
+
+            # Create vector index for CodeChunk embeddings
+            # Using 384 dimensions for all-MiniLM-L6-v2 model
+            try:
+                sess.run("""
+                    CREATE VECTOR INDEX code_chunk_embedding IF NOT EXISTS
+                    FOR (c:CodeChunk) ON c.embedding
+                    OPTIONS {
+                        indexConfig: {
+                            `vector.dimensions`: 384,
+                            `vector.similarity_function`: 'cosine'
+                        }
+                    }
+                """)
+            except Exception as e:
+                # Vector indexes may not be available in all Neo4j editions
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    f"Failed to create vector index (may require Neo4j 5.x+): {e}"
+                )
 
     def drop_all(self) -> int:
         """Delete all nodes and relationships.

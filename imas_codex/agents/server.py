@@ -5,35 +5,51 @@ This server provides MCP tools for:
 - Executing Cypher queries (mutations restricted to _Discovery nodes)
 - Ingesting validated nodes to the knowledge graph
 - Reading/updating sensitive infrastructure files
+- All IMAS DD tools (search, fetch, list, overview, etc.)
 
 Local use only - provides full graph access for trusted agents.
 """
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 import yaml
 from fastmcp import FastMCP
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+from imas_codex.code_examples import CodeExampleIngester, CodeExampleSearch
 from imas_codex.discovery import get_config
 from imas_codex.discovery.config import get_facilities_dir
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
+from imas_codex.tools import Tools
 
 logger = logging.getLogger(__name__)
 
+# Configure ruamel.yaml for comment-preserving round-trips
+_yaml = YAML()
+_yaml.preserve_quotes = True
+_yaml.width = 120
 
-def _deep_merge(base: dict, updates: dict) -> dict:
-    """Deep merge updates into base dict."""
-    result = base.copy()
+
+def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> CommentedMap:
+    """Deep merge updates into ruamel CommentedMap, preserving comments."""
     for key, value in updates.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-            result[key] = _deep_merge(result[key], value)
+        if key in base:
+            if isinstance(base[key], CommentedMap) and isinstance(value, dict):
+                _deep_merge_ruamel(base[key], value)
+            elif isinstance(base[key], list | CommentedSeq) and isinstance(value, list):
+                # Extend lists, avoiding duplicates
+                for item in value:
+                    if item not in base[key]:
+                        base[key].append(item)
+            else:
+                base[key] = value
         else:
-            result[key] = value
-    return result
+            base[key] = value
+    return base
 
 
 @dataclass
@@ -48,14 +64,24 @@ class AgentsServer:
     - update_infrastructure: Merge updates to infrastructure files
     - get_graph_schema: Get complete schema for Cypher generation
     - get_facilities: List available facilities with SSH hosts
+    - All IMAS DD tools (search_imas_paths, fetch_imas_paths, etc.)
     """
 
+    include_imas_tools: bool = True
     mcp: FastMCP = field(init=False, repr=False)
+    imas_tools: Tools | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self):
         """Initialize the MCP server."""
         self.mcp = FastMCP(name="imas-codex-agents")
         self._register_tools()
+
+        # Include IMAS DD tools by default
+        if self.include_imas_tools:
+            self.imas_tools = Tools()
+            self.imas_tools.register(self.mcp)
+            logger.debug("IMAS DD tools registered with agents server")
+
         logger.debug("Agents MCP server initialized")
 
     def _register_tools(self):
@@ -230,7 +256,7 @@ class AgentsServer:
             Merge updates into facility infrastructure file.
 
             Deep-merges the provided data into the existing infrastructure
-            file, creating it if it doesn't exist.
+            file, preserving comments and key order.
 
             Args:
                 facility: Facility identifier (e.g., "epfl")
@@ -242,33 +268,40 @@ class AgentsServer:
             Examples:
                 # Update tool availability
                 update_infrastructure("epfl", {
-                    "tools": {
-                        "rg": {"status": "unavailable"},
-                        "grep": {"status": "available", "path": "/usr/bin/grep"}
-                    }
+                    "knowledge": {"tools": {"rg": "unavailable"}}
                 })
 
                 # Add exploration notes
                 update_infrastructure("epfl", {
-                    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+                    "knowledge": {
+                        "notes": ["New discovery about MDSplus config"]
+                    }
+                })
+
+                # Add new paths discovered
+                update_infrastructure("epfl", {
+                    "paths": {"codes": {"root": "/home/codes"}}
                 })
             """
             infra_path = get_facilities_dir() / f"{facility}_infrastructure.yaml"
 
-            # Load existing or start fresh
-            if infra_path.exists():
-                existing = yaml.safe_load(infra_path.read_text()) or {}
-            else:
-                existing = {"facility_id": facility}
-
-            # Deep merge
-            merged = _deep_merge(existing, data)
-
-            # Add timestamp
-            merged["last_updated"] = datetime.now(UTC).isoformat()
-
             try:
-                infra_path.write_text(yaml.dump(merged, default_flow_style=False))
+                if infra_path.exists():
+                    # Load with ruamel to preserve comments
+                    with infra_path.open() as f:
+                        existing = _yaml.load(f)
+                    if existing is None:
+                        existing = CommentedMap({"facility_id": facility})
+                else:
+                    existing = CommentedMap({"facility_id": facility})
+
+                # Deep merge preserving comments
+                _deep_merge_ruamel(existing, data)
+
+                # Write back with preserved formatting
+                with infra_path.open("w") as f:
+                    _yaml.dump(existing, f)
+
                 return f"Updated infrastructure for {facility}"
             except Exception as e:
                 logger.exception(f"Failed to update infrastructure for {facility}")
@@ -335,6 +368,107 @@ class AgentsServer:
                     # Skip invalid configs
                     pass
             return result
+
+        # =====================================================================
+        # Code Example Tools
+        # =====================================================================
+
+        @self.mcp.tool()
+        def ingest_code_files(
+            facility: str,
+            remote_paths: list[str],
+            description: str | None = None,
+        ) -> dict[str, int]:
+            """
+            Ingest code files from a remote facility into the knowledge graph.
+
+            Fetches files via SCP, chunks them into searchable segments,
+            generates embeddings, extracts IMAS IDS references, and stores
+            in Neo4j with relationships to facility and IMAS paths.
+
+            Args:
+                facility: Facility SSH host alias (e.g., "epfl")
+                remote_paths: List of remote file paths to ingest
+                description: Optional description for all files
+
+            Returns:
+                Dict with counts: {"files": N, "chunks": M, "ids_found": K}
+
+            Examples:
+                # Ingest a single file
+                ingest_code_files("epfl", ["/home/wilson/data/load_to_imas.py"])
+
+                # Ingest multiple files
+                ingest_code_files("epfl", [
+                    "/home/duval/VNC_22/equil-tools-py/liuqeplot.py",
+                    "/home/athorn/python/equilibrium.py"
+                ], description="Equilibrium visualization examples")
+            """
+            try:
+                ingester = CodeExampleIngester()
+                return ingester.ingest_files(facility, remote_paths, description)
+            except Exception as e:
+                logger.exception("Failed to ingest code files")
+                raise RuntimeError(f"Failed to ingest code files: {e}") from e
+
+        @self.mcp.tool()
+        def search_code_examples(
+            query: str,
+            top_k: int = 10,
+            ids_filter: list[str] | None = None,
+            facility: str | None = None,
+        ) -> list[dict[str, Any]]:
+            """
+            Search for code examples using semantic similarity.
+
+            Uses vector embeddings to find code snippets matching the query,
+            with optional filtering by IMAS IDS or facility.
+
+            Args:
+                query: Natural language search query (e.g., "load equilibrium from MDSplus")
+                top_k: Maximum number of results to return
+                ids_filter: Optional list of IDS names to filter by (e.g., ["equilibrium"])
+                facility: Optional facility ID to filter by (e.g., "epfl")
+
+            Returns:
+                List of code search results with content, source file, and relevance score
+
+            Examples:
+                # Search for equilibrium loading code
+                search_code_examples("load equilibrium data from MDSplus")
+
+                # Search with IDS filter
+                search_code_examples("write profiles", ids_filter=["core_profiles"])
+
+                # Search within a specific facility
+                search_code_examples("LIUQE", facility="epfl")
+            """
+            try:
+                searcher = CodeExampleSearch()
+                results = searcher.search(
+                    query=query,
+                    top_k=top_k,
+                    ids_filter=ids_filter,
+                    facility=facility,
+                )
+                # Convert to dicts for JSON serialization
+                return [
+                    {
+                        "chunk_id": r.chunk_id,
+                        "content": r.content,
+                        "function_name": r.function_name,
+                        "source_file": r.source_file,
+                        "facility_id": r.facility_id,
+                        "related_ids": r.related_ids,
+                        "score": r.score,
+                        "start_line": r.start_line,
+                        "end_line": r.end_line,
+                    }
+                    for r in results
+                ]
+            except Exception as e:
+                logger.exception("Failed to search code examples")
+                raise RuntimeError(f"Failed to search code examples: {e}") from e
 
     def run(
         self,
