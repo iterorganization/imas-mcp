@@ -13,6 +13,15 @@
 | Sync dependencies | `uv sync --extra test` |
 | Add dependency | `uv add <package>` |
 | Add dev dependency | `uv add --dev <package>` |
+| Start Neo4j | `uv run imas-codex neo4j start` |
+| Stop Neo4j | `uv run imas-codex neo4j stop` |
+| Neo4j status | `uv run imas-codex neo4j status` |
+| Cypher shell | `uv run imas-codex neo4j shell` |
+| Dump graph | `uv run imas-codex neo4j dump` |
+| Push graph to GHCR | `uv run imas-codex neo4j push v1.0.0` |
+| Pull graph from GHCR | `uv run imas-codex neo4j pull` |
+| Load graph dump | `uv run imas-codex neo4j load graph.dump` |
+| Create release | `uv run imas-codex release v1.0.0 -m 'message'` |
 
 ## Project Overview
 
@@ -172,7 +181,137 @@ tests/              # Mirror source structure
 
 ## Knowledge Graph Strategy
 
-**Single source of truth**: LinkML schemas in `schemas/facility.yaml`
+**Single source of truth**: Neo4j graph database (versioned as OCI artifacts on GHCR)
+
+### Neo4j Service (Apptainer)
+
+Local development uses Neo4j via Apptainer. The CLI handles all setup:
+
+```bash
+# Start Neo4j (first run pulls image automatically)
+uv run imas-codex neo4j start
+
+# Check status
+uv run imas-codex neo4j status
+
+# Stop Neo4j
+uv run imas-codex neo4j stop
+
+# Open interactive Cypher shell
+uv run imas-codex neo4j shell
+
+# Access Neo4j Browser
+open http://localhost:7474
+```
+
+**Environment variables:**
+- `NEO4J_IMAGE`: Path to SIF image (default: `~/apptainer/neo4j_2025.11-community.sif`)
+- `NEO4J_DATA`: Data directory (default: `~/.local/share/imas-codex/neo4j`)
+- `NEO4J_PASSWORD`: Password (default: `imas-codex`)
+
+**First-time setup:**
+```bash
+# Pull the Neo4j image (one-time)
+apptainer pull --dir ~/apptainer docker://neo4j:2025.11-community
+
+# Start - password will be set automatically
+uv run imas-codex neo4j start
+```
+
+**Connection details for GraphClient:**
+- URI: `bolt://localhost:7687`
+- User: `neo4j`
+- Password: `imas-codex` (or `$NEO4J_PASSWORD`)
+
+### Graph Artifact Versioning
+
+The graph database is versioned as an OCI artifact on GHCR:
+
+```bash
+# Pull latest graph from GHCR
+uv run imas-codex neo4j pull
+
+# Load into Neo4j
+uv run imas-codex neo4j load imas-codex-graph.dump
+
+# After making changes, dump the graph
+uv run imas-codex neo4j stop
+uv run imas-codex neo4j dump
+
+# Push to GHCR (requires GHCR_TOKEN and GHCR_USERNAME in .env)
+uv run imas-codex neo4j push v1.0.0
+```
+
+**GHCR Authentication:**
+```bash
+# Add to .env (gitignored)
+GHCR_TOKEN=ghp_your_token_here
+GHCR_USERNAME=your_github_username
+```
+
+### Release Workflow
+
+Use the release command to sync schema versions, graph artifacts, and git tags:
+
+```bash
+# Full release: updates schemas, dumps graph, pushes to GHCR, creates git tag
+uv run imas-codex release v1.0.0 -m 'Add EPFL facility knowledge'
+
+# Preview changes without executing
+uv run imas-codex release v1.0.0 -m 'Test' --dry-run
+
+# Schema-only changes (no graph)
+uv run imas-codex release v1.0.1 -m 'Fix schema typo' --skip-graph
+```
+
+### LLM-First Cypher Queries
+
+Generate Cypher directly instead of using Python wrappers. Use `UNWIND` for batch operations:
+
+```python
+from imas_codex.graph import GraphClient
+
+with GraphClient() as client:
+    # Batch insert tools
+    tools = [{"id": "epfl:gcc", "name": "gcc", "available": True, "version": "11.5.0"}]
+    client.query("""
+        UNWIND $tools AS tool
+        MERGE (t:Tool {id: tool.id})
+        SET t += tool
+        WITH t
+        MATCH (f:Facility {id: 'epfl'})
+        MERGE (t)-[:FACILITY_ID]->(f)
+    """, tools=tools)
+
+    # Query unavailable tools (useful for agent guidance)
+    result = client.query("""
+        MATCH (t:Tool)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
+        WHERE t.available = false
+        RETURN t.name ORDER BY t.name
+    """)
+```
+
+### Schema Evolution
+
+Neo4j is schema-optional. Additive changes are safe:
+
+| Change | Safe? | Notes |
+|--------|-------|-------|
+| New class (node label) | ✅ | Old dumps load fine |
+| New property | ✅ | Missing = `null` |
+| Rename property | ❌ | Requires migration |
+| Remove class | ⚠️ | Old data orphaned |
+
+**Policy:** Additive changes only. Never rename/remove, just add.
+
+### _GraphMeta Node
+
+Every graph has a metadata node tracking version and contents:
+
+```cypher
+MATCH (m:_GraphMeta) RETURN m
+-- Returns: {version: "1.0.0", message: "Add EPFL", facilities: ["epfl"]}
+```
 
 ### Principles
 
@@ -188,7 +327,7 @@ tests/              # Mirror source structure
 | `schemas/facility.yaml` | ✅ Source | LinkML schema definition |
 | `graph/models.py` | ✅ Generated | Pydantic models from LinkML |
 | `graph/schema.py` | ✅ Runtime | Schema-driven graph ontology via SchemaView |
-| `graph/client.py` | ✅ Stable | Neo4j CRUD operations |
+| `graph/client.py` | ✅ Stable | Neo4j operations via `query()` |
 
 ### Usage
 

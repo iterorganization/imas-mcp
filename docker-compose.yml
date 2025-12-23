@@ -1,4 +1,6 @@
 services:
+  # Neo4j knowledge graph database
+  # Alternative for systems without Docker: use Apptainer (see AGENTS.md)
   neo4j:
     image: neo4j:2025.11-community
     ports:
@@ -10,7 +12,6 @@ services:
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
-      - ./ontology/cypher:/import
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:7474/"]
