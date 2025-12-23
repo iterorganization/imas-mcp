@@ -17,7 +17,7 @@ from typing import Any, Literal
 import yaml
 from fastmcp import FastMCP
 
-from imas_codex.discovery import get_config, list_facilities
+from imas_codex.discovery import get_config
 from imas_codex.discovery.config import get_facilities_dir
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
@@ -46,10 +46,8 @@ class AgentsServer:
     - ingest_node: Schema-validated node creation
     - read_infrastructure: Read sensitive infrastructure files
     - update_infrastructure: Merge updates to infrastructure files
-
-    And prompts for:
-    - graph_schema: Schema guidance for Cypher generation
-    - explore: Exploration guidance and facility list
+    - get_graph_schema: Get complete schema for Cypher generation
+    - get_facilities: List available facilities with SSH hosts
     """
 
     mcp: FastMCP = field(init=False, repr=False)
@@ -58,7 +56,6 @@ class AgentsServer:
         """Initialize the MCP server."""
         self.mcp = FastMCP(name="imas-codex-agents")
         self._register_tools()
-        self._register_prompts()
         logger.debug("Agents MCP server initialized")
 
     def _register_tools(self):
@@ -277,112 +274,67 @@ class AgentsServer:
                 logger.exception(f"Failed to update infrastructure for {facility}")
                 raise RuntimeError(f"Failed to update infrastructure: {e}") from e
 
-    def _register_prompts(self):
-        """Register exploration prompts."""
-
-        @self.mcp.prompt()
-        def graph_schema() -> str:
+        @self.mcp.tool()
+        def get_graph_schema() -> dict[str, Any]:
             """
-            Get graph schema for Cypher query generation.
+            Get complete graph schema for Cypher query generation.
 
-            Returns node labels, relationships, and identifier fields
-            derived from the LinkML schema.
+            Returns node labels with all properties, enums with valid values,
+            and relationship types. Call this before writing Cypher queries.
+
+            Returns:
+                Schema dict with node_labels, enums, relationship_types, special_nodes
             """
             schema = get_schema()
 
-            lines = [
-                "# Knowledge Graph Schema",
-                "",
-                "Use this schema when writing Cypher queries.",
-                "",
-                "## Node Labels (valid for ingest_node)",
-                "",
-            ]
+            node_labels = {}
+            for label in schema.node_labels:
+                node_labels[label] = {
+                    "identifier": schema.get_identifier(label),
+                    "description": schema.get_class_description(label),
+                    "properties": schema.get_all_slots(label),
+                }
 
-            for label in sorted(schema.node_labels):
-                id_field = schema.get_identifier(label)
-                required = schema.get_required_fields(label)
-                lines.append(f"- **{label}**")
-                lines.append(f"  - Identifier: `{id_field}`")
-                lines.append(f"  - Required: {required}")
-                lines.append("")
+            return {
+                "node_labels": node_labels,
+                "enums": schema.get_enums(),
+                "relationship_types": schema.relationship_types,
+                "special_nodes": {
+                    "_Discovery": "Staging area for unstructured findings (write freely)",
+                    "_GraphMeta": "Graph metadata (version, facilities)",
+                },
+            }
 
-            lines.extend(
-                [
-                    "## Relationship Types",
-                    "",
-                    "Derived from schema (SCREAMING_SNAKE_CASE):",
-                    "",
-                ]
-            )
-            for rel_type in sorted(schema.relationship_types):
-                lines.append(f"- `{rel_type}`")
-
-            lines.extend(
-                [
-                    "",
-                    "## Special Nodes",
-                    "",
-                    "- `_Discovery`: Staging area for unstructured findings",
-                    "  - Write freely via cypher() tool",
-                    "  - Not validated against schema",
-                    "  - Review periodically and promote to proper nodes",
-                    "",
-                    "- `_GraphMeta`: Graph metadata (version, facilities)",
-                    "",
-                ]
-            )
-
-            return "\n".join(lines)
-
-        @self.mcp.prompt()
-        def explore() -> str:
+        @self.mcp.tool()
+        def get_facilities() -> list[dict[str, str]]:
             """
-            Get exploration guidance and facility list.
+            List available facilities with SSH connection info.
 
-            Returns SSH hosts, graph tools usage, and configuration file locations.
+            Returns:
+                List of facility dicts with id, ssh_host, description
             """
-            facilities = list_facilities()
+            facilities_dir = get_facilities_dir()
+            if not facilities_dir.exists():
+                return []
 
-            lines = [
-                "# Facility Exploration",
-                "",
-                "## Tools Available",
-                "",
-                "- `cypher(query)`: Execute Cypher (read any, write _Discovery only)",
-                "- `ingest_node(type, data)`: Schema-validated node creation",
-                "- `read_infrastructure(facility)`: Read sensitive local data",
-                "- `update_infrastructure(facility, data)`: Update sensitive local data",
-                "",
-                "## Configuration Files",
-                "",
-                "- Public: `imas_codex/config/facilities/<facility>.yaml` (graphed)",
-                "- Private: `imas_codex/config/facilities/<facility>_infrastructure.yaml` (local only)",
-                "",
-                "Read `imas_codex/config/README.md` for sensitive data policy.",
-                "",
-                "## Available Facilities",
-                "",
-            ]
-
-            if facilities:
-                for name in sorted(facilities):
-                    try:
-                        config = get_config(name)
-                        lines.append(f"### {name}")
-                        lines.append(f"**{config.description}**")
-                        lines.append("```bash")
-                        lines.append(f'ssh {config.ssh_host} "your commands here"')
-                        lines.append("```")
-                        lines.append("")
-                    except Exception:
-                        lines.append(f"### {name}")
-                        lines.append("(config error)")
-                        lines.append("")
-            else:
-                lines.append("No facilities configured.")
-
-            return "\n".join(lines)
+            result = []
+            for path in sorted(facilities_dir.glob("*.yaml")):
+                # Skip infrastructure files
+                if path.stem.endswith("_infrastructure"):
+                    continue
+                try:
+                    config = get_config(path.stem)
+                    result.append(
+                        {
+                            "id": config.facility,
+                            "ssh_host": config.ssh_host,
+                            "description": config.description,
+                        }
+                    )
+                except Exception:
+                    # Skip invalid configs
+                    pass
+            return result
 
     def run(
         self,

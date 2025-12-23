@@ -170,6 +170,59 @@ class GraphSchema:
             if getattr(slot, "required", False)
         ]
 
+    def get_all_slots(self, class_name: str) -> dict[str, dict[str, Any]]:
+        """Get all slots (properties) for a class with their metadata.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            Dict mapping slot name to metadata (type, required, identifier).
+            Only includes truthy flags for compactness.
+        """
+        slots = {}
+        for slot in self._view.class_induced_slots(class_name):
+            slot_range = slot.range or "string"
+            is_relationship = slot_range in self._view.all_classes()
+
+            # Build compact representation (only truthy values)
+            info: dict[str, Any] = {"type": slot_range}
+            if getattr(slot, "required", False):
+                info["required"] = True
+            if getattr(slot, "identifier", False):
+                info["identifier"] = True
+            if getattr(slot, "multivalued", False):
+                info["multivalued"] = True
+            if is_relationship:
+                info["relationship"] = True
+
+            slots[slot.name] = info
+        return slots
+
+    def get_enums(self) -> dict[str, list[str]]:
+        """Get all enums with their permissible values.
+
+        Returns:
+            Dict mapping enum name to list of permissible values.
+        """
+        enums = {}
+        for name, enum_def in self._view.all_enums().items():
+            if enum_def.permissible_values:
+                enums[name] = list(enum_def.permissible_values.keys())
+        return enums
+
+    def get_class_description(self, class_name: str) -> str | None:
+        """Get the description of a class.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            Description string or None.
+        """
+        cls = self._view.get_class(class_name)
+        return cls.description if cls else None
+
     def get_relationships_from(self, class_name: str) -> list[Relationship]:
         """Get relationships originating from a class.
 

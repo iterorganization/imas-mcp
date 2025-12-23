@@ -16,21 +16,31 @@ config/facilities/
 └── epfl_infrastructure.yaml     # Private - paths, tools, OS, IPs
 ```
 
-## Sensitive Data Policy
+## Data Classification Policy
 
-**Never commit or graph sensitive data:**
+**Rule**: If the LinkML schema (`facility.yaml`) has a property for it, store it in the graph. Otherwise, use infrastructure files.
 
-| Data Type | Sensitivity | Reason | Where to Store |
-|-----------|-------------|--------|----------------|
-| Hostnames/IPs | 🔴 High | Network reconnaissance | `_infrastructure.yaml` |
-| NFS mounts | 🔴 High | Network topology | `_infrastructure.yaml` |
-| OS/kernel versions | 🔴 High | CVE matching | `_infrastructure.yaml` |
-| File paths | 🟡 Medium | Filesystem enumeration | `_infrastructure.yaml` |
-| Tool availability | 🟡 Medium | Reconnaissance | `_infrastructure.yaml` |
-| Python/compiler versions | 🟡 Medium | Vulnerability targeting | `_infrastructure.yaml` |
-| MDSplus tree names | 🟢 Low | Data semantics | `<facility>.yaml` |
-| Diagnostic names | 🟢 Low | Data semantics | `<facility>.yaml` |
-| TDI function names | 🟢 Low | Data semantics | `<facility>.yaml` |
+### Graph (Public) - Data access semantics
+
+| Data Type | Schema Property | Purpose |
+|-----------|-----------------|---------|
+| MDSplus tree names | `MDSplusTree.name` | Data discovery |
+| Diagnostic names | `Diagnostic.name` | Data discovery |
+| Analysis code names | `AnalysisCode.name` | Code discovery |
+| Code versions | `AnalysisCode.version` | Reproducibility |
+| Code paths | `AnalysisCode.path` | Data access |
+| TDI function names | `TDIFunction.name` | Data access |
+
+### Infrastructure (Private) - Operational/security data
+
+| Data Type | Why Private |
+|-----------|-------------|
+| Hostnames, IPs, NFS mounts | Network reconnaissance risk |
+| OS/kernel versions | CVE matching risk |
+| System tool availability | Reconnaissance risk |
+| Rich directory paths | Exploration guidance |
+| User home directories | Privacy |
+| Credentials, tokens | Security |
 
 ## Public Facility File
 
@@ -131,6 +141,25 @@ ssh epfl "which python3; python3 --version; pip list | head -10"
 ```
 
 ### 3. Persist Findings
+
+**After every exploration session, persist ALL discoveries:**
+
+#### Persistence Checklist
+
+| Discovery Type | Where to Persist | Tool |
+|----------------|------------------|------|
+| Analysis codes (name, version, type) | Graph | `ingest_node("AnalysisCode", {...})` |
+| Code installation paths | Graph | `ingest_node("AnalysisCode", {path: ...})` |
+| Diagnostics | Graph | `ingest_node("Diagnostic", {...})` |
+| MDSplus trees | Graph | `ingest_node("MDSplusTree", {...})` |
+| TDI functions | Graph | `ingest_node("TDIFunction", {...})` |
+| Rich directory paths (e.g., `/home/codes`) | Infrastructure | `update_infrastructure(...)` |
+| OS/kernel versions | Infrastructure | `update_infrastructure(...)` |
+| Tool availability | Infrastructure | `update_infrastructure(...)` |
+| SVN/Git repos discovered | Infrastructure | `update_infrastructure(...)` |
+| Unstructured findings | `_Discovery` nodes | `cypher("CREATE (:_Discovery {...})")` |
+
+#### Examples
 
 Use the Agents MCP server tools:
 
