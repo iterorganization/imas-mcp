@@ -7,7 +7,7 @@ This server provides MCP tools for:
 - Reading/updating sensitive private facility files
 - All IMAS DD tools (search, fetch, list, overview, etc.)
 
-Local use only - provides read access to graph, write via ingest_node only.
+Local use only - provides read access to graph, write via ingest_nodes only.
 """
 
 import logging
@@ -67,7 +67,7 @@ class AgentsServer:
 
     Provides tools for:
     - cypher: Execute Cypher queries (read any, write only _Discovery)
-    - ingest_node: Schema-validated node creation
+    - ingest_nodes: Schema-validated node creation (single or batch)
     - read_infrastructure: Read sensitive infrastructure files
     - update_infrastructure: Merge updates to infrastructure files
     - get_graph_schema: Get complete schema for Cypher generation
@@ -103,7 +103,7 @@ class AgentsServer:
             """
             Execute READ-ONLY Cypher query against the knowledge graph.
 
-            All write operations are blocked. Use ingest_node() for writes,
+            All write operations are blocked. Use ingest_nodes() for writes,
             which automatically filters private fields before graph storage.
 
             Args:
@@ -124,7 +124,7 @@ class AgentsServer:
 
             if any(kw in upper for kw in mutation_keywords):
                 msg = (
-                    "Cypher mutations are blocked. Use ingest_node() for writes - "
+                    "Cypher mutations are blocked. Use ingest_nodes() for writes - "
                     "it validates data and filters private fields automatically."
                 )
                 raise ValueError(msg)
@@ -137,14 +137,14 @@ class AgentsServer:
                 raise RuntimeError(f"Cypher query failed: {e}") from e
 
         @self.mcp.tool()
-        def ingest_node(
+        def ingest_nodes(
             node_type: str,
             data: dict[str, Any] | list[dict[str, Any]],
             create_facility_relationship: bool = True,
             batch_size: int = 50,
         ) -> dict[str, Any]:
             """
-            Ingest a node with schema validation and privacy filtering.
+            Ingest nodes with schema validation and privacy filtering.
 
             Validates data against the Pydantic model, FILTERS OUT private
             fields (is_private: true in schema), then writes to the graph.
@@ -152,14 +152,14 @@ class AgentsServer:
             Private fields are automatically excluded to prevent sensitive
             data from entering the graph or OCI artifacts.
 
-            Accepts a single dict or a list of dicts for batch ingestion.
-            Batch mode uses UNWIND for efficient Neo4j operations and
+            ALWAYS pass a list of dicts for batch ingestion, even for single
+            items. Batch mode uses UNWIND for efficient Neo4j operations and
             supports partial success - valid items are ingested even if
             some items fail validation.
 
             Args:
                 node_type: Node label (must be valid LinkML class)
-                data: Properties matching the Pydantic model, or list of properties
+                data: List of property dicts matching the Pydantic model
                 create_facility_relationship: Auto-create FACILITY_ID relationship
                 batch_size: Number of nodes per UNWIND batch (default: 50)
 
@@ -167,16 +167,14 @@ class AgentsServer:
                 Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
 
             Examples:
-                # Add a single diagnostic
-                ingest_node("Diagnostic", {
-                    "name": "XRCS",
-                    "facility_id": "epfl",
-                    "category": "spectroscopy",
-                    "description": "X-ray crystal spectrometer"
-                })
+                # Add diagnostics (always use list)
+                ingest_nodes("Diagnostic", [
+                    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
+                    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+                ])
 
-                # Batch add multiple paths
-                ingest_node("FacilityPath", [
+                # Add multiple paths in one call
+                ingest_nodes("FacilityPath", [
                     {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
                     {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
                 ])
@@ -345,7 +343,7 @@ class AgentsServer:
                 "relationship_types": schema.relationship_types,
                 "notes": {
                     "private_fields": "Fields with is_private:true are never stored in graph",
-                    "mutations": "Cypher mutations are blocked - use ingest_node() for writes",
+                    "mutations": "Cypher mutations are blocked - use ingest_nodes() for writes",
                 },
             }
 

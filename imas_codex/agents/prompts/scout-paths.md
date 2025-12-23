@@ -55,17 +55,29 @@ Discover directories at **{facility}** from `{root_path}` to depth **{depth}** a
    | 0 files | 0.2 | discovered |
    | Excluded pattern | 0.0 | excluded |
 
-4. **Ingest each path**:
+4. **Batch ingest all paths** (always use list, even for single items):
    ```python
-   ingest_node("FacilityPath", {
-       "id": "{facility}:<path>",
-       "facility_id": "{facility}",
-       "path": "<path>",
-       "path_type": "directory",
-       "status": "<status>",
-       "interest_score": <score>,
-       "depth": <calculated_depth>
-   })
+   ingest_nodes("FacilityPath", [
+       {
+           "id": "{facility}:<path1>",
+           "facility_id": "{facility}",
+           "path": "<path1>",
+           "path_type": "code_directory",  # or data_directory, config_directory, binary_directory
+           "status": "flagged",  # or discovered, scanned, excluded
+           "interest_score": 0.8,
+           "depth": 2
+       },
+       {
+           "id": "{facility}:<path2>",
+           "facility_id": "{facility}",
+           "path": "<path2>",
+           "path_type": "data_directory",
+           "status": "discovered",
+           "interest_score": 0.3,
+           "depth": 1
+       },
+       # ... all discovered paths in one call
+   ])
    ```
 
 5. **Report summary**:
