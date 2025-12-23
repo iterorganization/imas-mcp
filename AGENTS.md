@@ -178,8 +178,8 @@ tests/              # Mirror source structure
 
 1. **Schema-first**: All data models defined in LinkML YAML
 2. **Auto-generate**: Pydantic models generated via `gen-pydantic`
-3. **Derive graph structure**: Node labels = class names, relationships = slots with class ranges
-4. **No hard-coded duplication**: Avoid maintaining parallel definitions
+3. **Runtime introspection**: Node labels, relationships derived from schema via `GraphSchema`
+4. **No hard-coded duplication**: All graph structure comes from LinkML
 
 ### Files
 
@@ -187,27 +187,26 @@ tests/              # Mirror source structure
 |------|--------|---------|
 | `schemas/facility.yaml` | ✅ Source | LinkML schema definition |
 | `graph/models.py` | ✅ Generated | Pydantic models from LinkML |
-| `graph/cypher.py` | ⚠️ Transitional | Hard-coded Neo4j labels (to be replaced) |
+| `graph/schema.py` | ✅ Runtime | Schema-driven graph ontology via SchemaView |
 | `graph/client.py` | ✅ Stable | Neo4j CRUD operations |
 
-### Migration Path
-
-The `graph/cypher.py` file contains hard-coded `NodeLabel` and `RelationType` enums
-that duplicate information already in the LinkML schema. Target state:
+### Usage
 
 ```python
-# Derive from schema at runtime
-from linkml_runtime.utils.schemaview import SchemaView
-sv = SchemaView("schemas/facility.yaml")
-node_labels = list(sv.all_classes().keys())
+from imas_codex.graph import GraphSchema, get_schema
+
+schema = get_schema()
+print(schema.node_labels)         # ['Facility', 'MDSplusServer', ...]
+print(schema.relationship_types)  # ['FACILITY_ID', 'TREE_NAME', ...]
+print(schema.get_identifier("Facility"))  # 'id'
 ```
 
-When modifying graph code:
-- Add new classes/relationships to `schemas/facility.yaml` first
-- Regenerate models: `uv run build-models --force`
-- Update `cypher.py` to match (temporary, until migration complete)
+When modifying graph structure:
+1. Add new classes/relationships to `schemas/facility.yaml`
+2. Regenerate models: `uv run build-models --force`
+3. Schema changes automatically propagate to `GraphSchema` at runtime
 
-See `graph/README.md` for detailed architecture and migration plan.
+See `graph/README.md` for detailed usage examples.
 
 ## Remote Facility Exploration
 

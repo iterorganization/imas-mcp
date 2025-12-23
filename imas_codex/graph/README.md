@@ -2,7 +2,7 @@
 
 This module provides Neo4j-based storage for facility knowledge discovered through exploration.
 
-## Architecture Strategy
+## Architecture: Schema-Driven Graph Ontology
 
 ### Single Source of Truth: LinkML
 
@@ -10,140 +10,108 @@ The **LinkML schema** (`imas_codex/schemas/facility.yaml`) is the authoritative 
 - Class definitions → Neo4j **node labels**
 - Slots with class ranges → Neo4j **relationships**
 - Enumerations → Constrained property values
-- Constraints → Database validation rules
+- Identifier/required fields → Database constraints
 
-### What Gets Generated
+### Module Structure
 
-From the LinkML schema, we auto-generate:
-- **Pydantic models** (`models.py`) via `gen-pydantic`
-- **Node labels** derived from class names
-- **Relationship types** derived from slot names with class ranges
-
-### Current State (Transitional)
-
-Currently `cypher.py` contains hard-coded enums for Neo4j labels and relationships.
-This is **temporary** until we implement schema-driven generation.
-
-**Current files**:
 ```
 graph/
 ├── __init__.py      # Public API exports
 ├── client.py        # Neo4j client for CRUD operations
-├── cypher.py        # ⚠️ Hard-coded labels (to be replaced)
-└── models.py        # ✅ Auto-generated from LinkML
+├── schema.py        # ✅ Schema-driven graph ontology
+└── models.py        # ✅ Auto-generated Pydantic models
 ```
 
-### Target State
+### Generated from Schema
 
-Replace hard-coded cypher.py with runtime introspection of LinkML schema:
+From the LinkML schema, we auto-generate:
+- **Pydantic models** (`models.py`) via `gen-pydantic`
+- **Node labels** derived at runtime from class names
+- **Relationship types** derived from slot names with class ranges
+- **Constraints** derived from identifier fields
+
+## Usage
+
+### GraphSchema - Schema Introspection
 
 ```python
-from linkml_runtime.utils.schemaview import SchemaView
+from imas_codex.graph import GraphSchema, get_schema
 
-# Derive node labels from class names
-sv = SchemaView("schemas/facility.yaml")
-node_labels = [c.name for c in sv.all_classes().values()]
+# Get schema singleton (lazy-loaded)
+schema = get_schema()
 
-# Derive relationships from slots with class ranges
-relationships = [
-    (slot.name, slot.range)
-    for slot in sv.all_slots().values()
-    if slot.range in node_labels
-]
+# Get all node labels (non-abstract classes)
+print(schema.node_labels)
+# ['Facility', 'MDSplusServer', 'MDSplusTree', 'TreeNode', ...]
+
+# Get all relationships (slots with class ranges)
+for rel in schema.relationships:
+    print(f"{rel.from_class} -[:{rel.cypher_type}]-> {rel.to_class}")
+# MDSplusServer -[:FACILITY_ID]-> Facility
+# MDSplusTree -[:FACILITY_ID]-> Facility
+# ...
+
+# Get identifier field for a class
+print(schema.get_identifier("Facility"))  # 'id'
+print(schema.get_identifier("MDSplusServer"))  # 'hostname'
+
+# Generate constraint statements
+for stmt in schema.constraint_statements():
+    print(stmt)
+# CREATE CONSTRAINT facility_id IF NOT EXISTS FOR (n:Facility) REQUIRE n.id IS UNIQUE
+# CREATE CONSTRAINT mdsplusserver_hostname IF NOT EXISTS FOR (n:MDSplusServer) REQUIRE n.hostname IS UNIQUE
 ```
 
-## Recommended Approach
-
-### Option A: linkml-store (Preferred)
-
-[linkml-store](https://github.com/linkml/linkml-store) provides a unified abstraction
-layer for multiple backends including **Neo4j**. It handles:
-
-- Schema-to-graph mapping automatically
-- CRUD operations with validation
-- Semantic search with embeddings
-- Import/export across backends
-
-```bash
-# Install
-pip install linkml-store[neo4j]
-
-# Use from CLI
-linkml-store -d neo4j://localhost:7687 -c facilities insert data.json
-
-# Use from Python
-from linkml_store import Client
-client = Client()
-db = client.attach_database("neo4j://localhost:7687", schema="facility.yaml")
-collection = db.get_collection("Facility")
-collection.insert({"id": "epfl", "name": "EPFL/TCV"})
-```
-
-**Benefits**:
-- Schema is the single source of truth
-- Automatic label/relationship mapping
-- Built-in validation
-- Backend-agnostic (swap Neo4j for DuckDB in development)
-
-### Option B: Custom Generator
-
-Write a LinkML generator that produces cypher.py from the schema:
-
-```bash
-# Custom generator
-gen-cypher schemas/facility.yaml > graph/cypher.py
-```
-
-The generator would:
-1. Read LinkML classes → generate `NodeLabel` enum
-2. Read slots with class ranges → generate `RelationType` enum
-3. Extract `inverse` annotations for bidirectional relationships
-4. Generate constraint queries from `identifier` and `required` slots
-
-### Option C: Runtime Introspection (Current Direction)
-
-Use `linkml_runtime.utils.schemaview.SchemaView` at runtime:
+### GraphClient - Neo4j Operations
 
 ```python
-from linkml_runtime.utils.schemaview import SchemaView
-from dataclasses import dataclass
+from imas_codex.graph import GraphClient
 
-@dataclass
-class GraphSchema:
-    """Schema-derived graph metadata."""
+with GraphClient() as client:
+    # Initialize schema (creates constraints and indexes)
+    client.initialize_schema()
     
-    schema_view: SchemaView
+    # Create nodes using string labels (derived from schema)
+    client.create_node("Facility", "epfl", {"name": "EPFL/TCV", "ssh_host": "epfl"})
     
-    @classmethod
-    def from_yaml(cls, path: str) -> "GraphSchema":
-        return cls(SchemaView(path))
+    # Create relationships using SCREAMING_SNAKE_CASE types
+    client.create_relationship(
+        "MDSplusServer", "tcv.epfl.ch",
+        "Facility", "epfl",
+        "FACILITY_ID",
+        from_id_field="hostname"
+    )
     
-    @property
-    def node_labels(self) -> list[str]:
-        """Class names become Neo4j node labels."""
-        return list(self.schema_view.all_classes().keys())
+    # High-level methods
+    client.create_facility("iter", name="ITER", machine="ITER")
+    client.create_tool("epfl", name="git", available=True, category="vcs")
     
-    @property
-    def relationships(self) -> list[tuple[str, str, str]]:
-        """Slots with class ranges become relationships.
-        
-        Returns: List of (slot_name, domain_class, range_class)
-        """
-        result = []
-        classes = set(self.schema_view.all_classes().keys())
-        for slot in self.schema_view.all_slots().values():
-            if slot.range in classes:
-                # This slot creates a relationship
-                for domain in slot.domain_of or []:
-                    result.append((slot.name, domain, slot.range))
-        return result
+    # Query
+    facilities = client.get_facilities()
+    tools = client.get_tools("epfl")
+```
+
+### Utility Functions
+
+```python
+from imas_codex.graph import to_cypher_props, merge_node_query, merge_relationship_query
+
+# Convert Pydantic model to Neo4j-safe dict
+props = to_cypher_props(my_model, exclude={"internal_field"})
+
+# Generate Cypher MERGE queries
+node_query = merge_node_query("Facility", id_field="id")
+# "MERGE (n:Facility {id: $id}) SET n += $props"
+
+rel_query = merge_relationship_query("Tool", "Facility", "FACILITY_ID")
+# "MATCH (a:Tool {id: $from_id}), (b:Facility {id: $to_id}) MERGE (a)-[r:FACILITY_ID]->(b)"
 ```
 
 ## Schema Patterns for Neo4j
 
 ### Defining Relationships in LinkML
 
-Use slots with class ranges. The slot name becomes the relationship type:
+Slots with class ranges automatically become relationships:
 
 ```yaml
 classes:
@@ -154,38 +122,40 @@ classes:
         required: true
 ```
 
-For more semantic relationship names, use `slot_uri`:
-
-```yaml
-slots:
-  facility_id:
-    range: Facility
-    slot_uri: facility:HOSTED_BY  # Neo4j uses: -[:HOSTED_BY]->
-    inverse: hosts               # Optional: for bidirectional queries
+At runtime, `GraphSchema` detects this and exposes:
+```python
+Relationship(from_class="MDSplusServer", slot_name="facility_id", to_class="Facility")
 ```
 
-### Annotations for Neo4j-Specific Behavior
+### Identifier Fields → Unique Constraints
 
-Use LinkML annotations for database hints:
+Fields marked `identifier: true` automatically get unique constraints:
 
 ```yaml
 classes:
   Facility:
-    annotations:
-      neo4j:index: [ssh_host, machine]  # Create indexes
-      neo4j:constraint: id              # Unique constraint
     attributes:
       id:
-        identifier: true  # → UNIQUE constraint
-        required: true    # → NOT NULL
+        identifier: true    # → UNIQUE constraint on Facility.id
+        required: true
 ```
 
-## Migration Path
+### Indexes
 
-1. **Phase 1** (Current): Hard-coded cypher.py + generated models.py
-2. **Phase 2**: Add `GraphSchema` class with runtime introspection
-3. **Phase 3**: Remove cypher.py enums, derive from schema
-4. **Phase 4**: Consider linkml-store for full abstraction
+Common query patterns get indexes via `schema.index_statements()`:
+- `Facility.ssh_host`
+- `Tool.category`, `Tool.available`
+- `Diagnostic.category`
+
+## Regenerating Models
+
+When the LinkML schema changes:
+
+```bash
+uv run build-models --force
+```
+
+This regenerates `models.py` from `schemas/facility.yaml`.
 
 ## Testing
 
@@ -200,6 +170,6 @@ uv run pytest tests/graph/ -v
 ## References
 
 - [LinkML Schema](../schemas/facility.yaml) - Source of truth
-- [linkml-store docs](https://linkml.io/linkml-store/)
+- [linkml-store docs](https://linkml.io/linkml-store/) - Alternative abstraction
 - [LinkML Runtime SchemaView](https://linkml.io/linkml/developers/schemaview.html)
 - [Neo4j Python Driver](https://neo4j.com/docs/python-manual/current/)
