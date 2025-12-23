@@ -4,6 +4,10 @@ __pycache__/
 *$py.class
 *.so
 
+# Generated files (built by hatch build hook or build scripts)
+imas_codex/graph/models.py
+imas_codex/core/physics_domain.py
+
 # Generated index files
 # Ignore all files in resources directory but keep the directory structure
 imas_codex/resources/*

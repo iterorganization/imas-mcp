@@ -251,17 +251,43 @@ GHCR_USERNAME=your_github_username
 
 ### Release Workflow
 
-Use the release command to sync schema versions, graph artifacts, and git tags:
+The release command has two modes based on the target remote.
 
+**Mode 1: Prepare PR (`--remote origin`)**
+- Updates schema versions in `schemas/*.yaml`
+- Commits and pushes branch to origin
+- Creates and pushes tag to origin
+
+**Mode 2: Finalize Release (`--remote upstream`, default)**
+- Verifies clean tree, synced with upstream, schema versions match
+- Updates `_GraphMeta` node with version
+- Dumps and pushes graph to GHCR
+- Creates and pushes tag to upstream (triggers CI)
+
+**Step-by-step:**
 ```bash
-# Full release: updates schemas, dumps graph, pushes to GHCR, creates git tag
-uv run imas-codex release v1.0.0 -m 'Add EPFL facility knowledge'
+# 1. Prepare PR (updates schemas, commits, pushes to fork)
+uv run imas-codex release vX.Y.Z -m 'Release message' --remote origin
 
-# Preview changes without executing
+# 2. Create PR on GitHub, merge to upstream
+
+# 3. Sync with upstream
+git pull upstream main
+
+# 4. Finalize release (graph to GHCR, tag to upstream)
+uv run imas-codex release vX.Y.Z -m 'Release message'
+```
+
+**Options:**
+```bash
+# Preview changes
 uv run imas-codex release v1.0.0 -m 'Test' --dry-run
 
-# Schema-only changes (no graph)
-uv run imas-codex release v1.0.1 -m 'Fix schema typo' --skip-graph
+# Skip graph operations
+uv run imas-codex release v1.0.0 -m 'Schema only' --skip-graph
+
+# Skip git tag
+uv run imas-codex release v1.0.0 -m 'Graph only' --skip-git
 ```
 
 ### LLM-First Cypher Queries
