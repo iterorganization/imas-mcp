@@ -165,18 +165,24 @@ enums:
         description: Directory containing executables
 
   PathStatus:
-    description: Exploration status of a facility path
+    description: Exploration status of a facility path (multi-pass workflow)
     permissible_values:
-      pending:
-        description: Discovered but not yet explored
-      exploring:
-        description: Currently being explored by an agent
-      explored:
-        description: Directory contents have been listed and child paths created
+      discovered:
+        description: Path exists but nothing done yet
+      listed:
+        description: Directory contents enumerated, child paths created
+      scanned:
+        description: Searched for patterns (rg/grep), awaiting triage
+      flagged:
+        description: Marked for deeper investigation by scout
+      analyzed:
+        description: Files examined in detail, structure understood
       ingested:
-        description: Code content has been ingested into the graph
+        description: Code content extracted to graph (CodeExample nodes)
+      skipped:
+        description: Reviewed and deemed uninteresting
       excluded:
-        description: Marked to skip (e.g., user homes, tmp)
+        description: Never explore (known junk paths)
       stale:
         description: Path may no longer exist, needs re-verification
 
@@ -208,14 +214,14 @@ classes:
     description: >-
       A filesystem path at a remote facility for structured exploration.
       
-      EXPLORATION WORKFLOW:
-      1. Paths start with status=pending when discovered
-      2. Agent explores pending paths via SSH, creates child paths
-      3. After listing contents: status=explored
-      4. After code ingestion: status=ingested
-      5. Use status=excluded to skip (e.g., /tmp, user homes)
+      MULTI-PASS EXPLORATION WORKFLOW:
+      1. Scout: discovered → listed → scanned (pattern search)
+      2. Triage: scanned → flagged (interesting) or skipped (not)
+      3. Analyze: flagged → analyzed (read files, understand structure)
+      4. Ingest: analyzed → ingested (create CodeExample nodes)
       
-      Query pending paths via get_facility() before SSH exploration.
+      Query paths by status to find work for each pass.
+      Use interest_score to prioritize flagged paths.
     class_uri: facility:FacilityPath
     attributes:
       id:
@@ -248,9 +254,31 @@ classes:
       discovered_at:
         description: When this path was first discovered
         range: datetime
-      explored_at:
-        description: When this path was last explored
+      last_examined:
+        description: When this path was last examined by any pass
         range: datetime
+      # Coverage tracking
+      file_count:
+        description: Total files in directory (set during listing)
+        range: integer
+      dir_count:
+        description: Total subdirectories (set during listing)
+        range: integer
+      files_scanned:
+        description: Files that matched patterns during scanning
+        range: integer
+      files_ingested:
+        description: Files extracted to CodeExample nodes
+        range: integer
+      # Scout guidance
+      interest_score:
+        description: Priority for investigation (0.0-1.0, higher = more interesting)
+        range: float
+      patterns_found:
+        description: Patterns that matched during scanning (e.g., "equilibrium", "IMAS")
+        multivalued: true
+      notes:
+        description: Free-form notes about this path (append, don't overwrite)
 
 # =============================================================================
 # Data Infrastructure Classes (Public - no IPs or paths)
