@@ -9,52 +9,188 @@ contact:
   department: Swiss Plasma Center (SPC)
   machine: TCV (Tokamak à Configuration Variable)
 paths:
-  data:
-  - /common/tcv/data
-  - /common/tcv/results
-  code:
-  - /common/tcv/codes
-  - /home/*/diagnostics
-  - /home/*/analysis
-  docs:
-  - /common/tcv/docs
-  - /common/tcv/wiki
+  # NOTE: /common/tcv/* paths do NOT exist - data accessed via MDSplus
+  tdi:
+    root: /usr/local/CRPP/tdi
+    tcv: /usr/local/CRPP/tdi/tcv
+    base: /usr/local/CRPP/tdi/base
+    trees: /usr/local/CRPP/tdi/trees
+    python: /usr/local/CRPP/tdi/python
+    devices: /usr/local/CRPP/tdi/devices
+  mdsplus:
+    install: /usr/local/mdsplus
+    trees: /usr/local/mdsplus/trees
+    config: /usr/local/mdsplus/local/mdsplus.conf
+  spc:
+    root: /usr/local/SPC
+    tools: /usr/local/SPC/spc-linux-tools
+  matlab: /usr/local/MATLAB
+  intel_oneapi: /opt/intel/oneapi
+  containers: /data/apptainer
+  python_envs:
+    common3: /usr/local/pyenvs/common3
+nfs_mounts:
+  - source: "128.178.128.96:/home"
+    target: /home
+  - source: "10.27.128.167:/usr/local/CRPP/tdi"
+    target: /usr/local/CRPP/tdi
+    options: ro
+  - source: "spcnfsweb01:/data/nfs/home"
+    target: /macii
+    note: Legacy Mac home structure
 excludes:
   directories:
+  - /home
+  - /macii
   - /scratch
   - /tmp
   - /var/tmp
+  - /tcvdata_varlog2
   patterns:
   - '*.dat.old'
   - '*.backup'
 known_systems:
   mdsplus:
-    server: tcvdata.epfl.ch
-    trees:
-    - tcv
-    - tcv_shot
-    - results
-    - magnetics
-    - diagnostics
+    server: tcvdata
+    config_file: /usr/local/mdsplus/local/mdsplus.conf
+    python_bindings: true
+    version: 7.153.3
+    data_servers:
+      tcvdata: Main data server (MDS_HOST)
+      spcsrv1: Legacy pre-Linux trees
+      spcsrv8: Large data (HXR), video
+      crppsrv1: tcv_day, lupin, rga
+      mantis4: MTS (Multi-channel Thomson Scattering)
+      falcondata: Falcon camera
+      raiddata: RAID storage
+      scd: RTC (Real-Time Control)
+    tcv_shot_trees:
+      - tcv_shot
+      - atlas
+      - base
+      - diagz
+      - diag_act
+      - ecrh
+      - hybrid
+      - pcs
+      - magnetics
+      - power
+      - vsystem
+      - manual
+      - apcs
+      - results
+    tcv_shot_subtrees:
+      - ATLAS
+      - BASE
+      - DIAGZ
+      - DIAG_ACT
+      - ECRH
+      - HYBRID
+      - MAGNETICS
+      - MANUAL
+    results_subtrees:
+      equilibrium:
+        - EQUIL_1
+        - EQUIL_2
+        - EQUIL_3
+        - EQ_RECON
+        - EQ_RECON_2
+        - EQ_RECON_3
+      transport:
+        - ASTRA
+        - CQL3D
+        - TORAY
+      profiles:
+        - THOMSON
+        - ECE
+        - FIR
+        - PROFFIT
+      other:
+        - BOLO
+        - CXRS
+        - DBS
+        - IR_CAMERA
+        - LANGMUIR
+        - MHD
+    raw_trees:
+      - axuv
+      - langmuir
+      - thomson
+      - xtomo
+      - raw_bolo
+      - raw_ece
+      - raw_mag
+      - raw_mhd
+      - raw_neutron
+      - raw_fild
+    video_trees:
+      - video
+      - gpi_tcv
+      - vds_mts
+      - mts_analysis
+    current_shot: 89043
+    sample_shot_with_liuqe: 89031
+  tdi:
+    location: /usr/local/CRPP/tdi
+    tcv_functions: /usr/local/CRPP/tdi/tcv
+    function_count: 213
+    key_functions:
+      - name: tcv_ip
+        description: Plasma current (hybrid calculation)
+        returns: Signal with 62K+ points
+      - name: tcv_eq
+        description: Equilibrium quantities from LIUQE
+        args: [var, source, keyword]
+        sources: [FBTE, LIUQE, LIUQE.M, LIUQE2]
+        vars: [i_p, kappa, delta_top, delta_bot, r_axis, z_axis, q_95, r_contour, z_contour]
+      - name: ts_te
+        description: Thomson scattering electron temperature
+      - name: ts_rawdata
+        description: Raw Thomson scattering data
+    git_repo: true
   diagnostics:
-  - ece
-  - fir
-  - mse
-  - thomson
-  - bolometry
-  - soft_xray
-  - hard_xray
-  - neutron
+    core:
+      - ece
+      - fir
+      - thomson
+      - bolometry
+    particle:
+      - neutron
+      - fild
+    spectroscopy:
+      - cher
+      - brems
+    mhd:
+      - magnetics
+      - soft_xray
+      - hard_xray
   codes:
-  - liuqe
-  - raptor
-  - chease
+    equilibrium:
+      - liuqe
+      - chease
+    control:
+      - raptor
+      - pilote
+    transport:
+      - transp  # v24.5.0 container at /data/apptainer
+  containers:
+    transp:
+      path: /data/apptainer/transp_v24.5.0_noimas_epfl.sif
+      version: "24.5.0"
+      note: TRANSP without IMAS
 exploration_hints:
 - MDSplus is the primary data access system
 - LIUQE is used for equilibrium reconstruction
-- Python 3 with MDSplus bindings is commonly available
-- Look for diagnostic codes in /common/tcv/codes/diagnostics/
+- Python 3.9 with MDSplus bindings available
+- TDI functions in /usr/local/CRPP/tdi/tcv provide high-level data access
+- /common/tcv paths do NOT exist - all data via MDSplus
+- Data distributed across servers: tcvdata, spcsrv1, spcsrv8, crppsrv1, mantis4
 knowledge:
+  os:
+    name: RHEL
+    version: "9.6"
+    codename: Plow
+    kernel: 5.14.0-570.el9
   tools:
     tree: available
     modules: unavailable
@@ -101,49 +237,51 @@ knowledge:
     julia: unavailable
     R: unavailable
     jupyter: unavailable
-  paths: []
+    apptainer: available
   python:
     version: 3.9.21
     path: /usr/bin/python3
     packages:
-    - numpy==1.23.5
-    - matplotlib==3.4.3
-    - ipython==8.5.0
-    - MDSplus (bindings available)
-  data: []
-  notes:
-  - this is a test note
-  - No environment modules system (Lmod) installed
-  - Only Python 3.9.21 available - no alternative versions
-  - Intel oneAPI 2025.2 includes MPI, MKL, TBB, compilers, debugger
-  - MDSplus Python bindings work (import MDSplus succeeds)
-  - Intel debugger bundles Python 3.13 internally but not user-accessible
-  - OS is RHEL 9.6 (Plow)
-  - MATLAB R2019a is default; R2025b-devel is newest available
-  - CRPP toolbox (crpptbx-9.6.0) auto-loads with MATLAB
-  - No HDF5/NetCDF tools in PATH (h5dump, ncdump unavailable)
-  - No job scheduler - this is likely a shared login node, not HPC cluster
-  - System python is 3.9.21 at /usr/bin/python3
-  - No other python versions found in /opt, /common, or /usr/local
-  - No virtual environments (pyvenv.cfg) found in /common
-  mdsplus:
-    server: tcvdata.epfl.ch
-    trees:
-    - tcv
-    - tcv_shot
-  environment:
-    intel_oneapi: 2025.2 (auto-loaded via /etc/profile.d/intel.sh)
-    mdsplus: auto-loaded via /etc/profile.d/mdsplus.sh
-  test: value
+      - numpy==1.23.5
+      - matplotlib==3.4.3
+      - ipython==8.5.0
+      - MDSplus
+    common3_env: /usr/local/pyenvs/common3
   matlab:
-    default_version: R2019a (9.6.0.1099231 Update 1)
+    default_version: R2019a
     path: /usr/local/bin/matlab
     available_versions:
-    - R2017a
-    - R2019a
-    - R2021a
-    - R2022a
-    - R2023a
-    - R2025b-devel
+      - R2017a
+      - R2019a
+      - R2021a
+      - R2022a
+      - R2023a
+      - R2025b-devel
     install_path: /usr/local/MATLAB
     crpp_toolbox: crpptbx-9.6.0
+  environment:
+    intel_oneapi:
+      version: "2025.2"
+      path: /opt/intel/oneapi
+      auto_loaded: true
+      components:
+        - compiler
+        - mkl
+        - mpi
+        - tbb
+        - dpcpp-ct
+        - debugger
+    mdsplus:
+      auto_loaded: true
+      profile: /etc/profile.d/mdsplus.sh
+  notes:
+    - No environment modules system (Lmod) installed
+    - Only Python 3.9.21 available - no alternative versions
+    - Intel oneAPI 2025.2 auto-loaded via /etc/profile.d/intel.sh
+    - MDSplus Python bindings work (import MDSplus succeeds)
+    - No HDF5/NetCDF tools in PATH
+    - No job scheduler - shared login node, not HPC cluster
+    - TDI is NFS mounted read-only from 10.27.128.167
+    - /macii is legacy Mac home structure (skip during exploration)
+    - Data distributed across multiple MDSplus servers
+    - MDSplus config defines all tree paths with $mdsdataserver variable

@@ -2,11 +2,13 @@
 
 This guide teaches how to explore remote fusion facilities via SSH.
 
+Always validate against Pydantic schemas to maintain consistency.
+
 ## Quick Start
 
-1. Read the facility config to get the SSH host alias
-2. SSH directly and run commands  
-3. Capture findings using the CLI
+1. Read the facility config to understand what's already known
+2. SSH directly and run batched commands  
+3. Capture findings using the CLI (updates the YAML)
 
 ```bash
 # Read facility config
@@ -15,7 +17,7 @@ cat imas_codex/config/facilities/epfl.yaml
 # SSH using the host alias from your ~/.ssh/config
 ssh epfl "which python3; python3 --version"
 
-# Capture findings when done
+# Capture findings - validates and updates the facility YAML
 uv run imas-codex epfl --capture environment << 'EOF'
 python:
   version: "3.9.21"
@@ -191,7 +193,9 @@ EOF
 
 ## Capturing Findings
 
-Persist exploration results using typed artifacts. The system validates against Pydantic models.
+Persist exploration results to the facility YAML config. The `--capture` command validates against Pydantic schemas before updating.
+
+> ⚠️ **Never edit facility YAML files directly** — use `--capture` to ensure schema validation.
 
 ### Artifact Types
 
@@ -202,12 +206,38 @@ Persist exploration results using typed artifacts. The system validates against 
 | `filesystem` | `imas_codex/discovery/models/filesystem.py` | Directory structure, paths |
 | `data` | `imas_codex/discovery/models/data.py` | MDSplus, HDF5, NetCDF patterns |
 
+### Schema Field Reference
+
+Before capturing, check the Pydantic model for required fields:
+
+```bash
+# View the schema for an artifact type
+cat imas_codex/discovery/models/filesystem.py
+```
+
+Key fields by type:
+
+**environment**: `python` (version, path, packages), `os` (name, version), `compilers`, `module_system`, `notes`
+
+**tools**: `tools` (list of name, available, path), `notes`
+
+**filesystem**: `root_paths`, `important_paths` (path, purpose, path_type), `notes`
+
+**data**: `mdsplus` (available, server, trees, python_bindings), `hdf5`, `netcdf`, `notes`
+
 ### Capture Command
 
 ```bash
+# Validates YAML input against schema, then updates facility config
 uv run imas-codex <facility> --capture <type> << 'EOF'
 # YAML content matching the schema
 EOF
+```
+
+If validation fails, the command shows which fields are invalid:
+```
+Error: Validation failed for filesystem:
+  - mounts: Extra inputs are not permitted
 ```
 
 ### Environment Artifact Example
@@ -300,6 +330,22 @@ uv run imas-codex epfl --artifacts
 
 # View a specific artifact
 uv run imas-codex epfl --artifact environment
+```
+
+## Correcting Wrong Information
+
+If exploration reveals that existing config paths are incorrect (e.g., `/common/tcv/data` doesn't exist), capture the correct information and add notes explaining the correction:
+
+```bash
+uv run imas-codex epfl --capture filesystem << 'EOF'
+important_paths:
+  - path: "/usr/local/CRPP/tdi"
+    purpose: "TCV TDI functions (actual location)"
+    path_type: "code"
+notes:
+  - "/common/tcv/* paths do not exist - data accessed via MDSplus"
+  - "TDI code in /usr/local/CRPP/tdi (NFS mounted)"
+EOF
 ```
 
 ## Tool Preferences
