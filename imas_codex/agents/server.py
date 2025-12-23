@@ -369,6 +369,115 @@ class AgentsServer:
                     pass
             return result
 
+        @self.mcp.tool()
+        def get_facility(facility: str) -> dict[str, Any]:
+            """
+            Get comprehensive facility info for exploration.
+
+            Merges graph data, infrastructure, and exploration state.
+            Call this before starting exploration to understand:
+            - Available tools (rg, fd, etc.)
+            - Paths already explored
+            - Pending paths to explore
+            - Known analysis codes and diagnostics
+
+            Args:
+                facility: Facility ID (e.g., "epfl")
+
+            Returns:
+                Dict with: config, infrastructure, graph_summary, exploration_state
+            """
+            from imas_codex.discovery.config import (
+                get_config,
+                get_infrastructure,
+            )
+
+            result: dict[str, Any] = {"facility": facility}
+
+            # Load public config
+            try:
+                config = get_config(facility)
+                result["config"] = {
+                    "ssh_host": config.ssh_host,
+                    "description": config.description,
+                    "machine": config.machine,
+                }
+            except Exception as e:
+                result["config_error"] = str(e)
+
+            # Load infrastructure (tools, paths, etc.)
+            try:
+                infra = get_infrastructure(facility)
+                if infra:
+                    # Extract key agent guidance
+                    result["tools"] = infra.get("knowledge", {}).get("tools", {})
+                    result["paths"] = infra.get("paths", {})
+                    result["notes"] = infra.get("knowledge", {}).get("notes", [])
+            except Exception as e:
+                result["infrastructure_error"] = str(e)
+
+            # Query graph for facility summary
+            with self.graph_client:
+                # Count nodes by type
+                summary = self.graph_client.query(
+                    """
+                    MATCH (f:Facility {id: $fid})
+                    OPTIONAL MATCH (a:AnalysisCode)-[:FACILITY_ID]->(f)
+                    OPTIONAL MATCH (d:Diagnostic)-[:FACILITY_ID]->(f)
+                    OPTIONAL MATCH (t:TDIFunction)-[:FACILITY_ID]->(f)
+                    OPTIONAL MATCH (m:MDSplusTree)-[:FACILITY_ID]->(f)
+                    RETURN
+                        count(DISTINCT a) AS analysis_codes,
+                        count(DISTINCT d) AS diagnostics,
+                        count(DISTINCT t) AS tdi_functions,
+                        count(DISTINCT m) AS mdsplus_trees
+                    """,
+                    fid=facility,
+                )
+                if summary:
+                    result["graph_summary"] = summary[0]
+
+                # Get pending paths to explore
+                pending = self.graph_client.query(
+                    """
+                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                    WHERE p.status = 'pending'
+                    RETURN p.id AS id, p.path AS path, p.path_type AS path_type,
+                           p.description AS description, p.depth AS depth
+                    ORDER BY p.depth, p.path
+                    """,
+                    fid=facility,
+                )
+                result["pending_paths"] = pending
+
+                # Get recently explored paths
+                explored = self.graph_client.query(
+                    """
+                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                    WHERE p.status IN ['explored', 'ingested']
+                    RETURN p.id AS id, p.path AS path, p.status AS status,
+                           p.explored_at AS explored_at
+                    ORDER BY p.explored_at DESC
+                    LIMIT 10
+                    """,
+                    fid=facility,
+                )
+                result["recent_paths"] = explored
+
+                # Get excluded paths (so agent knows what to skip)
+                excluded = self.graph_client.query(
+                    """
+                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                    WHERE p.status = 'excluded'
+                    RETURN p.path AS path, p.description AS description
+                    ORDER BY p.path
+                    """,
+                    fid=facility,
+                )
+                result["excluded_paths"] = [e["path"] for e in excluded]
+
+            return result
+
         # =====================================================================
         # Code Example Tools
         # =====================================================================

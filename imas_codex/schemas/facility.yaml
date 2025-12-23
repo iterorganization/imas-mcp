@@ -152,6 +152,34 @@ enums:
       julia:
         description: Julia source code
 
+  PathType:
+    description: Types of filesystem paths at a facility
+    permissible_values:
+      code_directory:
+        description: Directory containing analysis codes or scripts
+      data_directory:
+        description: Directory containing data files
+      config_directory:
+        description: Directory containing configuration files
+      binary_directory:
+        description: Directory containing executables
+
+  PathStatus:
+    description: Exploration status of a facility path
+    permissible_values:
+      pending:
+        description: Discovered but not yet explored
+      exploring:
+        description: Currently being explored by an agent
+      explored:
+        description: Directory contents have been listed and child paths created
+      ingested:
+        description: Code content has been ingested into the graph
+      excluded:
+        description: Marked to skip (e.g., user homes, tmp)
+      stale:
+        description: Path may no longer exist, needs re-verification
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -175,6 +203,54 @@ classes:
         description: Tokamak/stellarator name (e.g., "TCV", "ITER", "JET")
       location:
         description: Geographic location
+
+  FacilityPath:
+    description: >-
+      A filesystem path at a remote facility for structured exploration.
+      
+      EXPLORATION WORKFLOW:
+      1. Paths start with status=pending when discovered
+      2. Agent explores pending paths via SSH, creates child paths
+      3. After listing contents: status=explored
+      4. After code ingestion: status=ingested
+      5. Use status=excluded to skip (e.g., /tmp, user homes)
+      
+      Query pending paths via get_facility() before SSH exploration.
+    class_uri: facility:FacilityPath
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:path (e.g., "epfl:/home/codes")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      path:
+        description: Absolute filesystem path
+        required: true
+      path_type:
+        description: Type of path
+        range: PathType
+        required: true
+      status:
+        description: Exploration status
+        range: PathStatus
+        required: true
+      parent_path_id:
+        description: Parent directory path ID (null for root paths)
+        range: FacilityPath
+      depth:
+        description: Distance from root path (0 = root like /home/codes)
+        range: integer
+      description:
+        description: Human-readable description of what this path contains
+      discovered_at:
+        description: When this path was first discovered
+        range: datetime
+      explored_at:
+        description: When this path was last explored
+        range: datetime
 
 # =============================================================================
 # Data Infrastructure Classes (Public - no IPs or paths)
@@ -330,8 +406,9 @@ classes:
         description: Code description
       version:
         description: Code version if known
-      path:
-        description: Executable or installation path (for data access)
+      installed_at:
+        description: Installation path (links to FacilityPath)
+        range: FacilityPath
 
 # =============================================================================
 # IMAS Mapping Classes
