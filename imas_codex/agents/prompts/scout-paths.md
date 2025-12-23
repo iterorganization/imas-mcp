@@ -4,19 +4,20 @@ description: Discover directories and score them for IMAS relevance
 arguments:
   facility:
     type: string
-    description: Facility SSH alias (e.g., "epfl")
+    description: "Facility SSH alias (e.g., 'epfl')"
     required: true
+    default: "epfl"
   root_path:
     type: string
-    description: Starting path for exploration
+    description: "Starting path for exploration (e.g., '/home/codes')"
     default: "/"
   depth:
     type: integer
-    description: Maximum directory depth to explore
+    description: "Maximum directory depth to explore (1-5)"
     default: 3
   quick_score:
     type: boolean
-    description: Run quick pattern matching to score paths
+    description: "Run quick pattern matching to score paths"
     default: true
 ---
 

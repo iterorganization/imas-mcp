@@ -38,6 +38,9 @@ class PromptDefinition:
     def render(self, **kwargs: Any) -> str:
         """Render the prompt template with arguments.
 
+        Uses regex-based substitution to only replace known argument
+        placeholders, preserving other curly braces (e.g., in code examples).
+
         Missing optional arguments use their defaults.
         """
         # Build context with defaults
@@ -51,20 +54,15 @@ class PromptDefinition:
                 msg = f"Missing required argument: {arg.name}"
                 raise ValueError(msg)
 
-        # Simple string formatting (handles {name} placeholders)
-        try:
-            return self.template.format(**context)
-        except KeyError:
-            # Some placeholders might be code examples, not arguments
-            # Fall back to partial formatting
-            return self.template.format_map(_SafeDict(context))
+        # Replace only known argument placeholders using regex
+        # This preserves code examples with curly braces like {"key": "value"}
+        result = self.template
+        for name, value in context.items():
+            # Match {name} but not {{name}} (escaped braces)
+            pattern = r"(?<!\{)\{" + re.escape(name) + r"\}(?!\})"
+            result = re.sub(pattern, str(value), result)
 
-
-class _SafeDict(dict):
-    """Dict that returns the key wrapped in braces for missing keys."""
-
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
+        return result
 
 
 def parse_prompt_file(path: Path) -> PromptDefinition:
