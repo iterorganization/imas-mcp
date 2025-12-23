@@ -377,8 +377,8 @@ class AgentsServer:
             Merges graph data, infrastructure, and exploration state.
             Call this before starting exploration to understand:
             - Available tools (rg, fd, etc.)
-            - Paths already explored
-            - Pending paths to explore
+            - Actionable paths (discovered/scanned/flagged) by interest_score
+            - Recently processed paths (analyzed/ingested)
             - Known analysis codes and diagnostics
 
             Args:
@@ -437,32 +437,33 @@ class AgentsServer:
                 if summary:
                     result["graph_summary"] = summary[0]
 
-                # Get pending paths to explore
-                pending = self.graph_client.query(
+                # Get actionable paths (discovered/scanned/flagged) for exploration
+                actionable = self.graph_client.query(
                     """
                     MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                    WHERE p.status = 'pending'
+                    WHERE p.status IN ['discovered', 'listed', 'scanned', 'flagged']
                     RETURN p.id AS id, p.path AS path, p.path_type AS path_type,
+                           p.status AS status, p.interest_score AS interest_score,
                            p.description AS description, p.depth AS depth
-                    ORDER BY p.depth, p.path
+                    ORDER BY COALESCE(p.interest_score, 0) DESC, p.depth, p.path
                     """,
                     fid=facility,
                 )
-                result["pending_paths"] = pending
+                result["actionable_paths"] = actionable
 
-                # Get recently explored paths
-                explored = self.graph_client.query(
+                # Get recently processed paths
+                processed = self.graph_client.query(
                     """
                     MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                    WHERE p.status IN ['explored', 'ingested']
+                    WHERE p.status IN ['analyzed', 'ingested']
                     RETURN p.id AS id, p.path AS path, p.status AS status,
-                           p.explored_at AS explored_at
-                    ORDER BY p.explored_at DESC
+                           p.last_examined AS last_examined, p.files_ingested AS files_ingested
+                    ORDER BY p.last_examined DESC
                     LIMIT 10
                     """,
                     fid=facility,
                 )
-                result["recent_paths"] = explored
+                result["recent_paths"] = processed
 
                 # Get excluded paths (so agent knows what to skip)
                 excluded = self.graph_client.query(

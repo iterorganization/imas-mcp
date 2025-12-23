@@ -206,53 +206,104 @@ cypher('''
 
 ### FacilityPath Nodes
 
-Use `FacilityPath` nodes to track exploration state in the graph:
+Use `FacilityPath` nodes to track exploration state in the graph.
 
+### Multi-Pass Exploration Workflow
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  SCOUT PASS │   │ TRIAGE PASS │   │ INGEST PASS │
+│             │   │             │   │             │
+│ discovered  │   │ scanned     │   │ flagged     │
+│     ↓       │   │     ↓       │   │     ↓       │
+│  listed     │   │  flagged    │   │ analyzed    │
+│     ↓       │   │     or      │   │     ↓       │
+│  scanned    │   │  skipped    │   │ ingested    │
+└─────────────┘   └─────────────┘   └─────────────┘
+```
+
+**Scout Pass**: Discover and scan paths
 ```python
-# Before exploring, call get_facility() to see pending paths
+# Start with discovered paths
 result = get_facility("epfl")
-# Returns: pending_paths, recent_paths, excluded_paths, tools, etc.
+# actionable_paths sorted by interest_score
 
-# Create a path for future exploration
+# After listing contents
 ingest_node("FacilityPath", {
     "id": "epfl:/home/codes/transport",
-    "facility_id": "epfl",
-    "path": "/home/codes/transport",
-    "path_type": "code_directory",
-    "status": "pending",
-    "description": "Transport codes",
-    "parent_path_id": "epfl:/home/codes",
-    "depth": 1
+    "status": "listed",
+    "file_count": 42,
+    "dir_count": 8,
+    "last_examined": "2025-01-15T10:30:00Z"
 })
 
-# After exploring, update status
+# After pattern search
 ingest_node("FacilityPath", {
     "id": "epfl:/home/codes/transport",
-    "status": "explored",
-    "explored_at": "2025-01-15T10:30:00Z"
+    "status": "scanned",
+    "files_scanned": 15,
+    "patterns_found": ["equilibrium", "IMAS", "write_ids"]
+})
+```
+
+**Triage Pass**: Prioritize interesting paths
+```python
+# Flag interesting paths with interest_score
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "flagged",
+    "interest_score": 0.9,  # High priority
+    "notes": "Found IMAS integration, multiple IDS writes"
 })
 
-# Mark paths to skip
+# Skip uninteresting paths
 ingest_node("FacilityPath", {
-    "id": "epfl:/home",
-    "facility_id": "epfl",
-    "path": "/home",
-    "path_type": "data_directory",
-    "status": "excluded",
-    "description": "User home directories - skip"
+    "id": "epfl:/home/codes/old_backup",
+    "status": "skipped",
+    "notes": "Stale backup, no active development"
+})
+```
+
+**Ingest Pass**: Extract code to graph
+```python
+# After reading and understanding code
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "analyzed",
+    "notes": "Main entry: run_transport.py, uses ASTRA"
+})
+
+# After code ingestion complete
+ingest_node("FacilityPath", {
+    "id": "epfl:/home/codes/transport",
+    "status": "ingested",
+    "files_ingested": 12
 })
 ```
 
 ### Path Status Values
 
-| Status | Meaning |
-|--------|---------|
-| `pending` | Discovered but not yet explored |
-| `exploring` | Currently being explored |
-| `explored` | Contents listed, child paths created |
-| `ingested` | Code content ingested into graph |
-| `excluded` | Skip this path |
-| `stale` | May no longer exist |
+| Status | Pass | Meaning |
+|--------|------|---------|
+| `discovered` | Scout | Found but not examined |
+| `listed` | Scout | Contents listed, counts known |
+| `scanned` | Scout | Pattern search complete |
+| `flagged` | Triage | Interesting, should analyze |
+| `skipped` | Triage | Not interesting enough |
+| `analyzed` | Ingest | Structure understood |
+| `ingested` | Ingest | Code extracted to graph |
+| `excluded` | Any | Permanently skip (e.g., /tmp) |
+| `stale` | Any | May no longer exist |
+
+### Interest Score Guidelines
+
+| Score | Use Case |
+|-------|----------|
+| 0.9+ | IMAS integration, IDS read/write |
+| 0.7+ | MDSplus access, equilibrium codes |
+| 0.5+ | General analysis codes |
+| 0.3+ | Utilities, helpers |
+| <0.3 | Config files, documentation |
 
 ### Tool Preferences
 
