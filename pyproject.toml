@@ -69,6 +69,8 @@ dependencies = [
     "fabric>=3.0.0",
     "httpx>=0.27.0",
     "neo4j>=6.0.3",
+    "ruamel-yaml>=0.18.17",
+    "llama-index-core>=0.12.0",
 ]
 
 [project.optional-dependencies]

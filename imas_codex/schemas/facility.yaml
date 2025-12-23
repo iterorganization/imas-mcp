@@ -134,6 +134,24 @@ enums:
       imas:
         description: IMAS data format
 
+  ProgrammingLanguage:
+    description: Programming languages for code examples
+    permissible_values:
+      python:
+        description: Python source code
+      matlab:
+        description: MATLAB/Octave code
+      fortran:
+        description: Fortran source code
+      idl:
+        description: IDL (Interactive Data Language)
+      tdi:
+        description: TDI (Tree Data Interface) expressions
+      cpp:
+        description: C++ source code
+      julia:
+        description: Julia source code
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -361,3 +379,75 @@ classes:
         range: boolean
       notes:
         description: Mapping notes
+
+# =============================================================================
+# Code Examples Classes
+# =============================================================================
+
+  CodeExample:
+    description: >-
+      A code file containing examples of reading/writing fusion data.
+      Links to facility and tracks source location for provenance.
+    class_uri: facility:CodeExample
+    attributes:
+      id:
+        identifier: true
+        description: Unique identifier (facility:filename hash)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      source_file:
+        description: Remote file path (e.g., /home/wilson/data/load_to_imas.py)
+        required: true
+      language:
+        description: Programming language
+        range: ProgrammingLanguage
+        required: true
+      title:
+        description: Human-readable title or filename
+      description:
+        description: Description of what this code does
+      author:
+        description: Username or author name if known
+      related_ids:
+        description: IDS names this code interacts with (coarse linking)
+        multivalued: true
+      ingested_at:
+        description: Timestamp when this was ingested
+        range: datetime
+
+  CodeChunk:
+    description: >-
+      A searchable chunk of code from a CodeExample.
+      Contains embedding for semantic search and links to IMAS paths.
+    class_uri: facility:CodeChunk
+    attributes:
+      id:
+        identifier: true
+        description: Unique chunk identifier
+        required: true
+      code_example_id:
+        description: Parent CodeExample
+        required: true
+        range: CodeExample
+      content:
+        description: The actual code content
+        required: true
+      function_name:
+        description: Function or class name if applicable
+      start_line:
+        description: Starting line number in source file
+        range: integer
+      end_line:
+        description: Ending line number in source file
+        range: integer
+      embedding:
+        description: Vector embedding for semantic search (stored as list of floats)
+        multivalued: true
+        range: float
+      related_paths:
+        description: Specific IMAS paths this chunk references
+        multivalued: true
+        range: IMASPath
