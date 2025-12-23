@@ -3,11 +3,14 @@
 This module provides a high-level client for interacting with the Neo4j
 knowledge graph, including schema initialization and CRUD operations.
 
+The graph structure is derived from the LinkML schema (schemas/facility.yaml)
+via the GraphSchema class, which is the single source of truth.
+
 Example:
     >>> from imas_codex.graph import GraphClient
     >>> with GraphClient() as client:
     ...     client.initialize_schema()
-    ...     client.create_node(NodeLabel.FACILITY, "epfl", {"name": "EPFL/TCV"})
+    ...     client.create_node("Facility", "epfl", {"name": "EPFL/TCV"})
 """
 
 from collections.abc import Iterator
@@ -17,12 +20,15 @@ from typing import Any
 
 from neo4j import Driver, GraphDatabase, Session
 
-from imas_codex.graph.cypher import NodeLabel, RelationType
+from imas_codex.graph.schema import GraphSchema, get_schema
 
 
 @dataclass
 class GraphClient:
     """Client for Neo4j knowledge graph operations.
+
+    The graph structure is derived from the LinkML schema (schemas/facility.yaml)
+    via GraphSchema, which provides node labels, relationship types, and constraints.
 
     Attributes:
         uri: Neo4j Bolt URI (default: bolt://localhost:7687)
@@ -34,12 +40,21 @@ class GraphClient:
     username: str = "neo4j"
     password: str = "imas-codex"
     _driver: Driver | None = field(default=None, init=False, repr=False)
+    _schema: GraphSchema | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Initialize the Neo4j driver."""
+        """Initialize the Neo4j driver and schema."""
         self._driver = GraphDatabase.driver(
             self.uri, auth=(self.username, self.password)
         )
+        self._schema = get_schema()
+
+    @property
+    def schema(self) -> GraphSchema:
+        """Get the graph schema."""
+        if self._schema is None:
+            self._schema = get_schema()
+        return self._schema
 
     def close(self) -> None:
         """Close the Neo4j driver."""
@@ -74,43 +89,15 @@ class GraphClient:
     def initialize_schema(self) -> None:
         """Create constraints and indexes for the schema.
 
-        Sets up unique constraints on node identifiers and indexes for
-        common query patterns.
+        Constraints and indexes are derived from the LinkML schema:
+        - Unique constraints on identifier fields
+        - Indexes for common query patterns
         """
-        constraints = [
-            # Core
-            f"CREATE CONSTRAINT facility_id IF NOT EXISTS FOR (n:{NodeLabel.FACILITY.value}) REQUIRE n.id IS UNIQUE",
-            # Data Infrastructure
-            f"CREATE CONSTRAINT server_hostname IF NOT EXISTS FOR (n:{NodeLabel.MDSPLUS_SERVER.value}) REQUIRE n.hostname IS UNIQUE",
-            f"CREATE CONSTRAINT tree_name IF NOT EXISTS FOR (n:{NodeLabel.MDSPLUS_TREE.value}) REQUIRE (n.name, n.facility_id) IS UNIQUE",
-            f"CREATE CONSTRAINT treenode_path IF NOT EXISTS FOR (n:{NodeLabel.TREE_NODE.value}) REQUIRE (n.path, n.facility_id) IS UNIQUE",
-            f"CREATE CONSTRAINT tdi_name IF NOT EXISTS FOR (n:{NodeLabel.TDI_FUNCTION.value}) REQUIRE (n.name, n.facility_id) IS UNIQUE",
-            f"CREATE CONSTRAINT data_location IF NOT EXISTS FOR (n:{NodeLabel.DATA_LOCATION.value}) REQUIRE (n.path, n.facility_id) IS UNIQUE",
-            # Environment
-            f"CREATE CONSTRAINT python_env IF NOT EXISTS FOR (n:{NodeLabel.PYTHON_ENVIRONMENT.value}) REQUIRE n.id IS UNIQUE",
-            f"CREATE CONSTRAINT os IF NOT EXISTS FOR (n:{NodeLabel.OPERATING_SYSTEM.value}) REQUIRE n.facility_id IS UNIQUE",
-            f"CREATE CONSTRAINT compiler IF NOT EXISTS FOR (n:{NodeLabel.COMPILER.value}) REQUIRE n.id IS UNIQUE",
-            f"CREATE CONSTRAINT module_sys IF NOT EXISTS FOR (n:{NodeLabel.MODULE_SYSTEM.value}) REQUIRE n.facility_id IS UNIQUE",
-            # Tools
-            f"CREATE CONSTRAINT tool IF NOT EXISTS FOR (n:{NodeLabel.TOOL.value}) REQUIRE n.id IS UNIQUE",
-            # Semantics
-            f"CREATE CONSTRAINT diagnostic IF NOT EXISTS FOR (n:{NodeLabel.DIAGNOSTIC.value}) REQUIRE (n.name, n.facility_id) IS UNIQUE",
-            f"CREATE CONSTRAINT analysis_code IF NOT EXISTS FOR (n:{NodeLabel.ANALYSIS_CODE.value}) REQUIRE (n.name, n.facility_id) IS UNIQUE",
-            # IMAS
-            f"CREATE CONSTRAINT imas_path IF NOT EXISTS FOR (n:{NodeLabel.IMAS_PATH.value}) REQUIRE n.path IS UNIQUE",
-            f"CREATE CONSTRAINT imas_mapping IF NOT EXISTS FOR (n:{NodeLabel.IMAS_MAPPING.value}) REQUIRE n.id IS UNIQUE",
-        ]
+        # Get constraints from schema (derived from identifier fields)
+        constraints = self.schema.constraint_statements()
 
-        indexes = [
-            # Common lookups
-            f"CREATE INDEX facility_ssh IF NOT EXISTS FOR (n:{NodeLabel.FACILITY.value}) ON (n.ssh_host)",
-            f"CREATE INDEX server_role IF NOT EXISTS FOR (n:{NodeLabel.MDSPLUS_SERVER.value}) ON (n.role)",
-            f"CREATE INDEX treenode_type IF NOT EXISTS FOR (n:{NodeLabel.TREE_NODE.value}) ON (n.node_type)",
-            f"CREATE INDEX diagnostic_category IF NOT EXISTS FOR (n:{NodeLabel.DIAGNOSTIC.value}) ON (n.category)",
-            f"CREATE INDEX code_type IF NOT EXISTS FOR (n:{NodeLabel.ANALYSIS_CODE.value}) ON (n.code_type)",
-            f"CREATE INDEX tool_category IF NOT EXISTS FOR (n:{NodeLabel.TOOL.value}) ON (n.category)",
-            f"CREATE INDEX tool_available IF NOT EXISTS FOR (n:{NodeLabel.TOOL.value}) ON (n.available)",
-        ]
+        # Get indexes from schema (common lookup patterns)
+        indexes = self.schema.index_statements()
 
         with self.session() as sess:
             for stmt in constraints + indexes:
@@ -163,7 +150,7 @@ class GraphClient:
 
     def create_node(
         self,
-        label: NodeLabel,
+        label: str,
         node_id: Any,
         props: dict[str, Any],
         id_field: str = "id",
@@ -171,25 +158,25 @@ class GraphClient:
         """Create or update a node.
 
         Args:
-            label: Node label
+            label: Node label (class name from schema)
             node_id: Value of the identifier field
             props: Node properties
             id_field: Name of the identifier field (default: "id")
         """
         with self.session() as sess:
             sess.run(
-                f"MERGE (n:{label.value} {{{id_field}: $id}}) SET n += $props",
+                f"MERGE (n:{label} {{{id_field}: $id}}) SET n += $props",
                 id=node_id,
                 props=props,
             )
 
     def create_relationship(
         self,
-        from_label: NodeLabel,
+        from_label: str,
         from_id: Any,
-        to_label: NodeLabel,
+        to_label: str,
         to_id: Any,
-        rel_type: RelationType,
+        rel_type: str,
         from_id_field: str = "id",
         to_id_field: str = "id",
         props: dict[str, Any] | None = None,
@@ -197,20 +184,20 @@ class GraphClient:
         """Create a relationship between two nodes.
 
         Args:
-            from_label: Source node label
+            from_label: Source node label (class name from schema)
             from_id: Source node identifier value
-            to_label: Target node label
+            to_label: Target node label (class name from schema)
             to_id: Target node identifier value
-            rel_type: Relationship type
+            rel_type: Relationship type (SCREAMING_SNAKE_CASE)
             from_id_field: Source node identifier field name
             to_id_field: Target node identifier field name
             props: Optional relationship properties
         """
         props_clause = " SET r += $props" if props else ""
         query = (
-            f"MATCH (a:{from_label.value} {{{from_id_field}: $from_id}}), "
-            f"(b:{to_label.value} {{{to_id_field}: $to_id}}) "
-            f"MERGE (a)-[r:{rel_type.value}]->(b){props_clause}"
+            f"MATCH (a:{from_label} {{{from_id_field}: $from_id}}), "
+            f"(b:{to_label} {{{to_id_field}: $to_id}}) "
+            f"MERGE (a)-[r:{rel_type}]->(b){props_clause}"
         )
         with self.session() as sess:
             sess.run(query, from_id=from_id, to_id=to_id, props=props or {})
@@ -234,7 +221,7 @@ class GraphClient:
         if machine:
             props["machine"] = machine
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node(NodeLabel.FACILITY, facility_id, props)
+        self.create_node("Facility", facility_id, props)
 
     def create_mdsplus_server(
         self,
@@ -248,13 +235,13 @@ class GraphClient:
         if role:
             props["role"] = role
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node(NodeLabel.MDSPLUS_SERVER, hostname, props, id_field="hostname")
+        self.create_node("MDSplusServer", hostname, props, id_field="hostname")
         self.create_relationship(
-            NodeLabel.MDSPLUS_SERVER,
+            "MDSplusServer",
             hostname,
-            NodeLabel.FACILITY,
+            "Facility",
             facility_id,
-            RelationType.HOSTED_BY,
+            "FACILITY_ID",
             from_id_field="hostname",
         )
 
@@ -283,13 +270,13 @@ class GraphClient:
         if category:
             props["category"] = category
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node(NodeLabel.TOOL, tool_id, props)
+        self.create_node("Tool", tool_id, props)
         self.create_relationship(
-            NodeLabel.TOOL,
+            "Tool",
             tool_id,
-            NodeLabel.FACILITY,
+            "Facility",
             facility_id,
-            RelationType.BELONGS_TO,
+            "FACILITY_ID",
         )
 
     def create_python_environment(
@@ -313,13 +300,13 @@ class GraphClient:
         if packages:
             props["packages"] = packages
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node(NodeLabel.PYTHON_ENVIRONMENT, env_id, props)
+        self.create_node("PythonEnvironment", env_id, props)
         self.create_relationship(
-            NodeLabel.PYTHON_ENVIRONMENT,
+            "PythonEnvironment",
             env_id,
-            NodeLabel.FACILITY,
+            "Facility",
             facility_id,
-            RelationType.BELONGS_TO,
+            "FACILITY_ID",
         )
 
     def create_diagnostic(
@@ -337,13 +324,13 @@ class GraphClient:
         if description:
             props["description"] = description
         props.update({k: v for k, v in extra.items() if v is not None})
-        self.create_node(NodeLabel.DIAGNOSTIC, name, props, id_field="name")
+        self.create_node("Diagnostic", name, props, id_field="name")
         self.create_relationship(
-            NodeLabel.DIAGNOSTIC,
+            "Diagnostic",
             name,
-            NodeLabel.FACILITY,
+            "Facility",
             facility_id,
-            RelationType.BELONGS_TO,
+            "FACILITY_ID",
             from_id_field="name",
         )
 
@@ -360,7 +347,7 @@ class GraphClient:
             props["description"] = description
         if units:
             props["units"] = units
-        self.create_node(NodeLabel.IMAS_PATH, path, props, id_field="path")
+        self.create_node("IMASPath", path, props, id_field="path")
 
     # =========================================================================
     # Query Methods
@@ -370,7 +357,7 @@ class GraphClient:
         """Get a facility by ID."""
         with self.session() as sess:
             result = sess.run(
-                f"MATCH (n:{NodeLabel.FACILITY.value} {{id: $id}}) RETURN n",
+                "MATCH (n:Facility {id: $id}) RETURN n",
                 id=facility_id,
             )
             record = result.single()
@@ -379,17 +366,14 @@ class GraphClient:
     def get_facilities(self) -> list[dict[str, Any]]:
         """Get all facilities."""
         with self.session() as sess:
-            result = sess.run(
-                f"MATCH (n:{NodeLabel.FACILITY.value}) RETURN n ORDER BY n.id"
-            )
+            result = sess.run("MATCH (n:Facility) RETURN n ORDER BY n.id")
             return [dict(record["n"]) for record in result]
 
     def get_tools(self, facility_id: str) -> list[dict[str, Any]]:
         """Get all tools for a facility."""
         with self.session() as sess:
             result = sess.run(
-                f"MATCH (t:{NodeLabel.TOOL.value} {{facility_id: $facility_id}}) "
-                "RETURN t ORDER BY t.name",
+                "MATCH (t:Tool {facility_id: $facility_id}) RETURN t ORDER BY t.name",
                 facility_id=facility_id,
             )
             return [dict(record["t"]) for record in result]
