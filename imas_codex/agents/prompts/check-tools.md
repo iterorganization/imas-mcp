@@ -4,8 +4,9 @@ description: Check available exploration tools and their versions at a facility
 arguments:
   facility:
     type: string
-    description: Facility SSH alias (e.g., "epfl")
+    description: "Facility SSH alias (e.g., 'epfl')"
     required: true
+    default: "epfl"
 ---
 
 # Tool Inventory

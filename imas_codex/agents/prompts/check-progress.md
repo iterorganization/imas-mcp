@@ -4,8 +4,9 @@ description: Get exploration progress metrics and recommend next actions
 arguments:
   facility:
     type: string
-    description: Facility SSH alias (e.g., "epfl")
+    description: "Facility SSH alias (e.g., 'epfl')"
     required: true
+    default: "epfl"
 ---
 
 # Exploration Status

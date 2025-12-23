@@ -4,15 +4,16 @@ description: Find and ingest Python files with IMAS imports at flagged paths
 arguments:
   facility:
     type: string
-    description: Facility SSH alias (e.g., "epfl")
+    description: "Facility SSH alias (e.g., 'epfl')"
     required: true
+    default: "epfl"
   path:
     type: string
-    description: Specific path to hunt (optional, uses flagged paths if not specified)
-    required: false
+    description: "Specific path to search (leave empty to use all flagged paths)"
+    default: ""
   max_files:
     type: integer
-    description: Maximum files to ingest per session
+    description: "Maximum files to ingest per session (1-50)"
     default: 10
 ---
 

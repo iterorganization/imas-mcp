@@ -4,15 +4,16 @@ description: Re-score discovered paths with refined criteria (optional, scout-pa
 arguments:
   facility:
     type: string
-    description: Facility SSH alias (e.g., "epfl")
+    description: "Facility SSH alias (e.g., 'epfl')"
     required: true
+    default: "epfl"
   status_filter:
     type: string
-    description: Filter paths by status (discovered, scanned, flagged)
+    description: "Filter paths by status: 'discovered', 'scanned', or 'flagged'"
     default: "discovered"
   limit:
     type: integer
-    description: Maximum paths to score in one session
+    description: "Maximum paths to score in one session (1-100)"
     default: 30
 ---
 
