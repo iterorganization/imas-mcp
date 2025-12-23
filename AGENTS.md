@@ -440,13 +440,16 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 
 > **Before writing Cypher queries**, call `get_graph_schema()` to get node labels, properties, enums, and relationship types.
 
+> **IMPORTANT**: Always use MCP tools (`update_infrastructure`, `ingest_node`, `cypher`) to persist discoveries. Never directly edit YAML files.
+
 **Usage Examples:**
 
 ```python
 # Persist sensitive infrastructure data (local only)
+# Use this for tool versions, paths, OS info - anything NOT in LinkML schema
 update_infrastructure("epfl", {
-    "tools": {"rg": {"status": "unavailable"}},
-    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+    "knowledge": {"tools": {"rg": "14.1.1", "fd": "10.2.0"}},
+    "paths": {"user_tools": {"bin": "$HOME/bin"}}
 })
 
 # Persist public data semantics (to graph)

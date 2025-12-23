@@ -204,6 +204,57 @@ cypher('''
 - Privilege escalation: `sudo`, `su`
 - System control: `kill`, `shutdown`, `reboot`
 
+## Structured Exploration Approach
+
+### Tool Preferences
+
+Before exploring, check infrastructure for available tools:
+
+```yaml
+# In infrastructure file
+exploration:
+  agent_instructions:
+    search_tools:
+      preferred: [rg, fd]  # Use these if available
+      system: [grep, find]  # Fallback
+      commands:
+        - ~/bin/rg   # User-installed ripgrep
+        - ~/bin/fd   # User-installed fd
+      notes: "Use rg (ripgrep) and fd from $HOME/bin for fast searching"
+```
+
+Always read `infrastructure.knowledge.tools` first to know what's available:
+- If `rg` is available, use `~/bin/rg` instead of `grep -r`
+- If `fd` is available, use `~/bin/fd` instead of `find`
+
+### Tracking Explored Paths
+
+Avoid re-treading searched paths by recording them:
+
+```yaml
+# In infrastructure file
+exploration:
+  explored_paths:
+    codes:
+      searched: true
+      equilibrium:
+        paths: [/home/codes/liuqe, /home/codes/helena]
+        searched: true
+  search_queries_run:
+    - "rg -l 'equilibrium' /home/codes --max-depth 4 -g '*.py'"
+```
+
+Before starting exploration:
+1. Read infrastructure to see what's already been explored
+2. Check `explored_paths` for directories already searched
+3. Check `search_queries_run` for queries already executed
+4. Focus on unexplored areas
+
+After exploration:
+1. Update `explored_paths` with new directories searched
+2. Append new queries to `search_queries_run`
+3. Persist all discoveries immediately (don't batch for later)
+
 ## Graph vs Local Storage
 
 | Operation | Uses Public File | Uses Infrastructure File |

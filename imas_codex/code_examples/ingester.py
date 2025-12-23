@@ -9,7 +9,6 @@ import logging
 import re
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -124,7 +123,7 @@ class CodeExampleIngester:
                     stats["chunks"] += result["chunks"]
                     stats["ids_found"] += result["ids_found"]
                 except Exception as e:
-                    logger.exception(f"Failed to ingest {remote_path}: {e}")
+                    logger.exception("Failed to ingest %s: %s", remote_path, e)
 
         return stats
 
@@ -239,7 +238,6 @@ class CodeExampleIngester:
 
         return {"chunks": chunk_count, "ids_found": len(related_ids)}
 
-    @contextmanager
     def _fetch_files(
         self, facility: str, remote_paths: list[str]
     ) -> Iterator[tuple[str, Path]]:
@@ -255,7 +253,7 @@ class CodeExampleIngester:
                         conn.get(remote_path, str(local_path))
                         yield remote_path, local_path
                     except Exception as e:
-                        logger.warning(f"Failed to fetch {remote_path}: {e}")
+                        logger.warning("Failed to fetch %s: %s", remote_path, e)
 
     def _chunk_code(self, content: str, language: str) -> Iterator[CodeChunkResult]:
         """Chunk code into searchable segments.
