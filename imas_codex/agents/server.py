@@ -18,6 +18,11 @@ from fastmcp import FastMCP
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+from imas_codex.agents.prompt_loader import (
+    PromptDefinition,
+    list_prompts_summary,
+    load_prompts,
+)
 from imas_codex.code_examples import CodeExampleIngester, CodeExampleSearch
 from imas_codex.discovery import (
     get_facility,
@@ -73,11 +78,14 @@ class AgentsServer:
     include_imas_tools: bool = True
     mcp: FastMCP = field(init=False, repr=False)
     imas_tools: Tools | None = field(init=False, repr=False, default=None)
+    _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
         """Initialize the MCP server."""
         self.mcp = FastMCP(name="imas-codex-agents")
+        self._prompts = load_prompts()
         self._register_tools()
+        self._register_prompts()
 
         # Include IMAS DD tools by default
         if self.include_imas_tools:
@@ -85,7 +93,7 @@ class AgentsServer:
             self.imas_tools.register(self.mcp)
             logger.debug("IMAS DD tools registered with agents server")
 
-        logger.debug("Agents MCP server initialized")
+        logger.debug(f"Agents MCP server initialized with {len(self._prompts)} prompts")
 
     def _register_tools(self):
         """Register exploration and graph tools."""
@@ -547,6 +555,145 @@ class AgentsServer:
             except Exception as e:
                 logger.exception("Failed to search code examples")
                 raise RuntimeError(f"Failed to search code examples: {e}") from e
+
+        # =====================================================================
+        # Prompt Tools
+        # =====================================================================
+
+        @self.mcp.tool()
+        def list_prompts() -> list[dict[str, Any]]:
+            """
+            List available exploration prompts with descriptions.
+
+            Prompts are pre-defined workflows for common exploration tasks.
+            Use get_prompt() to retrieve a specific prompt for execution.
+
+            Returns:
+                List of prompt summaries with name, description, and arguments.
+
+            Examples:
+                prompts = list_prompts()
+                # Returns: [
+                #   {"name": "scout_depth", "description": "Explore directories...", "arguments": [...]},
+                #   {"name": "triage_paths", "description": "Score discovered paths...", ...},
+                #   ...
+                # ]
+            """
+            return list_prompts_summary()
+
+        @self.mcp.tool()
+        def get_prompt(name: str, **kwargs: Any) -> str:
+            """
+            Get an exploration prompt rendered with arguments.
+
+            Retrieves a prompt template and renders it with the provided arguments.
+            Use list_prompts() to see available prompts and their arguments.
+
+            Args:
+                name: Prompt name (e.g., "scout_depth", "triage_paths")
+                **kwargs: Arguments to render into the prompt template
+
+            Returns:
+                Rendered prompt text ready for execution
+
+            Examples:
+                # Get scout_depth prompt for EPFL
+                prompt = get_prompt("scout_depth", facility="epfl", depth=3)
+
+                # Get triage_paths prompt
+                prompt = get_prompt("triage_paths", facility="epfl", limit=20)
+            """
+            if name not in self._prompts:
+                available = list(self._prompts.keys())
+                msg = f"Unknown prompt: {name}. Available: {available}"
+                raise ValueError(msg)
+
+            return self._prompts[name].render(**kwargs)
+
+        @self.mcp.tool()
+        def get_exploration_progress(facility: str) -> dict[str, Any]:
+            """
+            Get exploration progress metrics for a facility.
+
+            Calculates completion metrics based on FacilityPath status distribution.
+
+            Args:
+                facility: Facility ID (e.g., "epfl")
+
+            Returns:
+                Dict with total_paths, actionable, processed, completion_pct, by_status
+            """
+            try:
+                with GraphClient() as client:
+                    rows = client.query(
+                        """
+                        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        RETURN p.status AS status, count(*) AS count
+                        ORDER BY status
+                        """,
+                        fid=facility,
+                    )
+
+                counts = {r["status"]: r["count"] for r in rows}
+                total = sum(counts.values())
+
+                # Categorize by workflow stage
+                actionable = (
+                    counts.get("discovered", 0)
+                    + counts.get("listed", 0)
+                    + counts.get("scanned", 0)
+                )
+                processed = (
+                    counts.get("flagged", 0)
+                    + counts.get("analyzed", 0)
+                    + counts.get("ingested", 0)
+                )
+                skipped = counts.get("skipped", 0) + counts.get("excluded", 0)
+
+                completion_pct = (
+                    round(100 * (processed + skipped) / total, 1) if total else 0.0
+                )
+
+                # Recommend next action
+                if total == 0:
+                    recommendation = "Run /scout_depth to discover paths"
+                elif actionable > processed:
+                    recommendation = "Run /triage_paths to score discovered paths"
+                elif counts.get("flagged", 0) > counts.get("ingested", 0):
+                    recommendation = "Run /code_hunt to ingest flagged paths"
+                else:
+                    recommendation = "Increase depth or explore new root paths"
+
+                return {
+                    "facility": facility,
+                    "total_paths": total,
+                    "actionable": actionable,
+                    "processed": processed,
+                    "skipped": skipped,
+                    "completion_pct": completion_pct,
+                    "by_status": counts,
+                    "recommendation": recommendation,
+                }
+            except Exception as e:
+                logger.exception("Failed to get exploration progress")
+                raise RuntimeError(f"Failed to get exploration progress: {e}") from e
+
+    def _register_prompts(self):
+        """Register MCP prompts from markdown files."""
+        for name, prompt_def in self._prompts.items():
+            # Build argument list for MCP prompt
+            # Note: FastMCP prompts use a simpler signature
+            # We register them as callable prompts
+
+            @self.mcp.prompt(name=name, description=prompt_def.description)
+            def make_prompt_fn(prompt_def: PromptDefinition = prompt_def):
+                # Return a function that takes kwargs and renders
+                def prompt_fn(**kwargs: Any) -> str:
+                    return prompt_def.render(**kwargs)
+
+                return prompt_fn
+
+            logger.debug(f"Registered prompt: {name}")
 
     def run(
         self,
