@@ -1,13 +1,27 @@
 """Neo4j Cypher utilities for the knowledge graph.
 
-This module provides Neo4j-specific constants and utilities that complement
-the LinkML-generated models. The models define the schema structure, while
-this module handles the Neo4j implementation details.
+⚠️ TRANSITIONAL MODULE - TO BE REPLACED
 
-Node labels and relationship types are defined here to:
-1. Provide a single source of truth for Cypher queries
-2. Enable type-safe label/relationship references
-3. Keep Neo4j concerns separate from the schema definitions
+This module contains hard-coded Neo4j labels and relationship types that
+duplicate information already defined in the LinkML schema (schemas/facility.yaml).
+
+Target state: Derive these from the schema at runtime using SchemaView:
+
+    from linkml_runtime.utils.schemaview import SchemaView
+    sv = SchemaView("schemas/facility.yaml")
+    node_labels = list(sv.all_classes().keys())
+
+Migration path:
+1. Current: Hard-coded enums for stability during initial development
+2. Next: Add GraphSchema class with runtime introspection
+3. Future: Remove these enums, derive from schema
+
+When adding new node types or relationships:
+1. Add to schemas/facility.yaml first
+2. Regenerate models: uv run build-models --force
+3. Update enums below to match (temporary)
+
+See graph/README.md for full architecture documentation.
 """
 
 from enum import Enum

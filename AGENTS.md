@@ -158,8 +158,10 @@ imas_codex/
 ├── core/           # Data models, XML parsing, physics domains
 ├── discovery/      # Facility config loading
 ├── embeddings/     # Vector embeddings and semantic search
+├── graph/          # Neo4j knowledge graph (see graph/README.md)
 ├── models/         # Pydantic models
-├── remote/         # Artifact capture for exploration findings
+├── remote/         # Remote facility connection
+├── schemas/        # LinkML schemas (source of truth)
 ├── search/         # Search functionality
 ├── services/       # External services
 ├── tools/          # MCP tool implementations
@@ -167,6 +169,45 @@ imas_codex/
 
 tests/              # Mirror source structure
 ```
+
+## Knowledge Graph Strategy
+
+**Single source of truth**: LinkML schemas in `schemas/facility.yaml`
+
+### Principles
+
+1. **Schema-first**: All data models defined in LinkML YAML
+2. **Auto-generate**: Pydantic models generated via `gen-pydantic`
+3. **Derive graph structure**: Node labels = class names, relationships = slots with class ranges
+4. **No hard-coded duplication**: Avoid maintaining parallel definitions
+
+### Files
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `schemas/facility.yaml` | ✅ Source | LinkML schema definition |
+| `graph/models.py` | ✅ Generated | Pydantic models from LinkML |
+| `graph/cypher.py` | ⚠️ Transitional | Hard-coded Neo4j labels (to be replaced) |
+| `graph/client.py` | ✅ Stable | Neo4j CRUD operations |
+
+### Migration Path
+
+The `graph/cypher.py` file contains hard-coded `NodeLabel` and `RelationType` enums
+that duplicate information already in the LinkML schema. Target state:
+
+```python
+# Derive from schema at runtime
+from linkml_runtime.utils.schemaview import SchemaView
+sv = SchemaView("schemas/facility.yaml")
+node_labels = list(sv.all_classes().keys())
+```
+
+When modifying graph code:
+- Add new classes/relationships to `schemas/facility.yaml` first
+- Regenerate models: `uv run build-models --force`
+- Update `cypher.py` to match (temporary, until migration complete)
+
+See `graph/README.md` for detailed architecture and migration plan.
 
 ## Remote Facility Exploration
 
