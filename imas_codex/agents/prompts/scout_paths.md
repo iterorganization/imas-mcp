@@ -1,5 +1,5 @@
 ---
-name: scout_depth
+name: scout_paths
 description: Explore directories at a given depth, ingesting FacilityPath nodes
 arguments:
   facility:

@@ -1,5 +1,5 @@
 ---
-name: code_hunt
+name: scout_code
 description: Find and ingest Python files with IMAS imports at flagged paths
 arguments:
   facility:

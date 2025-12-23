@@ -1,5 +1,5 @@
 ---
-name: tool_inventory
+name: check_tools
 description: Check available exploration tools and their versions at a facility
 arguments:
   facility:
