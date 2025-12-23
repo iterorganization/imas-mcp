@@ -1,21 +1,22 @@
-# Fusion Facility Data Semantics Schema
+# Fusion Facility Schema (Unified)
 #
-# This schema defines PUBLIC data semantics for fusion facilities.
-# All classes here are safe for the public graph.
+# This schema defines ALL facility data - both public (graphed) and private.
+# Fields marked with `is_private: true` are:
+#   - Stored in <facility>_private.yaml (gitignored)
+#   - NEVER written to the Neo4j graph
+#   - NEVER included in OCI artifact pushes
 #
-# For sensitive infrastructure data (OS, tools, paths, IPs), see:
-#   facility_infrastructure.yaml (generates local-only models)
+# Public fields are stored in <facility>.yaml and the graph.
 #
 # Generated models: imas_codex/graph/models.py
 # To regenerate: uv run build-models --force
 
 id: https://imas.iter.org/schemas/facility
 name: facility
-title: Fusion Facility Data Semantics Schema
+title: Fusion Facility Schema (Unified)
 description: >-
-  Public schema for data semantics at fusion research facilities.
-  Includes MDSplus trees, diagnostics, analysis codes, and IMAS mappings.
-  Infrastructure data is in a separate schema and never graphed.
+  Unified schema for fusion research facilities. Fields with is_private: true
+  are stored locally only (gitignored YAML), never in the public graph.
 
 license: MIT
 version: 0.2.0
@@ -36,6 +37,16 @@ imports:
 # =============================================================================
 
 enums:
+  ToolStatus:
+    description: Availability status of a command-line tool
+    permissible_values:
+      available:
+        description: Tool is installed and accessible
+      unavailable:
+        description: Tool is not installed
+      restricted:
+        description: Tool exists but requires special access
+
   TreeNodeType:
     description: MDSplus node data types
     permissible_values:
@@ -194,8 +205,11 @@ classes:
   Facility:
     description: >-
       A fusion research facility. Root node for facility-specific knowledge.
+      Public fields are stored in the graph. Private fields (is_private: true)
+      are stored in <facility>_private.yaml only.
     class_uri: facility:Facility
     attributes:
+      # === PUBLIC FIELDS (graph + epfl.yaml) ===
       id:
         identifier: true
         description: Unique facility identifier (e.g., "epfl", "iter", "jet")
@@ -209,6 +223,58 @@ classes:
         description: Tokamak/stellarator name (e.g., "TCV", "ITER", "JET")
       location:
         description: Geographic location
+      data_systems:
+        description: Data systems available (e.g., "mdsplus", "uda")
+        multivalued: true
+
+      # === PRIVATE FIELDS (epfl_private.yaml only, never graphed) ===
+      ssh_host:
+        description: SSH host alias for connection
+        annotations:
+          is_private: true
+      hostnames:
+        description: Network hostnames for this facility
+        multivalued: true
+        annotations:
+          is_private: true
+      nfs_mounts:
+        description: NFS mount points (JSON-encoded list)
+        multivalued: true
+        annotations:
+          is_private: true
+      paths:
+        description: Key filesystem paths (JSON-encoded dict)
+        annotations:
+          is_private: true
+      excludes:
+        description: Paths/patterns to exclude during exploration (JSON-encoded)
+        annotations:
+          is_private: true
+      tools:
+        description: Tool availability map (JSON-encoded dict)
+        annotations:
+          is_private: true
+      os_info:
+        description: Operating system details (JSON-encoded)
+        annotations:
+          is_private: true
+      python_info:
+        description: Python environment details (JSON-encoded)
+        annotations:
+          is_private: true
+      compilers:
+        description: Compiler availability (JSON-encoded)
+        annotations:
+          is_private: true
+      containers:
+        description: Available container images (JSON-encoded)
+        annotations:
+          is_private: true
+      exploration_notes:
+        description: Free-form exploration notes
+        multivalued: true
+        annotations:
+          is_private: true
 
   FacilityPath:
     description: >-
