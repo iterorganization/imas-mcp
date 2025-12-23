@@ -53,9 +53,9 @@ Get comprehensive exploration progress for **{facility}** and recommend next act
 
    | State | Recommendation |
    |-------|----------------|
-   | No paths discovered | Run `/scout_depth` |
-   | Many discovered, few scanned | Run `/triage_paths` |
-   | Many flagged, few ingested | Run `/code_hunt` |
+   | No paths discovered | Run `/scout-paths` |
+   | Many discovered, few scanned | Run `/score-paths` |
+   | Many flagged, few ingested | Run `/scout-code` |
    | High completion | Increase depth or explore new roots |
 
 6. **Report**:

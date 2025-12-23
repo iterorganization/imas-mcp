@@ -648,11 +648,11 @@ class AgentsServer:
 
                 # Recommend next action
                 if total == 0:
-                    recommendation = "Run /scout_depth to discover paths"
+                    recommendation = "Run /scout-paths to discover paths"
                 elif actionable > processed:
-                    recommendation = "Run /triage_paths to score discovered paths"
+                    recommendation = "Run /score-paths to score discovered paths"
                 elif counts.get("flagged", 0) > counts.get("ingested", 0):
-                    recommendation = "Run /code_hunt to ingest flagged paths"
+                    recommendation = "Run /scout-code to ingest flagged paths"
                 else:
                     recommendation = "Increase depth or explore new root paths"
 
