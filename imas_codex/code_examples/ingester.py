@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fabric import Connection
 
@@ -178,7 +179,10 @@ class CodeExampleIngester:
 
         # Chunk the code
         chunks = list(self._chunk_code(content, language))
-        chunk_count = 0
+
+        # Collect all chunk data for batch insertion
+        chunk_props_list: list[dict[str, Any]] = []
+        chunk_ids_map: dict[str, set[str]] = {}  # chunk_id -> IDS names
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"{example_id}:chunk_{i}"
@@ -188,49 +192,62 @@ class CodeExampleIngester:
 
             # Extract IDS references from chunk
             chunk_ids = self._extract_ids_references(chunk.content)
+            if chunk_ids:
+                chunk_ids_map[chunk_id] = chunk_ids
 
-            chunk_props = {
-                "id": chunk_id,
-                "code_example_id": example_id,
-                "content": chunk.content,
-                "function_name": chunk.function_name,
-                "start_line": chunk.start_line,
-                "end_line": chunk.end_line,
-                "embedding": embedding.tolist(),
-            }
-
-            self.graph_client.create_node(
-                "CodeChunk", chunk_id, chunk_props, id_field="id"
+            chunk_props_list.append(
+                {
+                    "id": chunk_id,
+                    "code_example_id": example_id,
+                    "content": chunk.content,
+                    "function_name": chunk.function_name,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "embedding": embedding.tolist(),
+                }
             )
 
-            # Create relationship to parent
-            self.graph_client.create_relationship(
+        # Batch insert all chunks
+        if chunk_props_list:
+            self.graph_client.create_nodes(
                 "CodeChunk",
-                chunk_id,
-                "CodeExample",
-                example_id,
-                "HAS_CHUNK",
-                from_id_field="id",
+                chunk_props_list,
+                id_field="id",
+                facility_id_field=None,  # No facility relationship for chunks
             )
 
-            # Create relationships to IMAS paths for fine-grained linking
-            for ids_name in chunk_ids:
-                # Create IMASPath node if needed and link
-                imas_path = f"{ids_name}"
+            # Batch create HAS_CHUNK relationships
+            self.graph_client.query(
+                """
+                UNWIND $chunks AS chunk
+                MATCH (c:CodeChunk {id: chunk.id})
+                MATCH (e:CodeExample {id: $example_id})
+                MERGE (c)-[:HAS_CHUNK]->(e)
+                """,
+                chunks=[{"id": c["id"]} for c in chunk_props_list],
+                example_id=example_id,
+            )
+
+            # Batch create IMAS path relationships
+            imas_links = [
+                {"chunk_id": cid, "ids": ids_name}
+                for cid, ids_set in chunk_ids_map.items()
+                for ids_name in ids_set
+            ]
+            if imas_links:
                 self.graph_client.query(
                     """
-                    MERGE (i:IMASPath {path: $path})
-                    ON CREATE SET i.ids = $ids
-                    WITH i
-                    MATCH (c:CodeChunk {id: $chunk_id})
+                    UNWIND $links AS link
+                    MERGE (i:IMASPath {path: link.ids})
+                    ON CREATE SET i.ids = link.ids
+                    WITH i, link
+                    MATCH (c:CodeChunk {id: link.chunk_id})
                     MERGE (c)-[:RELATED_PATHS]->(i)
                     """,
-                    path=imas_path,
-                    ids=ids_name,
-                    chunk_id=chunk_id,
+                    links=imas_links,
                 )
 
-            chunk_count += 1
+        chunk_count = len(chunk_props_list)
 
         logger.info(
             f"Ingested {filename}: {chunk_count} chunks, {len(related_ids)} IDS refs"

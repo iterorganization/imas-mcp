@@ -139,9 +139,10 @@ class AgentsServer:
         @self.mcp.tool()
         def ingest_node(
             node_type: str,
-            data: dict[str, Any],
+            data: dict[str, Any] | list[dict[str, Any]],
             create_facility_relationship: bool = True,
-        ) -> str:
+            batch_size: int = 50,
+        ) -> dict[str, Any]:
             """
             Ingest a node with schema validation and privacy filtering.
 
@@ -151,16 +152,22 @@ class AgentsServer:
             Private fields are automatically excluded to prevent sensitive
             data from entering the graph or OCI artifacts.
 
+            Accepts a single dict or a list of dicts for batch ingestion.
+            Batch mode uses UNWIND for efficient Neo4j operations and
+            supports partial success - valid items are ingested even if
+            some items fail validation.
+
             Args:
                 node_type: Node label (must be valid LinkML class)
-                data: Properties matching the Pydantic model
+                data: Properties matching the Pydantic model, or list of properties
                 create_facility_relationship: Auto-create FACILITY_ID relationship
+                batch_size: Number of nodes per UNWIND batch (default: 50)
 
             Returns:
-                Success message with node identifier
+                Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
 
             Examples:
-                # Add a diagnostic
+                # Add a single diagnostic
                 ingest_node("Diagnostic", {
                     "name": "XRCS",
                     "facility_id": "epfl",
@@ -168,12 +175,11 @@ class AgentsServer:
                     "description": "X-ray crystal spectrometer"
                 })
 
-                # Add an MDSplus tree
-                ingest_node("MDSplusTree", {
-                    "name": "tcv_raw",
-                    "facility_id": "epfl",
-                    "description": "Raw diagnostic data"
-                })
+                # Batch add multiple paths
+                ingest_node("FacilityPath", [
+                    {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
+                    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
+                ])
             """
             schema = get_schema()
 
@@ -182,56 +188,71 @@ class AgentsServer:
                 msg = f"Unknown node type: {node_type}. Valid: {schema.node_labels}"
                 raise ValueError(msg)
 
-            # Filter out private fields BEFORE validation
+            # Normalize to list
+            items = [data] if isinstance(data, dict) else data
+            if not items:
+                return {"processed": 0, "skipped": 0, "errors": []}
+
+            # Get schema info once
             private_slots = set(schema.get_private_slots(node_type))
-            filtered_data = {k: v for k, v in data.items() if k not in private_slots}
-
-            # Log if private fields were stripped
-            stripped = set(data.keys()) & private_slots
-            if stripped:
-                logger.info(f"Filtered private fields from {node_type}: {stripped}")
-
-            # Get and validate against Pydantic model
             model_class = schema.get_model(node_type)
-            try:
-                validated = model_class.model_validate(filtered_data)
-            except Exception as e:
-                msg = f"Validation failed for {node_type}: {e}"
-                raise ValueError(msg) from e
-
-            # Get identifier field
             id_field = schema.get_identifier(node_type)
             if not id_field:
                 msg = f"No identifier field found for {node_type}"
                 raise ValueError(msg)
 
-            node_id = getattr(validated, id_field)
-            props = to_cypher_props(validated)
+            # Validate all items, collecting valid ones and errors
+            valid_items: list[dict[str, Any]] = []
+            errors: list[str] = []
 
-            try:
-                with GraphClient() as client:
-                    # Create/update the node
-                    client.create_node(node_type, node_id, props, id_field=id_field)
+            for i, item in enumerate(items):
+                try:
+                    # Filter out private fields
+                    filtered = {k: v for k, v in item.items() if k not in private_slots}
 
-                    # Create facility relationship if applicable
-                    if (
-                        create_facility_relationship
-                        and "facility_id" in props
-                        and node_type != "Facility"
-                    ):
-                        client.create_relationship(
-                            node_type,
-                            node_id,
-                            "Facility",
-                            props["facility_id"],
-                            "FACILITY_ID",
-                            from_id_field=id_field,
+                    # Log if private fields were stripped
+                    stripped = set(item.keys()) & private_slots
+                    if stripped:
+                        logger.info(
+                            f"Filtered private fields from {node_type}: {stripped}"
                         )
 
-                return f"Created/updated {node_type} node: {node_id}"
+                    # Validate against Pydantic model
+                    validated = model_class.model_validate(filtered)
+                    props = to_cypher_props(validated)
+                    valid_items.append(props)
+
+                except Exception as e:
+                    item_id = item.get(id_field, f"item[{i}]")
+                    errors.append(f"{item_id}: {e}")
+                    logger.warning(f"Validation failed for {node_type} {item_id}: {e}")
+
+            if not valid_items:
+                return {"processed": 0, "skipped": len(errors), "errors": errors}
+
+            # Batch write valid items
+            try:
+                with GraphClient() as client:
+                    facility_field = (
+                        "facility_id" if create_facility_relationship else None
+                    )
+                    result = client.create_nodes(
+                        label=node_type,
+                        items=valid_items,
+                        id_field=id_field,
+                        batch_size=batch_size,
+                        facility_id_field=facility_field,
+                    )
+
+                return {
+                    "processed": result["processed"],
+                    "skipped": len(errors),
+                    "errors": errors,
+                }
+
             except Exception as e:
-                logger.exception("Failed to ingest node")
-                raise RuntimeError(f"Failed to ingest node: {e}") from e
+                logger.exception("Failed to ingest nodes")
+                raise RuntimeError(f"Failed to ingest nodes: {e}") from e
 
         @self.mcp.tool()
         def read_private(facility: str) -> dict[str, Any] | None:

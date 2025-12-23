@@ -208,6 +208,70 @@ class GraphClient:
                 props=props,
             )
 
+    def create_nodes(
+        self,
+        label: str,
+        items: list[dict[str, Any]],
+        id_field: str = "id",
+        batch_size: int = 50,
+        facility_id_field: str | None = "facility_id",
+    ) -> dict[str, int]:
+        """Create or update multiple nodes using UNWIND for efficiency.
+
+        Uses batched UNWIND queries for optimal Neo4j performance.
+        Optionally creates FACILITY_ID relationships in the same transaction.
+
+        Args:
+            label: Node label (class name from schema)
+            items: List of property dicts, each must contain id_field
+            id_field: Name of the identifier field (default: "id")
+            batch_size: Number of nodes per UNWIND batch (default: 50)
+            facility_id_field: If set, create FACILITY_ID relationships
+                for items containing this field. Set to None to skip.
+
+        Returns:
+            Dict with counts: {"processed": N}
+
+        Example:
+            >>> client.create_nodes("FacilityPath", [
+            ...     {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
+            ...     {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
+            ... ])
+            {"processed": 2}
+        """
+        if not items:
+            return {"processed": 0}
+
+        processed = 0
+
+        # Build query with optional facility relationship
+        if facility_id_field and label != "Facility":
+            # Combined node + relationship creation
+            query = f"""
+                UNWIND $batch AS item
+                MERGE (n:{label} {{{id_field}: item.{id_field}}})
+                SET n += item
+                WITH n, item
+                WHERE item.{facility_id_field} IS NOT NULL
+                MATCH (f:Facility {{id: item.{facility_id_field}}})
+                MERGE (n)-[:FACILITY_ID]->(f)
+            """
+        else:
+            # Node creation only
+            query = f"""
+                UNWIND $batch AS item
+                MERGE (n:{label} {{{id_field}: item.{id_field}}})
+                SET n += item
+            """
+
+        with self.session() as sess:
+            for i in range(0, len(items), batch_size):
+                batch = items[i : i + batch_size]
+                sess.run(query, batch=batch)
+                processed += len(batch)
+
+        return {"processed": processed}
+
     def create_relationship(
         self,
         from_label: str,
