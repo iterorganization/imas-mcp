@@ -139,8 +139,7 @@ class GraphClient:
         """
         with self.session() as sess:
             result = sess.run(
-                "CALL db.labels() YIELD label "
-                "RETURN label, size([(n) WHERE label IN labels(n) | n]) as count"
+                "MATCH (n) RETURN labels(n)[0] as label, count(*) as count"
             )
             return {record["label"]: record["count"] for record in result}
 
