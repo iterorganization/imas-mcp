@@ -60,6 +60,11 @@ Thumbs.db
 poetry.lock
 .python-version
 
+# Private facility infrastructure files (sensitive data - never commit)
+# These files contain hostnames, IPs, paths, tool versions etc.
+# Pattern: <facility>_infrastructure.yaml (e.g., epfl_infrastructure.yaml)
+imas_codex/config/facilities/*_infrastructure.yaml
+
 # Log files
 *.log
 .env
