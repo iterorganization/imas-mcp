@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""
-Build Pydantic models from LinkML ontology schemas.
+"""Build Pydantic models from LinkML schemas.
 
-Source: imas_codex/ontology/discovery/*.yaml
-Output: imas_codex/discovery/models/*.py
+Source: imas_codex/schemas/facility.yaml
+Output: imas_codex/graph/models.py
 
 To regenerate:
     uv run build-models --force
@@ -22,14 +21,14 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent
 
 
-def get_ontology_dir() -> Path:
-    """Get the ontology directory containing LinkML schemas."""
-    return get_project_root() / "imas_codex" / "ontology" / "discovery"
+def get_schemas_dir() -> Path:
+    """Get the schemas directory containing LinkML schemas."""
+    return get_project_root() / "imas_codex" / "schemas"
 
 
-def get_discovery_dir() -> Path:
-    """Get the discovery module directory."""
-    return get_project_root() / "imas_codex" / "discovery"
+def get_graph_dir() -> Path:
+    """Get the graph module directory."""
+    return get_project_root() / "imas_codex" / "graph"
 
 
 @click.command()
@@ -49,17 +48,17 @@ def build_models(
     force: bool,
     dry_run: bool,
 ) -> int:
-    """Generate Pydantic models from LinkML discovery schema.
+    """Generate Pydantic models from LinkML facility schema.
 
     This command uses linkml's gen-pydantic generator to create Python models
-    from the discovery/*.yaml schemas. The generated code is written to
-    imas_codex/discovery/models/*.py.
+    from the schemas/facility.yaml schema. The generated code is written to
+    imas_codex/graph/models.py.
 
     Examples:
-        build-discovery-models              # Generate models
-        build-discovery-models -v           # Verbose output
-        build-discovery-models --dry-run    # Preview without writing
-        build-discovery-models -f           # Force regeneration
+        build-models              # Generate models
+        build-models -v           # Verbose output
+        build-models --dry-run    # Preview without writing
+        build-models -f           # Force regeneration
     """
     # Set up logging level
     if quiet:
@@ -75,68 +74,58 @@ def build_models(
     logger = logging.getLogger(__name__)
 
     try:
-        ontology_dir = get_ontology_dir()
-        discovery_dir = get_discovery_dir()
-        models_dir = discovery_dir / "models"
+        schemas_dir = get_schemas_dir()
+        graph_dir = get_graph_dir()
 
-        # Ensure models directory exists
-        models_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure graph directory exists
+        graph_dir.mkdir(parents=True, exist_ok=True)
 
-        # Schemas to process
-        schemas = ["data", "environment", "filesystem", "tools"]
+        schema_file = schemas_dir / "facility.yaml"
+        output_file = graph_dir / "models.py"
 
-        # Track generated classes for __init__.py
-        generated_modules = []
+        # Validate schema exists
+        if not schema_file.exists():
+            logger.error(f"Schema file not found: {schema_file}")
+            click.echo(f"Error: Schema file not found: {schema_file}", err=True)
+            return 1
 
-        for schema_name in schemas:
-            schema_file = ontology_dir / f"{schema_name}.yaml"
-            output_file = models_dir / f"{schema_name}.py"
+        # Check if output already exists
+        if output_file.exists() and not force:
+            # Check if schema is newer than output
+            if schema_file.stat().st_mtime <= output_file.stat().st_mtime:
+                logger.info(f"Models up to date at {output_file}")
+                click.echo(f"Models up to date: {output_file}")
+                return 0
+            logger.info("Schema newer than models, regenerating...")
 
-            # Validate schema exists
-            if not schema_file.exists():
-                logger.error(f"Schema file not found: {schema_file}")
-                continue
+        logger.info(f"Generating Pydantic models from {schema_file}")
 
-            # Check if output already exists
-            if output_file.exists() and not force:
-                logger.info(f"Model {schema_name} already exists at {output_file}")
-                generated_modules.append(schema_name)
-                continue
+        if dry_run:
+            click.echo(f"Would generate: {output_file}")
+            return 0
 
-            logger.info(f"Generating Pydantic models from {schema_file}")
+        # Run gen-pydantic
+        cmd = ["gen-pydantic", str(schema_file)]
 
-            if dry_run:
-                click.echo(f"Would generate: {output_file}")
-                continue
+        logger.debug(f"Running command: {' '.join(cmd)}")
 
-            # Run gen-pydantic
-            cmd = [
-                "gen-pydantic",
-                str(schema_file),
-            ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-            logger.debug(f"Running command: {' '.join(cmd)}")
+        if result.returncode != 0:
+            logger.error(f"gen-pydantic failed: {result.stderr}")
+            click.echo(f"Error: gen-pydantic failed:\n{result.stderr}", err=True)
+            return 1
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        # Add header comment to generated code
+        header = '''"""
+Facility Knowledge Graph Pydantic Models.
 
-            if result.returncode != 0:
-                logger.error(f"gen-pydantic failed for {schema_name}: {result.stderr}")
-                click.echo(
-                    f"Error: gen-pydantic failed for {schema_name}:\n{result.stderr}",
-                    err=True,
-                )
-                return 1
-
-            # Add header comment to generated code
-            header = f'''"""
-Discovery Engine Pydantic Models - {schema_name.capitalize()}.
-
-AUTO-GENERATED from imas_codex/ontology/discovery/{schema_name}.yaml
+AUTO-GENERATED from imas_codex/schemas/facility.yaml
 DO NOT EDIT THIS FILE DIRECTLY - edit the LinkML schema instead.
 
 To regenerate:
@@ -144,58 +133,12 @@ To regenerate:
 """
 
 '''
-            generated_code = header + result.stdout
+        generated_code = header + result.stdout
 
-            # Write output
-            output_file.write_text(generated_code)
-            logger.info(f"Generated models written to {output_file}")
-            generated_modules.append(schema_name)
-
-        if dry_run:
-            return 0
-
-        # Generate __init__.py
-        init_file = models_dir / "__init__.py"
-        init_content = [
-            '"""',
-            "Discovery Engine Pydantic Models.",
-            "",
-            "AUTO-GENERATED - DO NOT EDIT",
-            '"""',
-            "",
-        ]
-
-        # We need to know which classes to export.
-        # For now, we'll export everything from the modules.
-        # A better approach would be to parse the generated files or schemas,
-        # but star imports are easier for this build script.
-
-        # However, to avoid pollution, let's try to be specific if we can.
-        # But since we don't know the class names easily without parsing,
-        # we will use explicit imports based on known artifact names if possible,
-        # or just import the modules.
-
-        # The finish.py expects:
-        # from imas_codex.discovery.models import DataArtifact, EnvironmentArtifact, FilesystemArtifact, ToolsArtifact
-
-        # Let's hardcode the known artifacts for now to ensure they are exported.
-        # This is a bit brittle but matches the current requirement.
-
-        init_content.append("from .data import DataArtifact")
-        init_content.append("from .environment import EnvironmentArtifact")
-        init_content.append("from .filesystem import FilesystemArtifact")
-        init_content.append("from .tools import ToolsArtifact")
-        init_content.append("")
-        init_content.append("__all__ = [")
-        init_content.append('    "DataArtifact",')
-        init_content.append('    "EnvironmentArtifact",')
-        init_content.append('    "FilesystemArtifact",')
-        init_content.append('    "ToolsArtifact",')
-        init_content.append("]")
-        init_content.append("")
-
-        init_file.write_text("\n".join(init_content))
-        logger.info(f"Generated __init__.py at {init_file}")
+        # Write output
+        output_file.write_text(generated_code)
+        logger.info(f"Generated models written to {output_file}")
+        click.echo(f"Generated: {output_file}")
 
         return 0
 

@@ -149,30 +149,23 @@ known_systems:
         description: Raw Thomson scattering data
     git_repo: true
   diagnostics:
-    core:
-      - ece
-      - fir
-      - thomson
-      - bolometry
-    particle:
-      - neutron
-      - fild
-    spectroscopy:
-      - cher
-      - brems
-    mhd:
-      - magnetics
-      - soft_xray
-      - hard_xray
+    - ece
+    - fir
+    - thomson
+    - bolometry
+    - neutron
+    - fild
+    - cher
+    - brems
+    - magnetics
+    - soft_xray
+    - hard_xray
   codes:
-    equilibrium:
-      - liuqe
-      - chease
-    control:
-      - raptor
-      - pilote
-    transport:
-      - transp  # v24.5.0 container at /data/apptainer
+    - liuqe
+    - chease
+    - raptor
+    - pilote
+    - transp
   containers:
     transp:
       path: /data/apptainer/transp_v24.5.0_noimas_epfl.sif
@@ -184,7 +177,7 @@ exploration_hints:
 - Python 3.9 with MDSplus bindings available
 - TDI functions in /usr/local/CRPP/tdi/tcv provide high-level data access
 - /common/tcv paths do NOT exist - all data via MDSplus
-- Data distributed across servers: tcvdata, spcsrv1, spcsrv8, crppsrv1, mantis4
+- Data distributed across servers tcvdata spcsrv1 spcsrv8 crppsrv1 mantis4
 knowledge:
   os:
     name: RHEL

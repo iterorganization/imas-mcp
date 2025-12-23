@@ -1,0 +1,585 @@
+# Unified Facility Knowledge Graph Ontology
+#
+# This schema defines ALL knowledge about fusion facilities:
+# - Data infrastructure (MDSplus, HDF5, NetCDF)
+# - Computing environment (Python, OS, compilers)
+# - Available tools (CLI utilities)
+# - Data semantics (diagnostics, analysis codes)
+# - IMAS mappings (facility data → IMAS paths)
+#
+# Generated models: imas_codex/graph/models.py
+#
+# To regenerate:
+#   uv run build-models --force
+
+id: https://imas.iter.org/schemas/facility
+name: facility
+title: Fusion Facility Knowledge Graph Schema
+description: >-
+  Unified schema for capturing all knowledge about fusion research facilities,
+  including data infrastructure, computing environment, available tools,
+  diagnostic systems, analysis codes, and IMAS data mappings.
+
+license: MIT
+version: 0.1.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  facility: https://imas.iter.org/schemas/facility/
+  imas: https://imas.iter.org/
+
+default_prefix: facility
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+enums:
+  TreeNodeType:
+    description: MDSplus node data types
+    permissible_values:
+      STRUCTURE:
+        description: Container node with no data
+      SIGNAL:
+        description: Time-varying measurement data
+      NUMERIC:
+        description: Numeric scalar or array
+      TEXT:
+        description: Text/string data
+      AXIS:
+        description: Coordinate axis data
+      SUBTREE:
+        description: Reference to another tree
+      ACTION:
+        description: Action sequence node
+      DISPATCH:
+        description: Dispatch scheduling node
+      TASK:
+        description: Task definition node
+
+  DiagnosticCategory:
+    description: Categories of fusion plasma diagnostics
+    permissible_values:
+      magnetics:
+        description: Magnetic field and flux measurements
+      spectroscopy:
+        description: Spectroscopic diagnostics (visible, UV, X-ray)
+      particle:
+        description: Particle diagnostics (CX, NPA, beam emission)
+      imaging:
+        description: Camera and imaging systems
+      microwave:
+        description: Microwave diagnostics (ECE, reflectometry)
+      bolometry:
+        description: Radiated power measurements
+      neutron:
+        description: Neutron flux and spectrum diagnostics
+      probe:
+        description: Langmuir probes and other insertable probes
+      interferometry:
+        description: Interferometric density measurements
+      thomson:
+        description: Thomson scattering systems
+
+  AnalysisCodeType:
+    description: Types of physics analysis codes
+    permissible_values:
+      equilibrium:
+        description: Equilibrium reconstruction (EFIT, LIUQE, CLISTE)
+      transport:
+        description: Transport analysis (ASTRA, TRANSP, JETTO)
+      mhd:
+        description: MHD stability analysis
+      heating:
+        description: Heating deposition codes (TORAY, TORBEAM, NUBEAM)
+      control:
+        description: Real-time plasma control systems
+      profile_fitting:
+        description: Profile fitting and kinetic analysis
+      integrated:
+        description: Integrated modeling workflows
+
+  ServerRole:
+    description: Role of a data server in the facility infrastructure
+    permissible_values:
+      primary:
+        description: Main production data server
+      secondary:
+        description: Backup or read-replica server
+      legacy:
+        description: Historical/archived data server
+      realtime:
+        description: Real-time control system data
+      analysis:
+        description: Analysis results server
+
+  ToolCategory:
+    description: Categories of command-line tools
+    permissible_values:
+      search:
+        description: Search tools (rg, ag, grep, find)
+      text:
+        description: Text processing (awk, sed, jq)
+      file:
+        description: File utilities (tree, file, stat)
+      editor:
+        description: Text editors (vim, nano, emacs)
+      vcs:
+        description: Version control (git, svn)
+      network:
+        description: Network tools (wget, curl, rsync, ssh)
+      build:
+        description: Build tools (make, cmake, ninja)
+      compiler:
+        description: Compilers (gcc, gfortran, icc)
+      mpi:
+        description: MPI tools (mpirun, mpicc, srun)
+      scheduler:
+        description: Job schedulers (sbatch, qsub)
+      data:
+        description: Data tools (h5dump, ncdump, mdstcl)
+      python:
+        description: Python tools (pip, conda, jupyter)
+      other:
+        description: Other/uncategorized tools
+
+  DataFormatType:
+    description: Types of data storage formats
+    permissible_values:
+      mdsplus:
+        description: MDSplus tree-based storage
+      hdf5:
+        description: HDF5 hierarchical data format
+      netcdf:
+        description: NetCDF scientific data format
+      csv:
+        description: Comma-separated values
+      json:
+        description: JSON data files
+      mat:
+        description: MATLAB .mat files
+      idl:
+        description: IDL save files
+      imas:
+        description: IMAS data format
+
+# =============================================================================
+# Core Classes
+# =============================================================================
+
+classes:
+  Facility:
+    description: >-
+      A fusion research facility. Root node for all facility-specific knowledge.
+    class_uri: facility:Facility
+    attributes:
+      id:
+        identifier: true
+        description: Unique facility identifier (e.g., "epfl", "iter", "jet")
+        required: true
+      name:
+        description: Human-readable facility name (e.g., "EPFL/TCV")
+        required: true
+      ssh_host:
+        description: SSH host alias for remote access
+      description:
+        description: Facility description
+      machine:
+        description: Tokamak/stellarator name (e.g., "TCV", "ITER", "JET")
+      location:
+        description: Geographic location
+
+# =============================================================================
+# Data Infrastructure Classes
+# =============================================================================
+
+  DataServer:
+    description: A data server providing access to experimental data
+    abstract: true
+    class_uri: facility:DataServer
+    attributes:
+      hostname:
+        identifier: true
+        description: Server hostname
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      role:
+        description: Server role in the infrastructure
+        range: ServerRole
+      description:
+        description: Server description
+
+  MDSplusServer:
+    description: An MDSplus data server
+    is_a: DataServer
+    class_uri: facility:MDSplusServer
+    attributes:
+      hostname:
+        identifier: true
+        required: true
+      facility_id:
+        required: true
+      role:
+        range: ServerRole
+      port:
+        description: MDSplus port (default 8000)
+        range: integer
+      description:
+        description: Server description
+
+  MDSplusTree:
+    description: An MDSplus tree (hierarchical data container)
+    class_uri: facility:MDSplusTree
+    attributes:
+      name:
+        identifier: true
+        description: Tree name (e.g., "tcv_shot", "results")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      server_hostname:
+        description: Primary server hosting this tree
+        range: MDSplusServer
+      description:
+        description: Tree description
+      shot_dependent:
+        description: Whether tree structure varies by shot
+        range: boolean
+        ifabsent: "true"
+
+  TreeNode:
+    description: A node within an MDSplus tree
+    class_uri: facility:TreeNode
+    attributes:
+      path:
+        identifier: true
+        description: Full node path (e.g., "\\RESULTS::LIUQE:IP")
+        required: true
+      tree_name:
+        description: Parent tree name
+        required: true
+        range: MDSplusTree
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      node_type:
+        description: MDSplus node data type
+        range: TreeNodeType
+      units:
+        description: Physical units (SI)
+      description:
+        description: Node description
+      example_shot:
+        description: Example shot number where this node exists
+        range: integer
+
+  TDIFunction:
+    description: >-
+      A TDI (Tree Data Interface) function providing high-level data access.
+    class_uri: facility:TDIFunction
+    attributes:
+      name:
+        identifier: true
+        description: Function name (e.g., "tcv_eq", "tcv_ip")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      file_path:
+        description: Path to the .fun file
+      description:
+        description: Function description
+      parameters:
+        description: Function parameter names
+        multivalued: true
+      return_type:
+        description: Return type description
+      accesses:
+        description: TreeNodes this function reads
+        multivalued: true
+        range: TreeNode
+      calls:
+        description: Other TDI functions this function calls
+        multivalued: true
+        range: TDIFunction
+
+  DataLocation:
+    description: A location where data files are stored
+    class_uri: facility:DataLocation
+    attributes:
+      path:
+        identifier: true
+        description: Filesystem path
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      format:
+        description: Primary data format at this location
+        range: DataFormatType
+      description:
+        description: What data is stored here
+      naming_pattern:
+        description: File naming convention (e.g., "shot_{shot}.h5")
+
+  ShotRange:
+    description: A range of shot numbers with common characteristics
+    class_uri: facility:ShotRange
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      name:
+        description: Name or description of this range
+      start_shot:
+        description: First shot number
+        range: integer
+      end_shot:
+        description: Last shot number (null if ongoing)
+        range: integer
+      description:
+        description: What this shot range represents (e.g., "H-mode campaign 2024")
+
+# =============================================================================
+# Computing Environment Classes
+# =============================================================================
+
+  PythonEnvironment:
+    description: A Python installation on the facility
+    class_uri: facility:PythonEnvironment
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      version:
+        description: Python version (e.g., "3.9.21")
+        required: true
+      path:
+        description: Path to Python executable
+        required: true
+      is_default:
+        description: Whether this is the default Python
+        range: boolean
+      packages:
+        description: Installed packages (format "name==version")
+        multivalued: true
+      notes:
+        description: Notes about this Python environment
+        multivalued: true
+
+  OperatingSystem:
+    description: Operating system information for a facility
+    class_uri: facility:OperatingSystem
+    attributes:
+      facility_id:
+        identifier: true
+        description: Parent facility ID
+        required: true
+        range: Facility
+      name:
+        description: OS distribution name (e.g., "RHEL", "Ubuntu")
+        required: true
+      version:
+        description: OS version (e.g., "9.6", "22.04")
+        required: true
+      kernel:
+        description: Kernel version string
+      notes:
+        description: Notes about the operating system
+        multivalued: true
+
+  Compiler:
+    description: A compiler available at the facility
+    class_uri: facility:Compiler
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      name:
+        description: Compiler name (e.g., "gcc", "gfortran", "ifort")
+        required: true
+      version:
+        description: Compiler version
+      path:
+        description: Path to compiler executable
+      notes:
+        description: Notes about this compiler
+        multivalued: true
+
+  ModuleSystem:
+    description: Environment module system (Lmod, Environment Modules)
+    class_uri: facility:ModuleSystem
+    attributes:
+      facility_id:
+        identifier: true
+        description: Parent facility ID
+        required: true
+        range: Facility
+      available:
+        description: Whether a module system is available
+        range: boolean
+        required: true
+      type:
+        description: Module system type (e.g., "lmod", "environment-modules")
+      default_modules:
+        description: Modules loaded by default
+        multivalued: true
+      notes:
+        description: Notes about the module system
+        multivalued: true
+
+# =============================================================================
+# Available Tools Classes
+# =============================================================================
+
+  Tool:
+    description: A command-line tool available at the facility
+    class_uri: facility:Tool
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      name:
+        description: Tool name (e.g., "rg", "h5dump", "git")
+        required: true
+      available:
+        description: Whether the tool is installed and accessible
+        range: boolean
+        required: true
+      path:
+        description: Path to the tool executable
+      version:
+        description: Tool version string
+      category:
+        description: Tool category
+        range: ToolCategory
+      notes:
+        description: Notes about this tool
+        multivalued: true
+
+# =============================================================================
+# Data Semantics Classes
+# =============================================================================
+
+  Diagnostic:
+    description: A plasma diagnostic system
+    class_uri: facility:Diagnostic
+    attributes:
+      name:
+        identifier: true
+        description: Diagnostic name (e.g., "Thomson", "ECE", "MSE")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      category:
+        description: Diagnostic category
+        range: DiagnosticCategory
+      description:
+        description: Diagnostic description
+      writes_to:
+        description: TreeNodes this diagnostic writes data to
+        multivalued: true
+        range: TreeNode
+
+  AnalysisCode:
+    description: A physics analysis or simulation code
+    class_uri: facility:AnalysisCode
+    attributes:
+      name:
+        identifier: true
+        description: Code name (e.g., "LIUQE", "ASTRA", "TORAY")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      code_type:
+        description: Type of analysis
+        range: AnalysisCodeType
+      description:
+        description: Code description
+      version:
+        description: Code version if known
+      container_path:
+        description: Path to container image if applicable
+      produces:
+        description: TreeNodes this code produces data for
+        multivalued: true
+        range: TreeNode
+
+# =============================================================================
+# IMAS Mapping Classes
+# =============================================================================
+
+  IMASPath:
+    description: An IMAS data dictionary path
+    class_uri: imas:Path
+    attributes:
+      path:
+        identifier: true
+        description: Full IMAS path (e.g., "equilibrium/time_slice/boundary/psi")
+        required: true
+      ids:
+        description: IDS name (e.g., "equilibrium", "core_profiles")
+        required: true
+      description:
+        description: Path description from IMAS DD
+      units:
+        description: Physical units from IMAS DD
+
+  IMASMapping:
+    description: A mapping from facility-specific data to IMAS
+    class_uri: facility:IMASMapping
+    attributes:
+      id:
+        identifier: true
+        required: true
+      source_path:
+        description: Source path (TreeNode or TDI function)
+        required: true
+        range: TreeNode
+      target_path:
+        description: Target IMAS path
+        required: true
+        range: IMASPath
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      transformation:
+        description: Transformation expression (e.g., unit conversion)
+      validated:
+        description: Whether this mapping has been validated
+        range: boolean
+      notes:
+        description: Mapping notes

@@ -27,50 +27,45 @@ class CustomBuildHook(BuildHookInterface):
         """Print trace message for debugging build hook execution."""
         print(f"[BUILD HOOK] {message}", flush=True)
 
-    def _check_discovery_models_exist(self) -> bool:
-        """Check if discovery models exist and are up to date."""
+    def _check_graph_models_exist(self) -> bool:
+        """Check if graph models exist and are up to date."""
         package_root = Path(__file__).parent
-        schema_dir = package_root / "imas_codex" / "ontology" / "discovery"
-        models_dir = package_root / "imas_codex" / "discovery" / "models"
+        schema_file = package_root / "imas_codex" / "schemas" / "facility.yaml"
+        models_file = package_root / "imas_codex" / "graph" / "models.py"
 
-        # If schema directory doesn't exist yet, nothing to generate
-        if not schema_dir.exists():
+        # If schema file doesn't exist yet, nothing to generate
+        if not schema_file.exists():
             return True
 
-        # Check if models directory exists
-        if not models_dir.exists():
+        # Check if models file exists
+        if not models_file.exists():
             return False
 
-        # Check if any schema file is newer than its corresponding model
-        for schema_file in schema_dir.glob("*.yaml"):
-            if schema_file.name.startswith("_"):
-                continue
-            model_file = models_dir / f"{schema_file.stem}.py"
-            if not model_file.exists():
-                return False
-            if schema_file.stat().st_mtime > model_file.stat().st_mtime:
-                return False
+        # Check if schema is newer than models
+        return models_file.stat().st_mtime >= schema_file.stat().st_mtime
 
-        return True
-
-    def _generate_discovery_models(self, package_root: Path) -> None:
-        """Generate discovery Pydantic models and schema docs from LinkML."""
+    def _generate_graph_models(self, package_root: Path) -> None:
+        """Generate graph Pydantic models from LinkML schema."""
         original_path = sys.path[:]
         if str(package_root) not in sys.path:
             sys.path.insert(0, str(package_root))
 
         try:
-            from scripts.build_discovery import build_all
+            from scripts.build_models import build_models
 
-            models, docs = build_all(force=False)
-            if models > 0 or docs > 0:
-                self._trace(
-                    f"Generated {models} discovery models and {docs} schema docs"
-                )
+            # Use click's standalone mode to run the command
+            result = build_models.main(standalone_mode=False)
+            if result == 0:
+                self._trace("Graph models generated successfully")
             else:
-                self._trace("Discovery models up to date")
+                self._trace(f"Graph models generation returned {result}")
+        except SystemExit as e:
+            if e.code == 0:
+                self._trace("Graph models generated successfully")
+            else:
+                self._trace(f"Failed to generate graph models: exit {e.code}")
         except Exception as e:
-            self._trace(f"Failed to generate discovery models: {e}")
+            self._trace(f"Failed to generate graph models: {e}")
         finally:
             sys.path[:] = original_path
 
@@ -196,13 +191,13 @@ class CustomBuildHook(BuildHookInterface):
             self._trace("Generating physics domain enum from LinkML schema...")
             self._generate_physics_domain(package_root)
 
-        # Check if discovery models need generation
-        discovery_models_exist = self._check_discovery_models_exist()
-        self._trace(f"discovery_models_exist={discovery_models_exist}")
+        # Check if graph models need generation
+        graph_models_exist = self._check_graph_models_exist()
+        self._trace(f"graph_models_exist={graph_models_exist}")
 
-        if not discovery_models_exist:
-            self._trace("Generating discovery models from LinkML schemas...")
-            self._generate_discovery_models(package_root)
+        if not graph_models_exist:
+            self._trace("Generating graph models from LinkML schema...")
+            self._generate_graph_models(package_root)
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)

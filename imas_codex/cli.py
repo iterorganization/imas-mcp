@@ -323,6 +323,290 @@ def facilities_show(name: str, fmt: str) -> None:
 
 
 # ============================================================================
+# Neo4j Command Group
+# ============================================================================
+
+
+@main.group()
+def neo4j() -> None:
+    """Manage Neo4j graph database for knowledge graph.
+
+    \b
+      imas-codex neo4j start   Start Neo4j server via Apptainer
+      imas-codex neo4j stop    Stop Neo4j server
+      imas-codex neo4j status  Check Neo4j server status
+      imas-codex neo4j shell   Open Cypher shell
+    """
+    pass
+
+
+@neo4j.command("start")
+@click.option(
+    "--image",
+    envvar="NEO4J_IMAGE",
+    default=None,
+    help="Path to Neo4j SIF image (env: NEO4J_IMAGE)",
+)
+@click.option(
+    "--data-dir",
+    envvar="NEO4J_DATA",
+    default=None,
+    help="Data directory (env: NEO4J_DATA)",
+)
+@click.option(
+    "--password",
+    envvar="NEO4J_PASSWORD",
+    default="imas-codex",
+    help="Neo4j password (env: NEO4J_PASSWORD)",
+)
+@click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
+def neo4j_start(
+    image: str | None,
+    data_dir: str | None,
+    password: str,
+    foreground: bool,
+) -> None:
+    """Start Neo4j server via Apptainer.
+
+    Examples:
+        # Start with defaults
+        imas-codex neo4j start
+
+        # Run in foreground (for debugging)
+        imas-codex neo4j start -f
+
+        # Custom data directory
+        imas-codex neo4j start --data-dir /path/to/data
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    # Resolve paths
+    home = Path.home()
+    image_path = (
+        Path(image) if image else home / "apptainer" / "neo4j_2025.11-community.sif"
+    )
+    data_path = (
+        Path(data_dir)
+        if data_dir
+        else home / ".local" / "share" / "imas-codex" / "neo4j"
+    )
+
+    if not image_path.exists():
+        click.echo(f"Error: Neo4j image not found at {image_path}", err=True)
+        click.echo(
+            "Pull it with: apptainer pull docker://neo4j:2025.11-community", err=True
+        )
+        raise SystemExit(1)
+
+    if not shutil.which("apptainer"):
+        click.echo("Error: apptainer not found in PATH", err=True)
+        raise SystemExit(1)
+
+    # Check if already running
+    try:
+        import urllib.request
+
+        urllib.request.urlopen("http://localhost:7474/", timeout=2)
+        click.echo("Neo4j is already running on port 7474")
+        return
+    except Exception:
+        pass
+
+    # Create data directories
+    for subdir in ["data", "logs", "conf", "import"]:
+        (data_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    # Build command
+    cmd = [
+        "apptainer",
+        "exec",
+        "--bind",
+        f"{data_path}/data:/data",
+        "--bind",
+        f"{data_path}/logs:/logs",
+        "--bind",
+        f"{data_path}/import:/import",
+        "--writable-tmpfs",
+        "--env",
+        f"NEO4J_AUTH=neo4j/{password}",
+        str(image_path),
+        "neo4j",
+        "console",
+    ]
+
+    click.echo(f"Starting Neo4j from {image_path}")
+    click.echo(f"Data directory: {data_path}")
+
+    if foreground:
+        # Run in foreground
+        subprocess.run(cmd)
+    else:
+        # Run in background
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        # Write PID file
+        pid_file = data_path / "neo4j.pid"
+        pid_file.write_text(str(proc.pid))
+
+        click.echo(f"Neo4j starting in background (PID: {proc.pid})")
+        click.echo("Waiting for server...")
+
+        import json as json_module
+        import time
+        import urllib.request
+
+        for _ in range(30):
+            try:
+                urllib.request.urlopen("http://localhost:7474/", timeout=2)
+
+                # Check if password needs to be changed (fresh install)
+                try:
+                    # Try with default password
+                    req = urllib.request.Request(
+                        "http://localhost:7474/db/system/tx/commit",
+                        data=json_module.dumps(
+                            {
+                                "statements": [
+                                    {
+                                        "statement": f'ALTER CURRENT USER SET PASSWORD FROM "neo4j" TO "{password}"'
+                                    }
+                                ]
+                            }
+                        ).encode(),
+                        headers={"Content-Type": "application/json"},
+                    )
+                    req.add_header(
+                        "Authorization",
+                        "Basic "
+                        + __import__("base64").b64encode(b"neo4j:neo4j").decode(),
+                    )
+                    urllib.request.urlopen(req, timeout=5)
+                    click.echo("Initial password changed successfully")
+                except Exception:
+                    # Password already changed or different auth
+                    pass
+
+                click.echo("Neo4j ready at http://localhost:7474")
+                click.echo("Bolt: bolt://localhost:7687")
+                click.echo(f"Credentials: neo4j / {password}")
+                return
+            except Exception:
+                time.sleep(1)
+
+        click.echo(
+            "Warning: Neo4j may still be starting. Check with: imas-codex neo4j status"
+        )
+
+
+@neo4j.command("stop")
+@click.option(
+    "--data-dir",
+    envvar="NEO4J_DATA",
+    default=None,
+    help="Data directory (env: NEO4J_DATA)",
+)
+def neo4j_stop(data_dir: str | None) -> None:
+    """Stop Neo4j server."""
+    import signal
+    import subprocess
+    from pathlib import Path
+
+    home = Path.home()
+    data_path = (
+        Path(data_dir)
+        if data_dir
+        else home / ".local" / "share" / "imas-codex" / "neo4j"
+    )
+    pid_file = data_path / "neo4j.pid"
+
+    if pid_file.exists():
+        pid = int(pid_file.read_text().strip())
+        try:
+            os.kill(pid, signal.SIGTERM)
+            click.echo(f"Sent SIGTERM to Neo4j (PID: {pid})")
+            pid_file.unlink()
+        except ProcessLookupError:
+            click.echo("Neo4j process not found (stale PID file)")
+            pid_file.unlink()
+    else:
+        # Try pkill as fallback
+        result = subprocess.run(
+            ["pkill", "-f", "neo4j.*console"],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            click.echo("Neo4j stopped")
+        else:
+            click.echo("Neo4j not running")
+
+
+@neo4j.command("status")
+def neo4j_status() -> None:
+    """Check Neo4j server status."""
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen("http://localhost:7474/", timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            click.echo("Neo4j is running")
+            click.echo(f"  Version: {data.get('neo4j_version', 'unknown')}")
+            click.echo(f"  Edition: {data.get('neo4j_edition', 'unknown')}")
+            click.echo(f"  Bolt: {data.get('bolt_direct', 'unknown')}")
+    except Exception:
+        click.echo("Neo4j is not responding on port 7474")
+
+
+@neo4j.command("shell")
+@click.option(
+    "--image",
+    envvar="NEO4J_IMAGE",
+    default=None,
+    help="Path to Neo4j SIF image (env: NEO4J_IMAGE)",
+)
+@click.option(
+    "--password",
+    envvar="NEO4J_PASSWORD",
+    default="imas-codex",
+    help="Neo4j password (env: NEO4J_PASSWORD)",
+)
+def neo4j_shell(image: str | None, password: str) -> None:
+    """Open Cypher shell to Neo4j."""
+    import subprocess
+    from pathlib import Path
+
+    home = Path.home()
+    image_path = (
+        Path(image) if image else home / "apptainer" / "neo4j_2025.11-community.sif"
+    )
+
+    if not image_path.exists():
+        click.echo(f"Error: Neo4j image not found at {image_path}", err=True)
+        raise SystemExit(1)
+
+    cmd = [
+        "apptainer",
+        "exec",
+        "--writable-tmpfs",
+        str(image_path),
+        "cypher-shell",
+        "-u",
+        "neo4j",
+        "-p",
+        password,
+    ]
+
+    subprocess.run(cmd)
+
+
+# ============================================================================
 # Dynamic Facility Commands
 # ============================================================================
 
@@ -330,128 +614,43 @@ def facilities_show(name: str, fmt: str) -> None:
 def _create_facility_command(facility_name: str, description: str) -> click.Command:
     """Create a CLI command for a specific facility."""
 
-    @click.command(name=facility_name, help=f"Manage artifacts for {description}")
-    @click.option(
-        "--capture",
-        "capture_arg",
-        nargs=1,
-        default=None,
-        required=False,
-        help=(
-            "Capture learnings to artifact. Specify artifact type "
-            "(environment, tools, filesystem, data)."
-        ),
-    )
-    @click.option(
-        "--artifacts", is_flag=True, help="List all artifacts for this facility"
-    )
-    @click.option(
-        "--artifact",
-        "artifact_view",
-        type=str,
-        default=None,
-        help="View a specific artifact (environment, tools, filesystem, data)",
-    )
-    def facility_cmd(
-        capture_arg: str | None,
-        artifacts: bool,
-        artifact_view: str | None,
-    ) -> None:
-        """Manage exploration artifacts for a facility.
+    @click.command(name=facility_name, help=f"Show configuration for {description}")
+    @click.option("--config", "show_config", is_flag=True, help="Show full config")
+    def facility_cmd(show_config: bool) -> None:
+        """Show facility configuration.
 
-        Use SSH directly for exploration (faster than CLI):
+        Facility knowledge is now stored in the graph database.
+        Use SSH directly for exploration:
             ssh epfl "which python3; python3 --version"
 
         See imas_codex/config/README.md for comprehensive exploration guidance.
 
         Examples:
-            # Capture environment artifact
-            imas-codex epfl --capture environment << 'EOF'
-            python:
-              version: "3.9.21"
-              path: "/usr/bin/python3"
-            os:
-              name: "RHEL"
-              version: "9.6"
-            EOF
+            # Show facility info
+            imas-codex epfl
 
-            # List artifacts
-            imas-codex epfl --artifacts
-
-            # View specific artifact
-            imas-codex epfl --artifact environment
+            # Show full config
+            imas-codex epfl --config
         """
-        import json
-        import sys
+        from imas_codex.discovery import get_config
 
-        from imas_codex.remote.capture import (
-            capture_artifact,
-            list_artifacts,
-            load_artifact,
-        )
+        config = get_config(facility_name)
 
-        # Handle --artifacts
-        if artifacts:
-            manifest = list_artifacts(facility_name)
-            if manifest.get("artifacts"):
-                click.echo(f"Artifacts for {facility_name}:")
-                for name, info in manifest["artifacts"].items():
-                    status_str = info.get("status", "unknown")
-                    updated = info.get("updated", "")
-                    click.echo(f"  - {name}: {status_str} (updated: {updated})")
-            else:
-                click.echo(f"No artifacts found for {facility_name}")
-            return
+        if show_config:
+            import json
 
-        # Handle --artifact TYPE
-        if artifact_view:
-            artifact_data = load_artifact(facility_name, artifact_view)
-            if artifact_data:
-                click.echo(json.dumps(artifact_data, indent=2))
-            else:
+            click.echo(json.dumps(config.model_dump(), indent=2))
+        else:
+            click.echo(f"Facility: {config.facility}")
+            click.echo(f"Description: {config.description}")
+            click.echo(f"SSH Host: {config.ssh_host}")
+            if config.paths.data:
+                click.echo(f"Data paths: {', '.join(config.paths.data)}")
+            if config.known_systems.diagnostics:
                 click.echo(
-                    f"No {artifact_view} artifact found for {facility_name}", err=True
+                    f"Diagnostics: {', '.join(config.known_systems.diagnostics)}"
                 )
-                raise SystemExit(1)
-            return
-
-        # Handle --capture TYPE
-        if capture_arg is not None:
-            valid_types = {"environment", "tools", "filesystem", "data"}
-            if capture_arg not in valid_types:
-                click.echo(
-                    f"Error: --capture requires artifact type: {', '.join(sorted(valid_types))}",
-                    err=True,
-                )
-                raise SystemExit(1)
-
-            if sys.stdin.isatty():
-                click.echo(
-                    f"Error: --capture {capture_arg} requires input via stdin",
-                    err=True,
-                )
-                raise SystemExit(1)
-
-            learnings_input = sys.stdin.read()
-            if not learnings_input or not learnings_input.strip():
-                click.echo("Error: --capture requires learnings via stdin", err=True)
-                raise SystemExit(1)
-
-            success, message = capture_artifact(
-                facility_name,
-                artifact_type=capture_arg,
-                learnings=learnings_input,
-            )
-            if success:
-                click.echo(message)
-            else:
-                click.echo(f"Error: {message}", err=True)
-                raise SystemExit(1)
-            return
-
-        # No option - show help
-        ctx = click.get_current_context()
-        click.echo(ctx.get_help())
+            click.echo("\nUse --config for full configuration")
 
     return facility_cmd
 
