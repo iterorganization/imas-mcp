@@ -566,7 +566,7 @@ class AgentsServer:
             List available exploration prompts with descriptions.
 
             Prompts are pre-defined workflows for common exploration tasks.
-            Use get_prompt() to retrieve a specific prompt for execution.
+            They are also registered as MCP prompts (accessible via /prompt-name).
 
             Returns:
                 List of prompt summaries with name, description, and arguments.
@@ -574,41 +574,12 @@ class AgentsServer:
             Examples:
                 prompts = list_prompts()
                 # Returns: [
-                #   {"name": "scout_depth", "description": "Explore directories...", "arguments": [...]},
-                #   {"name": "triage_paths", "description": "Score discovered paths...", ...},
+                #   {"name": "scout-paths", "description": "Discover directories...", ...},
+                #   {"name": "scout-code", "description": "Find and ingest...", ...},
                 #   ...
                 # ]
             """
             return list_prompts_summary()
-
-        @self.mcp.tool()
-        def get_prompt(name: str, **kwargs: Any) -> str:
-            """
-            Get an exploration prompt rendered with arguments.
-
-            Retrieves a prompt template and renders it with the provided arguments.
-            Use list_prompts() to see available prompts and their arguments.
-
-            Args:
-                name: Prompt name (e.g., "scout_depth", "triage_paths")
-                **kwargs: Arguments to render into the prompt template
-
-            Returns:
-                Rendered prompt text ready for execution
-
-            Examples:
-                # Get scout_depth prompt for EPFL
-                prompt = get_prompt("scout_depth", facility="epfl", depth=3)
-
-                # Get triage_paths prompt
-                prompt = get_prompt("triage_paths", facility="epfl", limit=20)
-            """
-            if name not in self._prompts:
-                available = list(self._prompts.keys())
-                msg = f"Unknown prompt: {name}. Available: {available}"
-                raise ValueError(msg)
-
-            return self._prompts[name].render(**kwargs)
 
         @self.mcp.tool()
         def get_exploration_progress(facility: str) -> dict[str, Any]:

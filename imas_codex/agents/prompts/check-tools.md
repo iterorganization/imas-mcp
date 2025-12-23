@@ -1,5 +1,5 @@
 ---
-name: check_tools
+name: check-tools
 description: Check available exploration tools and their versions at a facility
 arguments:
   facility:

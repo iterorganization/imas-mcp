@@ -1,5 +1,5 @@
 ---
-name: check_progress
+name: check-progress
 description: Get exploration progress metrics and recommend next actions
 arguments:
   facility:
