@@ -8,7 +8,7 @@ import hashlib
 import logging
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +20,9 @@ from imas_codex.embeddings.encoder import Encoder
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
+
+# Progress callback type: (current, total, message) -> None
+ProgressCallback = Callable[[int, int, str], None]
 
 # Extension to language mapping
 EXTENSION_TO_LANGUAGE = {
@@ -92,6 +95,7 @@ class CodeExampleIngester:
     graph_client: GraphClient = field(default_factory=GraphClient)
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    progress_callback: ProgressCallback | None = None
 
     def ingest_files(
         self,
@@ -110,9 +114,18 @@ class CodeExampleIngester:
             Dict with counts: {"files": N, "chunks": M, "ids_found": K}
         """
         stats = {"files": 0, "chunks": 0, "ids_found": 0}
+        total_files = len(remote_paths)
+
+        self._report_progress(
+            0, total_files, f"Starting ingestion of {total_files} files"
+        )
 
         with self.graph_client:
-            for remote_path, local_path in self._fetch_files(facility, remote_paths):
+            for idx, (remote_path, local_path) in enumerate(
+                self._fetch_files(facility, remote_paths)
+            ):
+                filename = Path(remote_path).name
+                self._report_progress(idx, total_files, f"Processing {filename}")
                 try:
                     result = self._ingest_single_file(
                         facility=facility,
@@ -123,10 +136,29 @@ class CodeExampleIngester:
                     stats["files"] += 1
                     stats["chunks"] += result["chunks"]
                     stats["ids_found"] += result["ids_found"]
+                    self._report_progress(
+                        idx + 1,
+                        total_files,
+                        f"Ingested {filename}: {result['chunks']} chunks",
+                    )
                 except Exception as e:
                     logger.exception("Failed to ingest %s: %s", remote_path, e)
+                    self._report_progress(
+                        idx + 1, total_files, f"Failed to ingest {filename}: {e}"
+                    )
 
+        self._report_progress(
+            total_files,
+            total_files,
+            f"Completed: {stats['files']} files, {stats['chunks']} chunks",
+        )
         return stats
+
+    def _report_progress(self, current: int, total: int, message: str) -> None:
+        """Report progress via callback if set."""
+        if self.progress_callback:
+            self.progress_callback(current, total, message)
+        logger.info(f"[{current}/{total}] {message}")
 
     def _ingest_single_file(
         self,

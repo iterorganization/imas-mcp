@@ -8,7 +8,7 @@ This module provides tools for:
 - Storing code examples and chunks in the Neo4j graph
 """
 
-from .ingester import CodeExampleIngester
+from .ingester import CodeExampleIngester, ProgressCallback
 from .search import CodeExampleSearch
 
-__all__ = ["CodeExampleIngester", "CodeExampleSearch"]
+__all__ = ["CodeExampleIngester", "CodeExampleSearch", "ProgressCallback"]
