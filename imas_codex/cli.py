@@ -300,22 +300,25 @@ def facilities_list() -> None:
 @click.option(
     "--format", "-f", "fmt", default="yaml", type=click.Choice(["yaml", "json"])
 )
-def facilities_show(name: str, fmt: str) -> None:
+@click.option("--public-only", is_flag=True, help="Show only public fields")
+def facilities_show(name: str, fmt: str, public_only: bool) -> None:
     """Show configuration for a specific facility."""
     import json
 
     import yaml
 
-    from imas_codex.discovery import get_config
+    from imas_codex.discovery import get_facility, get_facility_public
 
     try:
-        config = get_config(name)
-        context = config.to_context()
+        if public_only:
+            data = get_facility_public(name)
+        else:
+            data = get_facility(name)
 
         if fmt == "json":
-            click.echo(json.dumps(context, indent=2))
+            click.echo(json.dumps(data, indent=2, default=str))
         else:
-            click.echo(yaml.dump(context, default_flow_style=False, sort_keys=False))
+            click.echo(yaml.dump(data, default_flow_style=False, sort_keys=False))
 
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
@@ -1328,6 +1331,53 @@ def release(
             click.echo(f"  imas-codex release {version} -m '{message}' --remote origin")
             raise SystemExit(1)
 
+        # Step 1b: Validate no private fields in graph
+        click.echo("\nStep 1b: Validating graph contains no private fields...")
+        if not dry_run:
+            try:
+                from imas_codex.graph import GraphClient, get_schema
+
+                schema = get_schema()
+                private_slots = schema.get_private_slots("Facility")
+
+                if private_slots:
+                    with GraphClient() as client:
+                        # Check Facility nodes for private fields
+                        for slot in private_slots:
+                            result = client.query(
+                                f"MATCH (f:Facility) WHERE f.{slot} IS NOT NULL "
+                                f"RETURN f.id AS id, f.{slot} AS value LIMIT 5"
+                            )
+                            if result:
+                                click.echo(
+                                    f"  ✗ Private field '{slot}' found in graph!",
+                                    err=True,
+                                )
+                                for r in result:
+                                    click.echo(
+                                        f"    - Facility {r['id']}: {slot}={r['value']}"
+                                    )
+                                click.echo(
+                                    "\nPrivate data must not be in graph before OCI push."
+                                )
+                                click.echo(
+                                    "Remove with: MATCH (f:Facility) REMOVE f.<field>"
+                                )
+                                raise SystemExit(1)
+
+                    click.echo(
+                        f"  ✓ No private fields found (checked: {private_slots})"
+                    )
+                else:
+                    click.echo("  ✓ No private slots defined in schema")
+            except SystemExit:
+                raise
+            except Exception as e:
+                click.echo(f"Warning: Could not validate graph: {e}", err=True)
+                click.echo("  Is Neo4j running? Check with: imas-codex neo4j status")
+        else:
+            click.echo("  [would validate no private fields in graph]")
+
         # Step 2: Update _GraphMeta node
         if not skip_graph:
             click.echo("\nStep 2: Updating graph metadata...")
@@ -1478,24 +1528,21 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
             # Show full config
             imas-codex epfl --config
         """
-        from imas_codex.discovery import get_config
+        from imas_codex.discovery import get_facility
 
-        config = get_config(facility_name)
+        data = get_facility(facility_name)
 
         if show_config:
             import json
 
-            click.echo(json.dumps(config.model_dump(), indent=2))
+            click.echo(json.dumps(data, indent=2, default=str))
         else:
-            click.echo(f"Facility: {config.facility}")
-            click.echo(f"Description: {config.description}")
-            click.echo(f"SSH Host: {config.ssh_host}")
-            if config.paths.data:
-                click.echo(f"Data paths: {', '.join(config.paths.data)}")
-            if config.known_systems.diagnostics:
-                click.echo(
-                    f"Diagnostics: {', '.join(config.known_systems.diagnostics)}"
-                )
+            click.echo(f"Facility: {data.get('id', facility_name)}")
+            click.echo(f"Name: {data.get('name', '')}")
+            click.echo(f"Machine: {data.get('machine', '')}")
+            click.echo(f"Description: {data.get('description', '')}")
+            if data.get("ssh_host"):
+                click.echo(f"SSH Host: {data['ssh_host']}")
             click.echo("\nUse --config for full configuration")
 
     return facility_cmd
@@ -1504,12 +1551,14 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
 def _register_facility_commands() -> None:
     """Register a CLI command for each configured facility."""
     try:
-        from imas_codex.discovery import get_config, list_facilities
+        from imas_codex.discovery import get_facility, list_facilities
 
         for facility_name in list_facilities():
             try:
-                config = get_config(facility_name)
-                cmd = _create_facility_command(facility_name, config.description)
+                data = get_facility(facility_name)
+                cmd = _create_facility_command(
+                    facility_name, data.get("description", "")
+                )
                 main.add_command(cmd)
             except Exception:
                 # Skip facilities with invalid configs

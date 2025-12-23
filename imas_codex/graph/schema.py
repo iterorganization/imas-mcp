@@ -267,6 +267,60 @@ class GraphSchema:
                 }
         return {}
 
+    def get_private_slots(self, class_name: str) -> list[str]:
+        """Get slot names marked with is_private: true annotation.
+
+        Private slots are stored in *_private.yaml files only,
+        never written to the graph or included in OCI artifacts.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            List of private slot names.
+        """
+        private_slots = []
+        for slot in self._view.class_induced_slots(class_name):
+            if slot.annotations:
+                ann = slot.annotations.get("is_private")
+                if ann and str(ann.value).lower() == "true":
+                    private_slots.append(slot.name)
+        return private_slots
+
+    def is_private_slot(self, class_name: str, slot_name: str) -> bool:
+        """Check if a specific slot is marked is_private: true.
+
+        Args:
+            class_name: Name of the class (node label)
+            slot_name: Name of the slot to check
+
+        Returns:
+            True if the slot is private.
+        """
+        for slot in self._view.class_induced_slots(class_name):
+            if slot.name == slot_name and slot.annotations:
+                ann = slot.annotations.get("is_private")
+                return ann is not None and str(ann.value).lower() == "true"
+        return False
+
+    def get_public_slots(self, class_name: str) -> list[str]:
+        """Get slot names that are NOT marked private.
+
+        Public slots are safe for the graph and OCI artifacts.
+
+        Args:
+            class_name: Name of the class (node label)
+
+        Returns:
+            List of public slot names.
+        """
+        private_set = set(self.get_private_slots(class_name))
+        return [
+            slot.name
+            for slot in self._view.class_induced_slots(class_name)
+            if slot.name not in private_set
+        ]
+
     # =========================================================================
     # Cypher Generation Helpers
     # =========================================================================

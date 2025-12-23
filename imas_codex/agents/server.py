@@ -2,26 +2,29 @@
 Agents MCP Server - Tools for LLM-driven facility exploration.
 
 This server provides MCP tools for:
-- Executing Cypher queries (mutations restricted to _Discovery nodes)
-- Ingesting validated nodes to the knowledge graph
-- Reading/updating sensitive infrastructure files
+- Executing Cypher queries (READ ONLY - mutations blocked)
+- Ingesting validated nodes to the knowledge graph (private fields filtered)
+- Reading/updating sensitive private facility files
 - All IMAS DD tools (search, fetch, list, overview, etc.)
 
-Local use only - provides full graph access for trusted agents.
+Local use only - provides read access to graph, write via ingest_node only.
 """
 
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import yaml
 from fastmcp import FastMCP
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from imas_codex.code_examples import CodeExampleIngester, CodeExampleSearch
-from imas_codex.discovery import get_config
-from imas_codex.discovery.config import get_facilities_dir
+from imas_codex.discovery import (
+    get_facility,
+    get_facility_private,
+    list_facilities,
+    save_private,
+)
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
 from imas_codex.tools import Tools
@@ -90,44 +93,31 @@ class AgentsServer:
         @self.mcp.tool()
         def cypher(query: str, params: dict[str, Any] | None = None) -> list[dict]:
             """
-            Execute Cypher query against the knowledge graph.
+            Execute READ-ONLY Cypher query against the knowledge graph.
 
-            Read queries: unrestricted access to all nodes
-            Write queries: restricted to _Discovery nodes only
-
-            For schema-validated writes to proper nodes, use ingest_node().
+            All write operations are blocked. Use ingest_node() for writes,
+            which automatically filters private fields before graph storage.
 
             Args:
-                query: Cypher query string
+                query: Cypher query string (READ ONLY)
                 params: Optional query parameters
 
             Returns:
                 List of result records as dicts
 
             Examples:
-                # Read query - explore the graph
+                # Read queries - explore the graph
+                cypher("MATCH (f:Facility) RETURN f.id, f.name")
                 cypher("MATCH (f:Facility)-[:FACILITY_ID]-(d:Diagnostic) RETURN f.id, d.name")
-
-                # Write to _Discovery - stage unstructured findings
-                cypher('''
-                    CREATE (d:_Discovery {
-                        facility: 'epfl',
-                        type: 'unknown_tree',
-                        name: 'tcv_raw',
-                        notes: 'Found on spcsrv1',
-                        discovered_at: datetime()
-                    })
-                ''')
+                cypher("MATCH (p:FacilityPath {status: 'flagged'}) RETURN p.path, p.interest_score")
             """
             upper = query.upper()
-            mutation_keywords = ["CREATE", "MERGE", "SET", "DELETE", "REMOVE"]
-            has_mutation = any(kw in upper for kw in mutation_keywords)
+            mutation_keywords = ["CREATE", "MERGE", "SET", "DELETE", "REMOVE", "DETACH"]
 
-            if has_mutation and "_DISCOVERY" not in upper:
+            if any(kw in upper for kw in mutation_keywords):
                 msg = (
-                    "Write operations restricted to _Discovery nodes. "
-                    "Use ingest_node() for schema-validated writes to proper nodes, "
-                    "or write to _Discovery for staging unstructured findings."
+                    "Cypher mutations are blocked. Use ingest_node() for writes - "
+                    "it validates data and filters private fields automatically."
                 )
                 raise ValueError(msg)
 
@@ -145,10 +135,13 @@ class AgentsServer:
             create_facility_relationship: bool = True,
         ) -> str:
             """
-            Ingest a node with schema validation.
+            Ingest a node with schema validation and privacy filtering.
 
-            Validates data against the Pydantic model for the node type,
-            then creates/updates the node in the graph.
+            Validates data against the Pydantic model, FILTERS OUT private
+            fields (is_private: true in schema), then writes to the graph.
+
+            Private fields are automatically excluded to prevent sensitive
+            data from entering the graph or OCI artifacts.
 
             Args:
                 node_type: Node label (must be valid LinkML class)
@@ -181,10 +174,19 @@ class AgentsServer:
                 msg = f"Unknown node type: {node_type}. Valid: {schema.node_labels}"
                 raise ValueError(msg)
 
+            # Filter out private fields BEFORE validation
+            private_slots = set(schema.get_private_slots(node_type))
+            filtered_data = {k: v for k, v in data.items() if k not in private_slots}
+
+            # Log if private fields were stripped
+            stripped = set(data.keys()) & private_slots
+            if stripped:
+                logger.info(f"Filtered private fields from {node_type}: {stripped}")
+
             # Get and validate against Pydantic model
             model_class = schema.get_model(node_type)
             try:
-                validated = model_class.model_validate(data)
+                validated = model_class.model_validate(filtered_data)
             except Exception as e:
                 msg = f"Validation failed for {node_type}: {e}"
                 raise ValueError(msg) from e
@@ -224,39 +226,36 @@ class AgentsServer:
                 raise RuntimeError(f"Failed to ingest node: {e}") from e
 
         @self.mcp.tool()
-        def read_infrastructure(facility: str) -> dict[str, Any] | None:
+        def read_private(facility: str) -> dict[str, Any] | None:
             """
-            Read sensitive infrastructure data for a facility.
+            Read private facility data (sensitive infrastructure info).
 
-            Infrastructure files contain sensitive data (OS versions, paths,
-            tool availability) that is NOT stored in the public graph.
+            Private files contain data marked is_private in the schema:
+            OS versions, paths, tool availability, etc.
+            This data is NEVER stored in the graph or OCI artifacts.
 
             Args:
                 facility: Facility identifier (e.g., "epfl")
 
             Returns:
-                Infrastructure data dict, or None if file doesn't exist
+                Private data dict, or None if file doesn't exist
             """
-            infra_path = get_facilities_dir() / f"{facility}_infrastructure.yaml"
-            if not infra_path.exists():
-                return None
-
             try:
-                return yaml.safe_load(infra_path.read_text())
+                return get_facility_private(facility)
             except Exception as e:
-                logger.exception(f"Failed to read infrastructure for {facility}")
-                raise RuntimeError(f"Failed to read infrastructure: {e}") from e
+                logger.exception(f"Failed to read private data for {facility}")
+                raise RuntimeError(f"Failed to read private data: {e}") from e
 
         @self.mcp.tool()
-        def update_infrastructure(
+        def update_private(
             facility: str,
             data: dict[str, Any],
         ) -> str:
             """
-            Merge updates into facility infrastructure file.
+            Merge updates into facility private file.
 
-            Deep-merges the provided data into the existing infrastructure
-            file, preserving comments and key order.
+            Deep-merges the provided data into the existing private file,
+            preserving comments and key order using ruamel.yaml.
 
             Args:
                 facility: Facility identifier (e.g., "epfl")
@@ -267,45 +266,26 @@ class AgentsServer:
 
             Examples:
                 # Update tool availability
-                update_infrastructure("epfl", {
-                    "knowledge": {"tools": {"rg": "unavailable"}}
+                update_private("epfl", {
+                    "tools": {"rg": "14.1.1", "fd": "10.2.0"}
                 })
 
                 # Add exploration notes
-                update_infrastructure("epfl", {
-                    "knowledge": {
-                        "notes": ["New discovery about MDSplus config"]
-                    }
+                update_private("epfl", {
+                    "exploration_notes": ["Discovered new MDSplus tree"]
                 })
 
                 # Add new paths discovered
-                update_infrastructure("epfl", {
+                update_private("epfl", {
                     "paths": {"codes": {"root": "/home/codes"}}
                 })
             """
-            infra_path = get_facilities_dir() / f"{facility}_infrastructure.yaml"
-
             try:
-                if infra_path.exists():
-                    # Load with ruamel to preserve comments
-                    with infra_path.open() as f:
-                        existing = _yaml.load(f)
-                    if existing is None:
-                        existing = CommentedMap({"facility_id": facility})
-                else:
-                    existing = CommentedMap({"facility_id": facility})
-
-                # Deep merge preserving comments
-                _deep_merge_ruamel(existing, data)
-
-                # Write back with preserved formatting
-                with infra_path.open("w") as f:
-                    _yaml.dump(existing, f)
-
-                return f"Updated infrastructure for {facility}"
+                save_private(facility, data)
+                return f"Updated private data for {facility}"
             except Exception as e:
-                logger.exception(f"Failed to update infrastructure for {facility}")
-                raise RuntimeError(f"Failed to update infrastructure: {e}") from e
+                logger.exception(f"Failed to update private data for {facility}")
+                raise RuntimeError(f"Failed to update private data: {e}") from e
 
         @self.mcp.tool()
         def get_graph_schema() -> dict[str, Any]:
@@ -313,10 +293,11 @@ class AgentsServer:
             Get complete graph schema for Cypher query generation.
 
             Returns node labels with all properties, enums with valid values,
-            and relationship types. Call this before writing Cypher queries.
+            relationship types, and private field annotations.
+            Call this before writing Cypher queries.
 
             Returns:
-                Schema dict with node_labels, enums, relationship_types, special_nodes
+                Schema dict with node_labels, enums, relationship_types, private_fields
             """
             schema = get_schema()
 
@@ -326,42 +307,37 @@ class AgentsServer:
                     "identifier": schema.get_identifier(label),
                     "description": schema.get_class_description(label),
                     "properties": schema.get_all_slots(label),
+                    "private_fields": schema.get_private_slots(label),
                 }
 
             return {
                 "node_labels": node_labels,
                 "enums": schema.get_enums(),
                 "relationship_types": schema.relationship_types,
-                "special_nodes": {
-                    "_Discovery": "Staging area for unstructured findings (write freely)",
-                    "_GraphMeta": "Graph metadata (version, facilities)",
+                "notes": {
+                    "private_fields": "Fields with is_private:true are never stored in graph",
+                    "mutations": "Cypher mutations are blocked - use ingest_node() for writes",
                 },
             }
 
         @self.mcp.tool()
-        def get_facilities() -> list[dict[str, str]]:
+        def get_all_facilities() -> list[dict[str, str]]:
             """
             List available facilities with SSH connection info.
 
             Returns:
                 List of facility dicts with id, ssh_host, description
             """
-            facilities_dir = get_facilities_dir()
-            if not facilities_dir.exists():
-                return []
-
             result = []
-            for path in sorted(facilities_dir.glob("*.yaml")):
-                # Skip infrastructure files
-                if path.stem.endswith("_infrastructure"):
-                    continue
+            for facility_id in list_facilities():
                 try:
-                    config = get_config(path.stem)
+                    data = get_facility(facility_id)
                     result.append(
                         {
-                            "id": config.facility,
-                            "ssh_host": config.ssh_host,
-                            "description": config.description,
+                            "id": data.get("id", facility_id),
+                            "ssh_host": data.get("ssh_host", ""),
+                            "description": data.get("description", ""),
+                            "machine": data.get("machine", ""),
                         }
                     )
                 except Exception:
@@ -370,11 +346,11 @@ class AgentsServer:
             return result
 
         @self.mcp.tool()
-        def get_facility(facility: str) -> dict[str, Any]:
+        def get_facility_info(facility: str) -> dict[str, Any]:
             """
             Get comprehensive facility info for exploration.
 
-            Merges graph data, infrastructure, and exploration state.
+            Merges public config, private data, and graph state.
             Call this before starting exploration to understand:
             - Available tools (rg, fd, etc.)
             - Actionable paths (discovered/scanned/flagged) by interest_score
@@ -385,97 +361,89 @@ class AgentsServer:
                 facility: Facility ID (e.g., "epfl")
 
             Returns:
-                Dict with: config, infrastructure, graph_summary, exploration_state
+                Dict with: config, tools, paths, graph_summary, exploration_state
             """
-            from imas_codex.discovery.config import (
-                get_config,
-                get_infrastructure,
-            )
-
             result: dict[str, Any] = {"facility": facility}
 
-            # Load public config
+            # Load merged facility data (public + private)
             try:
-                config = get_config(facility)
+                data = get_facility(facility)
                 result["config"] = {
-                    "ssh_host": config.ssh_host,
-                    "description": config.description,
-                    "machine": config.machine,
+                    "ssh_host": data.get("ssh_host"),
+                    "description": data.get("description"),
+                    "machine": data.get("machine"),
+                    "name": data.get("name"),
                 }
+                result["tools"] = data.get("tools", {})
+                result["paths"] = data.get("paths", {})
+                result["exploration_notes"] = data.get("exploration_notes", [])
             except Exception as e:
-                result["config_error"] = str(e)
-
-            # Load infrastructure (tools, paths, etc.)
-            try:
-                infra = get_infrastructure(facility)
-                if infra:
-                    # Extract key agent guidance
-                    result["tools"] = infra.get("knowledge", {}).get("tools", {})
-                    result["paths"] = infra.get("paths", {})
-                    result["notes"] = infra.get("knowledge", {}).get("notes", [])
-            except Exception as e:
-                result["infrastructure_error"] = str(e)
+                result["error"] = str(e)
+                return result
 
             # Query graph for facility summary
-            with self.graph_client:
-                # Count nodes by type
-                summary = self.graph_client.query(
-                    """
-                    MATCH (f:Facility {id: $fid})
-                    OPTIONAL MATCH (a:AnalysisCode)-[:FACILITY_ID]->(f)
-                    OPTIONAL MATCH (d:Diagnostic)-[:FACILITY_ID]->(f)
-                    OPTIONAL MATCH (t:TDIFunction)-[:FACILITY_ID]->(f)
-                    OPTIONAL MATCH (m:MDSplusTree)-[:FACILITY_ID]->(f)
-                    RETURN
-                        count(DISTINCT a) AS analysis_codes,
-                        count(DISTINCT d) AS diagnostics,
-                        count(DISTINCT t) AS tdi_functions,
-                        count(DISTINCT m) AS mdsplus_trees
-                    """,
-                    fid=facility,
-                )
-                if summary:
-                    result["graph_summary"] = summary[0]
+            try:
+                with GraphClient() as client:
+                    # Count nodes by type
+                    summary = client.query(
+                        """
+                        MATCH (f:Facility {id: $fid})
+                        OPTIONAL MATCH (a:AnalysisCode)-[:FACILITY_ID]->(f)
+                        OPTIONAL MATCH (d:Diagnostic)-[:FACILITY_ID]->(f)
+                        OPTIONAL MATCH (t:TDIFunction)-[:FACILITY_ID]->(f)
+                        OPTIONAL MATCH (m:MDSplusTree)-[:FACILITY_ID]->(f)
+                        RETURN
+                            count(DISTINCT a) AS analysis_codes,
+                            count(DISTINCT d) AS diagnostics,
+                            count(DISTINCT t) AS tdi_functions,
+                            count(DISTINCT m) AS mdsplus_trees
+                        """,
+                        fid=facility,
+                    )
+                    if summary:
+                        result["graph_summary"] = summary[0]
 
-                # Get actionable paths (discovered/scanned/flagged) for exploration
-                actionable = self.graph_client.query(
-                    """
-                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                    WHERE p.status IN ['discovered', 'listed', 'scanned', 'flagged']
-                    RETURN p.id AS id, p.path AS path, p.path_type AS path_type,
-                           p.status AS status, p.interest_score AS interest_score,
-                           p.description AS description, p.depth AS depth
-                    ORDER BY COALESCE(p.interest_score, 0) DESC, p.depth, p.path
-                    """,
-                    fid=facility,
-                )
-                result["actionable_paths"] = actionable
+                    # Get actionable paths (discovered/scanned/flagged) for exploration
+                    actionable = client.query(
+                        """
+                        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        WHERE p.status IN ['discovered', 'listed', 'scanned', 'flagged']
+                        RETURN p.id AS id, p.path AS path, p.path_type AS path_type,
+                               p.status AS status, p.interest_score AS interest_score,
+                               p.description AS description, p.depth AS depth
+                        ORDER BY COALESCE(p.interest_score, 0) DESC, p.depth, p.path
+                        """,
+                        fid=facility,
+                    )
+                    result["actionable_paths"] = actionable
 
-                # Get recently processed paths
-                processed = self.graph_client.query(
-                    """
-                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                    WHERE p.status IN ['analyzed', 'ingested']
-                    RETURN p.id AS id, p.path AS path, p.status AS status,
-                           p.last_examined AS last_examined, p.files_ingested AS files_ingested
-                    ORDER BY p.last_examined DESC
-                    LIMIT 10
-                    """,
-                    fid=facility,
-                )
-                result["recent_paths"] = processed
+                    # Get recently processed paths
+                    processed = client.query(
+                        """
+                        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        WHERE p.status IN ['analyzed', 'ingested']
+                        RETURN p.id AS id, p.path AS path, p.status AS status,
+                               p.last_examined AS last_examined, p.files_ingested AS files_ingested
+                        ORDER BY p.last_examined DESC
+                        LIMIT 10
+                        """,
+                        fid=facility,
+                    )
+                    result["recent_paths"] = processed
 
-                # Get excluded paths (so agent knows what to skip)
-                excluded = self.graph_client.query(
-                    """
-                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                    WHERE p.status = 'excluded'
-                    RETURN p.path AS path, p.description AS description
-                    ORDER BY p.path
-                    """,
-                    fid=facility,
-                )
-                result["excluded_paths"] = [e["path"] for e in excluded]
+                    # Get excluded paths (so agent knows what to skip)
+                    excluded = client.query(
+                        """
+                        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        WHERE p.status = 'excluded'
+                        RETURN p.path AS path, p.description AS description
+                        ORDER BY p.path
+                        """,
+                        fid=facility,
+                    )
+                    result["excluded_paths"] = [e["path"] for e in excluded]
+            except Exception as e:
+                result["graph_error"] = str(e)
 
             return result
 
