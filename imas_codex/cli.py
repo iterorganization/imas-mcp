@@ -384,9 +384,21 @@ def neo4j_start(
         # Custom data directory
         imas-codex neo4j start --data-dir /path/to/data
     """
+    import platform
     import shutil
     import subprocess
     from pathlib import Path
+
+    # On Windows/Mac, use docker compose instead of Apptainer
+    if platform.system() in ("Windows", "Darwin"):
+        click.echo("This command uses Apptainer (for Linux HPC).", err=True)
+        click.echo("On Windows/Mac, use Docker instead:", err=True)
+        click.echo("  docker compose up -d neo4j", err=True)
+        raise SystemExit(1)
+
+    if not shutil.which("apptainer"):
+        click.echo("Error: apptainer not found in PATH", err=True)
+        raise SystemExit(1)
 
     # Resolve paths
     home = Path.home()
@@ -404,10 +416,6 @@ def neo4j_start(
         click.echo(
             "Pull it with: apptainer pull docker://neo4j:2025.11-community", err=True
         )
-        raise SystemExit(1)
-
-    if not shutil.which("apptainer"):
-        click.echo("Error: apptainer not found in PATH", err=True)
         raise SystemExit(1)
 
     # Check if already running
