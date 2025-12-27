@@ -19,7 +19,7 @@ description: >-
   are stored locally only (gitignored YAML), never in the public graph.
 
 license: MIT
-version: 0.2.0
+version: 0.3.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -37,6 +37,24 @@ imports:
 # =============================================================================
 
 enums:
+  DataSourceType:
+    description: Types of data source systems at fusion facilities
+    permissible_values:
+      mdsplus:
+        description: MDSplus tree-based data system
+      uda:
+        description: Universal Data Access (UDA) system
+      hdf5:
+        description: HDF5 file-based storage
+      netcdf:
+        description: NetCDF scientific data format
+      imas:
+        description: IMAS native data format
+      ppf:
+        description: JET Processed Pulse File system
+      allas:
+        description: CSC Allas object storage
+
   ToolStatus:
     description: Availability status of a command-line tool
     permissible_values:
@@ -288,10 +306,10 @@ classes:
       - scc: SLOC + complexity metrics for prioritization
       
       MULTI-PASS EXPLORATION WORKFLOW:
-      1. Scout: discovered → listed → scanned (pattern search with rg)
-      2. Triage: scanned → flagged (use scc complexity for interest_score) or skipped
-      3. Analyze: flagged → analyzed (read files, understand structure)
-      4. Ingest: analyzed → ingested (create CodeExample nodes)
+      1. Scout: discovered -> listed -> scanned (pattern search with rg)
+      2. Triage: scanned -> flagged (use scc complexity for interest_score) or skipped
+      3. Analyze: flagged -> analyzed (read files, understand structure)
+      4. Ingest: analyzed -> ingested (create CodeExample nodes)
       
       Query paths by status to find work for each pass.
       Use interest_score to prioritize flagged paths.
@@ -398,12 +416,15 @@ classes:
         ifabsent: "true"
 
   TreeNode:
-    description: A node within an MDSplus tree
+    description: >-
+      A node within an MDSplus tree. Represents a single data point that can
+      be mapped to IMAS. Nodes with variants (PSI, PSI_2, PSI_3) are stored
+      as a single node with a variants array.
     class_uri: facility:TreeNode
     attributes:
       path:
         identifier: true
-        description: Full node path (e.g., "\\RESULTS::LIUQE:IP")
+        description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
         required: true
       tree_name:
         description: Parent tree name
@@ -417,15 +438,32 @@ classes:
         description: MDSplus node data type
         range: TreeNodeType
       units:
-        description: Physical units (SI)
+        description: Physical units (SI, validated by pint)
+        required: true
       description:
         description: Node description
+      physics_domain:
+        description: Physics domain for categorization and filtering
       example_shot:
         description: Example shot number where this node exists
         range: integer
+      variants:
+        description: >-
+          Variant suffixes for multi-source nodes (e.g., ["", "_2", "_3"] for 
+          PSI, PSI_2, PSI_3 from LIUQE, LIUQE02, LIUQE03). First element is
+          the primary/canonical path. Order matches source priority.
+        multivalued: true
+      shape:
+        description: Data shape description (e.g., "1D time series", "2D profile(rho, time)")
+      accessor_function:
+        description: TDI function that provides high-level access to this node
+        range: TDIFunction
 
   TDIFunction:
-    description: A TDI function providing high-level data access
+    description: >-
+      A TDI function providing high-level data access abstraction.
+      TDI functions encapsulate tree navigation and source selection logic,
+      e.g., tcv_eq("PSI", "LIUQE") handles LIUQE/FBTE equilibrium selection.
     class_uri: facility:TDIFunction
     attributes:
       name:
@@ -437,12 +475,19 @@ classes:
         required: true
         range: Facility
       description:
-        description: Function description
+        description: Function description and usage notes
+      signature:
+        description: Function signature with parameter types (e.g., "tcv_eq(signal, source, shot)")
       parameters:
         description: Function parameter names
         multivalued: true
       return_type:
         description: Return type description
+      source_file:
+        description: Path to the .FUN file defining this function
+        range: FacilityPath
+      physics_domain:
+        description: Physics domain this function serves
 
   ShotRange:
     description: A range of shot numbers with common characteristics
@@ -532,14 +577,17 @@ classes:
         description: Physical units from IMAS DD
 
   IMASMapping:
-    description: A mapping from facility-specific data to IMAS
+    description: >-
+      A mapping from facility-specific data to IMAS paths.
+      Contains all information needed to generate an Ambix Recipe for data pumping.
+      Data flow is one-way (facility->IMAS) but searchable from either direction.
     class_uri: facility:IMASMapping
     attributes:
       id:
         identifier: true
         required: true
       source_path:
-        description: Source path (TreeNode or TDI function)
+        description: Source facility path (TreeNode path or TDI function call)
         required: true
         range: TreeNode
       target_path:
@@ -550,13 +598,36 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+      
+      # Pump context for Ambix Recipe generation
+      driver:
+        description: Data access driver (e.g., "mdsplus", "tdi", "ppf")
+        range: DataSourceType
+        required: true
+      driver_args:
+        description: Arguments for the driver (JSON-encoded, e.g., tree name, path)
+      units_in:
+        description: Units of the source data (must be pint-compatible)
+      units_out:
+        description: Units of the target IMAS path (from IMAS DD)
+      scale:
+        description: Numeric scale factor for transformation
+        range: float
       transformation:
-        description: Transformation expression (e.g., unit conversion)
+        description: Complex transformation expression if scale is insufficient
+      
+      # Validation and provenance
       validated:
-        description: Whether this mapping has been validated
+        description: Whether this mapping has been validated against real data
         range: boolean
+      validated_shot:
+        description: Shot number used for validation
+        range: integer
+      confidence:
+        description: Confidence level of the mapping (0.0-1.0)
+        range: float
       notes:
-        description: Mapping notes
+        description: Mapping notes and caveats
 
 # =============================================================================
 # Code Examples Classes
