@@ -377,6 +377,8 @@ See `graph/README.md` for detailed usage examples.
 
 The Agents MCP server enables exploration of remote fusion facilities.
 
+> **MDSplus Trees**: For ingesting MDSplus tree structures, see [plans/MDSPLUS_INGESTION.md](plans/MDSPLUS_INGESTION.md).
+
 ### Architecture
 
 The system uses a **Command/Deploy** pattern:
