@@ -602,12 +602,13 @@ class AgentsServer:
             """
             try:
                 searcher = CodeExampleSearch()
-                results = searcher.search(
-                    query=query,
-                    top_k=top_k,
-                    ids_filter=ids_filter,
-                    facility=facility,
-                )
+                with searcher.graph_client:
+                    results = searcher.search(
+                        query=query,
+                        top_k=top_k,
+                        ids_filter=ids_filter,
+                        facility=facility,
+                    )
                 # Convert to dicts for JSON serialization
                 return [
                     {
