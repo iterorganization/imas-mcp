@@ -429,7 +429,7 @@ class CodeExampleIngester:
                 UNWIND $chunks AS chunk
                 MATCH (c:CodeChunk {id: chunk.id})
                 MATCH (e:CodeExample {id: $example_id})
-                MERGE (c)-[:HAS_CHUNK]->(e)
+                MERGE (e)-[:HAS_CHUNK]->(c)
                 """,
                 chunks=[{"id": c["id"]} for c in chunk_props_list],
                 example_id=example_id,
