@@ -9,6 +9,7 @@ MDSplus trees are hierarchical data containers used at fusion facilities (TCV, D
 1. **Discoverability** - Search nodes by physics domain, units, description
 2. **IMAS Mapping** - Link facility data to IMAS paths for Ambix Recipe generation
 3. **Documentation** - Provide context for data access patterns
+4. **Versioning** - Track shot-range validity for evolving analysis codes
 
 ## Key Insight: No Scripts Needed
 
@@ -18,6 +19,21 @@ Tree structures are **very stable** (years between changes). Rather than maintai
 2. Parse output dynamically
 3. Use MCP tools (`ingest_nodes`, `cypher`) to batch insert
 4. LLM adapts to different tree structures without code changes
+
+## Priority: TDI Functions First
+
+TDI functions are the recommended starting point because:
+
+1. **They abstract complexity** - Handle source selection, variant mapping, version lookup
+2. **Fewer items** - ~700 functions vs ~100k tree nodes
+3. **Rich semantics** - Signature, parameters, physics domain are explicit
+4. **Version tracking** - VERSION.FUN provides shot-range validity
+
+**Recommended order:**
+1. TDI functions (especially VERSION.FUN pattern)
+2. Analysis codes with version/variant info
+3. Tree nodes (starting with `results` tree equilibrium subtree)
+4. IMAS mappings
 
 ## Workflow
 
@@ -109,7 +125,91 @@ ingest_nodes("TDIFunction", [
         "description": "Get equilibrium quantities with source selection",
         "signature": "tcv_eq(signal, source='LIUQE', shot=None)",
         "parameters": ["signal", "source", "shot"],
-        "physics_domain": "equilibrium"
+        "physics_domain": "equilibrium",
+        "default_source": "LIUQE",
+        "available_sources": ["LIUQE", "LIUQE2", "LIUQE.M", "FBTE", "FLAT", "RAMP"]
+    }
+])
+```
+
+### TCV VERSION.FUN Pattern
+
+TCV implements shot-range versioning via `VERSION.FUN`. This function returns:
+- **`-1`**: Program not applicable for this shot range
+- **`-2`**: Program doesn't exist (undefined)
+- **`> 0`**: Version number valid from that shot
+
+**Internal structure:**
+```tdi
+PUBLIC FUN VERSION(OPTIONAL IN _program, OPTIONAL IN _shot) {
+    /* Arrays of versions and starting shot numbers */
+    _equil_1_verss = [1.0, ...];
+    _equil_1_shots = [0, ...];
+    
+    /* bsearch to find version for shot */
+    _loc = BSEARCH(_shot, _shots);
+    RETURN(_verss[_loc]);
+}
+```
+
+**Ingest version history:**
+```python
+ingest_nodes("TDIFunction", [
+    {
+        "name": "version",
+        "facility_id": "epfl",
+        "description": "Master version lookup for analysis codes",
+        "signature": "version(program, shot)",
+        "parameters": ["program", "shot"],
+        "physics_domain": "general",
+        "return_type": "float"
+    }
+])
+```
+
+### TCV Variant Mapping (tcv_eq)
+
+The `tcv_eq` function handles source selection and variant mapping:
+
+```tdi
+/* Source to variant suffix mapping */
+_mode = _mode == "LIUQE" ? "" : "_" // extract(5,1,_mode)
+/* LIUQE -> "", LIUQE2 -> "_2", LIUQE.M -> ".M" */
+
+/* Path construction */
+_path = "\\RESULTS::" // _var // _mode
+/* e.g., \\RESULTS::PSI_2 for LIUQE2 */
+```
+
+| Source | Variant Suffix | Example Path |
+|--------|---------------|--------------|
+| LIUQE | `` | `\RESULTS::PSI` |
+| LIUQE2 | `_2` | `\RESULTS::PSI_2` |
+| LIUQE3 | `_3` | `\RESULTS::PSI_3` |
+| LIUQE.M | `.M` | `\RESULTS::PSI.M` |
+| FBTE | `` | `\RESULTS::FBTE:PSI` |
+
+### Analysis Code Versioning
+
+Link analysis codes to the variants they produce:
+
+```python
+ingest_nodes("AnalysisCode", [
+    {
+        "name": "LIUQE",
+        "facility_id": "epfl",
+        "code_type": "equilibrium",
+        "description": "Primary equilibrium reconstruction",
+        "output_variant": "",
+        "writes_to_tree": "results"
+    },
+    {
+        "name": "LIUQE02",
+        "facility_id": "epfl",
+        "code_type": "equilibrium",
+        "output_variant": "_2",
+        "writes_to_tree": "results",
+        "supersedes": "LIUQE"
     }
 ])
 ```
@@ -146,18 +246,41 @@ For large trees (>1000 nodes), ingest in chunks:
 
 Key trees at TCV:
 
-| Tree | Nodes | Purpose |
-|------|-------|---------|
-| `results` | ~11k | Processed/analyzed data (start here) |
-| `tcv_shot` | ~84k | Raw diagnostic data |
-| `magnetics` | ~500 | Magnetic measurements |
-| `base` | ~1.3k | Machine configuration |
+| Tree | Nodes | Population | Purpose |
+|------|-------|------------|---------|
+| `results` | ~11k | dynamic | Processed/analyzed data (start here) |
+| `tcv_shot` | ~84k | dynamic | Raw diagnostic data |
+| `magnetics` | ~500 | static | Magnetic measurements |
+| `base` | ~1.3k | static | Machine configuration |
+| `thomson` | ~1k | hybrid | Thomson scattering data |
+
+**Population types:**
+- **static**: Structure fixed, always present
+- **dynamic**: Nodes created at runtime by analysis codes
+- **hybrid**: Fixed structure with dynamic population
 
 TDI function locations:
-- `/home/VMS/XYZ/MDSMGR/TDI/` (~442 functions)
-- `/home/VMS/XYZ/MDSMGR/TCV_TDI_FUNCTIONS/` (~253 functions)
+- `/usr/local/mdsplus/tdi/` (~672 .FUN files total)
+- Key functions: `VERSION.FUN`, `TCV_EQ.FUN`, `TCV_IP.FUN`, `TCV_PSITBX.FUN`
 
 Data server: `tcvdata.epfl.ch`
+
+### TDI Function Categories (from scouting)
+
+| Category | Count | Examples |
+|----------|-------|----------|
+| Equilibrium | ~50 | `tcv_eq`, `tcv_psitbx`, `setequil` |
+| Magnetics | ~30 | `tcv_ip`, `tcv_bphi`, `tcv_mhd_env` |
+| Thomson | ~20 | `ts_te`, `ts_ne`, `thomson_merge` |
+| ECE | ~15 | `ece_te`, `ece_freq` |
+| General | ~50 | `version`, `tcv_get`, `tcv_time` |
+
+### Current Graph State
+
+Run `get_exploration_progress("epfl")` to see:
+- `mdsplus_coverage`: Per-tree ingestion status and node counts
+- `tdi_coverage`: TDI functions by physics domain
+- `code_coverage`: Analysis codes by type
 
 ## See Also
 

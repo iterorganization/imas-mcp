@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 import anyio
 from fastmcp import Context, FastMCP
+from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
@@ -41,6 +42,21 @@ logger = logging.getLogger(__name__)
 _yaml = YAML()
 _yaml.preserve_quotes = True
 _yaml.width = 120
+
+# Neo4j connection error message
+NEO4J_NOT_RUNNING_MSG = (
+    "Neo4j is not running. Start it with: uv run imas-codex neo4j start"
+)
+
+
+def _neo4j_error_message(e: Exception) -> str:
+    """Format Neo4j errors with helpful instructions."""
+    if isinstance(e, ServiceUnavailable):
+        return NEO4J_NOT_RUNNING_MSG
+    # Check for connection refused in the error chain
+    if "Connection refused" in str(e) or "ServiceUnavailable" in str(e):
+        return NEO4J_NOT_RUNNING_MSG
+    return str(e)
 
 
 def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> CommentedMap:
@@ -135,7 +151,9 @@ class AgentsServer:
                     return client.query(query, **(params or {}))
             except Exception as e:
                 logger.exception("Cypher query failed")
-                raise RuntimeError(f"Cypher query failed: {e}") from e
+                raise RuntimeError(
+                    f"Cypher query failed: {_neo4j_error_message(e)}"
+                ) from e
 
         @self.mcp.tool()
         def ingest_nodes(
@@ -251,7 +269,9 @@ class AgentsServer:
 
             except Exception as e:
                 logger.exception("Failed to ingest nodes")
-                raise RuntimeError(f"Failed to ingest nodes: {e}") from e
+                raise RuntimeError(
+                    f"Failed to ingest nodes: {_neo4j_error_message(e)}"
+                ) from e
 
         @self.mcp.tool()
         def read_private(facility: str) -> dict[str, Any] | None:
@@ -471,7 +491,7 @@ class AgentsServer:
                     )
                     result["excluded_paths"] = [e["path"] for e in excluded]
             except Exception as e:
-                result["graph_error"] = str(e)
+                result["graph_error"] = _neo4j_error_message(e)
 
             return result
 
@@ -544,8 +564,9 @@ class AgentsServer:
                 return result
             except Exception as e:
                 logger.exception("Failed to ingest code files")
-                await ctx.error(f"Ingestion failed: {e}")
-                raise RuntimeError(f"Failed to ingest code files: {e}") from e
+                error_msg = _neo4j_error_message(e)
+                await ctx.error(f"Ingestion failed: {error_msg}")
+                raise RuntimeError(f"Failed to ingest code files: {error_msg}") from e
 
         @self.mcp.tool()
         def search_code_examples(
@@ -636,17 +657,20 @@ class AgentsServer:
             """
             Get exploration progress metrics for a facility.
 
-            Calculates completion metrics based on FacilityPath status distribution.
+            Calculates completion metrics based on FacilityPath status distribution
+            and MDSplus tree/TDI function coverage.
 
             Args:
                 facility: Facility ID (e.g., "epfl")
 
             Returns:
-                Dict with total_paths, actionable, processed, completion_pct, by_status
+                Dict with total_paths, actionable, processed, completion_pct, by_status,
+                mdsplus_coverage (per-tree stats), tdi_coverage
             """
             try:
                 with GraphClient() as client:
-                    rows = client.query(
+                    # Path exploration progress
+                    path_rows = client.query(
                         """
                         MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
                         RETURN p.status AS status, count(*) AS count
@@ -655,7 +679,50 @@ class AgentsServer:
                         fid=facility,
                     )
 
-                counts = {r["status"]: r["count"] for r in rows}
+                    # MDSplus tree coverage (per-tree)
+                    tree_rows = client.query(
+                        """
+                        MATCH (t:MDSplusTree)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        OPTIONAL MATCH (n:TreeNode)-[:MDSPLUS_TREE]->(t)
+                        OPTIONAL MATCH (tdi:TDIFunction)-[:FACILITY_ID]->(f)
+                        WHERE tdi.physics_domain IS NOT NULL
+                        RETURN t.name AS tree,
+                               t.ingestion_status AS status,
+                               t.node_count_total AS total_nodes,
+                               t.node_count_ingested AS ingested_nodes,
+                               t.population_type AS population_type,
+                               count(DISTINCT n) AS nodes_in_graph,
+                               t.last_ingested AS last_ingested
+                        ORDER BY t.name
+                        """,
+                        fid=facility,
+                    )
+
+                    # TDI function coverage
+                    tdi_rows = client.query(
+                        """
+                        MATCH (t:TDIFunction)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        RETURN t.physics_domain AS domain,
+                               count(*) AS count,
+                               sum(CASE WHEN t.version IS NOT NULL THEN 1 ELSE 0 END) AS with_version
+                        ORDER BY count DESC
+                        """,
+                        fid=facility,
+                    )
+
+                    # Analysis code coverage
+                    code_rows = client.query(
+                        """
+                        MATCH (a:AnalysisCode)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        RETURN a.code_type AS type,
+                               count(*) AS count,
+                               sum(CASE WHEN a.writes_to_tree IS NOT NULL THEN 1 ELSE 0 END) AS with_tree_link
+                        ORDER BY count DESC
+                        """,
+                        fid=facility,
+                    )
+
+                counts = {r["status"]: r["count"] for r in path_rows}
                 total = sum(counts.values())
 
                 # Categorize by workflow stage
@@ -675,6 +742,41 @@ class AgentsServer:
                     round(100 * (processed + skipped) / total, 1) if total else 0.0
                 )
 
+                # MDSplus tree coverage summary
+                mdsplus_coverage = {}
+                for row in tree_rows:
+                    tree_name = row["tree"]
+                    total_nodes = row["total_nodes"] or 0
+                    ingested = row["ingested_nodes"] or row["nodes_in_graph"] or 0
+                    mdsplus_coverage[tree_name] = {
+                        "status": row["status"] or "pending",
+                        "population_type": row["population_type"],
+                        "total_nodes": total_nodes,
+                        "ingested_nodes": ingested,
+                        "coverage_pct": round(100 * ingested / total_nodes, 1)
+                        if total_nodes
+                        else 0.0,
+                        "last_ingested": row["last_ingested"],
+                    }
+
+                # TDI function coverage by domain
+                tdi_coverage = {
+                    "total": sum(r["count"] for r in tdi_rows),
+                    "with_version": sum(r["with_version"] for r in tdi_rows),
+                    "by_domain": {
+                        r["domain"] or "unclassified": r["count"] for r in tdi_rows
+                    },
+                }
+
+                # Analysis code coverage
+                code_coverage = {
+                    "total": sum(r["count"] for r in code_rows),
+                    "with_tree_link": sum(r["with_tree_link"] for r in code_rows),
+                    "by_type": {
+                        r["type"] or "unclassified": r["count"] for r in code_rows
+                    },
+                }
+
                 # Recommend next action
                 if total == 0:
                     recommendation = "Run /scout-paths to discover paths"
@@ -682,22 +784,35 @@ class AgentsServer:
                     recommendation = "Run /score-paths to score discovered paths"
                 elif counts.get("flagged", 0) > counts.get("ingested", 0):
                     recommendation = "Run /scout-code to ingest flagged paths"
+                elif tdi_coverage["total"] == 0:
+                    recommendation = (
+                        "Run /ingest-tdi-functions to discover TDI functions"
+                    )
+                elif any(t["status"] == "pending" for t in mdsplus_coverage.values()):
+                    recommendation = "Run /ingest-tree for pending trees"
                 else:
                     recommendation = "Increase depth or explore new root paths"
 
                 return {
                     "facility": facility,
-                    "total_paths": total,
-                    "actionable": actionable,
-                    "processed": processed,
-                    "skipped": skipped,
-                    "completion_pct": completion_pct,
-                    "by_status": counts,
+                    "paths": {
+                        "total": total,
+                        "actionable": actionable,
+                        "processed": processed,
+                        "skipped": skipped,
+                        "completion_pct": completion_pct,
+                        "by_status": counts,
+                    },
+                    "mdsplus_coverage": mdsplus_coverage,
+                    "tdi_coverage": tdi_coverage,
+                    "code_coverage": code_coverage,
                     "recommendation": recommendation,
                 }
             except Exception as e:
                 logger.exception("Failed to get exploration progress")
-                raise RuntimeError(f"Failed to get exploration progress: {e}") from e
+                raise RuntimeError(
+                    f"Failed to get exploration progress: {_neo4j_error_message(e)}"
+                ) from e
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files.

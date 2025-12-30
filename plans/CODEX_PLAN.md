@@ -226,18 +226,29 @@ We treat the Database as an Artifact.
 - [x] File Explorer subagent demonstrator
 - [x] Agents MCP server for prompts
 
-### Phase 3: Subagent Expansion 🔜
+### Phase 3: Neo4j Knowledge Graph ✅
+- [x] Neo4j integration with Apptainer
+- [x] GraphClient with Cypher query API
+- [x] Schema-driven graph structure from LinkML
+- [x] OCI artifact versioning (GHCR push/pull)
+- [x] `get_exploration_progress` with per-tree coverage
+- [x] `get_graph_schema` for LLM Cypher generation
+
+### Phase 4: MDSplus Ingestion 🔜 (Current Focus)
+- [x] TDI function discovery (VERSION.FUN pattern)
+- [x] Variant/source mapping (tcv_eq pattern)
+- [x] Shot-range validity tracking
+- [x] Analysis code versioning
+- [ ] Tree structure ingestion (equilibrium subtree)
+- [ ] IMAS mapping generation
+
+### Phase 5: Subagent Expansion 🔜
 - [ ] Code Search agent
 - [ ] Data Inspector agent (HDF5, MDSplus)
 - [ ] Environment Probe agent
-- [ ] Dependency Mapper agent
+- [ ] TDI Parser agent
 
-### Phase 4: Graph Building 🔜
-- [ ] Neo4j integration
-- [ ] LinkML schema generation from discoveries
-- [ ] Zone D logic synthesis
-
-### Phase 5: CI/CD & Artifacts 🔜
+### Phase 6: CI/CD & Artifacts 🔜
 - [ ] Automated graph builds
 - [ ] GHCR publishing pipeline
 - [ ] Version traceability
