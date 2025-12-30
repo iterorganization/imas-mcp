@@ -1,18 +1,23 @@
-"""Semantic search over code examples.
+"""Semantic search over code examples using LlamaIndex.
 
-Uses Neo4j vector index for similarity search with optional
-IDS and facility filtering.
+Uses Neo4jVectorStore for similarity search with optional
+IDS and facility filtering via Neo4j's native metadata filtering.
 """
 
 import logging
 from dataclasses import dataclass, field
 
-import numpy as np
+from llama_index.core import VectorStoreIndex
+from llama_index.core.vector_stores.types import (
+    FilterCondition,
+    FilterOperator,
+    MetadataFilter,
+    MetadataFilters,
+)
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
-from imas_codex.graph import GraphClient
-
-from .ingester import get_embed_model
+from .pipeline import create_vector_store, get_embed_model
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +39,21 @@ class CodeSearchResult:
 
 @dataclass
 class CodeExampleSearch:
-    """Search code examples using vector similarity and graph filtering."""
+    """Search code examples using LlamaIndex VectorStoreIndex."""
 
     embed_model: HuggingFaceEmbedding = field(default_factory=get_embed_model)
-    graph_client: GraphClient = field(default_factory=GraphClient)
+    vector_store: Neo4jVectorStore | None = None
+    _index: VectorStoreIndex | None = field(default=None, init=False)
+
+    def _get_index(self) -> VectorStoreIndex:
+        """Get or create the VectorStoreIndex."""
+        if self._index is None:
+            vs = self.vector_store or create_vector_store()
+            self._index = VectorStoreIndex.from_vector_store(
+                vector_store=vs,
+                embed_model=self.embed_model,
+            )
+        return self._index
 
     def search(
         self,
@@ -49,6 +65,8 @@ class CodeExampleSearch:
     ) -> list[CodeSearchResult]:
         """Search for code examples matching the query.
 
+        Uses Neo4jVectorStore's native metadata filtering (requires Neo4j 5.18+).
+
         Args:
             query: Natural language search query
             top_k: Maximum number of results to return
@@ -59,215 +77,96 @@ class CodeExampleSearch:
         Returns:
             List of CodeSearchResult objects ordered by relevance
         """
-        # Generate query embedding using LlamaIndex
-        query_embedding = self.embed_model.get_text_embedding(query)
+        index = self._get_index()
 
-        # Build Cypher query with optional filters
-        where_clauses = []
-        params: dict = {
-            "embedding": list(query_embedding),
-            "top_k": top_k,
-        }
+        # Build metadata filters for Neo4jVectorStore
+        filters = self._build_filters(facility, ids_filter)
 
-        if facility:
-            where_clauses.append("e.facility_id = $facility")
-            params["facility"] = facility
+        # Use retriever with native filtering when possible
+        retriever = index.as_retriever(
+            similarity_top_k=top_k,
+            filters=filters,
+        )
 
-        # Use vector index for similarity search
-        # Then optionally filter by IDS
-        if ids_filter:
-            # Filter chunks that have relationships to specified IDS
-            ids_filter_lower = [ids.lower() for ids in ids_filter]
-            params["ids_filter"] = ids_filter_lower
-
-            cypher = """
-                CALL db.index.vector.queryNodes('code_chunk_embedding', $top_k * 2, $embedding)
-                YIELD node AS c, score
-                MATCH (c)-[:HAS_CHUNK]-(e:CodeExample)
-                WHERE (c)-[:RELATED_PATHS]->(:IMASPath)
-                WITH c, e, score
-                MATCH (c)-[:RELATED_PATHS]->(p:IMASPath)
-                WHERE p.ids IN $ids_filter
-                WITH c, e, score, collect(DISTINCT p.ids) AS related_ids
-            """
-        else:
-            cypher = """
-                CALL db.index.vector.queryNodes('code_chunk_embedding', $top_k, $embedding)
-                YIELD node AS c, score
-                MATCH (c)-[:HAS_CHUNK]-(e:CodeExample)
-                OPTIONAL MATCH (c)-[:RELATED_PATHS]->(p:IMASPath)
-                WITH c, e, score, collect(DISTINCT p.ids) AS related_ids
-            """
-
-        # Add facility filter if specified
-        if where_clauses:
-            cypher += f" WHERE {' AND '.join(where_clauses)}"
-
-        # Return results
-        cypher += """
-            RETURN
-                c.id AS chunk_id,
-                c.content AS content,
-                c.function_name AS function_name,
-                c.start_line AS start_line,
-                c.end_line AS end_line,
-                e.source_file AS source_file,
-                e.facility_id AS facility_id,
-                related_ids,
-                score
-            ORDER BY score DESC
-            LIMIT $top_k
-        """
-
-        with self.graph_client:
-            try:
-                results = self.graph_client.query(cypher, **params)
-            except Exception as e:
-                logger.warning(f"Vector search failed, falling back to text match: {e}")
-                return self._fallback_search(query, top_k, ids_filter, facility)
-
-        # Convert to result objects
-        return [
-            CodeSearchResult(
-                chunk_id=r["chunk_id"],
-                content=r["content"],
-                function_name=r["function_name"],
-                source_file=r["source_file"],
-                facility_id=r["facility_id"],
-                related_ids=r["related_ids"] or [],
-                score=r["score"],
-                start_line=r.get("start_line"),
-                end_line=r.get("end_line"),
-            )
-            for r in results
-            if r["score"] >= min_score
-        ]
-
-    def _fallback_search(
-        self,
-        query: str,
-        top_k: int,
-        ids_filter: list[str] | None = None,
-        facility: str | None = None,
-    ) -> list[CodeSearchResult]:
-        """Fallback to in-memory similarity search if vector index unavailable."""
-        # Fetch all chunks with embeddings
-        params: dict = {}
-
-        cypher = """
-            MATCH (c:CodeChunk)-[:HAS_CHUNK]-(e:CodeExample)
-            WHERE c.embedding IS NOT NULL
-        """
-
-        if facility:
-            cypher += " AND e.facility_id = $facility"
-            params["facility"] = facility
-
-        if ids_filter:
-            cypher += """
-                AND EXISTS {
-                    MATCH (c)-[:RELATED_PATHS]->(p:IMASPath)
-                    WHERE p.ids IN $ids_filter
-                }
-            """
-            params["ids_filter"] = [ids.lower() for ids in ids_filter]
-
-        cypher += """
-            OPTIONAL MATCH (c)-[:RELATED_PATHS]->(p:IMASPath)
-            RETURN
-                c.id AS chunk_id,
-                c.content AS content,
-                c.function_name AS function_name,
-                c.start_line AS start_line,
-                c.end_line AS end_line,
-                c.embedding AS embedding,
-                e.source_file AS source_file,
-                e.facility_id AS facility_id,
-                collect(DISTINCT p.ids) AS related_ids
-        """
-
-        with self.graph_client:
-            results = self.graph_client.query(cypher, **params)
-
-        if not results:
+        try:
+            nodes_with_scores = retriever.retrieve(query)
+        except Exception as e:
+            logger.warning("Vector search failed: %s", e)
             return []
 
-        # Generate query embedding using LlamaIndex
-        query_embedding = np.array(self.embed_model.get_text_embedding(query))
+        # Convert to results
+        results = []
+        for node_with_score in nodes_with_scores:
+            node = node_with_score.node
+            score = node_with_score.score or 0.0
 
-        # Compute similarities
-        scored_results = []
-        for r in results:
-            if r["embedding"]:
-                chunk_embedding = np.array(r["embedding"])
-                # Cosine similarity (embeddings are normalized)
-                score = float(np.dot(query_embedding, chunk_embedding))
-                scored_results.append((r, score))
+            if score < min_score:
+                continue
 
-        # Sort by score and return top_k
-        scored_results.sort(key=lambda x: x[1], reverse=True)
+            metadata = node.metadata or {}
 
-        return [
-            CodeSearchResult(
-                chunk_id=r["chunk_id"],
-                content=r["content"],
-                function_name=r["function_name"],
-                source_file=r["source_file"],
-                facility_id=r["facility_id"],
-                related_ids=r["related_ids"] or [],
-                score=score,
-                start_line=r.get("start_line"),
-                end_line=r.get("end_line"),
+            results.append(
+                CodeSearchResult(
+                    chunk_id=node.node_id,
+                    content=node.get_content(),
+                    function_name=metadata.get("function_name"),
+                    source_file=metadata.get("source_file", ""),
+                    facility_id=metadata.get("facility_id", ""),
+                    related_ids=metadata.get("related_ids", []),
+                    score=score,
+                    start_line=metadata.get("start_line"),
+                    end_line=metadata.get("end_line"),
+                )
             )
-            for r, score in scored_results[:top_k]
-        ]
 
-    def get_example_by_id(self, example_id: str) -> dict | None:
-        """Get full code example by ID."""
-        cypher = """
-            MATCH (e:CodeExample {id: $id})
-            OPTIONAL MATCH (e)<-[:HAS_CHUNK]-(c:CodeChunk)
-            RETURN e, collect(c) AS chunks
-        """
-        with self.graph_client:
-            results = self.graph_client.query(cypher, id=example_id)
-            if not results:
-                return None
+        return results
 
-            r = results[0]
-            return {
-                "example": dict(r["e"]),
-                "chunks": [dict(c) for c in r["chunks"]],
-            }
-
-    def list_examples(
+    def _build_filters(
         self,
-        facility: str | None = None,
-        ids_filter: list[str] | None = None,
-        limit: int = 100,
-    ) -> list[dict]:
-        """List code examples with optional filtering."""
-        where_clauses = []
-        params: dict = {"limit": limit}
+        facility: str | None,
+        ids_filter: list[str] | None,
+    ) -> MetadataFilters | None:
+        """Build MetadataFilters for Neo4jVectorStore.
+
+        Args:
+            facility: Optional facility ID to filter by
+            ids_filter: Optional list of IDS names to filter by
+
+        Returns:
+            MetadataFilters object or None if no filters
+        """
+        if not facility and not ids_filter:
+            return None
+
+        filter_list: list[MetadataFilter] = []
 
         if facility:
-            where_clauses.append("e.facility_id = $facility")
-            params["facility"] = facility
+            filter_list.append(
+                MetadataFilter(
+                    key="facility_id",
+                    value=facility,
+                    operator=FilterOperator.EQ,
+                )
+            )
 
         if ids_filter:
-            where_clauses.append("any(ids IN e.related_ids WHERE ids IN $ids_filter)")
-            params["ids_filter"] = [ids.lower() for ids in ids_filter]
+            # Filter chunks that have ANY of the specified IDS in related_ids
+            # Use ANY operator for list membership check
+            filter_list.append(
+                MetadataFilter(
+                    key="related_ids",
+                    value=ids_filter,
+                    operator=FilterOperator.ANY,
+                )
+            )
 
-        where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        # Use AND condition when both facility and IDS filters are present
+        return MetadataFilters(
+            filters=filter_list,
+            condition=FilterCondition.AND
+            if len(filter_list) > 1
+            else FilterCondition.OR,
+        )
 
-        cypher = f"""
-            MATCH (e:CodeExample)
-            {where_clause}
-            RETURN e
-            ORDER BY e.ingested_at DESC
-            LIMIT $limit
-        """
 
-        with self.graph_client:
-            results = self.graph_client.query(cypher, **params)
-            return [dict(r["e"]) for r in results]
+__all__ = ["CodeExampleSearch", "CodeSearchResult"]
