@@ -317,6 +317,17 @@ with GraphClient() as client:
     """)
 ```
 
+### Schema Versioning
+
+The LinkML schema version in `schemas/facility.yaml` is kept **in sync with the project version**. Both are updated together during the release workflow:
+
+```bash
+# Release updates both project version (via git tag) and schema version
+uv run imas-codex release v1.0.0 -m 'Release message'
+```
+
+Do **not** manually edit the schema version field.
+
 ### Schema Evolution
 
 Neo4j is schema-optional. Additive changes are safe:

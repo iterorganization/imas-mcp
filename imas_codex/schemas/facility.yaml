@@ -10,6 +10,9 @@
 #
 # Generated models: imas_codex/graph/models.py
 # To regenerate: uv run build-models --force
+#
+# VERSIONING: The version field below is kept in sync with the project version.
+# The release workflow updates both together. Do not manually edit the version.
 
 id: https://imas.iter.org/schemas/facility
 name: facility
