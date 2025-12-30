@@ -1071,6 +1071,7 @@ dependencies = [
     { name = "linkml-runtime" },
     { name = "llama-index-core" },
     { name = "llama-index-embeddings-huggingface" },
+    { name = "llama-index-vector-stores-neo4jvector" },
     { name = "neo4j" },
     { name = "nest-asyncio" },
     { name = "networkx" },
@@ -1143,7 +1144,8 @@ requires-dist = [
     { name = "linkml-runtime", specifier = ">=1.9.5" },
     { name = "llama-index-core", specifier = ">=0.12.0" },
     { name = "llama-index-embeddings-huggingface", specifier = ">=0.6.1" },
-    { name = "neo4j", specifier = ">=6.0.3" },
+    { name = "llama-index-vector-stores-neo4jvector", specifier = ">=0.4.0" },
+    { name = "neo4j", specifier = ">=5.28.0,<6.0.0" },
     { name = "nest-asyncio", specifier = ">=1.5.0,<2.0.0" },
     { name = "networkx", specifier = ">=3.0,<4.0" },
     { name = "numpy", specifier = ">=2.3.1" },
@@ -1757,6 +1759,19 @@ wheels = [
 ]
 
 [[package]]
+name = "llama-index-vector-stores-neo4jvector"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "llama-index-core" },
+    { name = "neo4j" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/44/5c/bb3d17bfc10ee4faae7967882e8a8fdca5646d605c4b51436973b7da62b2/llama_index_vector_stores_neo4jvector-0.5.1.tar.gz", hash = "sha256:044075d6ba09c8e055d3732c5c7ffc86cc849c878664a0cf1467c95b1bc26ec8", size = 8309, upload-time = "2025-09-08T20:27:43.33Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/12/d2337376e0af4961b479306f2031a875745a2cb809517ac038bee74363a2/llama_index_vector_stores_neo4jvector-0.5.1-py3-none-any.whl", hash = "sha256:cd7b1dcae16558ae7482092d395bc88436a0ff88e656b430c1815227538a6cc4", size = 8178, upload-time = "2025-09-08T20:27:41.51Z" },
+]
+
+[[package]]
 name = "llama-index-workflows"
 version = "2.11.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1981,14 +1996,14 @@ wheels = [
 
 [[package]]
 name = "neo4j"
-version = "6.0.3"
+version = "5.28.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytz" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/b2/87534fc0520e5f9db1432bacc3f8d0ce024608010babc4f65b96e0c34906/neo4j-6.0.3.tar.gz", hash = "sha256:7fb79e166e281aafd67d521f6611763ebcdc529f26db506c5605f91ddcd825ea", size = 239653, upload-time = "2025-11-06T16:57:57.012Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/50/69/4862fabc082f2447131aada5c91736155349d77ebf443af7f59553b7b789/neo4j-5.28.2.tar.gz", hash = "sha256:7d38e27e4f987a45cc9052500c6ee27325cb23dae6509037fe31dd7ddaed70c7", size = 231874, upload-time = "2025-07-30T06:04:34.669Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/fe/55ed1d4636defb57fae1f7be7818820aa8071d45949c91ef8649930e70c5/neo4j-6.0.3-py3-none-any.whl", hash = "sha256:a92023854da96aed4270e0d03d6429cdd7f0d3335eae977370934f4732de5678", size = 325433, upload-time = "2025-11-06T16:57:55.03Z" },
+    { url = "https://files.pythonhosted.org/packages/04/00/1f74089c06aec1fac9390e2300a6a6b2381e0dac281783d64ccca9d681fd/neo4j-5.28.2-py3-none-any.whl", hash = "sha256:5c53b5c3eee6dee7e920c9724391aa38d7135a651e71b766da00533b92a91a94", size = 313156, upload-time = "2025-07-30T06:04:31.438Z" },
 ]
 
 [[package]]

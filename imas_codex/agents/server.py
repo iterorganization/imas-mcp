@@ -14,7 +14,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import anyio
 from fastmcp import Context, FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
@@ -25,7 +24,7 @@ from imas_codex.agents.prompt_loader import (
     list_prompts_summary,
     load_prompts,
 )
-from imas_codex.code_examples import CodeExampleIngester, CodeExampleSearch
+from imas_codex.code_examples import CodeExampleSearch, ingest_code_files
 from imas_codex.discovery import (
     get_facility,
     get_facility_private,
@@ -500,7 +499,7 @@ class AgentsServer:
         # =====================================================================
 
         @self.mcp.tool()
-        async def ingest_code_files(
+        async def ingest_code_files_tool(
             facility: str,
             remote_paths: list[str],
             ctx: Context,
@@ -535,27 +534,23 @@ class AgentsServer:
                     "/home/athorn/python/equilibrium.py"
                 ], description="Equilibrium visualization examples")
             """
-            # Track last reported progress to send updates via Context
-            last_message: list[str] = [""]
 
             def progress_callback(current: int, total: int, message: str) -> None:
-                """Synchronous callback that stores progress for async reporting."""
-                last_message[0] = message
-
-            async def run_ingestion() -> dict[str, int]:
-                """Run the blocking ingestion in a thread."""
-                ingester = CodeExampleIngester(progress_callback=progress_callback)
-                return await anyio.to_thread.run_sync(
-                    lambda: ingester.ingest_files(facility, remote_paths, description)
-                )
+                """Progress callback for ingestion updates."""
+                logger.info("[%d/%d] %s", current, total, message)
 
             try:
                 await ctx.info(
                     f"Starting ingestion of {len(remote_paths)} files from {facility}"
                 )
 
-                # Run ingestion with progress reporting
-                result = await run_ingestion()
+                # Use the async ingest_code_files from pipeline
+                result = await ingest_code_files(
+                    facility=facility,
+                    remote_paths=remote_paths,
+                    description=description,
+                    progress_callback=progress_callback,
+                )
 
                 await ctx.info(
                     f"Completed: {result['files']} files, "
