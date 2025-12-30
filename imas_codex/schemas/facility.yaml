@@ -19,7 +19,7 @@ description: >-
   are stored locally only (gitignored YAML), never in the public graph.
 
 license: MIT
-version: 0.3.0
+version: 0.4.0
 
 prefixes:
   linkml: https://w3id.org/linkml/
@@ -162,6 +162,28 @@ enums:
         description: IDL save files
       imas:
         description: IMAS data format
+
+  IngestionStatus:
+    description: Status of data ingestion for a tree or data source
+    permissible_values:
+      pending:
+        description: Not yet ingested
+      partial:
+        description: Some nodes ingested (in progress)
+      complete:
+        description: All known nodes ingested
+      stale:
+        description: Ingestion may be outdated (schema changed)
+
+  PopulationType:
+    description: How tree nodes are populated with data
+    permissible_values:
+      static:
+        description: Structure is fixed, always present
+      dynamic:
+        description: Nodes created at runtime by analysis codes
+      hybrid:
+        description: Mix of static structure with dynamic population
 
   ProgrammingLanguage:
     description: Programming languages for code examples
@@ -414,12 +436,34 @@ classes:
         description: Whether tree structure varies by shot
         range: boolean
         ifabsent: "true"
+      population_type:
+        description: How nodes are populated (static, dynamic, hybrid)
+        range: PopulationType
+      # Ingestion tracking
+      ingestion_status:
+        description: Current ingestion status
+        range: IngestionStatus
+      node_count_total:
+        description: Total known nodes in tree (from introspection)
+        range: integer
+      node_count_ingested:
+        description: Number of nodes ingested to graph
+        range: integer
+      tdi_function_count:
+        description: Number of TDI functions accessing this tree
+        range: integer
+      last_ingested:
+        description: When tree structure was last ingested
+        range: datetime
+      reference_shot:
+        description: Shot number used for structure introspection
+        range: integer
 
   TreeNode:
     description: >-
       A node within an MDSplus tree. Represents a single data point that can
       be mapped to IMAS. Nodes with variants (PSI, PSI_2, PSI_3) are stored
-      as a single node with a variants array.
+      as a single node with a variants array, each linked to its source code.
     class_uri: facility:TreeNode
     attributes:
       path:
@@ -453,17 +497,36 @@ classes:
           PSI, PSI_2, PSI_3 from LIUQE, LIUQE02, LIUQE03). First element is
           the primary/canonical path. Order matches source priority.
         multivalued: true
+      variant_sources:
+        description: >-
+          Analysis codes that produce each variant (parallel array to variants).
+          E.g., ["LIUQE", "LIUQE02", "LIUQE03"] for variants ["", "_2", "_3"].
+        multivalued: true
+        range: AnalysisCode
       shape:
         description: Data shape description (e.g., "1D time series", "2D profile(rho, time)")
       accessor_function:
         description: TDI function that provides high-level access to this node
         range: TDIFunction
+      population_type:
+        description: How this node is populated (static structure vs dynamic by analysis)
+        range: PopulationType
+      aliases:
+        description: >-
+          Alternative names for this node used by accessor functions.
+          E.g., FORTRAN name "I_P" for MATLAB node "I_PL" in tcv_eq.
+          First entry is the canonical/preferred name for the accessor.
+        multivalued: true
 
   TDIFunction:
     description: >-
       A TDI function providing high-level data access abstraction.
       TDI functions encapsulate tree navigation and source selection logic,
       e.g., tcv_eq("PSI", "LIUQE") handles LIUQE/FBTE equilibrium selection.
+      
+      Version info: TCV uses VERSION.FUN to track shot-range validity.
+      Pattern: _verss array maps to _shots array, bsearch selects version.
+      Return -1 means not applicable, -2 means undefined program.
     class_uri: facility:TDIFunction
     attributes:
       name:
@@ -488,6 +551,33 @@ classes:
         range: FacilityPath
       physics_domain:
         description: Physics domain this function serves
+      # Version and shot-range validity
+      version:
+        description: Current version number (from VERSION.FUN lookup)
+        range: float
+      valid_from_shot:
+        description: First shot this function is valid for
+        range: integer
+      valid_to_shot:
+        description: Last shot this function is valid for (null = current)
+        range: integer
+      version_history:
+        description: JSON-encoded version history [{version, from_shot, to_shot}, ...]
+      superseded_by:
+        description: Name of replacement function if deprecated
+        range: TDIFunction
+      # Source selection for multi-source functions
+      default_source:
+        description: Default equilibrium/analysis source (e.g., "LIUQE")
+      available_sources:
+        description: Available source selections (e.g., ["LIUQE", "LIUQE2", "FBTE"])
+        multivalued: true
+      supported_quantities:
+        description: >-
+          Quantity names this function accepts as first argument.
+          E.g., ["I_P", "R_AXIS", "PSI_AXIS", "Q_95", ...] for tcv_eq.
+          Use TreeNode.aliases for name translation (FORTRAN↔MATLAB).
+        multivalued: true
 
   ShotRange:
     description: A range of shot numbers with common characteristics
@@ -534,7 +624,10 @@ classes:
         description: Diagnostic description
 
   AnalysisCode:
-    description: A physics analysis or simulation code
+    description: >-
+      A physics analysis or simulation code that writes data to trees.
+      Links to the TreeNode variants it produces (e.g., LIUQE writes PSI, PSI_2).
+      Version info tracks which shots used which code version.
     class_uri: facility:AnalysisCode
     attributes:
       name:
@@ -555,6 +648,24 @@ classes:
       installed_at:
         description: Installation path (links to FacilityPath)
         range: FacilityPath
+      # Shot-range validity
+      valid_from_shot:
+        description: First shot this code version is valid for
+        range: integer
+      valid_to_shot:
+        description: Last shot this code version is valid for (null = current)
+        range: integer
+      version_history:
+        description: JSON-encoded version history [{version, from_shot, to_shot}, ...]
+      # Output relationships
+      writes_to_tree:
+        description: Tree this code writes results to
+        range: MDSplusTree
+      output_variant:
+        description: Variant suffix for this code's output (e.g., "_2" for LIUQE02)
+      supersedes:
+        description: Previous version of this code it replaces
+        range: AnalysisCode
 
 # =============================================================================
 # IMAS Mapping Classes

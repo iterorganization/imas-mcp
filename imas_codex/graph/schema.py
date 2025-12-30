@@ -182,7 +182,8 @@ class GraphSchema:
         """
         slots = {}
         for slot in self._view.class_induced_slots(class_name):
-            slot_range = slot.range or "string"
+            # Convert LinkML types (extended_str, TypeDefinitionName) to plain strings
+            slot_range = str(slot.range) if slot.range else "string"
             is_relationship = slot_range in self._view.all_classes()
 
             # Build compact representation (only truthy values)
@@ -195,6 +196,8 @@ class GraphSchema:
                 info["multivalued"] = True
             if is_relationship:
                 info["relationship"] = True
+            if slot.description:
+                info["description"] = str(slot.description)
 
             slots[slot.name] = info
         return slots
@@ -221,7 +224,8 @@ class GraphSchema:
             Description string or None.
         """
         cls = self._view.get_class(class_name)
-        return cls.description if cls else None
+        # Convert LinkML extended_str to plain string for JSON serialization
+        return str(cls.description) if cls and cls.description else None
 
     def get_relationships_from(self, class_name: str) -> list[Relationship]:
         """Get relationships originating from a class.
@@ -258,12 +262,12 @@ class GraphSchema:
         for slot in self._view.class_induced_slots(class_name):
             if slot.name == slot_name:
                 return {
-                    "name": slot.name,
-                    "range": slot.range,
+                    "name": str(slot.name),
+                    "range": str(slot.range) if slot.range else None,
                     "required": getattr(slot, "required", False),
                     "identifier": getattr(slot, "identifier", False),
                     "multivalued": getattr(slot, "multivalued", False),
-                    "description": slot.description,
+                    "description": str(slot.description) if slot.description else None,
                 }
         return {}
 
@@ -282,7 +286,8 @@ class GraphSchema:
         private_slots = []
         for slot in self._view.class_induced_slots(class_name):
             if slot.annotations:
-                ann = slot.annotations.get("is_private")
+                # Use getattr for JsonObj - .get() doesn't work on LinkML JsonObj
+                ann = getattr(slot.annotations, "is_private", None)
                 if ann and str(ann.value).lower() == "true":
                     private_slots.append(slot.name)
         return private_slots
@@ -299,7 +304,8 @@ class GraphSchema:
         """
         for slot in self._view.class_induced_slots(class_name):
             if slot.name == slot_name and slot.annotations:
-                ann = slot.annotations.get("is_private")
+                # Use getattr for JsonObj - .get() doesn't work on LinkML JsonObj
+                ann = getattr(slot.annotations, "is_private", None)
                 return ann is not None and str(ann.value).lower() == "true"
         return False
 
