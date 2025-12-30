@@ -1,7 +1,8 @@
-"""Code example ingestion pipeline.
+"""Code example ingestion pipeline using LlamaIndex.
 
-Fetches code from remote facilities, chunks it, generates embeddings,
-extracts IMAS references, and stores in Neo4j.
+Fetches code from remote facilities, chunks it with tree-sitter,
+generates embeddings using sentence-transformers, extracts IMAS
+references, and stores in Neo4j.
 """
 
 import hashlib
@@ -15,27 +16,35 @@ from pathlib import Path
 from typing import Any
 
 from fabric import Connection
+from llama_index.core.node_parser import CodeSplitter
+from llama_index.core.schema import Document
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from imas_codex.embeddings.encoder import Encoder
 from imas_codex.graph import GraphClient
+from imas_codex.settings import get_imas_embedding_model
+
+from .queue import EmbeddingQueue, QueuedFile
 
 logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
-# Extension to language mapping
+# Extension to language mapping (tree-sitter language names)
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".m": "matlab",
     ".f90": "fortran",
     ".f": "fortran",
     ".for": "fortran",
-    ".pro": "idl",
+    ".pro": "python",  # IDL -> fallback to Python-like parsing
     ".jl": "julia",
     ".cpp": "cpp",
     ".cxx": "cpp",
     ".cc": "cpp",
+    ".c": "c",
+    ".h": "c",
+    ".hpp": "cpp",
 }
 
 # Regex patterns for IMAS IDS detection
@@ -81,21 +90,73 @@ class CodeChunkResult:
     function_name: str | None
     start_line: int
     end_line: int
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def get_embed_model() -> HuggingFaceEmbedding:
+    """Get the project's standard embedding model."""
+    model_name = get_imas_embedding_model()
+    return HuggingFaceEmbedding(
+        model_name=model_name,
+        trust_remote_code=False,
+    )
+
+
+def get_code_splitter(
+    language: str,
+    chunk_lines: int = 40,
+    chunk_lines_overlap: int = 10,
+    max_chars: int = 3000,
+) -> CodeSplitter:
+    """Get a LlamaIndex CodeSplitter for the given language.
+
+    Args:
+        language: Programming language (python, matlab, fortran, etc.)
+        chunk_lines: Target number of lines per chunk
+        chunk_lines_overlap: Number of overlapping lines between chunks
+        max_chars: Maximum characters per chunk
+
+    Returns:
+        Configured CodeSplitter instance
+    """
+    return CodeSplitter(
+        language=language,
+        chunk_lines=chunk_lines,
+        chunk_lines_overlap=chunk_lines_overlap,
+        max_chars=max_chars,
+    )
 
 
 @dataclass
 class CodeExampleIngester:
     """Ingests code examples from remote facilities into the knowledge graph.
 
-    Uses Fabric for SSH file transfer, LlamaIndex for code chunking,
-    and the existing Encoder for embeddings.
+    Uses Fabric for SSH file transfer, LlamaIndex CodeSplitter for
+    language-aware chunking, and HuggingFace embeddings for semantic search.
     """
 
-    encoder: Encoder = field(default_factory=Encoder)
+    embed_model: HuggingFaceEmbedding = field(default_factory=get_embed_model)
     graph_client: GraphClient = field(default_factory=GraphClient)
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_lines: int = 40
+    chunk_lines_overlap: int = 10
+    max_chars: int = 3000
     progress_callback: ProgressCallback | None = None
+    queue: EmbeddingQueue | None = None
+
+    def __post_init__(self) -> None:
+        """Cache CodeSplitters by language for efficiency."""
+        self._splitters: dict[str, CodeSplitter] = {}
+
+    def _get_splitter(self, language: str) -> CodeSplitter:
+        """Get or create a CodeSplitter for the given language."""
+        if language not in self._splitters:
+            self._splitters[language] = get_code_splitter(
+                language=language,
+                chunk_lines=self.chunk_lines,
+                chunk_lines_overlap=self.chunk_lines_overlap,
+                max_chars=self.max_chars,
+            )
+        return self._splitters[language]
 
     def ingest_files(
         self,
@@ -160,6 +221,119 @@ class CodeExampleIngester:
             self.progress_callback(current, total, message)
         logger.info(f"[{current}/{total}] {message}")
 
+    def queue_files(
+        self,
+        facility: str,
+        remote_paths: list[str],
+        description: str | None = None,
+    ) -> list[QueuedFile]:
+        """Queue files for offline embedding processing.
+
+        Downloads files from remote facility and stages them locally
+        for async processing. Does not block on embedding generation.
+
+        Args:
+            facility: Facility SSH host alias (e.g., "epfl")
+            remote_paths: List of remote file paths to queue
+            description: Optional description for all files
+
+        Returns:
+            List of QueuedFile objects representing queued items
+        """
+        if self.queue is None:
+            self.queue = EmbeddingQueue()
+
+        queued = []
+        total = len(remote_paths)
+
+        self._report_progress(0, total, f"Downloading {total} files for queuing")
+
+        for idx, (remote_path, local_path) in enumerate(
+            self._fetch_files(facility, remote_paths)
+        ):
+            try:
+                content = local_path.read_text(encoding="utf-8", errors="replace")
+                extension = Path(remote_path).suffix.lower()
+                language = EXTENSION_TO_LANGUAGE.get(extension, "python")
+
+                qf = self.queue.add_file(
+                    facility_id=facility,
+                    remote_path=remote_path,
+                    content=content,
+                    language=language,
+                    description=description,
+                )
+                queued.append(qf)
+                self._report_progress(
+                    idx + 1, total, f"Queued: {Path(remote_path).name}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to queue {remote_path}: {e}")
+
+        self._report_progress(
+            total, total, f"Queued {len(queued)} files for processing"
+        )
+        return queued
+
+    def process_queue(self, max_files: int | None = None) -> dict[str, int]:
+        """Process pending files from the embedding queue.
+
+        Args:
+            max_files: Maximum number of files to process (None = all)
+
+        Returns:
+            Dict with counts: {"processed": N, "failed": M, "chunks": K}
+        """
+        if self.queue is None:
+            self.queue = EmbeddingQueue()
+
+        pending = self.queue.get_pending()
+        if max_files:
+            pending = pending[:max_files]
+
+        stats = {"processed": 0, "failed": 0, "chunks": 0}
+        total = len(pending)
+
+        self._report_progress(0, total, f"Processing {total} queued files")
+
+        with self.graph_client:
+            for idx, qf in enumerate(pending):
+                self.queue.mark_processing(qf.id)
+                filename = Path(qf.remote_path).name
+
+                try:
+                    local_path = Path(qf.local_path)
+                    if not local_path.exists():
+                        raise FileNotFoundError(f"Staged file missing: {qf.local_path}")
+
+                    result = self._ingest_single_file(
+                        facility=qf.facility_id,
+                        remote_path=qf.remote_path,
+                        local_path=local_path,
+                        description=qf.description,
+                    )
+
+                    self.queue.mark_completed(qf.id)
+                    stats["processed"] += 1
+                    stats["chunks"] += result["chunks"]
+                    self._report_progress(
+                        idx + 1,
+                        total,
+                        f"Processed: {filename} ({result['chunks']} chunks)",
+                    )
+                except Exception as e:
+                    self.queue.mark_failed(qf.id, str(e))
+                    stats["failed"] += 1
+                    logger.exception(f"Failed to process {filename}: {e}")
+                    self._report_progress(idx + 1, total, f"Failed: {filename}")
+
+        self._report_progress(
+            total,
+            total,
+            f"Completed: {stats['processed']} processed, {stats['failed']} failed",
+        )
+        return stats
+
     def _ingest_single_file(
         self,
         facility: str,
@@ -167,7 +341,7 @@ class CodeExampleIngester:
         local_path: Path,
         description: str | None = None,
     ) -> dict[str, int]:
-        """Ingest a single code file."""
+        """Ingest a single code file using LlamaIndex."""
         content = local_path.read_text(encoding="utf-8", errors="replace")
         filename = Path(remote_path).name
         extension = Path(remote_path).suffix.lower()
@@ -176,7 +350,7 @@ class CodeExampleIngester:
         # Generate example ID
         example_id = self._generate_id(facility, remote_path)
 
-        # Extract author from path if possible (e.g., /home/username/...)
+        # Extract author from path if possible
         author = self._extract_author(remote_path)
 
         # Extract IDS references from the full file
@@ -209,18 +383,19 @@ class CodeExampleIngester:
             from_id_field="id",
         )
 
-        # Chunk the code
+        # Chunk the code using LlamaIndex
         chunks = list(self._chunk_code(content, language))
+
+        # Generate embeddings for all chunks in batch
+        chunk_texts = [c.content for c in chunks]
+        embeddings = self._batch_embed(chunk_texts) if chunk_texts else []
 
         # Collect all chunk data for batch insertion
         chunk_props_list: list[dict[str, Any]] = []
-        chunk_ids_map: dict[str, set[str]] = {}  # chunk_id -> IDS names
+        chunk_ids_map: dict[str, set[str]] = {}
 
-        for i, chunk in enumerate(chunks):
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
             chunk_id = f"{example_id}:chunk_{i}"
-
-            # Generate embedding for chunk
-            embedding = self.encoder.embed_texts([chunk.content])[0]
 
             # Extract IDS references from chunk
             chunk_ids = self._extract_ids_references(chunk.content)
@@ -235,7 +410,7 @@ class CodeExampleIngester:
                     "function_name": chunk.function_name,
                     "start_line": chunk.start_line,
                     "end_line": chunk.end_line,
-                    "embedding": embedding.tolist(),
+                    "embedding": embedding,
                 }
             )
 
@@ -245,7 +420,7 @@ class CodeExampleIngester:
                 "CodeChunk",
                 chunk_props_list,
                 id_field="id",
-                facility_id_field=None,  # No facility relationship for chunks
+                facility_id_field=None,
             )
 
             # Batch create HAS_CHUNK relationships
@@ -280,7 +455,6 @@ class CodeExampleIngester:
                 )
 
         chunk_count = len(chunk_props_list)
-
         logger.info(
             f"Ingested {filename}: {chunk_count} chunks, {len(related_ids)} IDS refs"
         )
@@ -305,95 +479,80 @@ class CodeExampleIngester:
                         logger.warning("Failed to fetch %s: %s", remote_path, e)
 
     def _chunk_code(self, content: str, language: str) -> Iterator[CodeChunkResult]:
-        """Chunk code into searchable segments.
+        """Chunk code using LlamaIndex CodeSplitter.
 
-        Uses function-level chunking for Python, falls back to
-        size-based chunking for other languages.
+        Uses tree-sitter for language-aware parsing that respects
+        function and class boundaries.
         """
-        if language == "python":
-            yield from self._chunk_python_functions(content)
-        else:
+        try:
+            splitter = self._get_splitter(language)
+            doc = Document(text=content)
+            nodes = splitter.get_nodes_from_documents([doc])
+
+            for node in nodes:
+                # Extract line information from node metadata
+                start_line = node.metadata.get("start_line", 1)
+                end_line = node.metadata.get(
+                    "end_line", start_line + node.text.count("\n")
+                )
+
+                # Try to extract function name from first line
+                function_name = self._extract_function_name(node.text, language)
+
+                yield CodeChunkResult(
+                    content=node.text,
+                    function_name=function_name,
+                    start_line=start_line,
+                    end_line=end_line,
+                    metadata=dict(node.metadata),
+                )
+        except Exception as e:
+            logger.warning(f"CodeSplitter failed for {language}, falling back: {e}")
             yield from self._chunk_by_size(content)
 
-    def _chunk_python_functions(self, content: str) -> Iterator[CodeChunkResult]:
-        """Extract Python functions/classes as chunks."""
-        lines = content.split("\n")
-        current_chunk: list[str] = []
-        current_name: str | None = None
-        current_start: int = 0
-        in_definition = False
-        base_indent: int = 0
+    def _extract_function_name(self, text: str, language: str) -> str | None:
+        """Extract function/class name from chunk text."""
+        first_line = text.strip().split("\n")[0] if text else ""
 
-        for i, line in enumerate(lines, 1):
-            # Detect function/class definition
-            stripped = line.lstrip()
-            indent = len(line) - len(stripped)
+        patterns = {
+            "python": r"(?:async\s+)?(?:def|class)\s+(\w+)",
+            "matlab": r"function\s+(?:\[?\w+\]?\s*=\s*)?(\w+)",
+            "fortran": r"(?:subroutine|function)\s+(\w+)",
+            "julia": r"function\s+(\w+)",
+            "cpp": r"(?:\w+\s+)+(\w+)\s*\(",
+            "c": r"(?:\w+\s+)+(\w+)\s*\(",
+        }
 
-            if stripped.startswith(("def ", "class ", "async def ")):
-                # Yield previous chunk if any
-                if current_chunk and current_name:
-                    yield CodeChunkResult(
-                        content="\n".join(current_chunk),
-                        function_name=current_name,
-                        start_line=current_start,
-                        end_line=i - 1,
-                    )
+        pattern = patterns.get(language)
+        if pattern:
+            match = re.match(pattern, first_line, re.IGNORECASE)
+            if match:
+                return match.group(1)
 
-                # Start new chunk
-                match = re.match(r"(?:async\s+)?(?:def|class)\s+(\w+)", stripped)
-                current_name = match.group(1) if match else None
-                current_chunk = [line]
-                current_start = i
-                in_definition = True
-                base_indent = indent
-            elif in_definition:
-                # Continue current definition
-                if (
-                    stripped
-                    and indent <= base_indent
-                    and not stripped.startswith(("@", "#"))
-                ):
-                    # End of definition
-                    yield CodeChunkResult(
-                        content="\n".join(current_chunk),
-                        function_name=current_name,
-                        start_line=current_start,
-                        end_line=i - 1,
-                    )
-                    current_chunk = [line]
-                    current_name = None
-                    current_start = i
-                    in_definition = False
-                else:
-                    current_chunk.append(line)
-            else:
-                # Module-level code
-                if not current_chunk:
-                    current_start = i
-                current_chunk.append(line)
-
-        # Yield final chunk
-        if current_chunk:
-            yield CodeChunkResult(
-                content="\n".join(current_chunk),
-                function_name=current_name,
-                start_line=current_start,
-                end_line=len(lines),
-            )
+        return None
 
     def _chunk_by_size(self, content: str) -> Iterator[CodeChunkResult]:
-        """Fall back to size-based chunking."""
+        """Fallback size-based chunking."""
         lines = content.split("\n")
-        chunk_lines = self.chunk_size // 50  # Approximate lines per chunk
 
-        for i in range(0, len(lines), chunk_lines - self.chunk_overlap // 50):
-            chunk = lines[i : i + chunk_lines]
+        for i in range(0, len(lines), self.chunk_lines - self.chunk_lines_overlap):
+            chunk = lines[i : i + self.chunk_lines]
             yield CodeChunkResult(
                 content="\n".join(chunk),
                 function_name=None,
                 start_line=i + 1,
-                end_line=min(i + chunk_lines, len(lines)),
+                end_line=min(i + self.chunk_lines, len(lines)),
             )
+
+    def _batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts in batch."""
+        if not texts:
+            return []
+
+        embeddings = self.embed_model.get_text_embedding_batch(
+            texts, show_progress=False
+        )
+        return [list(e) for e in embeddings]
 
     def _extract_ids_references(self, content: str) -> set[str]:
         """Extract IMAS IDS references from code content."""
@@ -417,3 +576,11 @@ class CodeExampleIngester:
         """Extract username from path like /home/username/..."""
         match = re.match(r"/home/(\w+)/", path)
         return match.group(1) if match else None
+
+
+__all__ = [
+    "CodeExampleIngester",
+    "ProgressCallback",
+    "get_embed_model",
+    "get_code_splitter",
+]

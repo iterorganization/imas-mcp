@@ -8,9 +8,11 @@ import logging
 from dataclasses import dataclass, field
 
 import numpy as np
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from imas_codex.embeddings.encoder import Encoder
 from imas_codex.graph import GraphClient
+
+from .ingester import get_embed_model
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +36,7 @@ class CodeSearchResult:
 class CodeExampleSearch:
     """Search code examples using vector similarity and graph filtering."""
 
-    encoder: Encoder = field(default_factory=Encoder)
+    embed_model: HuggingFaceEmbedding = field(default_factory=get_embed_model)
     graph_client: GraphClient = field(default_factory=GraphClient)
 
     def search(
@@ -57,13 +59,13 @@ class CodeExampleSearch:
         Returns:
             List of CodeSearchResult objects ordered by relevance
         """
-        # Generate query embedding
-        query_embedding = self.encoder.embed_texts([query])[0]
+        # Generate query embedding using LlamaIndex
+        query_embedding = self.embed_model.get_text_embedding(query)
 
         # Build Cypher query with optional filters
         where_clauses = []
         params: dict = {
-            "embedding": query_embedding.tolist(),
+            "embedding": list(query_embedding),
             "top_k": top_k,
         }
 
@@ -190,8 +192,8 @@ class CodeExampleSearch:
         if not results:
             return []
 
-        # Generate query embedding
-        query_embedding = self.encoder.embed_texts([query])[0]
+        # Generate query embedding using LlamaIndex
+        query_embedding = np.array(self.embed_model.get_text_embedding(query))
 
         # Compute similarities
         scored_results = []

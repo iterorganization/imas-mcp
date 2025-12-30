@@ -71,6 +71,10 @@ dependencies = [
     "neo4j>=6.0.3",
     "ruamel-yaml>=0.18.17",
     "llama-index-core>=0.12.0",
+    "llama-index-embeddings-huggingface>=0.6.1",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-languages>=1.10.2",
+    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [project.optional-dependencies]
