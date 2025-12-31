@@ -597,13 +597,12 @@ class AgentsServer:
             """
             try:
                 searcher = CodeExampleSearch()
-                with searcher.graph_client:
-                    results = searcher.search(
-                        query=query,
-                        top_k=top_k,
-                        ids_filter=ids_filter,
-                        facility=facility,
-                    )
+                results = searcher.search(
+                    query=query,
+                    top_k=top_k,
+                    ids_filter=ids_filter,
+                    facility=facility,
+                )
                 # Convert to dicts for JSON serialization
                 return [
                     {
@@ -653,15 +652,20 @@ class AgentsServer:
             """
             Get exploration progress metrics for a facility.
 
-            Calculates completion metrics based on FacilityPath status distribution
-            and MDSplus tree/TDI function coverage.
+            Calculates completion metrics based on FacilityPath status distribution,
+            MDSplus tree coverage, and TreeNode ingestion progress.
 
             Args:
                 facility: Facility ID (e.g., "epfl")
 
             Returns:
-                Dict with total_paths, actionable, processed, completion_pct, by_status,
-                mdsplus_coverage (per-tree stats), tdi_coverage
+                Dict with:
+                - paths: FacilityPath status distribution and completion
+                - mdsplus_coverage: Per-tree expected vs ingested node counts
+                - tree_node_coverage: TreeNodes by tree, domain, accessor function
+                - tdi_coverage: TDI functions by physics domain
+                - code_coverage: Analysis codes by type
+                - recommendation: Suggested next action
             """
             try:
                 with GraphClient() as client:
@@ -675,13 +679,11 @@ class AgentsServer:
                         fid=facility,
                     )
 
-                    # MDSplus tree coverage (per-tree)
+                    # MDSplus tree coverage (per-tree) - uses property match
                     tree_rows = client.query(
                         """
                         MATCH (t:MDSplusTree)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                        OPTIONAL MATCH (n:TreeNode)-[:MDSPLUS_TREE]->(t)
-                        OPTIONAL MATCH (tdi:TDIFunction)-[:FACILITY_ID]->(f)
-                        WHERE tdi.physics_domain IS NOT NULL
+                        OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:FACILITY_ID]->(f)
                         RETURN t.name AS tree,
                                t.ingestion_status AS status,
                                t.node_count_total AS total_nodes,
@@ -690,6 +692,32 @@ class AgentsServer:
                                count(DISTINCT n) AS nodes_in_graph,
                                t.last_ingested AS last_ingested
                         ORDER BY t.name
+                        """,
+                        fid=facility,
+                    )
+
+                    # TreeNode coverage by physics domain and accessor function
+                    tree_node_rows = client.query(
+                        """
+                        MATCH (n:TreeNode)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        RETURN n.tree_name AS tree,
+                               n.physics_domain AS domain,
+                               count(*) AS nodes,
+                               sum(CASE WHEN n.accessor_function IS NOT NULL THEN 1 ELSE 0 END) AS with_accessor
+                        ORDER BY nodes DESC
+                        """,
+                        fid=facility,
+                    )
+
+                    # Top subtrees in results tree
+                    subtree_rows = client.query(
+                        """
+                        MATCH (n:TreeNode {tree_name: 'results'})-[:FACILITY_ID]->(f:Facility {id: $fid})
+                        WITH split(replace(n.path, '\\\\RESULTS::', ''), ':')[0] AS subtree,
+                             count(*) AS nodes
+                        RETURN subtree, nodes
+                        ORDER BY nodes DESC
+                        LIMIT 15
                         """,
                         fid=facility,
                     )
@@ -755,6 +783,34 @@ class AgentsServer:
                         "last_ingested": row["last_ingested"],
                     }
 
+                # TreeNode coverage by tree and domain
+                total_tree_nodes = sum(r["nodes"] for r in tree_node_rows)
+                total_with_accessor = sum(r["with_accessor"] for r in tree_node_rows)
+                by_tree: dict[str, int] = {}
+                by_domain: dict[str, int] = {}
+                for row in tree_node_rows:
+                    tree = row["tree"] or "unknown"
+                    domain = row["domain"] or "unclassified"
+                    by_tree[tree] = by_tree.get(tree, 0) + row["nodes"]
+                    by_domain[domain] = by_domain.get(domain, 0) + row["nodes"]
+
+                tree_node_coverage = {
+                    "total": total_tree_nodes,
+                    "by_tree": dict(
+                        sorted(by_tree.items(), key=lambda x: x[1], reverse=True)
+                    ),
+                    "by_domain": dict(
+                        sorted(by_domain.items(), key=lambda x: x[1], reverse=True)
+                    ),
+                    "with_accessor": total_with_accessor,
+                    "accessor_pct": round(
+                        100 * total_with_accessor / total_tree_nodes, 1
+                    )
+                    if total_tree_nodes
+                    else 0.0,
+                    "top_subtrees": {r["subtree"]: r["nodes"] for r in subtree_rows},
+                }
+
                 # TDI function coverage by domain
                 tdi_coverage = {
                     "total": sum(r["count"] for r in tdi_rows),
@@ -800,6 +856,7 @@ class AgentsServer:
                         "by_status": counts,
                     },
                     "mdsplus_coverage": mdsplus_coverage,
+                    "tree_node_coverage": tree_node_coverage,
                     "tdi_coverage": tdi_coverage,
                     "code_coverage": code_coverage,
                     "recommendation": recommendation,
