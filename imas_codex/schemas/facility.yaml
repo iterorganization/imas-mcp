@@ -520,6 +520,13 @@ classes:
           E.g., FORTRAN name "I_P" for MATLAB node "I_PL" in tcv_eq.
           First entry is the canonical/preferred name for the accessor.
         multivalued: true
+      parent_path:
+        description: >-
+          Path to parent node (computed from path at ingestion time).
+          Enables hierarchy traversal without explicit relationships.
+          Null for root nodes (tree level).
+          Example: \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
+        range: string
 
   TDIFunction:
     description: >-

@@ -1,6 +1,184 @@
 # MDSplus Tree Exploration Plan
 
-> Status tracking and strategy for systematic MDSplus TreeNode ingestion.
+> Strategy and progress tracking for systematic MDSplus TreeNode ingestion.
+
+## Overview
+
+This document describes the approach for populating the knowledge graph with MDSplus tree structure from remote facilities. The system supports both:
+
+1. **Script-driven ingestion** - For high-volume batch operations (>1000 nodes)
+2. **LLM-driven exploration** - For discovery, triage, and enrichment tasks
+
+Neo4j easily handles 100k+ nodes, so capacity is not a constraint.
+
+## Reference Shots
+
+For dynamic trees (shot-dependent structure), we use reference shots that have rich data across diagnostics. These are documented per-tree in the graph.
+
+### EPFL/TCV Reference Shots
+
+| Tree | Reference Shot | Reason | Node Count |
+|------|---------------|--------|------------|
+| results | 84469 | Recent, 62% data occupancy | ~11,500 |
+| tcv_shot | 84469 | Recent, full diagnostic set | ~82,500 |
+| magnetics | - | Static tree | ~500 |
+| base | - | Static tree | ~1,300 |
+| thomson | 84469 | Rich Thomson data | ~1,000 |
+
+**Selection criteria**:
+- Recent shot (within last 1000 shots)
+- High data occupancy (sample nodes with data)
+- Representative diagnostic coverage
+- Successful plasma discharge
+
+## Ingestion Workflow
+
+### Phase 1: Script-Driven Bulk Ingestion
+
+Use `ingest-mdsplus` for initial tree population:
+
+```bash
+# Ingest a single tree
+uv run ingest-mdsplus epfl results --shot 84469
+
+# Ingest multiple trees
+uv run ingest-mdsplus epfl results tcv_shot magnetics --shot 84469
+
+# Dry run to preview
+uv run ingest-mdsplus epfl results --shot 84469 --dry-run -v
+
+# Limit for testing
+uv run ingest-mdsplus epfl results --shot 84469 --limit 100
+```
+
+The script:
+1. Connects to facility via SSH
+2. Introspects tree structure using Python MDSplus
+3. Computes `parent_path` for hierarchy traversal
+4. Batch-inserts TreeNodes with UNWIND
+5. Creates `TREE_NAME` and `FACILITY_ID` relationships
+6. Updates MDSplusTree stats (node_count_ingested, reference_shot)
+
+### Phase 2: LLM-Driven Enrichment
+
+After bulk ingestion, agents use `get_exploration_progress` to identify gaps:
+
+```python
+# Agent workflow
+progress = get_exploration_progress("epfl")
+
+# Check next_targets for prioritized work
+for target in progress["next_targets"]:
+    print(f"{target['priority']}: {target['action']}")
+    # 1: Ingest thomson tree structure
+    # 2: Continue results ingestion (2.5% complete)
+    # 3: Expand equilibrium domain coverage
+```
+
+Agents then enrich nodes with:
+- `physics_domain` classification
+- `accessor_function` links
+- `description` from documentation
+- `shape` and `units` refinement
+
+## Progress Tracking
+
+### get_exploration_progress Output
+
+The `get_exploration_progress` tool returns comprehensive metrics:
+
+```python
+{
+    "facility": "epfl",
+    "paths": {...},  # FacilityPath status
+    "mdsplus_coverage": {
+        "results": {
+            "status": "partial",
+            "total_nodes": 11500,
+            "ingested_nodes": 272,
+            "coverage_pct": 2.4,
+            "population_type": "dynamic"
+        },
+        ...
+    },
+    "tree_node_coverage": {
+        "total": 493,
+        "by_tree": {"results": 272, "magnetics": 42, ...},
+        "by_domain": {"equilibrium": 165, "profiles": 100, ...},
+        "with_accessor": 66,
+        "accessor_pct": 13.4,
+        "top_subtrees": {"THOMSON": 23, ...}
+    },
+    "next_targets": [
+        {
+            "priority": 1,
+            "type": "mdsplus_tree",
+            "target": "thomson",
+            "action": "Ingest thomson tree structure",
+            "expected_nodes": 1000,
+            "effort": "medium"
+        },
+        ...
+    ],
+    "recommendation": "Ingest thomson tree structure"
+}
+```
+
+### Priority Algorithm
+
+`next_targets` uses this priority order:
+
+| Priority | Type | Condition |
+|----------|------|-----------|
+| 1 | mdsplus_tree | 0% coverage (breadth-first) |
+| 2 | mdsplus_tree | <10% coverage (continue partial) |
+| 3 | physics_domain | High-value domain with <50 nodes |
+| 4 | results_subtree | High-value subtree not yet explored |
+
+High-value domains: equilibrium, profiles, magnetics, heating
+High-value subtrees: THOMSON, LANGMUIR, CXRS, ECE, FIR, BOLOMETER, TORAY, LIUQE, PSITBX, ECRH, NBI
+
+## Schema Design
+
+### TreeNode Properties
+
+| Property | Required | Description |
+|----------|----------|-------------|
+| path | ✓ | Full MDSplus path (identifier) |
+| tree_name | ✓ | Parent tree name |
+| facility_id | ✓ | Parent facility |
+| units | ✓ | Physical units (SI) |
+| parent_path | | Computed parent for hierarchy |
+| node_type | | STRUCTURE, SIGNAL, NUMERIC, etc. |
+| physics_domain | | For categorization |
+| accessor_function | | TDI function for access |
+| example_shot | | Reference shot number |
+| description | | Node description |
+
+### Auto-Created Relationships
+
+When ingesting TreeNodes, `ingest_nodes` automatically creates:
+
+1. `FACILITY_ID` → Facility (always)
+2. `TREE_NAME` → MDSplusTree (if tree_name provided)
+3. `ACCESSOR_FUNCTION` → TDIFunction (if accessor_function provided)
+
+### Hierarchy Traversal
+
+Use `parent_path` property for hierarchy queries:
+
+```cypher
+-- Find all children of a node
+MATCH (n:TreeNode)
+WHERE n.parent_path = '\\RESULTS::LIUQE'
+RETURN n.path
+
+-- Find ancestors
+MATCH (n:TreeNode {path: '\\RESULTS::LIUQE:PSI'})
+WITH n.parent_path AS parent
+MATCH (p:TreeNode {path: parent})
+RETURN p.path
+```
 
 ## Current Coverage (2025-12-31)
 
@@ -8,17 +186,12 @@
 
 | Tree | Expected | Ingested | Coverage | Population |
 |------|----------|----------|----------|------------|
-| results | 11,000 | 272 | 2.5% | dynamic |
-| tcv_shot | 84,000 | 49 | 0.1% | dynamic |
+| results | 11,500 | 272 | 2.4% | dynamic |
+| tcv_shot | 82,500 | 49 | 0.1% | dynamic |
 | magnetics | 500 | 42 | 8.4% | static |
 | base | 1,300 | 9 | 0.7% | static |
 | thomson | 1,000 | 0 | 0% | hybrid |
-| atlas | - | 31 | - | - |
-| diagz | - | 29 | - | - |
-| ecrh | - | 17 | - | - |
-| pcs | - | 15 | - | - |
-| vsystem | - | 14 | - | - |
-| **Total** | ~98k | **493** | <1% | - |
+| **Total** | ~96k | **493** | <1% | - |
 
 ### Physics Domain Distribution
 
@@ -29,280 +202,35 @@
 | magnetics | 63 | 13% |
 | heating | 33 | 7% |
 | edge | 18 | 4% |
-| diagnostics | 15 | 3% |
-| radiation | 14 | 3% |
-| control | 14 | 3% |
-| (16 other domains) | 71 | 14% |
-
-### Accessor Function Links
-
-| Function | Nodes Linked |
-|----------|-------------|
-| tcv_eq | 40 |
-| tcv_get | 17 |
-| tcv_psitbx | 6 |
-| tcv_ip | 3 |
-| **Total with accessor** | 66 (13%) |
-
-### Top Subtrees in RESULTS Tree
-
-| Subtree | Nodes |
-|---------|-------|
-| THOMSON | 23 |
-| THOMSON.PROFILES.AUTO | 17 |
-| LANGMUIR | 15 |
-| CXRS | 14 |
-| PSITBX | 11 |
-| BOLOMETER | 9 |
-| ECE | 8 |
-| FIR | 7 |
-| TORAY | 6 |
-
-## Strategy Questions
-
-### 1. Duplicate Handling in ingest_nodes
-
-**Current behavior**: Uses `MERGE` which updates existing nodes if path matches.
-
-**Options:**
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| A. MERGE (current) | Idempotent, safe re-runs | Silent overwrites |
-| B. Check before insert | Explicit control | Extra query overhead |
-| C. Return which were new vs updated | Best visibility | More complex return type |
-
-**Recommendation**: Keep MERGE but enhance return value to indicate `{"created": N, "updated": M, "errors": []}`. This provides visibility without breaking idempotency.
-
-**Implementation** (in `create_nodes`):
-```cypher
-UNWIND $batch AS item
-MERGE (n:{label} {path: item.path})
-ON CREATE SET n = item, n._created = true
-ON MATCH SET n += item
-WITH n, exists(n._created) AS was_created
-REMOVE n._created
-RETURN count(CASE WHEN was_created THEN 1 END) AS created,
-       count(CASE WHEN NOT was_created THEN 1 END) AS updated
-```
-
-### 2. Hierarchy Storage Strategy
-
-**Current state**: Hierarchy is embedded in path string `\\RESULTS::LIUQE:PSI`.
-
-**Options:**
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| A. Path string only (current) | Simple, path prefix queries work | No parent traversal |
-| B. Add `parent_path` property | Explicit parent link, easy tree walks | Denormalized, must maintain |
-| C. `PARENT_OF` relationships | Full graph traversal | Many relationships, complex queries |
-| D. Hybrid: `parent_path` + lazy relationships | Best of both | Two maintenance burdens |
-
-**Recommendation**: Add `parent_path` property. Benefits:
-- Enables `MATCH (n:TreeNode)-[:PARENT]->(p:TreeNode)` style queries
-- Cheap to compute at ingestion time
-- Works even when parent node not yet ingested
-
-**Schema change** (in `facility.yaml`):
-```yaml
-parent_path:
-  description: >-
-    Path to parent node (computed from path). Enables hierarchy traversal
-    without explicit relationships. Null for root nodes (tree level).
-  range: string
-```
-
-**Compute at ingestion**:
-```python
-def compute_parent_path(path: str) -> str | None:
-    """Extract parent path from MDSplus node path.
-    
-    \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
-    \\RESULTS::LIUQE -> \\RESULTS
-    \\RESULTS -> None (root)
-    """
-    if ':' in path:
-        return path.rsplit(':', 1)[0]
-    return None
-```
-
-### 3. Progress Tool Integration
-
-**Current `get_exploration_progress`** returns:
-- `mdsplus_coverage`: Per-tree stats from `MDSplusTree` nodes
-- `tdi_coverage`: TDI functions by physics domain
-- `code_coverage`: Analysis codes by type
-
-**Problem**: Current query uses `MDSPLUS_TREE` relationship that doesn't exist.
-
-**Fix**: Query should use `tree_name` property match instead:
-
-```cypher
--- Current (broken)
-OPTIONAL MATCH (n:TreeNode)-[:MDSPLUS_TREE]->(t)
-
--- Fixed (uses property)
-OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:FACILITY_ID]->(f)
-```
-
-**Enhanced coverage section** for progress tool:
-
-```python
-# Add TreeNode coverage detail
-tree_node_rows = client.query("""
-    MATCH (n:TreeNode)-[:FACILITY_ID]->(f:Facility {id: $fid})
-    WITH n.tree_name AS tree,
-         n.physics_domain AS domain,
-         count(*) AS nodes,
-         count(n.accessor_function) AS with_accessor
-    RETURN tree, domain, nodes, with_accessor
-    ORDER BY nodes DESC
-""", fid=facility)
-
-# Add subtree coverage
-subtree_rows = client.query("""
-    MATCH (n:TreeNode {tree_name: 'results'})-[:FACILITY_ID]->(f:Facility {id: $fid})
-    WITH split(replace(n.path, '\\\\RESULTS::', ''), ':')[0] AS subtree,
-         count(*) AS nodes
-    RETURN subtree, nodes
-    ORDER BY nodes DESC
-    LIMIT 20
-""", fid=facility)
-```
-
-**New return structure**:
-```python
-{
-    # ... existing fields ...
-    "tree_node_coverage": {
-        "total": 493,
-        "by_tree": {"results": 272, "magnetics": 42, ...},
-        "by_domain": {"equilibrium": 165, "profiles": 100, ...},
-        "with_accessor": 66,
-        "accessor_pct": 13.4,
-        "top_subtrees": {"THOMSON": 23, "LANGMUIR": 15, ...}
-    }
-}
-```
-
-### 4. Relationship Materialization
-
-**Current state**: Only `FACILITY_ID` relationships exist (493).
-
-**Defined in schema but not created**:
-- `TREE_NAME` (TreeNode → MDSplusTree)
-- `ACCESSOR_FUNCTION` (TreeNode → TDIFunction)
-- `VARIANT_SOURCES` (TreeNode → AnalysisCode)
-
-**Strategy**: Materialize lazily via property values.
-
-For `TREE_NAME`:
-```cypher
-MATCH (n:TreeNode)
-WHERE n.tree_name IS NOT NULL
-MATCH (t:MDSplusTree {name: n.tree_name})
-MERGE (n)-[:TREE_NAME]->(t)
-```
-
-For `ACCESSOR_FUNCTION`:
-```cypher
-MATCH (n:TreeNode)
-WHERE n.accessor_function IS NOT NULL
-MATCH (tdi:TDIFunction {name: n.accessor_function})
-MERGE (n)-[:ACCESSOR_FUNCTION]->(tdi)
-```
-
-**Decision**: Add relationship creation to ingest_nodes for TreeNode type. When ingesting TreeNodes:
-1. Create FACILITY_ID (existing)
-2. Create TREE_NAME if tree_name provided
-3. Create ACCESSOR_FUNCTION if accessor_function provided
-
-### 5. Agent Coordination for Exploration
-
-**Problem**: Multiple agents may discover same paths.
-
-**Solution**: Before ingesting, check existence:
-
-```cypher
--- Batch check for existing paths
-UNWIND $paths AS p
-OPTIONAL MATCH (n:TreeNode {path: p})
-RETURN p AS path, n IS NOT NULL AS exists
-```
-
-**Coverage query for unexplored areas**:
-```cypher
--- Find subtrees with low coverage
-MATCH (t:MDSplusTree {name: 'results'})-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
-OPTIONAL MATCH (n:TreeNode {tree_name: 'results'})-[:FACILITY_ID]->(f)
-WITH t, count(n) AS ingested, t.node_count_total AS total
-RETURN t.name, ingested, total, 
-       round(100.0 * ingested / total, 1) AS pct
-```
-
-**Next exploration priorities**:
-1. Thomson tree (0% coverage, 1000 nodes)
-2. results subtrees not yet touched
-3. Nodes with accessor functions but no TreeNode entry
+| (others) | 114 | 23% |
 
 ## Action Items
 
-### Immediate (Schema/Tool Fixes)
+### Completed ✓
 
-1. [ ] Fix `get_exploration_progress` to use property match instead of `MDSPLUS_TREE` relationship
-2. [ ] Add `tree_node_coverage` section to progress output
-3. [ ] Add `parent_path` property to TreeNode schema
+- [x] Add `parent_path` property to TreeNode schema
+- [x] Enhance `get_exploration_progress` with `next_targets` section
+- [x] Auto-create `TREE_NAME` and `ACCESSOR_FUNCTION` relationships in `ingest_nodes`
+- [x] Create `ingest-mdsplus` script for batch ingestion
 
-### Near-term (Relationship Materialization)
+### Next Steps
 
-4. [ ] Create `TREE_NAME` relationships for existing TreeNodes
-5. [ ] Create `ACCESSOR_FUNCTION` relationships for nodes with accessor_function property
-6. [ ] Update ingest_nodes to auto-create these relationships
-
-### Exploration (Ongoing)
-
-7. [ ] Ingest Thomson tree structure via MDSplus introspection
-8. [ ] Continue results tree expansion focusing on:
-   - Diagnostics with accessor functions
-   - Physics domains not yet covered
-   - High-value subtrees (LANGMUIR, CXRS, ECE)
+1. [ ] Run `ingest-mdsplus epfl results --shot 84469` to complete results tree
+2. [ ] Run `ingest-mdsplus epfl tcv_shot --shot 84469` for tcv_shot tree
+3. [ ] Run `ingest-mdsplus epfl thomson --shot 84469` for thomson tree
+4. [ ] Regenerate models: `uv run build-models --force`
+5. [ ] LLM pass to enrich nodes with physics_domain classification
 
 ## Query Reference
 
-### Check before ingest
-```cypher
-MATCH (n:TreeNode {path: $path})
-RETURN count(n) > 0 AS exists
-```
-
-### Find gaps in coverage
+### Check exploration progress
 ```cypher
 MATCH (t:MDSplusTree)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
 OPTIONAL MATCH (n:TreeNode {tree_name: t.name})-[:FACILITY_ID]->(f)
 WITH t.name AS tree, count(n) AS ingested, t.node_count_total AS expected
-WHERE expected IS NOT NULL
 RETURN tree, ingested, expected,
-       round(100.0 * ingested / expected, 1) AS pct
+       round(100.0 * ingested / CASE WHEN expected > 0 THEN expected ELSE 1 END, 1) AS pct
 ORDER BY pct ASC
-```
-
-### Unexplored subtrees
-```cypher
-MATCH (n:TreeNode {tree_name: 'results'})-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
-WITH split(replace(n.path, '\\\\RESULTS::', ''), ':')[0] AS subtree
-RETURN subtree, count(*) AS nodes
-ORDER BY nodes ASC
-LIMIT 20
-```
-
-### Nodes missing accessor function
-```cypher
-MATCH (n:TreeNode)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
-WHERE n.accessor_function IS NULL
-AND n.physics_domain IN ['equilibrium', 'profiles']
-RETURN n.path, n.physics_domain
-ORDER BY n.path
 ```
 
 ### Coverage by physics domain
@@ -310,6 +238,23 @@ ORDER BY n.path
 MATCH (n:TreeNode)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
 RETURN n.physics_domain AS domain, count(*) AS nodes
 ORDER BY nodes DESC
+```
+
+### Find nodes needing enrichment
+```cypher
+MATCH (n:TreeNode)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
+WHERE n.physics_domain IS NULL
+RETURN n.tree_name AS tree, count(*) AS needs_domain
+ORDER BY needs_domain DESC
+```
+
+### Hierarchy traversal example
+```cypher
+-- Get subtree rooted at LIUQE
+MATCH (n:TreeNode)
+WHERE n.path STARTS WITH '\\RESULTS::LIUQE'
+RETURN n.path, n.node_type, n.physics_domain
+ORDER BY n.path
 ```
 
 ## See Also
