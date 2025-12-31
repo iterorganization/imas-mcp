@@ -28,6 +28,8 @@ EXTENSION_TO_LANGUAGE = {
     ".c": "c",
     ".h": "c",
     ".hpp": "cpp",
+    ".fun": "c",  # TDI -> fallback to C-like parsing
+    ".FUN": "c",  # TDI (case sensitive filesystems)
 }
 
 

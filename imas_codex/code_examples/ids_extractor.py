@@ -41,6 +41,7 @@ class IDSExtractor(TransformComponent):
 
     This LlamaIndex TransformComponent scans code text for patterns
     that indicate IMAS IDS usage and adds them to node metadata.
+    Also computes line numbers from character offsets.
     """
 
     def __call__(self, nodes: list[BaseNode], **kwargs: dict) -> list[BaseNode]:
@@ -50,12 +51,26 @@ class IDSExtractor(TransformComponent):
             nodes: List of LlamaIndex nodes to process
 
         Returns:
-            Nodes with updated metadata containing related_ids
+            Nodes with updated metadata containing related_ids and line numbers
         """
         for node in nodes:
-            ids_refs = self._extract_ids(node.get_content())
+            content = node.get_content()
+
+            # Extract IDS references
+            ids_refs = self._extract_ids(content)
             if ids_refs:
                 node.metadata["related_ids"] = sorted(ids_refs)
+
+            # Compute absolute line numbers using parent doc text
+            full_text = node.metadata.get("_full_doc_text")
+            if full_text and node.start_char_idx is not None:
+                start_line = full_text[: node.start_char_idx].count("\n") + 1
+                end_line = start_line + content.count("\n")
+                node.metadata["start_line"] = start_line
+                node.metadata["end_line"] = end_line
+                # Remove temp field to avoid storing in graph
+                del node.metadata["_full_doc_text"]
+
         return nodes
 
     def _extract_ids(self, text: str) -> set[str]:
