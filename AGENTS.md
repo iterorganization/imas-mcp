@@ -2,6 +2,24 @@
 
 > **TL;DR**: Use `uv run` for Python commands, `ruff` for linting, conventional commits with single quotes, and `pytest` for testing. No backward compatibility constraints.
 
+## Critical Rules
+
+### NEVER Delete Graph Data Without Backup
+
+Before ANY operation that modifies or deletes graph nodes:
+
+1. **ALWAYS dump the graph first**: `uv run imas-codex neo4j dump`
+2. **NEVER use `DETACH DELETE` on production data** without explicit user confirmation
+3. **For re-embedding**: Update nodes in place, don't delete and recreate
+4. **Ask before destructive operations**: "This will delete X nodes. Should I back up first?"
+
+**Re-embedding workflow** (preserves nodes):
+```cypher
+-- Update embeddings on existing nodes, don't delete them
+MATCH (c:CodeChunk {source_file: $file})
+SET c.embedding = $new_embedding
+```
+
 ## Quick Reference
 
 | Task | Command |

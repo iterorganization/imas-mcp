@@ -181,6 +181,7 @@ async def ingest_code_files(
                 "facility_id": facility,
                 "language": language,
                 "code_example_id": example_id,
+                "_full_doc_text": content,  # For line number calculation
             },
         )
         documents.append(doc)
