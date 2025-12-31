@@ -260,6 +260,42 @@ class AgentsServer:
                         facility_id_field=facility_field,
                     )
 
+                    # For TreeNode, auto-create TREE_NAME and ACCESSOR_FUNCTION relationships
+                    if node_type == "TreeNode":
+                        # Create TREE_NAME relationships (TreeNode -> MDSplusTree)
+                        tree_names = {
+                            item["tree_name"]
+                            for item in valid_items
+                            if item.get("tree_name")
+                        }
+                        if tree_names:
+                            client.query(
+                                """
+                                UNWIND $tree_names AS tn
+                                MATCH (n:TreeNode {tree_name: tn})
+                                MATCH (t:MDSplusTree {name: tn})
+                                MERGE (n)-[:TREE_NAME]->(t)
+                                """,
+                                tree_names=list(tree_names),
+                            )
+
+                        # Create ACCESSOR_FUNCTION relationships (TreeNode -> TDIFunction)
+                        accessor_funcs = {
+                            item["accessor_function"]
+                            for item in valid_items
+                            if item.get("accessor_function")
+                        }
+                        if accessor_funcs:
+                            client.query(
+                                """
+                                UNWIND $accessor_funcs AS af
+                                MATCH (n:TreeNode {accessor_function: af})
+                                MATCH (tdi:TDIFunction {name: af})
+                                MERGE (n)-[:ACCESSOR_FUNCTION]->(tdi)
+                                """,
+                                accessor_funcs=list(accessor_funcs),
+                            )
+
                 return {
                     "processed": result["processed"],
                     "skipped": len(errors),
@@ -655,6 +691,9 @@ class AgentsServer:
             Calculates completion metrics based on FacilityPath status distribution,
             MDSplus tree coverage, and TreeNode ingestion progress.
 
+            Use this at the start of an exploration session to understand current
+            state and identify high-priority targets for ingestion.
+
             Args:
                 facility: Facility ID (e.g., "epfl")
 
@@ -665,7 +704,14 @@ class AgentsServer:
                 - tree_node_coverage: TreeNodes by tree, domain, accessor function
                 - tdi_coverage: TDI functions by physics domain
                 - code_coverage: Analysis codes by type
-                - recommendation: Suggested next action
+                - next_targets: Top 5 prioritized exploration targets with actions
+                - recommendation: Suggested next action (from top target)
+
+            next_targets priorities:
+                1. Trees with 0% coverage (breadth-first approach)
+                2. Trees with <10% coverage (continue partial work)
+                3. High-value physics domains with low coverage
+                4. High-value results subtrees not yet explored
             """
             try:
                 with GraphClient() as client:
@@ -829,9 +875,97 @@ class AgentsServer:
                     },
                 }
 
-                # Recommend next action
+                # Build next_targets: prioritized exploration targets for agents
+                next_targets: list[dict[str, Any]] = []
+
+                # Priority 1: Trees with 0% coverage (breadth-first)
+                for tree_name, tree_info in mdsplus_coverage.items():
+                    if tree_info["coverage_pct"] == 0.0 and tree_info["total_nodes"]:
+                        next_targets.append(
+                            {
+                                "priority": 1,
+                                "type": "mdsplus_tree",
+                                "target": tree_name,
+                                "action": f"Ingest {tree_name} tree structure",
+                                "expected_nodes": tree_info["total_nodes"],
+                                "population_type": tree_info["population_type"],
+                                "effort": "high"
+                                if tree_info["total_nodes"] > 1000
+                                else "medium",
+                            }
+                        )
+
+                # Priority 2: Trees with low coverage (<10%)
+                for tree_name, tree_info in mdsplus_coverage.items():
+                    cov = tree_info["coverage_pct"]
+                    if 0.0 < cov < 10.0:
+                        remaining = (
+                            tree_info["total_nodes"] - tree_info["ingested_nodes"]
+                        )
+                        next_targets.append(
+                            {
+                                "priority": 2,
+                                "type": "mdsplus_tree",
+                                "target": tree_name,
+                                "action": f"Continue {tree_name} ingestion ({cov:.1f}% complete)",
+                                "remaining_nodes": remaining,
+                                "effort": "high" if remaining > 1000 else "medium",
+                            }
+                        )
+
+                # Priority 3: Physics domains with low coverage
+                high_value_domains = ["equilibrium", "profiles", "magnetics", "heating"]
+                for domain in high_value_domains:
+                    domain_count = by_domain.get(domain, 0)
+                    if domain_count < 50:  # Threshold for "low coverage"
+                        next_targets.append(
+                            {
+                                "priority": 3,
+                                "type": "physics_domain",
+                                "target": domain,
+                                "action": f"Expand {domain} domain coverage",
+                                "current_nodes": domain_count,
+                                "effort": "medium",
+                            }
+                        )
+
+                # Priority 4: Subtrees in results tree not yet explored
+                known_subtrees = set(tree_node_coverage["top_subtrees"].keys())
+                high_value_subtrees = {
+                    "THOMSON",
+                    "LANGMUIR",
+                    "CXRS",
+                    "ECE",
+                    "FIR",
+                    "BOLOMETER",
+                    "TORAY",
+                    "LIUQE",
+                    "PSITBX",
+                    "ECRH",
+                    "NBI",
+                }
+                missing_subtrees = high_value_subtrees - known_subtrees
+                for subtree in sorted(missing_subtrees):
+                    next_targets.append(
+                        {
+                            "priority": 4,
+                            "type": "results_subtree",
+                            "target": subtree,
+                            "action": f"Explore \\\\RESULTS::{subtree} subtree",
+                            "effort": "medium",
+                        }
+                    )
+
+                # Sort by priority and limit to top 5
+                next_targets.sort(key=lambda x: x["priority"])
+                next_targets = next_targets[:5]
+
+                # Recommend next action based on current state
                 if total == 0:
                     recommendation = "Run /scout-paths to discover paths"
+                elif next_targets:
+                    top = next_targets[0]
+                    recommendation = top["action"]
                 elif actionable > processed:
                     recommendation = "Run /score-paths to score discovered paths"
                 elif counts.get("flagged", 0) > counts.get("ingested", 0):
@@ -840,8 +974,6 @@ class AgentsServer:
                     recommendation = (
                         "Run /ingest-tdi-functions to discover TDI functions"
                     )
-                elif any(t["status"] == "pending" for t in mdsplus_coverage.values()):
-                    recommendation = "Run /ingest-tree for pending trees"
                 else:
                     recommendation = "Increase depth or explore new root paths"
 
@@ -859,6 +991,7 @@ class AgentsServer:
                     "tree_node_coverage": tree_node_coverage,
                     "tdi_coverage": tdi_coverage,
                     "code_coverage": code_coverage,
+                    "next_targets": next_targets,
                     "recommendation": recommendation,
                 }
             except Exception as e:
