@@ -14,7 +14,6 @@
         "in-dir={env_dir} python -m pip install --index-url https://download.pytorch.org/whl/cpu torch",
         "in-dir={env_dir} python -m pip install --only-binary :all: sentence-transformers",
         "in-dir={env_dir} python -m pip install {wheel_file}",
-        "in-dir={env_dir} build-models --force",
         "in-dir={env_dir} IDS_FILTER=core_profiles,equilibrium build-embeddings --ids-filter 'core_profiles equilibrium' --no-rich",
         "in-dir={env_dir} IDS_FILTER=core_profiles,equilibrium build-clusters --ids-filter 'core_profiles equilibrium' --quiet"
     ],

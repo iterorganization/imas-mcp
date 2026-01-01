@@ -142,7 +142,11 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 packages = ["imas_codex", "scripts"]
 exclude = ["imas_codex/resources/.gitkeep"]
-artifacts = ["imas_codex/resources/**"]
+artifacts = [
+    "imas_codex/resources/**",
+    "imas_codex/core/physics_domain.py",
+    "imas_codex/graph/models.py",
+]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"
