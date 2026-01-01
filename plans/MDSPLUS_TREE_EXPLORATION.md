@@ -11,6 +11,60 @@ This document describes the approach for populating the knowledge graph with MDS
 
 Neo4j easily handles 100k+ nodes, so capacity is not a constraint.
 
+## The "Super Tree" Concept
+
+MDSplus tree structures evolve over time as diagnostics are added and analysis codes change. Instead of storing multiple tree snapshots, we model a **single unified tree** where nodes have **applicability ranges**:
+
+```
+TreeModelVersion v1 (shots 3000-50000): 6,895 nodes
+TreeModelVersion v2 (shots 50000-70000): 9,980 nodes  [+3,085 nodes]
+TreeModelVersion v3 (shots 70000-82000): 11,403 nodes [+1,423 nodes]
+TreeModelVersion v4 (shots 82000-current): 11,463 nodes [+60 nodes]
+```
+
+Each `TreeNode` has:
+- `first_shot`: When this node first appeared in the tree structure
+- `last_shot`: When it was removed (null = still active)
+- `introduced_version`: Link to the `TreeModelVersion` that added it
+
+This enables queries like "what did the tree look like at shot 50000?" without storing 89,000 snapshots.
+
+### Epoch Discovery
+
+Use `discover-epochs` to scan the shot history and find structural changes:
+
+```bash
+# Discover all epochs for results tree
+uv run discover-epochs epfl results
+
+# Fine-grained scan
+uv run discover-epochs epfl results --step 100
+
+# Dry run
+uv run discover-epochs epfl results --dry-run -v
+```
+
+The script:
+1. Scans shot history at regular intervals (default: 500 shots)
+2. Compares tree structures to find boundaries
+3. Creates `TreeModelVersion` nodes with version numbers and shot ranges
+4. Links epochs via `PREDECESSOR` relationships
+
+### Key Findings (EPFL/TCV Results Tree)
+
+| Metric | Value |
+|--------|-------|
+| Total shots | ~89,000 |
+| Structure epochs | ~66 |
+| Changes frequency | ~1 per 1,350 shots |
+| Largest change | Shot 70500→71000: +686 nodes (CXRS channels) |
+| Evolution pattern | Mostly additive (new diagnostics) |
+
+**Notable transitions:**
+- Shot ~50000: Major reorganization (-3,314 nodes, then +2,578)
+- Shot ~70500: CXRS_010-016 added (+686 nodes)
+- Shot ~82000: MAGANALYSIS added (+60 nodes)
+
 ## Reference Shots
 
 For dynamic trees (shot-dependent structure), we use reference shots that have rich data across diagnostics. These are documented per-tree in the graph.
@@ -212,16 +266,37 @@ RETURN p.path
 - [x] Enhance `get_exploration_progress` with `next_targets` section
 - [x] Auto-create `TREE_NAME` and `ACCESSOR_FUNCTION` relationships in `ingest_nodes`
 - [x] Create `ingest-mdsplus` script for batch ingestion
+- [x] Add `TreeModelVersion` class to schema (super tree concept)
+- [x] Add `first_shot`, `last_shot`, `introduced_version` to TreeNode
+- [x] Create `discover-epochs` script for epoch discovery
 
 ### Next Steps
 
-1. [ ] Run `ingest-mdsplus epfl results --shot 84469` to complete results tree
-2. [ ] Run `ingest-mdsplus epfl tcv_shot --shot 84469` for tcv_shot tree
-3. [ ] Run `ingest-mdsplus epfl thomson --shot 84469` for thomson tree
-4. [ ] Regenerate models: `uv run build-models --force`
+1. [ ] Complete epoch discovery for results tree
+2. [ ] Compute `first_shot` for each TreeNode via binary search
+3. [ ] Link TreeNodes to their `introduced_version`
+4. [ ] Run `ingest-mdsplus epfl results --shot 84469` to complete results tree
 5. [ ] LLM pass to enrich nodes with physics_domain classification
 
 ## Query Reference
+
+### Check tree model versions
+```cypher
+MATCH (v:TreeModelVersion)-[:FACILITY_ID]->(f:Facility {id: 'epfl'})
+WHERE v.tree_name = 'results'
+RETURN v.version, v.first_shot, v.last_shot, v.node_count, 
+       v.nodes_added, v.added_subtrees
+ORDER BY v.version
+```
+
+### Find nodes valid for a specific shot
+```cypher
+-- What nodes existed at shot 60000?
+MATCH (n:TreeNode {tree_name: 'results'})
+WHERE (n.first_shot IS NULL OR n.first_shot <= 60000)
+  AND (n.last_shot IS NULL OR n.last_shot >= 60000)
+RETURN count(n) AS nodes_at_shot_60000
+```
 
 ### Check exploration progress
 ```cypher
@@ -255,6 +330,16 @@ MATCH (n:TreeNode)
 WHERE n.path STARTS WITH '\\RESULTS::LIUQE'
 RETURN n.path, n.node_type, n.physics_domain
 ORDER BY n.path
+```
+
+### Evolution timeline
+```cypher
+-- Show tree evolution over time
+MATCH (v:TreeModelVersion {tree_name: 'results'})
+OPTIONAL MATCH (v)-[:PREDECESSOR]->(prev)
+RETURN v.version, v.first_shot, v.node_count, 
+       v.nodes_added, prev.version AS from_version
+ORDER BY v.version
 ```
 
 ## See Also

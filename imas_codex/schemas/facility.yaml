@@ -462,6 +462,58 @@ classes:
         description: Shot number used for structure introspection
         range: integer
 
+  TreeModelVersion:
+    description: >-
+      A structural version of an MDSplus tree model. Captures when the
+      tree structure changed and what nodes were added/removed. Enables
+      the "super tree" concept where each node has applicability ranges.
+    class_uri: facility:TreeModelVersion
+    attributes:
+      id:
+        identifier: true
+        description: Composite ID like epfl:results:v67
+        required: true
+      tree_name:
+        description: Parent tree name
+        required: true
+        range: MDSplusTree
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      version:
+        description: Sequential version number for this tree structure
+        required: true
+        range: integer
+      first_shot:
+        description: First shot where this structure was active
+        required: true
+        range: integer
+      last_shot:
+        description: Last shot with this structure (null = current model)
+        range: integer
+      node_count:
+        description: Total nodes in this version
+        range: integer
+      nodes_added:
+        description: Nodes added from previous version
+        range: integer
+      nodes_removed:
+        description: Nodes removed from previous version
+        range: integer
+      added_subtrees:
+        description: Top-level subtrees added in this version (e.g., ["BARATRON", "BOLO"])
+        multivalued: true
+      removed_subtrees:
+        description: Top-level subtrees removed in this version
+        multivalued: true
+      predecessor:
+        description: Previous structure version
+        range: TreeModelVersion
+      discovery_date:
+        description: When this epoch was discovered
+        range: datetime
+
   TreeNode:
     description: >-
       A node within an MDSplus tree. Represents a single data point that can
@@ -527,6 +579,23 @@ classes:
           Null for root nodes (tree level).
           Example: \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
         range: string
+      # Applicability range ("super tree" concept)
+      first_shot:
+        description: >-
+          First shot where this node exists in tree structure.
+          Null means node exists since earliest known shot.
+        range: integer
+      last_shot:
+        description: >-
+          Last shot where this node exists. Null means node exists
+          in current model (still active).
+        range: integer
+      introduced_version:
+        description: The tree model version that introduced this node
+        range: TreeModelVersion
+      removed_version:
+        description: The tree model version that removed this node (rare)
+        range: TreeModelVersion
 
   TDIFunction:
     description: >-
