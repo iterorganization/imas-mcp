@@ -5,6 +5,7 @@ This module provides facility-agnostic tools for:
 - Epoch boundary detection (structural versioning)
 - Super tree construction with applicability ranges
 - TreeNode ingestion with cross-links to versions
+- Metadata extraction (units, descriptions from COMMENT nodes)
 
 Works with any facility that uses MDSplus as a data store.
 
@@ -22,12 +23,19 @@ Usage:
     with GraphClient() as client:
         ingest_epochs(client, epochs)
         ingest_super_tree(client, "epfl", "results", epochs, structures)
+
+        # Enrich with real metadata (units, descriptions)
+        enrich_graph_metadata(client, "epfl", "results", shot=89000)
+
+        # Refine rough boundaries (for legacy sequential data)
+        refine_boundaries(client, "epfl", "results")
 """
 
 from imas_codex.mdsplus.batch_discovery import (
     BatchDiscovery,
     DiscoveryCheckpoint,
     discover_epochs_optimized,
+    refine_boundaries,
 )
 from imas_codex.mdsplus.discovery import (
     TreeDiscovery,
@@ -39,6 +47,10 @@ from imas_codex.mdsplus.ingestion import (
     ingest_epochs,
     ingest_super_tree,
 )
+from imas_codex.mdsplus.metadata import (
+    enrich_graph_metadata,
+    extract_metadata,
+)
 
 __all__ = [
     "BatchDiscovery",
@@ -46,8 +58,11 @@ __all__ = [
     "TreeDiscovery",
     "discover_epochs",
     "discover_epochs_optimized",
+    "enrich_graph_metadata",
     "enrich_node_metadata",
+    "extract_metadata",
     "get_tree_structure",
     "ingest_epochs",
     "ingest_super_tree",
+    "refine_boundaries",
 ]

@@ -526,3 +526,115 @@ def _build_epoch_records(
         )
 
     return epochs, structures
+
+
+def refine_boundaries(
+    client: "GraphClient",
+    facility: str,
+    tree_name: str,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Refine rough epoch boundaries using binary search.
+
+    Takes existing epochs (from sequential discovery with rough boundaries)
+    and uses binary search to find exact shot where structure changed.
+
+    Args:
+        client: Neo4j GraphClient
+        facility: SSH host alias
+        tree_name: MDSplus tree name
+        dry_run: If True, log but don't update
+
+    Returns:
+        Dict with counts: epochs_checked, boundaries_refined
+    """
+    # Get existing epochs sorted by first_shot
+    result = client.query(
+        """
+        MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+        RETURN v.id as id, v.first_shot as first_shot
+        ORDER BY v.first_shot
+        """,
+        facility=facility,
+        tree=tree_name,
+    )
+
+    epochs = list(result)
+    if len(epochs) < 2:
+        logger.info("Not enough epochs to refine (need at least 2)")
+        return {"epochs_checked": 0, "boundaries_refined": 0}
+
+    logger.info(f"Checking {len(epochs) - 1} boundaries for refinement")
+
+    discovery = BatchDiscovery(facility, tree_name)
+    refined_count = 0
+
+    for i in range(1, len(epochs)):
+        prev = epochs[i - 1]
+        curr = epochs[i]
+
+        prev_shot = prev["first_shot"]
+        curr_shot = curr["first_shot"]
+        gap = curr_shot - prev_shot
+
+        # Skip if already at shot-level precision (gap <= 1)
+        if gap <= 1:
+            logger.debug(f"Epoch {curr['id']}: already exact (gap={gap})")
+            continue
+
+        # Get fingerprints at boundaries
+        fp_result = discovery.batch_query_structures([prev_shot, curr_shot])
+        prev_info = fp_result.get(prev_shot)
+        curr_info = fp_result.get(curr_shot)
+
+        if prev_info is None or curr_info is None:
+            logger.warning(f"Cannot query shots {prev_shot}/{curr_shot}, skipping")
+            continue
+
+        prev_fp = prev_info[1]
+        curr_fp = curr_info[1]
+
+        if prev_fp == curr_fp:
+            logger.debug(f"Epoch {curr['id']}: fingerprints match, no change")
+            continue
+
+        # Binary search for exact boundary
+        exact_shot = discovery.binary_search_boundary(
+            prev_shot, curr_shot, prev_fp, curr_fp
+        )
+
+        if exact_shot is None:
+            logger.warning(f"Could not refine boundary for {curr['id']}")
+            continue
+
+        if exact_shot != curr_shot:
+            logger.info(
+                f"Epoch {curr['id']}: refined {curr_shot} -> {exact_shot} "
+                f"(was off by {curr_shot - exact_shot} shots)"
+            )
+
+            if not dry_run:
+                client.query(
+                    """
+                    MATCH (v:TreeModelVersion {id: $id})
+                    SET v.first_shot = $shot,
+                        v.boundary_refined = true
+                    """,
+                    id=curr["id"],
+                    shot=exact_shot,
+                )
+            refined_count += 1
+        else:
+            logger.debug(f"Epoch {curr['id']}: boundary already correct")
+
+    result_dict = {
+        "epochs_checked": len(epochs) - 1,
+        "boundaries_refined": refined_count,
+    }
+
+    if refined_count > 0:
+        logger.info(f"Refined {refined_count} boundaries")
+    else:
+        logger.info("All boundaries already at exact precision")
+
+    return result_dict
