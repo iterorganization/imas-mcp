@@ -1,0 +1,970 @@
+# Fusion Facility Schema (Unified)
+#
+# This schema defines ALL facility data - both public (graphed) and private.
+# Fields marked with `is_private: true` are:
+#   - Stored in <facility>_private.yaml (gitignored)
+#   - NEVER written to the Neo4j graph
+#   - NEVER included in OCI artifact pushes
+#
+# Public fields are stored in <facility>.yaml and the graph.
+#
+# Generated models: imas_codex/graph/models.py
+# To regenerate: uv run build-models --force
+#
+# VERSIONING: The version field below is kept in sync with the project version.
+# The release workflow updates both together. Do not manually edit the version.
+
+id: https://imas.iter.org/schemas/facility
+name: facility
+title: Fusion Facility Schema (Unified)
+description: >-
+  Unified schema for fusion research facilities. Fields with is_private: true
+  are stored locally only (gitignored YAML), never in the public graph.
+
+license: MIT
+version: 0.4.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  facility: https://imas.iter.org/schemas/facility/
+  imas: https://imas.iter.org/
+
+default_prefix: facility
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+enums:
+  DataSourceType:
+    description: Types of data source systems at fusion facilities
+    permissible_values:
+      mdsplus:
+        description: MDSplus tree-based data system
+      uda:
+        description: Universal Data Access (UDA) system
+      hdf5:
+        description: HDF5 file-based storage
+      netcdf:
+        description: NetCDF scientific data format
+      imas:
+        description: IMAS native data format
+      ppf:
+        description: JET Processed Pulse File system
+      allas:
+        description: CSC Allas object storage
+
+  ToolStatus:
+    description: Availability status of a command-line tool
+    permissible_values:
+      available:
+        description: Tool is installed and accessible
+      unavailable:
+        description: Tool is not installed
+      restricted:
+        description: Tool exists but requires special access
+
+  TreeNodeType:
+    description: MDSplus node data types
+    permissible_values:
+      STRUCTURE:
+        description: Container node with no data
+      SIGNAL:
+        description: Time-varying measurement data
+      NUMERIC:
+        description: Numeric scalar or array
+      TEXT:
+        description: Text/string data
+      AXIS:
+        description: Coordinate axis data
+      SUBTREE:
+        description: Reference to another tree
+      ACTION:
+        description: Action sequence node
+      DISPATCH:
+        description: Dispatch scheduling node
+      TASK:
+        description: Task definition node
+
+  DiagnosticCategory:
+    description: Categories of fusion plasma diagnostics
+    permissible_values:
+      magnetics:
+        description: Magnetic field and flux measurements
+      spectroscopy:
+        description: Spectroscopic diagnostics (visible, UV, X-ray)
+      particle:
+        description: Particle diagnostics (CX, NPA, beam emission)
+      imaging:
+        description: Camera and imaging systems
+      microwave:
+        description: Microwave diagnostics (ECE, reflectometry)
+      bolometry:
+        description: Radiated power measurements
+      neutron:
+        description: Neutron flux and spectrum diagnostics
+      probe:
+        description: Langmuir probes and other insertable probes
+      interferometry:
+        description: Interferometric density measurements
+      thomson:
+        description: Thomson scattering systems
+
+  AnalysisCodeType:
+    description: Types of physics analysis codes
+    permissible_values:
+      equilibrium:
+        description: Equilibrium reconstruction (EFIT, LIUQE, CLISTE)
+      transport:
+        description: Transport analysis (ASTRA, TRANSP, JETTO)
+      mhd:
+        description: MHD stability analysis
+      heating:
+        description: Heating deposition codes (TORAY, TORBEAM, NUBEAM)
+      control:
+        description: Real-time plasma control systems
+      profile_fitting:
+        description: Profile fitting and kinetic analysis
+      integrated:
+        description: Integrated modeling workflows
+
+  ServerRole:
+    description: Role of a data server in the facility infrastructure
+    permissible_values:
+      primary:
+        description: Main production data server
+      secondary:
+        description: Backup or read-replica server
+      legacy:
+        description: Historical/archived data server
+      realtime:
+        description: Real-time control system data
+      analysis:
+        description: Analysis results server
+
+  DataFormatType:
+    description: Types of data storage formats
+    permissible_values:
+      mdsplus:
+        description: MDSplus tree-based storage
+      hdf5:
+        description: HDF5 hierarchical data format
+      netcdf:
+        description: NetCDF scientific data format
+      csv:
+        description: Comma-separated values
+      json:
+        description: JSON data files
+      mat:
+        description: MATLAB .mat files
+      idl:
+        description: IDL save files
+      imas:
+        description: IMAS data format
+
+  IngestionStatus:
+    description: Status of data ingestion for a tree or data source
+    permissible_values:
+      pending:
+        description: Not yet ingested
+      partial:
+        description: Some nodes ingested (in progress)
+      complete:
+        description: All known nodes ingested
+      stale:
+        description: Ingestion may be outdated (schema changed)
+
+  PopulationType:
+    description: How tree nodes are populated with data
+    permissible_values:
+      static:
+        description: Structure is fixed, always present
+      dynamic:
+        description: Nodes created at runtime by analysis codes
+      hybrid:
+        description: Mix of static structure with dynamic population
+
+  ProgrammingLanguage:
+    description: Programming languages for code examples
+    permissible_values:
+      python:
+        description: Python source code
+      matlab:
+        description: MATLAB/Octave code
+      fortran:
+        description: Fortran source code
+      idl:
+        description: IDL (Interactive Data Language)
+      tdi:
+        description: TDI (Tree Data Interface) expressions
+      cpp:
+        description: C++ source code
+      julia:
+        description: Julia source code
+
+  PathType:
+    description: Types of filesystem paths at a facility
+    permissible_values:
+      code_directory:
+        description: Directory containing analysis codes or scripts
+      data_directory:
+        description: Directory containing data files
+      config_directory:
+        description: Directory containing configuration files
+      binary_directory:
+        description: Directory containing executables
+
+  PathStatus:
+    description: Exploration status of a facility path (multi-pass workflow)
+    permissible_values:
+      discovered:
+        description: Path exists but nothing done yet
+      listed:
+        description: Directory contents enumerated, child paths created
+      scanned:
+        description: Searched for patterns (rg/grep), awaiting triage
+      flagged:
+        description: Marked for deeper investigation by scout
+      analyzed:
+        description: Files examined in detail, structure understood
+      ingested:
+        description: Code content extracted to graph (CodeExample nodes)
+      skipped:
+        description: Reviewed and deemed uninteresting
+      excluded:
+        description: Never explore (known junk paths)
+      stale:
+        description: Path may no longer exist, needs re-verification
+
+  SourceFileStatus:
+    description: Lifecycle status of a source file for ingestion pipeline
+    permissible_values:
+      queued:
+        description: Discovered by scout, awaiting ingestion
+      fetching:
+        description: Currently being transferred from remote
+      embedding:
+        description: Generating embeddings for chunks
+      ready:
+        description: Successfully ingested, CodeExample created
+      failed:
+        description: Ingestion failed (check error field)
+      stale:
+        description: Source may have changed, needs re-fetch
+
+# =============================================================================
+# Core Classes
+# =============================================================================
+
+classes:
+  Facility:
+    description: >-
+      A fusion research facility. Root node for facility-specific knowledge.
+      Public fields are stored in the graph. Private fields (is_private: true)
+      are stored in <facility>_private.yaml only.
+    class_uri: facility:Facility
+    attributes:
+      # === PUBLIC FIELDS (graph + epfl.yaml) ===
+      id:
+        identifier: true
+        description: Unique facility identifier (e.g., "epfl", "iter", "jet")
+        required: true
+      name:
+        description: Human-readable facility name (e.g., "EPFL/TCV")
+        required: true
+      description:
+        description: Facility description
+      machine:
+        description: Tokamak/stellarator name (e.g., "TCV", "ITER", "JET")
+      location:
+        description: Geographic location
+      data_systems:
+        description: Data systems available (e.g., "mdsplus", "uda")
+        multivalued: true
+
+      # === PRIVATE FIELDS (epfl_private.yaml only, never graphed) ===
+      ssh_host:
+        description: SSH host alias for connection
+        annotations:
+          is_private: true
+      hostnames:
+        description: Network hostnames for this facility
+        multivalued: true
+        annotations:
+          is_private: true
+      nfs_mounts:
+        description: NFS mount points (JSON-encoded list)
+        multivalued: true
+        annotations:
+          is_private: true
+      paths:
+        description: Key filesystem paths (JSON-encoded dict)
+        annotations:
+          is_private: true
+      excludes:
+        description: Paths/patterns to exclude during exploration (JSON-encoded)
+        annotations:
+          is_private: true
+      tools:
+        description: Tool availability map (JSON-encoded dict)
+        annotations:
+          is_private: true
+      os_info:
+        description: Operating system details (JSON-encoded)
+        annotations:
+          is_private: true
+      python_info:
+        description: Python environment details (JSON-encoded)
+        annotations:
+          is_private: true
+      compilers:
+        description: Compiler availability (JSON-encoded)
+        annotations:
+          is_private: true
+      containers:
+        description: Available container images (JSON-encoded)
+        annotations:
+          is_private: true
+      exploration_notes:
+        description: Free-form exploration notes
+        multivalued: true
+        annotations:
+          is_private: true
+
+  FacilityPath:
+    description: >-
+      A filesystem path at a remote facility for structured exploration.
+      
+      REQUIRED TOOLS (install at ~/bin before exploration):
+      - rg (ripgrep): Fast pattern search with --max-depth, --max-count limits
+      - fd: Fast file finder, safer than find for large directories
+      - dust: Disk usage visualization (~10x faster than du)
+      - tokei: Lines of code by language (parallel, very fast)
+      - scc: SLOC + complexity metrics for prioritization
+      
+      MULTI-PASS EXPLORATION WORKFLOW:
+      1. Scout: discovered -> listed -> scanned (pattern search with rg)
+      2. Triage: scanned -> flagged (use scc complexity for interest_score) or skipped
+      3. Analyze: flagged -> analyzed (read files, understand structure)
+      4. Ingest: analyzed -> ingested (create CodeExample nodes)
+      
+      Query paths by status to find work for each pass.
+      Use interest_score to prioritize flagged paths.
+    class_uri: facility:FacilityPath
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:path (e.g., "epfl:/home/codes")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      path:
+        description: Absolute filesystem path
+        required: true
+      path_type:
+        description: Type of path
+        range: PathType
+        required: true
+      status:
+        description: Exploration status
+        range: PathStatus
+        required: true
+      parent_path_id:
+        description: Parent directory path ID (null for root paths)
+        range: FacilityPath
+      depth:
+        description: Distance from root path (0 = root like /home/codes)
+        range: integer
+      description:
+        description: Human-readable description of what this path contains
+      discovered_at:
+        description: When this path was first discovered
+        range: datetime
+      last_examined:
+        description: When this path was last examined by any pass
+        range: datetime
+      # Coverage tracking
+      file_count:
+        description: Total files in directory (set during listing)
+        range: integer
+      dir_count:
+        description: Total subdirectories (set during listing)
+        range: integer
+      files_scanned:
+        description: Files that matched patterns during scanning
+        range: integer
+      files_ingested:
+        description: Files extracted to CodeExample nodes
+        range: integer
+      # Scout guidance
+      interest_score:
+        description: Priority for investigation (0.0-1.0, higher = more interesting)
+        range: float
+      patterns_found:
+        description: Patterns that matched during scanning (e.g., "equilibrium", "IMAS")
+        multivalued: true
+      notes:
+        description: Free-form notes about this path (append, don't overwrite)
+
+# =============================================================================
+# Data Infrastructure Classes (Public - no IPs or paths)
+# =============================================================================
+
+  MDSplusServer:
+    description: An MDSplus data server (internal name only, no IP)
+    class_uri: facility:MDSplusServer
+    attributes:
+      hostname:
+        identifier: true
+        description: Server name (e.g., "tcvdata", not IP address)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      role:
+        description: Server role in the infrastructure
+        range: ServerRole
+      description:
+        description: What data this server hosts
+
+  MDSplusTree:
+    description: An MDSplus tree (hierarchical data container)
+    class_uri: facility:MDSplusTree
+    attributes:
+      name:
+        identifier: true
+        description: Tree name (e.g., "tcv_shot", "results")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      server_hostname:
+        description: Primary server hosting this tree
+        range: MDSplusServer
+      description:
+        description: Tree description
+      shot_dependent:
+        description: Whether tree structure varies by shot
+        range: boolean
+        ifabsent: "true"
+      population_type:
+        description: How nodes are populated (static, dynamic, hybrid)
+        range: PopulationType
+      # Ingestion tracking
+      ingestion_status:
+        description: Current ingestion status
+        range: IngestionStatus
+      node_count_total:
+        description: Total known nodes in tree (from introspection)
+        range: integer
+      node_count_ingested:
+        description: Number of nodes ingested to graph
+        range: integer
+      tdi_function_count:
+        description: Number of TDI functions accessing this tree
+        range: integer
+      last_ingested:
+        description: When tree structure was last ingested
+        range: datetime
+      reference_shot:
+        description: Shot number used for structure introspection
+        range: integer
+
+  TreeModelVersion:
+    description: >-
+      A structural version of an MDSplus tree model. Captures when the
+      tree structure changed and what nodes were added/removed. Enables
+      the "super tree" concept where each node has applicability ranges.
+    class_uri: facility:TreeModelVersion
+    attributes:
+      id:
+        identifier: true
+        description: Composite ID like epfl:results:v67
+        required: true
+      tree_name:
+        description: Parent tree name
+        required: true
+        range: MDSplusTree
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      version:
+        description: Sequential version number for this tree structure
+        required: true
+        range: integer
+      first_shot:
+        description: First shot where this structure was active
+        required: true
+        range: integer
+      last_shot:
+        description: Last shot with this structure (null = current model)
+        range: integer
+      node_count:
+        description: Total nodes in this version
+        range: integer
+      nodes_added:
+        description: Nodes added from previous version
+        range: integer
+      nodes_removed:
+        description: Nodes removed from previous version
+        range: integer
+      added_subtrees:
+        description: Top-level subtrees added in this version (e.g., ["BARATRON", "BOLO"])
+        multivalued: true
+      removed_subtrees:
+        description: Top-level subtrees removed in this version
+        multivalued: true
+      predecessor:
+        description: Previous structure version
+        range: TreeModelVersion
+      discovery_date:
+        description: When this epoch was discovered
+        range: datetime
+
+  TreeNode:
+    description: >-
+      A node within an MDSplus tree. Represents a single data point that can
+      be mapped to IMAS. Nodes with variants (PSI, PSI_2, PSI_3) are stored
+      as a single node with a variants array, each linked to its source code.
+    class_uri: facility:TreeNode
+    attributes:
+      path:
+        identifier: true
+        description: Full node path (e.g., "\\RESULTS::LIUQE:PSI")
+        required: true
+      tree_name:
+        description: Parent tree name
+        required: true
+        range: MDSplusTree
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      node_type:
+        description: MDSplus node data type
+        range: TreeNodeType
+      units:
+        description: Physical units (SI, validated by pint)
+        required: true
+      description:
+        description: Node description
+      physics_domain:
+        description: Physics domain for categorization and filtering
+      example_shot:
+        description: Example shot number where this node exists
+        range: integer
+      variants:
+        description: >-
+          Variant suffixes for multi-source nodes (e.g., ["", "_2", "_3"] for 
+          PSI, PSI_2, PSI_3 from LIUQE, LIUQE02, LIUQE03). First element is
+          the primary/canonical path. Order matches source priority.
+        multivalued: true
+      variant_sources:
+        description: >-
+          Analysis codes that produce each variant (parallel array to variants).
+          E.g., ["LIUQE", "LIUQE02", "LIUQE03"] for variants ["", "_2", "_3"].
+        multivalued: true
+        range: AnalysisCode
+      shape:
+        description: Data shape description (e.g., "1D time series", "2D profile(rho, time)")
+      accessor_function:
+        description: TDI function that provides high-level access to this node
+        range: TDIFunction
+      population_type:
+        description: How this node is populated (static structure vs dynamic by analysis)
+        range: PopulationType
+      aliases:
+        description: >-
+          Alternative names for this node used by accessor functions.
+          E.g., FORTRAN name "I_P" for MATLAB node "I_PL" in tcv_eq.
+          First entry is the canonical/preferred name for the accessor.
+        multivalued: true
+      parent_path:
+        description: >-
+          Path to parent node (computed from path at ingestion time).
+          Enables hierarchy traversal without explicit relationships.
+          Null for root nodes (tree level).
+          Example: \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
+        range: string
+      # Applicability range ("super tree" concept)
+      first_shot:
+        description: >-
+          First shot where this node exists in tree structure.
+          Null means node exists since earliest known shot.
+        range: integer
+      last_shot:
+        description: >-
+          Last shot where this node exists. Null means node exists
+          in current model (still active).
+        range: integer
+      introduced_version:
+        description: The tree model version that introduced this node
+        range: TreeModelVersion
+      removed_version:
+        description: The tree model version that removed this node (rare)
+        range: TreeModelVersion
+
+  TDIFunction:
+    description: >-
+      A TDI function providing high-level data access abstraction.
+      TDI functions encapsulate tree navigation and source selection logic,
+      e.g., tcv_eq("PSI", "LIUQE") handles LIUQE/FBTE equilibrium selection.
+      
+      Version info: TCV uses VERSION.FUN to track shot-range validity.
+      Pattern: _verss array maps to _shots array, bsearch selects version.
+      Return -1 means not applicable, -2 means undefined program.
+    class_uri: facility:TDIFunction
+    attributes:
+      name:
+        identifier: true
+        description: Function name (e.g., "tcv_eq", "tcv_ip")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      description:
+        description: Function description and usage notes
+      signature:
+        description: Function signature with parameter types (e.g., "tcv_eq(signal, source, shot)")
+      parameters:
+        description: Function parameter names
+        multivalued: true
+      return_type:
+        description: Return type description
+      source_file:
+        description: Path to the .FUN file defining this function
+        range: FacilityPath
+      physics_domain:
+        description: Physics domain this function serves
+      # Version and shot-range validity
+      version:
+        description: Current version number (from VERSION.FUN lookup)
+        range: float
+      valid_from_shot:
+        description: First shot this function is valid for
+        range: integer
+      valid_to_shot:
+        description: Last shot this function is valid for (null = current)
+        range: integer
+      version_history:
+        description: JSON-encoded version history [{version, from_shot, to_shot}, ...]
+      superseded_by:
+        description: Name of replacement function if deprecated
+        range: TDIFunction
+      # Source selection for multi-source functions
+      default_source:
+        description: Default equilibrium/analysis source (e.g., "LIUQE")
+      available_sources:
+        description: Available source selections (e.g., ["LIUQE", "LIUQE2", "FBTE"])
+        multivalued: true
+      supported_quantities:
+        description: >-
+          Quantity names this function accepts as first argument.
+          E.g., ["I_P", "R_AXIS", "PSI_AXIS", "Q_95", ...] for tcv_eq.
+          Use TreeNode.aliases for name translation (FORTRAN↔MATLAB).
+        multivalued: true
+
+  ShotRange:
+    description: A range of shot numbers with common characteristics
+    class_uri: facility:ShotRange
+    attributes:
+      id:
+        identifier: true
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      name:
+        description: Name or description of this range
+      start_shot:
+        description: First shot number
+        range: integer
+      end_shot:
+        description: Last shot number (null if ongoing)
+        range: integer
+      description:
+        description: What this shot range represents
+
+# =============================================================================
+# Data Semantics Classes
+# =============================================================================
+
+  Diagnostic:
+    description: A plasma diagnostic system
+    class_uri: facility:Diagnostic
+    attributes:
+      name:
+        identifier: true
+        description: Diagnostic name (e.g., "Thomson", "ECE", "MSE")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      category:
+        description: Diagnostic category
+        range: DiagnosticCategory
+      description:
+        description: Diagnostic description
+
+  AnalysisCode:
+    description: >-
+      A physics analysis or simulation code that writes data to trees.
+      Links to the TreeNode variants it produces (e.g., LIUQE writes PSI, PSI_2).
+      Version info tracks which shots used which code version.
+    class_uri: facility:AnalysisCode
+    attributes:
+      name:
+        identifier: true
+        description: Code name (e.g., "LIUQE", "ASTRA", "TORAY")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      code_type:
+        description: Type of analysis
+        range: AnalysisCodeType
+      description:
+        description: Code description
+      version:
+        description: Code version if known
+      installed_at:
+        description: Installation path (links to FacilityPath)
+        range: FacilityPath
+      # Shot-range validity
+      valid_from_shot:
+        description: First shot this code version is valid for
+        range: integer
+      valid_to_shot:
+        description: Last shot this code version is valid for (null = current)
+        range: integer
+      version_history:
+        description: JSON-encoded version history [{version, from_shot, to_shot}, ...]
+      # Output relationships
+      writes_to_tree:
+        description: Tree this code writes results to
+        range: MDSplusTree
+      output_variant:
+        description: Variant suffix for this code's output (e.g., "_2" for LIUQE02)
+      supersedes:
+        description: Previous version of this code it replaces
+        range: AnalysisCode
+
+# =============================================================================
+# IMAS Mapping Classes
+# =============================================================================
+
+  IMASPath:
+    description: An IMAS data dictionary path
+    class_uri: imas:Path
+    attributes:
+      path:
+        identifier: true
+        description: Full IMAS path
+        required: true
+      ids:
+        description: IDS name (e.g., "equilibrium", "core_profiles")
+        required: true
+      description:
+        description: Path description from IMAS DD
+      units:
+        description: Physical units from IMAS DD
+
+  IMASMapping:
+    description: >-
+      A mapping from facility-specific data to IMAS paths.
+      Contains all information needed to generate an Ambix Recipe for data pumping.
+      Data flow is one-way (facility->IMAS) but searchable from either direction.
+    class_uri: facility:IMASMapping
+    attributes:
+      id:
+        identifier: true
+        required: true
+      source_path:
+        description: Source facility path (TreeNode path or TDI function call)
+        required: true
+        range: TreeNode
+      target_path:
+        description: Target IMAS path
+        required: true
+        range: IMASPath
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      
+      # Pump context for Ambix Recipe generation
+      driver:
+        description: Data access driver (e.g., "mdsplus", "tdi", "ppf")
+        range: DataSourceType
+        required: true
+      driver_args:
+        description: Arguments for the driver (JSON-encoded, e.g., tree name, path)
+      units_in:
+        description: Units of the source data (must be pint-compatible)
+      units_out:
+        description: Units of the target IMAS path (from IMAS DD)
+      scale:
+        description: Numeric scale factor for transformation
+        range: float
+      transformation:
+        description: Complex transformation expression if scale is insufficient
+      
+      # Validation and provenance
+      validated:
+        description: Whether this mapping has been validated against real data
+        range: boolean
+      validated_shot:
+        description: Shot number used for validation
+        range: integer
+      confidence:
+        description: Confidence level of the mapping (0.0-1.0)
+        range: float
+      notes:
+        description: Mapping notes and caveats
+
+# =============================================================================
+# Code Examples Classes
+# =============================================================================
+
+  CodeExample:
+    description: >-
+      A code file containing examples of reading/writing fusion data.
+      Links to facility and tracks source location for provenance.
+    class_uri: facility:CodeExample
+    attributes:
+      id:
+        identifier: true
+        description: Unique identifier (facility:filename hash)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      source_file:
+        description: Remote file path (e.g., /home/wilson/data/load_to_imas.py)
+        required: true
+      language:
+        description: Programming language
+        range: ProgrammingLanguage
+        required: true
+      title:
+        description: Human-readable title or filename
+      description:
+        description: Description of what this code does
+      author:
+        description: Username or author name if known
+      related_ids:
+        description: IDS names this code interacts with (coarse linking)
+        multivalued: true
+      ingested_at:
+        description: Timestamp when this was ingested
+        range: datetime
+
+  SourceFile:
+    description: >-
+      A source file queued for ingestion into the knowledge graph.
+      
+      Lifecycle: queued -> fetching -> embedding -> ready
+      On failure: any state -> failed (check error field)
+      On re-scan: ready -> stale -> queued (if changed)
+      
+      SourceFile is the unit of work for the ingestion pipeline.
+      Scouts create SourceFile nodes; CLI processes them.
+      When ready, a CodeExample node is created with chunks.
+    class_uri: facility:SourceFile
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:path (e.g., epfl:/home/codes/foo.py)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      path:
+        description: Absolute remote filesystem path
+        required: true
+      status:
+        description: Current lifecycle status
+        range: SourceFileStatus
+        required: true
+      language:
+        description: Programming language (detected from extension)
+        range: ProgrammingLanguage
+      parent_path_id:
+        description: FacilityPath that contains this file (for tracking)
+        range: FacilityPath
+      discovered_by:
+        description: Scout session or pattern that found this file
+      discovered_at:
+        description: When this file was queued for ingestion
+        range: datetime
+      interest_score:
+        description: Priority score from scout (0.0-1.0, higher = more interesting)
+        range: float
+      patterns_matched:
+        description: Patterns that matched during discovery (e.g., "IMAS", "equilibrium")
+        multivalued: true
+      # Processing metadata
+      started_at:
+        description: When ingestion started (fetching state)
+        range: datetime
+      completed_at:
+        description: When ingestion completed (ready state)
+        range: datetime
+      error:
+        description: Error message if status is failed
+      retry_count:
+        description: Number of retry attempts
+        range: integer
+      # Output
+      code_example_id:
+        description: ID of created CodeExample (set when ready)
+        range: CodeExample
+
+  CodeChunk:
+    description: >-
+      A searchable chunk of code from a CodeExample.
+      Contains embedding for semantic search and links to IMAS paths.
+    class_uri: facility:CodeChunk
+    attributes:
+      id:
+        identifier: true
+        description: Unique chunk identifier
+        required: true
+      code_example_id:
+        description: Parent CodeExample
+        required: true
+        range: CodeExample
+      content:
+        description: The actual code content
+        required: true
+      function_name:
+        description: Function or class name if applicable
+      start_line:
+        description: Starting line number in source file
+        range: integer
+      end_line:
+        description: Ending line number in source file
+        range: integer
+      embedding:
+        description: Vector embedding for semantic search (stored as list of floats)
+        multivalued: true
+        range: float
+      related_paths:
+        description: Specific IMAS paths this chunk references
+        multivalued: true
+        range: IMASPath

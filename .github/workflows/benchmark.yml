@@ -149,10 +149,8 @@ jobs:
           echo "MACHINE_NAME=$MACHINE_NAME" >> $GITHUB_ENV
 
       - name: Run benchmarks
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          # Run benchmarks
+          # Run benchmarks (no OPENAI_API_KEY - use cached labels only)
           if [ -n "${{ github.event.inputs.benchmark_filter }}" ]; then
             asv run --python=3.12 --machine "$MACHINE_NAME" -b "${{ github.event.inputs.benchmark_filter }}" --verbose
           else

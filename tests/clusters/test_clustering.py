@@ -189,11 +189,9 @@ class TestEmbeddingClusterer:
 
     def test_calculate_statistics(self, clusterer):
         """Test statistics calculation."""
-        from imas_codex.clusters.models import PathMembership
-
         clusters = [
             ClusterInfo(
-                id=0,
+                id="uuid-0",
                 similarity_score=0.9,
                 size=3,
                 is_cross_ids=True,
@@ -201,7 +199,7 @@ class TestEmbeddingClusterer:
                 paths=["a/x", "a/y", "b/z"],
             ),
             ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.85,
                 size=2,
                 is_cross_ids=False,
@@ -210,9 +208,9 @@ class TestEmbeddingClusterer:
             ),
         ]
         path_index = {
-            "a/x": PathMembership(cross_ids_cluster=0, intra_ids_cluster=None),
-            "a/m": PathMembership(cross_ids_cluster=None, intra_ids_cluster=1),
-            "a/p": PathMembership(cross_ids_cluster=None, intra_ids_cluster=None),
+            "a/x": ["uuid-0"],
+            "a/m": ["uuid-1"],
+            "a/p": [],  # isolated path
         }
 
         stats = clusterer._calculate_statistics(clusters, path_index)
@@ -247,7 +245,7 @@ class TestRelationshipBuilder:
         """Test building path index with clusters."""
         cluster_infos = {
             0: ClusterInfo(
-                id=0,
+                id="uuid-0",
                 similarity_score=0.9,
                 size=2,
                 is_cross_ids=True,
@@ -255,7 +253,7 @@ class TestRelationshipBuilder:
                 paths=["a/x", "b/y"],
             ),
             1: ClusterInfo(
-                id=1,
+                id="uuid-1",
                 similarity_score=0.8,
                 size=2,
                 is_cross_ids=False,
@@ -266,8 +264,9 @@ class TestRelationshipBuilder:
 
         result = builder.build_path_index(cluster_infos)
 
-        assert result["path_to_cluster"]["a/x"] == 0
-        assert result["path_to_cluster"]["b/y"] == 0
-        assert result["path_to_cluster"]["a/m"] == 1
-        assert result["cluster_to_paths"][0] == ["a/x", "b/y"]
-        assert result["cluster_to_paths"][1] == ["a/m", "a/n"]
+        # path_to_cluster now returns list of cluster IDs (multi-membership support)
+        assert result["path_to_cluster"]["a/x"] == ["0"]
+        assert result["path_to_cluster"]["b/y"] == ["0"]
+        assert result["path_to_cluster"]["a/m"] == ["1"]
+        assert result["cluster_to_paths"]["0"] == ["a/x", "b/y"]
+        assert result["cluster_to_paths"]["1"] == ["a/m", "a/n"]

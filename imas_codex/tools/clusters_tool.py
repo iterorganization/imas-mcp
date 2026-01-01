@@ -1,17 +1,19 @@
 """
 Clusters tool for searching semantically related IMAS paths.
 
-Provides search over clusters of related paths using:
+Provides search over hierarchical clusters of related paths using:
 - Path lookup (exact match)
 - Natural language queries (semantic search on labels/descriptions)
-- IDS filtering
+- Scope filtering (global, domain, ids)
+- Composite relevance ranking
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastmcp import Context
 
+from imas_codex.clusters.models import ClusterScope
 from imas_codex.clusters.search import ClusterSearcher, ClusterSearchResult
 from imas_codex.core.clusters import Clusters
 from imas_codex.embeddings.config import EncoderConfig
@@ -29,9 +31,19 @@ class ClustersTool(BaseTool):
     """
     Search tool for discovering related IMAS data paths via semantic clusters.
 
-    Clusters group paths with similar physics meaning, enabling discovery of:
-    - Cross-IDS clusters (same concept across different IDS)
-    - Intra-IDS clusters (related paths within an IDS)
+    Clusters are organized hierarchically:
+    - Global: Discovered from full embedding space (all IDS)
+    - Domain: Per physics domain (e.g., transport, equilibrium)
+    - IDS: Per individual IDS (e.g., core_profiles, magnetics)
+
+    Clusters include enrichment metadata:
+    - physics_concepts: Normalized physics quantities
+    - data_type: Data structure classification
+    - tags: Classification tags
+    - mapping_relevance: Usefulness for data mapping (high/medium/low)
+
+    Results are ranked by composite relevance score blending semantic
+    similarity with mapping relevance.
     """
 
     def __init__(self, *args, **kwargs):
@@ -97,14 +109,15 @@ class ClustersTool(BaseTool):
     @handle_errors(fallback="cluster_suggestions")
     @mcp_tool(
         "Search for semantically related IMAS path clusters. "
-        "query (required): Natural language (e.g., 'electron density measurements') or IMAS path (e.g., 'equilibrium/time_slice/profiles_2d/b_field_r'). "
+        "query (required): Natural language (e.g., 'electron density measurements') or IMAS path. "
+        "scope: Filter by hierarchy level - 'global', 'domain', or 'ids'. "
         "ids_filter: Limit to specific IDS (space/comma-delimited). "
-        "Returns: Clusters of related paths - cross_ids (same concept across IDS) or intra_ids (related within one IDS). "
-        "Use for discovering related data structures across diagnostics."
+        "Returns: Clusters ranked by relevance with enrichment metadata (physics_concepts, data_type, tags, mapping_relevance)."
     )
     async def search_imas_clusters(
         self,
         query: str,
+        scope: Literal["global", "domain", "ids"] | None = None,
         ids_filter: str | list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any] | ToolError:
@@ -115,8 +128,16 @@ class ClustersTool(BaseTool):
         - Paths (contain '/') → exact cluster lookup
         - Natural language → semantic search on cluster labels/descriptions
 
+        Results are ranked by composite relevance score blending semantic
+        similarity with mapping relevance, cluster type, and scope.
+
         Args:
             query: Path or natural language query (required)
+            scope: Filter by hierarchy level:
+                   - "global": Clusters from full embedding space
+                   - "domain": Clusters within physics domains
+                   - "ids": Clusters within individual IDS
+                   - None: Search all levels (default)
             ids_filter: Limit results to specific IDS. Accepts:
                        - Space-delimited string: "equilibrium transport core_profiles"
                        - Comma-delimited string: "equilibrium, transport, core_profiles"
@@ -124,13 +145,13 @@ class ClustersTool(BaseTool):
             ctx: MCP context
 
         Returns:
-            Dict with matching clusters and their paths
+            Dict with matching clusters, enrichment metadata, and relevance scores
 
         Examples:
             search_imas_clusters(query="core_profiles/profiles_1d/electrons/density")
-            search_imas_clusters(query="electron temperature measurements")
-            search_imas_clusters(query="magnetic field", ids_filter="equilibrium magnetics")
-            search_imas_clusters(query="transport", ids_filter="equilibrium, core_profiles")
+            search_imas_clusters(query="electron temperature", scope="global")
+            search_imas_clusters(query="magnetic field", scope="domain")
+            search_imas_clusters(query="transport", ids_filter="core_profiles")
         """
         # Validate query is not empty
         is_valid, error_message = validate_query(query, "search_imas_clusters")
@@ -163,20 +184,27 @@ class ClustersTool(BaseTool):
                 set(normalized_filter) if normalized_filter else None
             )
 
+            # Cast scope to ClusterScope type if provided
+            scope_filter: ClusterScope | None = scope  # type: ignore[assignment]
+
             # Detect query type and search
             is_path = "/" in query and " " not in query
 
             if is_path:
                 # Path lookup
                 results = self._searcher.search_by_path(query)
+                # Apply scope filter for path lookups
+                if scope_filter:
+                    results = [r for r in results if r.scope == scope_filter]
             else:
-                # Natural language search
+                # Natural language search with scope filtering
                 encoder = self._get_encoder()
                 results = self._searcher.search_by_text(
                     query=query,
                     encoder=encoder,
                     top_k=10,
                     similarity_threshold=0.3,
+                    scope=scope_filter,
                 )
 
             # Apply IDS filter if specified
@@ -191,18 +219,21 @@ class ClustersTool(BaseTool):
                 error_context: dict[str, Any] = {"query": query}
                 if ids_set:
                     error_context["ids_filter"] = list(ids_set)
+                if scope:
+                    error_context["scope"] = scope
                 return ToolError(
                     error=f"No clusters found for query: {query}",
                     suggestions=[
                         "Try a broader search term",
+                        "Try without scope filter to search all levels",
                         "Use search_imas_paths() for direct path search",
                         "Check available IDS with get_imas_overview()",
                     ],
                     context=error_context,
                 )
 
-            # Format response
-            return self._format_results(query, results, is_path, ids_set)
+            # Format response with enrichment fields
+            return self._format_results(query, results, is_path, ids_set, scope)
 
         except Exception as e:
             logger.error(f"Cluster search failed: {e}")
@@ -221,8 +252,9 @@ class ClustersTool(BaseTool):
         results: list[ClusterSearchResult],
         is_path: bool,
         ids_filter: set[str] | None = None,
+        scope_filter: str | None = None,
     ) -> dict[str, Any]:
-        """Format search results for output."""
+        """Format search results with enrichment fields."""
         clusters = []
 
         for result in results:
@@ -231,15 +263,31 @@ class ClustersTool(BaseTool):
             if ids_filter:
                 paths = [p for p in paths if p.split("/")[0] in ids_filter]
 
-            cluster_data = {
+            cluster_data: dict[str, Any] = {
                 "id": result.cluster_id,
-                "label": result.label or f"Cluster {result.cluster_id}",
+                "label": result.label or f"Cluster {result.cluster_id[:8]}",
                 "description": result.description,
                 "type": "cross_ids" if result.is_cross_ids else "intra_ids",
+                "scope": result.scope,
                 "ids": result.ids_names,
                 "similarity": round(result.similarity_score, 3),
+                "relevance_score": round(result.relevance_score or 0, 3),
                 "paths": paths[:20],  # Limit paths in response
             }
+
+            # Add scope_detail if present
+            if result.scope_detail:
+                cluster_data["scope_detail"] = result.scope_detail
+
+            # Add enrichment fields if present
+            if result.physics_concepts:
+                cluster_data["physics_concepts"] = result.physics_concepts
+            if result.data_type:
+                cluster_data["data_type"] = result.data_type
+            if result.tags:
+                cluster_data["tags"] = result.tags
+            if result.mapping_relevance:
+                cluster_data["mapping_relevance"] = result.mapping_relevance
 
             if len(paths) > 20:
                 cluster_data["total_paths"] = len(paths)
@@ -256,5 +304,8 @@ class ClustersTool(BaseTool):
 
         if ids_filter:
             response["ids_filter"] = sorted(ids_filter)
+
+        if scope_filter:
+            response["scope_filter"] = scope_filter
 
         return response

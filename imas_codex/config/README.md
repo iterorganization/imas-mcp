@@ -1,0 +1,340 @@
+# Facility Configuration Guide
+
+## File Structure
+
+Each facility has two configuration files:
+
+| File | Visibility | Content | Schema |
+|------|------------|---------|--------|
+| `<facility>.yaml` | ✅ Git tracked | Public data semantics | `facility.yaml` |
+| `<facility>_infrastructure.yaml` | ❌ Gitignored | Sensitive infrastructure | `facility_infrastructure.yaml` |
+
+**Example for EPFL:**
+```
+config/facilities/
+├── epfl.yaml                    # Public - machine, data systems
+└── epfl_infrastructure.yaml     # Private - paths, tools, OS, IPs
+```
+
+## Data Classification Policy
+
+**Rule**: If the LinkML schema (`facility.yaml`) has a property for it, store it in the graph. Otherwise, use infrastructure files.
+
+### Graph (Public) - Data access semantics
+
+| Data Type | Schema Property | Purpose |
+|-----------|-----------------|---------|
+| MDSplus tree names | `MDSplusTree.name` | Data discovery |
+| Diagnostic names | `Diagnostic.name` | Data discovery |
+| Analysis code names | `AnalysisCode.name` | Code discovery |
+| Code versions | `AnalysisCode.version` | Reproducibility |
+| Code paths | `AnalysisCode.path` | Data access |
+| TDI function names | `TDIFunction.name` | Data access |
+
+### Infrastructure (Private) - Operational/security data
+
+| Data Type | Why Private |
+|-----------|-------------|
+| Hostnames, IPs, NFS mounts | Network reconnaissance risk |
+| OS/kernel versions | CVE matching risk |
+| System tool availability | Reconnaissance risk |
+| Rich directory paths | Exploration guidance |
+| User home directories | Privacy |
+| Credentials, tokens | Security |
+
+## Public Facility File
+
+Minimal configuration for graph building and connections:
+
+```yaml
+# epfl.yaml - PUBLIC (version controlled)
+facility: epfl
+name: École Polytechnique Fédérale de Lausanne
+machine: TCV
+description: Swiss Plasma Center - TCV Tokamak
+location: Lausanne, Switzerland
+
+# SSH connection alias (user configures ~/.ssh/config)
+ssh_host: epfl
+
+# Data systems at this facility
+data_systems:
+  - mdsplus
+  - tdi
+```
+
+## Infrastructure File
+
+Sensitive data for exploration agents:
+
+```yaml
+# epfl_infrastructure.yaml - PRIVATE (gitignored)
+facility_id: epfl
+last_explored: 2025-01-15T10:30:00Z
+
+# Network infrastructure
+nfs_mounts:
+  - source: "10.27.128.167:/usr/local/CRPP/tdi"
+    target: /usr/local/CRPP/tdi
+    options: ro
+
+# File paths
+paths:
+  tdi:
+    root: /usr/local/CRPP/tdi
+    tcv: /usr/local/CRPP/tdi/tcv
+
+# Operating system (CVE-sensitive)
+os:
+  name: RHEL
+  version: "9.6"
+  kernel: 5.14.0-570.el9
+
+# Tool availability
+tools:
+  rg: unavailable
+  grep: available
+  tree: available
+
+# Python environment
+python:
+  version: 3.9.21
+  path: /usr/bin/python3
+  packages:
+    - numpy==1.23.5
+    - MDSplus
+
+# Agent guidance notes
+notes:
+  - "No ripgrep - use grep -r instead"
+  - "MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"
+```
+
+## Exploration Workflow
+
+### 1. Load Both Files
+
+When exploring, agents should load and merge both files:
+
+```python
+# Load public config
+with open(f"config/facilities/{facility}.yaml") as f:
+    public = yaml.safe_load(f)
+
+# Load infrastructure if exists
+infra_path = f"config/facilities/{facility}_infrastructure.yaml"
+if Path(infra_path).exists():
+    with open(infra_path) as f:
+        infrastructure = yaml.safe_load(f)
+```
+
+### 2. SSH Exploration
+
+Use batched commands for efficiency:
+
+```bash
+# Read facility config first
+cat imas_codex/config/facilities/epfl.yaml
+
+# SSH using the host alias
+ssh epfl "which python3; python3 --version; pip list | head -10"
+```
+
+### 3. Persist Findings
+
+**After every exploration session, persist ALL discoveries:**
+
+#### Persistence Checklist
+
+| Discovery Type | Where to Persist | Tool |
+|----------------|------------------|------|
+| Analysis codes (name, version, type) | Graph | `ingest_nodes("AnalysisCode", [...])` |
+| Directory paths for exploration | Graph | `ingest_nodes("FacilityPath", [...])` |
+| Diagnostics | Graph | `ingest_nodes("Diagnostic", [...])` |
+| MDSplus trees | Graph | `ingest_nodes("MDSplusTree", [...])` |
+| TDI functions | Graph | `ingest_nodes("TDIFunction", [...])` |
+| OS/kernel versions | Infrastructure | `update_infrastructure(...)` |
+| Tool availability | Infrastructure | `update_infrastructure(...)` |
+| Unstructured findings | `_Discovery` nodes | `cypher("CREATE (:_Discovery {...})")` |
+
+#### Examples
+
+Use the Agents MCP server tools:
+
+```python
+# For sensitive data (local only, never graphed)
+update_infrastructure("epfl", {
+    "tools": {
+        "rg": {"status": "unavailable"},
+        "grep": {"status": "available"}
+    },
+    "notes": ["MDSplus config at /usr/local/mdsplus/local/mdsplus.conf"]
+})
+
+# For public data semantics (goes to graph, always use list)
+ingest_nodes("Diagnostic", [
+    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
+    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+])
+
+# For unstructured discoveries (staging area)
+cypher('''
+    CREATE (d:_Discovery {
+        facility: 'epfl',
+        type: 'unknown_tree',
+        name: 'tcv_raw',
+        discovered_at: datetime()
+    })
+''')
+```
+
+## Safety Rules
+
+**Safe operations only on remote facilities:**
+- Reading: `cat`, `head`, `tail`, `less`, `grep`
+- Listing: `ls`, `find`, `tree`, `du`, `df`
+- System info: `uname`, `hostname`, `whoami`
+- Package queries: `rpm -qa`, `pip list`
+
+**Never run:**
+- File modification: `rm`, `mv`, `chmod`
+- Privilege escalation: `sudo`, `su`
+- System control: `kill`, `shutdown`, `reboot`
+
+## Structured Exploration Approach
+
+### FacilityPath Nodes
+
+Use `FacilityPath` nodes to track exploration state in the graph.
+
+### Multi-Pass Exploration Workflow
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  SCOUT PASS │   │ TRIAGE PASS │   │ INGEST PASS │
+│             │   │             │   │             │
+│ discovered  │   │ scanned     │   │ flagged     │
+│     ↓       │   │     ↓       │   │     ↓       │
+│  listed     │   │  flagged    │   │ analyzed    │
+│     ↓       │   │     or      │   │     ↓       │
+│  scanned    │   │  skipped    │   │ ingested    │
+└─────────────┘   └─────────────┘   └─────────────┘
+```
+
+**Scout Pass**: Discover and scan paths
+```python
+# Start with discovered paths
+result = get_facility("epfl")
+# actionable_paths sorted by interest_score
+
+# After pattern search, batch update all paths
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "scanned",
+        "files_scanned": 15,
+        "patterns_found": ["equilibrium", "IMAS", "write_ids"],
+        "last_examined": "2025-01-15T10:30:00Z"
+    },
+    {
+        "id": "epfl:/home/codes/helena",
+        "status": "scanned",
+        "files_scanned": 8,
+        "patterns_found": ["equilibrium"]
+    }
+])
+```
+
+**Triage Pass**: Prioritize interesting paths
+```python
+# Batch update paths after triage
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "flagged",
+        "interest_score": 0.9,
+        "notes": "Found IMAS integration, multiple IDS writes"
+    },
+    {
+        "id": "epfl:/home/codes/old_backup",
+        "status": "skipped",
+        "notes": "Stale backup, no active development"
+    }
+])
+```
+
+**Ingest Pass**: Extract code to graph
+```python
+# After reading and understanding code
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "analyzed",
+        "notes": "Main entry: run_transport.py, uses ASTRA"
+    }
+])
+
+# After code ingestion complete
+ingest_nodes("FacilityPath", [
+    {
+        "id": "epfl:/home/codes/transport",
+        "status": "ingested",
+        "files_ingested": 12
+    }
+])
+```
+
+### Path Status Values
+
+| Status | Pass | Meaning |
+|--------|------|---------|
+| `discovered` | Scout | Found but not examined |
+| `listed` | Scout | Contents listed, counts known |
+| `scanned` | Scout | Pattern search complete |
+| `flagged` | Triage | Interesting, should analyze |
+| `skipped` | Triage | Not interesting enough |
+| `analyzed` | Ingest | Structure understood |
+| `ingested` | Ingest | Code extracted to graph |
+| `excluded` | Any | Permanently skip (e.g., /tmp) |
+| `stale` | Any | May no longer exist |
+
+### Interest Score Guidelines
+
+| Score | Use Case |
+|-------|----------|
+| 0.9+ | IMAS integration, IDS read/write |
+| 0.7+ | MDSplus access, equilibrium codes |
+| 0.5+ | General analysis codes |
+| 0.3+ | Utilities, helpers |
+| <0.3 | Config files, documentation |
+
+### Tool Preferences
+
+Check `get_facility(facility)` for available tools:
+- `tools.rg` - ripgrep version (if installed)
+- `tools.fd` - fd version (if installed)
+- `paths.user_tools.bin` - where user tools are installed
+
+Use fast tools when available:
+```bash
+# If rg available at ~/bin/rg
+ssh epfl "~/bin/rg -l 'pattern' /path --max-depth 4 -g '*.py'"
+
+# Fallback to grep
+ssh epfl "grep -r 'pattern' /path --include='*.py'"
+```
+
+## Graph vs Local Storage
+
+| Operation | Uses Public File | Uses Infrastructure File |
+|-----------|------------------|--------------------------|
+| Graph building | ✅ | ❌ Never |
+| Recipe generation | ✅ | ❌ |
+| SSH connection | ✅ (ssh_host) | ❌ |
+| Agent exploration | ✅ | ✅ (local context) |
+| LLM prompts | ✅ | ✅ (merged for context) |
+
+The infrastructure file provides **agent guidance** for exploration but is never:
+- Committed to git
+- Loaded into the graph
+- Distributed in OCI artifacts

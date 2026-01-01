@@ -114,6 +114,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     fi && \
     echo "✓ Schema data ready"
 
+# Build generated Python models (graph models, physics domains)
+# These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building generated models..." && \
+    uv run --no-dev build-models --force && \
+    echo "✓ Generated models ready"
+
 # Build path map for version upgrade mappings (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building path map..." && \

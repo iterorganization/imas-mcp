@@ -27,6 +27,48 @@ class CustomBuildHook(BuildHookInterface):
         """Print trace message for debugging build hook execution."""
         print(f"[BUILD HOOK] {message}", flush=True)
 
+    def _check_graph_models_exist(self) -> bool:
+        """Check if graph models exist and are up to date."""
+        package_root = Path(__file__).parent
+        schema_file = package_root / "imas_codex" / "schemas" / "facility.yaml"
+        models_file = package_root / "imas_codex" / "graph" / "models.py"
+
+        # If schema file doesn't exist yet, nothing to generate
+        if not schema_file.exists():
+            return True
+
+        # Check if models file exists
+        if not models_file.exists():
+            return False
+
+        # Check if schema is newer than models
+        return models_file.stat().st_mtime >= schema_file.stat().st_mtime
+
+    def _generate_graph_models(self, package_root: Path) -> None:
+        """Generate graph Pydantic models from LinkML schema."""
+        original_path = sys.path[:]
+        if str(package_root) not in sys.path:
+            sys.path.insert(0, str(package_root))
+
+        try:
+            from scripts.build_models import build_models
+
+            # Invoke with empty args to avoid picking up hatch's CLI arguments
+            result = build_models.main(args=["--force"], standalone_mode=False)
+            if result == 0:
+                self._trace("Graph models generated successfully")
+            else:
+                self._trace(f"Graph models generation returned {result}")
+        except SystemExit as e:
+            if e.code == 0:
+                self._trace("Graph models generated successfully")
+            else:
+                self._trace(f"Failed to generate graph models: exit {e.code}")
+        except Exception as e:
+            self._trace(f"Failed to generate graph models: {e}")
+        finally:
+            sys.path[:] = original_path
+
     def _check_physics_domain_exists(self) -> bool:
         """Check if physics domain enum file exists and is up to date."""
         package_root = Path(__file__).parent
@@ -148,6 +190,14 @@ class CustomBuildHook(BuildHookInterface):
         if not physics_domain_exists:
             self._trace("Generating physics domain enum from LinkML schema...")
             self._generate_physics_domain(package_root)
+
+        # Check if graph models need generation
+        graph_models_exist = self._check_graph_models_exist()
+        self._trace(f"graph_models_exist={graph_models_exist}")
+
+        if not graph_models_exist:
+            self._trace("Generating graph models from LinkML schema...")
+            self._generate_graph_models(package_root)
 
         # Get resource paths for this version
         path_accessor = ResourcePathAccessor(dd_version=resolved_dd_version)

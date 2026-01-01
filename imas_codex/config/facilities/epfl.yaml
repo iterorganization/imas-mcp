@@ -1,0 +1,18 @@
+# EPFL Swiss Plasma Center - TCV Tokamak
+#
+# Public facility configuration for graph and mappings.
+# Infrastructure data is in epfl_infrastructure.yaml (gitignored).
+
+facility: epfl
+name: École Polytechnique Fédérale de Lausanne
+machine: TCV
+description: Swiss Plasma Center - TCV Tokamak
+location: Lausanne, Switzerland
+
+# SSH connection (user configures ~/.ssh/config with this alias)
+ssh_host: epfl
+
+# Data systems available at this facility
+data_systems:
+  - mdsplus
+  - tdi
