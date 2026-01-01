@@ -235,7 +235,7 @@ async def ingest_code_files(
     description: str | None = None,
     progress_callback: ProgressCallback | None = None,
     force: bool = False,
-    limit: int = 100,
+    limit: int | None = None,
 ) -> dict[str, int]:
     """Ingest code files from a remote facility using LlamaIndex pipeline.
 
@@ -259,7 +259,7 @@ async def ingest_code_files(
         description: Optional description for all files
         progress_callback: Optional callback for progress reporting
         force: If True, re-ingest files even if already present
-        limit: Maximum files to process from graph queue (default: 100)
+        limit: Maximum files to process from graph queue (None = all queued files)
 
     Returns:
         Dict with counts: {
@@ -290,7 +290,8 @@ async def ingest_code_files(
 
     if remote_paths is None:
         # Graph-driven mode: get pending files from queue
-        pending = get_pending_files(facility, limit=limit)
+        query_limit = limit if limit is not None else 10000  # Large number for "all"
+        pending = get_pending_files(facility, limit=query_limit)
         if not pending:
             report(0, 0, "No pending files in queue")
             return stats
@@ -302,16 +303,15 @@ async def ingest_code_files(
     total_files = len(remote_paths)
     report(0, total_files, f"Starting ingestion of {total_files} files")
 
-    # Create graph client and vector store (shared across all languages)
-    graph_client = GraphClient()
+    # Create vector store (shared across all languages)
     vector_store = create_vector_store()
 
     # Check for already-ingested files (deduplication)
     paths_to_ingest = remote_paths
     if not force:
-        with graph_client:
+        with GraphClient() as check_client:
             paths_to_ingest, already_ingested = _check_already_ingested(
-                graph_client, facility, remote_paths
+                check_client, facility, remote_paths
             )
             stats["skipped"] = len(already_ingested)
             if already_ingested:
@@ -384,16 +384,18 @@ async def ingest_code_files(
 
     # Process each language group with appropriate pipeline
     all_nodes = []
+    processed_files = 0
     for language, documents in docs_by_language.items():
         report(
+            processed_files,
             stats["files"],
-            len(paths_to_ingest),
-            f"Processing {len(documents)} {language} files",
+            f"Embedding {len(documents)} {language} files...",
         )
         try:
             pipeline = create_pipeline(vector_store=vector_store, language=language)
             nodes = await pipeline.arun(documents=documents)
             all_nodes.extend(nodes)
+            processed_files += len(documents)
         except Exception as e:
             # Fallback: try with Python parser (works for most languages)
             logger.warning(
@@ -406,6 +408,7 @@ async def ingest_code_files(
                 pipeline = create_pipeline(vector_store=vector_store, language="python")
                 nodes = await pipeline.arun(documents=documents)
                 all_nodes.extend(nodes)
+                processed_files += len(documents)
             except Exception as e2:
                 logger.error("Failed to process %s files: %s", language, e2)
                 # Mark these files as failed
@@ -425,9 +428,9 @@ async def ingest_code_files(
         stats["mdsplus_paths"] += len(mdsplus_paths)
 
     # Create CodeExample nodes and relationships
-    report(stats["files"], len(paths_to_ingest), "Creating graph relationships")
+    report(processed_files, stats["files"], "Creating graph relationships...")
 
-    with graph_client:
+    with GraphClient() as graph_client:
         # Create CodeExample nodes and update FacilityPath status
         for example_id, meta in file_metadata.items():
             # Remove internal fields before storing
