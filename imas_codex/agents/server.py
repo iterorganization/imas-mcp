@@ -24,10 +24,7 @@ from imas_codex.agents.prompt_loader import (
     PromptDefinition,
     load_prompts,
 )
-from imas_codex.code_examples import (
-    CodeExampleSearch,
-    queue_source_files,
-)
+from imas_codex.code_examples import CodeExampleSearch
 from imas_codex.discovery import (
     get_facility,
     get_facility_private,
@@ -186,13 +183,14 @@ class AgentsServer:
             Validates data against the Pydantic model, FILTERS OUT private
             fields (is_private: true in schema), then writes to the graph.
 
-            Private fields are automatically excluded to prevent sensitive
-            data from entering the graph or OCI artifacts.
+            Special handling by node type:
+            - SourceFile: Deduplicates automatically. Files already queued,
+              in progress, or with existing CodeExamples are skipped.
+            - TreeNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships.
+            - FacilityPath: Links to parent Facility.
 
             ALWAYS pass a list of dicts for batch ingestion, even for single
-            items. Batch mode uses UNWIND for efficient Neo4j operations and
-            supports partial success - valid items are ingested even if
-            some items fail validation.
+            items. Batch mode uses UNWIND for efficient Neo4j operations.
 
             Args:
                 node_type: Node label (must be valid LinkML class)
@@ -204,16 +202,16 @@ class AgentsServer:
                 Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
 
             Examples:
-                # Add diagnostics (always use list)
-                ingest_nodes("Diagnostic", [
-                    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
-                    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+                # Queue source files for ingestion (idempotent, auto-deduplicates)
+                ingest_nodes("SourceFile", [
+                    {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
+                     "facility_id": "epfl", "status": "queued", "interest_score": 0.8,
+                     "patterns_matched": ["equilibrium", "IMAS"]},
                 ])
 
-                # Add multiple paths in one call
+                # Add FacilityPaths
                 ingest_nodes("FacilityPath", [
                     {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
-                    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
                 ])
             """
             schema = get_schema()
@@ -268,6 +266,46 @@ class AgentsServer:
             # Batch write valid items
             try:
                 with GraphClient() as client:
+                    # For SourceFile, skip items that are already queued/ready or have CodeExamples
+                    skipped_dedup = 0
+                    if node_type == "SourceFile":
+                        existing = client.query(
+                            """
+                            UNWIND $items AS item
+                            OPTIONAL MATCH (sf:SourceFile {id: item.id})
+                            OPTIONAL MATCH (ce:CodeExample {source_file: item.path, facility_id: item.facility_id})
+                            RETURN item.id AS id,
+                                   sf.status AS sf_status,
+                                   ce.id AS ce_id
+                            """,
+                            items=valid_items,
+                        )
+                        skip_ids = set()
+                        for row in existing:
+                            if row["sf_status"] in (
+                                "queued",
+                                "fetching",
+                                "embedding",
+                                "ready",
+                            ):
+                                skip_ids.add(row["id"])
+                            elif row["ce_id"] is not None:
+                                skip_ids.add(row["id"])
+                        if skip_ids:
+                            valid_items = [
+                                i for i in valid_items if i["id"] not in skip_ids
+                            ]
+                            skipped_dedup = len(skip_ids)
+                            logger.info(
+                                f"Skipped {skipped_dedup} SourceFiles (already queued/ingested)"
+                            )
+                        if not valid_items:
+                            return {
+                                "processed": 0,
+                                "skipped": len(errors) + skipped_dedup,
+                                "errors": errors,
+                            }
+
                     facility_field = (
                         "facility_id" if create_facility_relationship else None
                     )
@@ -315,9 +353,28 @@ class AgentsServer:
                                 accessor_funcs=list(accessor_funcs),
                             )
 
+                    # For SourceFile, link to parent FacilityPath if provided
+                    if node_type == "SourceFile":
+                        parent_ids = {
+                            item["parent_path_id"]
+                            for item in valid_items
+                            if item.get("parent_path_id")
+                        }
+                        if parent_ids:
+                            for parent_id in parent_ids:
+                                client.query(
+                                    """
+                                    MATCH (sf:SourceFile)
+                                    WHERE sf.parent_path_id = $parent_id
+                                    MATCH (p:FacilityPath {id: $parent_id})
+                                    MERGE (p)-[:CONTAINS]->(sf)
+                                    """,
+                                    parent_id=parent_id,
+                                )
+
                 return {
                     "processed": result["processed"],
-                    "skipped": len(errors),
+                    "skipped": len(errors) + skipped_dedup,
                     "errors": errors,
                 }
 
@@ -328,9 +385,12 @@ class AgentsServer:
                 ) from e
 
         @self.mcp.tool()
-        def read_private(facility: str) -> dict[str, Any] | None:
+        def private(
+            facility: str,
+            data: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
             """
-            Read private facility data (sensitive infrastructure info).
+            Read or update private facility data (sensitive infrastructure info).
 
             Private files contain data marked is_private in the schema:
             OS versions, paths, tool availability, etc.
@@ -338,56 +398,29 @@ class AgentsServer:
 
             Args:
                 facility: Facility identifier (e.g., "epfl")
+                data: If provided, deep-merge into private file and return result.
+                      If None, just read and return current data.
 
             Returns:
-                Private data dict, or None if file doesn't exist
-            """
-            try:
-                return get_facility_private(facility)
-            except Exception as e:
-                logger.exception(f"Failed to read private data for {facility}")
-                raise RuntimeError(f"Failed to read private data: {e}") from e
-
-        @self.mcp.tool()
-        def update_private(
-            facility: str,
-            data: dict[str, Any],
-        ) -> str:
-            """
-            Merge updates into facility private file.
-
-            Deep-merges the provided data into the existing private file,
-            preserving comments and key order using ruamel.yaml.
-
-            Args:
-                facility: Facility identifier (e.g., "epfl")
-                data: Data to merge (will be deep-merged with existing)
-
-            Returns:
-                Success message
+                Current private data dict (after merge if data provided)
 
             Examples:
-                # Update tool availability
-                update_private("epfl", {
-                    "tools": {"rg": "14.1.1", "fd": "10.2.0"}
-                })
+                # Read private data
+                private("epfl")
+
+                # Update tool availability (returns merged result)
+                private("epfl", {"tools": {"rg": "14.1.1"}})
 
                 # Add exploration notes
-                update_private("epfl", {
-                    "exploration_notes": ["Discovered new MDSplus tree"]
-                })
-
-                # Add new paths discovered
-                update_private("epfl", {
-                    "paths": {"codes": {"root": "/home/codes"}}
-                })
+                private("epfl", {"exploration_notes": ["Found new tree"]})
             """
             try:
-                save_private(facility, data)
-                return f"Updated private data for {facility}"
+                if data is not None:
+                    save_private(facility, data)
+                return get_facility_private(facility) or {}
             except Exception as e:
-                logger.exception(f"Failed to update private data for {facility}")
-                raise RuntimeError(f"Failed to update private data: {e}") from e
+                logger.exception(f"Failed to access private data for {facility}")
+                raise RuntimeError(f"Failed to access private data: {e}") from e
 
         @self.mcp.tool()
         def get_graph_schema() -> dict[str, Any]:
@@ -527,64 +560,6 @@ class AgentsServer:
         # =====================================================================
         # Code Example Tools
         # =====================================================================
-
-        @self.mcp.tool()
-        def queue_source_files_tool(
-            facility: str,
-            file_paths: list[str],
-            interest_score: float = 0.5,
-            patterns_matched: list[str] | None = None,
-            parent_path_id: str | None = None,
-            discovered_by: str | None = None,
-        ) -> dict[str, Any]:
-            """
-            Queue source files for ingestion by the CLI.
-
-            Creates SourceFile nodes with status='queued'. These files will be
-            processed by running `imas-codex ingest run <facility>`.
-
-            Files already in queued/ready status or with existing CodeExample
-            nodes are skipped (idempotent).
-
-            This is the recommended way to mark files for ingestion during
-            scout exploration. The CLI command handles the actual transfer,
-            embedding, and graph operations.
-
-            Args:
-                facility: Facility ID (e.g., "epfl")
-                file_paths: List of remote file paths to queue
-                interest_score: Priority score (0.0-1.0, higher = sooner)
-                patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])
-                parent_path_id: FacilityPath that contains these files
-                discovered_by: Scout session identifier or pattern name
-
-            Returns:
-                Dict with counts: {"queued": N, "skipped": K, "errors": [...]}
-
-            Examples:
-                # Queue files discovered by rg search
-                queue_source_files("epfl", [
-                    "/home/codes/liuqe/liuqe.py",
-                    "/home/codes/toray/toray.py"
-                ], interest_score=0.8, patterns_matched=["equilibrium", "IMAS"])
-
-                # Queue from a specific FacilityPath
-                queue_source_files("epfl", [
-                    "/home/codes/analysis/fit.py"
-                ], parent_path_id="epfl:/home/codes/analysis")
-            """
-            try:
-                return queue_source_files(
-                    facility=facility,
-                    file_paths=file_paths,
-                    interest_score=interest_score,
-                    patterns_matched=patterns_matched,
-                    parent_path_id=parent_path_id,
-                    discovered_by=discovered_by,
-                )
-            except Exception as e:
-                logger.exception("Failed to queue source files")
-                raise RuntimeError(f"Failed to queue source files: {e}") from e
 
         @self.mcp.tool()
         def search_code_examples(

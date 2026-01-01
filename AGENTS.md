@@ -465,52 +465,41 @@ The agents server (`imas-codex serve agents`) provides tools for exploration:
 
 | Tool | Purpose |
 |------|---------|
-| `cypher(query)` | Execute Cypher (read any, write `_Discovery` only) |
+| `cypher(query)` | Execute Cypher (read-only) |
 | `ingest_nodes(type, data)` | Schema-validated batch node creation (always use list) |
-| `read_infrastructure(facility)` | Read sensitive local data |
-| `update_infrastructure(facility, data)` | Update sensitive local data |
+| `private(facility, data?)` | Read or update sensitive infrastructure data |
 | `get_graph_schema()` | Get complete schema for Cypher generation |
-| `get_facilities()` | List available facilities with SSH hosts |
+| `get_facility_info(facility)` | Comprehensive facility + graph state |
+| `search_code_examples(query)` | Semantic code search |
+| `get_exploration_progress(facility)` | Progress metrics and recommendations |
 
 > **Before writing Cypher queries**, call `get_graph_schema()` to get node labels, properties, enums, and relationship types.
 
-> **IMPORTANT**: Always use MCP tools (`update_infrastructure`, `ingest_nodes`, `cypher`) to persist discoveries. Never directly edit YAML files.
+> **IMPORTANT**: Always use MCP tools (`private`, `ingest_nodes`, `cypher`) to persist discoveries. Never directly edit YAML files.
 
 **Usage Examples:**
 
 ```python
-# Persist sensitive infrastructure data (local only)
-# Use this for tool versions, paths, OS info - anything NOT in LinkML schema
-update_infrastructure("epfl", {
-    "knowledge": {"tools": {"rg": "14.1.1", "fd": "10.2.0"}},
-    "paths": {"user_tools": {"bin": "$HOME/bin"}}
-})
+# Read private infrastructure data
+private("epfl")
 
-# Persist nodes (ALWAYS use list, even for single items)
-ingest_nodes("Diagnostic", [
-    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
-    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+# Update private data (returns merged result)
+private("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
+
+# Queue source files for ingestion (auto-deduplicates)
+ingest_nodes("SourceFile", [
+    {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
+     "facility_id": "epfl", "status": "queued", "interest_score": 0.8,
+     "patterns_matched": ["equilibrium", "IMAS"]},
 ])
-# Returns: {"processed": 2, "skipped": 0, "errors": []}
+# Returns: {"processed": 1, "skipped": 0, "errors": []}
+# Already-queued or ingested files are automatically skipped
 
-# Batch persist paths (uses UNWIND for efficiency)
+# Batch persist FacilityPaths
 ingest_nodes("FacilityPath", [
     {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl", "path_type": "code_directory"},
-    {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl", "path_type": "code_directory"},
-    {"id": "epfl:/data", "path": "/data", "facility_id": "epfl", "path_type": "data_directory"},
 ])
-# Returns: {"processed": 3, "skipped": 0, "errors": []}
-# Supports partial success - valid items ingested even if some fail validation
-
-# Stage unstructured discoveries
-cypher('''
-    CREATE (d:_Discovery {
-        facility: 'epfl',
-        type: 'unknown_tree',
-        name: 'tcv_raw',
-        discovered_at: datetime()
-    })
-''')
+```
 ```
 
 ### Exploring Facilities
@@ -534,8 +523,9 @@ ssh epfl "which python3; python3 --version; pip list | head"
 | Analysis codes (name, version, path) | Graph | `ingest_nodes("AnalysisCode", [...])` |
 | Diagnostics, MDSplus trees, TDI functions | Graph | `ingest_nodes(...)` |
 | Rich directory paths (e.g., `/home/codes`) | Graph | `ingest_nodes("FacilityPath", [...])` |
-| OS/kernel versions, tool availability | Infrastructure | `update_infrastructure(...)` |
-| SVN/Git repo URLs discovered | Infrastructure | `update_infrastructure(...)` |
+| Source files for ingestion | Graph | `ingest_nodes("SourceFile", [...])` |
+| OS/kernel versions, tool availability | Infrastructure | `private(facility, {...})` |
+| SVN/Git repo URLs discovered | Infrastructure | `private(facility, {...})` |
 | Unstructured findings to review later | Graph staging | `cypher("CREATE (:_Discovery {...})")` |
 
 **Key principle**: If you `find` or `ls` a useful path during exploration, persist it immediately.
@@ -738,14 +728,15 @@ files = subprocess.run(
     capture_output=True, text=True
 ).stdout.strip().split('\n')
 
-# 2. Queue for ingestion via MCP tool
-result = queue_source_files(
-    "epfl", 
-    files, 
-    interest_score=0.8,
-    patterns_matched=["equilibrium", "IMAS"]
-)
-# Returns: {"queued": 45, "skipped": 5, "errors": []}
+# 2. Queue for ingestion via ingest_nodes (auto-deduplicates)
+result = ingest_nodes("SourceFile", [
+    {"id": f"epfl:{f}", "path": f, "facility_id": "epfl",
+     "status": "queued", "interest_score": 0.8,
+     "patterns_matched": ["equilibrium", "IMAS"]}
+    for f in files
+])
+# Returns: {"processed": 45, "skipped": 5, "errors": []}
+# Already-queued or ingested files are automatically skipped
 ```
 
 **CLI Ingestion:**
