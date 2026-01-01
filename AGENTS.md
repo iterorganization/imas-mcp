@@ -695,6 +695,64 @@ ssh epfl "~/bin/rg -l --max-count 1 --max-depth 4 'equilibrium|IMAS' /path -g '*
 ssh epfl "timeout 30s ~/bin/rg -l 'pattern' /path --max-depth 3"
 ```
 
+### Code Ingestion Workflow
+
+The `ingest_code_files()` MCP tool provides robust code ingestion with automatic deduplication and status tracking.
+
+**Key Features:**
+- **Deduplication**: Already-ingested files are automatically skipped
+- **Interrupt-safe**: Partial ingestion can be resumed safely
+- **Auto status update**: `FacilityPath` nodes are marked `ingested` automatically
+- **MDSplus linking**: Extracted paths are linked to `TreeNode` entities
+
+**Workflow: Scout → Ingest**
+
+```
+1. SCOUT: Find interesting code paths
+   └─ Use ssh + rg/fd to discover files
+   └─ Create FacilityPath nodes with status='flagged'
+
+2. INGEST: Process flagged paths
+   └─ ingest_code_files() handles:
+      ├─ Skips already-ingested (deduplication)
+      ├─ Batch tar transfer for performance (>10 files)
+      ├─ Embedding + graph storage
+      ├─ Auto-updates FacilityPath.status = 'ingested'
+      └─ Links CodeExample → TreeNode via extracted paths
+
+3. VERIFY: Check coverage
+   └─ Query: MATCH (p:FacilityPath) RETURN p.status, count(p)
+```
+
+**Example: Ingest Flagged TDI Functions**
+
+```python
+# 1. Find files to ingest (agent-generated code)
+result = subprocess.run(
+    ["ssh", "epfl", "~/bin/fd -e .fun /usr/local/CRPP/tdi/tcv"],
+    capture_output=True, text=True
+)
+files = result.stdout.strip().split('\n')
+
+# 2. Ingest via MCP tool - deduplication is automatic
+stats = ingest_code_files("epfl", files, "TDI function library")
+# Returns: {"files": 50, "chunks": 200, "skipped": 10, "tree_nodes_linked": 45}
+```
+
+**Recovery from Interrupts:**
+
+If ingestion is interrupted, simply rerun with the same file list:
+- Already-ingested files are skipped automatically
+- No duplicate `CodeChunk` or `CodeExample` nodes created
+- `FacilityPath` status reflects actual ingestion state
+
+**Force Re-ingestion:**
+
+To re-ingest files (e.g., after code changes):
+```python
+stats = ingest_code_files("epfl", files, force=True)
+```
+
 ### Available Facilities
 
 ```bash
