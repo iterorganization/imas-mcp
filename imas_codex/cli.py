@@ -1466,15 +1466,14 @@ def release(
     """Create a new release with two modes based on remote.
 
     VERSION should be a semantic version with 'v' prefix (e.g., v1.0.0).
+    The project version is derived from git tags via hatch-vcs.
 
     MODE: --remote origin (prepare PR)
-    - Updates schema versions to match release version
-    - Commits changes and pushes branch to origin
     - Creates and pushes tag to origin
     - No graph operations (graph is local-only data)
 
     MODE: --remote upstream (finalize release - default)
-    - Pre-flight: clean tree, synced with upstream, schema versions match
+    - Pre-flight: clean tree, synced with upstream
     - Updates _GraphMeta node with version
     - Dumps and pushes graph to GHCR
     - Creates and pushes tag to upstream (triggers CI)
@@ -1486,7 +1485,7 @@ def release(
     4. imas-codex release vX.Y.Z -m 'message' --remote upstream
 
     Examples:
-        # Prepare PR (updates schemas, commits, pushes to fork)
+        # Prepare PR (pushes tag to fork)
         imas-codex release v1.0.0 -m 'Add EPFL' --remote origin
 
         # Finalize release (graph to GHCR, tag to upstream)
@@ -1497,7 +1496,6 @@ def release(
     """
     import re
     import subprocess
-    from pathlib import Path
 
     # Validate version format
     if not re.match(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$", version):
@@ -1506,7 +1504,6 @@ def release(
         raise SystemExit(1)
 
     version_number = version.lstrip("v")
-    schemas_dir = Path("imas_codex/schemas")
 
     # Determine mode
     is_origin_mode = remote == "origin"
@@ -1593,57 +1590,11 @@ def release(
     click.echo()
 
     # =========================================================================
-    # ORIGIN MODE: Update schemas, commit, push branch + tag
+    # ORIGIN MODE: Push branch + tag
     # =========================================================================
     if is_origin_mode:
-        # Step 1: Update schema versions
-        click.echo("Step 1: Updating schema versions...")
-        schema_files = list(schemas_dir.glob("*.yaml"))
-        for schema_file in schema_files:
-            if schema_file.name.startswith("_"):
-                continue
-            click.echo(f"  - {schema_file.name}")
-            if not dry_run:
-                content = schema_file.read_text()
-                updated = re.sub(
-                    r"^version:\s*['\"]?[\d.]+['\"]?",
-                    f"version: {version_number}",
-                    content,
-                    flags=re.MULTILINE,
-                )
-                schema_file.write_text(updated)
-
-        # Step 2: Commit changes
-        click.echo("\nStep 2: Committing schema changes...")
-        if not dry_run:
-            subprocess.run(
-                ["git", "add", "imas_codex/schemas/"],
-                capture_output=True,
-            )
-            result = subprocess.run(
-                [
-                    "git",
-                    "commit",
-                    "-m",
-                    f"chore: bump schema version to {version_number}",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                click.echo("  Committed schema version bump")
-            elif "nothing to commit" in result.stdout + result.stderr:
-                click.echo("  No changes to commit (schemas already at version)")
-            else:
-                click.echo(f"Error committing: {result.stderr}", err=True)
-                raise SystemExit(1)
-        else:
-            click.echo(
-                f"  [would commit: chore: bump schema version to {version_number}]"
-            )
-
-        # Step 3: Push branch
-        click.echo("\nStep 3: Pushing branch to origin...")
+        # Step 1: Push branch
+        click.echo("Step 1: Pushing branch to origin...")
         if not dry_run:
             result = subprocess.run(
                 ["git", "push", "origin", "main"],
@@ -1657,9 +1608,9 @@ def release(
         else:
             click.echo("  [would push to origin/main]")
 
-        # Step 4: Create and push tag
+        # Step 2: Create and push tag
         if not skip_git:
-            click.echo("\nStep 4: Creating and pushing tag...")
+            click.echo("\nStep 2: Creating and pushing tag...")
             if not dry_run:
                 # Create tag
                 result = subprocess.run(
@@ -1689,7 +1640,7 @@ def release(
             else:
                 click.echo(f"  [would create and push tag {version} to origin]")
         else:
-            click.echo("\nStep 4: Skipped (--skip-git)")
+            click.echo("\nStep 2: Skipped (--skip-git)")
 
         click.echo()
         if dry_run:
@@ -1702,38 +1653,11 @@ def release(
             click.echo(f"  3. Run: imas-codex release {version} -m '{message}'")
 
     # =========================================================================
-    # UPSTREAM MODE: Verify schemas, graph operations, push tag
+    # UPSTREAM MODE: Graph operations, push tag
     # =========================================================================
     else:
-        # Step 1: Verify schema versions match release version
-        click.echo("Step 1: Verifying schema versions...")
-        schema_files = list(schemas_dir.glob("*.yaml"))
-        version_mismatches = []
-        for schema_file in schema_files:
-            if schema_file.name.startswith("_"):
-                continue
-            content = schema_file.read_text()
-            version_match = re.search(
-                r"^version:\s*['\"]?([\d.]+)['\"]?", content, flags=re.MULTILINE
-            )
-            if version_match:
-                schema_version = version_match.group(1)
-                if schema_version != version_number:
-                    version_mismatches.append((schema_file.name, schema_version))
-                    click.echo(
-                        f"  ✗ {schema_file.name}: {schema_version} != {version_number}"
-                    )
-                else:
-                    click.echo(f"  ✓ {schema_file.name}: {schema_version}")
-
-        if version_mismatches and not dry_run:
-            click.echo("\nSchema versions don't match release version.", err=True)
-            click.echo("Run origin mode first to prepare PR:")
-            click.echo(f"  imas-codex release {version} -m '{message}' --remote origin")
-            raise SystemExit(1)
-
-        # Step 1b: Validate no private fields in graph
-        click.echo("\nStep 1b: Validating graph contains no private fields...")
+        # Step 1: Validate no private fields in graph
+        click.echo("Step 1: Validating graph contains no private fields...")
         if not dry_run:
             try:
                 from imas_codex.graph import GraphClient, get_schema
