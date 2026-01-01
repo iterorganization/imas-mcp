@@ -1147,7 +1147,10 @@ def ingest_run(
         task = progress.add_task("Ingesting...", total=len(pending))
 
         def progress_callback(current: int, total: int, message: str) -> None:
-            progress.update(task, completed=current, description=message[:50])
+            # Update total if pipeline reports a different count (e.g., after skip)
+            progress.update(
+                task, completed=current, total=total, description=message[:50]
+            )
 
         try:
             stats = asyncio.run(
@@ -1160,7 +1163,8 @@ def ingest_run(
                 )
             )
 
-            progress.update(task, completed=len(pending))
+            # Final update to ensure 100%
+            progress.update(task, completed=stats["files"] + stats["skipped"])
 
         except Exception as e:
             console.print(f"[red]Error during ingestion: {e}[/red]")

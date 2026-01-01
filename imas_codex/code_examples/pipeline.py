@@ -371,11 +371,14 @@ async def ingest_code_files(
         if language not in docs_by_language:
             docs_by_language[language] = []
         docs_by_language[language].append(doc)
-        stats["files"] += 1
 
     if not docs_by_language:
         report(total_files, total_files, "No files to process")
         return stats
+
+    # Calculate total files to process (fixed value for progress)
+    total_to_process = sum(len(docs) for docs in docs_by_language.values())
+    stats["files"] = 0  # Will be incremented as files complete
 
     # Process in micro-batches for better progress and interrupt safety
     # Each batch: embed -> create graph nodes -> mark ready
@@ -397,7 +400,7 @@ async def ingest_code_files(
 
             report(
                 processed_files,
-                stats["files"],
+                total_to_process,
                 f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
             )
 
@@ -502,7 +505,7 @@ async def ingest_code_files(
             stats["files"] = processed_files
 
     # Final relationship linking (IMAS paths, facility)
-    report(processed_files, processed_files, "Creating final graph relationships...")
+    report(processed_files, total_to_process, "Creating final graph relationships...")
 
     with GraphClient() as graph_client:
         link_chunks_to_imas_paths(graph_client)
@@ -510,8 +513,8 @@ async def ingest_code_files(
         link_examples_to_facility(graph_client)
 
     report(
-        processed_files,
-        processed_files,
+        total_to_process,
+        total_to_process,
         f"Completed: {stats['files']} files, {stats['chunks']} chunks, "
         f"{stats['skipped']} skipped, {stats['tree_nodes_linked']} tree nodes linked",
     )
