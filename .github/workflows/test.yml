@@ -61,6 +61,9 @@ jobs:
           HATCH_BUILD_NO_HOOKS: true
           IMAS_DD_VERSION: ${{ matrix.imas-dd-version }}
 
+      - name: Build generated models
+        run: uv run build-models --force
+
       - name: Build schema data
         run: uv run build-schemas --ids-filter "equilibrium core_profiles" --quiet
         env:

@@ -31,6 +31,62 @@ def get_graph_dir() -> Path:
     return get_project_root() / "imas_codex" / "graph"
 
 
+def get_core_dir() -> Path:
+    """Get the core module directory."""
+    return get_project_root() / "imas_codex" / "core"
+
+
+def get_definitions_dir() -> Path:
+    """Get the definitions directory."""
+    return get_project_root() / "imas_codex" / "definitions"
+
+
+def _generate_physics_domain(
+    logger: logging.Logger,
+    force: bool,
+    dry_run: bool,
+) -> int:
+    """Generate physics domain enum from LinkML schema.
+
+    Returns:
+        0 on success, non-zero on failure.
+    """
+    from scripts.gen_physics_domains import generate_enum_code
+
+    definitions_dir = get_definitions_dir()
+    core_dir = get_core_dir()
+
+    schema_file = definitions_dir / "physics" / "domains.yaml"
+    output_file = core_dir / "physics_domain.py"
+
+    if not schema_file.exists():
+        logger.error(f"Physics domain schema not found: {schema_file}")
+        return 1
+
+    # Check if output already exists and is up to date
+    if output_file.exists() and not force:
+        if schema_file.stat().st_mtime <= output_file.stat().st_mtime:
+            logger.info(f"Physics domain up to date at {output_file}")
+            return 0
+        logger.info("Physics schema newer than enum, regenerating...")
+
+    logger.info(f"Generating physics domain enum from {schema_file}")
+
+    if dry_run:
+        click.echo(f"Would generate: {output_file}")
+        return 0
+
+    try:
+        code = generate_enum_code(schema_file)
+        output_file.write_text(code)
+        logger.info(f"Generated physics domain written to {output_file}")
+        click.echo(f"Generated: {output_file}")
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to generate physics domain: {e}")
+        return 1
+
+
 @click.command()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging output")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress all logging except errors")
@@ -48,14 +104,14 @@ def build_models(
     force: bool,
     dry_run: bool,
 ) -> int:
-    """Generate Pydantic models from LinkML facility schema.
+    """Generate Pydantic models from LinkML schemas.
 
-    This command uses linkml's gen-pydantic generator to create Python models
-    from the schemas/facility.yaml schema. The generated code is written to
-    imas_codex/graph/models.py.
+    This command generates:
+    1. Physics domain enum from definitions/physics/domains.yaml
+    2. Graph Pydantic models from schemas/facility.yaml
 
     Examples:
-        build-models              # Generate models
+        build-models              # Generate all models
         build-models -v           # Verbose output
         build-models --dry-run    # Preview without writing
         build-models -f           # Force regeneration
@@ -74,6 +130,12 @@ def build_models(
     logger = logging.getLogger(__name__)
 
     try:
+        # Generate physics domain enum first (required by other modules)
+        physics_result = _generate_physics_domain(logger, force, dry_run)
+        if physics_result != 0:
+            return physics_result
+
+        # Generate graph models
         schemas_dir = get_schemas_dir()
         graph_dir = get_graph_dir()
 

@@ -130,6 +130,7 @@ build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
 build-models = "scripts.build_models:build_models"
+gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
 discover-mdsplus = "scripts.discover_mdsplus:main"
 
