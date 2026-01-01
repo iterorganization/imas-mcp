@@ -11,6 +11,7 @@ Local use only - provides read access to graph, write via ingest_nodes only.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -56,6 +57,26 @@ def _neo4j_error_message(e: Exception) -> str:
     if "Connection refused" in str(e) or "ServiceUnavailable" in str(e):
         return NEO4J_NOT_RUNNING_MSG
     return str(e)
+
+
+# Cypher mutation keywords that modify the graph
+_MUTATION_KEYWORDS = ["CREATE", "MERGE", "SET", "DELETE", "REMOVE", "DETACH"]
+_MUTATION_PATTERN = re.compile(
+    r"\b(" + "|".join(_MUTATION_KEYWORDS) + r")\b", re.IGNORECASE
+)
+
+
+def _is_cypher_mutation(query: str) -> bool:
+    """
+    Detect Cypher mutation keywords, ignoring content inside string literals.
+
+    Strips string literals first to avoid false positives like SETTINGS,
+    OFFSET, RESET, DATASET, CREATED_AT, and keywords inside string values.
+    """
+    # Strip string literals to avoid false positives
+    stripped = re.sub(r'"[^"]*"', '""', query)
+    stripped = re.sub(r"'[^']*'", "''", stripped)
+    return bool(_MUTATION_PATTERN.search(stripped))
 
 
 def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> CommentedMap:
@@ -135,10 +156,7 @@ class AgentsServer:
                 cypher("MATCH (f:Facility)-[:FACILITY_ID]-(d:Diagnostic) RETURN f.id, d.name")
                 cypher("MATCH (p:FacilityPath {status: 'flagged'}) RETURN p.path, p.interest_score")
             """
-            upper = query.upper()
-            mutation_keywords = ["CREATE", "MERGE", "SET", "DELETE", "REMOVE", "DETACH"]
-
-            if any(kw in upper for kw in mutation_keywords):
+            if _is_cypher_mutation(query):
                 msg = (
                     "Cypher mutations are blocked. Use ingest_nodes() for writes - "
                     "it validates data and filters private fields automatically."
