@@ -1,15 +1,12 @@
 {
   "mcpServers": {
-    "docs": {
-      "type": "http",
-      "url": "http://127.0.0.1:6280/mcp"
-    },
-    "imas-codex": {
+    "codex": {
       "command": "uv",
-      "args": ["run", "imas-codex", "--transport", "stdio"],
-      "env": {
-        "DOCS_SERVER_URL": "http://localhost:6280"
-      }
+      "args": ["run", "imas-codex", "serve", "agents"]
+    },
+    "imas": {
+      "url": "https://imas-dd.iter.org/mcp",
+      "type": "http"
     }
   }
 }

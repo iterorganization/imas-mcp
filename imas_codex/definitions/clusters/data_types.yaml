@@ -1,0 +1,96 @@
+id: https://imas.iter.org/codex/data-types
+name: data_types
+title: IMAS Data Type Classification
+description: >-
+  Classification of data structure types for cluster enrichment.
+  Helps LLMs understand what kind of data a cluster represents.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas: https://imas.iter.org/codex/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+enums:
+  DataTypeHint:
+    description: >-
+      Classification of data structure type within a cluster.
+      Indicates the dimensional and semantic nature of the data.
+    permissible_values:
+      profile_1d:
+        description: 1D radial or spatial profile (e.g., Te(rho), ne(psi))
+        meaning: imas:profile_1d
+        annotations:
+          typical_coordinates: rho_tor_norm, rho_pol_norm, psi, radius
+
+      profile_2d:
+        description: 2D spatial profile (e.g., R-Z plane, flux surface maps)
+        meaning: imas:profile_2d
+        annotations:
+          typical_coordinates: r, z, theta, phi
+
+      timeseries:
+        description: Time-varying scalar or vector quantity
+        meaning: imas:timeseries
+        annotations:
+          typical_coordinates: time
+
+      scalar:
+        description: Single-valued quantity (global or per time slice)
+        meaning: imas:scalar
+        annotations:
+          examples: Ip, Bt, total stored energy
+
+      geometry:
+        description: Geometric description (boundaries, surfaces, grids, coordinates)
+        meaning: imas:geometry
+        annotations:
+          examples: plasma boundary, flux surface shape, grid definition
+
+      measurement:
+        description: Raw or processed diagnostic measurement data
+        meaning: imas:measurement
+        annotations:
+          has_uncertainty: true
+          examples: detector signals, line-integrated measurements
+
+      coefficient:
+        description: Transport or physical coefficient (diffusion, conductivity, viscosity)
+        meaning: imas:coefficient
+        annotations:
+          examples: D, chi, viscosity tensor components
+
+      fitting:
+        description: Fit parameters, weights, and reconstructed values
+        meaning: imas:fitting
+        annotations:
+          examples: fit parameters, chi-squared, reconstructed profiles
+
+      metadata:
+        description: Descriptive or organizational data (identifiers, labels, sources)
+        meaning: imas:metadata
+        annotations:
+          examples: code name, data provenance, method description
+
+      coordinate:
+        description: Coordinate array or grid definition
+        meaning: imas:coordinate
+        annotations:
+          examples: rho_tor_norm array, time vector, grid indices
+
+      vector_field:
+        description: Multi-component vector field (R, Z, phi components)
+        meaning: imas:vector_field
+        annotations:
+          examples: B-field components, velocity components, E-field
+
+      spectrum:
+        description: Spectral data (frequency, wavelength, or energy resolved)
+        meaning: imas:spectrum
+        annotations:
+          examples: emission spectra, power spectral density
+
+

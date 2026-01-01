@@ -11,6 +11,8 @@ requires = [
     "imas-data-dictionary>=4.1.0",
     "imas-data-dictionaries>=4.1.0",
     "imas-python>=2.0.1",
+    "linkml>=1.9.3",
+    "linkml-runtime>=1.9.5",
 ]
 build-backend = "hatchling.build"
 
@@ -66,6 +68,16 @@ dependencies = [
     "linkml>=1.9.3",
     "linkml-runtime>=1.9.5",
     "hdbscan>=0.8.41",
+    "fabric>=3.0.0",
+    "httpx>=0.27.0",
+    "neo4j>=5.28.0,<6.0.0",
+    "ruamel-yaml>=0.18.17",
+    "llama-index-core>=0.12.0",
+    "llama-index-embeddings-huggingface>=0.6.1",
+    "llama-index-vector-stores-neo4jvector>=0.4.0",
+    "tree-sitter>=0.25.2",
+    "tree-sitter-languages>=1.10.2",
+    "tree-sitter-language-pack>=0.13.0",
 ]
 
 [project.optional-dependencies]
@@ -119,6 +131,10 @@ build-clusters = "scripts.build_clusters:build_clusters"
 build-embeddings = "scripts.build_embeddings:build_embeddings"
 build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
+build-models = "scripts.build_models:build_models"
+gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
+ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
+discover-mdsplus = "scripts.discover_mdsplus:main"
 
 [tool.hatch.version]
 source = "vcs"
@@ -126,7 +142,11 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 packages = ["imas_codex", "scripts"]
 exclude = ["imas_codex/resources/.gitkeep"]
-artifacts = ["imas_codex/resources/**"]
+artifacts = [
+    "imas_codex/resources/**",
+    "imas_codex/core/physics_domain.py",
+    "imas_codex/graph/models.py",
+]
 
 [tool.hatch.build.hooks.custom]
 path = "hatch_build_hooks.py"

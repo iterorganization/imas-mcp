@@ -10,6 +10,15 @@
 
 A Model Context Protocol (MCP) server providing AI assistants with access to IMAS (Integrated Modelling & Analysis Suite) data structures through natural language search and optimized path indexing.
 
+## MCP Servers
+
+IMAS Codex provides two MCP servers:
+
+| Server | Command | Purpose |
+|--------|---------|---------|
+| **IMAS DD** | `imas-codex serve imas` | IMAS Data Dictionary knowledge, semantic search |
+| **Agents** | `imas-codex serve agents` | Remote facility exploration via subagents |
+
 ## Quick Start
 
 Select the setup method that matches your environment:
@@ -169,7 +178,7 @@ export IMAS_CODEX_INCLUDE_ERROR_FIELDS=true  # Include error fields
 
 If model loading fails, the system will fall back to the default `all-MiniLM-L6-v2` model.
 
-VS Code:
+VS Code (`.vscode/mcp.json`):
 
 ```json
 {
@@ -177,7 +186,7 @@ VS Code:
     "imas-codex-uv": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--active", "imas-codex", "--no-rich"]
+      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"]
     }
   }
 }
@@ -190,10 +199,100 @@ Claude Desktop:
   "mcpServers": {
     "imas-codex-uv": {
       "command": "uv",
-      "args": ["run", "--active", "imas-codex", "--no-rich"]
+      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"]
     }
   }
 }
+```
+
+#### Agents MCP Server (Local Facility Exploration)
+
+For exploring remote fusion facilities, run the Agents server locally:
+
+VS Code (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "imas-agents": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve", "agents"]
+    }
+  }
+}
+```
+
+This provides the `/explore` prompt for LLM-driven exploration of remote facilities via SSH.
+
+#### SSH ControlMaster Setup (Recommended)
+
+For fast repeated SSH connections during facility exploration, configure SSH ControlMaster. This keeps connections alive, reducing latency from ~1-2 seconds to ~100ms for subsequent commands.
+
+```bash
+# Create socket directory
+mkdir -p ~/.ssh/sockets
+chmod 700 ~/.ssh/sockets
+```
+
+Add to `~/.ssh/config`:
+
+```
+# EPFL / Swiss Plasma Center
+Host epfl
+    HostName spcepfl.epfl.ch
+    User your_username
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+
+# Add other facilities as needed
+Host ipp
+    HostName gateway.ipp.mpg.de
+    User your_username
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+```
+
+**How it works:**
+- First connection: ~1-2 seconds (establishes master connection)
+- Subsequent connections: ~100ms (reuses existing socket)
+- `ControlPersist 600`: Keep connection alive for 10 minutes after last use
+
+**Verify setup:**
+```bash
+# Check if master connection is active
+ssh -O check epfl
+
+# Manually close master connection
+ssh -O exit epfl
+```
+
+#### Facility Exploration Commands
+
+Once SSH is configured, explore facilities directly from the terminal:
+
+```bash
+# Execute commands on remote facility
+uv run imas-codex epfl "python --version"
+uv run imas-codex epfl "ls /common/tcv/codes"
+
+# View session history
+uv run imas-codex epfl --status
+
+# Persist learnings when done
+uv run imas-codex epfl --finish << 'EOF'
+python:
+  version: "3.9.21"
+tools:
+  rg: unavailable
+paths:
+  codes: /common/tcv/codes
+EOF
+
+# Or discard session
+uv run imas-codex epfl --discard
 ```
 
 ### Docker Setup
@@ -513,11 +612,14 @@ uv run build-schemas
 # Build document store and semantic search embeddings
 uv run build-embeddings
 
-# Run the server locally (default: streamable-http on port 8000)
-uv run --active imas-codex --no-rich
+# Run the IMAS DD server locally (default: streamable-http on port 8000)
+uv run imas-codex serve imas
 
 # Run with stdio transport for MCP clients
-uv run --active imas-codex --no-rich --transport stdio
+uv run imas-codex serve imas --transport stdio
+
+# Run the Agents server for facility exploration
+uv run imas-codex serve agents
 ```
 
 ### Build Scripts
@@ -559,7 +661,12 @@ Add to your config file:
   "mcpServers": {
     "imas-local-dev": {
       "command": "uv",
-      "args": ["run", "--active", "imas-codex", "--no-rich", "--auto-build"],
+      "args": ["run", "imas-codex", "serve", "imas", "--transport", "stdio"],
+      "cwd": "/path/to/imas-codex"
+    },
+    "imas-agents-dev": {
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve", "agents"],
       "cwd": "/path/to/imas-codex"
     }
   }

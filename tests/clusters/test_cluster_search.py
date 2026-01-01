@@ -77,32 +77,34 @@ class TestClusterInfoWithCentroid:
     def test_cluster_info_with_centroid(self):
         """ClusterInfo should accept centroid field."""
         cluster = ClusterInfo(
-            id=1,
+            id="test-uuid-001",
             similarity_score=0.9,
             size=2,
             is_cross_ids=True,
             ids_names=["core_profiles", "equilibrium"],
             paths=["core_profiles/a", "equilibrium/b"],
             centroid=[0.1, 0.2, 0.3],
+            scope="global",
         )
 
         assert cluster.centroid == [0.1, 0.2, 0.3]
-        assert cluster.id == 1
+        assert cluster.id == "test-uuid-001"
         assert cluster.is_cross_ids
 
     def test_cluster_info_without_centroid(self):
-        """ClusterInfo should work without centroid (backwards compatible)."""
+        """ClusterInfo should work without centroid."""
         cluster = ClusterInfo(
-            id=1,
+            id="test-uuid-002",
             similarity_score=0.9,
             size=2,
             is_cross_ids=False,
             ids_names=["core_profiles"],
             paths=["core_profiles/a", "core_profiles/b"],
+            scope="global",
         )
 
         assert cluster.centroid is None
-        assert cluster.id == 1
+        assert cluster.id == "test-uuid-002"
 
 
 class TestClusterSearcher:
@@ -113,25 +115,28 @@ class TestClusterSearcher:
         """Create sample clusters (without embedded centroids - now in .npz)."""
         return [
             {
-                "id": 0,
+                "id": "test-uuid-000",
                 "similarity_score": 0.9,
                 "is_cross_ids": True,
                 "ids_names": ["core_profiles", "equilibrium"],
                 "paths": ["core_profiles/density", "equilibrium/psi"],
+                "scope": "global",
             },
             {
-                "id": 1,
+                "id": "test-uuid-001",
                 "similarity_score": 0.85,
                 "is_cross_ids": False,
                 "ids_names": ["core_profiles"],
                 "paths": ["core_profiles/temperature", "core_profiles/pressure"],
+                "scope": "global",
             },
             {
-                "id": 2,
+                "id": "test-uuid-002",
                 "similarity_score": 0.8,
                 "is_cross_ids": True,
                 "ids_names": ["equilibrium", "mhd"],
                 "paths": ["equilibrium/boundary", "mhd/stability"],
+                "scope": "global",
             },
         ]
 
@@ -144,11 +149,14 @@ class TestClusterSearcher:
         centroids = np.array(
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
         )
-        centroid_cluster_ids = np.array([0, 1, 2], dtype=np.int32)
+        # UUIDs stored as object array
+        centroid_cluster_ids = np.array(
+            ["test-uuid-000", "test-uuid-001", "test-uuid-002"], dtype=object
+        )
 
         # No label embeddings for basic tests
         label_embeddings = np.array([], dtype=np.float32)
-        label_cluster_ids = np.array([], dtype=np.int32)
+        label_cluster_ids = np.array([], dtype=object)
 
         np.savez_compressed(
             embeddings_file,
@@ -193,7 +201,7 @@ class TestClusterSearcher:
         results = searcher.search(query, top_k=1)
 
         assert len(results) == 1
-        assert results[0].cluster_id == 0
+        assert results[0].cluster_id == "test-uuid-000"
 
     def test_search_respects_top_k(self, sample_clusters, sample_embeddings_file):
         """Search respects top_k limit."""
@@ -217,7 +225,7 @@ class TestClusterSearcher:
 
         # Only cluster 0 should match with high threshold
         assert len(results) == 1
-        assert results[0].cluster_id == 0
+        assert results[0].cluster_id == "test-uuid-000"
 
     def test_search_cross_ids_only(self, sample_clusters, sample_embeddings_file):
         """Search can filter to cross-IDS clusters only."""
@@ -249,7 +257,7 @@ class TestClusterSearcher:
 
         result = results[0]
         assert isinstance(result, ClusterSearchResult)
-        assert isinstance(result.cluster_id, int)
+        assert isinstance(result.cluster_id, str)  # UUID string
         assert isinstance(result.similarity_score, float)
         assert isinstance(result.is_cross_ids, bool)
         assert isinstance(result.ids_names, list)
@@ -263,24 +271,25 @@ class TestClusterSearcher:
 
         # Get clusters similar to cluster 0
         similar = searcher.get_similar_clusters(
-            cluster_id=0,
+            cluster_id="test-uuid-000",
             top_k=2,
             similarity_threshold=0.0,
         )
 
         # Should not include cluster 0 itself
         for result in similar:
-            assert result.cluster_id != 0
+            assert result.cluster_id != "test-uuid-000"
 
     def test_clusters_without_centroids(self):
         """Searcher handles clusters without embeddings file."""
         clusters = [
             {
-                "id": 0,
+                "id": "test-uuid-000",
                 "similarity_score": 0.9,
                 "is_cross_ids": True,
                 "ids_names": ["core_profiles"],
                 "paths": ["core_profiles/a"],
+                "scope": "global",
             },
         ]
 
