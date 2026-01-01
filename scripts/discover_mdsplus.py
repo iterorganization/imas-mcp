@@ -6,11 +6,17 @@ This script discovers structural epochs (when tree structure changed) and
 builds the "super tree" - TreeNodes with applicability ranges (first_shot/last_shot).
 
 Usage:
-    # Discover and ingest epochs + super tree (optimized batch mode)
+    # Full discovery with metadata extraction (default)
     uv run discover-mdsplus epfl results
 
-    # Use legacy sequential mode (slower but more detailed logging)
+    # Use legacy sequential mode (slower, rough boundaries)
     uv run discover-mdsplus epfl results --sequential --step 100
+
+    # Refine existing rough boundaries
+    uv run discover-mdsplus epfl results --refine
+
+    # Skip metadata extraction (faster but less complete)
+    uv run discover-mdsplus epfl results --skip-metadata
 
     # Dry run to preview
     uv run discover-mdsplus epfl results --dry-run
@@ -32,8 +38,10 @@ from imas_codex.graph import GraphClient
 from imas_codex.mdsplus import (
     discover_epochs,
     discover_epochs_optimized,
+    enrich_graph_metadata,
     ingest_epochs,
     ingest_super_tree,
+    refine_boundaries,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,6 +63,10 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--full", is_flag=True, help="Force full scan, ignoring existing graph data"
 )
+@click.option(
+    "--refine", is_flag=True, help="Refine existing rough boundaries (for legacy data)"
+)
+@click.option("--skip-metadata", is_flag=True, help="Skip metadata extraction (faster)")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output except errors")
 def main(
@@ -69,6 +81,8 @@ def main(
     dry_run: bool,
     epochs_only: bool,
     full: bool,
+    refine: bool,
+    skip_metadata: bool,
     verbose: bool,
     quiet: bool,
 ) -> int:
@@ -77,13 +91,14 @@ def main(
     FACILITY is the SSH host alias (e.g., "epfl").
     TREE_NAME is the MDSplus tree name (e.g., "results").
 
-    By default uses optimized batch mode (10-20x faster). Use --sequential
-    for the original per-shot scanning mode.
+    By default uses optimized batch mode with exact boundaries and metadata extraction.
+    Use --sequential for the legacy per-shot scanning mode (rough boundaries).
 
     This creates:
     - TreeModelVersion nodes for each structural epoch
     - TreeNode nodes with first_shot/last_shot applicability ranges
     - INTRODUCED_IN/REMOVED_IN relationships linking nodes to versions
+    - Real units and descriptions extracted from MDSplus
 
     Examples:
         discover-mdsplus epfl results
@@ -120,6 +135,41 @@ def main(
             return 1
 
     try:
+        # Special mode: refine-only (just refine and enrich existing data)
+        if refine:
+            click.echo(f"Refining existing data for {facility}:{tree_name}...")
+
+            with GraphClient() as client:
+                # Get current shot for metadata
+                from imas_codex.mdsplus import BatchDiscovery
+
+                discovery = BatchDiscovery(facility, tree_name)
+                current_shot = discovery.get_current_shot()
+
+                # Refine boundaries
+                click.echo("\nRefining epoch boundaries...")
+                refine_result = refine_boundaries(client, facility, tree_name, dry_run)
+                if refine_result["boundaries_refined"] > 0:
+                    click.echo(
+                        f"✓ Refined {refine_result['boundaries_refined']} of "
+                        f"{refine_result['epochs_checked']} boundaries"
+                    )
+                else:
+                    click.echo("✓ All boundaries already at exact precision")
+
+                # Enrich metadata (unless skip)
+                if not skip_metadata:
+                    click.echo(f"\nExtracting metadata from shot {current_shot}...")
+                    meta_result = enrich_graph_metadata(
+                        client, facility, tree_name, current_shot, dry_run
+                    )
+                    click.echo(
+                        f"✓ Updated {meta_result['units_updated']} nodes with units, "
+                        f"{meta_result['descriptions_updated']} with descriptions"
+                    )
+
+            return 0
+
         # Phase 1: Discover epochs
         click.echo(f"Discovering epochs for {facility}:{tree_name}...")
 
@@ -221,6 +271,34 @@ def main(
                     client, facility, tree_name, epochs, structures
                 )
                 click.echo(f"✓ Ingested {node_count} TreeNodes")
+
+                # Phase 4: Refine boundaries (if requested or if sequential mode)
+                if refine or sequential:
+                    click.echo("\nRefining epoch boundaries...")
+                    refine_result = refine_boundaries(client, facility, tree_name)
+                    if refine_result["boundaries_refined"] > 0:
+                        click.echo(
+                            f"✓ Refined {refine_result['boundaries_refined']} boundaries"
+                        )
+                    else:
+                        click.echo("✓ All boundaries already at exact precision")
+
+                # Phase 5: Enrich with metadata (unless skipped)
+                if not skip_metadata:
+                    # Use most recent shot for metadata
+                    latest_shot = max(e["first_shot"] for e in epochs)
+                    click.echo(f"\nExtracting metadata from shot {latest_shot}...")
+                    meta_result = enrich_graph_metadata(
+                        client, facility, tree_name, latest_shot
+                    )
+                    click.echo(
+                        f"✓ Updated {meta_result['units_updated']} nodes with units, "
+                        f"{meta_result['descriptions_updated']} with descriptions"
+                    )
+                else:
+                    click.echo(
+                        "\n(skipping metadata extraction - use without --skip-metadata)"
+                    )
             else:
                 click.echo(
                     "\n(skipping super tree - use without --epochs-only to build)"
