@@ -131,6 +131,7 @@ build-database = "scripts.build_database:build_database"
 build-path-map = "scripts.build_path_map:build_path_map_cli"
 build-models = "scripts.build_models:build_models"
 ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
+discover-mdsplus = "scripts.discover_mdsplus:main"
 
 [tool.hatch.version]
 source = "vcs"
