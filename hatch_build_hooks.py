@@ -53,8 +53,8 @@ class CustomBuildHook(BuildHookInterface):
         try:
             from scripts.build_models import build_models
 
-            # Use click's standalone mode to run the command
-            result = build_models.main(standalone_mode=False)
+            # Invoke with empty args to avoid picking up hatch's CLI arguments
+            result = build_models.main(args=["--force"], standalone_mode=False)
             if result == 0:
                 self._trace("Graph models generated successfully")
             else:

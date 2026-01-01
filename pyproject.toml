@@ -11,6 +11,8 @@ requires = [
     "imas-data-dictionary>=4.1.0",
     "imas-data-dictionaries>=4.1.0",
     "imas-python>=2.0.1",
+    "linkml>=1.9.3",
+    "linkml-runtime>=1.9.5",
 ]
 build-backend = "hatchling.build"
 
