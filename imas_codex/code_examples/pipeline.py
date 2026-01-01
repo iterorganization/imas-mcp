@@ -21,8 +21,13 @@ from imas_codex.graph import GraphClient
 from imas_codex.settings import get_imas_embedding_model
 
 from .facility_reader import fetch_remote_files
-from .graph_linker import link_chunks_to_imas_paths, link_examples_to_facility
+from .graph_linker import (
+    link_chunks_to_imas_paths,
+    link_chunks_to_tree_nodes,
+    link_examples_to_facility,
+)
 from .ids_extractor import IDSExtractor
+from .mdsplus_extractor import MDSplusExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +99,7 @@ def create_pipeline(
                 max_chars=max_chars,
             ),
             IDSExtractor(),
+            MDSplusExtractor(),
             get_embed_model(),
         ],
         vector_store=vs,
@@ -197,10 +203,12 @@ async def ingest_code_files(
 
     stats["chunks"] = len(nodes)
 
-    # Count IDS references
+    # Count IDS and MDSplus references
     for node in nodes:
         related_ids = node.metadata.get("related_ids", [])
         stats["ids_found"] += len(related_ids)
+        mdsplus_paths = node.metadata.get("mdsplus_paths", [])
+        stats["mdsplus_paths"] = stats.get("mdsplus_paths", 0) + len(mdsplus_paths)
 
     # Create CodeExample nodes and relationships
     report(stats["files"], total_files, "Creating graph relationships")
@@ -227,8 +235,9 @@ async def ingest_code_files(
             """
         )
 
-        # Create RELATED_PATHS and FACILITY_ID relationships
+        # Create RELATED_PATHS, REFERENCES_NODE, and FACILITY_ID relationships
         link_chunks_to_imas_paths(graph_client)
+        link_chunks_to_tree_nodes(graph_client)
         link_examples_to_facility(graph_client)
 
     report(

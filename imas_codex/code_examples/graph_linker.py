@@ -89,7 +89,38 @@ def link_examples_to_facility(graph_client: GraphClient | None = None) -> int:
         return count
 
 
-__all__ = ["link_chunks_to_imas_paths", "link_examples_to_facility"]
+def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
+    """Create REFERENCES_NODE relationships for chunks with MDSplus paths.
+
+    Matches CodeChunk nodes that have mdsplus_paths metadata to
+    corresponding TreeNode entities. Uses suffix matching to handle
+    paths extracted from f-strings.
+
+    Args:
+        graph_client: Optional GraphClient instance. If None, creates one.
+
+    Returns:
+        Number of relationships created
+    """
+    cypher = """
+        MATCH (c:CodeChunk)
+        WHERE c.mdsplus_paths IS NOT NULL
+        UNWIND c.mdsplus_paths AS mds_path
+        MATCH (t:TreeNode)
+        WHERE t.path = mds_path OR t.path ENDS WITH substring(mds_path, 1)
+        MERGE (c)-[:REFERENCES_NODE]->(t)
+        RETURN count(*) AS created
+    """
+
+    with _get_client(graph_client) as client:
+        result = client.query(cypher)
+        count = result[0]["created"] if result else 0
+        logger.info("Created %d REFERENCES_NODE relationships", count)
+        return count
 
 
-__all__ = ["link_chunks_to_imas_paths", "link_examples_to_facility"]
+__all__ = [
+    "link_chunks_to_imas_paths",
+    "link_chunks_to_tree_nodes",
+    "link_examples_to_facility",
+]

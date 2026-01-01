@@ -5,13 +5,24 @@ This module uses LlamaIndex's IngestionPipeline and Neo4jVectorStore for:
 - Chunking code into searchable segments using tree-sitter CodeSplitter
 - Generating embeddings using HuggingFace sentence-transformers
 - Extracting IMAS IDS references from code via custom IDSExtractor
+- Extracting MDSplus paths from code via custom MDSplusExtractor
 - Storing code examples and chunks in Neo4j with vector embeddings
 - Semantic search with optional IDS and facility filtering
 """
 
 from .facility_reader import EXTENSION_TO_LANGUAGE, detect_language, fetch_remote_files
-from .graph_linker import link_chunks_to_imas_paths, link_examples_to_facility
+from .graph_linker import (
+    link_chunks_to_imas_paths,
+    link_chunks_to_tree_nodes,
+    link_examples_to_facility,
+)
 from .ids_extractor import IDSExtractor, get_known_ids
+from .mdsplus_extractor import (
+    MDSplusExtractor,
+    MDSplusReference,
+    extract_mdsplus_paths,
+    normalize_mdsplus_path,
+)
 from .pipeline import (
     ProgressCallback,
     create_pipeline,
@@ -26,14 +37,19 @@ __all__ = [
     "CodeSearchResult",
     "EXTENSION_TO_LANGUAGE",
     "IDSExtractor",
+    "MDSplusExtractor",
+    "MDSplusReference",
     "ProgressCallback",
     "create_pipeline",
     "create_vector_store",
     "detect_language",
+    "extract_mdsplus_paths",
     "fetch_remote_files",
     "get_embed_model",
     "get_known_ids",
     "ingest_code_files",
     "link_chunks_to_imas_paths",
+    "link_chunks_to_tree_nodes",
     "link_examples_to_facility",
+    "normalize_mdsplus_path",
 ]
