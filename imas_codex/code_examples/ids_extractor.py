@@ -5,7 +5,9 @@ and stores them in node metadata for graph relationship creation.
 """
 
 import functools
+import json
 import re
+from pathlib import Path
 
 from llama_index.core.schema import BaseNode, TransformComponent
 
@@ -22,18 +24,48 @@ IDS_PATTERNS = [
 
 @functools.cache
 def get_known_ids() -> frozenset[str]:
-    """Get the set of valid IDS names from IMAS Python.
+    """Get the set of valid IDS names from the bundled catalog.
 
-    Uses IDSFactory to get the authoritative list of IDS names
-    for the current data dictionary version.
+    Uses the ids_catalog.json bundled with imas-codex to avoid
+    importing imas-python (which triggers DD parsing logs).
 
     Returns:
         Frozen set of lowercase IDS names
     """
-    from imas import IDSFactory
+    # Use bundled catalog - find latest DD version
+    resources_dir = Path(__file__).parent.parent / "resources" / "imas_data_dictionary"
 
-    factory = IDSFactory()
-    return frozenset(name.lower() for name in factory.ids_names())
+    # Find available DD versions and use the latest
+    dd_versions = sorted(
+        [d.name for d in resources_dir.iterdir() if d.is_dir()],
+        reverse=True,
+    )
+
+    if not dd_versions:
+        # Fallback: return common IDS names
+        return frozenset(
+            [
+                "equilibrium",
+                "core_profiles",
+                "magnetics",
+                "wall",
+                "pf_active",
+                "core_sources",
+                "core_transport",
+                "summary",
+                "controllers",
+            ]
+        )
+
+    catalog_path = resources_dir / dd_versions[0] / "schemas" / "ids_catalog.json"
+
+    if not catalog_path.exists():
+        return frozenset()
+
+    catalog = json.loads(catalog_path.read_text())
+    ids_catalog = catalog.get("ids_catalog", {})
+
+    return frozenset(name.lower() for name in ids_catalog.keys())
 
 
 class IDSExtractor(TransformComponent):
