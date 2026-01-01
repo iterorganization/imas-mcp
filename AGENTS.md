@@ -290,7 +290,7 @@ The release command has two modes based on the target remote.
 **Step-by-step:**
 ```bash
 # 1. Prepare PR (updates schemas, commits, pushes to fork)
-uv run imas-codex release vX.Y.Z -m 'Release message' --remote origin
+uv run imas-codex release v3.3.0 -m 'Release message' --remote origin
 
 # 2. Create PR on GitHub, merge to upstream
 
@@ -298,19 +298,19 @@ uv run imas-codex release vX.Y.Z -m 'Release message' --remote origin
 git pull upstream main
 
 # 4. Finalize release (graph to GHCR, tag to upstream)
-uv run imas-codex release vX.Y.Z -m 'Release message'
+uv run imas-codex release v3.3.0 -m 'Release message'
 ```
 
 **Options:**
 ```bash
 # Preview changes
-uv run imas-codex release v1.0.0 -m 'Test' --dry-run
+uv run imas-codex release v3.3.0 -m 'Test' --dry-run
 
 # Skip graph operations
-uv run imas-codex release v1.0.0 -m 'Schema only' --skip-graph
+uv run imas-codex release v3.3.0 -m 'Schema only' --skip-graph
 
 # Skip git tag
-uv run imas-codex release v1.0.0 -m 'Graph only' --skip-git
+uv run imas-codex release v3.3.0 -m 'Graph only' --skip-git
 ```
 
 ### LLM-First Cypher Queries
@@ -340,16 +340,25 @@ with GraphClient() as client:
     """)
 ```
 
-### Schema Versioning
+### Project Versioning
 
-The LinkML schema version in `schemas/facility.yaml` is kept **in sync with the project version**. Both are updated together during the release workflow:
+This project uses **automatic versioning via git tags** (`hatch-vcs`). The version is derived directly from tags:
 
 ```bash
-# Release updates both project version (via git tag) and schema version
-uv run imas-codex release v1.0.0 -m 'Release message'
+# Check current version
+uv run python -c "import imas_codex; print(imas_codex.__version__)"
+# e.g., "3.2.0" (from tag v3.2.0)
+
+# Development versions include commit info
+# e.g., "3.2.0.dev5+g1a2b3c4" (5 commits after v3.2.0)
 ```
 
-Do **not** manually edit the schema version field.
+**Key points:**
+- **No manual version edits** - version comes from git tags
+- **LinkML schema versions** in `schemas/*.yaml` are updated by `release` command to match
+- **SemVer**: Use minor bumps (`v3.3.0`) for new features, patch (`v3.2.1`) for fixes
+
+**Do not** manually edit version fields in `pyproject.toml` or schema files.
 
 ### Schema Evolution
 
