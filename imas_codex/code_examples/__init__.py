@@ -8,6 +8,11 @@ This module uses LlamaIndex's IngestionPipeline and Neo4jVectorStore for:
 - Extracting MDSplus paths from code via custom MDSplusExtractor
 - Storing code examples and chunks in Neo4j with vector embeddings
 - Semantic search with optional IDS and facility filtering
+
+Graph-driven ingestion workflow:
+1. Scouts use queue_source_files() to mark files for ingestion
+2. CLI command 'imas-codex ingest <facility>' processes the queue
+3. SourceFile nodes track lifecycle: queued -> fetching -> embedding -> ready
 """
 
 from .facility_reader import EXTENSION_TO_LANGUAGE, detect_language, fetch_remote_files
@@ -30,6 +35,13 @@ from .pipeline import (
     get_embed_model,
     ingest_code_files,
 )
+from .queue import (
+    QueuedFile,
+    get_pending_files,
+    get_queue_stats,
+    queue_source_files,
+    update_source_file_status,
+)
 from .search import CodeExampleSearch, CodeSearchResult
 
 __all__ = [
@@ -40,6 +52,7 @@ __all__ = [
     "MDSplusExtractor",
     "MDSplusReference",
     "ProgressCallback",
+    "QueuedFile",
     "create_pipeline",
     "create_vector_store",
     "detect_language",
@@ -47,9 +60,13 @@ __all__ = [
     "fetch_remote_files",
     "get_embed_model",
     "get_known_ids",
+    "get_pending_files",
+    "get_queue_stats",
     "ingest_code_files",
     "link_chunks_to_imas_paths",
     "link_chunks_to_tree_nodes",
     "link_examples_to_facility",
     "normalize_mdsplus_path",
+    "queue_source_files",
+    "update_source_file_status",
 ]

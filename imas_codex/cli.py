@@ -1029,6 +1029,272 @@ def neo4j_load(
 
 
 # ============================================================================
+# Ingest Command Group
+# ============================================================================
+
+
+@main.group()
+def ingest() -> None:
+    """Ingest code examples from remote facilities.
+
+    \b
+      imas-codex ingest run <facility>   Process queued SourceFile nodes
+      imas-codex ingest status <facility> Show queue statistics
+      imas-codex ingest list <facility>   List queued files
+    """
+    pass
+
+
+@ingest.command("run")
+@click.argument("facility")
+@click.option(
+    "--limit",
+    "-n",
+    default=100,
+    type=int,
+    help="Maximum files to process (default: 100)",
+)
+@click.option(
+    "--min-score",
+    default=0.0,
+    type=float,
+    help="Minimum interest score threshold (default: 0.0)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-ingest files even if already present",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be processed without ingesting",
+)
+def ingest_run(
+    facility: str,
+    limit: int,
+    min_score: float,
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Process queued SourceFile nodes for a facility.
+
+    Scouts queue files for ingestion using the queue_source_files MCP tool.
+    This command fetches those files, generates embeddings, and creates
+    CodeExample nodes with searchable chunks.
+
+    Examples:
+        # Process up to 100 queued files
+        imas-codex ingest run epfl
+
+        # Process only high-priority files
+        imas-codex ingest run epfl --min-score 0.7
+
+        # Process more files
+        imas-codex ingest run epfl -n 500
+
+        # Preview what would be processed
+        imas-codex ingest run epfl --dry-run
+    """
+    import asyncio
+
+    from rich.console import Console
+    from rich.progress import (
+        BarColumn,
+        MofNCompleteColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
+    from imas_codex.code_examples import get_pending_files, ingest_code_files
+
+    console = Console()
+
+    # Get pending files from queue
+    console.print(f"[cyan]Fetching queued files for {facility}...[/cyan]")
+    pending = get_pending_files(facility, limit=limit, min_interest_score=min_score)
+
+    if not pending:
+        console.print("[yellow]No pending files in queue.[/yellow]")
+        console.print("Scouts can queue files using the queue_source_files MCP tool.")
+        return
+
+    console.print(f"[green]Found {len(pending)} queued files[/green]")
+
+    if dry_run:
+        console.print("\n[cyan]Files that would be processed:[/cyan]")
+        for i, f in enumerate(pending[:20], 1):
+            score = f.get("interest_score", 0.5)
+            console.print(f"  {i}. [{score:.2f}] {f['path']}")
+        if len(pending) > 20:
+            console.print(f"  ... and {len(pending) - 20} more")
+        return
+
+    # Run ingestion with progress bar
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Ingesting...", total=len(pending))
+
+        def progress_callback(current: int, total: int, message: str) -> None:
+            progress.update(task, completed=current, description=message[:50])
+
+        try:
+            stats = asyncio.run(
+                ingest_code_files(
+                    facility=facility,
+                    remote_paths=None,  # Use graph queue
+                    progress_callback=progress_callback,
+                    force=force,
+                    limit=limit,
+                )
+            )
+
+            progress.update(task, completed=len(pending))
+
+        except Exception as e:
+            console.print(f"[red]Error during ingestion: {e}[/red]")
+            raise SystemExit(1) from e
+
+    # Print summary
+    console.print("\n[green]Ingestion complete![/green]")
+    console.print(f"  Files processed: {stats['files']}")
+    console.print(f"  Chunks created:  {stats['chunks']}")
+    console.print(f"  IDS references:  {stats['ids_found']}")
+    console.print(f"  MDSplus paths:   {stats['mdsplus_paths']}")
+    console.print(f"  TreeNodes linked: {stats['tree_nodes_linked']}")
+    console.print(f"  Skipped:         {stats['skipped']}")
+
+
+@ingest.command("status")
+@click.argument("facility")
+def ingest_status(facility: str) -> None:
+    """Show queue statistics for a facility.
+
+    Examples:
+        imas-codex ingest status epfl
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.code_examples import get_queue_stats
+
+    console = Console()
+    stats = get_queue_stats(facility)
+
+    if not stats:
+        console.print(f"[yellow]No SourceFile nodes for {facility}[/yellow]")
+        return
+
+    table = Table(title=f"SourceFile Queue: {facility}")
+    table.add_column("Status", style="cyan")
+    table.add_column("Count", justify="right", style="green")
+
+    total = 0
+    for status, count in sorted(stats.items()):
+        table.add_row(status, str(count))
+        total += count
+
+    table.add_row("─" * 10, "─" * 5)
+    table.add_row("Total", str(total), style="bold")
+
+    console.print(table)
+
+
+@ingest.command("list")
+@click.argument("facility")
+@click.option(
+    "--status",
+    "-s",
+    default="queued",
+    type=click.Choice(["queued", "fetching", "embedding", "ready", "failed", "all"]),
+    help="Filter by status (default: queued)",
+)
+@click.option(
+    "--limit",
+    "-n",
+    default=50,
+    type=int,
+    help="Maximum files to show (default: 50)",
+)
+def ingest_list(facility: str, status: str, limit: int) -> None:
+    """List SourceFile nodes for a facility.
+
+    Examples:
+        # List queued files
+        imas-codex ingest list epfl
+
+        # List failed files
+        imas-codex ingest list epfl -s failed
+
+        # List all files
+        imas-codex ingest list epfl -s all
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    with GraphClient() as client:
+        if status == "all":
+            result = client.query(
+                """
+                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                RETURN sf.path AS path, sf.status AS status,
+                       sf.interest_score AS score, sf.error AS error
+                ORDER BY sf.interest_score DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                limit=limit,
+            )
+        else:
+            result = client.query(
+                """
+                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WHERE sf.status = $status
+                RETURN sf.path AS path, sf.status AS status,
+                       sf.interest_score AS score, sf.error AS error
+                ORDER BY sf.interest_score DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                status=status,
+                limit=limit,
+            )
+
+    if not result:
+        console.print(f"[yellow]No SourceFile nodes with status '{status}'[/yellow]")
+        return
+
+    table = Table(title=f"SourceFiles ({status}): {facility}")
+    table.add_column("Path", style="cyan", max_width=60)
+    table.add_column("Status", style="green")
+    table.add_column("Score", justify="right")
+    if status == "failed":
+        table.add_column("Error", style="red", max_width=30)
+
+    for row in result:
+        score = f"{row['score']:.2f}" if row["score"] is not None else "-"
+        if status == "failed":
+            table.add_row(row["path"], row["status"], score, row["error"] or "")
+        else:
+            table.add_row(row["path"], row["status"], score)
+
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(result)} of possibly more files[/dim]")
+
+
+# ============================================================================
 # Release Command
 # ============================================================================
 

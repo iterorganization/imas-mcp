@@ -25,7 +25,12 @@ from imas_codex.agents.prompt_loader import (
     list_prompts_summary,
     load_prompts,
 )
-from imas_codex.code_examples import CodeExampleSearch, ingest_code_files
+from imas_codex.code_examples import (
+    CodeExampleSearch,
+    get_queue_stats,
+    ingest_code_files,
+    queue_source_files,
+)
 from imas_codex.discovery import (
     get_facility,
     get_facility_private,
@@ -616,6 +621,88 @@ class AgentsServer:
                 error_msg = _neo4j_error_message(e)
                 await ctx.error(f"Ingestion failed: {error_msg}")
                 raise RuntimeError(f"Failed to ingest code files: {error_msg}") from e
+
+        @self.mcp.tool()
+        def queue_source_files_tool(
+            facility: str,
+            file_paths: list[str],
+            interest_score: float = 0.5,
+            patterns_matched: list[str] | None = None,
+            parent_path_id: str | None = None,
+            discovered_by: str | None = None,
+        ) -> dict[str, Any]:
+            """
+            Queue source files for ingestion by the CLI.
+
+            Creates SourceFile nodes with status='queued'. These files will be
+            processed by running `imas-codex ingest run <facility>`.
+
+            Files already in queued/ready status or with existing CodeExample
+            nodes are skipped (idempotent).
+
+            This is the recommended way to mark files for ingestion during
+            scout exploration. The CLI command handles the actual transfer,
+            embedding, and graph operations.
+
+            Args:
+                facility: Facility ID (e.g., "epfl")
+                file_paths: List of remote file paths to queue
+                interest_score: Priority score (0.0-1.0, higher = sooner)
+                patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])
+                parent_path_id: FacilityPath that contains these files
+                discovered_by: Scout session identifier or pattern name
+
+            Returns:
+                Dict with counts: {"queued": N, "skipped": K, "errors": [...]}
+
+            Examples:
+                # Queue files discovered by rg search
+                queue_source_files("epfl", [
+                    "/home/codes/liuqe/liuqe.py",
+                    "/home/codes/toray/toray.py"
+                ], interest_score=0.8, patterns_matched=["equilibrium", "IMAS"])
+
+                # Queue from a specific FacilityPath
+                queue_source_files("epfl", [
+                    "/home/codes/analysis/fit.py"
+                ], parent_path_id="epfl:/home/codes/analysis")
+            """
+            try:
+                return queue_source_files(
+                    facility=facility,
+                    file_paths=file_paths,
+                    interest_score=interest_score,
+                    patterns_matched=patterns_matched,
+                    parent_path_id=parent_path_id,
+                    discovered_by=discovered_by,
+                )
+            except Exception as e:
+                logger.exception("Failed to queue source files")
+                raise RuntimeError(f"Failed to queue source files: {e}") from e
+
+        @self.mcp.tool()
+        def get_source_file_queue_stats(facility: str) -> dict[str, Any]:
+            """
+            Get queue statistics for a facility.
+
+            Shows counts of SourceFile nodes by status, useful for
+            understanding current queue state before running ingestion.
+
+            Args:
+                facility: Facility ID (e.g., "epfl")
+
+            Returns:
+                Dict with counts by status: {"queued": N, "ready": M, ...}
+
+            Examples:
+                stats = get_source_file_queue_stats("epfl")
+                # Returns: {"queued": 50, "ready": 200, "failed": 2}
+            """
+            try:
+                return get_queue_stats(facility)
+            except Exception as e:
+                logger.exception("Failed to get queue stats")
+                raise RuntimeError(f"Failed to get queue stats: {e}") from e
 
         @self.mcp.tool()
         def search_code_examples(
