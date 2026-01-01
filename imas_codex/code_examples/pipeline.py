@@ -4,6 +4,7 @@ Configures the pipeline with CodeSplitter, IDSExtractor, and
 Neo4jVectorStore for semantic code search.
 
 Features:
+- Graph-driven ingestion via SourceFile queue
 - Automatic deduplication (skips already-ingested files)
 - Per-file atomic commits (interrupt-safe)
 - Auto-updates FacilityPath status to 'ingested'
@@ -34,6 +35,7 @@ from .graph_linker import (
 )
 from .ids_extractor import IDSExtractor
 from .mdsplus_extractor import MDSplusExtractor
+from .queue import get_pending_files, update_source_file_status
 
 logger = logging.getLogger(__name__)
 
@@ -229,12 +231,17 @@ def _link_example_mdsplus_paths(
 
 async def ingest_code_files(
     facility: str,
-    remote_paths: list[str],
+    remote_paths: list[str] | None = None,
     description: str | None = None,
     progress_callback: ProgressCallback | None = None,
     force: bool = False,
+    limit: int = 100,
 ) -> dict[str, int]:
     """Ingest code files from a remote facility using LlamaIndex pipeline.
+
+    Can be called in two modes:
+    1. **Path list mode**: Provide remote_paths explicitly
+    2. **Graph-driven mode**: Omit remote_paths to process queued SourceFile nodes
 
     Fetches files via SSH, processes with IngestionPipeline, and creates
     graph relationships for IMAS and MDSplus path linking. Files are grouped
@@ -243,15 +250,16 @@ async def ingest_code_files(
     Features:
     - **Deduplication**: Skips files that are already ingested (unless force=True)
     - **Interrupt-safe**: Each file is committed atomically
-    - **Auto status update**: FacilityPath nodes are marked 'ingested'
+    - **Auto status update**: SourceFile nodes are marked 'ready'
     - **MDSplus linking**: Extracted paths are linked to TreeNode entities
 
     Args:
         facility: Facility SSH host alias (e.g., "epfl")
-        remote_paths: List of remote file paths to ingest
+        remote_paths: List of remote file paths to ingest (if None, uses graph queue)
         description: Optional description for all files
         progress_callback: Optional callback for progress reporting
         force: If True, re-ingest files even if already present
+        limit: Maximum files to process from graph queue (default: 100)
 
     Returns:
         Dict with counts: {
@@ -271,13 +279,27 @@ async def ingest_code_files(
         "skipped": 0,
         "tree_nodes_linked": 0,
     }
-    total_files = len(remote_paths)
 
     def report(current: int, total: int, message: str) -> None:
         if progress_callback:
             progress_callback(current, total, message)
         logger.info("[%d/%d] %s", current, total, message)
 
+    # Determine source of files: explicit paths or graph queue
+    source_file_ids: dict[str, str] = {}  # path -> source_file_id for status updates
+
+    if remote_paths is None:
+        # Graph-driven mode: get pending files from queue
+        pending = get_pending_files(facility, limit=limit)
+        if not pending:
+            report(0, 0, "No pending files in queue")
+            return stats
+
+        remote_paths = [p["path"] for p in pending]
+        source_file_ids = {p["path"]: p["id"] for p in pending}
+        report(0, len(pending), f"Processing {len(pending)} queued files")
+
+    total_files = len(remote_paths)
     report(0, total_files, f"Starting ingestion of {total_files} files")
 
     # Create graph client and vector store (shared across all languages)
@@ -303,6 +325,11 @@ async def ingest_code_files(
         report(total_files, total_files, "All files already ingested")
         return stats
 
+    # Update SourceFile status to 'fetching'
+    for path in paths_to_ingest:
+        if path in source_file_ids:
+            update_source_file_status(source_file_ids[path], "fetching")
+
     # Group documents by language
     docs_by_language: dict[str, list[Document]] = {}
     file_metadata: dict[str, dict[str, Any]] = {}
@@ -325,6 +352,7 @@ async def ingest_code_files(
             "description": description or f"Code example from {remote_path}",
             "author": author,
             "ingested_at": datetime.now(UTC).isoformat(),
+            "_source_file_id": source_file_ids.get(remote_path),  # For status update
         }
 
         # Create Document for pipeline
@@ -348,6 +376,11 @@ async def ingest_code_files(
     if not docs_by_language:
         report(total_files, total_files, "No files to process")
         return stats
+
+    # Update status to 'embedding' for files being processed
+    for meta in file_metadata.values():
+        if meta.get("_source_file_id"):
+            update_source_file_status(meta["_source_file_id"], "embedding")
 
     # Process each language group with appropriate pipeline
     all_nodes = []
@@ -375,6 +408,11 @@ async def ingest_code_files(
                 all_nodes.extend(nodes)
             except Exception as e2:
                 logger.error("Failed to process %s files: %s", language, e2)
+                # Mark these files as failed
+                for doc in documents:
+                    sf_id = source_file_ids.get(doc.metadata.get("source_file"))
+                    if sf_id:
+                        update_source_file_status(sf_id, "failed", error=str(e2))
                 continue
 
     stats["chunks"] = len(all_nodes)
@@ -392,6 +430,9 @@ async def ingest_code_files(
     with graph_client:
         # Create CodeExample nodes and update FacilityPath status
         for example_id, meta in file_metadata.items():
+            # Remove internal fields before storing
+            source_file_id = meta.pop("_source_file_id", None)
+
             graph_client.query(
                 """
                 MERGE (e:CodeExample {id: $id})
@@ -404,6 +445,12 @@ async def ingest_code_files(
             _update_facility_path_status(
                 graph_client, facility, meta["source_file"], example_id
             )
+
+            # Update SourceFile status to 'ready'
+            if source_file_id:
+                update_source_file_status(
+                    source_file_id, "ready", code_example_id=example_id
+                )
 
         # Link chunks to examples (based on metadata)
         graph_client.query(

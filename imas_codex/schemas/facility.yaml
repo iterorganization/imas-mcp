@@ -240,6 +240,22 @@ enums:
       stale:
         description: Path may no longer exist, needs re-verification
 
+  SourceFileStatus:
+    description: Lifecycle status of a source file for ingestion pipeline
+    permissible_values:
+      queued:
+        description: Discovered by scout, awaiting ingestion
+      fetching:
+        description: Currently being transferred from remote
+      embedding:
+        description: Generating embeddings for chunks
+      ready:
+        description: Successfully ingested, CodeExample created
+      failed:
+        description: Ingestion failed (check error field)
+      stale:
+        description: Source may have changed, needs re-fetch
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -856,6 +872,68 @@ classes:
       ingested_at:
         description: Timestamp when this was ingested
         range: datetime
+
+  SourceFile:
+    description: >-
+      A source file queued for ingestion into the knowledge graph.
+      
+      Lifecycle: queued -> fetching -> embedding -> ready
+      On failure: any state -> failed (check error field)
+      On re-scan: ready -> stale -> queued (if changed)
+      
+      SourceFile is the unit of work for the ingestion pipeline.
+      Scouts create SourceFile nodes; CLI processes them.
+      When ready, a CodeExample node is created with chunks.
+    class_uri: facility:SourceFile
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:path (e.g., epfl:/home/codes/foo.py)
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      path:
+        description: Absolute remote filesystem path
+        required: true
+      status:
+        description: Current lifecycle status
+        range: SourceFileStatus
+        required: true
+      language:
+        description: Programming language (detected from extension)
+        range: ProgrammingLanguage
+      parent_path_id:
+        description: FacilityPath that contains this file (for tracking)
+        range: FacilityPath
+      discovered_by:
+        description: Scout session or pattern that found this file
+      discovered_at:
+        description: When this file was queued for ingestion
+        range: datetime
+      interest_score:
+        description: Priority score from scout (0.0-1.0, higher = more interesting)
+        range: float
+      patterns_matched:
+        description: Patterns that matched during discovery (e.g., "IMAS", "equilibrium")
+        multivalued: true
+      # Processing metadata
+      started_at:
+        description: When ingestion started (fetching state)
+        range: datetime
+      completed_at:
+        description: When ingestion completed (ready state)
+        range: datetime
+      error:
+        description: Error message if status is failed
+      retry_count:
+        description: Number of retry attempts
+        range: integer
+      # Output
+      code_example_id:
+        description: ID of created CodeExample (set when ready)
+        range: CodeExample
 
   CodeChunk:
     description: >-

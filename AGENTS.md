@@ -39,6 +39,9 @@ SET c.embedding = $new_embedding
 | Push graph to GHCR | `uv run imas-codex neo4j push v1.0.0` |
 | Pull graph from GHCR | `uv run imas-codex neo4j pull` |
 | Load graph dump | `uv run imas-codex neo4j load graph.dump` |
+| Ingest queue status | `uv run imas-codex ingest status epfl` |
+| Run code ingestion | `uv run imas-codex ingest run epfl` |
+| List queued files | `uv run imas-codex ingest list epfl` |
 | Create release | `uv run imas-codex release v1.0.0 -m 'message'` |
 
 ## Project Overview
@@ -697,60 +700,100 @@ ssh epfl "timeout 30s ~/bin/rg -l 'pattern' /path --max-depth 3"
 
 ### Code Ingestion Workflow
 
-The `ingest_code_files()` MCP tool provides robust code ingestion with automatic deduplication and status tracking.
+The ingestion pipeline uses a **graph-driven approach** with `SourceFile` nodes as the unit of work. Scouts queue files; the CLI processes them.
+
+**Architecture:**
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  SCOUT (LLM)    │     │   GRAPH (Neo4j) │     │    CLI (User)   │
+│                 │     │                 │     │                 │
+│  ssh + rg/fd    │────▶│  SourceFile     │────▶│  imas-codex     │
+│  queue_source_  │     │  status=queued  │     │  ingest run     │
+│  files()        │     │                 │     │                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+**SourceFile Lifecycle:**
+```
+queued ──▶ fetching ──▶ embedding ──▶ ready
+  │                                    │
+  │         ┌── failed ◀───────────────┘
+  ▼         ▼
+stale ◀── (re-scan)
+```
 
 **Key Features:**
+- **Graph-driven**: Scouts queue files, CLI processes the queue
 - **Deduplication**: Already-ingested files are automatically skipped
 - **Interrupt-safe**: Partial ingestion can be resumed safely
-- **Auto status update**: `FacilityPath` nodes are marked `ingested` automatically
+- **Status tracking**: `SourceFile` nodes track progress through lifecycle
 - **MDSplus linking**: Extracted paths are linked to `TreeNode` entities
 
-**Workflow: Scout → Ingest**
-
-```
-1. SCOUT: Find interesting code paths
-   └─ Use ssh + rg/fd to discover files
-   └─ Create FacilityPath nodes with status='flagged'
-
-2. INGEST: Process flagged paths
-   └─ ingest_code_files() handles:
-      ├─ Skips already-ingested (deduplication)
-      ├─ Batch tar transfer for performance (>10 files)
-      ├─ Embedding + graph storage
-      ├─ Auto-updates FacilityPath.status = 'ingested'
-      └─ Links CodeExample → TreeNode via extracted paths
-
-3. VERIFY: Check coverage
-   └─ Query: MATCH (p:FacilityPath) RETURN p.status, count(p)
-```
-
-**Example: Ingest Flagged TDI Functions**
+**Scout Workflow:**
 
 ```python
-# 1. Find files to ingest (agent-generated code)
-result = subprocess.run(
-    ["ssh", "epfl", "~/bin/fd -e .fun /usr/local/CRPP/tdi/tcv"],
+# 1. Find interesting files via SSH
+files = subprocess.run(
+    ["ssh", "epfl", "~/bin/rg -l 'equilibrium|IMAS' /home/codes -g '*.py'"],
     capture_output=True, text=True
-)
-files = result.stdout.strip().split('\n')
+).stdout.strip().split('\n')
 
-# 2. Ingest via MCP tool - deduplication is automatic
-stats = ingest_code_files("epfl", files, "TDI function library")
-# Returns: {"files": 50, "chunks": 200, "skipped": 10, "tree_nodes_linked": 45}
+# 2. Queue for ingestion via MCP tool
+result = queue_source_files(
+    "epfl", 
+    files, 
+    interest_score=0.8,
+    patterns_matched=["equilibrium", "IMAS"]
+)
+# Returns: {"queued": 45, "skipped": 5, "errors": []}
+```
+
+**CLI Ingestion:**
+
+```bash
+# Check queue status
+imas-codex ingest status epfl
+
+# Process queued files with progress bar
+imas-codex ingest run epfl
+
+# Process only high-priority files
+imas-codex ingest run epfl --min-score 0.7
+
+# Process more files
+imas-codex ingest run epfl -n 500
+
+# Preview what would be processed
+imas-codex ingest run epfl --dry-run
+
+# List queued files
+imas-codex ingest list epfl
+
+# List failed files
+imas-codex ingest list epfl -s failed
+```
+
+**Direct Ingestion (Legacy):**
+
+For ad-hoc ingestion without queueing, the MCP tool still accepts explicit paths:
+```python
+stats = ingest_code_files("epfl", [
+    "/home/duval/VNC_22/equil-tools-py/liuqeplot.py"
+], description="Equilibrium visualization")
 ```
 
 **Recovery from Interrupts:**
 
-If ingestion is interrupted, simply rerun with the same file list:
-- Already-ingested files are skipped automatically
-- No duplicate `CodeChunk` or `CodeExample` nodes created
-- `FacilityPath` status reflects actual ingestion state
+If ingestion is interrupted:
+- `SourceFile` nodes retain their status
+- Rerun `imas-codex ingest run epfl` to continue
+- Already-ready files are skipped automatically
 
 **Force Re-ingestion:**
 
 To re-ingest files (e.g., after code changes):
-```python
-stats = ingest_code_files("epfl", files, force=True)
+```bash
+imas-codex ingest run epfl --force
 ```
 
 ### Available Facilities
