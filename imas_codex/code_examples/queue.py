@@ -162,8 +162,12 @@ def get_pending_files(
 ) -> list[dict]:
     """Get pending SourceFile nodes for ingestion.
 
-    Returns files in queued or failed (with retry) status,
-    ordered by interest_score descending.
+    Returns files that need processing:
+    - queued: Not yet started
+    - fetching/embedding: Interrupted mid-processing (will be retried)
+    - failed: With retry count < 3
+
+    Ordered by interest_score descending.
 
     Args:
         facility: Facility ID
@@ -177,7 +181,7 @@ def get_pending_files(
         result = client.query(
             """
             MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE sf.status = 'queued'
+            WHERE sf.status IN ['queued', 'fetching', 'embedding']
                OR (sf.status = 'failed' AND coalesce(sf.retry_count, 0) < 3)
             AND coalesce(sf.interest_score, 0.5) >= $min_score
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
