@@ -275,22 +275,22 @@ GHCR_TOKEN=ghp_your_token_here
 ### Release Workflow
 
 The release command has two modes based on the target remote.
+The project version is derived from git tags via hatch-vcs.
 
 **Mode 1: Prepare PR (`--remote origin`)**
-- Updates schema versions in `schemas/*.yaml`
-- Commits and pushes branch to origin
+- Pushes branch to origin
 - Creates and pushes tag to origin
 
 **Mode 2: Finalize Release (`--remote upstream`, default)**
-- Verifies clean tree, synced with upstream, schema versions match
+- Verifies clean tree, synced with upstream
 - Updates `_GraphMeta` node with version
 - Dumps and pushes graph to GHCR
 - Creates and pushes tag to upstream (triggers CI)
 
 **Step-by-step:**
 ```bash
-# 1. Prepare PR (updates schemas, commits, pushes to fork)
-uv run imas-codex release v3.3.0 -m 'Release message' --remote origin
+# 1. Prepare PR (pushes tag to fork)
+uv run imas-codex release v4.0.0 -m 'Release message' --remote origin
 
 # 2. Create PR on GitHub, merge to upstream
 
@@ -298,19 +298,19 @@ uv run imas-codex release v3.3.0 -m 'Release message' --remote origin
 git pull upstream main
 
 # 4. Finalize release (graph to GHCR, tag to upstream)
-uv run imas-codex release v3.3.0 -m 'Release message'
+uv run imas-codex release v4.0.0 -m 'Release message'
 ```
 
 **Options:**
 ```bash
 # Preview changes
-uv run imas-codex release v3.3.0 -m 'Test' --dry-run
+uv run imas-codex release v4.0.0 -m 'Test' --dry-run
 
 # Skip graph operations
-uv run imas-codex release v3.3.0 -m 'Schema only' --skip-graph
+uv run imas-codex release v4.0.0 -m 'Code only' --skip-graph
 
 # Skip git tag
-uv run imas-codex release v3.3.0 -m 'Graph only' --skip-git
+uv run imas-codex release v4.0.0 -m 'Graph only' --skip-git
 ```
 
 ### LLM-First Cypher Queries
