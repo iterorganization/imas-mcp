@@ -1,28 +1,15 @@
-"""Prompt loading and management for exploration prompts.
+"""Prompt loading for exploration prompts.
 
-Prompts are markdown files with YAML frontmatter that define:
+Prompts are markdown files with YAML frontmatter:
 - name: Prompt identifier
-- description: Short description for listing
-- arguments: Dict of argument definitions with type, description, default, required
+- description: Short description
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import yaml
-
-
-@dataclass
-class PromptArgument:
-    """Definition of a prompt argument."""
-
-    name: str
-    type: str = "string"
-    description: str = ""
-    default: Any = None
-    required: bool = False
 
 
 @dataclass
@@ -31,101 +18,29 @@ class PromptDefinition:
 
     name: str
     description: str
-    template: str
-    arguments: list[PromptArgument] = field(default_factory=list)
-    source_file: Path | None = None
-
-    def render(self, **kwargs: Any) -> str:
-        """Render the prompt template with arguments.
-
-        Uses regex-based substitution to only replace known argument
-        placeholders, preserving other curly braces (e.g., in code examples).
-
-        Missing optional arguments use their defaults.
-        """
-        # Build context with defaults
-        context = {}
-        for arg in self.arguments:
-            if arg.name in kwargs:
-                context[arg.name] = kwargs[arg.name]
-            elif arg.default is not None:
-                context[arg.name] = arg.default
-            elif arg.required:
-                msg = f"Missing required argument: {arg.name}"
-                raise ValueError(msg)
-
-        # Replace only known argument placeholders using regex
-        # This preserves code examples with curly braces like {"key": "value"}
-        result = self.template
-        for name, value in context.items():
-            # Match {name} but not {{name}} (escaped braces)
-            pattern = r"(?<!\{)\{" + re.escape(name) + r"\}(?!\})"
-            result = re.sub(pattern, str(value), result)
-
-        return result
+    content: str
 
 
 def parse_prompt_file(path: Path) -> PromptDefinition:
-    """Parse a markdown prompt file with YAML frontmatter.
+    """Parse a markdown prompt file with YAML frontmatter."""
+    text = path.read_text()
 
-    Args:
-        path: Path to the markdown file
-
-    Returns:
-        PromptDefinition with parsed metadata and template
-    """
-    content = path.read_text()
-
-    # Split frontmatter from body
-    match = re.match(r"^---\n(.*?)\n---\n(.*)$", content, re.DOTALL)
+    match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
     if not match:
-        # No frontmatter, use filename as name
-        return PromptDefinition(
-            name=path.stem,
-            description="",
-            template=content,
-            source_file=path,
-        )
+        return PromptDefinition(name=path.stem, description="", content=text.strip())
 
-    frontmatter_text, template = match.groups()
+    frontmatter_text, content = match.groups()
     frontmatter = yaml.safe_load(frontmatter_text)
-
-    # Parse arguments
-    arguments = []
-    for arg_name, arg_def in frontmatter.get("arguments", {}).items():
-        if isinstance(arg_def, dict):
-            arguments.append(
-                PromptArgument(
-                    name=arg_name,
-                    type=arg_def.get("type", "string"),
-                    description=arg_def.get("description", ""),
-                    default=arg_def.get("default"),
-                    required=arg_def.get("required", False),
-                )
-            )
-        else:
-            # Simple value is the default
-            arguments.append(PromptArgument(name=arg_name, default=arg_def))
 
     return PromptDefinition(
         name=frontmatter.get("name", path.stem),
         description=frontmatter.get("description", ""),
-        template=template.strip(),
-        arguments=arguments,
-        source_file=path,
+        content=content.strip(),
     )
 
 
 def load_prompts(prompts_dir: Path | None = None) -> dict[str, PromptDefinition]:
-    """Load all prompts from a directory.
-
-    Args:
-        prompts_dir: Directory containing markdown prompt files.
-                    Defaults to agents/prompts/.
-
-    Returns:
-        Dict mapping prompt name to PromptDefinition.
-    """
+    """Load all prompts from a directory."""
     if prompts_dir is None:
         prompts_dir = Path(__file__).parent / "prompts"
 
@@ -138,38 +53,12 @@ def load_prompts(prompts_dir: Path | None = None) -> dict[str, PromptDefinition]
             except Exception as e:
                 import logging
 
-                logging.getLogger(__name__).warning(
-                    f"Failed to parse prompt {md_file}: {e}"
-                )
+                logging.getLogger(__name__).warning(f"Failed to parse {md_file}: {e}")
 
     return prompts
 
 
-def list_prompts_summary(prompts_dir: Path | None = None) -> list[dict[str, Any]]:
-    """Get a summary list of available prompts.
-
-    Returns:
-        List of dicts with name, description, and argument info.
-    """
+def list_prompts_summary(prompts_dir: Path | None = None) -> list[dict[str, str]]:
+    """Get a summary list of available prompts."""
     prompts = load_prompts(prompts_dir)
-    result = []
-    for prompt in prompts.values():
-        args_summary = []
-        for arg in prompt.arguments:
-            arg_info = {"name": arg.name, "type": arg.type}
-            if arg.required:
-                arg_info["required"] = True
-            if arg.default is not None:
-                arg_info["default"] = arg.default
-            if arg.description:
-                arg_info["description"] = arg.description
-            args_summary.append(arg_info)
-
-        result.append(
-            {
-                "name": prompt.name,
-                "description": prompt.description,
-                "arguments": args_summary,
-            }
-        )
-    return result
+    return [{"name": p.name, "description": p.description} for p in prompts.values()]

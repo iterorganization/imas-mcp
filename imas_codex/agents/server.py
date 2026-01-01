@@ -1106,71 +1106,20 @@ class AgentsServer:
                 ) from e
 
     def _register_prompts(self):
-        """Register MCP prompts from markdown files.
-
-        Creates typed wrapper functions for each prompt so FastMCP can
-        expose the arguments properly. Each argument gets a type annotation
-        and default value from the prompt definition.
-        """
+        """Register MCP prompts from markdown files."""
         for name, prompt_def in self._prompts.items():
-            self._register_single_prompt(name, prompt_def)
-            logger.debug(f"Registered prompt: {name}")
+            # Capture prompt_def in closure
+            def make_prompt_fn(pd: PromptDefinition):
+                def prompt_fn() -> str:
+                    return pd.content
 
-    def _register_single_prompt(self, name: str, prompt_def: PromptDefinition):
-        """Register a single prompt with proper argument handling.
+                prompt_fn.__name__ = pd.name.replace("-", "_")
+                return prompt_fn
 
-        FastMCP prompts need typed function signatures (no **kwargs).
-        We dynamically create a function with explicit parameters.
-        """
-        # Build argument documentation for the description
-        arg_docs = []
-        for arg in prompt_def.arguments:
-            req = " (required)" if arg.required else ""
-            default = f" [default: {arg.default}]" if arg.default is not None else ""
-            arg_docs.append(f"  - {arg.name}: {arg.description}{req}{default}")
-
-        enhanced_desc = prompt_def.description
-        if arg_docs:
-            enhanced_desc += "\n\nArguments:\n" + "\n".join(arg_docs)
-
-        # For prompts with no arguments, use a simple function
-        if not prompt_def.arguments:
-
-            @self.mcp.prompt(name=name, description=enhanced_desc)
-            def no_arg_prompt(_prompt_def: PromptDefinition = prompt_def) -> str:
-                return _prompt_def.render()
-
-            return
-
-        # For prompts with arguments, dynamically build a function signature
-        # FastMCP doesn't support **kwargs, so we need explicit parameters
-        # All our prompts have defaults, so we can use simple typed params
-        param_parts = []
-        for arg in prompt_def.arguments:
-            # Map YAML types to Python types
-            py_type = {"string": "str", "integer": "int", "boolean": "bool"}.get(
-                arg.type, "str"
+            self.mcp.prompt(name=name, description=prompt_def.description)(
+                make_prompt_fn(prompt_def)
             )
-            default_repr = repr(arg.default) if arg.default is not None else '""'
-            param_parts.append(f"{arg.name}: {py_type} = {default_repr}")
-
-        params_str = ", ".join(param_parts)
-        arg_names = [arg.name for arg in prompt_def.arguments]
-        kwargs_str = ", ".join(f"{n}={n}" for n in arg_names)
-
-        # Create the function dynamically
-        func_code = f"""
-def prompt_fn({params_str}) -> str:
-    return _prompt_def.render({kwargs_str})
-"""
-        local_ns: dict[str, Any] = {"_prompt_def": prompt_def}
-        exec(func_code, local_ns)  # noqa: S102
-        prompt_fn = local_ns["prompt_fn"]
-        prompt_fn.__name__ = name.replace("-", "_")
-        prompt_fn.__doc__ = enhanced_desc
-
-        # Register with FastMCP
-        self.mcp.prompt(name=name, description=enhanced_desc)(prompt_fn)
+            logger.debug(f"Registered prompt: {name}")
 
     def run(
         self,
