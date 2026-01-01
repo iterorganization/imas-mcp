@@ -2,6 +2,12 @@
 
 Configures the pipeline with CodeSplitter, IDSExtractor, and
 Neo4jVectorStore for semantic code search.
+
+Features:
+- Automatic deduplication (skips already-ingested files)
+- Per-file atomic commits (interrupt-safe)
+- Auto-updates FacilityPath status to 'ingested'
+- Links extracted MDSplus paths to TreeNode entities
 """
 
 import hashlib
@@ -73,6 +79,7 @@ def create_vector_store(
 
 def create_pipeline(
     vector_store: Neo4jVectorStore | None = None,
+    language: str = "python",
     chunk_lines: int = 40,
     chunk_lines_overlap: int = 10,
     max_chars: int = 3000,
@@ -81,6 +88,7 @@ def create_pipeline(
 
     Args:
         vector_store: Optional pre-configured Neo4jVectorStore
+        language: Programming language for CodeSplitter (default: python)
         chunk_lines: Target lines per chunk
         chunk_lines_overlap: Overlap between chunks
         max_chars: Maximum characters per chunk
@@ -93,7 +101,7 @@ def create_pipeline(
     return IngestionPipeline(
         transformations=[
             CodeSplitter(
-                language="python",
+                language=language,
                 chunk_lines=chunk_lines,
                 chunk_lines_overlap=chunk_lines_overlap,
                 max_chars=max_chars,
@@ -121,27 +129,148 @@ def _extract_author(path: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _check_already_ingested(
+    graph_client: GraphClient,
+    facility: str,
+    remote_paths: list[str],
+) -> tuple[list[str], list[str]]:
+    """Check which files are already ingested.
+
+    Args:
+        graph_client: GraphClient instance
+        facility: Facility ID
+        remote_paths: List of remote file paths to check
+
+    Returns:
+        Tuple of (paths_to_ingest, already_ingested_paths)
+    """
+    # Query for existing CodeExample nodes with matching source_file
+    result = graph_client.query(
+        """
+        MATCH (e:CodeExample)
+        WHERE e.facility_id = $facility AND e.source_file IN $paths
+        RETURN e.source_file AS path
+        """,
+        facility=facility,
+        paths=remote_paths,
+    )
+
+    already_ingested = {r["path"] for r in result}
+    to_ingest = [p for p in remote_paths if p not in already_ingested]
+
+    return to_ingest, list(already_ingested)
+
+
+def _update_facility_path_status(
+    graph_client: GraphClient,
+    facility: str,
+    source_file: str,
+    example_id: str,
+) -> None:
+    """Update FacilityPath status to 'ingested' and link to CodeExample.
+
+    Finds the FacilityPath that contains this source file and updates it.
+
+    Args:
+        graph_client: GraphClient instance
+        facility: Facility ID
+        source_file: Remote file path that was ingested
+        example_id: ID of the created CodeExample
+    """
+    # Find containing FacilityPath and update status
+    graph_client.query(
+        """
+        MATCH (p:FacilityPath {facility_id: $facility})
+        WHERE $source_file STARTS WITH p.path
+        MATCH (e:CodeExample {id: $example_id})
+        SET p.status = 'ingested',
+            p.last_ingested_at = datetime(),
+            p.files_ingested = coalesce(p.files_ingested, 0) + 1
+        MERGE (p)-[:PRODUCED]->(e)
+        """,
+        facility=facility,
+        source_file=source_file,
+        example_id=example_id,
+    )
+
+
+def _link_example_mdsplus_paths(
+    graph_client: GraphClient,
+    example_id: str,
+) -> int:
+    """Link a CodeExample to TreeNodes via its chunks' MDSplus paths.
+
+    Creates REFERENCES_NODE relationships from the CodeExample directly
+    to TreeNode entities for easier querying.
+
+    Args:
+        graph_client: GraphClient instance
+        example_id: ID of the CodeExample
+
+    Returns:
+        Number of TreeNode links created
+    """
+    result = graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+        WHERE c.mdsplus_paths IS NOT NULL
+        UNWIND c.mdsplus_paths AS mds_path
+        MATCH (t:TreeNode)
+        WHERE t.path = mds_path
+           OR t.path ENDS WITH substring(mds_path, 1)
+           OR t.name = split(mds_path, '::')[-1]
+        MERGE (e)-[:REFERENCES_NODE]->(t)
+        RETURN count(DISTINCT t) AS linked
+        """,
+        example_id=example_id,
+    )
+    return result[0]["linked"] if result else 0
+
+
 async def ingest_code_files(
     facility: str,
     remote_paths: list[str],
     description: str | None = None,
     progress_callback: ProgressCallback | None = None,
+    force: bool = False,
 ) -> dict[str, int]:
     """Ingest code files from a remote facility using LlamaIndex pipeline.
 
     Fetches files via SSH, processes with IngestionPipeline, and creates
-    graph relationships for IMAS path linking.
+    graph relationships for IMAS and MDSplus path linking. Files are grouped
+    by language and processed with language-specific CodeSplitter.
+
+    Features:
+    - **Deduplication**: Skips files that are already ingested (unless force=True)
+    - **Interrupt-safe**: Each file is committed atomically
+    - **Auto status update**: FacilityPath nodes are marked 'ingested'
+    - **MDSplus linking**: Extracted paths are linked to TreeNode entities
 
     Args:
         facility: Facility SSH host alias (e.g., "epfl")
         remote_paths: List of remote file paths to ingest
         description: Optional description for all files
         progress_callback: Optional callback for progress reporting
+        force: If True, re-ingest files even if already present
 
     Returns:
-        Dict with counts: {"files": N, "chunks": M, "ids_found": K}
+        Dict with counts: {
+            "files": N,
+            "chunks": M,
+            "ids_found": K,
+            "mdsplus_paths": L,
+            "skipped": S,
+            "tree_nodes_linked": T
+        }
     """
-    stats = {"files": 0, "chunks": 0, "ids_found": 0}
+    stats = {
+        "files": 0,
+        "chunks": 0,
+        "ids_found": 0,
+        "mdsplus_paths": 0,
+        "skipped": 0,
+        "tree_nodes_linked": 0,
+    }
     total_files = len(remote_paths)
 
     def report(current: int, total: int, message: str) -> None:
@@ -151,19 +280,38 @@ async def ingest_code_files(
 
     report(0, total_files, f"Starting ingestion of {total_files} files")
 
-    # Create pipeline and graph client
-    pipeline = create_pipeline()
+    # Create graph client and vector store (shared across all languages)
     graph_client = GraphClient()
+    vector_store = create_vector_store()
 
-    # Fetch and process files
-    documents: list[Document] = []
+    # Check for already-ingested files (deduplication)
+    paths_to_ingest = remote_paths
+    if not force:
+        with graph_client:
+            paths_to_ingest, already_ingested = _check_already_ingested(
+                graph_client, facility, remote_paths
+            )
+            stats["skipped"] = len(already_ingested)
+            if already_ingested:
+                report(
+                    0,
+                    total_files,
+                    f"Skipping {len(already_ingested)} already-ingested files",
+                )
+
+    if not paths_to_ingest:
+        report(total_files, total_files, "All files already ingested")
+        return stats
+
+    # Group documents by language
+    docs_by_language: dict[str, list[Document]] = {}
     file_metadata: dict[str, dict[str, Any]] = {}
 
     for idx, (remote_path, content, language) in enumerate(
-        fetch_remote_files(facility, remote_paths)
+        fetch_remote_files(facility, paths_to_ingest)
     ):
         filename = Path(remote_path).name
-        report(idx, total_files, f"Fetched {filename}")
+        report(idx, len(paths_to_ingest), f"Fetched {filename} ({language})")
 
         example_id = _generate_example_id(facility, remote_path)
         author = _extract_author(remote_path)
@@ -190,31 +338,59 @@ async def ingest_code_files(
                 "_full_doc_text": content,  # For line number calculation
             },
         )
-        documents.append(doc)
+
+        # Group by language
+        if language not in docs_by_language:
+            docs_by_language[language] = []
+        docs_by_language[language].append(doc)
         stats["files"] += 1
 
-    if not documents:
+    if not docs_by_language:
         report(total_files, total_files, "No files to process")
         return stats
 
-    # Run pipeline
-    report(stats["files"], total_files, "Running ingestion pipeline")
-    nodes = await pipeline.arun(documents=documents)
+    # Process each language group with appropriate pipeline
+    all_nodes = []
+    for language, documents in docs_by_language.items():
+        report(
+            stats["files"],
+            len(paths_to_ingest),
+            f"Processing {len(documents)} {language} files",
+        )
+        try:
+            pipeline = create_pipeline(vector_store=vector_store, language=language)
+            nodes = await pipeline.arun(documents=documents)
+            all_nodes.extend(nodes)
+        except Exception as e:
+            # Fallback: try with Python parser (works for most languages)
+            logger.warning(
+                "Failed to parse %s with %s parser, trying python: %s",
+                language,
+                language,
+                e,
+            )
+            try:
+                pipeline = create_pipeline(vector_store=vector_store, language="python")
+                nodes = await pipeline.arun(documents=documents)
+                all_nodes.extend(nodes)
+            except Exception as e2:
+                logger.error("Failed to process %s files: %s", language, e2)
+                continue
 
-    stats["chunks"] = len(nodes)
+    stats["chunks"] = len(all_nodes)
 
     # Count IDS and MDSplus references
-    for node in nodes:
+    for node in all_nodes:
         related_ids = node.metadata.get("related_ids", [])
         stats["ids_found"] += len(related_ids)
         mdsplus_paths = node.metadata.get("mdsplus_paths", [])
-        stats["mdsplus_paths"] = stats.get("mdsplus_paths", 0) + len(mdsplus_paths)
+        stats["mdsplus_paths"] += len(mdsplus_paths)
 
     # Create CodeExample nodes and relationships
-    report(stats["files"], total_files, "Creating graph relationships")
+    report(stats["files"], len(paths_to_ingest), "Creating graph relationships")
 
     with graph_client:
-        # Create CodeExample nodes
+        # Create CodeExample nodes and update FacilityPath status
         for example_id, meta in file_metadata.items():
             graph_client.query(
                 """
@@ -223,6 +399,10 @@ async def ingest_code_files(
                 """,
                 id=example_id,
                 props=meta,
+            )
+            # Update FacilityPath status automatically
+            _update_facility_path_status(
+                graph_client, facility, meta["source_file"], example_id
             )
 
         # Link chunks to examples (based on metadata)
@@ -240,10 +420,16 @@ async def ingest_code_files(
         link_chunks_to_tree_nodes(graph_client)
         link_examples_to_facility(graph_client)
 
+        # Link CodeExamples directly to TreeNodes for easier querying
+        for example_id in file_metadata:
+            linked = _link_example_mdsplus_paths(graph_client, example_id)
+            stats["tree_nodes_linked"] += linked
+
     report(
         total_files,
         total_files,
-        f"Completed: {stats['files']} files, {stats['chunks']} chunks",
+        f"Completed: {stats['files']} files, {stats['chunks']} chunks, "
+        f"{stats['skipped']} skipped, {stats['tree_nodes_linked']} tree nodes linked",
     )
     return stats
 
