@@ -377,107 +377,141 @@ async def ingest_code_files(
         report(total_files, total_files, "No files to process")
         return stats
 
-    # Update status to 'embedding' for files being processed
-    for meta in file_metadata.values():
-        if meta.get("_source_file_id"):
-            update_source_file_status(meta["_source_file_id"], "embedding")
+    # Process in micro-batches for better progress and interrupt safety
+    # Each batch: embed -> create graph nodes -> mark ready
+    BATCH_SIZE = 25  # Small batches for frequent progress updates
 
-    # Process each language group with appropriate pipeline
-    all_nodes = []
     processed_files = 0
     for language, documents in docs_by_language.items():
-        report(
-            processed_files,
-            stats["files"],
-            f"Embedding {len(documents)} {language} files...",
-        )
+        # Create pipeline once per language
         try:
             pipeline = create_pipeline(vector_store=vector_store, language=language)
-            nodes = await pipeline.arun(documents=documents)
-            all_nodes.extend(nodes)
-            processed_files += len(documents)
         except Exception as e:
-            # Fallback: try with Python parser (works for most languages)
-            logger.warning(
-                "Failed to parse %s with %s parser, trying python: %s",
-                language,
-                language,
-                e,
+            logger.error("Failed to create pipeline for %s: %s", language, e)
+            continue
+
+        # Process documents in batches
+        for batch_start in range(0, len(documents), BATCH_SIZE):
+            batch_docs = documents[batch_start : batch_start + BATCH_SIZE]
+            batch_end = min(batch_start + BATCH_SIZE, len(documents))
+
+            report(
+                processed_files,
+                stats["files"],
+                f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
             )
+
+            # Update status to 'embedding' for this batch only
+            for doc in batch_docs:
+                example_id = doc.metadata.get("code_example_id")
+                meta = file_metadata.get(example_id, {})
+                if meta.get("_source_file_id"):
+                    update_source_file_status(meta["_source_file_id"], "embedding")
+
             try:
-                pipeline = create_pipeline(vector_store=vector_store, language="python")
-                nodes = await pipeline.arun(documents=documents)
-                all_nodes.extend(nodes)
-                processed_files += len(documents)
-            except Exception as e2:
-                logger.error("Failed to process %s files: %s", language, e2)
-                # Mark these files as failed
-                for doc in documents:
-                    sf_id = source_file_ids.get(doc.metadata.get("source_file"))
-                    if sf_id:
-                        update_source_file_status(sf_id, "failed", error=str(e2))
-                continue
+                nodes = await pipeline.arun(documents=batch_docs)
+            except Exception as e:
+                logger.warning(
+                    "Failed to parse %s batch with %s parser, trying python: %s",
+                    language,
+                    language,
+                    e,
+                )
+                try:
+                    fallback_pipeline = create_pipeline(
+                        vector_store=vector_store, language="python"
+                    )
+                    nodes = await fallback_pipeline.arun(documents=batch_docs)
+                except Exception as e2:
+                    logger.error("Failed to process %s batch: %s", language, e2)
+                    # Mark this batch as failed
+                    for doc in batch_docs:
+                        example_id = doc.metadata.get("code_example_id")
+                        meta = file_metadata.get(example_id, {})
+                        sf_id = meta.get("_source_file_id")
+                        if sf_id:
+                            update_source_file_status(sf_id, "failed", error=str(e2))
+                    continue
 
-    stats["chunks"] = len(all_nodes)
+            # Count stats for this batch
+            batch_ids_found = 0
+            batch_mdsplus_paths = 0
+            for node in nodes:
+                related_ids = node.metadata.get("related_ids", [])
+                batch_ids_found += len(related_ids)
+                mdsplus_paths = node.metadata.get("mdsplus_paths", [])
+                batch_mdsplus_paths += len(mdsplus_paths)
 
-    # Count IDS and MDSplus references
-    for node in all_nodes:
-        related_ids = node.metadata.get("related_ids", [])
-        stats["ids_found"] += len(related_ids)
-        mdsplus_paths = node.metadata.get("mdsplus_paths", [])
-        stats["mdsplus_paths"] += len(mdsplus_paths)
+            stats["chunks"] += len(nodes)
+            stats["ids_found"] += batch_ids_found
+            stats["mdsplus_paths"] += batch_mdsplus_paths
 
-    # Create CodeExample nodes and relationships
-    report(processed_files, stats["files"], "Creating graph relationships...")
+            # Commit this batch to graph immediately (interrupt-safe)
+            with GraphClient() as graph_client:
+                for doc in batch_docs:
+                    example_id = doc.metadata.get("code_example_id")
+                    meta = file_metadata.get(example_id)
+                    if not meta:
+                        continue
 
-    with GraphClient() as graph_client:
-        # Create CodeExample nodes and update FacilityPath status
-        for example_id, meta in file_metadata.items():
-            # Remove internal fields before storing
-            source_file_id = meta.pop("_source_file_id", None)
+                    # Pop source_file_id for status update
+                    source_file_id = meta.pop("_source_file_id", None)
 
-            graph_client.query(
-                """
-                MERGE (e:CodeExample {id: $id})
-                SET e += $props
-                """,
-                id=example_id,
-                props=meta,
-            )
-            # Update FacilityPath status automatically
-            _update_facility_path_status(
-                graph_client, facility, meta["source_file"], example_id
-            )
+                    # Create CodeExample node
+                    graph_client.query(
+                        """
+                        MERGE (e:CodeExample {id: $id})
+                        SET e += $props
+                        """,
+                        id=example_id,
+                        props=meta,
+                    )
 
-            # Update SourceFile status to 'ready'
-            if source_file_id:
-                update_source_file_status(
-                    source_file_id, "ready", code_example_id=example_id
+                    # Update FacilityPath status
+                    _update_facility_path_status(
+                        graph_client, facility, meta["source_file"], example_id
+                    )
+
+                    # Mark SourceFile as ready
+                    if source_file_id:
+                        update_source_file_status(
+                            source_file_id, "ready", code_example_id=example_id
+                        )
+
+                # Link chunks to examples for this batch
+                batch_example_ids = [
+                    doc.metadata.get("code_example_id") for doc in batch_docs
+                ]
+                graph_client.query(
+                    """
+                    MATCH (c:CodeChunk)
+                    WHERE c.code_example_id IN $example_ids
+                    MATCH (e:CodeExample {id: c.code_example_id})
+                    MERGE (e)-[:HAS_CHUNK]->(c)
+                    """,
+                    example_ids=batch_example_ids,
                 )
 
-        # Link chunks to examples (based on metadata)
-        graph_client.query(
-            """
-            MATCH (c:CodeChunk)
-            WHERE c.code_example_id IS NOT NULL
-            MATCH (e:CodeExample {id: c.code_example_id})
-            MERGE (e)-[:HAS_CHUNK]->(c)
-            """
-        )
+                # Link MDSplus paths for this batch
+                for example_id in batch_example_ids:
+                    if example_id:
+                        linked = _link_example_mdsplus_paths(graph_client, example_id)
+                        stats["tree_nodes_linked"] += linked
 
-        # Create RELATED_PATHS, REFERENCES_NODE, and FACILITY_ID relationships
+            processed_files += len(batch_docs)
+            stats["files"] = processed_files
+
+    # Final relationship linking (IMAS paths, facility)
+    report(processed_files, processed_files, "Creating final graph relationships...")
+
+    with GraphClient() as graph_client:
         link_chunks_to_imas_paths(graph_client)
         link_chunks_to_tree_nodes(graph_client)
         link_examples_to_facility(graph_client)
 
-        # Link CodeExamples directly to TreeNodes for easier querying
-        for example_id in file_metadata:
-            linked = _link_example_mdsplus_paths(graph_client, example_id)
-            stats["tree_nodes_linked"] += linked
-
     report(
-        total_files,
-        total_files,
+        processed_files,
+        processed_files,
         f"Completed: {stats['files']} files, {stats['chunks']} chunks, "
         f"{stats['skipped']} skipped, {stats['tree_nodes_linked']} tree nodes linked",
     )
