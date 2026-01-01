@@ -1050,9 +1050,9 @@ def ingest() -> None:
 @click.option(
     "--limit",
     "-n",
-    default=100,
+    default=None,
     type=int,
-    help="Maximum files to process (default: 100)",
+    help="Maximum files to process (default: all queued files)",
 )
 @click.option(
     "--min-score",
@@ -1072,7 +1072,7 @@ def ingest() -> None:
 )
 def ingest_run(
     facility: str,
-    limit: int,
+    limit: int | None,
     min_score: float,
     force: bool,
     dry_run: bool,
@@ -1084,14 +1084,14 @@ def ingest_run(
     CodeExample nodes with searchable chunks.
 
     Examples:
-        # Process up to 100 queued files
+        # Process all queued files
         imas-codex ingest run epfl
 
         # Process only high-priority files
         imas-codex ingest run epfl --min-score 0.7
 
-        # Process more files
-        imas-codex ingest run epfl -n 500
+        # Limit to 100 files
+        imas-codex ingest run epfl -n 100
 
         # Preview what would be processed
         imas-codex ingest run epfl --dry-run
@@ -1112,9 +1112,12 @@ def ingest_run(
 
     console = Console()
 
-    # Get pending files from queue
+    # Get pending files from queue (no limit means get all)
     console.print(f"[cyan]Fetching queued files for {facility}...[/cyan]")
-    pending = get_pending_files(facility, limit=limit, min_interest_score=min_score)
+    query_limit = limit if limit is not None else 10000  # Large number for "all"
+    pending = get_pending_files(
+        facility, limit=query_limit, min_interest_score=min_score
+    )
 
     if not pending:
         console.print("[yellow]No pending files in queue.[/yellow]")
@@ -1206,6 +1209,126 @@ def ingest_status(facility: str) -> None:
     table.add_row("Total", str(total), style="bold")
 
     console.print(table)
+
+
+@ingest.command("queue")
+@click.argument("facility")
+@click.argument("paths", nargs=-1)
+@click.option(
+    "--from-file",
+    "-f",
+    "from_file",
+    type=click.Path(exists=True),
+    help="Read file paths from a text file (one per line)",
+)
+@click.option(
+    "--stdin",
+    is_flag=True,
+    help="Read file paths from stdin",
+)
+@click.option(
+    "--interest-score",
+    "-s",
+    default=0.5,
+    type=float,
+    help="Interest score for all files (0.0-1.0, default: 0.5)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be queued without making changes",
+)
+def ingest_queue(
+    facility: str,
+    paths: tuple[str, ...],
+    from_file: str | None,
+    stdin: bool,
+    interest_score: float,
+    dry_run: bool,
+) -> None:
+    """Queue source files for ingestion.
+
+    Accepts paths as arguments, from a file, or from stdin. Creates
+    SourceFile nodes with status='queued'. Already-queued or ingested
+    files are skipped automatically.
+
+    Examples:
+        # Queue paths directly (LLM-friendly)
+        imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
+
+        # Queue from file (for large batches)
+        imas-codex ingest queue epfl -f files.txt
+
+        # Queue from stdin (pipe from rg)
+        ssh epfl 'rg -l "IMAS" /home' | imas-codex ingest queue epfl --stdin
+
+        # Set priority score
+        imas-codex ingest queue epfl /path/a.py -s 0.9
+
+        # Preview
+        imas-codex ingest queue epfl /path/a.py --dry-run
+    """
+    import sys
+    from pathlib import Path
+
+    from rich.console import Console
+
+    from imas_codex.code_examples import queue_source_files
+
+    console = Console()
+
+    # Read file paths from arguments, file, or stdin
+    path_list: list[str] = []
+    if paths:
+        path_list = list(paths)
+    elif from_file:
+        path_list = Path(from_file).read_text().strip().splitlines()
+    elif stdin:
+        path_list = sys.stdin.read().strip().splitlines()
+    else:
+        console.print(
+            "[red]Error: Provide paths as arguments, --from-file, or --stdin[/red]"
+        )
+        raise SystemExit(1)
+
+    # Filter empty lines and comments
+    path_list = [
+        p.strip() for p in path_list if p.strip() and not p.strip().startswith("#")
+    ]
+
+    if not path_list:
+        console.print("[yellow]No file paths provided[/yellow]")
+        return
+
+    console.print(f"[cyan]Queueing {len(path_list)} files for {facility}...[/cyan]")
+
+    if dry_run:
+        console.print("\n[cyan]Files that would be queued:[/cyan]")
+        for i, path in enumerate(path_list[:20], 1):
+            console.print(f"  {i}. {path}")
+        if len(path_list) > 20:
+            console.print(f"  ... and {len(path_list) - 20} more")
+        console.print(f"\n[dim]Interest score: {interest_score}[/dim]")
+        return
+
+    result = queue_source_files(
+        facility=facility,
+        file_paths=path_list,
+        interest_score=interest_score,
+        discovered_by="cli",
+    )
+
+    console.print(f"[green]✓ Queued: {result['queued']}[/green]")
+    console.print(
+        f"[yellow]↷ Skipped: {result['skipped']} (already queued/ingested)[/yellow]"
+    )
+    if result["errors"]:
+        for err in result["errors"]:
+            console.print(f"[red]✗ Error: {err}[/red]")
+
+    console.print(
+        f"\n[dim]Run ingestion: imas-codex ingest run {facility} -n {min(result['queued'], 500)}[/dim]"
+    )
 
 
 @ingest.command("list")

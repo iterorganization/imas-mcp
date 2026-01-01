@@ -13,6 +13,7 @@ Example:
     ...     client.create_node("Facility", "epfl", {"name": "EPFL/TCV"})
 """
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -21,6 +22,10 @@ from typing import Any
 from neo4j import Driver, GraphDatabase, Session
 
 from imas_codex.graph.schema import GraphSchema, get_schema
+
+# Suppress noisy Neo4j warnings about unknown property keys
+# These are harmless (e.g., retry_count doesn't exist until first failure)
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
 
 @dataclass

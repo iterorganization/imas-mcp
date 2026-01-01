@@ -39,6 +39,8 @@ SET c.embedding = $new_embedding
 | Push graph to GHCR | `uv run imas-codex neo4j push v1.0.0` |
 | Pull graph from GHCR | `uv run imas-codex neo4j pull` |
 | Load graph dump | `uv run imas-codex neo4j load graph.dump` |
+| Queue files for ingestion | `uv run imas-codex ingest queue epfl /path/a.py /path/b.py` |
+| Queue files from stdin | `ssh epfl 'rg -l pattern /path' \| uv run imas-codex ingest queue epfl --stdin` |
 | Ingest queue status | `uv run imas-codex ingest status epfl` |
 | Run code ingestion | `uv run imas-codex ingest run epfl` |
 | List queued files | `uv run imas-codex ingest list epfl` |
@@ -719,25 +721,22 @@ stale ◀── (re-scan)
 - **Status tracking**: `SourceFile` nodes track progress through lifecycle
 - **MDSplus linking**: Extracted paths are linked to `TreeNode` entities
 
-**Scout Workflow:**
+**Scout Workflow (CLI - Preferred):**
 
-```python
-# 1. Find interesting files via SSH
-files = subprocess.run(
-    ["ssh", "epfl", "~/bin/rg -l 'equilibrium|IMAS' /home/codes -g '*.py'"],
-    capture_output=True, text=True
-).stdout.strip().split('\n')
+```bash
+# 1. Queue files directly (LLM-friendly)
+imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
 
-# 2. Queue for ingestion via ingest_nodes (auto-deduplicates)
-result = ingest_nodes("SourceFile", [
-    {"id": f"epfl:{f}", "path": f, "facility_id": "epfl",
-     "status": "queued", "interest_score": 0.8,
-     "patterns_matched": ["equilibrium", "IMAS"]}
-    for f in files
-])
-# Returns: {"processed": 45, "skipped": 5, "errors": []}
-# Already-queued or ingested files are automatically skipped
+# 2. Or pipe from SSH search for large batches
+ssh epfl 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | imas-codex ingest queue epfl --stdin
+
+# 3. Or use a file list
+ssh epfl 'rg -l "pattern" /path' > files.txt
+imas-codex ingest queue epfl -f files.txt
 ```
+
+The pipeline automatically extracts MDSplus paths, TDI calls, and IDS references.
+Do NOT fabricate `patterns_matched` metadata - let the pipeline do real extraction.
 
 **CLI Ingestion:**
 
@@ -762,15 +761,6 @@ imas-codex ingest list epfl
 
 # List failed files
 imas-codex ingest list epfl -s failed
-```
-
-**Direct Ingestion (Legacy):**
-
-For ad-hoc ingestion without queueing, the MCP tool still accepts explicit paths:
-```python
-stats = ingest_code_files("epfl", [
-    "/home/duval/VNC_22/equil-tools-py/liuqeplot.py"
-], description="Equilibrium visualization")
 ```
 
 **Recovery from Interrupts:**
