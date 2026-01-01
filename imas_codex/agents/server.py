@@ -15,26 +15,22 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from imas_codex.agents.prompt_loader import (
     PromptDefinition,
-    list_prompts_summary,
     load_prompts,
 )
 from imas_codex.code_examples import (
     CodeExampleSearch,
-    get_queue_stats,
-    ingest_code_files,
     queue_source_files,
 )
 from imas_codex.discovery import (
     get_facility,
     get_facility_private,
-    list_facilities,
     save_private,
 )
 from imas_codex.graph import GraphClient, get_schema
@@ -427,31 +423,6 @@ class AgentsServer:
             }
 
         @self.mcp.tool()
-        def get_all_facilities() -> list[dict[str, str]]:
-            """
-            List available facilities with SSH connection info.
-
-            Returns:
-                List of facility dicts with id, ssh_host, description
-            """
-            result = []
-            for facility_id in list_facilities():
-                try:
-                    data = get_facility(facility_id)
-                    result.append(
-                        {
-                            "id": data.get("id", facility_id),
-                            "ssh_host": data.get("ssh_host", ""),
-                            "description": data.get("description", ""),
-                            "machine": data.get("machine", ""),
-                        }
-                    )
-                except Exception:
-                    # Skip invalid configs
-                    pass
-            return result
-
-        @self.mcp.tool()
         def get_facility_info(facility: str) -> dict[str, Any]:
             """
             Get comprehensive facility info for exploration.
@@ -558,71 +529,6 @@ class AgentsServer:
         # =====================================================================
 
         @self.mcp.tool()
-        async def ingest_code_files_tool(
-            facility: str,
-            remote_paths: list[str],
-            ctx: Context,
-            description: str | None = None,
-        ) -> dict[str, int]:
-            """
-            Ingest code files from a remote facility into the knowledge graph.
-
-            Fetches files via SCP, chunks them into searchable segments,
-            generates embeddings, extracts IMAS IDS references, and stores
-            in Neo4j with relationships to facility and IMAS paths.
-
-            Progress is reported during ingestion so you can monitor long
-            operations. Each file fetch, chunk generation, and graph write
-            step is reported.
-
-            Args:
-                facility: Facility SSH host alias (e.g., "epfl")
-                remote_paths: List of remote file paths to ingest
-                description: Optional description for all files
-
-            Returns:
-                Dict with counts: {"files": N, "chunks": M, "ids_found": K}
-
-            Examples:
-                # Ingest a single file
-                ingest_code_files("epfl", ["/home/wilson/data/load_to_imas.py"])
-
-                # Ingest multiple files
-                ingest_code_files("epfl", [
-                    "/home/duval/VNC_22/equil-tools-py/liuqeplot.py",
-                    "/home/athorn/python/equilibrium.py"
-                ], description="Equilibrium visualization examples")
-            """
-
-            def progress_callback(current: int, total: int, message: str) -> None:
-                """Progress callback for ingestion updates."""
-                logger.info("[%d/%d] %s", current, total, message)
-
-            try:
-                await ctx.info(
-                    f"Starting ingestion of {len(remote_paths)} files from {facility}"
-                )
-
-                # Use the async ingest_code_files from pipeline
-                result = await ingest_code_files(
-                    facility=facility,
-                    remote_paths=remote_paths,
-                    description=description,
-                    progress_callback=progress_callback,
-                )
-
-                await ctx.info(
-                    f"Completed: {result['files']} files, "
-                    f"{result['chunks']} chunks, {result['ids_found']} IDS refs"
-                )
-                return result
-            except Exception as e:
-                logger.exception("Failed to ingest code files")
-                error_msg = _neo4j_error_message(e)
-                await ctx.error(f"Ingestion failed: {error_msg}")
-                raise RuntimeError(f"Failed to ingest code files: {error_msg}") from e
-
-        @self.mcp.tool()
         def queue_source_files_tool(
             facility: str,
             file_paths: list[str],
@@ -679,30 +585,6 @@ class AgentsServer:
             except Exception as e:
                 logger.exception("Failed to queue source files")
                 raise RuntimeError(f"Failed to queue source files: {e}") from e
-
-        @self.mcp.tool()
-        def get_source_file_queue_stats(facility: str) -> dict[str, Any]:
-            """
-            Get queue statistics for a facility.
-
-            Shows counts of SourceFile nodes by status, useful for
-            understanding current queue state before running ingestion.
-
-            Args:
-                facility: Facility ID (e.g., "epfl")
-
-            Returns:
-                Dict with counts by status: {"queued": N, "ready": M, ...}
-
-            Examples:
-                stats = get_source_file_queue_stats("epfl")
-                # Returns: {"queued": 50, "ready": 200, "failed": 2}
-            """
-            try:
-                return get_queue_stats(facility)
-            except Exception as e:
-                logger.exception("Failed to get queue stats")
-                raise RuntimeError(f"Failed to get queue stats: {e}") from e
 
         @self.mcp.tool()
         def search_code_examples(
@@ -762,31 +644,6 @@ class AgentsServer:
             except Exception as e:
                 logger.exception("Failed to search code examples")
                 raise RuntimeError(f"Failed to search code examples: {e}") from e
-
-        # =====================================================================
-        # Prompt Tools
-        # =====================================================================
-
-        @self.mcp.tool()
-        def list_prompts() -> list[dict[str, Any]]:
-            """
-            List available exploration prompts with descriptions.
-
-            Prompts are pre-defined workflows for common exploration tasks.
-            They are also registered as MCP prompts (accessible via /prompt-name).
-
-            Returns:
-                List of prompt summaries with name, description, and arguments.
-
-            Examples:
-                prompts = list_prompts()
-                # Returns: [
-                #   {"name": "scout-paths", "description": "Discover directories...", ...},
-                #   {"name": "scout-code", "description": "Find and ingest...", ...},
-                #   ...
-                # ]
-            """
-            return list_prompts_summary()
 
         @self.mcp.tool()
         def get_exploration_progress(facility: str) -> dict[str, Any]:
