@@ -1,0 +1,409 @@
+# IMAS Data Dictionary Knowledge Graph Schema
+#
+# This schema defines the graph representation of the IMAS Data Dictionary,
+# enabling version tracking, compliance checking, and cross-linking with
+# facility-specific data.
+#
+# Design follows the "Super Tree" pattern from MDSplus ingestion:
+# - Store unified graph with applicability ranges (introduced/deprecated versions)
+# - Augment rather than rebuild (shared with facility knowledge)
+#
+# Generated models: imas_codex/graph/models.py
+# To regenerate: uv run build-models --force
+#
+# See plans/IMAS_DD_GRAPH.md for design decisions and rationale.
+
+id: https://imas.iter.org/schemas/imas_dd
+name: imas_dd
+title: IMAS Data Dictionary Knowledge Graph Schema
+description: >-
+  Graph representation of the IMAS Data Dictionary with version tracking,
+  coordinate linking, and semantic clustering.
+
+license: MIT
+version: 0.4.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  imas_dd: https://imas.iter.org/schemas/imas_dd/
+  imas: https://imas.iter.org/
+
+default_prefix: imas_dd
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+enums:
+  DDDataType:
+    description: IMAS Data Dictionary data types
+    permissible_values:
+      STR_0D:
+        description: Scalar string
+      STR_1D:
+        description: 1D array of strings
+      INT_0D:
+        description: Scalar integer
+      INT_1D:
+        description: 1D array of integers
+      INT_2D:
+        description: 2D array of integers
+      INT_3D:
+        description: 3D array of integers
+      FLT_0D:
+        description: Scalar float
+      FLT_1D:
+        description: 1D array of floats
+      FLT_2D:
+        description: 2D array of floats
+      FLT_3D:
+        description: 3D array of floats
+      FLT_4D:
+        description: 4D array of floats
+      FLT_5D:
+        description: 5D array of floats
+      FLT_6D:
+        description: 6D array of floats
+      CPX_0D:
+        description: Scalar complex
+      CPX_1D:
+        description: 1D array of complex
+      CPX_2D:
+        description: 2D array of complex
+      CPX_3D:
+        description: 3D array of complex
+      STRUCTURE:
+        description: Container structure (no data)
+      STRUCT_ARRAY:
+        description: Array of structures
+
+  DDNodeType:
+    description: Time-variation character of DD nodes
+    permissible_values:
+      dynamic:
+        description: Data varying in time within the IDS
+      constant:
+        description: Data not varying within the IDS
+      static:
+        description: Data not varying between IDSs
+
+  PhysicsDomainDD:
+    description: Physics domains for IMAS data paths
+    permissible_values:
+      equilibrium:
+        description: Equilibrium reconstruction and MHD equilibrium
+      core_profiles:
+        description: Core plasma profiles (Te, Ti, ne)
+      edge_profiles:
+        description: Edge and SOL plasma profiles
+      transport:
+        description: Transport coefficients and fluxes
+      mhd:
+        description: MHD stability and instabilities
+      waves:
+        description: Wave heating and current drive
+      particles:
+        description: Energetic particles and neutrals
+      diagnostics:
+        description: Diagnostic measurements
+      engineering:
+        description: Machine and engineering systems
+      control:
+        description: Plasma control systems
+      general:
+        description: General/unclassified
+
+  ChangeType:
+    description: Types of metadata changes between DD versions
+    permissible_values:
+      units:
+        description: Units changed
+      documentation:
+        description: Documentation text changed
+      type:
+        description: Data type or node type changed
+      coordinates:
+        description: Coordinate specification changed
+      lifecycle:
+        description: Lifecycle status changed (e.g., obsolete)
+      maxoccur:
+        description: Maximum occurrences changed
+
+# =============================================================================
+# Classes
+# =============================================================================
+
+classes:
+  DDVersion:
+    description: >-
+      A version of the IMAS Data Dictionary. Versions form a chain via
+      PREDECESSOR relationships, enabling traversal of DD evolution.
+    class_uri: imas_dd:DDVersion
+    attributes:
+      id:
+        identifier: true
+        description: Version string (e.g., "3.42.2", "4.0.0")
+        required: true
+      release_date:
+        description: Release date of this DD version
+        range: datetime
+      is_current:
+        description: Whether this is the current/latest version
+        range: boolean
+      path_count:
+        description: Total number of paths in this version
+        range: integer
+      ids_count:
+        description: Number of IDS definitions in this version
+        range: integer
+      predecessor:
+        description: Previous DD version
+        range: DDVersion
+
+  IDS:
+    description: >-
+      A top-level Interface Data Structure definition. IDS nodes are the
+      root containers for physics data (e.g., equilibrium, core_profiles).
+    class_uri: imas_dd:IDS
+    attributes:
+      name:
+        identifier: true
+        description: IDS name (e.g., "equilibrium", "core_profiles")
+        required: true
+      description:
+        description: IDS description from DD documentation
+      physics_domain:
+        description: Primary physics domain
+        range: PhysicsDomainDD
+      path_count:
+        description: Number of paths in this IDS (current version)
+        range: integer
+      leaf_count:
+        description: Number of leaf nodes (data endpoints)
+        range: integer
+      max_depth:
+        description: Maximum hierarchy depth
+        range: integer
+      documentation_coverage:
+        description: Fraction of paths with documentation (0.0-1.0)
+        range: float
+      introduced_version:
+        description: DD version where this IDS was introduced
+        range: DDVersion
+      deprecated_version:
+        description: DD version where this IDS was deprecated (null = current)
+        range: DDVersion
+
+  DDPath:
+    description: >-
+      A data path in the IMAS Data Dictionary. Paths form a hierarchy via
+      PARENT relationships and link to units, coordinates, and clusters.
+      Version tracking uses INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO.
+    class_uri: imas_dd:DDPath
+    attributes:
+      id:
+        identifier: true
+        description: Full path (e.g., "equilibrium/time_slice/boundary/psi")
+        required: true
+      name:
+        description: Leaf name (last path component, e.g., "psi")
+        required: true
+      documentation:
+        description: Documentation string from DD
+      data_type:
+        description: Data type (e.g., FLT_1D, STR_0D, STRUCTURE)
+        range: DDDataType
+      ndim:
+        description: Number of dimensions (0-6)
+        range: integer
+      node_type:
+        description: Time-variation type (dynamic/constant/static)
+        range: DDNodeType
+      physics_domain:
+        description: Physics domain (derived from path/IDS)
+        range: PhysicsDomainDD
+      maxoccur:
+        description: Maximum occurrences (for struct arrays)
+        range: integer
+      # Relationships
+      ids:
+        description: Parent IDS
+        required: true
+        range: IDS
+      parent_path:
+        description: Parent path in hierarchy (null for IDS-level)
+        range: DDPath
+      unit:
+        description: Physical units for this path
+        range: Unit
+      introduced_version:
+        description: DD version where this path was introduced
+        range: DDVersion
+      deprecated_version:
+        description: DD version where this path was deprecated (null = current)
+        range: DDVersion
+      renamed_to:
+        description: Successor path if this was renamed (not just removed)
+        range: DDPath
+      identifier_schema:
+        description: Identifier schema if this is an identifier field
+        range: IdentifierSchema
+
+  Unit:
+    description: >-
+      A physical unit used in the Data Dictionary. Units are deduplicated
+      across all paths to enable unit-based queries.
+    class_uri: imas_dd:Unit
+    attributes:
+      symbol:
+        identifier: true
+        description: Unit symbol (e.g., "Wb", "m.s^-1", "eV")
+        required: true
+      name:
+        description: Human-readable name (e.g., "Weber", "meters per second")
+      dimension:
+        description: Physical dimension category
+      is_si:
+        description: Whether this is an SI base or derived unit
+        range: boolean
+
+  CoordinateSpec:
+    description: >-
+      An index-based coordinate specification (e.g., "1...N", "1...3").
+      Path references are handled via COORDINATE relationships to DDPath.
+    class_uri: imas_dd:CoordinateSpec
+    attributes:
+      id:
+        identifier: true
+        description: Coordinate spec string (e.g., "1...N", "1...3")
+        required: true
+      is_bounded:
+        description: Whether the coordinate has a fixed maximum
+        range: boolean
+      max_size:
+        description: Maximum size if bounded (e.g., 3 for "1...3")
+        range: integer
+
+  SemanticCluster:
+    description: >-
+      A semantic cluster of related IMAS paths, derived from HDBSCAN
+      clustering on path embeddings. Paths link to clusters via IN_CLUSTER.
+    class_uri: imas_dd:SemanticCluster
+    attributes:
+      id:
+        identifier: true
+        description: Cluster identifier (e.g., "cluster_42")
+        required: true
+      label:
+        description: LLM-generated semantic label (e.g., "boundary geometry")
+        required: true
+      description:
+        description: Extended description of the cluster concept
+      physics_domain:
+        description: Primary physics domain of cluster members
+        range: PhysicsDomainDD
+      path_count:
+        description: Number of paths in this cluster
+        range: integer
+      cross_ids:
+        description: Whether cluster spans multiple IDS
+        range: boolean
+      representative_path:
+        description: Most central path (closest to centroid)
+        range: DDPath
+
+  IdentifierSchema:
+    description: >-
+      An enumeration/identifier schema from the Data Dictionary.
+      Options are stored as JSON property rather than separate nodes.
+    class_uri: imas_dd:IdentifierSchema
+    attributes:
+      name:
+        identifier: true
+        description: Schema name (e.g., "coordinate_identifier")
+        required: true
+      description:
+        description: Schema description
+      option_count:
+        description: Number of valid options
+        range: integer
+      options:
+        description: JSON-encoded list of {index, name, description}
+
+  PathChange:
+    description: >-
+      Records a change to path metadata between DD versions.
+      Enables tracking of documentation updates, unit changes, etc.
+    class_uri: imas_dd:PathChange
+    attributes:
+      id:
+        identifier: true
+        description: Composite key (path:change_type:version)
+        required: true
+      change_type:
+        description: Type of change
+        range: ChangeType
+        required: true
+      old_value:
+        description: Previous value (as string)
+      new_value:
+        description: New value (as string)
+      path:
+        description: The path that changed
+        range: DDPath
+        required: true
+      version:
+        description: Version where the change occurred
+        range: DDVersion
+        required: true
+
+  # Relationship class for coordinates (captures dimension + properties)
+  CoordinateRelationship:
+    description: >-
+      Represents a coordinate relationship between a DDPath and its coordinate
+      (either another DDPath or a CoordinateSpec). Stored as relationship properties.
+    class_uri: imas_dd:CoordinateRelationship
+    attributes:
+      dimension:
+        description: Which dimension this coordinate applies to (1-6)
+        range: integer
+        required: true
+      alternative:
+        description: Whether this is an OR alternative coordinate
+        range: boolean
+      same_as:
+        description: Whether from coordinate_same_as attribute
+        range: boolean
+      source_path:
+        description: The path that has this coordinate
+        range: DDPath
+        required: true
+      target_path:
+        description: The coordinate path (for path references)
+        range: DDPath
+      target_spec:
+        description: The coordinate spec (for index coordinates)
+        range: CoordinateSpec
+
+  # Relationship class for cluster membership
+  ClusterMembership:
+    description: >-
+      Represents membership of a DDPath in a SemanticCluster.
+      Distance indicates proximity to cluster centroid.
+    class_uri: imas_dd:ClusterMembership
+    attributes:
+      path:
+        description: The member path
+        range: DDPath
+        required: true
+      cluster:
+        description: The cluster
+        range: SemanticCluster
+        required: true
+      distance:
+        description: Distance to cluster centroid (lower = more central)
+        range: float

@@ -135,6 +135,7 @@ build-models = "scripts.build_models:build_models"
 gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
 discover-mdsplus = "scripts.discover_mdsplus:main"
+build-dd-graph = "scripts.build_dd_graph:build_dd_graph_cli"
 
 [tool.hatch.version]
 source = "vcs"
