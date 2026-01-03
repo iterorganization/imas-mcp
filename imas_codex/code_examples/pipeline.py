@@ -20,14 +20,14 @@ from typing import Any
 
 from llama_index.core import Document
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.node_parser import CodeSplitter
+from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
 from imas_codex.graph import GraphClient
 from imas_codex.settings import get_imas_embedding_model
 
-from .facility_reader import fetch_remote_files
+from .facility_reader import TEXT_SPLITTER_LANGUAGES, fetch_remote_files
 from .graph_linker import (
     link_chunks_to_imas_paths,
     link_chunks_to_tree_nodes,
@@ -84,7 +84,8 @@ def create_pipeline(
     language: str = "python",
     chunk_lines: int = 40,
     chunk_lines_overlap: int = 10,
-    max_chars: int = 3000,
+    max_chars: int = 10000,
+    use_text_splitter: bool = False,
 ) -> IngestionPipeline:
     """Create LlamaIndex ingestion pipeline for code examples.
 
@@ -94,20 +95,32 @@ def create_pipeline(
         chunk_lines: Target lines per chunk
         chunk_lines_overlap: Overlap between chunks
         max_chars: Maximum characters per chunk
+        use_text_splitter: Use text-based splitting instead of tree-sitter
 
     Returns:
         Configured IngestionPipeline
     """
     vs = vector_store or create_vector_store()
 
+    # Use text splitter for languages without tree-sitter support
+    # Use larger chunk size for text splitter to accommodate metadata
+    if use_text_splitter or language in TEXT_SPLITTER_LANGUAGES:
+        splitter = SentenceSplitter(
+            chunk_size=max_chars,
+            chunk_overlap=chunk_lines_overlap * 60,  # Approx chars per line
+            separator="\n",
+        )
+    else:
+        splitter = CodeSplitter(
+            language=language,
+            chunk_lines=chunk_lines,
+            chunk_lines_overlap=chunk_lines_overlap,
+            max_chars=max_chars,
+        )
+
     return IngestionPipeline(
         transformations=[
-            CodeSplitter(
-                language=language,
-                chunk_lines=chunk_lines,
-                chunk_lines_overlap=chunk_lines_overlap,
-                max_chars=max_chars,
-            ),
+            splitter,
             IDSExtractor(),
             MDSplusExtractor(),
             get_embed_model(),
@@ -415,14 +428,16 @@ async def ingest_code_files(
                 nodes = await pipeline.arun(documents=batch_docs)
             except Exception as e:
                 logger.warning(
-                    "Failed to parse %s batch with %s parser, trying python: %s",
-                    language,
+                    "Failed to parse %s batch with tree-sitter, trying text splitter: %s",
                     language,
                     e,
                 )
                 try:
+                    # Fallback to text-based splitting for unparseable code
                     fallback_pipeline = create_pipeline(
-                        vector_store=vector_store, language="python"
+                        vector_store=vector_store,
+                        language=language,
+                        use_text_splitter=True,
                     )
                     nodes = await fallback_pipeline.arun(documents=batch_docs)
                 except Exception as e2:

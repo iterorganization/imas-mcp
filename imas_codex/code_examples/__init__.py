@@ -15,7 +15,12 @@ Graph-driven ingestion workflow:
 3. SourceFile nodes track lifecycle: queued -> fetching -> embedding -> ready
 """
 
-from .facility_reader import EXTENSION_TO_LANGUAGE, detect_language, fetch_remote_files
+from .facility_reader import (
+    EXTENSION_TO_LANGUAGE,
+    TEXT_SPLITTER_LANGUAGES,
+    detect_language,
+    fetch_remote_files,
+)
 from .graph_linker import (
     link_chunks_to_imas_paths,
     link_chunks_to_tree_nodes,
@@ -53,6 +58,7 @@ __all__ = [
     "MDSplusReference",
     "ProgressCallback",
     "QueuedFile",
+    "TEXT_SPLITTER_LANGUAGES",
     "create_pipeline",
     "create_vector_store",
     "detect_language",

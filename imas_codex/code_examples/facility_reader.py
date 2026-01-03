@@ -20,14 +20,18 @@ logger = logging.getLogger(__name__)
 # Threshold for switching to batch tar transfer
 TAR_BATCH_THRESHOLD = 10
 
-# Extension to language mapping (tree-sitter language names)
+# Extension to language mapping
+# Languages with tree-sitter support: python, matlab, fortran, julia, cpp, c
+# Languages needing text splitter: tdi, idl
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
     ".m": "matlab",
     ".f90": "fortran",
     ".f": "fortran",
     ".for": "fortran",
-    ".pro": "python",  # IDL -> fallback to Python-like parsing
+    ".F90": "fortran",
+    ".F": "fortran",
+    ".pro": "idl",
     ".jl": "julia",
     ".cpp": "cpp",
     ".cxx": "cpp",
@@ -35,9 +39,12 @@ EXTENSION_TO_LANGUAGE = {
     ".c": "c",
     ".h": "c",
     ".hpp": "cpp",
-    ".fun": "c",  # TDI -> fallback to C-like parsing
-    ".FUN": "c",  # TDI (case sensitive filesystems)
+    ".fun": "tdi",  # TDI (MDSplus Tree Data Interface)
+    ".FUN": "tdi",  # TDI (case sensitive filesystems)
 }
+
+# Languages that require text-based splitting (no tree-sitter grammar)
+TEXT_SPLITTER_LANGUAGES = {"tdi", "idl"}
 
 
 def detect_language(path: str) -> str:
