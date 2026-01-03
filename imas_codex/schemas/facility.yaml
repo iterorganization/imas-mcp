@@ -34,6 +34,7 @@ default_range: string
 
 imports:
   - linkml:types
+  - imas_dd
 
 # =============================================================================
 # Enums
@@ -776,21 +777,8 @@ classes:
 # IMAS Mapping Classes
 # =============================================================================
 
-  IMASPath:
-    description: An IMAS data dictionary path
-    class_uri: imas:Path
-    attributes:
-      path:
-        identifier: true
-        description: Full IMAS path
-        required: true
-      ids:
-        description: IDS name (e.g., "equilibrium", "core_profiles")
-        required: true
-      description:
-        description: Path description from IMAS DD
-      units:
-        description: Physical units from IMAS DD
+# NOTE: IMASPath is now defined in imas_dd.yaml as the unified representation
+# of IMAS Data Dictionary paths. Do not define it here.
 
   IMASMapping:
     description: >-

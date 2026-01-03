@@ -73,7 +73,7 @@ linkml_meta = LinkMLMeta(
                 "prefix_reference": "https://w3id.org/linkml/",
             },
         },
-        "source_file": "/home/ITER/mcintos/Code/imas-codex.worktrees/worktree-2026-01-03T16-35-58/imas_codex/schemas/imas_dd.yaml",
+        "source_file": "/home/ITER/mcintos/Code/imas-codex/imas_codex/schemas/imas_dd.yaml",
         "title": "IMAS Data Dictionary Knowledge Graph Schema",
     }
 )
@@ -283,7 +283,7 @@ class DDVersion(ConfiguredBaseModel):
                 "alias": "id",
                 "domain_of": [
                     "DDVersion",
-                    "DDPath",
+                    "IMASPath",
                     "CoordinateSpec",
                     "SemanticCluster",
                     "PathChange",
@@ -349,7 +349,7 @@ class IDS(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "name",
-                "domain_of": ["IDS", "DDPath", "Unit", "IdentifierSchema"],
+                "domain_of": ["IDS", "IMASPath", "Unit", "IdentifierSchema"],
             }
         },
     )
@@ -369,7 +369,7 @@ class IDS(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "physics_domain",
-                "domain_of": ["IDS", "DDPath", "SemanticCluster"],
+                "domain_of": ["IDS", "IMASPath", "SemanticCluster"],
             }
         },
     )
@@ -408,7 +408,7 @@ class IDS(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "introduced_version",
-                "domain_of": ["IDS", "DDPath"],
+                "domain_of": ["IDS", "IMASPath"],
             }
         },
     )
@@ -418,20 +418,21 @@ class IDS(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "deprecated_version",
-                "domain_of": ["IDS", "DDPath"],
+                "domain_of": ["IDS", "IMASPath"],
             }
         },
     )
 
 
-class DDPath(ConfiguredBaseModel):
+class IMASPath(ConfiguredBaseModel):
     """
-    A data path in the IMAS Data Dictionary. Paths form a hierarchy via PARENT relationships and link to units, coordinates, and clusters. Version tracking uses INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO.
+    An IMAS Data Dictionary path. Represents any level from IDS root (e.g., \"equilibrium\") to leaf nodes (e.g., \"equilibrium/time_slice/boundary/psi\"). Paths form a hierarchy via PARENT relationships and link to units, coordinates, and semantic clusters. Version tracking uses INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO relationships.
+    This is the single authoritative representation of IMAS paths - code references should link to existing IMASPath nodes, never create them on-demand.
     """
 
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta(
         {
-            "class_uri": "imas_dd:DDPath",
+            "class_uri": "imas_dd:IMASPath",
             "from_schema": "https://imas.iter.org/schemas/imas_dd",
         }
     )
@@ -444,7 +445,7 @@ class DDPath(ConfiguredBaseModel):
                 "alias": "id",
                 "domain_of": [
                     "DDVersion",
-                    "DDPath",
+                    "IMASPath",
                     "CoordinateSpec",
                     "SemanticCluster",
                     "PathChange",
@@ -458,34 +459,39 @@ class DDPath(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "name",
-                "domain_of": ["IDS", "DDPath", "Unit", "IdentifierSchema"],
+                "domain_of": ["IDS", "IMASPath", "Unit", "IdentifierSchema"],
             }
         },
+    )
+    ids: str = Field(
+        default=...,
+        description="""IDS name (root of path hierarchy, e.g., \"equilibrium\")""",
+        json_schema_extra={"linkml_meta": {"alias": "ids", "domain_of": ["IMASPath"]}},
     )
     documentation: str | None = Field(
         default=None,
         description="""Documentation string from DD""",
         json_schema_extra={
-            "linkml_meta": {"alias": "documentation", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "documentation", "domain_of": ["IMASPath"]}
         },
     )
     data_type: DDDataType | None = Field(
         default=None,
         description="""Data type (e.g., FLT_1D, STR_0D, STRUCTURE)""",
         json_schema_extra={
-            "linkml_meta": {"alias": "data_type", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "data_type", "domain_of": ["IMASPath"]}
         },
     )
     ndim: int | None = Field(
         default=None,
         description="""Number of dimensions (0-6)""",
-        json_schema_extra={"linkml_meta": {"alias": "ndim", "domain_of": ["DDPath"]}},
+        json_schema_extra={"linkml_meta": {"alias": "ndim", "domain_of": ["IMASPath"]}},
     )
     node_type: DDNodeType | None = Field(
         default=None,
         description="""Time-variation type (dynamic/constant/static)""",
         json_schema_extra={
-            "linkml_meta": {"alias": "node_type", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "node_type", "domain_of": ["IMASPath"]}
         },
     )
     physics_domain: PhysicsDomainDD | None = Field(
@@ -494,7 +500,7 @@ class DDPath(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "physics_domain",
-                "domain_of": ["IDS", "DDPath", "SemanticCluster"],
+                "domain_of": ["IDS", "IMASPath", "SemanticCluster"],
             }
         },
     )
@@ -502,25 +508,20 @@ class DDPath(ConfiguredBaseModel):
         default=None,
         description="""Maximum occurrences (for struct arrays)""",
         json_schema_extra={
-            "linkml_meta": {"alias": "maxoccur", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "maxoccur", "domain_of": ["IMASPath"]}
         },
-    )
-    ids: str = Field(
-        default=...,
-        description="""Parent IDS""",
-        json_schema_extra={"linkml_meta": {"alias": "ids", "domain_of": ["DDPath"]}},
     )
     parent_path: str | None = Field(
         default=None,
-        description="""Parent path in hierarchy (null for IDS-level)""",
+        description="""Parent path in hierarchy (null for IDS-level paths)""",
         json_schema_extra={
-            "linkml_meta": {"alias": "parent_path", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "parent_path", "domain_of": ["IMASPath"]}
         },
     )
     unit: str | None = Field(
         default=None,
         description="""Physical units for this path""",
-        json_schema_extra={"linkml_meta": {"alias": "unit", "domain_of": ["DDPath"]}},
+        json_schema_extra={"linkml_meta": {"alias": "unit", "domain_of": ["IMASPath"]}},
     )
     introduced_version: str | None = Field(
         default=None,
@@ -528,7 +529,7 @@ class DDPath(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "introduced_version",
-                "domain_of": ["IDS", "DDPath"],
+                "domain_of": ["IDS", "IMASPath"],
             }
         },
     )
@@ -538,7 +539,7 @@ class DDPath(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "deprecated_version",
-                "domain_of": ["IDS", "DDPath"],
+                "domain_of": ["IDS", "IMASPath"],
             }
         },
     )
@@ -546,14 +547,14 @@ class DDPath(ConfiguredBaseModel):
         default=None,
         description="""Successor path if this was renamed (not just removed)""",
         json_schema_extra={
-            "linkml_meta": {"alias": "renamed_to", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "renamed_to", "domain_of": ["IMASPath"]}
         },
     )
     identifier_schema: str | None = Field(
         default=None,
         description="""Identifier schema if this is an identifier field""",
         json_schema_extra={
-            "linkml_meta": {"alias": "identifier_schema", "domain_of": ["DDPath"]}
+            "linkml_meta": {"alias": "identifier_schema", "domain_of": ["IMASPath"]}
         },
     )
 
@@ -581,7 +582,7 @@ class Unit(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "name",
-                "domain_of": ["IDS", "DDPath", "Unit", "IdentifierSchema"],
+                "domain_of": ["IDS", "IMASPath", "Unit", "IdentifierSchema"],
             }
         },
     )
@@ -604,7 +605,7 @@ class Unit(ConfiguredBaseModel):
 
 class CoordinateSpec(ConfiguredBaseModel):
     """
-    An index-based coordinate specification (e.g., \"1...N\", \"1...3\"). Path references are handled via COORDINATE relationships to DDPath.
+    An index-based coordinate specification (e.g., \"1...N\", \"1...3\"). Path references are handled via COORDINATE relationships to IMASPath.
     """
 
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta(
@@ -622,7 +623,7 @@ class CoordinateSpec(ConfiguredBaseModel):
                 "alias": "id",
                 "domain_of": [
                     "DDVersion",
-                    "DDPath",
+                    "IMASPath",
                     "CoordinateSpec",
                     "SemanticCluster",
                     "PathChange",
@@ -666,7 +667,7 @@ class SemanticCluster(ConfiguredBaseModel):
                 "alias": "id",
                 "domain_of": [
                     "DDVersion",
-                    "DDPath",
+                    "IMASPath",
                     "CoordinateSpec",
                     "SemanticCluster",
                     "PathChange",
@@ -697,7 +698,7 @@ class SemanticCluster(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "physics_domain",
-                "domain_of": ["IDS", "DDPath", "SemanticCluster"],
+                "domain_of": ["IDS", "IMASPath", "SemanticCluster"],
             }
         },
     )
@@ -748,7 +749,7 @@ class IdentifierSchema(ConfiguredBaseModel):
         json_schema_extra={
             "linkml_meta": {
                 "alias": "name",
-                "domain_of": ["IDS", "DDPath", "Unit", "IdentifierSchema"],
+                "domain_of": ["IDS", "IMASPath", "Unit", "IdentifierSchema"],
             }
         },
     )
@@ -798,7 +799,7 @@ class PathChange(ConfiguredBaseModel):
                 "alias": "id",
                 "domain_of": [
                     "DDVersion",
-                    "DDPath",
+                    "IMASPath",
                     "CoordinateSpec",
                     "SemanticCluster",
                     "PathChange",
@@ -848,7 +849,7 @@ class PathChange(ConfiguredBaseModel):
 
 class CoordinateRelationship(ConfiguredBaseModel):
     """
-    Represents a coordinate relationship between a DDPath and its coordinate (either another DDPath or a CoordinateSpec). Stored as relationship properties.
+    Represents a coordinate relationship between an IMASPath and its coordinate (either another IMASPath or a CoordinateSpec). Stored as relationship properties.
     """
 
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta(
@@ -919,7 +920,7 @@ class CoordinateRelationship(ConfiguredBaseModel):
 
 class ClusterMembership(ConfiguredBaseModel):
     """
-    Represents membership of a DDPath in a SemanticCluster. Distance indicates proximity to cluster centroid.
+    Represents membership of an IMASPath in a SemanticCluster. Distance indicates proximity to cluster centroid.
     """
 
     linkml_meta: ClassVar[LinkMLMeta] = LinkMLMeta(
@@ -959,7 +960,7 @@ class ClusterMembership(ConfiguredBaseModel):
 # see https://pydantic-docs.helpmanual.io/usage/models/#rebuilding-a-model
 DDVersion.model_rebuild()
 IDS.model_rebuild()
-DDPath.model_rebuild()
+IMASPath.model_rebuild()
 Unit.model_rebuild()
 CoordinateSpec.model_rebuild()
 SemanticCluster.model_rebuild()

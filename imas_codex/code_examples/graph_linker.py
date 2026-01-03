@@ -1,6 +1,6 @@
 """Graph relationship creation for code examples.
 
-Post-ingestion processing to create RELATED_PATHS relationships
+Post-ingestion processing to create REFERENCES_IMAS relationships
 between CodeChunk nodes and IMASPath nodes based on IDS references.
 """
 
@@ -38,10 +38,13 @@ def _get_client(graph_client: GraphClient | None = None) -> Iterator[GraphClient
 
 
 def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
-    """Create RELATED_PATHS relationships for chunks with IDS references.
+    """Create REFERENCES_IMAS relationships for chunks with IDS references.
 
     Matches CodeChunk nodes that have related_ids metadata to
-    corresponding IMASPath nodes and creates relationships.
+    existing IMASPath nodes (IDS-level paths where id = ids name).
+
+    Note: IMASPath nodes must already exist from DD ingestion.
+    This function does NOT create IMASPath nodes on-demand.
 
     Args:
         graph_client: Optional GraphClient instance. If None, creates one.
@@ -53,15 +56,16 @@ def link_chunks_to_imas_paths(graph_client: GraphClient | None = None) -> int:
         MATCH (c:CodeChunk)
         WHERE c.related_ids IS NOT NULL
         UNWIND c.related_ids AS ids_name
-        MERGE (p:IMASPath {ids: ids_name})
-        MERGE (c)-[:RELATED_PATHS]->(p)
+        MATCH (p:IMASPath)
+        WHERE p.id = ids_name AND p.ids = ids_name
+        MERGE (c)-[:REFERENCES_IMAS]->(p)
         RETURN count(*) AS created
     """
 
     with _get_client(graph_client) as client:
         result = client.query(cypher)
         count = result[0]["created"] if result else 0
-        logger.info("Created %d RELATED_PATHS relationships", count)
+        logger.info("Created %d REFERENCES_IMAS relationships", count)
         return count
 
 

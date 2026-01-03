@@ -198,12 +198,18 @@ classes:
         description: DD version where this IDS was deprecated (null = current)
         range: DDVersion
 
-  DDPath:
+  IMASPath:
     description: >-
-      A data path in the IMAS Data Dictionary. Paths form a hierarchy via
-      PARENT relationships and link to units, coordinates, and clusters.
-      Version tracking uses INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO.
-    class_uri: imas_dd:DDPath
+      An IMAS Data Dictionary path. Represents any level from IDS root
+      (e.g., "equilibrium") to leaf nodes (e.g., "equilibrium/time_slice/boundary/psi").
+      Paths form a hierarchy via PARENT relationships and link to units,
+      coordinates, and semantic clusters. Version tracking uses
+      INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO relationships.
+      
+      This is the single authoritative representation of IMAS paths - code
+      references should link to existing IMASPath nodes, never create them
+      on-demand.
+    class_uri: imas_dd:IMASPath
     attributes:
       id:
         identifier: true
@@ -211,6 +217,9 @@ classes:
         required: true
       name:
         description: Leaf name (last path component, e.g., "psi")
+        required: true
+      ids:
+        description: IDS name (root of path hierarchy, e.g., "equilibrium")
         required: true
       documentation:
         description: Documentation string from DD
@@ -230,13 +239,9 @@ classes:
         description: Maximum occurrences (for struct arrays)
         range: integer
       # Relationships
-      ids:
-        description: Parent IDS
-        required: true
-        range: IDS
       parent_path:
-        description: Parent path in hierarchy (null for IDS-level)
-        range: DDPath
+        description: Parent path in hierarchy (null for IDS-level paths)
+        range: IMASPath
       unit:
         description: Physical units for this path
         range: Unit
@@ -248,7 +253,7 @@ classes:
         range: DDVersion
       renamed_to:
         description: Successor path if this was renamed (not just removed)
-        range: DDPath
+        range: IMASPath
       identifier_schema:
         description: Identifier schema if this is an identifier field
         range: IdentifierSchema
@@ -274,7 +279,7 @@ classes:
   CoordinateSpec:
     description: >-
       An index-based coordinate specification (e.g., "1...N", "1...3").
-      Path references are handled via COORDINATE relationships to DDPath.
+      Path references are handled via COORDINATE relationships to IMASPath.
     class_uri: imas_dd:CoordinateSpec
     attributes:
       id:
@@ -314,7 +319,7 @@ classes:
         range: boolean
       representative_path:
         description: Most central path (closest to centroid)
-        range: DDPath
+        range: IMASPath
 
   IdentifierSchema:
     description: >-
@@ -354,7 +359,7 @@ classes:
         description: New value (as string)
       path:
         description: The path that changed
-        range: DDPath
+        range: IMASPath
         required: true
       version:
         description: Version where the change occurred
@@ -364,8 +369,8 @@ classes:
   # Relationship class for coordinates (captures dimension + properties)
   CoordinateRelationship:
     description: >-
-      Represents a coordinate relationship between a DDPath and its coordinate
-      (either another DDPath or a CoordinateSpec). Stored as relationship properties.
+      Represents a coordinate relationship between an IMASPath and its coordinate
+      (either another IMASPath or a CoordinateSpec). Stored as relationship properties.
     class_uri: imas_dd:CoordinateRelationship
     attributes:
       dimension:
@@ -380,11 +385,11 @@ classes:
         range: boolean
       source_path:
         description: The path that has this coordinate
-        range: DDPath
+        range: IMASPath
         required: true
       target_path:
         description: The coordinate path (for path references)
-        range: DDPath
+        range: IMASPath
       target_spec:
         description: The coordinate spec (for index coordinates)
         range: CoordinateSpec
@@ -392,13 +397,13 @@ classes:
   # Relationship class for cluster membership
   ClusterMembership:
     description: >-
-      Represents membership of a DDPath in a SemanticCluster.
+      Represents membership of an IMASPath in a SemanticCluster.
       Distance indicates proximity to cluster centroid.
     class_uri: imas_dd:ClusterMembership
     attributes:
       path:
         description: The member path
-        range: DDPath
+        range: IMASPath
         required: true
       cluster:
         description: The cluster
