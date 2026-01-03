@@ -266,6 +266,10 @@ def build_dd_graph(
         "clusters_created": 0,
     }
 
+    # Ensure indexes exist for performance
+    if not dry_run:
+        _ensure_indexes(client)
+
     # First pass: create DDVersion nodes with predecessor chain
     logger.info("Creating DDVersion nodes...")
     if not dry_run:
@@ -321,40 +325,34 @@ def build_dd_graph(
         changes = compute_version_changes(prev_paths, data["paths"])
 
         if not dry_run:
-            # Create/update IDS nodes
-            for ids_name, ids_info in data["ids_info"].items():
-                _upsert_ids_node(client, ids_name, ids_info, version, i == 0)
+            # Batch create/update IDS nodes
+            _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
             stats["ids_created"] = max(stats["ids_created"], len(data["ids_info"]))
 
-            # Create DDPath nodes for new paths
-            for path in changes["added"]:
-                path_info = data["paths"][path]
-                _create_path_node(client, path, path_info, version)
+            # Batch create DDPath nodes for new paths
+            new_paths_data = {p: data["paths"][p] for p in changes["added"]}
+            _batch_create_path_nodes(client, new_paths_data, version)
             stats["paths_created"] += len(changes["added"])
 
-            # Mark deprecated paths
-            for path in changes["removed"]:
-                _mark_path_deprecated(client, path, version)
+            # Batch mark deprecated paths
+            _batch_mark_paths_deprecated(client, changes["removed"], version)
 
-            # Create PathChange nodes for metadata changes
-            for path, path_changes in changes["changed"].items():
-                for change in path_changes:
-                    _create_path_change(client, path, version, change)
-                    stats["path_changes_created"] += 1
+            # Batch create PathChange nodes for metadata changes
+            change_count = _batch_create_path_changes(
+                client, changes["changed"], version
+            )
+            stats["path_changes_created"] += change_count
 
         prev_paths = data["paths"]
         progress.update_progress(version)
 
     progress.finish_processing()
 
-    # Create RENAMED_TO relationships from path mappings
+    # Batch create RENAMED_TO relationships from path mappings
     logger.info("Creating RENAMED_TO relationships...")
     if not dry_run:
         mappings = load_path_mappings(current_dd_version)
-        for old_path, mapping in mappings.get("old_to_new", {}).items():
-            new_path = mapping.get("new_path")
-            if new_path:
-                _create_renamed_to(client, old_path, new_path)
+        _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
     # Import semantic clusters if requested
     if include_clusters:
@@ -379,31 +377,60 @@ def build_dd_graph(
 
 
 def _create_version_nodes(client: GraphClient, versions: list[str]) -> None:
-    """Create DDVersion nodes with predecessor chain."""
-    # Sort versions to ensure proper ordering
+    """Create DDVersion nodes with predecessor chain using batch operations."""
     sorted_versions = sorted(versions)
 
+    # Build version data with predecessors
+    version_data = []
     for i, version in enumerate(sorted_versions):
-        predecessor = sorted_versions[i - 1] if i > 0 else None
-        is_current = version == current_dd_version
+        version_data.append(
+            {
+                "id": version,
+                "predecessor": sorted_versions[i - 1] if i > 0 else None,
+                "is_current": version == current_dd_version,
+            }
+        )
 
+    # Batch create all version nodes
+    client.query(
+        """
+        UNWIND $versions AS v
+        MERGE (ver:DDVersion {id: v.id})
+        SET ver.is_current = v.is_current,
+            ver.created_at = datetime()
+    """,
+        versions=version_data,
+    )
+
+    # Batch create predecessor relationships
+    predecessors = [v for v in version_data if v["predecessor"] is not None]
+    if predecessors:
         client.query(
             """
-            MERGE (v:DDVersion {id: $version})
-            SET v.is_current = $is_current,
-                v.created_at = datetime()
-            WITH v
-            CALL {
-                WITH v
-                MATCH (prev:DDVersion {id: $predecessor})
-                MERGE (v)-[:PREDECESSOR]->(prev)
-            }
-            RETURN v
+            UNWIND $versions AS v
+            MATCH (ver:DDVersion {id: v.id})
+            MATCH (prev:DDVersion {id: v.predecessor})
+            MERGE (ver)-[:PREDECESSOR]->(prev)
         """,
-            version=version,
-            predecessor=predecessor,
-            is_current=is_current,
+            versions=predecessors,
         )
+
+
+def _ensure_indexes(client: GraphClient) -> None:
+    """Ensure required indexes exist for optimal query performance."""
+    logger.debug("Ensuring DD indexes exist...")
+
+    # DDPath.id - critical for MERGE and relationship creation
+    client.query("CREATE INDEX ddpath_id IF NOT EXISTS FOR (p:DDPath) ON (p.id)")
+
+    # IDS.name - for IDS relationship lookups
+    client.query("CREATE INDEX ids_name IF NOT EXISTS FOR (i:IDS) ON (i.name)")
+
+    # DDVersion.id - for version relationship lookups
+    client.query("CREATE INDEX ddversion_id IF NOT EXISTS FOR (v:DDVersion) ON (v.id)")
+
+    # Unit.symbol - for unit relationship lookups
+    client.query("CREATE INDEX unit_symbol IF NOT EXISTS FOR (u:Unit) ON (u.symbol)")
 
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
@@ -450,155 +477,256 @@ def _create_coordinate_spec_nodes(client: GraphClient, specs: set[str]) -> None:
         )
 
 
-def _upsert_ids_node(
+def _batch_upsert_ids_nodes(
     client: GraphClient,
-    ids_name: str,
-    ids_info: dict,
+    ids_info_map: dict[str, dict],
     version: str,
     is_first_version: bool,
 ) -> None:
-    """Create or update IDS node."""
+    """Batch create or update IDS nodes."""
+    ids_list = [
+        {
+            "name": ids_name,
+            "description": info.get("description", ""),
+            "physics_domain": info.get("physics_domain", "general"),
+            "path_count": info.get("path_count", 0),
+            "leaf_count": info.get("leaf_count", 0),
+        }
+        for ids_name, info in ids_info_map.items()
+    ]
+
+    if not ids_list:
+        return
+
+    # Batch create/update IDS nodes
     client.query(
         """
-        MERGE (ids:IDS {name: $name})
-        SET ids.description = $description,
-            ids.physics_domain = $physics_domain,
-            ids.path_count = $path_count,
-            ids.leaf_count = $leaf_count
-        WITH ids
-        MATCH (v:DDVersion {id: $version})
-        // Only set introduced_version if this is first version or IDS is new
-        FOREACH (_ IN CASE WHEN $is_first THEN [1] ELSE [] END |
+        UNWIND $ids_list AS ids_data
+        MERGE (ids:IDS {name: ids_data.name})
+        SET ids.description = ids_data.description,
+            ids.physics_domain = ids_data.physics_domain,
+            ids.path_count = ids_data.path_count,
+            ids.leaf_count = ids_data.leaf_count
+    """,
+        ids_list=ids_list,
+    )
+
+    # Batch create INTRODUCED_IN relationships for first version
+    if is_first_version:
+        client.query(
+            """
+            UNWIND $ids_list AS ids_data
+            MATCH (ids:IDS {name: ids_data.name})
+            MATCH (v:DDVersion {id: $version})
             MERGE (ids)-[:INTRODUCED_IN]->(v)
+        """,
+            ids_list=ids_list,
+            version=version,
         )
-    """,
-        name=ids_name,
-        description=ids_info.get("description", ""),
-        physics_domain=ids_info.get("physics_domain", "general"),
-        path_count=ids_info.get("path_count", 0),
-        leaf_count=ids_info.get("leaf_count", 0),
-        version=version,
-        is_first=is_first_version,
-    )
 
 
-def _create_path_node(
+def _batch_create_path_nodes(
     client: GraphClient,
-    path: str,
-    path_info: dict,
+    paths_data: dict[str, dict],
     version: str,
+    batch_size: int = 1000,
 ) -> None:
-    """Create DDPath node with relationships."""
-    # Extract IDS name from path
-    ids_name = path.split("/")[0]
+    """Batch create DDPath nodes with relationships.
 
-    # Determine physics domain
-    physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
+    Uses multiple batched queries to avoid memory issues with large datasets.
+    """
+    # Prepare path data for batch insertion
+    path_list = []
+    for path, path_info in paths_data.items():
+        ids_name = path.split("/")[0]
+        physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
 
+        path_list.append(
+            {
+                "id": path,
+                "name": path_info.get("name", ""),
+                "documentation": path_info.get("documentation", ""),
+                "data_type": path_info.get("data_type"),
+                "ndim": path_info.get("ndim", 0),
+                "node_type": path_info.get("node_type"),
+                "physics_domain": physics_domain,
+                "maxoccur": path_info.get("maxoccur"),
+                "ids_name": ids_name,
+                "parent_path": path_info.get("parent_path"),
+                "units": path_info.get("units", ""),
+            }
+        )
+
+    if not path_list:
+        return
+
+    # Process in batches to avoid memory issues
+    for i in range(0, len(path_list), batch_size):
+        batch = path_list[i : i + batch_size]
+
+        # Step 1: Create DDPath nodes
+        client.query(
+            """
+            UNWIND $paths AS p
+            MERGE (path:DDPath {id: p.id})
+            SET path.name = p.name,
+                path.documentation = p.documentation,
+                path.data_type = p.data_type,
+                path.ndim = p.ndim,
+                path.node_type = p.node_type,
+                path.physics_domain = p.physics_domain,
+                path.maxoccur = p.maxoccur
+        """,
+            paths=batch,
+        )
+
+        # Step 2: Create IDS relationships
+        client.query(
+            """
+            UNWIND $paths AS p
+            MATCH (path:DDPath {id: p.id})
+            MATCH (ids:IDS {name: p.ids_name})
+            MERGE (path)-[:IDS]->(ids)
+        """,
+            paths=batch,
+        )
+
+        # Step 3: Create PARENT relationships (filter out root-level paths)
+        parent_paths = [
+            p for p in batch if p["parent_path"] and p["parent_path"] != p["ids_name"]
+        ]
+        if parent_paths:
+            client.query(
+                """
+                UNWIND $paths AS p
+                MATCH (path:DDPath {id: p.id})
+                MERGE (parent:DDPath {id: p.parent_path})
+                MERGE (path)-[:PARENT]->(parent)
+            """,
+                paths=parent_paths,
+            )
+
+        # Step 4: Create HAS_UNIT relationships (filter out empty units)
+        unit_paths = [p for p in batch if p["units"] and p["units"] != ""]
+        if unit_paths:
+            client.query(
+                """
+                UNWIND $paths AS p
+                MATCH (path:DDPath {id: p.id})
+                MATCH (u:Unit {symbol: p.units})
+                MERGE (path)-[:HAS_UNIT]->(u)
+            """,
+                paths=unit_paths,
+            )
+
+        # Step 5: Create INTRODUCED_IN relationships
+        client.query(
+            """
+            UNWIND $paths AS p
+            MATCH (path:DDPath {id: p.id})
+            MATCH (v:DDVersion {id: $version})
+            MERGE (path)-[:INTRODUCED_IN]->(v)
+        """,
+            paths=batch,
+            version=version,
+        )
+
+
+def _batch_mark_paths_deprecated(
+    client: GraphClient, paths: set[str], version: str
+) -> None:
+    """Batch mark paths as deprecated in a specific version."""
+    if not paths:
+        return
+
+    path_list = [{"path": p} for p in paths]
     client.query(
         """
-        MERGE (p:DDPath {id: $path})
-        SET p.name = $name,
-            p.documentation = $documentation,
-            p.data_type = $data_type,
-            p.ndim = $ndim,
-            p.node_type = $node_type,
-            p.physics_domain = $physics_domain,
-            p.maxoccur = $maxoccur
-        WITH p
-
-        // Link to IDS
-        MATCH (ids:IDS {name: $ids_name})
-        MERGE (p)-[:IDS]->(ids)
-        WITH p
-
-        // Link to parent path
-        FOREACH (_ IN CASE WHEN $parent_path IS NOT NULL AND $parent_path <> $ids_name THEN [1] ELSE [] END |
-            MERGE (parent:DDPath {id: $parent_path})
-            MERGE (p)-[:PARENT]->(parent)
-        )
-        WITH p
-
-        // Link to unit
-        FOREACH (_ IN CASE WHEN $units IS NOT NULL AND $units <> '' THEN [1] ELSE [] END |
-            MERGE (u:Unit {symbol: $units})
-            MERGE (p)-[:HAS_UNIT]->(u)
-        )
-        WITH p
-
-        // Link to introduced version
+        UNWIND $paths AS p
+        MATCH (path:DDPath {id: p.path})
         MATCH (v:DDVersion {id: $version})
-        MERGE (p)-[:INTRODUCED_IN]->(v)
+        MERGE (path)-[:DEPRECATED_IN]->(v)
     """,
-        path=path,
-        name=path_info.get("name", ""),
-        documentation=path_info.get("documentation", ""),
-        data_type=path_info.get("data_type"),
-        ndim=path_info.get("ndim", 0),
-        node_type=path_info.get("node_type"),
-        physics_domain=physics_domain,
-        maxoccur=path_info.get("maxoccur"),
-        ids_name=ids_name,
-        parent_path=path_info.get("parent_path"),
-        units=path_info.get("units", ""),
+        paths=path_list,
         version=version,
     )
 
 
-def _mark_path_deprecated(client: GraphClient, path: str, version: str) -> None:
-    """Mark a path as deprecated in a specific version."""
-    client.query(
-        """
-        MATCH (p:DDPath {id: $path})
-        MATCH (v:DDVersion {id: $version})
-        MERGE (p)-[:DEPRECATED_IN]->(v)
-    """,
-        path=path,
-        version=version,
-    )
-
-
-def _create_path_change(
+def _batch_create_path_changes(
     client: GraphClient,
-    path: str,
+    changes: dict[str, list[dict]],
     version: str,
-    change: dict,
-) -> None:
-    """Create a PathChange node for metadata changes."""
-    change_id = f"{path}:{change['field']}:{version}"
+) -> int:
+    """Batch create PathChange nodes for metadata changes."""
+    if not changes:
+        return 0
 
+    change_list = []
+    for path, path_changes in changes.items():
+        for change in path_changes:
+            change_list.append(
+                {
+                    "id": f"{path}:{change['field']}:{version}",
+                    "path": path,
+                    "change_type": change["field"],
+                    "old_value": change.get("old_value", ""),
+                    "new_value": change.get("new_value", ""),
+                }
+            )
+
+    if not change_list:
+        return 0
+
+    # Create PathChange nodes
     client.query(
         """
-        MERGE (c:PathChange {id: $change_id})
-        SET c.change_type = $change_type,
-            c.old_value = $old_value,
-            c.new_value = $new_value
-        WITH c
-        MATCH (p:DDPath {id: $path})
-        MATCH (v:DDVersion {id: $version})
-        MERGE (c)-[:PATH]->(p)
-        MERGE (c)-[:VERSION]->(v)
+        UNWIND $changes AS c
+        MERGE (change:PathChange {id: c.id})
+        SET change.change_type = c.change_type,
+            change.old_value = c.old_value,
+            change.new_value = c.new_value
     """,
-        change_id=change_id,
-        change_type=change["field"],
-        old_value=change.get("old_value", ""),
-        new_value=change.get("new_value", ""),
-        path=path,
+        changes=change_list,
+    )
+
+    # Create relationships
+    client.query(
+        """
+        UNWIND $changes AS c
+        MATCH (change:PathChange {id: c.id})
+        MATCH (p:DDPath {id: c.path})
+        MATCH (v:DDVersion {id: $version})
+        MERGE (change)-[:PATH]->(p)
+        MERGE (change)-[:VERSION]->(v)
+    """,
+        changes=change_list,
         version=version,
     )
 
+    return len(change_list)
 
-def _create_renamed_to(client: GraphClient, old_path: str, new_path: str) -> None:
-    """Create RENAMED_TO relationship between paths."""
-    client.query(
-        """
-        MATCH (old:DDPath {id: $old_path})
-        MATCH (new:DDPath {id: $new_path})
-        MERGE (old)-[:RENAMED_TO]->(new)
-    """,
-        old_path=old_path,
-        new_path=new_path,
-    )
+
+def _batch_create_renamed_to(client: GraphClient, mappings: dict[str, dict]) -> None:
+    """Batch create RENAMED_TO relationships between paths."""
+    if not mappings:
+        return
+
+    rename_list = []
+    for old_path, mapping in mappings.items():
+        new_path = mapping.get("new_path")
+        if new_path:
+            rename_list.append({"old_path": old_path, "new_path": new_path})
+
+    if rename_list:
+        client.query(
+            """
+            UNWIND $renames AS r
+            MATCH (old:DDPath {id: r.old_path})
+            MATCH (new:DDPath {id: r.new_path})
+            MERGE (old)-[:RENAMED_TO]->(new)
+        """,
+            renames=rename_list,
+        )
 
 
 def _import_clusters(client: GraphClient, dry_run: bool) -> int:
