@@ -1,7 +1,7 @@
 # Federated Fusion Knowledge Graph - Implementation Plan
 
 **Status**: Active  
-**Date**: 2024-12-23  
+**Last Updated**: 2026-01-03  
 **Based on**: EPFL/TCV exploration findings, LinkML ecosystem research
 
 ---
@@ -202,7 +202,164 @@ schema.needs_composite_constraint("Facility")      # False
 
 ---
 
-## 5. Questions to Resolve
+## 5. Naming Conventions
+
+### Node Label Prefixes
+
+| Pattern | When to Use | Examples |
+|---------|-------------|----------|
+| **Prefixed** | Container/entry-point nodes for a data system | `MDSplusServer`, `MDSplusTree` |
+| **Unprefixed** | Nodes always accessed in parent context | `TreeNode`, `TreeModelVersion` |
+
+**Rationale**: `TreeNode` is always navigated via its parent `MDSplusTree`, so the context is implicit. This keeps queries concise while maintaining clarity.
+
+### Relationship Naming
+
+- Use **SCREAMING_SNAKE_CASE** for relationships
+- Relationship names match the schema attribute name (e.g., `facility_id` → `:FACILITY_ID`)
+- Typed resolution relationships are explicit: `:RESOLVES_TO_TREE_NODE`, not generic `:RESOLVES_TO`
+
+---
+
+## 6. Code Ingestion & DataReference Architecture
+
+### Problem Statement
+
+Code files reference external data (MDSplus paths, TDI calls, IMAS paths). We need to:
+1. **Capture** what was found in code (provenance)
+2. **Resolve** to actual data nodes (semantic linking)
+3. **Support** multiple data systems (MDSplus now, IMAS/NetCDF later)
+
+### Design: DataReference as Intermediate Node
+
+```
+┌─────────────┐     ┌────────────────┐
+│ CodeExample │────▶│   CodeChunk    │
+│ (file)      │     │ (searchable)   │
+│             │     │                │
+│ source_file │     │ content        │
+│ language    │     │ embedding      │
+│ facility_id │     │ ref_count: 5   │  ← Scalar count only
+└─────────────┘     └───────┬────────┘
+                            │
+                    [:CONTAINS_REF]
+                            │
+                            ▼
+                    ┌───────────────┐
+                    │ DataReference │
+                    │               │
+                    │ raw_string    │  ← Exact string from code
+                    │ ref_type      │  ← mdsplus_path | tdi_call | imas_path
+                    │ facility_id   │
+                    └───────┬───────┘
+                            │
+           ┌────────────────┼────────────────┐
+           │                │                │
+    [:RESOLVES_TO_     [:CALLS_TDI_    [:RESOLVES_TO_
+     TREE_NODE]         FUNCTION]       IMAS_PATH]
+           │                │                │
+           ▼                ▼                ▼
+      ┌─────────┐    ┌────────────┐    ┌──────────┐
+      │TreeNode │    │TDIFunction │    │IMASPath  │
+      │(MDSplus)│    │            │    │(future)  │
+      └─────────┘    └────────────┘    └──────────┘
+```
+
+### Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| DataReference persistence | **Keep forever** | Provenance, re-resolution if mappings change |
+| Resolution relationships | **Typed per target** | Schema-enforced, efficient queries |
+| Metadata in chunks | **Counts only** | Avoid LlamaIndex size limits |
+| Multiple resolutions | **Allowed** | TDI call may resolve to multiple TreeNodes |
+
+### DataReference Schema
+
+```yaml
+DataReferenceType:
+  description: Type of data reference found in code
+  permissible_values:
+    mdsplus_path:
+      description: Direct MDSplus tree path (e.g., \RESULTS::PSI)
+    tdi_call:
+      description: TDI function call (e.g., tcv_eq("PSI"))
+    imas_path:
+      description: IMAS data path (future)
+
+DataReference:
+  description: |
+    A reference to external data found in source code.
+    Preserves the exact string for provenance.
+    Resolution happens via typed relationships.
+  attributes:
+    id:
+      identifier: true
+      description: Composite key (facility:type:hash)
+    raw_string:
+      required: true
+      description: Exact string as found in code
+    ref_type:
+      range: DataReferenceType
+      required: true
+    facility_id:
+      range: Facility
+      required: true
+      relationship: true
+    # Typed resolution relationships
+    resolves_to_tree_node:
+      range: TreeNode
+      relationship: true
+      multivalued: true
+    calls_tdi_function:
+      range: TDIFunction
+      relationship: true
+    resolves_to_imas_path:
+      range: IMASPath
+      relationship: true
+      multivalued: true
+```
+
+### Query Examples
+
+**Find code that references a specific MDSplus node:**
+```cypher
+MATCH (t:TreeNode {path: "\\\\RESULTS::PSI"})
+      <-[:RESOLVES_TO_TREE_NODE]-(ref:DataReference)
+      <-[:CONTAINS_REF]-(chunk:CodeChunk)
+      <-[:HAS_CHUNK]-(example:CodeExample)
+RETURN example.source_file, chunk.content
+```
+
+**Find all TDI function calls in MATLAB code:**
+```cypher
+MATCH (example:CodeExample {language: "matlab"})
+      -[:HAS_CHUNK]->(chunk)
+      -[:CONTAINS_REF]->(ref:DataReference {ref_type: "tdi_call"})
+      -[:CALLS_TDI_FUNCTION]->(tdi:TDIFunction)
+RETURN tdi.name, count(ref) AS call_count
+ORDER BY call_count DESC
+```
+
+**Future: Find code that writes to IMAS equilibrium:**
+```cypher
+MATCH (imas:IMASPath)
+WHERE imas.path STARTS WITH "equilibrium/"
+MATCH (imas)<-[:RESOLVES_TO_IMAS_PATH]-(ref)<-[:CONTAINS_REF]-(chunk)
+RETURN chunk.content, imas.path
+```
+
+### Schema Evolution Path
+
+| Phase | Additions |
+|-------|-----------|
+| **Now** | `DataReference`, `DataReferenceType`, `RESOLVES_TO_TREE_NODE`, `CALLS_TDI_FUNCTION`, `CONTAINS_REF` |
+| **IMAS Integration** | `IMASPath` node, `imas_path` enum value, `RESOLVES_TO_IMAS_PATH` relationship |
+| **New Facility** | Add enum values and typed relationships as needed |
+
+---
+
+## 7. Questions to Resolve
 
 1. **Granularity**: Do we ingest every TreeNode or just "interesting" ones?
    - Full ingest: millions of nodes
@@ -224,13 +381,14 @@ schema.needs_composite_constraint("Facility")      # False
 
 ---
 
-## 6. Immediate Next Steps
+## 8. Immediate Next Steps
 
 1. ✅ **Schema-driven graph ontology** - Implemented
 2. ✅ **Multi-facility composite constraints** - Implemented
-3. ⏳ **Set up Neo4j locally** and test ingestion
-4. ⏳ **Write minimal ingest script** for EPFL data
-5. ⏳ **Test cross-facility queries** in Neo4j browser
+3. ✅ **Neo4j local setup** - Running via Apptainer
+4. ✅ **Code ingestion pipeline** - LlamaIndex-based
+5. ⏳ **DataReference implementation** - In progress
+6. ⏳ **IMAS DD graph nodes** - Next phase
 
 ---
 

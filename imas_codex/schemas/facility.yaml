@@ -256,6 +256,16 @@ enums:
       stale:
         description: Source may have changed, needs re-fetch
 
+  DataReferenceType:
+    description: Type of data reference found in source code
+    permissible_values:
+      mdsplus_path:
+        description: Direct MDSplus tree path (e.g., \RESULTS::PSI)
+      tdi_call:
+        description: TDI function call (e.g., tcv_eq("PSI", "LIUQE"))
+      imas_path:
+        description: IMAS data dictionary path (future)
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -938,7 +948,8 @@ classes:
   CodeChunk:
     description: >-
       A searchable chunk of code from a CodeExample.
-      Contains embedding for semantic search and links to IMAS paths.
+      Contains embedding for semantic search. Data references are linked
+      via DataReference nodes, not stored as arrays.
     class_uri: facility:CodeChunk
     attributes:
       id:
@@ -964,7 +975,41 @@ classes:
         description: Vector embedding for semantic search (stored as list of floats)
         multivalued: true
         range: float
-      related_paths:
-        description: Specific IMAS paths this chunk references
+      ref_count:
+        description: Count of DataReference nodes linked to this chunk
+        range: integer
+
+  DataReference:
+    description: >-
+      A reference to external data found in source code.
+      Preserves the exact string as found for provenance.
+      Resolution to actual data nodes happens via typed relationships.
+    class_uri: facility:DataReference
+    attributes:
+      id:
+        identifier: true
+        description: Composite key (facility:type:hash of raw_string)
+        required: true
+      raw_string:
+        description: Exact string as found in code (e.g., "\\RESULTS::PSI")
+        required: true
+      ref_type:
+        description: Type of data reference
+        required: true
+        range: DataReferenceType
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      # Typed resolution relationships
+      resolves_to_tree_node:
+        description: MDSplus TreeNode this reference resolves to
+        range: TreeNode
         multivalued: true
+      calls_tdi_function:
+        description: TDI function being called (for tdi_call type)
+        range: TDIFunction
+      resolves_to_imas_path:
+        description: IMAS path this reference resolves to (future)
         range: IMASPath
+        multivalued: true

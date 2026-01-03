@@ -84,12 +84,12 @@ def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
             # Check if this is a full path (has ::) or just a suffix
             if "::" in raw:
                 normalized = normalize_mdsplus_path(raw)
-                ref_type = "path"
+                ref_type = "mdsplus_path"
             else:
                 # F-string suffix like "TIME_PSI" from f"{eq_tree}:TIME_PSI"
                 # Create a partial path - will match via suffix
                 normalized = f"\\RESULTS::{raw.upper()}"
-                ref_type = "fstring_suffix"
+                ref_type = "mdsplus_path"
             if normalized not in seen:
                 seen.add(normalized)
                 found.append(MDSplusReference(normalized, raw, ref_type))
@@ -102,9 +102,7 @@ def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
             pseudo_path = f"\\RESULTS::{quantity}"
             if pseudo_path not in seen:
                 seen.add(pseudo_path)
-                found.append(
-                    MDSplusReference(pseudo_path, match.group(0), "tdi_quantity")
-                )
+                found.append(MDSplusReference(pseudo_path, match.group(0), "tdi_call"))
 
     return found
 
@@ -113,8 +111,9 @@ class MDSplusExtractor(TransformComponent):
     """Extract MDSplus paths from code chunks.
 
     This LlamaIndex TransformComponent scans code text for MDSplus
-    path references and TDI function calls, adding them to node metadata
-    for graph relationship creation with TreeNode entities.
+    path references and TDI function calls. Stores only counts in metadata
+    to avoid size limits; full references are stored in _mdsplus_refs for
+    graph linking.
     """
 
     def __call__(self, nodes: list[BaseNode], **kwargs: dict) -> list[BaseNode]:
@@ -124,17 +123,18 @@ class MDSplusExtractor(TransformComponent):
             nodes: List of LlamaIndex nodes to process
 
         Returns:
-            Nodes with updated metadata containing mdsplus_paths
+            Nodes with updated metadata containing ref_count and _mdsplus_refs
         """
         for node in nodes:
             content = node.get_content()
             refs = extract_mdsplus_paths(content)
 
             if refs:
-                # Store normalized paths for graph linking
-                node.metadata["mdsplus_paths"] = sorted({r.path for r in refs})
-                # Store ref types for analytics
-                node.metadata["mdsplus_ref_types"] = sorted({r.ref_type for r in refs})
+                # Store only count in metadata (avoids size limits)
+                node.metadata["mdsplus_ref_count"] = len(refs)
+                # Store full refs in private metadata for graph linking
+                # This is NOT persisted to vector store, only used during ingestion
+                node.metadata["_mdsplus_refs"] = refs
 
         return nodes
 
