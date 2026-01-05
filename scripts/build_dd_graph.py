@@ -10,17 +10,26 @@ This script populates Neo4j with IMAS DD structure including:
 - Version tracking (INTRODUCED_IN, DEPRECATED_IN, RENAMED_TO)
 - PathChange nodes for metadata changes with semantic classification
 - SemanticCluster nodes from existing clusters (optional)
+- Embeddings for IMASPath nodes with content-based caching
 
 The graph is augmented incrementally, not rebuilt - this preserves
 links to facility data (TreeNodes, IMASMappings).
+
+Embedding Pipeline:
+- Generates enriched_text by concatenating IDS context, documentation, units
+- Computes SHA256 hash of enriched_text for cache busting
+- Only regenerates embeddings for paths where hash changed
+- Stores embedding vectors in Neo4j for vector search
 """
 
+import hashlib
 import json
 import logging
 import sys
 
 import click
 import imas
+import numpy as np
 
 from imas_codex import dd_version as current_dd_version
 from imas_codex.core.physics_categorization import physics_categorizer
@@ -85,6 +94,309 @@ def classify_doc_change(old_doc: str, new_doc: str) -> tuple[str, list[str]]:
         return "definition_clarification", []
 
     return "none", []
+
+
+# =============================================================================
+# Embedding Generation Functions
+# =============================================================================
+
+
+def generate_embedding_text(
+    path: str,
+    path_info: dict,
+    ids_info: dict | None = None,
+) -> str:
+    """
+    Generate embedding text by concatenating contextual information.
+
+    Produces coherent prose describing the data path, its physics context,
+    and measurement characteristics for better semantic clustering. Uses
+    natural language formatting optimized for sentence transformer embedding.
+
+    Args:
+        path: Full path (e.g., "equilibrium/time_slice/profiles_1d/psi")
+        path_info: Path metadata dict
+        ids_info: Optional IDS-level metadata for context
+
+    Returns:
+        Natural language prose optimized for sentence transformer embedding
+    """
+    from imas_codex.core.unit_loader import get_unit_dimensionality, get_unit_name
+
+    sentences = []
+
+    # Extract components
+    ids_name = path.split("/")[0]
+    path_name = path_info.get("name", path.split("/")[-1])
+
+    # Core identity with readable path formatting (convert / to " in ")
+    path_readable = path_name.replace("_", " ")
+    ids_readable = ids_name.replace("_", " ")
+
+    # Include parent context in path name for better semantic context
+    path_parts = path.split("/")
+    if len(path_parts) > 2:
+        parent_context = " in ".join(p.replace("_", " ") for p in path_parts[1:-1] if p)
+        if parent_context:
+            sentences.append(
+                f"The {path_readable} in {parent_context} field in the {ids_readable} IDS."
+            )
+        else:
+            sentences.append(f"The {path_readable} field in the {ids_readable} IDS.")
+    else:
+        sentences.append(f"The {path_readable} field in the {ids_readable} IDS.")
+
+    # IDS-level context if available
+    if ids_info and ids_info.get("description"):
+        ids_desc = ids_info["description"]
+        if len(ids_desc) < 200:
+            sentences.append(f"The {ids_readable} IDS contains {ids_desc.lower()}")
+
+    # Primary documentation
+    doc = path_info.get("documentation", "")
+    if doc:
+        doc_clean = doc.strip()
+        if doc_clean and not doc_clean.endswith("."):
+            doc_clean += "."
+        sentences.append(doc_clean)
+
+    # Units with pint-based expansion for better semantic matching
+    units = path_info.get("units", "")
+    if units and units not in ("", "none", "1", "as_parent"):
+        unit_parts = []
+
+        # Get expanded unit name (e.g., "eV" -> "electron volt")
+        unit_name = get_unit_name(units)
+        if unit_name and unit_name != units:
+            unit_parts.append(f"measured in {unit_name} ({units})")
+        else:
+            unit_parts.append(f"measured in {units}")
+
+        # Add dimensionality for physics context (e.g., "[energy]", "[length]")
+        dimensionality = get_unit_dimensionality(units)
+        if dimensionality and dimensionality != "dimensionless":
+            unit_parts.append(f"representing {dimensionality}")
+
+        if unit_parts:
+            unit_sentence = " ".join(unit_parts)
+            # Capitalize first letter without lowercasing rest (preserves eV, Pa)
+            sentences.append(unit_sentence[0].upper() + unit_sentence[1:] + ".")
+
+    # Physics domain context
+    physics_domain = path_info.get("physics_domain", "")
+    if not physics_domain:
+        # Derive from IDS name if not provided
+        physics_domain = physics_categorizer.get_domain_for_ids(ids_name).value
+
+    if physics_domain and physics_domain != "general":
+        domain_readable = physics_domain.replace("_", " ")
+        sentences.append(f"Related to {domain_readable} physics.")
+
+    # Data type in natural language
+    data_type = path_info.get("data_type", "")
+    if data_type and data_type not in ("STRUCTURE", "STRUCT_ARRAY"):
+        ndim = path_info.get("ndim", 0)
+        if ndim == 0:
+            sentences.append("This is a scalar value.")
+        elif ndim == 1:
+            sentences.append("This is a one-dimensional array.")
+        elif ndim == 2:
+            sentences.append("This is a two-dimensional array.")
+        elif ndim == 3:
+            sentences.append("This is a three-dimensional array.")
+        elif ndim > 3:
+            sentences.append(f"This is a {ndim}-dimensional array.")
+
+    # Coordinate system in natural language
+    coordinates = path_info.get("coordinates", [])
+    if coordinates and isinstance(coordinates, list):
+        valid_coords = [str(c) for c in coordinates if c]
+        if valid_coords:
+            if len(valid_coords) == 1:
+                sentences.append(f"Indexed along the {valid_coords[0]} coordinate.")
+            else:
+                coords_formatted = ", ".join(valid_coords[:-1])
+                sentences.append(
+                    f"Indexed along the {coords_formatted} and {valid_coords[-1]} coordinates."
+                )
+
+    return " ".join(sentences)
+
+
+def compute_content_hash(text: str) -> str:
+    """
+    Compute SHA256 hash of content for cache busting.
+
+    Args:
+        text: Text to hash (typically enriched_text)
+
+    Returns:
+        First 16 characters of SHA256 hex digest
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def generate_embeddings_batch(
+    texts: list[str],
+    model_name: str = "all-MiniLM-L6-v2",
+    batch_size: int = 256,
+) -> np.ndarray:
+    """
+    Generate embeddings for a batch of texts using sentence transformer.
+
+    Args:
+        texts: List of text strings to embed
+        model_name: Sentence transformer model name
+        batch_size: Batch size for encoding
+
+    Returns:
+        Numpy array of embeddings (N x 384 for MiniLM)
+    """
+    from sentence_transformers import SentenceTransformer
+
+    model = SentenceTransformer(model_name)
+    embeddings = model.encode(
+        texts,
+        batch_size=batch_size,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    return embeddings
+
+
+def get_existing_embedding_hashes(
+    client: GraphClient,
+    paths: list[str],
+    batch_size: int = 1000,
+) -> dict[str, str]:
+    """
+    Query existing embedding hashes from the graph for cache validation.
+
+    Args:
+        client: GraphClient instance
+        paths: List of path IDs to check
+        batch_size: Query batch size
+
+    Returns:
+        Dict mapping path_id to embedding_hash (only for paths with existing hashes)
+    """
+    result = {}
+
+    for i in range(0, len(paths), batch_size):
+        batch = paths[i : i + batch_size]
+        records = client.query(
+            """
+            UNWIND $paths AS path_id
+            MATCH (p:IMASPath {id: path_id})
+            WHERE p.embedding_hash IS NOT NULL
+            RETURN p.id AS path_id, p.embedding_hash AS hash
+            """,
+            paths=batch,
+        )
+        for record in records:
+            result[record["path_id"]] = record["hash"]
+
+    return result
+
+
+def update_path_embeddings(
+    client: GraphClient,
+    paths_data: dict[str, dict],
+    ids_info: dict[str, dict],
+    model_name: str = "all-MiniLM-L6-v2",
+    batch_size: int = 500,
+    force_rebuild: bool = False,
+) -> dict[str, int]:
+    """
+    Generate and store embeddings for IMASPath nodes with content-based caching.
+
+    Only regenerates embeddings for paths where the content hash has changed,
+    minimizing recompute on graph rebuilds. Model name is stored on DDVersion,
+    not on individual paths.
+
+    Args:
+        client: GraphClient instance
+        paths_data: Dict mapping path_id to path metadata
+        ids_info: Dict mapping ids_name to IDS metadata
+        model_name: Sentence transformer model name
+        batch_size: Batch size for embedding generation
+        force_rebuild: If True, regenerate all embeddings regardless of cache
+
+    Returns:
+        Dict with stats: {"updated": N, "cached": M, "total": N+M}
+    """
+    if not paths_data:
+        return {"updated": 0, "cached": 0, "total": 0}
+
+    # Step 1: Generate embedding text and compute hashes for all paths
+    path_ids = list(paths_data.keys())
+    embedding_texts = {}
+    content_hashes = {}
+
+    for path_id, path_info in paths_data.items():
+        ids_name = path_id.split("/")[0]
+        ids_meta = ids_info.get(ids_name, {})
+        text = generate_embedding_text(path_id, path_info, ids_meta)
+        embedding_texts[path_id] = text
+        content_hashes[path_id] = compute_content_hash(text)
+
+    # Step 2: Get existing hashes from graph to determine what needs update
+    if not force_rebuild:
+        existing_hashes = get_existing_embedding_hashes(client, path_ids)
+        paths_to_update = [
+            pid for pid in path_ids if content_hashes[pid] != existing_hashes.get(pid)
+        ]
+        cached_count = len(path_ids) - len(paths_to_update)
+    else:
+        paths_to_update = path_ids
+        cached_count = 0
+
+    if not paths_to_update:
+        logger.info(f"All {len(path_ids)} embeddings up to date (cached)")
+        return {"updated": 0, "cached": len(path_ids), "total": len(path_ids)}
+
+    logger.info(
+        f"Generating embeddings for {len(paths_to_update)} paths "
+        f"({cached_count} cached)"
+    )
+
+    # Step 3: Generate embeddings for paths that need update
+    texts_to_embed = [embedding_texts[pid] for pid in paths_to_update]
+    embeddings = generate_embeddings_batch(texts_to_embed, model_name, batch_size)
+
+    # Step 4: Store embeddings in graph in batches (model tracked on DDVersion)
+    store_batch_size = 100
+    for i in range(0, len(paths_to_update), store_batch_size):
+        batch_paths = paths_to_update[i : i + store_batch_size]
+        batch_data = []
+
+        for j, path_id in enumerate(batch_paths):
+            embedding_idx = i + j
+            batch_data.append(
+                {
+                    "path_id": path_id,
+                    "embedding_text": embedding_texts[path_id],
+                    "embedding": embeddings[embedding_idx].tolist(),
+                    "embedding_hash": content_hashes[path_id],
+                }
+            )
+
+        client.query(
+            """
+            UNWIND $batch AS b
+            MATCH (p:IMASPath {id: b.path_id})
+            SET p.embedding_text = b.embedding_text,
+                p.embedding = b.embedding,
+                p.embedding_hash = b.embedding_hash
+            """,
+            batch=batch_data,
+        )
+
+    return {
+        "updated": len(paths_to_update),
+        "cached": cached_count,
+        "total": len(path_ids),
+    }
 
 
 def get_all_dd_versions() -> list[str]:
@@ -274,9 +586,12 @@ def build_dd_graph(
     client: GraphClient,
     versions: list[str] | None = None,
     include_clusters: bool = False,
+    include_embeddings: bool = True,
     dry_run: bool = False,
     ids_filter: set[str] | None = None,
     use_rich: bool | None = None,
+    embedding_model: str = "all-MiniLM-L6-v2",
+    force_embeddings: bool = False,
 ) -> dict:
     """
     Build the IMAS DD graph.
@@ -286,8 +601,11 @@ def build_dd_graph(
         versions: List of versions to process (None = all available)
         ids_filter: Optional set of IDS names to include
         include_clusters: Whether to import semantic clusters
+        include_embeddings: Whether to generate path embeddings (default True)
         dry_run: If True, don't write to graph
         use_rich: Force rich progress (True), logging (False), or auto (None)
+        embedding_model: Sentence transformer model for embeddings
+        force_embeddings: Force regenerate all embeddings (ignore cache)
 
     Returns:
         Statistics about the build
@@ -321,6 +639,8 @@ def build_dd_graph(
         "units_created": 0,
         "path_changes_created": 0,
         "clusters_created": 0,
+        "embeddings_updated": 0,
+        "embeddings_cached": 0,
     }
 
     # Ensure indexes exist for performance
@@ -411,6 +731,36 @@ def build_dd_graph(
         mappings = load_path_mappings(current_dd_version)
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
+    # Generate and store embeddings for current version paths
+    if include_embeddings and not dry_run:
+        current_version_data = version_data.get(current_dd_version)
+        if current_version_data:
+            logger.info(f"Generating embeddings for {current_dd_version}...")
+            embedding_stats = update_path_embeddings(
+                client=client,
+                paths_data=current_version_data["paths"],
+                ids_info=current_version_data["ids_info"],
+                model_name=embedding_model,
+                force_rebuild=force_embeddings,
+            )
+            stats["embeddings_updated"] = embedding_stats["updated"]
+            stats["embeddings_cached"] = embedding_stats["cached"]
+
+            # Update DDVersion with embedding metadata
+            client.query(
+                """
+                MATCH (v:DDVersion {id: $version})
+                SET v.embeddings_built_at = datetime(),
+                    v.embeddings_model = $model,
+                    v.embeddings_count = $count
+                """,
+                version=current_dd_version,
+                model=embedding_model,
+                count=embedding_stats["total"],
+            )
+        else:
+            logger.warning(f"No data for current version {current_dd_version}")
+
     # Import semantic clusters if requested
     if include_clusters:
         logger.info("Importing semantic clusters...")
@@ -488,6 +838,63 @@ def _ensure_indexes(client: GraphClient) -> None:
 
     # Unit.symbol - for unit relationship lookups
     client.query("CREATE INDEX unit_symbol IF NOT EXISTS FOR (u:Unit) ON (u.symbol)")
+
+    # SemanticCluster.id - for cluster lookups
+    client.query(
+        "CREATE INDEX semanticcluster_id IF NOT EXISTS FOR (c:SemanticCluster) ON (c.id)"
+    )
+
+    # Vector indexes for semantic search
+    _ensure_vector_indexes(client)
+
+
+def _ensure_vector_indexes(client: GraphClient) -> None:
+    """Create vector indexes for semantic search on embeddings.
+
+    Creates two vector indexes:
+    - imas_path_embedding: For searching IMASPath nodes by embedding
+    - cluster_centroid: For hierarchical cluster-first search
+    """
+    # Check if vector indexes already exist
+    try:
+        existing = client.query("SHOW INDEXES YIELD name RETURN collect(name) AS names")
+        existing_names = set(existing[0]["names"]) if existing else set()
+    except Exception:
+        existing_names = set()
+
+    # Create IMASPath embedding index (384 dims for all-MiniLM-L6-v2)
+    if "imas_path_embedding" not in existing_names:
+        try:
+            client.query("""
+                CREATE VECTOR INDEX imas_path_embedding IF NOT EXISTS
+                FOR (p:IMASPath) ON p.embedding
+                OPTIONS {
+                    indexConfig: {
+                        `vector.dimensions`: 384,
+                        `vector.similarity_function`: 'cosine'
+                    }
+                }
+            """)
+            logger.info("Created vector index: imas_path_embedding")
+        except Exception as e:
+            logger.warning(f"Failed to create imas_path_embedding index: {e}")
+
+    # Create SemanticCluster centroid index
+    if "cluster_centroid" not in existing_names:
+        try:
+            client.query("""
+                CREATE VECTOR INDEX cluster_centroid IF NOT EXISTS
+                FOR (c:SemanticCluster) ON c.centroid
+                OPTIONS {
+                    indexConfig: {
+                        `vector.dimensions`: 384,
+                        `vector.similarity_function`: 'cosine'
+                    }
+                }
+            """)
+            logger.info("Created vector index: cluster_centroid")
+        except Exception as e:
+            logger.warning(f"Failed to create cluster_centroid index: {e}")
 
 
 def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
@@ -800,8 +1207,23 @@ def _batch_create_renamed_to(client: GraphClient, mappings: dict[str, dict]) -> 
         )
 
 
-def _import_clusters(client: GraphClient, dry_run: bool) -> int:
-    """Import semantic clusters from existing cluster data."""
+def _import_clusters(
+    client: GraphClient,
+    dry_run: bool,
+) -> int:
+    """Import semantic clusters from existing cluster data with centroids.
+
+    Stores cluster centroids for hierarchical semantic search - first match
+    clusters by centroid similarity, then search within matching clusters.
+    Model name is tracked on DDVersion, not on clusters.
+
+    Args:
+        client: GraphClient instance
+        dry_run: If True, don't write to graph
+
+    Returns:
+        Number of clusters imported
+    """
     try:
         from imas_codex.core.clusters import Clusters
 
@@ -818,28 +1240,53 @@ def _import_clusters(client: GraphClient, dry_run: bool) -> int:
                 cluster_count += 1
                 continue
 
-            # Create SemanticCluster node
+            # Extract cluster properties
             label = cluster.get("label", f"cluster_{cluster_id}")
             physics_domain = cluster.get("physics_domain", "general")
             paths = cluster.get("paths", [])
             cross_ids = cluster.get("cross_ids", False)
+            centroid = cluster.get("centroid")
+            similarity_score = cluster.get("similarity_score", 0.0)
+            ids_names = cluster.get("ids_names", [])
+            scope = cluster.get("scope", "global")
 
+            # Build cluster properties dict
+            cluster_props = {
+                "cluster_id": str(cluster_id),
+                "label": label,
+                "physics_domain": physics_domain,
+                "path_count": len(paths),
+                "cross_ids": cross_ids,
+                "similarity_score": similarity_score,
+                "scope": scope,
+            }
+
+            # Add centroid if available (list of floats for Neo4j vector index)
+            if centroid and isinstance(centroid, list):
+                cluster_props["centroid"] = centroid
+
+            # Add IDS names as array
+            if ids_names:
+                cluster_props["ids_names"] = ids_names
+
+            # Create SemanticCluster node with all properties
             client.query(
                 """
                 MERGE (c:SemanticCluster {id: $cluster_id})
                 SET c.label = $label,
                     c.physics_domain = $physics_domain,
                     c.path_count = $path_count,
-                    c.cross_ids = $cross_ids
-            """,
-                cluster_id=str(cluster_id),
-                label=label,
-                physics_domain=physics_domain,
-                path_count=len(paths),
-                cross_ids=cross_ids,
+                    c.cross_ids = $cross_ids,
+                    c.similarity_score = $similarity_score,
+                    c.scope = $scope,
+                    c.centroid = $centroid,
+                    c.ids_names = $ids_names
+                """,
+                **cluster_props,
             )
 
-            # Create IN_CLUSTER relationships
+            # Batch create IN_CLUSTER relationships for efficiency
+            path_memberships = []
             for path_info in paths:
                 if isinstance(path_info, dict):
                     path = path_info.get("path", "")
@@ -847,20 +1294,33 @@ def _import_clusters(client: GraphClient, dry_run: bool) -> int:
                 else:
                     path = str(path_info)
                     distance = 0.0
+                if path:
+                    path_memberships.append({"path": path, "distance": distance})
 
+            if path_memberships:
                 client.query(
                     """
-                    MATCH (p:IMASPath {id: $path})
+                    UNWIND $memberships AS m
+                    MATCH (p:IMASPath {id: m.path})
                     MATCH (c:SemanticCluster {id: $cluster_id})
                     MERGE (p)-[r:IN_CLUSTER]->(c)
-                    SET r.distance = $distance
-                """,
-                    path=path,
+                    SET r.distance = m.distance
+                    """,
+                    memberships=path_memberships,
                     cluster_id=str(cluster_id),
-                    distance=distance,
                 )
 
             cluster_count += 1
+
+        # Update DDVersion with cluster metadata
+        client.query(
+            """
+            MATCH (v:DDVersion {is_current: true})
+            SET v.clusters_built_at = datetime(),
+                v.clusters_count = $count
+            """,
+            count=cluster_count,
+        )
 
         return cluster_count
 
@@ -893,6 +1353,22 @@ def _import_clusters(client: GraphClient, dry_run: bool) -> int:
     help="Import semantic clusters into graph",
 )
 @click.option(
+    "--include-embeddings/--no-embeddings",
+    default=True,
+    help="Generate embeddings for IMASPath nodes (default: enabled)",
+)
+@click.option(
+    "--force-embeddings",
+    is_flag=True,
+    help="Force regenerate all embeddings (ignore cache)",
+)
+@click.option(
+    "--embedding-model",
+    type=str,
+    default="all-MiniLM-L6-v2",
+    help="Sentence transformer model for embeddings",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Preview changes without writing to graph",
@@ -909,19 +1385,27 @@ def build_dd_graph_cli(
     from_version: str | None,
     ids_filter: str | None,
     include_clusters: bool,
+    include_embeddings: bool,
+    force_embeddings: bool,
+    embedding_model: str,
     dry_run: bool,
     no_rich: bool,
 ) -> int:
     """Build the IMAS Data Dictionary Knowledge Graph.
 
     This command populates Neo4j with IMAS DD structure including version
-    tracking, path hierarchy, units, and optionally semantic clusters.
+    tracking, path hierarchy, units, embeddings, and optionally semantic clusters.
+
+    Embeddings are cached using content-based hashing - only paths with changed
+    content will have embeddings regenerated on subsequent runs.
 
     Examples:
-        build-dd-graph                        # Build current version only
+        build-dd-graph                        # Build current version with embeddings
         build-dd-graph --all-versions         # Build all 34 versions
         build-dd-graph --from-version 4.0.0   # Incremental from 4.0.0
         build-dd-graph --include-clusters     # Include semantic clusters
+        build-dd-graph --force-embeddings     # Regenerate all embeddings
+        build-dd-graph --no-embeddings        # Skip embedding generation
         build-dd-graph --dry-run -v           # Preview without writing
     """
     # Set up logging
@@ -985,8 +1469,11 @@ def build_dd_graph_cli(
                 versions=versions,
                 ids_filter=ids_set,
                 include_clusters=include_clusters,
+                include_embeddings=include_embeddings,
                 dry_run=dry_run,
                 use_rich=use_rich,
+                embedding_model=embedding_model,
+                force_embeddings=force_embeddings,
             )
 
         # Report results
@@ -996,6 +1483,9 @@ def build_dd_graph_cli(
         click.echo(f"IMASPath nodes created: {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
+        if include_embeddings:
+            click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
+            click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
         if include_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 

@@ -154,6 +154,9 @@ classes:
     description: >-
       A version of the IMAS Data Dictionary. Versions form a chain via
       PREDECESSOR relationships, enabling traversal of DD evolution.
+      
+      Embedding metadata tracks when embeddings were generated for this version,
+      enabling cache validation and incremental updates.
     class_uri: imas_dd:DDVersion
     attributes:
       id:
@@ -175,6 +178,21 @@ classes:
       predecessor:
         description: Previous DD version
         range: DDVersion
+      # Embedding generation metadata
+      embeddings_built_at:
+        description: Timestamp when embeddings were generated for this version
+        range: datetime
+      embeddings_model:
+        description: Model name used for embedding generation
+      embeddings_count:
+        description: Number of paths with embeddings in this version
+        range: integer
+      clusters_built_at:
+        description: Timestamp when clusters were generated for this version
+        range: datetime
+      clusters_count:
+        description: Number of clusters for this version
+        range: integer
 
   IDS:
     description: >-
@@ -221,6 +239,11 @@ classes:
       This is the single authoritative representation of IMAS paths - code
       references should link to existing IMASPath nodes, never create them
       on-demand.
+      
+      Embedding Support:
+      - embedding_text: Pre-concatenated context for embedding generation
+      - embedding: 384-dim vector (model tracked on DDVersion)
+      - embedding_hash: Content hash for cache busting
     class_uri: imas_dd:IMASPath
     attributes:
       id:
@@ -269,6 +292,22 @@ classes:
       identifier_schema:
         description: Identifier schema if this is an identifier field
         range: IdentifierSchema
+      # Embedding fields for semantic search
+      embedding_text:
+        description: >-
+          Pre-concatenated context for embedding: combines IDS description,
+          parent path context, documentation, units, and coordinates into
+          natural language prose optimized for sentence transformer embedding.
+      embedding:
+        description: >-
+          384-dim embedding vector. Model tracked on DDVersion.embeddings_model.
+          Use Neo4j vector index for semantic search.
+        multivalued: true
+        range: float
+      embedding_hash:
+        description: >-
+          SHA256 hash of embedding_text content. Used for cache busting - if hash
+          changes, embedding needs regeneration. Enables minimal recompute on rebuild.
 
   Unit:
     description: >-
@@ -309,11 +348,15 @@ classes:
     description: >-
       A semantic cluster of related IMAS paths, derived from HDBSCAN
       clustering on path embeddings. Paths link to clusters via IN_CLUSTER.
+      
+      Centroid embeddings enable fast cluster-based semantic search:
+      query embedding is compared against cluster centroids first, then
+      individual paths within matching clusters are searched.
     class_uri: imas_dd:SemanticCluster
     attributes:
       id:
         identifier: true
-        description: Cluster identifier (e.g., "cluster_42")
+        description: Cluster identifier (UUID string)
         required: true
       label:
         description: LLM-generated semantic label (e.g., "boundary geometry")
@@ -332,6 +375,30 @@ classes:
       representative_path:
         description: Most central path (closest to centroid)
         range: IMASPath
+      # Cluster centroid for semantic search
+      centroid:
+        description: >-
+          Cluster centroid embedding vector (384-dim, L2-normalized).
+          Mean of member path embeddings. Enables hierarchical search:
+          first match clusters by centroid, then search within cluster.
+        multivalued: true
+        range: float
+      similarity_score:
+        description: Average intra-cluster cosine similarity (0-1)
+        range: float
+      scope:
+        description: Cluster scope (global, domain, or ids)
+      scope_detail:
+        description: Domain name or IDS name for domain/ids scopes
+      ids_names:
+        description: List of IDS names represented in this cluster
+        multivalued: true
+      # Enrichment metadata
+      physics_concepts:
+        description: Physics concepts covered by this cluster
+        multivalued: true
+      mapping_relevance:
+        description: Relevance for IMAS mapping (high, medium, low)
 
   IdentifierSchema:
     description: >-
