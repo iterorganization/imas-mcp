@@ -197,23 +197,81 @@ print(t.getCurrent())
         """Find exact shot where structure changed using binary search.
 
         Returns the first shot with high_fingerprint structure.
+        Handles gaps (missing shots) by probing nearby shots in batches.
         """
         logger.debug(f"Binary search: {low_shot} -> {high_shot}")
 
+        failed_shots: set[int] = set()
+        max_probe_attempts = 20
+
         while high_shot - low_shot > 1:
             mid_shot = (low_shot + high_shot) // 2
+
+            # Skip known failed shots - find nearest untried
+            if mid_shot in failed_shots:
+                found = False
+                for offset in range(1, (high_shot - low_shot) // 2 + 1):
+                    for candidate in [mid_shot + offset, mid_shot - offset]:
+                        if (
+                            low_shot < candidate < high_shot
+                            and candidate not in failed_shots
+                        ):
+                            mid_shot = candidate
+                            found = True
+                            break
+                    if found:
+                        break
+                if not found:
+                    logger.warning(
+                        f"Cannot resolve boundary {low_shot}-{high_shot}: "
+                        f"too many failed shots ({len(failed_shots)})"
+                    )
+                    return None
 
             result = self.batch_query_structures([mid_shot])
             mid_info = result.get(mid_shot)
 
             if mid_info is None:
-                # Shot failed, try nearby
-                mid_shot += 1
-                result = self.batch_query_structures([mid_shot])
-                mid_info = result.get(mid_shot)
-                if mid_info is None:
-                    # Skip this boundary
-                    logger.warning(f"Cannot resolve boundary {low_shot}-{high_shot}")
+                failed_shots.add(mid_shot)
+                # Batch probe nearby shots for efficiency
+                candidates = []
+                for offset in range(1, max_probe_attempts + 1):
+                    for candidate in [mid_shot + offset, mid_shot - offset]:
+                        if (
+                            candidate not in failed_shots
+                            and low_shot < candidate < high_shot
+                        ):
+                            candidates.append(candidate)
+                        if len(candidates) >= 10:
+                            break
+                    if len(candidates) >= 10:
+                        break
+
+                if not candidates:
+                    logger.warning(
+                        f"Cannot resolve boundary {low_shot}-{high_shot}: "
+                        f"no candidate shots available"
+                    )
+                    return None
+
+                # Query all candidates in one batch
+                probe_result = self.batch_query_structures(candidates)
+                found_valid = False
+                # Check candidates in order (closest to mid first)
+                for candidate in candidates:
+                    probe_info = probe_result.get(candidate)
+                    if probe_info is not None:
+                        mid_shot = candidate
+                        mid_info = probe_info
+                        found_valid = True
+                        break
+                    failed_shots.add(candidate)
+
+                if not found_valid:
+                    logger.warning(
+                        f"Cannot resolve boundary {low_shot}-{high_shot}: "
+                        f"no valid shots found near {(low_shot + high_shot) // 2}"
+                    )
                     return None
 
             mid_fingerprint = mid_info[1]

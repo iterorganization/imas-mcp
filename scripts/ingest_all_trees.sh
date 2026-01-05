@@ -71,9 +71,9 @@ for tree in "${TREES[@]}"; do
     logfile="$LOGDIR/${tree}_$(date +%Y%m%d_%H%M%S).log"
     
     # Run discover-mdsplus with full metadata extraction and legacy cleanup
-    # -v for verbose output
     # --clean to merge and cleanup legacy nodes after ingestion
-    if uv run discover-mdsplus "$FACILITY" "$tree" -v --clean 2>&1 | tee "$logfile"; then
+    # Remove -v for less verbose output (INFO level instead of DEBUG)
+    if uv run discover-mdsplus "$FACILITY" "$tree" --clean 2>&1 | tee "$logfile"; then
         echo "✓ $tree completed successfully"
         SUCCEEDED+=("$tree")
     else
