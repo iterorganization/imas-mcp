@@ -5,10 +5,10 @@ Build the IMAS Data Dictionary Knowledge Graph.
 This script populates Neo4j with IMAS DD structure including:
 - DDVersion nodes for all available DD versions
 - IDS nodes for top-level structures
-- DDPath nodes with hierarchical relationships
+- IMASPath nodes with hierarchical relationships
 - Unit and CoordinateSpec nodes
 - Version tracking (INTRODUCED_IN, DEPRECATED_IN, RENAMED_TO)
-- PathChange nodes for metadata changes
+- PathChange nodes for metadata changes with semantic classification
 - SemanticCluster nodes from existing clusters (optional)
 
 The graph is augmented incrementally, not rebuilt - this preserves
@@ -28,6 +28,63 @@ from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
+
+# Keywords for semantic classification of documentation changes
+SIGN_CONVENTION_KEYWORDS = [
+    "upwards",
+    "downwards",
+    "increasing",
+    "decreasing",
+    "positive",
+    "negative",
+    "clockwise",
+    "anti-clockwise",
+    "normal vector",
+    "surface normal",
+    "sign convention",
+]
+
+COORDINATE_CONVENTION_KEYWORDS = [
+    "right-handed",
+    "left-handed",
+    "coordinate system",
+    "reference frame",
+]
+
+
+def classify_doc_change(old_doc: str, new_doc: str) -> tuple[str, list[str]]:
+    """
+    Classify a documentation change by physics significance.
+
+    Returns:
+        Tuple of (semantic_type, keywords_detected)
+    """
+    old_lower = old_doc.lower() if old_doc else ""
+    new_lower = new_doc.lower() if new_doc else ""
+
+    keywords_found = []
+
+    # Check for new sign convention text
+    for kw in SIGN_CONVENTION_KEYWORDS:
+        if kw in new_lower and kw not in old_lower:
+            keywords_found.append(kw)
+
+    if keywords_found:
+        return "sign_convention", keywords_found
+
+    # Check for coordinate convention changes
+    for kw in COORDINATE_CONVENTION_KEYWORDS:
+        if kw in new_lower and kw not in old_lower:
+            keywords_found.append(kw)
+
+    if keywords_found:
+        return "coordinate_convention", keywords_found
+
+    # Check if documentation was significantly expanded (clarification)
+    if new_doc and old_doc and len(new_doc) > len(old_doc) * 1.5:
+        return "definition_clarification", []
+
+    return "none", []
 
 
 def get_all_dd_versions() -> list[str]:
@@ -307,8 +364,8 @@ def build_dd_graph(
     if not dry_run:
         _create_coordinate_spec_nodes(client, coord_specs)
 
-    # Create IDS and DDPath nodes, tracking version changes
-    logger.info("Creating IDS and DDPath nodes with version tracking...")
+    # Create IDS and IMASPath nodes, tracking version changes
+    logger.info("Creating IDS and IMASPath nodes with version tracking...")
     prev_paths: dict[str, dict] = {}
 
     progress.start_processing(versions, "Building graph")
@@ -329,7 +386,7 @@ def build_dd_graph(
             _batch_upsert_ids_nodes(client, data["ids_info"], version, i == 0)
             stats["ids_created"] = max(stats["ids_created"], len(data["ids_info"]))
 
-            # Batch create DDPath nodes for new paths
+            # Batch create IMASPath nodes for new paths
             new_paths_data = {p: data["paths"][p] for p in changes["added"]}
             _batch_create_path_nodes(client, new_paths_data, version)
             stats["paths_created"] += len(changes["added"])
@@ -420,8 +477,8 @@ def _ensure_indexes(client: GraphClient) -> None:
     """Ensure required indexes exist for optimal query performance."""
     logger.debug("Ensuring DD indexes exist...")
 
-    # DDPath.id - critical for MERGE and relationship creation
-    client.query("CREATE INDEX ddpath_id IF NOT EXISTS FOR (p:DDPath) ON (p.id)")
+    # IMASPath.id - critical for MERGE and relationship creation
+    client.query("CREATE INDEX imaspath_id IF NOT EXISTS FOR (p:IMASPath) ON (p.id)")
 
     # IDS.name - for IDS relationship lookups
     client.query("CREATE INDEX ids_name IF NOT EXISTS FOR (i:IDS) ON (i.name)")
@@ -531,7 +588,7 @@ def _batch_create_path_nodes(
     version: str,
     batch_size: int = 1000,
 ) -> None:
-    """Batch create DDPath nodes with relationships.
+    """Batch create IMASPath nodes with relationships.
 
     Uses multiple batched queries to avoid memory issues with large datasets.
     """
@@ -564,11 +621,11 @@ def _batch_create_path_nodes(
     for i in range(0, len(path_list), batch_size):
         batch = path_list[i : i + batch_size]
 
-        # Step 1: Create DDPath nodes
+        # Step 1: Create IMASPath nodes
         client.query(
             """
             UNWIND $paths AS p
-            MERGE (path:DDPath {id: p.id})
+            MERGE (path:IMASPath {id: p.id})
             SET path.name = p.name,
                 path.documentation = p.documentation,
                 path.data_type = p.data_type,
@@ -584,7 +641,7 @@ def _batch_create_path_nodes(
         client.query(
             """
             UNWIND $paths AS p
-            MATCH (path:DDPath {id: p.id})
+            MATCH (path:IMASPath {id: p.id})
             MATCH (ids:IDS {name: p.ids_name})
             MERGE (path)-[:IDS]->(ids)
         """,
@@ -599,8 +656,8 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $paths AS p
-                MATCH (path:DDPath {id: p.id})
-                MERGE (parent:DDPath {id: p.parent_path})
+                MATCH (path:IMASPath {id: p.id})
+                MERGE (parent:IMASPath {id: p.parent_path})
                 MERGE (path)-[:PARENT]->(parent)
             """,
                 paths=parent_paths,
@@ -612,7 +669,7 @@ def _batch_create_path_nodes(
             client.query(
                 """
                 UNWIND $paths AS p
-                MATCH (path:DDPath {id: p.id})
+                MATCH (path:IMASPath {id: p.id})
                 MATCH (u:Unit {symbol: p.units})
                 MERGE (path)-[:HAS_UNIT]->(u)
             """,
@@ -623,7 +680,7 @@ def _batch_create_path_nodes(
         client.query(
             """
             UNWIND $paths AS p
-            MATCH (path:DDPath {id: p.id})
+            MATCH (path:IMASPath {id: p.id})
             MATCH (v:DDVersion {id: $version})
             MERGE (path)-[:INTRODUCED_IN]->(v)
         """,
@@ -643,7 +700,7 @@ def _batch_mark_paths_deprecated(
     client.query(
         """
         UNWIND $paths AS p
-        MATCH (path:DDPath {id: p.path})
+        MATCH (path:IMASPath {id: p.path})
         MATCH (v:DDVersion {id: $version})
         MERGE (path)-[:DEPRECATED_IN]->(v)
     """,
@@ -657,34 +714,48 @@ def _batch_create_path_changes(
     changes: dict[str, list[dict]],
     version: str,
 ) -> int:
-    """Batch create PathChange nodes for metadata changes."""
+    """Batch create PathChange nodes for metadata changes with semantic classification."""
     if not changes:
         return 0
 
     change_list = []
     for path, path_changes in changes.items():
         for change in path_changes:
-            change_list.append(
-                {
-                    "id": f"{path}:{change['field']}:{version}",
-                    "path": path,
-                    "change_type": change["field"],
-                    "old_value": change.get("old_value", ""),
-                    "new_value": change.get("new_value", ""),
-                }
-            )
+            change_data = {
+                "id": f"{path}:{change['field']}:{version}",
+                "path": path,
+                "change_type": change["field"],
+                "old_value": change.get("old_value", ""),
+                "new_value": change.get("new_value", ""),
+                "semantic_type": None,
+                "keywords_detected": None,
+            }
+
+            # Classify documentation changes
+            if change["field"] == "documentation":
+                semantic_type, keywords = classify_doc_change(
+                    change.get("old_value", ""),
+                    change.get("new_value", ""),
+                )
+                change_data["semantic_type"] = semantic_type
+                if keywords:
+                    change_data["keywords_detected"] = json.dumps(keywords)
+
+            change_list.append(change_data)
 
     if not change_list:
         return 0
 
-    # Create PathChange nodes
+    # Create PathChange nodes with semantic classification
     client.query(
         """
         UNWIND $changes AS c
         MERGE (change:PathChange {id: c.id})
         SET change.change_type = c.change_type,
             change.old_value = c.old_value,
-            change.new_value = c.new_value
+            change.new_value = c.new_value,
+            change.semantic_type = c.semantic_type,
+            change.keywords_detected = c.keywords_detected
     """,
         changes=change_list,
     )
@@ -694,7 +765,7 @@ def _batch_create_path_changes(
         """
         UNWIND $changes AS c
         MATCH (change:PathChange {id: c.id})
-        MATCH (p:DDPath {id: c.path})
+        MATCH (p:IMASPath {id: c.path})
         MATCH (v:DDVersion {id: $version})
         MERGE (change)-[:PATH]->(p)
         MERGE (change)-[:VERSION]->(v)
@@ -721,8 +792,8 @@ def _batch_create_renamed_to(client: GraphClient, mappings: dict[str, dict]) -> 
         client.query(
             """
             UNWIND $renames AS r
-            MATCH (old:DDPath {id: r.old_path})
-            MATCH (new:DDPath {id: r.new_path})
+            MATCH (old:IMASPath {id: r.old_path})
+            MATCH (new:IMASPath {id: r.new_path})
             MERGE (old)-[:RENAMED_TO]->(new)
         """,
             renames=rename_list,
@@ -779,7 +850,7 @@ def _import_clusters(client: GraphClient, dry_run: bool) -> int:
 
                 client.query(
                     """
-                    MATCH (p:DDPath {id: $path})
+                    MATCH (p:IMASPath {id: $path})
                     MATCH (c:SemanticCluster {id: $cluster_id})
                     MERGE (p)-[r:IN_CLUSTER]->(c)
                     SET r.distance = $distance
@@ -922,7 +993,7 @@ def build_dd_graph_cli(
         click.echo("\n=== Build Complete ===")
         click.echo(f"Versions processed: {stats['versions_processed']}")
         click.echo(f"IDS nodes: {stats['ids_created']}")
-        click.echo(f"DDPath nodes created: {stats['paths_created']}")
+        click.echo(f"IMASPath nodes created: {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
         if include_clusters:

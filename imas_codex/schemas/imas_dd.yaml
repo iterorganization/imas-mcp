@@ -133,6 +133,18 @@ enums:
       maxoccur:
         description: Maximum occurrences changed
 
+  SemanticChangeType:
+    description: Physics significance of documentation changes
+    permissible_values:
+      sign_convention:
+        description: Sign or orientation convention change (affects data interpretation)
+      coordinate_convention:
+        description: Coordinate system or reference frame change
+      definition_clarification:
+        description: More precise definition without semantic change
+      none:
+        description: No physics significance detected
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -357,6 +369,11 @@ classes:
         description: Previous value (as string)
       new_value:
         description: New value (as string)
+      semantic_type:
+        description: Physics significance (for documentation changes)
+        range: SemanticChangeType
+      keywords_detected:
+        description: JSON array of significant keywords found in new value
       path:
         description: The path that changed
         range: IMASPath

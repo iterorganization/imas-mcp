@@ -73,7 +73,7 @@ linkml_meta = LinkMLMeta(
                 "prefix_reference": "https://w3id.org/linkml/",
             },
         },
-        "source_file": "/home/ITER/mcintos/Code/imas-codex/imas_codex/schemas/imas_dd.yaml",
+        "source_file": "/home/ITER/mcintos/Code/imas-codex.worktrees/worktree-2026-01-05T05-37-10/imas_codex/schemas/imas_dd.yaml",
         "title": "IMAS Data Dictionary Knowledge Graph Schema",
     }
 )
@@ -260,6 +260,29 @@ class ChangeType(str, Enum):
     maxoccur = "maxoccur"
     """
     Maximum occurrences changed
+    """
+
+
+class SemanticChangeType(str, Enum):
+    """
+    Physics significance of documentation changes
+    """
+
+    sign_convention = "sign_convention"
+    """
+    Sign or orientation convention change (affects data interpretation)
+    """
+    coordinate_convention = "coordinate_convention"
+    """
+    Coordinate system or reference frame change
+    """
+    definition_clarification = "definition_clarification"
+    """
+    More precise definition without semantic change
+    """
+    none = "none"
+    """
+    No physics significance detected
     """
 
 
@@ -826,6 +849,20 @@ class PathChange(ConfiguredBaseModel):
         description="""New value (as string)""",
         json_schema_extra={
             "linkml_meta": {"alias": "new_value", "domain_of": ["PathChange"]}
+        },
+    )
+    semantic_type: SemanticChangeType | None = Field(
+        default=None,
+        description="""Physics significance (for documentation changes)""",
+        json_schema_extra={
+            "linkml_meta": {"alias": "semantic_type", "domain_of": ["PathChange"]}
+        },
+    )
+    keywords_detected: str | None = Field(
+        default=None,
+        description="""JSON array of significant keywords found in new value""",
+        json_schema_extra={
+            "linkml_meta": {"alias": "keywords_detected", "domain_of": ["PathChange"]}
         },
     )
     path: str = Field(
