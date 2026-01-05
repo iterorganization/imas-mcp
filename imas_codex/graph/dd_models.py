@@ -73,7 +73,7 @@ linkml_meta = LinkMLMeta(
                 "prefix_reference": "https://w3id.org/linkml/",
             },
         },
-        "source_file": "/home/ITER/mcintos/Code/imas-codex/imas_codex/schemas/imas_dd.yaml",
+        "source_file": "/home/ITER/mcintos/Code/imas-codex.worktrees/worktree-2026-01-05T11-06-45/imas_codex/schemas/imas_dd.yaml",
         "title": "IMAS Data Dictionary Knowledge Graph Schema",
     }
 )

@@ -402,7 +402,7 @@ def discover_epochs_optimized(
     # Tag epochs as new vs existing for reporting
     if existing_max_shot is not None:
         for epoch in epochs:
-            epoch["is_new"] = epoch["first_shot"] >= existing_max_shot
+            epoch["is_new"] = epoch["first_shot"] > existing_max_shot
     else:
         for epoch in epochs:
             epoch["is_new"] = True
