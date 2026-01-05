@@ -574,18 +574,25 @@ def get_ssh_tools() -> list[FunctionTool]:
 
 
 def get_search_tools() -> list[FunctionTool]:
-    """Get search tools (code examples and IMAS paths)."""
+    """Get fast search tools (code examples only, no IMAS DD).
+
+    For IMAS DD search tools, use get_imas_tools() separately.
+    Note: IMAS tools have ~30s startup cost for embedding model loading.
+    """
     return [
         FunctionTool.from_defaults(
             fn=_search_code_examples, name="search_code_examples"
         ),
-        FunctionTool.from_defaults(fn=_search_imas_paths, name="search_imas_paths"),
     ]
 
 
 def get_all_tools() -> list[FunctionTool]:
     """
     Get all available tools for a fully-capable agent.
+
+    WARNING: This includes IMAS DD tools which have ~30s startup cost
+    for embedding model loading. For fast agent startup, use
+    get_exploration_tools() instead.
 
     Combines:
     - Exploration tools (graph, SSH, code search)

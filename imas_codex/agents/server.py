@@ -5,7 +5,9 @@ This server provides MCP tools for:
 - Executing Cypher queries (READ ONLY - mutations blocked)
 - Ingesting validated nodes to the knowledge graph (private fields filtered)
 - Reading/updating sensitive private facility files
-- All IMAS DD tools (search, fetch, list, overview, etc.)
+
+Note: IMAS DD tools are NOT included to keep startup fast (~2s vs ~40s).
+Use the separate IMAS server (imas-codex serve imas) for DD search.
 
 Local use only - provides read access to graph, write via ingest_nodes only.
 """
@@ -32,7 +34,6 @@ from imas_codex.discovery import (
 )
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
-from imas_codex.tools import Tools
 
 logger = logging.getLogger(__name__)
 
@@ -107,12 +108,12 @@ class AgentsServer:
     - update_infrastructure: Merge updates to infrastructure files
     - get_graph_schema: Get complete schema for Cypher generation
     - get_facilities: List available facilities with SSH hosts
-    - All IMAS DD tools (search_imas_paths, fetch_imas_paths, etc.)
+
+    Note: IMAS DD tools are NOT included here to keep startup fast (~2s vs ~40s).
+    Use the separate IMAS server (imas-codex serve imas) for DD search.
     """
 
-    include_imas_tools: bool = True
     mcp: FastMCP = field(init=False, repr=False)
-    imas_tools: Tools | None = field(init=False, repr=False, default=None)
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
@@ -121,12 +122,6 @@ class AgentsServer:
         self._prompts = load_prompts()
         self._register_tools()
         self._register_prompts()
-
-        # Include IMAS DD tools by default
-        if self.include_imas_tools:
-            self.imas_tools = Tools()
-            self.imas_tools.register(self.mcp)
-            logger.debug("IMAS DD tools registered with agents server")
 
         logger.debug(f"Agents MCP server initialized with {len(self._prompts)} prompts")
 

@@ -52,7 +52,7 @@ result = await run_agent(agent, "Analyze this path...")
 
 ## Available Tools
 
-All agents have access to these tools:
+Agents use `get_exploration_tools()` by default for fast startup:
 
 | Tool | Description |
 |------|-------------|
@@ -60,8 +60,31 @@ All agents have access to these tools:
 | `ssh_mdsplus_query` | Query MDSplus database via SSH for node metadata |
 | `ssh_command` | Execute arbitrary SSH commands on remote facilities |
 | `search_code_examples` | Find usage patterns in ingested code |
-| `search_imas_paths` | Search IMAS Data Dictionary semantically |
 | `get_tree_structure` | View TreeNode hierarchy from the graph |
+
+### IMAS DD Tools (Optional)
+
+IMAS DD tools have ~30s startup cost for embedding model loading.
+Add them explicitly if needed:
+
+```python
+from imas_codex.agents import get_exploration_tools, get_imas_tools
+
+# Fast agents (default)
+tools = get_exploration_tools()
+
+# Add IMAS tools if needed (slow startup)
+tools = get_exploration_tools() + get_imas_tools()
+```
+
+| IMAS Tool | Description |
+|-----------|-------------|
+| `search_imas_paths` | Search IMAS Data Dictionary semantically |
+| `check_imas_paths` | Fast path validation |
+| `fetch_imas_paths` | Full path documentation |
+| `list_imas_paths` | Structure exploration |
+| `get_imas_overview` | High-level DD summary |
+| `search_imas_clusters` | Find related paths |
 
 ## Configuration
 
