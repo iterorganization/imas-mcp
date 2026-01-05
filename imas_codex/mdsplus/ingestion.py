@@ -38,6 +38,7 @@ def ingest_epochs(
     client: "GraphClient",
     epochs: list[dict],
     dry_run: bool = False,
+    delete_orphans: bool = True,
 ) -> int:
     """Ingest TreeModelVersion nodes to the graph.
 
@@ -45,10 +46,19 @@ def ingest_epochs(
         client: Neo4j GraphClient
         epochs: List of epoch dicts from discover_epochs()
         dry_run: If True, log but don't write
+        delete_orphans: If True, delete epochs not in the new set (for full re-scans)
 
     Returns:
         Number of epochs ingested
     """
+    if not epochs:
+        logger.warning("No epochs to ingest")
+        return 0
+
+    facility = epochs[0]["facility_id"]
+    tree_name = epochs[0]["tree_name"]
+    epoch_ids = [e["id"] for e in epochs]
+
     if dry_run:
         for epoch in epochs:
             logger.info(
@@ -56,6 +66,24 @@ def ingest_epochs(
                 f"(v{epoch['version']}, shots {epoch['first_shot']}-{epoch.get('last_shot', 'current')})"
             )
         return len(epochs)
+
+    # Delete orphaned epochs (from buggy fingerprinting) before ingesting new ones
+    if delete_orphans:
+        orphan_result = client.query(
+            """
+            MATCH (v:TreeModelVersion {facility_id: $facility, tree_name: $tree})
+            WHERE NOT v.id IN $epoch_ids
+            WITH v, v.id AS orphan_id
+            DETACH DELETE v
+            RETURN count(orphan_id) AS deleted
+            """,
+            facility=facility,
+            tree=tree_name,
+            epoch_ids=epoch_ids,
+        )
+        deleted = orphan_result[0]["deleted"] if orphan_result else 0
+        if deleted > 0:
+            logger.info(f"Deleted {deleted} orphaned epochs for {tree_name}")
 
     # Prepare records (remove paths used for super tree, not stored)
     records = []
