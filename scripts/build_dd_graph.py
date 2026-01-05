@@ -25,6 +25,7 @@ Embedding Pipeline:
 import hashlib
 import json
 import logging
+import re
 import sys
 
 import click
@@ -32,6 +33,7 @@ import imas
 import numpy as np
 
 from imas_codex import dd_version as current_dd_version
+from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.graph import GraphClient
@@ -234,6 +236,56 @@ def compute_content_hash(text: str) -> str:
         First 16 characters of SHA256 hex digest
     """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+# Error field pattern for identifying error paths and extracting base path and type
+ERROR_FIELD_PATTERN = re.compile(r"^(.+?)_error_(upper|lower|index)$")
+
+
+def filter_embeddable_paths(
+    paths_data: dict[str, dict],
+    exclusion_checker: ExclusionChecker | None = None,
+) -> tuple[dict[str, dict], dict[str, tuple[str, str]]]:
+    """
+    Filter paths to only those that should have embeddings generated.
+
+    Error fields, GGD paths, and metadata paths are excluded from embedding
+    generation but still exist as nodes in the graph.
+
+    Args:
+        paths_data: Dict mapping path_id to path metadata
+        exclusion_checker: Optional ExclusionChecker (uses default if None)
+
+    Returns:
+        Tuple of (embeddable_paths, error_relationships) where:
+        - embeddable_paths: Dict of paths that should have embeddings
+        - error_relationships: Dict mapping error_path -> (data_path, error_type)
+          where error_type is "upper", "lower", or "index"
+    """
+    checker = exclusion_checker or ExclusionChecker()
+    embeddable = {}
+    error_relationships: dict[str, tuple[str, str]] = {}
+
+    for path_id, path_info in paths_data.items():
+        exclusion_reason = checker.get_exclusion_reason(path_id)
+
+        if exclusion_reason is None:
+            # Not excluded - will be embedded
+            embeddable[path_id] = path_info
+        elif exclusion_reason == "error_field":
+            # Error field - extract base path and error type for linking
+            name = path_info.get("name", "")
+            match = ERROR_FIELD_PATTERN.match(name)
+            if match:
+                base_name = match.group(1)
+                error_type = match.group(2)  # "upper", "lower", or "index"
+                # Construct the data path by replacing error suffix in full path
+                parent_path = path_info.get("parent_path", "")
+                if parent_path:
+                    data_path = f"{parent_path}/{base_name}"
+                    error_relationships[path_id] = (data_path, error_type)
+
+    return embeddable, error_relationships
 
 
 def generate_embeddings_batch(
@@ -720,6 +772,8 @@ def build_dd_graph(
         "clusters_created": 0,
         "embeddings_updated": 0,
         "embeddings_cached": 0,
+        "error_relationships": 0,
+        "paths_filtered": 0,
     }
 
     # Ensure indexes exist for performance
@@ -811,13 +865,35 @@ def build_dd_graph(
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
     # Generate and store embeddings for current version paths
+    # Filter out error fields, GGD, and metadata paths to reduce embedding count
     if include_embeddings and not dry_run:
         current_version_data = version_data.get(current_dd_version)
         if current_version_data:
+            all_paths = current_version_data["paths"]
+
+            # Filter paths and extract error relationships
+            logger.info(f"Filtering {len(all_paths)} paths for embedding...")
+            embeddable_paths, error_relationships = filter_embeddable_paths(all_paths)
+            stats["paths_filtered"] = len(all_paths) - len(embeddable_paths)
+            logger.info(
+                f"Embedding {len(embeddable_paths)} paths "
+                f"(filtered {stats['paths_filtered']} excluded paths)"
+            )
+
+            # Create HAS_ERROR relationships for error fields
+            if error_relationships:
+                logger.info(
+                    f"Creating {len(error_relationships)} HAS_ERROR relationships..."
+                )
+                stats["error_relationships"] = _batch_create_error_relationships(
+                    client, error_relationships
+                )
+
+            # Generate embeddings only for non-excluded paths
             logger.info(f"Generating embeddings for {current_dd_version}...")
             embedding_stats = update_path_embeddings(
                 client=client,
-                paths_data=current_version_data["paths"],
+                paths_data=embeddable_paths,
                 ids_info=current_version_data["ids_info"],
                 model_name=embedding_model,
                 force_rebuild=force_embeddings,
@@ -1287,6 +1363,55 @@ def _batch_create_renamed_to(client: GraphClient, mappings: dict[str, dict]) -> 
         )
 
 
+def _batch_create_error_relationships(
+    client: GraphClient,
+    error_relationships: dict[str, tuple[str, str]],
+    batch_size: int = 1000,
+) -> int:
+    """Batch create HAS_ERROR relationships between error paths and data paths.
+
+    Error paths (e.g., psi_error_upper) are linked to their data paths (e.g., psi)
+    via HAS_ERROR relationships with an error_type property. This allows semantic
+    search to find the primary data path without embedding redundant error field
+    descriptions.
+
+    Args:
+        client: GraphClient instance
+        error_relationships: Dict mapping error_path_id to (data_path_id, error_type)
+            where error_type is "upper", "lower", or "index"
+
+    Returns:
+        Number of relationships created
+    """
+    if not error_relationships:
+        return 0
+
+    rel_list = [
+        {"error_path": error_path, "data_path": data_path, "error_type": error_type}
+        for error_path, (data_path, error_type) in error_relationships.items()
+    ]
+
+    created = 0
+    for i in range(0, len(rel_list), batch_size):
+        batch = rel_list[i : i + batch_size]
+        result = client.query(
+            """
+            UNWIND $rels AS r
+            MATCH (err:IMASPath {id: r.error_path})
+            MATCH (data:IMASPath {id: r.data_path})
+            MERGE (data)-[rel:HAS_ERROR]->(err)
+            SET rel.error_type = r.error_type
+            RETURN count(*) as created
+            """,
+            rels=batch,
+        )
+        if result:
+            created += result[0].get("created", 0)
+
+    logger.info(f"Created {created} HAS_ERROR relationships")
+    return created
+
+
 def _import_clusters(
     client: GraphClient,
     dry_run: bool,
@@ -1564,6 +1689,10 @@ def build_dd_graph_cli(
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
         if include_embeddings:
+            click.echo(
+                f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
+            )
+            click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
         if include_clusters:

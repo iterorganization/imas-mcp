@@ -236,6 +236,10 @@ classes:
       coordinates, and semantic clusters. Version tracking uses
       INTRODUCED_IN/DEPRECATED_IN/RENAMED_TO relationships.
       
+      Error field paths (e.g., psi_error_upper) are linked to their data paths
+      via HAS_ERROR relationships. This allows semantic search to find the
+      primary data path without embedding redundant error field descriptions.
+      
       This is the single authoritative representation of IMAS paths - code
       references should link to existing IMASPath nodes, never create them
       on-demand.
@@ -244,6 +248,7 @@ classes:
       - embedding_text: Pre-concatenated context for embedding generation
       - embedding: 384-dim vector (model tracked on DDVersion)
       - embedding_hash: Content hash for cache busting
+      - Error fields, GGD paths, and metadata are excluded from embedding
     class_uri: imas_dd:IMASPath
     attributes:
       id:
@@ -308,6 +313,15 @@ classes:
         description: >-
           SHA256 hash of embedding_text content. Used for cache busting - if hash
           changes, embedding needs regeneration. Enables minimal recompute on rebuild.
+      # Error field linking (HAS_ERROR relationship with error_type property)
+      error_paths:
+        description: >-
+          Error field paths linked via HAS_ERROR relationship. For data paths like
+          "psi", links to error variants like "psi_error_upper", "psi_error_lower".
+          The relationship has an error_type property ("upper", "lower", or "index").
+          Error fields are not embedded since they have no unique semantic content.
+        multivalued: true
+        range: IMASPath
 
   Unit:
     description: >-
