@@ -6,10 +6,11 @@ serving as the primary entry point for users to discover and navigate
 identifier schemas and enumeration options.
 """
 
+from __future__ import annotations
+
 import json
 import logging
-
-from fastmcp import Context
+from typing import TYPE_CHECKING
 
 from imas_codex import dd_version
 from imas_codex.models.error_models import ToolError
@@ -24,6 +25,9 @@ from imas_codex.search.decorators import (
 )
 
 from .base import BaseTool
+
+if TYPE_CHECKING:
+    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,9 @@ This package contains the Tools implementation split into focused modules.
 Each module handles a specific tool functionality with clean separation of concerns.
 """
 
-from fastmcp import FastMCP
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from imas_codex.providers import MCPProvider
 from imas_codex.search.document_store import DocumentStore
@@ -16,6 +18,9 @@ from .list_tool import ListTool
 from .overview_tool import OverviewTool
 from .path_tool import PathTool
 from .search_tool import SearchTool
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 
 class Tools(MCPProvider):

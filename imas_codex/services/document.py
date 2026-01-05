@@ -13,7 +13,8 @@ class DocumentService(BaseService):
 
     def __init__(self, document_store: DocumentStore | None = None):
         super().__init__()
-        self.store = document_store or DocumentStore()
+        # Use 'is None' check to avoid triggering __bool__/__len__ on DocumentStore
+        self.store = document_store if document_store is not None else DocumentStore()
 
     async def validate_ids(self, ids_names: list[str]) -> tuple[list[str], list[str]]:
         """

@@ -29,7 +29,10 @@ class BaseTool(ABC):
 
     def __init__(self, document_store: DocumentStore | None = None):
         self.logger = logger
-        self.document_store = document_store or DocumentStore()
+        # Use 'is None' check to avoid triggering __bool__/__len__ on DocumentStore
+        self.document_store = (
+            document_store if document_store is not None else DocumentStore()
+        )
 
         # Initialize search service
         self._search_service = self._create_search_service()

@@ -8,10 +8,10 @@ Provides search over hierarchical clusters of related paths using:
 - Composite relevance ranking
 """
 
-import logging
-from typing import Any, Literal
+from __future__ import annotations
 
-from fastmcp import Context
+import logging
+from typing import TYPE_CHECKING, Any, Literal
 
 from imas_codex.clusters.models import ClusterScope
 from imas_codex.clusters.search import ClusterSearcher, ClusterSearchResult
@@ -23,6 +23,9 @@ from imas_codex.search.decorators import cache_results, handle_errors, mcp_tool
 
 from .base import BaseTool
 from .utils import normalize_ids_filter, validate_query
+
+if TYPE_CHECKING:
+    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,7 @@ class ClustersTool(BaseTool):
     """
 
     def __init__(self, *args, **kwargs):
-        """Initialize clusters tool."""
+        """Initialize clusters tool with lazy loading."""
         super().__init__(*args, **kwargs)
 
         # Create encoder config
@@ -67,15 +70,17 @@ class ClustersTool(BaseTool):
             use_rich=False,
         )
 
-        # Use the Clusters class for unified management with auto-build
+        # Lazy-loaded state - defer heavy initialization until first use
         self._clusters: Clusters | None = None
         self._searcher: ClusterSearcher | None = None
         self._encoder: Encoder | None = None
+        self._initialized: bool = False
 
-        self._initialize_clusters()
-
-    def _initialize_clusters(self) -> None:
-        """Initialize clusters using the Clusters class with auto-build support."""
+    def _ensure_initialized(self) -> None:
+        """Lazy initialization of clusters - called on first use."""
+        if self._initialized:
+            return
+        self._initialized = True
         try:
             self._clusters = Clusters(encoder_config=self._encoder_config)
 
@@ -166,6 +171,9 @@ class ClustersTool(BaseTool):
                 ],
                 context={"tool": "search_imas_clusters"},
             )
+
+        # Lazy initialization - defer heavy loading until first use
+        self._ensure_initialized()
 
         if not self._searcher:
             return ToolError(

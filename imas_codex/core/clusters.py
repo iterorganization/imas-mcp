@@ -135,6 +135,24 @@ class Clusters:
             logger.debug(f"Could not read embedding cache document count: {e}")
         return None
 
+    def _get_clusters_document_count(self) -> int | None:
+        """
+        Get the document count from clusters.json metadata (fast file read).
+
+        This avoids loading the entire DocumentStore just to count documents.
+
+        Returns:
+            The total_paths count from clusters metadata, or None if unavailable.
+        """
+        try:
+            with self.file_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            stats = data.get("statistics", {})
+            return stats.get("total_paths")
+        except Exception as e:
+            logger.debug(f"Could not read clusters document count: {e}")
+            return None
+
     def _get_expected_document_count(self) -> int:
         """
         Get the expected document count from the document store.
@@ -154,8 +172,10 @@ class Clusters:
         """
         Check if any dependency files are newer than the clusters file.
 
-        Checks both file modification times and document count consistency
-        to detect stale caches even when mtime hasn't changed.
+        Uses fast file-based checks only. Does NOT load DocumentStore to avoid
+        expensive initialization (~30s for embeddings). Compares:
+        1. File modification times (clusters vs embeddings)
+        2. Document counts from cached metadata (embeddings cache vs clusters.json)
 
         Returns:
             True if clusters file should be regenerated, False otherwise.
@@ -181,21 +201,24 @@ class Clusters:
                 )
                 return True
 
-            # Check document count consistency
+            # Fast document count check: compare embedding cache count with clusters metadata
+            # This avoids loading the entire DocumentStore just to count documents
             cached_count = self._get_cached_embedding_doc_count(embedding_cache)
-            expected_count = self._get_expected_document_count()
-
-            if cached_count is not None and expected_count > 0:
-                if cached_count != expected_count:
+            if cached_count is not None:
+                # Get expected count from clusters.json metadata (fast file read)
+                clusters_doc_count = self._get_clusters_document_count()
+                if (
+                    clusters_doc_count is not None
+                    and cached_count != clusters_doc_count
+                ):
                     logger.info(
-                        f"Embedding cache document count mismatch: "
-                        f"cached={cached_count}, expected={expected_count}. Clusters rebuild required."
+                        f"Embedding cache document count mismatch with clusters: "
+                        f"embedding={cached_count}, clusters={clusters_doc_count}. Clusters rebuild required."
                     )
                     return True
-                else:
-                    logger.debug(
-                        f"Embedding cache document count valid: {cached_count} documents"
-                    )
+                logger.debug(
+                    f"Embedding cache document count valid: {cached_count} documents"
+                )
 
             logger.debug(
                 f"Embedding cache is up-to-date: {embedding_cache.name} "

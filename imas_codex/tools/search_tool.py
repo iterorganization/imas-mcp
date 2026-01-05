@@ -5,9 +5,10 @@ This module contains the search_imas tool logic with decorators
 for caching, validation, performance monitoring, and error handling.
 """
 
-import logging
+from __future__ import annotations
 
-from fastmcp import Context
+import logging
+from typing import TYPE_CHECKING
 
 from imas_codex.models.constants import (
     LOW_CONFIDENCE_THRESHOLD,
@@ -27,6 +28,9 @@ from imas_codex.search.decorators import (
 
 from .base import BaseTool
 from .utils import normalize_ids_filter, validate_query
+
+if TYPE_CHECKING:
+    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 

@@ -6,9 +6,13 @@ tools and resources with the FastMCP server. This enables a composable
 architecture where the server acts as an integrator.
 """
 
-from abc import ABC, abstractmethod
+from __future__ import annotations
 
-from fastmcp import FastMCP
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 
 class MCPProvider(ABC):
