@@ -96,6 +96,14 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # This ensures consistency and avoids copying stale or multi-version data.
 # In CI, resources may be pre-generated as artifacts and copied separately.
 
+# Build generated Python models (graph models, physics domains)
+# These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true
+# Must run BEFORE build-schemas which imports physics_domain.py
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    echo "Building generated models..." && \
+    uv run --no-dev build-models --force && \
+    echo "✓ Generated models ready"
+
 # Cache bust: Explicit ARG ensures rebuild when DD version changes.
 # IDS_FILTER is tracked automatically via its use in RUN commands.
 # IMAS_DD_VERSION needs explicit tracking since it may be empty (default from pyproject.toml).
@@ -113,13 +121,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv run --no-dev build-schemas --no-rich; \
     fi && \
     echo "✓ Schema data ready"
-
-# Build generated Python models (graph models, physics domains)
-# These are normally built by hatch build hook, but HATCH_BUILD_NO_HOOKS=true
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    echo "Building generated models..." && \
-    uv run --no-dev build-models --force && \
-    echo "✓ Generated models ready"
 
 # Build path map for version upgrade mappings (will skip if already exists from CI artifacts)
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
