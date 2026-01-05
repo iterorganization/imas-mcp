@@ -348,6 +348,7 @@ def discover_epochs_optimized(
 
     # Check graph for existing epochs (incremental mode)
     existing_max_shot = None
+    existing_max_epoch_shot = None  # first_shot of the latest epoch
     if client is not None:
         existing = client.query(
             """
@@ -363,6 +364,7 @@ def discover_epochs_optimized(
             existing_max = existing[0]["max_shot"]
             epoch_count = existing[0]["epoch_count"]
             existing_max_shot = existing_max
+            existing_max_epoch_shot = existing_max
             logger.info(
                 f"Graph has {epoch_count} epochs covering shots "
                 f"{existing_min}-{existing_max}"
@@ -396,6 +398,31 @@ def discover_epochs_optimized(
     if checkpoint.phase == "refine":
         logger.info(f"Phase 2: Refining {len(checkpoint.boundaries)} boundaries")
         checkpoint = _refine_boundaries(discovery, checkpoint, checkpoint_path)
+
+    # In incremental mode, check if first scanned shot matches existing epoch
+    # If so, no new epochs - just an extension of the current epoch
+    if existing_max_epoch_shot is not None and checkpoint.structures:
+        sorted_shots = sorted(checkpoint.structures.keys())
+        first_scanned = sorted_shots[0]
+
+        # Fetch fingerprint of the existing epoch's representative shot
+        existing_fp_result = discovery.batch_query_structures([existing_max_epoch_shot])
+        existing_fp_info = existing_fp_result.get(existing_max_epoch_shot)
+
+        if existing_fp_info is not None:
+            existing_fp = existing_fp_info[1]
+            first_scanned_fp = checkpoint.structures[first_scanned][1]
+
+            if existing_fp == first_scanned_fp and not checkpoint.refined_boundaries:
+                # Structure unchanged - no new epochs, just extension
+                logger.info(
+                    f"Structure unchanged since shot {existing_max_epoch_shot}, "
+                    f"no new epochs (current epoch extends to {end_shot})"
+                )
+                if checkpoint_path:
+                    checkpoint.phase = "complete"
+                    checkpoint.save(checkpoint_path)
+                return [], {}
 
     # Phase 3: Build epoch records
     logger.info("Phase 3: Building epoch records")
