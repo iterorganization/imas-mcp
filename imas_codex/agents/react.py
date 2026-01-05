@@ -9,7 +9,10 @@ Provides pre-configured agents for:
 """
 
 import asyncio
+import json
 import logging
+import re
+import time
 from dataclasses import dataclass, field
 
 from llama_index.core.agent import ReActAgent
@@ -17,6 +20,7 @@ from llama_index.core.tools import FunctionTool
 
 from imas_codex.agents.llm import get_llm
 from imas_codex.agents.tools import get_exploration_tools
+from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
 
@@ -292,57 +296,268 @@ class EnrichmentResult:
     path: str
     description: str | None
     physics_domain: str | None
+    units: str | None
     confidence: str
     error: str | None = None
+    elapsed_seconds: float = 0.0
+
+
+# Physics domains for TreeNode enrichment
+PHYSICS_DOMAINS = [
+    "equilibrium",
+    "magnetics",
+    "heating",
+    "diagnostics",
+    "transport",
+    "mhd",
+    "control",
+    "machine",
+    "neutral_beam",
+    "spectroscopy",
+]
+
+
+def _build_batch_prompt(
+    tree_name: str,
+    nodes: list[dict],
+) -> str:
+    """Build LLM prompt for batch enrichment."""
+    prompt = f"""You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
+
+For each path, analyze the naming convention and any provided code context to generate:
+- description: 1-2 sentence physics description. Be DIRECT and DEFINITIVE - do NOT use hedging language like "likely", "probably", "may represent". State what the node IS, not what it "might be".
+- physics_domain: One of: {", ".join(PHYSICS_DOMAINS)}
+- units: SI units for this quantity (e.g., "A", "Wb", "m", "s", "eV", "m^-3"). Use null if dimensionless or unknown.
+- confidence:
+  - high = standard physics quantity with well-known abbreviation (I_P, PSI, Q, ne, Te, etc.)
+  - medium = clear from context or naming pattern but not a standard abbreviation
+  - low = uncertain, set description to null instead of guessing
+
+If you cannot determine the meaning with confidence, set description to null rather than guessing.
+
+TCV-specific knowledge:
+- LIUQE: TCV's main equilibrium reconstruction code (both FORTRAN and MATLAB versions)
+- ASTRA: 1.5D transport code for plasma simulations
+- CXRS: Charge Exchange Recombination Spectroscopy diagnostic
+- THOMSON: Thomson scattering diagnostic for Te/ne profiles
+- FIR: Far-Infrared interferometer for line-integrated density
+- BOLO: Bolometer arrays for radiated power
+- GPI: Gas Puff Imaging diagnostic
+- PROFFIT: Profile fitting analysis code
+- IBS: Integrated Beam Simulation or Ion Beam System
+- RHO: Normalized toroidal flux coordinate (sqrt of normalized toroidal flux)
+- _95 suffix: quantity at 95% normalized flux surface
+- _AXIS suffix: quantity on magnetic axis
+
+Tree: {tree_name}
+
+Paths to describe (respond with JSON array):
+"""
+
+    for node in nodes:
+        path = node["path"]
+        prompt += f"\n- {path}"
+        if node.get("units") and node["units"] != "dimensionless":
+            prompt += f" (current units: {node['units']})"
+        if node.get("description") and node["description"] != "None":
+            prompt += f" (current: {node['description'][:100]})"
+
+    prompt += """
+
+Respond with a JSON array only, no markdown. Be definitive in descriptions:
+[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "high|medium|low"}]
+"""
+    return prompt
+
+
+def _parse_llm_response(content: str) -> list[dict]:
+    """Parse LLM response, extracting JSON."""
+    content = content.strip()
+    # Remove markdown code blocks if present
+    if content.startswith("```"):
+        content = re.sub(r"^```(?:json)?\n?", "", content)
+        content = re.sub(r"\n?```$", "", content)
+    return json.loads(content)
+
+
+async def _call_llm_batch(
+    model: str,
+    tree_name: str,
+    nodes: list[dict],
+    temperature: float = 0.3,
+) -> list[EnrichmentResult]:
+    """Call LLM for batch enrichment."""
+    from imas_codex.agents.llm import get_llm
+
+    prompt = _build_batch_prompt(tree_name, nodes)
+
+    llm = get_llm(model=model, temperature=temperature)
+    response = await llm.acomplete(prompt)
+
+    try:
+        results = _parse_llm_response(response.text)
+        return [
+            EnrichmentResult(
+                path=item["path"],
+                description=item.get("description"),
+                physics_domain=item.get("physics_domain"),
+                units=item.get("units"),
+                confidence=item.get("confidence", "low"),
+            )
+            for item in results
+        ]
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse LLM response: {e}")
+        logger.debug(f"Response was: {response.text[:500]}")
+        return [
+            EnrichmentResult(
+                path=n["path"],
+                description=None,
+                physics_domain=None,
+                units=None,
+                confidence="low",
+                error=f"JSON parse error: {e}",
+            )
+            for n in nodes
+        ]
+
+
+def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
+    """
+    Save enrichment results to Neo4j graph.
+
+    Returns number of nodes updated.
+    """
+    updates = [
+        {
+            "path": r.path,
+            "description": r.description,
+            "physics_domain": r.physics_domain,
+            "units": r.units,
+            "enrichment_confidence": r.confidence,
+            "enrichment_source": "llm_agent",
+        }
+        for r in results
+        if r.description  # Only update if we got a description
+    ]
+
+    if not updates:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $updates AS u
+            MATCH (t:TreeNode {path: u.path})
+            SET t.description = u.description,
+                t.physics_domain = u.physics_domain,
+                t.units = COALESCE(u.units, t.units),
+                t.enrichment_confidence = u.enrichment_confidence,
+                t.enrichment_source = u.enrichment_source
+            """,
+            updates=updates,
+        )
+
+    return len(updates)
+
+
+def _get_nodes_for_enrichment(
+    paths: list[str],
+    tree_name: str,
+) -> list[dict]:
+    """Fetch current node state from graph for enrichment."""
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            UNWIND $paths AS path
+            MATCH (t:TreeNode {path: path})
+            RETURN t.path AS path, t.tree_name AS tree,
+                   t.units AS units, t.description AS description
+            """,
+            paths=paths,
+        )
+        return [dict(r) for r in result]
 
 
 async def batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
     verbose: bool = False,
+    batch_size: int = 20,
+    model: str = "google/gemini-2.0-flash-001",
+    dry_run: bool = False,
 ) -> list[EnrichmentResult]:
     """
-    Batch enrich multiple TreeNode paths using the enrichment agent.
+    Batch enrich multiple TreeNode paths with LLM-generated metadata.
+
+    This function:
+    1. Fetches current node state from the graph
+    2. Calls LLM in batches for efficient processing
+    3. Persists enrichments back to the graph
 
     Args:
         paths: List of MDSplus paths to enrich
         tree_name: Tree name for context
         verbose: Enable verbose output
+        batch_size: Paths per LLM request (default: 20)
+        model: LLM model to use
+        dry_run: If True, don't persist to graph
 
     Returns:
         List of EnrichmentResult for each path
     """
-    agent = get_enrichment_agent(verbose=verbose)
-    results = []
+    start_time = time.perf_counter()
 
-    for path in paths:
-        try:
-            response = await run_agent(
-                agent,
-                f"Analyze the TreeNode path {path} in the {tree_name} tree. "
-                f"Provide: 1) A physics description, 2) Physics domain, 3) Confidence level. "
-                f"Use available tools to gather context before answering.",
-            )
+    # Get current node state
+    nodes = _get_nodes_for_enrichment(paths, tree_name)
+    if not nodes:
+        logger.warning(f"No TreeNodes found for paths: {paths[:3]}...")
+        # Create placeholder nodes for paths not in graph
+        nodes = [
+            {"path": p, "tree": tree_name, "units": None, "description": None}
+            for p in paths
+        ]
 
-            # Parse response (agent should format consistently)
-            results.append(
-                EnrichmentResult(
-                    path=path,
-                    description=response,  # Full response as description
-                    physics_domain=None,  # Would need structured output
-                    confidence="medium",
-                )
-            )
-        except Exception as e:
-            logger.exception(f"Failed to enrich {path}")
-            results.append(
-                EnrichmentResult(
-                    path=path,
-                    description=None,
-                    physics_domain=None,
-                    confidence="low",
-                    error=str(e),
-                )
-            )
+    if verbose:
+        logger.info(f"Processing {len(nodes)} nodes in batches of {batch_size}")
 
-    return results
+    all_results: list[EnrichmentResult] = []
+
+    # Process in batches
+    for i in range(0, len(nodes), batch_size):
+        batch = nodes[i : i + batch_size]
+        batch_start = time.perf_counter()
+
+        if verbose:
+            batch_num = i // batch_size + 1
+            total_batches = (len(nodes) + batch_size - 1) // batch_size
+            logger.info(f"Batch {batch_num}/{total_batches}...")
+
+        results = await _call_llm_batch(model, tree_name, batch)
+
+        batch_elapsed = time.perf_counter() - batch_start
+        for r in results:
+            r.elapsed_seconds = batch_elapsed / len(results)
+
+        all_results.extend(results)
+
+        # Persist after each batch (not in dry run)
+        if not dry_run:
+            updated = _save_enrichments_to_graph(results)
+            if verbose:
+                logger.info(f"  Persisted {updated} enrichments to graph")
+
+    total_elapsed = time.perf_counter() - start_time
+
+    # Summary stats
+    enriched = sum(1 for r in all_results if r.description)
+    high_conf = sum(1 for r in all_results if r.confidence == "high")
+    errors = sum(1 for r in all_results if r.error)
+
+    logger.info(
+        f"Enrichment complete: {enriched}/{len(all_results)} enriched, "
+        f"{high_conf} high confidence, {errors} errors, "
+        f"{total_elapsed:.1f}s total"
+    )
+
+    return all_results

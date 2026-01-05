@@ -1886,19 +1886,39 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @agent.command("enrich")
 @click.argument("paths", nargs=-1)
 @click.option("--tree", default="results", help="Tree name for context")
-@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
-def agent_enrich(paths: tuple[str, ...], tree: str, verbose: bool) -> None:
-    """Enrich TreeNode metadata using an agent.
+@click.option("--batch-size", "-b", default=20, help="Paths per LLM request")
+@click.option(
+    "--model",
+    "-m",
+    default="google/gemini-2.0-flash-001",
+    help="LLM model to use",
+)
+@click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
+@click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
+def agent_enrich(
+    paths: tuple[str, ...],
+    tree: str,
+    batch_size: int,
+    model: str,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Enrich TreeNode metadata using batch LLM inference.
 
-    The agent will analyze each path, gather context from the graph,
-    code examples, and MDSplus, then generate physics descriptions.
+    The tool will analyze each path, generate physics descriptions,
+    and persist enrichments to the Neo4j graph.
 
     Examples:
         imas-codex agent enrich "\\RESULTS::IBS"
 
         imas-codex agent enrich "\\RESULTS::ASTRA" "\\RESULTS::LIUQE" --tree results
+
+        # Dry run to preview without saving
+        imas-codex agent enrich "\\RESULTS::IBS:BOLO_CHORD" --dry-run
     """
     import asyncio
+    import logging
+    import time
 
     from imas_codex.agents import batch_enrich_paths
 
@@ -1906,17 +1926,55 @@ def agent_enrich(paths: tuple[str, ...], tree: str, verbose: bool) -> None:
         click.echo("No paths provided", err=True)
         raise SystemExit(1)
 
+    if verbose:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     click.echo(f"Enriching {len(paths)} paths from {tree} tree...")
+    click.echo(f"Model: {model}")
+    click.echo(f"Batch size: {batch_size}")
+    if dry_run:
+        click.echo("[DRY RUN] Will not persist to graph")
+    click.echo()
+
+    start_time = time.perf_counter()
 
     try:
-        results = asyncio.run(batch_enrich_paths(list(paths), tree, verbose))
+        results = asyncio.run(
+            batch_enrich_paths(
+                list(paths),
+                tree,
+                verbose=verbose,
+                batch_size=batch_size,
+                model=model,
+                dry_run=dry_run,
+            )
+        )
 
+        elapsed = time.perf_counter() - start_time
+
+        # Display results
         for r in results:
             click.echo(f"\n=== {r.path} ===")
             if r.error:
                 click.echo(f"Error: {r.error}")
             else:
-                click.echo(r.description)
+                click.echo(f"Description: {r.description}")
+                click.echo(f"Domain: {r.physics_domain}")
+                click.echo(f"Units: {r.units}")
+                click.echo(f"Confidence: {r.confidence}")
+
+        # Summary
+        click.echo("\n=== Summary ===")
+        enriched = sum(1 for r in results if r.description)
+        high_conf = sum(1 for r in results if r.confidence == "high")
+        click.echo(f"Enriched: {enriched}/{len(results)}")
+        click.echo(f"High confidence: {high_conf}")
+        click.echo(f"Total time: {elapsed:.1f}s")
+        click.echo(f"Avg per path: {elapsed / len(results):.2f}s")
+
+        if not dry_run and enriched > 0:
+            click.echo(f"\n✓ Persisted {enriched} enrichments to graph")
+
     except Exception as e:
         click.echo(f"Enrichment error: {e}", err=True)
         raise SystemExit(1) from None
