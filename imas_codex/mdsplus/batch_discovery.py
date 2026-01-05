@@ -20,8 +20,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Remote script template for batch structure queries
+# Uses hashlib.md5 for deterministic fingerprinting (Python's hash() is randomized per session)
 BATCH_QUERY_SCRIPT = """
 import json
+import hashlib
 import MDSplus
 
 tree_name = "{tree_name}"
@@ -32,8 +34,8 @@ for shot in shots:
     try:
         t = MDSplus.Tree(tree_name, shot)
         paths = sorted(str(n.path) for n in t.getNodeWild("***"))
-        # Use hash of sorted paths as structure fingerprint
-        fingerprint = hash(tuple(paths))
+        # Deterministic fingerprint: MD5 of newline-joined sorted paths
+        fingerprint = hashlib.md5("\\n".join(paths).encode()).hexdigest()
         results[shot] = {{"count": len(paths), "fingerprint": fingerprint}}
     except Exception as e:
         results[shot] = {{"error": str(e)}}
@@ -67,8 +69,8 @@ class DiscoveryCheckpoint:
     current_shot: int
     start_shot: int
     coarse_step: int
-    # Structure fingerprints: shot -> (count, fingerprint)
-    structures: dict[int, tuple[int, int]] = field(default_factory=dict)
+    # Structure fingerprints: shot -> (count, fingerprint_hex)
+    structures: dict[int, tuple[int, str]] = field(default_factory=dict)
     # Discovered boundaries: list of (low_shot, high_shot) pairs
     boundaries: list[tuple[int, int]] = field(default_factory=list)
     # Refined boundaries: shot where structure changed
@@ -138,10 +140,10 @@ print(t.getCurrent())
 
     def batch_query_structures(
         self, shots: list[int]
-    ) -> dict[int, tuple[int, int] | None]:
+    ) -> dict[int, tuple[int, str] | None]:
         """Query structure fingerprints for multiple shots in one SSH call.
 
-        Returns dict of shot -> (count, fingerprint) or None for errors.
+        Returns dict of shot -> (count, fingerprint_hex) or None for errors.
         """
         if not shots:
             return {}
@@ -191,8 +193,8 @@ print(t.getCurrent())
         self,
         low_shot: int,
         high_shot: int,
-        low_fingerprint: int,
-        high_fingerprint: int,
+        low_fingerprint: str,
+        high_fingerprint: str,
     ) -> int | None:
         """Find exact shot where structure changed using binary search.
 
