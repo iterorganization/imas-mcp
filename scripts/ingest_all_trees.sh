@@ -19,10 +19,10 @@ set -e
 
 # Trees to ingest - all valid TCV trees
 # Trees already done with epochs: results (129 epochs), magnetics (22 epochs)
+# Excluded: base (structure changes per-shot, not suitable for epoch discovery)
 TREES=(
     "apcs"
-    "atlas" 
-    "base"
+    "atlas"
     "diag_act"
     "diagz"
     "ecrh"
