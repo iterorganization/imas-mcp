@@ -240,6 +240,7 @@ def generate_embeddings_batch(
     texts: list[str],
     model_name: str = "all-MiniLM-L6-v2",
     batch_size: int = 256,
+    use_rich: bool | None = None,
 ) -> np.ndarray:
     """
     Generate embeddings for a batch of texts using sentence transformer.
@@ -248,6 +249,7 @@ def generate_embeddings_batch(
         texts: List of text strings to embed
         model_name: Sentence transformer model name
         batch_size: Batch size for encoding
+        use_rich: Force rich progress (True), logging (False), or auto (None)
 
     Returns:
         Numpy array of embeddings (N x 384 for MiniLM)
@@ -255,13 +257,49 @@ def generate_embeddings_batch(
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(model_name)
-    embeddings = model.encode(
-        texts,
-        batch_size=batch_size,
-        normalize_embeddings=True,
-        show_progress_bar=False,
+
+    total_batches = (len(texts) + batch_size - 1) // batch_size
+    if total_batches <= 1:
+        return model.encode(
+            texts,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+
+    batch_names = [
+        f"{min((i + 1) * batch_size, len(texts))}/{len(texts)}"
+        for i in range(total_batches)
+    ]
+
+    progress = create_progress_monitor(
+        use_rich=use_rich,
+        logger=logger,
+        item_names=batch_names,
+        description_template="Embedding: {item}",
     )
-    return embeddings
+
+    embeddings_list = []
+    progress.start_processing(batch_names, "Generating embeddings")
+    try:
+        for i in range(0, len(texts), batch_size):
+            texts_processed = min((i // batch_size + 1) * batch_size, len(texts))
+            batch_name = f"{texts_processed}/{len(texts)}"
+            progress.set_current_item(batch_name)
+
+            batch_texts = texts[i : i + batch_size]
+            batch_embeddings = model.encode(
+                batch_texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            embeddings_list.append(batch_embeddings)
+            progress.update_progress(batch_name)
+    finally:
+        progress.finish_processing()
+
+    return np.vstack(embeddings_list)
 
 
 def get_existing_embedding_hashes(
@@ -306,6 +344,7 @@ def update_path_embeddings(
     model_name: str = "all-MiniLM-L6-v2",
     batch_size: int = 500,
     force_rebuild: bool = False,
+    use_rich: bool | None = None,
 ) -> dict[str, int]:
     """
     Generate and store embeddings for IMASPath nodes with content-based caching.
@@ -321,6 +360,7 @@ def update_path_embeddings(
         model_name: Sentence transformer model name
         batch_size: Batch size for embedding generation
         force_rebuild: If True, regenerate all embeddings regardless of cache
+        use_rich: Force rich progress (True), logging (False), or auto (None)
 
     Returns:
         Dict with stats: {"updated": N, "cached": M, "total": N+M}
@@ -362,35 +402,74 @@ def update_path_embeddings(
 
     # Step 3: Generate embeddings for paths that need update
     texts_to_embed = [embedding_texts[pid] for pid in paths_to_update]
-    embeddings = generate_embeddings_batch(texts_to_embed, model_name, batch_size)
+    embeddings = generate_embeddings_batch(
+        texts_to_embed, model_name, batch_size, use_rich=use_rich
+    )
 
-    # Step 4: Store embeddings in graph in batches (model tracked on DDVersion)
+    # Step 4: Store embeddings in graph in batches with progress tracking
     store_batch_size = 100
-    for i in range(0, len(paths_to_update), store_batch_size):
-        batch_paths = paths_to_update[i : i + store_batch_size]
-        batch_data = []
+    total_store_batches = (
+        len(paths_to_update) + store_batch_size - 1
+    ) // store_batch_size
 
-        for j, path_id in enumerate(batch_paths):
-            embedding_idx = i + j
-            batch_data.append(
-                {
-                    "path_id": path_id,
-                    "embedding_text": embedding_texts[path_id],
-                    "embedding": embeddings[embedding_idx].tolist(),
-                    "embedding_hash": content_hashes[path_id],
-                }
+    if total_store_batches > 1:
+        store_batch_names = [
+            f"{min((i + 1) * store_batch_size, len(paths_to_update))}/{len(paths_to_update)}"
+            for i in range(total_store_batches)
+        ]
+        store_progress = create_progress_monitor(
+            use_rich=use_rich,
+            logger=logger,
+            item_names=store_batch_names,
+            description_template="Storing: {item}",
+        )
+        store_progress.start_processing(store_batch_names, "Storing embeddings")
+    else:
+        store_progress = None
+
+    try:
+        for i in range(0, len(paths_to_update), store_batch_size):
+            batch_paths = paths_to_update[i : i + store_batch_size]
+            batch_data = []
+
+            if store_progress:
+                paths_stored = min(
+                    (i // store_batch_size + 1) * store_batch_size, len(paths_to_update)
+                )
+                batch_name = f"{paths_stored}/{len(paths_to_update)}"
+                store_progress.set_current_item(batch_name)
+
+            for j, path_id in enumerate(batch_paths):
+                embedding_idx = i + j
+                batch_data.append(
+                    {
+                        "path_id": path_id,
+                        "embedding_text": embedding_texts[path_id],
+                        "embedding": embeddings[embedding_idx].tolist(),
+                        "embedding_hash": content_hashes[path_id],
+                    }
+                )
+
+            client.query(
+                """
+                UNWIND $batch AS b
+                MATCH (p:IMASPath {id: b.path_id})
+                SET p.embedding_text = b.embedding_text,
+                    p.embedding = b.embedding,
+                    p.embedding_hash = b.embedding_hash
+                """,
+                batch=batch_data,
             )
 
-        client.query(
-            """
-            UNWIND $batch AS b
-            MATCH (p:IMASPath {id: b.path_id})
-            SET p.embedding_text = b.embedding_text,
-                p.embedding = b.embedding,
-                p.embedding_hash = b.embedding_hash
-            """,
-            batch=batch_data,
-        )
+            if store_progress:
+                paths_stored = min(
+                    (i // store_batch_size + 1) * store_batch_size, len(paths_to_update)
+                )
+                batch_name = f"{paths_stored}/{len(paths_to_update)}"
+                store_progress.update_progress(batch_name)
+    finally:
+        if store_progress:
+            store_progress.finish_processing()
 
     return {
         "updated": len(paths_to_update),
@@ -742,6 +821,7 @@ def build_dd_graph(
                 ids_info=current_version_data["ids_info"],
                 model_name=embedding_model,
                 force_rebuild=force_embeddings,
+                use_rich=use_rich,
             )
             stats["embeddings_updated"] = embedding_stats["updated"]
             stats["embeddings_cached"] = embedding_stats["cached"]
