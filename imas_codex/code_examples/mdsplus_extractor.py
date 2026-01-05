@@ -50,6 +50,7 @@ def normalize_mdsplus_path(path: str) -> str:
     - Uppercase
     - Single backslash prefix
     - Consistent :: separator
+    - Strip trailing separators (: or .)
 
     Args:
         path: Raw MDSplus path
@@ -61,6 +62,8 @@ def normalize_mdsplus_path(path: str) -> str:
     path = path.lstrip("\\")
     # Uppercase
     path = path.upper()
+    # Strip trailing separators that indicate incomplete paths
+    path = path.rstrip(":.")
     # Ensure single backslash prefix
     return f"\\{path}"
 

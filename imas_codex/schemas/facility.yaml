@@ -261,7 +261,7 @@ enums:
     description: Type of data reference found in source code
     permissible_values:
       mdsplus_path:
-        description: Direct MDSplus tree path (e.g., \RESULTS::PSI)
+        description: Direct MDSplus tree path (e.g., \\RESULTS::PSI)
       tdi_call:
         description: TDI function call (e.g., tcv_eq("PSI", "LIUQE"))
       imas_path:
@@ -981,6 +981,11 @@ classes:
       raw_string:
         description: Exact string as found in code (e.g., "\\RESULTS::PSI")
         required: true
+      normalized_path:
+        description: >-
+          Normalized path for fuzzy matching. Strips channel indices and
+          suffixes to match tree structure nodes. E.g., CHANNEL_006 -> CHANNEL.
+          Used when raw_string doesn't match any TreeNode exactly.
       ref_type:
         description: Type of data reference
         required: true

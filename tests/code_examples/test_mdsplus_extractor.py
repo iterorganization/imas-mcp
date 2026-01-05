@@ -38,7 +38,7 @@ class TestExtractMDSplusPaths:
         refs = extract_mdsplus_paths(code)
         assert len(refs) == 1
         assert refs[0].path == "\\RESULTS::I_P"
-        assert refs[0].ref_type == "path"
+        assert refs[0].ref_type == "mdsplus_path"
 
     def test_lowercase_path(self) -> None:
         """Should handle lowercase paths."""
@@ -63,7 +63,7 @@ psi = _load_data(conn, f"{eq_tree}:PSI")
         refs = extract_mdsplus_paths(code)
         assert len(refs) == 1
         assert refs[0].path == "\\RESULTS::I_P"
-        assert refs[0].ref_type == "tdi_quantity"
+        assert refs[0].ref_type == "tdi_call"
 
     def test_tcv_get_call(self) -> None:
         """Should extract tcv_get quantities."""
@@ -71,7 +71,7 @@ psi = _load_data(conn, f"{eq_tree}:PSI")
         refs = extract_mdsplus_paths(code)
         assert len(refs) == 1
         assert refs[0].path == "\\RESULTS::IP"
-        assert refs[0].ref_type == "tdi_quantity"
+        assert refs[0].ref_type == "tdi_call"
 
     def test_multiple_paths(self) -> None:
         """Should extract multiple unique paths."""
@@ -95,7 +95,7 @@ ip = tcv_eq("I_P")
         refs = extract_mdsplus_paths(code)
         assert len(refs) == 2
         types = {r.ref_type for r in refs}
-        assert types == {"path", "tdi_quantity"}
+        assert types == {"mdsplus_path", "tdi_call"}
 
     def test_ignores_non_mdsplus_strings(self) -> None:
         """Should not extract regular strings."""

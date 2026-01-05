@@ -43,9 +43,12 @@ from imas_codex.mdsplus.discovery import (
     get_tree_structure,
 )
 from imas_codex.mdsplus.ingestion import (
+    cleanup_legacy_nodes,
     enrich_node_metadata,
     ingest_epochs,
     ingest_super_tree,
+    merge_legacy_metadata,
+    normalize_mdsplus_path,
 )
 from imas_codex.mdsplus.metadata import (
     enrich_graph_metadata,
@@ -56,6 +59,7 @@ __all__ = [
     "BatchDiscovery",
     "DiscoveryCheckpoint",
     "TreeDiscovery",
+    "cleanup_legacy_nodes",
     "discover_epochs",
     "discover_epochs_optimized",
     "enrich_graph_metadata",
@@ -64,5 +68,7 @@ __all__ = [
     "get_tree_structure",
     "ingest_epochs",
     "ingest_super_tree",
+    "merge_legacy_metadata",
+    "normalize_mdsplus_path",
     "refine_boundaries",
 ]

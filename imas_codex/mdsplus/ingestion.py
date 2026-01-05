@@ -13,6 +13,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def normalize_mdsplus_path(path: str) -> str:
+    """Normalize an MDSplus path to canonical form.
+
+    - Single backslash prefix
+    - Uppercase tree and node names
+    - Consistent :: separator
+
+    Args:
+        path: Raw MDSplus path
+
+    Returns:
+        Normalized path like \\RESULTS::TOP.NODE
+    """
+    # Remove all leading backslashes
+    path = path.lstrip("\\")
+    # Uppercase the entire path
+    path = path.upper()
+    # Ensure single backslash prefix
+    return f"\\{path}"
+
+
 def ingest_epochs(
     client: "GraphClient",
     epochs: list[dict],
@@ -324,3 +345,231 @@ def enrich_node_metadata(
 
     logger.info(f"Enriched {len(details)} nodes with metadata")
     return len(details)
+
+
+def merge_legacy_metadata(
+    client: "GraphClient",
+    facility: str,
+    tree_name: str,
+    dry_run: bool = False,
+) -> dict:
+    """Merge metadata from legacy nodes (without epoch info) into epoch-aware nodes.
+
+    Legacy nodes may have valuable description, physics_domain, or units fields
+    that should be preserved when re-ingesting with epoch discovery.
+
+    Matching is done by normalized path (case-insensitive, normalized backslashes).
+
+    Args:
+        client: Neo4j GraphClient
+        facility: Facility ID (e.g., "epfl")
+        tree_name: MDSplus tree name (e.g., "results")
+        dry_run: If True, log but don't write
+
+    Returns:
+        Dict with merge statistics
+    """
+    # Find legacy nodes with valuable metadata that match epoch nodes
+    # Normalize paths by uppercasing and removing extra backslashes
+    # Use parameters to pass backslash strings to avoid escaping issues
+    double_bs = "\\\\"  # Two backslash chars
+    single_bs = "\\"  # One backslash char
+
+    result = client.query(
+        """
+        MATCH (legacy:TreeNode)
+        WHERE legacy.first_shot IS NULL
+          AND legacy.tree_name = $tree_name
+          AND (legacy.description IS NOT NULL
+               OR legacy.physics_domain IS NOT NULL)
+        WITH legacy,
+             toUpper(replace(legacy.path, $double_bs, $single_bs)) AS norm_legacy
+        MATCH (epoch:TreeNode)
+        WHERE epoch.first_shot IS NOT NULL
+          AND epoch.tree_name = $tree_name
+          AND toUpper(replace(epoch.path, $double_bs, $single_bs)) = norm_legacy
+        RETURN legacy.path AS legacy_path,
+               epoch.path AS epoch_path,
+               legacy.description AS legacy_desc,
+               epoch.description AS epoch_desc,
+               legacy.physics_domain AS legacy_domain,
+               epoch.physics_domain AS epoch_domain,
+               legacy.units AS legacy_units,
+               epoch.units AS epoch_units
+        """,
+        tree_name=tree_name,
+        double_bs=double_bs,
+        single_bs=single_bs,
+    )
+
+    stats = {
+        "matched": len(result),
+        "descriptions_merged": 0,
+        "physics_domains_merged": 0,
+        "units_merged": 0,
+    }
+
+    if not result:
+        logger.info(f"No legacy nodes with metadata to merge for {tree_name}")
+        return stats
+
+    logger.info(f"Found {len(result)} legacy nodes with metadata to merge")
+
+    if dry_run:
+        for r in result[:5]:
+            logger.info(
+                f"  [DRY RUN] Would merge: {r['legacy_path']} -> {r['epoch_path']}"
+            )
+        return stats
+
+    # Merge metadata - prefer legacy if epoch is missing or generic
+    for r in result:
+        updates = {}
+
+        # Merge description if legacy has better one
+        legacy_desc = r["legacy_desc"] or ""
+        epoch_desc = r["epoch_desc"] or ""
+        if legacy_desc and (
+            not epoch_desc
+            or epoch_desc.lower() == "none"
+            or len(legacy_desc) > len(epoch_desc)
+        ):
+            updates["description"] = legacy_desc
+            stats["descriptions_merged"] += 1
+
+        # Merge physics_domain if missing
+        if r["legacy_domain"] and not r["epoch_domain"]:
+            updates["physics_domain"] = r["legacy_domain"]
+            stats["physics_domains_merged"] += 1
+
+        # Merge units if epoch has generic 'dimensionless'
+        legacy_units = r["legacy_units"] or ""
+        epoch_units = r["epoch_units"] or ""
+        if (
+            legacy_units
+            and legacy_units != "dimensionless"
+            and (not epoch_units or epoch_units == "dimensionless")
+        ):
+            updates["units"] = legacy_units
+            stats["units_merged"] += 1
+
+        if updates:
+            # Apply updates to epoch node - normalize paths for matching
+            set_clauses = ", ".join(f"n.{k} = ${k}" for k in updates)
+            norm_path = r["epoch_path"].upper().replace("\\\\", "\\")
+            client.query(
+                f"""
+                MATCH (n:TreeNode)
+                WHERE toUpper(replace(n.path, $double_bs, $single_bs)) = $norm_path
+                  AND n.first_shot IS NOT NULL
+                  AND n.tree_name = $tree_name
+                SET {set_clauses}
+                """,
+                norm_path=norm_path,
+                tree_name=tree_name,
+                double_bs=double_bs,
+                single_bs=single_bs,
+                **updates,
+            )
+
+    logger.info(
+        f"Merged metadata: {stats['descriptions_merged']} descriptions, "
+        f"{stats['physics_domains_merged']} physics_domains, "
+        f"{stats['units_merged']} units"
+    )
+    return stats
+
+
+def cleanup_legacy_nodes(
+    client: "GraphClient",
+    facility: str,
+    tree_name: str,
+    dry_run: bool = False,
+) -> dict:
+    """Remove legacy nodes that have been superseded by epoch-aware nodes.
+
+    Only removes legacy nodes (first_shot IS NULL) that have a matching
+    epoch-aware node with the same normalized path. Preserves legacy nodes
+    that don't have epoch equivalents.
+
+    Should be called AFTER merge_legacy_metadata() to preserve valuable metadata.
+
+    Args:
+        client: Neo4j GraphClient
+        facility: Facility ID
+        tree_name: MDSplus tree name
+        dry_run: If True, log but don't delete
+
+    Returns:
+        Dict with cleanup statistics
+    """
+    # Backslash strings for normalization
+    double_bs = "\\\\"  # Two backslash chars
+    single_bs = "\\"  # One backslash char
+
+    # Count legacy nodes that have epoch equivalents
+    # Normalize paths by removing extra backslashes
+    result = client.query(
+        """
+        MATCH (legacy:TreeNode)
+        WHERE legacy.first_shot IS NULL
+          AND legacy.tree_name = $tree_name
+        WITH legacy,
+             toUpper(replace(legacy.path, $double_bs, $single_bs)) AS norm_legacy
+        OPTIONAL MATCH (epoch:TreeNode)
+        WHERE epoch.first_shot IS NOT NULL
+          AND epoch.tree_name = $tree_name
+          AND toUpper(replace(epoch.path, $double_bs, $single_bs)) = norm_legacy
+        RETURN legacy.path AS path,
+               epoch IS NOT NULL AS has_epoch
+        """,
+        tree_name=tree_name,
+        double_bs=double_bs,
+        single_bs=single_bs,
+    )
+
+    to_delete = [r["path"] for r in result if r["has_epoch"]]
+    to_keep = [r["path"] for r in result if not r["has_epoch"]]
+
+    stats = {
+        "total_legacy": len(result),
+        "to_delete": len(to_delete),
+        "to_keep": len(to_keep),
+        "deleted": 0,
+    }
+
+    logger.info(
+        f"Legacy nodes for {tree_name}: {len(to_delete)} to delete, "
+        f"{len(to_keep)} to keep (no epoch equivalent)"
+    )
+
+    if dry_run:
+        for path in to_delete[:5]:
+            logger.info(f"  [DRY RUN] Would delete: {path}")
+        if len(to_delete) > 5:
+            logger.info(f"  ... and {len(to_delete) - 5} more")
+        return stats
+
+    if to_delete:
+        # Delete legacy nodes that have epoch equivalents
+        client.query(
+            """
+            MATCH (legacy:TreeNode)
+            WHERE legacy.first_shot IS NULL
+              AND legacy.tree_name = $tree_name
+            WITH legacy,
+                 toUpper(replace(legacy.path, $double_bs, $single_bs)) AS norm_legacy
+            MATCH (epoch:TreeNode)
+            WHERE epoch.first_shot IS NOT NULL
+              AND epoch.tree_name = $tree_name
+              AND toUpper(replace(epoch.path, $double_bs, $single_bs)) = norm_legacy
+            DETACH DELETE legacy
+            """,
+            tree_name=tree_name,
+            double_bs=double_bs,
+            single_bs=single_bs,
+        )
+        stats["deleted"] = len(to_delete)
+        logger.info(f"Deleted {len(to_delete)} superseded legacy nodes")
+
+    return stats

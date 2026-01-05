@@ -1,6 +1,6 @@
 # MDSplus Tree Ingestion
 
-> LLM-driven workflow for ingesting MDSplus tree structures into the knowledge graph.
+> CLI-driven workflow for ingesting MDSplus tree structures into the knowledge graph.
 
 ## Overview
 
@@ -11,14 +11,46 @@ MDSplus trees are hierarchical data containers used at fusion facilities (TCV, D
 3. **Documentation** - Provide context for data access patterns
 4. **Versioning** - Track shot-range validity for evolving analysis codes
 
-## Key Insight: No Scripts Needed
+## Quick Start: Batch Ingestion
 
-Tree structures are **very stable** (years between changes). Rather than maintaining ingestion scripts, we use an **LLM-driven on-the-fly approach**:
+For complete tree ingestion across all TCV trees:
 
-1. SSH to facility, introspect tree structure
-2. Parse output dynamically
-3. Use MCP tools (`ingest_nodes`, `cypher`) to batch insert
-4. LLM adapts to different tree structures without code changes
+```bash
+cd /path/to/imas-codex
+uv run imas-codex neo4j start
+./scripts/ingest_all_trees.sh 2>&1 | tee ingest_trees.log
+```
+
+For individual trees:
+
+```bash
+# Ingest a single tree with epoch discovery and metadata extraction
+uv run discover-mdsplus epfl results -v
+
+# Include legacy node cleanup (merge metadata then delete superseded nodes)
+uv run discover-mdsplus epfl magnetics -v --clean
+
+# Dry run to preview
+uv run discover-mdsplus epfl base --dry-run
+```
+
+## CLI Options
+
+| Option | Purpose |
+|--------|---------|
+| `-v, --verbose` | Detailed logging |
+| `--clean` | Merge legacy metadata and cleanup superseded nodes |
+| `--skip-metadata` | Skip units/description extraction (faster) |
+| `--dry-run` | Preview without writing to graph |
+| `--full` | Force full scan, ignoring existing epochs |
+| `--refine` | Refine existing rough epoch boundaries |
+
+## Available Trees (TCV/EPFL)
+
+```
+apcs atlas base diag_act diagz ecrh hybrid magnetics manual pcs 
+power raw_bolo raw_ece raw_fild raw_mag raw_mhd results tcv_shot thomson vsystem
+```
 
 ## Priority: TDI Functions First
 

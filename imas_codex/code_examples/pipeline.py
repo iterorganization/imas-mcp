@@ -213,33 +213,65 @@ def _link_example_mdsplus_paths(
     graph_client: GraphClient,
     example_id: str,
 ) -> int:
-    """Link a CodeExample to TreeNodes via its chunks' MDSplus paths.
+    """Create DataReference nodes and link to TreeNodes for an example.
 
-    Creates REFERENCES_NODE relationships from the CodeExample directly
-    to TreeNode entities for easier querying.
+    For chunks with mdsplus_paths metadata:
+    1. Creates DataReference nodes (deduplicated)
+    2. Creates CONTAINS_REF relationships from CodeChunk -> DataReference
+    3. Creates RESOLVES_TO_TREE_NODE relationships from DataReference -> TreeNode
 
     Args:
         graph_client: GraphClient instance
         example_id: ID of the CodeExample
 
     Returns:
-        Number of TreeNode links created
+        Number of DataReference nodes created/linked
     """
+    # Step 1: Create DataReference nodes and CONTAINS_REF relationships
     result = graph_client.query(
         """
         MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
         WHERE c.mdsplus_paths IS NOT NULL
-        UNWIND c.mdsplus_paths AS mds_path
-        MATCH (t:TreeNode)
-        WHERE t.path = mds_path
-           OR t.path ENDS WITH substring(mds_path, 1)
-           OR t.name = split(mds_path, '::')[-1]
-        MERGE (e)-[:REFERENCES_NODE]->(t)
-        RETURN count(DISTINCT t) AS linked
+        UNWIND c.mdsplus_paths AS path
+        WITH c, coalesce(e.facility_id, 'epfl') AS facility, path
+        MERGE (d:DataReference {raw_string: path, facility_id: facility})
+        ON CREATE SET
+            d.id = facility + ':mdsplus_path:' + path,
+            d.ref_type = 'mdsplus_path'
+        MERGE (c)-[:CONTAINS_REF]->(d)
+        RETURN count(DISTINCT d) AS refs_created
         """,
         example_id=example_id,
     )
-    return result[0]["linked"] if result else 0
+    refs_created = result[0]["refs_created"] if result else 0
+
+    # Step 2: Resolve to TreeNodes (only unresolved ones)
+    graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+              -[:CONTAINS_REF]->(d:DataReference {ref_type: 'mdsplus_path'})
+        WHERE NOT (d)-[:RESOLVES_TO_TREE_NODE]->()
+        MATCH (t:TreeNode)
+        WHERE t.path = d.raw_string
+           OR t.path ENDS WITH substring(d.raw_string, 1)
+           OR toLower(split(t.path, ':')[-1]) = toLower(split(d.raw_string, '::')[-1])
+        MERGE (d)-[:RESOLVES_TO_TREE_NODE]->(t)
+        """,
+        example_id=example_id,
+    )
+
+    # Update ref_count on CodeChunk nodes
+    graph_client.query(
+        """
+        MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
+              -[r:CONTAINS_REF]->(d:DataReference)
+        WITH c, count(r) AS ref_count
+        SET c.ref_count = ref_count
+        """,
+        example_id=example_id,
+    )
+
+    return refs_created
 
 
 async def ingest_code_files(

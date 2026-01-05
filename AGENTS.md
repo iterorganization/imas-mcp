@@ -45,6 +45,8 @@ SET c.embedding = $new_embedding
 | Run code ingestion | `uv run imas-codex ingest run epfl` |
 | List queued files | `uv run imas-codex ingest list epfl` |
 | Create release | `uv run imas-codex release v1.0.0 -m 'message'` |
+| Run LLM agent task | `uv run imas-codex agent run "describe path"` |
+| Batch enrich paths | `uv run imas-codex agent enrich "\\RESULTS::IBS"` |
 
 ## Project Overview
 
@@ -60,6 +62,12 @@ SET c.embedding = $new_embedding
 - Remote facility exploration via subagents
 - File system mapping, code search, data inspection
 - Command/Deploy architecture with specialist agents
+
+**LlamaIndex Agents** (`imas-codex agent`):
+- Autonomous ReActAgents for metadata enrichment
+- IMAS ↔ MDSplus mapping discovery
+- Tools for graph queries, SSH, and semantic search
+- See [agents/README.md](imas_codex/agents/README.md) and [plans/LLAMAINDEX_AGENTS.md](plans/LLAMAINDEX_AGENTS.md)
 
 ## Agent Workflows
 

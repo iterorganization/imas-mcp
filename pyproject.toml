@@ -72,12 +72,16 @@ dependencies = [
     "httpx>=0.27.0",
     "neo4j>=5.28.0,<6.0.0",
     "ruamel-yaml>=0.18.17",
-    "llama-index-core>=0.12.0",
+    "llama-index-core>=0.14.12",
     "llama-index-embeddings-huggingface>=0.6.1",
     "llama-index-vector-stores-neo4jvector>=0.4.0",
     "tree-sitter>=0.25.2",
     "tree-sitter-languages>=1.10.2",
     "tree-sitter-language-pack>=0.13.0",
+    "openai>=2.14.0",
+    "llama-index-llms-openai>=0.6.12",
+    "llama-index-llms-openai-like>=0.5.3",
+    "llama-index-tools-mcp>=0.4.5",
 ]
 
 [project.optional-dependencies]
@@ -135,6 +139,7 @@ build-models = "scripts.build_models:build_models"
 gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
 discover-mdsplus = "scripts.discover_mdsplus:main"
+enrich-tree-metadata = "scripts.enrich_tree_metadata:main"
 build-dd-graph = "scripts.build_dd_graph:build_dd_graph_cli"
 
 [tool.hatch.version]

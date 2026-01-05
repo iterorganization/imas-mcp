@@ -1828,6 +1828,101 @@ def release(
 
 
 # ============================================================================
+# Agent Commands
+# ============================================================================
+
+
+@main.group()
+def agent() -> None:
+    """Run LlamaIndex agents for exploration and enrichment.
+
+    \b
+      imas-codex agent run       Run an agent with a task
+      imas-codex agent enrich    Enrich TreeNode metadata
+    """
+    pass
+
+
+@agent.command("run")
+@click.argument("task")
+@click.option(
+    "--type",
+    "agent_type",
+    default="enrichment",
+    type=click.Choice(["enrichment", "mapping", "exploration"]),
+    help="Agent type to use",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def agent_run(task: str, agent_type: str, verbose: bool) -> None:
+    """Run an agent with a task.
+
+    The agent can autonomously use tools to:
+    - Query the Neo4j knowledge graph
+    - Execute SSH commands on remote facilities
+    - Search code examples and IMAS paths
+
+    Examples:
+        imas-codex agent run "Describe what \\RESULTS::ASTRA is used for"
+
+        imas-codex agent run "Find IMAS paths for electron temperature" --type mapping
+    """
+    import asyncio
+
+    from imas_codex.agents import quick_agent_task
+
+    click.echo(f"Running {agent_type} agent...")
+    if verbose:
+        click.echo(f"Task: {task}\n")
+
+    try:
+        result = asyncio.run(quick_agent_task(task, agent_type, verbose))
+        click.echo("\n=== Agent Response ===")
+        click.echo(result)
+    except Exception as e:
+        click.echo(f"Agent error: {e}", err=True)
+        raise SystemExit(1) from None
+
+
+@agent.command("enrich")
+@click.argument("paths", nargs=-1)
+@click.option("--tree", default="results", help="Tree name for context")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def agent_enrich(paths: tuple[str, ...], tree: str, verbose: bool) -> None:
+    """Enrich TreeNode metadata using an agent.
+
+    The agent will analyze each path, gather context from the graph,
+    code examples, and MDSplus, then generate physics descriptions.
+
+    Examples:
+        imas-codex agent enrich "\\RESULTS::IBS"
+
+        imas-codex agent enrich "\\RESULTS::ASTRA" "\\RESULTS::LIUQE" --tree results
+    """
+    import asyncio
+
+    from imas_codex.agents import batch_enrich_paths
+
+    if not paths:
+        click.echo("No paths provided", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Enriching {len(paths)} paths from {tree} tree...")
+
+    try:
+        results = asyncio.run(batch_enrich_paths(list(paths), tree, verbose))
+
+        for r in results:
+            click.echo(f"\n=== {r.path} ===")
+            if r.error:
+                click.echo(f"Error: {r.error}")
+            else:
+                click.echo(r.description)
+    except Exception as e:
+        click.echo(f"Enrichment error: {e}", err=True)
+        raise SystemExit(1) from None
+
+
+# ============================================================================
 # Dynamic Facility Commands
 # ============================================================================
 

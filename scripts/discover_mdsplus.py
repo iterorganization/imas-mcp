@@ -36,11 +36,13 @@ import click
 
 from imas_codex.graph import GraphClient
 from imas_codex.mdsplus import (
+    cleanup_legacy_nodes,
     discover_epochs,
     discover_epochs_optimized,
     enrich_graph_metadata,
     ingest_epochs,
     ingest_super_tree,
+    merge_legacy_metadata,
     refine_boundaries,
 )
 
@@ -67,6 +69,11 @@ logger = logging.getLogger(__name__)
     "--refine", is_flag=True, help="Refine existing rough boundaries (for legacy data)"
 )
 @click.option("--skip-metadata", is_flag=True, help="Skip metadata extraction (faster)")
+@click.option(
+    "--clean",
+    is_flag=True,
+    help="Merge and cleanup legacy nodes after ingestion",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output except errors")
 def main(
@@ -83,6 +90,7 @@ def main(
     full: bool,
     refine: bool,
     skip_metadata: bool,
+    clean: bool,
     verbose: bool,
     quiet: bool,
 ) -> int:
@@ -298,6 +306,26 @@ def main(
                 else:
                     click.echo(
                         "\n(skipping metadata extraction - use without --skip-metadata)"
+                    )
+
+                # Phase 6: Merge and cleanup legacy nodes (if --clean)
+                if clean:
+                    click.echo("\nMerging legacy node metadata...")
+                    merge_result = merge_legacy_metadata(
+                        client, facility, tree_name, dry_run
+                    )
+                    click.echo(
+                        f"✓ Merged {merge_result['descriptions_merged']} descriptions, "
+                        f"{merge_result['physics_domains_merged']} physics_domains"
+                    )
+
+                    click.echo("\nCleaning up superseded legacy nodes...")
+                    cleanup_result = cleanup_legacy_nodes(
+                        client, facility, tree_name, dry_run
+                    )
+                    click.echo(
+                        f"✓ Deleted {cleanup_result['deleted']} legacy nodes, "
+                        f"kept {cleanup_result['to_keep']} (no epoch equivalent)"
                     )
             else:
                 click.echo(
