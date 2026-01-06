@@ -78,12 +78,11 @@ def create_agent(config: AgentConfig) -> ReActAgent:
     tools = config.tools or get_exploration_tools()
 
     agent = ReActAgent(
-        name=config.name,
-        description=config.system_prompt[:200],  # Short description
-        system_prompt=config.system_prompt,
         tools=tools,
         llm=llm,
         verbose=config.verbose,
+        system_prompt=config.system_prompt,
+        max_iterations=config.max_iterations,
     )
 
     logger.info(f"Created agent '{config.name}' with {len(tools)} tools")
@@ -347,11 +346,23 @@ def _build_batch_prompt(
 def _parse_llm_response(content: str) -> list[dict]:
     """Parse LLM response, extracting JSON."""
     content = content.strip()
-    # Remove markdown code blocks if present
-    if content.startswith("```"):
+    
+    # Try to find JSON array block
+    match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", content, re.DOTALL)
+    if match:
+        content = match.group(1)
+    elif content.startswith("```"):
         content = re.sub(r"^```(?:json)?\n?", "", content)
         content = re.sub(r"\n?```$", "", content)
-    return json.loads(content)
+        
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback: try to find any list structure
+        match = re.search(r"(\[.*\])", content, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise
 
 
 def _parse_physics_domain(value: str | None) -> PhysicsDomain | None:
@@ -718,6 +729,312 @@ async def batch_enrich_paths(
         f"Enrichment complete: {enriched}/{len(all_results)} enriched, "
         f"{high_conf} high confidence, {errors} errors, "
         f"{total_elapsed:.1f}s total"
+    )
+
+    return all_results
+
+
+# =============================================================================
+# Smart Batch Composition
+# =============================================================================
+
+
+def _get_parent_path(path: str) -> str:
+    """Extract parent path from MDSplus path.
+
+    Examples:
+        \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
+        \\RESULTS::THOMSON:NE:ERROR_BAR -> \\RESULTS::THOMSON:NE
+        \\RESULTS::TOP -> \\RESULTS
+    """
+    # Handle :: separator (tree::subtree)
+    if "::" in path:
+        tree_part, node_part = path.split("::", 1)
+        if ":" in node_part:
+            # Has sub-nodes, get parent
+            parent_node = ":".join(node_part.split(":")[:-1])
+            return f"{tree_part}::{parent_node}" if parent_node else tree_part
+        return tree_part
+    return path
+
+
+def compose_batches(
+    paths: list[str],
+    batch_size: int = 50,
+    group_by_parent: bool = True,
+) -> list[list[str]]:
+    """
+    Compose smart batches of related paths for efficient enrichment.
+
+    Groups paths by parent to maximize context sharing. Sibling paths
+    (same parent) are processed together so one context query serves all.
+
+    Args:
+        paths: List of MDSplus paths to batch
+        batch_size: Maximum paths per batch (default: 50 for ReAct)
+        group_by_parent: If True, group siblings together
+
+    Returns:
+        List of batches, each batch is a list of related paths
+    """
+    if not group_by_parent:
+        # Simple chunking without grouping
+        return [paths[i : i + batch_size] for i in range(0, len(paths), batch_size)]
+
+    # Group paths by parent
+    parent_groups: dict[str, list[str]] = {}
+    for path in paths:
+        parent = _get_parent_path(path)
+        if parent not in parent_groups:
+            parent_groups[parent] = []
+        parent_groups[parent].append(path)
+
+    # Build batches respecting parent groups
+    batches: list[list[str]] = []
+    current_batch: list[str] = []
+
+    # Sort parents by group size (process larger groups first for efficiency)
+    sorted_parents = sorted(parent_groups.keys(), key=lambda p: -len(parent_groups[p]))
+
+    for parent in sorted_parents:
+        group = parent_groups[parent]
+
+        if len(group) > batch_size:
+            # Large group: split into multiple batches
+            if current_batch:
+                batches.append(current_batch)
+                current_batch = []
+            for i in range(0, len(group), batch_size):
+                batches.append(group[i : i + batch_size])
+        elif len(current_batch) + len(group) <= batch_size:
+            # Fits in current batch
+            current_batch.extend(group)
+        else:
+            # Start new batch
+            if current_batch:
+                batches.append(current_batch)
+            current_batch = group.copy()
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+# =============================================================================
+# ReAct Batch Enrichment
+# =============================================================================
+
+
+async def _run_react_batch_enrichment(
+    agent: ReActAgent,
+    paths: list[str],
+    tree_name: str,
+) -> list[EnrichmentResult]:
+    """
+    Run ReAct agent to enrich a batch of related paths.
+
+    The agent will:
+    1. Use tools to gather context for the batch
+    2. Generate enrichments for all paths
+
+    Args:
+        agent: Configured ReActAgent with tools
+        paths: Batch of related paths to enrich
+        tree_name: Tree name for context
+
+    Returns:
+        List of EnrichmentResult for each path
+    """
+    # Build the task prompt
+    paths_list = "\n".join(f"- {p}" for p in paths)
+    parent = _get_parent_path(paths[0]) if paths else "unknown"
+
+    task = f"""Enrich the following {len(paths)} MDSplus TreeNode paths from the {tree_name} tree.
+
+These paths share the parent: {parent}
+
+Paths to enrich:
+{paths_list}
+
+## Instructions
+
+1. First, gather context using tools:
+   - Query the graph for existing metadata on these paths and their siblings
+   - Search code examples for usage patterns (try searching for "{parent}" or key terms)
+   - Only use SSH if graph/code search is insufficient
+
+2. Then, output a JSON array with enrichments for ALL {len(paths)} paths.
+
+Remember: Be DEFINITIVE in descriptions. Use proper physics terminology.
+Output ONLY the JSON array, no other text.
+"""
+
+    try:
+        response = await agent.run(task)
+        response_text = str(response)
+
+        # Parse JSON from response
+        results = _parse_llm_response(response_text)
+
+        return [
+            EnrichmentResult(
+                path=item.get("path", paths[i] if i < len(paths) else "unknown"),
+                description=item.get("description"),
+                physics_domain=_parse_physics_domain(item.get("physics_domain")),
+                units=item.get("units"),
+                confidence=item.get("confidence", "low"),
+                sign_convention=item.get("sign_convention"),
+                dimensions=item.get("dimensions"),
+                error_node=item.get("error_node"),
+            )
+            for i, item in enumerate(results)
+        ]
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse agent response: {e}")
+        return [
+            EnrichmentResult(
+                path=p,
+                description=None,
+                physics_domain=None,
+                units=None,
+                confidence="low",
+                error=f"JSON parse error: {e}",
+            )
+            for p in paths
+        ]
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        return [
+            EnrichmentResult(
+                path=p,
+                description=None,
+                physics_domain=None,
+                units=None,
+                confidence="low",
+                error=str(e),
+            )
+            for p in paths
+        ]
+
+
+def get_batch_enrichment_agent(
+    verbose: bool = False,
+    model: str = "google/gemini-3-flash-preview",
+) -> ReActAgent:
+    """
+    Create a ReActAgent configured for batch enrichment.
+
+    Uses tools for context gathering but expects batch JSON output.
+
+    Args:
+        verbose: Enable verbose agent output
+        model: LLM model to use
+
+    Returns:
+        Configured ReActAgent
+    """
+    from imas_codex.agents.tools import get_enrichment_tools
+
+    # Get system prompt and fill in physics domains
+    system_prompt = _get_prompt("enrichment-react-batch")
+    if system_prompt:
+        system_prompt = system_prompt.format(
+            physics_domains=", ".join(get_physics_domain_values())
+        )
+    else:
+        # Fallback if prompt file not found
+        system_prompt = ENRICHMENT_SYSTEM_PROMPT
+
+    llm = get_llm(model=model, temperature=0.3, max_tokens=16384)
+    tools = get_enrichment_tools()
+
+    return ReActAgent(
+        tools=tools,
+        llm=llm,
+        verbose=verbose,
+        system_prompt=system_prompt,
+        max_iterations=10,
+    )
+
+
+async def react_batch_enrich_paths(
+    paths: list[str],
+    tree_name: str = "results",
+    batch_size: int = 50,
+    verbose: bool = False,
+    dry_run: bool = False,
+    model: str = "google/gemini-3-flash-preview",
+) -> list[EnrichmentResult]:
+    """
+    Enrich TreeNode paths using ReAct agent with smart batching.
+
+    This function:
+    1. Composes smart batches (groups related paths by parent)
+    2. For each batch, runs ReAct agent to gather context and enrich
+    3. Persists enrichments to graph
+
+    Compared to direct LLM batch:
+    - Slower (agent uses tools for context)
+    - Smarter (gathers relevant context from graph/code/MDSplus)
+    - Smaller batches (50 vs 200) due to context overhead
+
+    Args:
+        paths: List of MDSplus paths to enrich
+        tree_name: Tree name for context
+        batch_size: Paths per ReAct batch (default: 50)
+        verbose: Enable verbose output
+        dry_run: If True, don't persist to graph
+        model: LLM model to use
+
+    Returns:
+        List of EnrichmentResult for all paths
+    """
+    start_time = time.perf_counter()
+
+    # Compose smart batches
+    batches = compose_batches(paths, batch_size=batch_size, group_by_parent=True)
+
+    logger.info(
+        f"Processing {len(paths)} paths in {len(batches)} smart batches "
+        f"(avg {len(paths)/len(batches):.1f} paths/batch)"
+    )
+
+    # Create agent once, reuse for all batches
+    agent = get_batch_enrichment_agent(verbose=verbose, model=model)
+
+    all_results: list[EnrichmentResult] = []
+
+    for i, batch in enumerate(batches, 1):
+        batch_start = time.perf_counter()
+        parent = _get_parent_path(batch[0]) if batch else "unknown"
+
+        logger.info(f"Batch {i}/{len(batches)}: {len(batch)} paths from {parent}")
+
+        results = await _run_react_batch_enrichment(agent, batch, tree_name)
+
+        batch_elapsed = time.perf_counter() - batch_start
+        for r in results:
+            r.elapsed_seconds = batch_elapsed / len(results)
+
+        all_results.extend(results)
+
+        # Persist after each batch
+        if not dry_run:
+            updated = _save_enrichments_to_graph(results)
+            logger.info(f"  Persisted {updated} enrichments ({batch_elapsed:.1f}s)")
+
+    total_elapsed = time.perf_counter() - start_time
+
+    # Summary
+    enriched = sum(1 for r in all_results if r.description)
+    high_conf = sum(1 for r in all_results if r.confidence == "high")
+    errors = sum(1 for r in all_results if r.error)
+
+    logger.info(
+        f"ReAct enrichment complete: {enriched}/{len(all_results)} enriched, "
+        f"{high_conf} high confidence, {errors} errors, "
+        f"{total_elapsed:.1f}s total ({len(all_results)/total_elapsed:.1f} paths/sec)"
     )
 
     return all_results

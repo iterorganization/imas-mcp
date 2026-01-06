@@ -67,13 +67,14 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
 
     Returns:
         Query results as formatted string (max 20 rows)
-
-    Examples:
-        - MATCH (n:TreeNode) WHERE n.path CONTAINS 'ASTRA' RETURN n.path, n.description LIMIT 10
-        - MATCH (t:MDSplusTree) RETURN t.name, t.node_count_total
-        - MATCH (c:CodeChunk)-[:CONTAINS_REF]->(d:DataReference) RETURN d.raw_string LIMIT 5
     """
     try:
+        # Safety check for mutations
+        if not cypher.strip().upper().startswith("MATCH") and "CALL" not in cypher.upper():
+             # Basic read-only check (imperfect but helpful)
+             if any(kw in cypher.upper() for kw in ["CREATE", "DELETE", "SET", "MERGE", "REMOVE", "DROP"]):
+                 return "Error: Only read-only queries are allowed (MATCH, RETURN, CALL)"
+
         with GraphClient() as gc:
             result = gc.query(cypher, **(params or {}))
             if not result:
@@ -83,7 +84,12 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
                 output.append(str(dict(r)))
             if len(result) > 20:
                 output.append(f"... and {len(result) - 20} more rows")
-            return "\n".join(output)
+            
+            # Truncate total output to avoid context window issues
+            full_output = "\n".join(output)
+            if len(full_output) > 10000:
+                return full_output[:10000] + "... (truncated)"
+            return full_output
     except Exception as e:
         return f"Query error: {e}"
 
@@ -565,6 +571,52 @@ def get_imas_tools() -> list[FunctionTool]:
                 "Find clusters of semantically related IMAS paths. "
                 "Args: query (str), ids_filter (str, optional). "
                 "Discover related data across diagnostics."
+            ),
+        ),
+    ]
+
+
+def get_enrichment_tools() -> list[FunctionTool]:
+    """
+    Get tools optimized for enrichment tasks (context gathering).
+
+    Includes:
+    - query_neo4j: Critical for graph context
+    - search_code_examples: Critical for usage context
+    - ssh_mdsplus_query: Last resort for live metadata
+    - get_tree_structure: Helpful for hierarchy context
+    """
+    return [
+        FunctionTool.from_defaults(
+            fn=_query_neo4j,
+            name="query_neo4j",
+            description=(
+                "Execute a Cypher query against the Neo4j graph database. "
+                "Use to find sibling nodes, existing metadata, and relationships."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_search_code_examples,
+            name="search_code_examples",
+            description=(
+                "Semantic search over code examples using vector embeddings. "
+                "Finds code that matches meaning, not just keywords."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_ssh_mdsplus_query,
+            name="ssh_mdsplus_query",
+            description=(
+                "LAST RESORT: Query MDSplus via SSH (~5s latency). "
+                "Use only if graph and code search fail to provide context."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_get_tree_structure,
+            name="get_tree_structure",
+            description=(
+                "Get TreeNode structure from the graph. "
+                "Shows hierarchical MDSplus tree structure."
             ),
         ),
     ]
