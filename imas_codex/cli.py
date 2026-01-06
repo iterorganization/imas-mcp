@@ -1887,19 +1887,23 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.argument("paths", nargs=-1)
 @click.option("--limit", "-n", default=20, type=int, help="Max nodes to enrich")
 @click.option("--tree", default=None, help="Filter to specific tree name")
+@click.option("--status", default="pending", help="Target status (pending, enriched)")
+@click.option("--force", is_flag=True, help="Re-enrich already enriched nodes")
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def agent_enrich(
     paths: tuple[str, ...],
     limit: int,
     tree: str | None,
+    status: str,
+    force: bool,
     dry_run: bool,
     verbose: bool,
 ) -> None:
     """Enrich TreeNode metadata using ReAct agent with SSH access.
 
-    By default, discovers unenriched nodes from the graph. You can also
-    provide explicit paths to enrich.
+    By default, discovers nodes with status='pending' from the graph.
+    Use --force to re-enrich already enriched nodes.
 
     The agent uses ReAct reasoning to:
     - Query the knowledge graph for context
@@ -1909,11 +1913,17 @@ def agent_enrich(
 
     \b
     EXAMPLES:
-        # Enrich up to 20 discovered nodes (default)
+        # Enrich up to 20 pending nodes (default)
         imas-codex agent enrich
 
         # Enrich more nodes
         imas-codex agent enrich --limit 100
+
+        # Enrich specific tree
+        imas-codex agent enrich --tree results
+
+        # Re-enrich already processed nodes
+        imas-codex agent enrich --force --status enriched
 
         # Enrich specific paths
         imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
@@ -1935,19 +1945,23 @@ def agent_enrich(
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    # Determine target status
+    target_status = "enriched" if force else status
+
     # Get paths - either from args or discover from graph
     if paths:
         path_list = list(paths)
         click.echo(f"Enriching {len(path_list)} specified paths...")
     else:
-        click.echo("Discovering nodes needing enrichment...")
+        click.echo(f"Discovering nodes with status='{target_status}'...")
         nodes = discover_nodes_to_enrich(
             tree_name=tree,
+            status=target_status,
             with_context_only=False,
             limit=limit,
         )
         if not nodes:
-            click.echo("No nodes found needing enrichment.")
+            click.echo(f"No nodes found with status='{target_status}'.")
             return
         path_list = [n["path"] for n in nodes]
         with_ctx = sum(1 for n in nodes if n["has_context"])

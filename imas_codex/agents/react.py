@@ -57,7 +57,7 @@ class AgentConfig:
     name: str
     system_prompt: str
     tools: list[FunctionTool] = field(default_factory=list)
-    model: str = "google/gemini-3-flash-preview"
+    model: str = "google/gemini-3-pro-preview"
     temperature: float = 0.3
     verbose: bool = False
     max_iterations: int = 10
@@ -275,14 +275,14 @@ class EnrichmentResult:
 
 # Patterns for metadata/internal nodes to skip during discovery
 # These are matched as complete path segments (ending the path or followed by colon)
+# Note: ERROR_BAR and UNITS are NOT skipped - they are important for IMAS mapping
+# and should be linked via HAS_ERROR and HAS_UNIT relationships respectively.
 SKIP_PATTERNS = {
     "IGNORE",
     "FOO",
     "BAR",
     "VERSION_NUM",
     "COMMENT",
-    "ERROR_BAR",
-    "UNITS",
     "CONFIDENCE",
     "TRIAL",
     "USER_NAME",
@@ -429,12 +429,64 @@ async def _call_llm_batch(
         ]
 
 
+def _compute_confidence_score(
+    result: EnrichmentResult, has_context: bool = False
+) -> float:
+    """
+    Compute objective confidence score based on available signals.
+
+    Returns 0.0-1.0 based on:
+    - Description quality (length, specificity)
+    - Has code context from graph
+    - Has units defined
+    - Has physics domain assigned
+    """
+    score = 0.0
+
+    # Description quality (40% weight)
+    desc = result.description or ""
+    if len(desc) > 100:
+        score += 0.25
+    elif len(desc) > 50:
+        score += 0.15
+    elif len(desc) > 20:
+        score += 0.05
+    # Extra points for specific physics terms
+    physics_terms = [
+        "plasma",
+        "magnetic",
+        "flux",
+        "current",
+        "temperature",
+        "density",
+        "pressure",
+        "equilibrium",
+        "profile",
+    ]
+    if any(term in desc.lower() for term in physics_terms):
+        score += 0.15
+
+    # Has code context (30% weight) - computed from graph, not stored
+    if has_context:
+        score += 0.3
+
+    # Has units (15% weight)
+    if result.units:
+        score += 0.15
+
+    # Has physics domain (15% weight)
+    if result.physics_domain:
+        score += 0.15
+
+    return min(1.0, score)
+
+
 def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
     """
     Save enrichment results to Neo4j graph.
 
     Creates:
-    - TreeNode property updates (description, physics_domain, etc.)
+    - TreeNode property updates (description, physics_domain, enrichment_status, etc.)
     - HAS_UNIT relationships to Unit nodes (creating Unit if needed)
     - HAS_ERROR relationships to error TreeNodes (if they exist)
 
@@ -447,11 +499,16 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
     for r in results:
         if not r.description:
             continue
+
+        # Compute objective confidence score
+        confidence = _compute_confidence_score(r, r.has_context)
+
         update = {
             "path": r.path,
             "description": r.description,
             "physics_domain": r.physics_domain.value if r.physics_domain else None,
-            "enrichment_confidence": r.confidence,
+            "enrichment_confidence": confidence,
+            "enrichment_status": "enriched",
             "enrichment_source": "llm_agent",
         }
         # Add optional IMAS mapping fields if present
@@ -481,6 +538,7 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
             SET t.description = u.description,
                 t.physics_domain = u.physics_domain,
                 t.enrichment_confidence = u.enrichment_confidence,
+                t.enrichment_status = u.enrichment_status,
                 t.enrichment_source = u.enrichment_source,
                 t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
                 t.dimensions = COALESCE(u.dimensions, t.dimensions)
@@ -535,19 +593,21 @@ def _get_nodes_for_enrichment(
 
 def discover_nodes_to_enrich(
     tree_name: str | None = None,
+    status: str = "pending",
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
     """
     Discover TreeNodes needing enrichment from Neo4j.
 
-    Finds nodes that:
-    - Have first_shot set (are valid epoch-aware nodes)
-    - Have no description or description is "None"
-    - Are not metadata/internal nodes (TRIAL, IGNORE, etc.)
+    Uses enrichment_status to control workflow:
+    - 'pending': Never enriched (default target)
+    - 'enriched': Already processed, skip unless --force
+    - 'reviewed': Human validated, never auto-overwrite
 
     Args:
         tree_name: Filter to specific tree (e.g., "results")
+        status: Target enrichment_status (default: "pending")
         with_context_only: Only return nodes with code context
         limit: Maximum nodes to return
 
@@ -555,16 +615,22 @@ def discover_nodes_to_enrich(
         List of node dicts with path, tree, units, has_context, snippets
     """
     with GraphClient() as gc:
-        # Build WHERE clauses
-        where_clauses = [
-            "t.first_shot IS NOT NULL",
-            '(t.description IS NULL OR t.description = "None")',
-        ]
+        # Build WHERE clauses based on status
+        if status == "pending":
+            # Nodes that have never been enriched
+            status_clause = (
+                "(t.enrichment_status IS NULL OR t.enrichment_status = 'pending')"
+            )
+        else:
+            status_clause = f"t.enrichment_status = '{status}'"
+
+        where_clauses = [status_clause]
         if tree_name:
             where_clauses.append(f't.tree_name = "{tree_name}"')
 
         limit_clause = f"LIMIT {limit}" if limit else ""
 
+        # Compute has_context from graph relationships, not stored metadata
         query = f"""
             MATCH (t:TreeNode)
             WHERE {" AND ".join(where_clauses)}
@@ -572,6 +638,7 @@ def discover_nodes_to_enrich(
             OPTIONAL MATCH (c:CodeChunk)-[:CONTAINS_REF]->(d)
             WITH t, collect(DISTINCT substring(c.content, 0, 300)) AS snippets
             RETURN t.path AS path, t.tree_name AS tree, t.units AS units,
+                   t.enrichment_status AS status, t.enrichment_confidence AS confidence,
                    size(snippets) > 0 AS has_context, snippets
             ORDER BY has_context DESC, t.path
             {limit_clause}
@@ -590,6 +657,8 @@ def discover_nodes_to_enrich(
                     "path": r["path"],
                     "tree": r["tree"],
                     "units": r["units"],
+                    "status": r["status"],
+                    "confidence": r["confidence"],
                     "has_context": r["has_context"],
                     "snippets": r["snippets"] or [],
                 }
@@ -637,7 +706,7 @@ async def batch_enrich_paths(
     tree_name: str = "results",
     verbose: bool = False,
     batch_size: int = 200,
-    model: str = "google/gemini-3-flash-preview",
+    model: str = "google/gemini-3-pro-preview",
     dry_run: bool = False,
     context_map: dict[str, list[str]] | None = None,
 ) -> list[EnrichmentResult]:
@@ -920,7 +989,7 @@ Output ONLY the JSON array, no other text.
 
 def get_batch_enrichment_agent(
     verbose: bool = False,
-    model: str = "google/gemini-3-flash-preview",
+    model: str = "google/gemini-3-pro-preview",
 ) -> ReActAgent:
     """
     Create a ReActAgent configured for batch enrichment.
@@ -966,7 +1035,7 @@ async def react_batch_enrich_paths(
     batch_size: int | None = None,  # Auto-select based on model
     verbose: bool = False,
     dry_run: bool = False,
-    model: str = "google/gemini-3-flash-preview",
+    model: str = "google/gemini-3-pro-preview",
 ) -> list[EnrichmentResult]:
     """
     Enrich TreeNode paths using ReAct agent with smart batching.
