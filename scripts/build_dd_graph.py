@@ -772,6 +772,7 @@ def build_dd_graph(
         "clusters_created": 0,
         "embeddings_updated": 0,
         "embeddings_cached": 0,
+        "embeddings_cleaned": 0,
         "error_relationships": 0,
         "paths_filtered": 0,
     }
@@ -914,6 +915,9 @@ def build_dd_graph(
                 model=embedding_model,
                 count=embedding_stats["total"],
             )
+
+            # Clean up stale embeddings from deprecated paths
+            stats["embeddings_cleaned"] = _cleanup_stale_embeddings(client)
         else:
             logger.warning(f"No data for current version {current_dd_version}")
 
@@ -1412,6 +1416,29 @@ def _batch_create_error_relationships(
     return created
 
 
+def _cleanup_stale_embeddings(client: GraphClient) -> int:
+    """Remove embeddings from deprecated paths.
+
+    When a new DD version becomes current, paths that were deprecated should
+    have their embeddings removed to avoid polluting semantic search results.
+
+    Returns:
+        Number of paths cleaned up
+    """
+    result = client.query("""
+        MATCH (p:IMASPath)-[:DEPRECATED_IN]->(:DDVersion)
+        WHERE p.embedding IS NOT NULL
+        SET p.embedding = null,
+            p.embedding_text = null,
+            p.embedding_hash = null
+        RETURN count(p) as cleaned
+    """)
+    cleaned = result[0]["cleaned"] if result else 0
+    if cleaned > 0:
+        logger.info(f"Cleaned up {cleaned} stale embeddings from deprecated paths")
+    return cleaned
+
+
 def _import_clusters(
     client: GraphClient,
     dry_run: bool,
@@ -1431,8 +1458,11 @@ def _import_clusters(
     """
     try:
         from imas_codex.core.clusters import Clusters
+        from imas_codex.embeddings.config import EncoderConfig
 
-        clusters_manager = Clusters()
+        # Create encoder config for loading clusters
+        encoder_config = EncoderConfig()
+        clusters_manager = Clusters(encoder_config=encoder_config)
         if not clusters_manager.is_available():
             logger.warning("Cluster data not available")
             return 0
@@ -1440,7 +1470,8 @@ def _import_clusters(
         cluster_data = clusters_manager.get_clusters()
         cluster_count = 0
 
-        for cluster_id, cluster in cluster_data.items():
+        for cluster in cluster_data:
+            cluster_id = cluster.get("id", cluster_count)
             if dry_run:
                 cluster_count += 1
                 continue
@@ -1535,12 +1566,13 @@ def _import_clusters(
 
 
 @click.command()
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging output")
-@click.option("--quiet", "-q", is_flag=True, help="Suppress all logging except errors")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
 @click.option(
+    "-a",
     "--all-versions",
     is_flag=True,
-    help="Process all available DD versions (default: current only)",
+    help="Process all DD versions (default: current only)",
 )
 @click.option(
     "--from-version",
@@ -1548,24 +1580,20 @@ def _import_clusters(
     help="Start from a specific version (for incremental updates)",
 )
 @click.option(
-    "--ids-filter",
-    type=str,
-    help="Specific IDS names to include as a space-separated string (e.g., 'equilibrium core_profiles')",
-)
-@click.option(
-    "--include-clusters",
-    is_flag=True,
-    help="Import semantic clusters into graph",
-)
-@click.option(
-    "--include-embeddings/--no-embeddings",
-    default=True,
-    help="Generate embeddings for IMASPath nodes (default: enabled)",
-)
-@click.option(
-    "--force-embeddings",
+    "-f",
+    "--force",
     is_flag=True,
     help="Force regenerate all embeddings (ignore cache)",
+)
+@click.option(
+    "--skip-clusters",
+    is_flag=True,
+    help="Skip importing semantic clusters into graph",
+)
+@click.option(
+    "--skip-embeddings",
+    is_flag=True,
+    help="Skip embedding generation for current version paths",
 )
 @click.option(
     "--embedding-model",
@@ -1574,44 +1602,52 @@ def _import_clusters(
     help="Sentence transformer model for embeddings",
 )
 @click.option(
+    "--ids-filter",
+    type=str,
+    help="Filter to specific IDS (space-separated, for testing)",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Preview changes without writing to graph",
-)
-@click.option(
-    "--no-rich",
-    is_flag=True,
-    help="Disable rich progress bar, use plain logging",
 )
 def build_dd_graph_cli(
     verbose: bool,
     quiet: bool,
     all_versions: bool,
     from_version: str | None,
-    ids_filter: str | None,
-    include_clusters: bool,
-    include_embeddings: bool,
-    force_embeddings: bool,
+    force: bool,
+    skip_clusters: bool,
+    skip_embeddings: bool,
     embedding_model: str,
+    ids_filter: str | None,
     dry_run: bool,
-    no_rich: bool,
 ) -> int:
     """Build the IMAS Data Dictionary Knowledge Graph.
 
-    This command populates Neo4j with IMAS DD structure including version
-    tracking, path hierarchy, units, embeddings, and optionally semantic clusters.
+    Populates Neo4j with complete IMAS DD structure including:
 
-    Embeddings are cached using content-based hashing - only paths with changed
-    content will have embeddings regenerated on subsequent runs.
+    \b
+    - All 34 DD versions with version tracking (INTRODUCED_IN, DEPRECATED_IN)
+    - IMASPath nodes with hierarchical relationships (PARENT, IDS)
+    - PathChange nodes for metadata evolution between versions
+    - RENAMED_TO relationships for path migrations
+    - HAS_ERROR relationships linking data paths to error fields
+    - Vector embeddings for semantic search (current version only)
+    - SemanticCluster nodes with centroids for cluster-based search
 
+    Embeddings are generated only for current version paths to avoid noise
+    from deprecated/renamed paths. Version history is queryable via graph
+    relationships, not vector search. Stale embeddings on deprecated paths
+    are automatically cleaned up.
+
+    \b
     Examples:
-        build-dd-graph                        # Build current version with embeddings
-        build-dd-graph --all-versions         # Build all 34 versions
-        build-dd-graph --from-version 4.0.0   # Incremental from 4.0.0
-        build-dd-graph --include-clusters     # Include semantic clusters
-        build-dd-graph --force-embeddings     # Regenerate all embeddings
-        build-dd-graph --no-embeddings        # Skip embedding generation
-        build-dd-graph --dry-run -v           # Preview without writing
+        build-dd-graph                  # Build current version with all features
+        build-dd-graph --all-versions   # Build all 34 DD versions
+        build-dd-graph --from-version 4.0.0  # Incremental from specific version
+        build-dd-graph --force          # Regenerate all embeddings
+        build-dd-graph --dry-run -v     # Preview without writing
     """
     # Set up logging
     if quiet:
@@ -1647,11 +1683,12 @@ def build_dd_graph_cli(
                 )
                 return 1
         else:
-            # Just current version
+            # Default: current version only
             versions = [current_dd_version]
 
         logger.info(f"Processing {len(versions)} DD versions")
-        logger.info(f"Versions: {versions[0]} → {versions[-1]}")
+        if len(versions) > 1:
+            logger.info(f"Versions: {versions[0]} → {versions[-1]}")
 
         # Parse IDS filter if provided
         ids_set: set[str] | None = None
@@ -1662,23 +1699,17 @@ def build_dd_graph_cli(
         if dry_run:
             click.echo("DRY RUN - no changes will be written to graph")
 
-        # Determine rich usage
-        use_rich: bool | None = None
-        if no_rich:
-            use_rich = False
-
-        # Build graph
+        # Build graph with all features enabled by default
         with GraphClient() as client:
             stats = build_dd_graph(
                 client=client,
                 versions=versions,
                 ids_filter=ids_set,
-                include_clusters=include_clusters,
-                include_embeddings=include_embeddings,
+                include_clusters=not skip_clusters,
+                include_embeddings=not skip_embeddings,
                 dry_run=dry_run,
-                use_rich=use_rich,
                 embedding_model=embedding_model,
-                force_embeddings=force_embeddings,
+                force_embeddings=force,
             )
 
         # Report results
@@ -1688,14 +1719,16 @@ def build_dd_graph_cli(
         click.echo(f"IMASPath nodes created: {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
-        if include_embeddings:
+        if not skip_embeddings:
             click.echo(
                 f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
             )
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
-        if include_clusters:
+            if stats.get("embeddings_cleaned", 0) > 0:
+                click.echo(f"Stale embeddings cleaned: {stats['embeddings_cleaned']}")
+        if not skip_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
         return 0
