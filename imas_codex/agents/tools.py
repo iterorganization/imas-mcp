@@ -182,43 +182,46 @@ def _ssh_command(command: str, facility: str = "epfl", timeout: int = 60) -> str
         return f"SSH error: {e}"
 
 
-def _search_code_examples(query: str, limit: int = 5) -> str:
+def _search_code_examples(query: str, limit: int = 5, min_score: float = 0.5) -> str:
     """
-    Search code examples for how MDSplus paths or concepts are used.
+    Search code examples using semantic vector search.
 
-    Use this to find real-world usage patterns that reveal the physics
-    meaning of TreeNodes or how data is accessed.
+    Uses embedded code chunks for similarity search, finding code that
+    semantically matches your query even without exact keyword matches.
 
     Args:
-        query: Search term (path fragment, function name, or concept)
+        query: Natural language query or path fragment (e.g., 'electron density profile')
         limit: Maximum number of results (default: 5)
+        min_score: Minimum similarity score 0-1 (default: 0.5)
 
     Returns:
-        Matching code snippets with file names
+        Matching code snippets with file names, function names, and scores
     """
     try:
-        with GraphClient() as gc:
-            result = gc.query(
-                """
-                MATCH (c:CodeChunk)
-                WHERE c.content CONTAINS $query
-                MATCH (e:CodeExample)-[:HAS_CHUNK]->(c)
-                RETURN e.source_file AS file,
-                       e.facility_id AS facility,
-                       substring(c.content, 0, 500) AS snippet
-                LIMIT $limit
-                """,
-                query=query,
-                limit=limit,
-            )
-            if not result:
-                return f"No code examples found containing '{query}'"
-            output = []
-            for r in result:
-                output.append(f"=== {r['file']} ({r['facility']}) ===")
-                output.append(r["snippet"])
-                output.append("")
-            return "\n".join(output)
+        from imas_codex.code_examples.search import CodeExampleSearch
+
+        searcher = CodeExampleSearch()
+        results = searcher.search(query=query, top_k=limit, min_score=min_score)
+
+        if not results:
+            return f"No code examples found matching '{query}'"
+
+        output = []
+        for r in results:
+            header = f"=== {r.source_file} (score: {r.score:.2f}) ==="
+            if r.function_name:
+                header = (
+                    f"=== {r.source_file}::{r.function_name} (score: {r.score:.2f}) ==="
+                )
+            output.append(header)
+            # Truncate long content
+            content = r.content[:600] + "..." if len(r.content) > 600 else r.content
+            output.append(content)
+            if r.related_ids:
+                output.append(f"  Related IDS: {', '.join(r.related_ids)}")
+            output.append("")
+
+        return "\n".join(output)
     except Exception as e:
         return f"Search error: {e}"
 
@@ -473,8 +476,8 @@ def get_exploration_tools() -> list[FunctionTool]:
             fn=_search_code_examples,
             name="search_code_examples",
             description=(
-                "Search code examples for usage patterns. "
-                "Finds how MDSplus paths are used in real code."
+                "Semantic search over code examples using vector embeddings. "
+                "Finds code that matches meaning, not just keywords."
             ),
         ),
         FunctionTool.from_defaults(
