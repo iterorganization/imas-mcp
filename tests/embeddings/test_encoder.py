@@ -32,10 +32,11 @@ class TestEncoder:
         return Encoder(config=encoder_config)
 
     def test_initialization_default_config(self):
-        """Encoder initializes with default config when none provided."""
+        """Encoder initializes with default config and loads model eagerly."""
         encoder = Encoder()
         assert encoder.config is not None
-        assert encoder._model is None
+        # Model is now loaded eagerly in __init__
+        assert encoder._model is not None
         assert encoder._cache is None
 
     def test_initialization_custom_config(self, encoder_config):
@@ -45,26 +46,17 @@ class TestEncoder:
         assert encoder.config.batch_size == 8
 
     def test_get_model_loads_model(self, encoder):
-        """get_model loads model if not already loaded."""
-        # Patch the internal loading method to avoid real loading
-        with patch.object(encoder, "_load_model") as mock_load:
-            encoder._model = MagicMock()  # Simulate already loaded
-            result = encoder.get_model()
-            mock_load.assert_not_called()
-            assert result is not None
+        """get_model returns the already-loaded model."""
+        # Model is now loaded eagerly, so get_model just returns it
+        result = encoder.get_model()
+        assert result is not None
+        assert result is encoder._model
 
-    def test_get_model_triggers_load_when_none(self, encoder):
-        """get_model triggers _load_model when model is None."""
-        mock_model = MagicMock()
-        with patch.object(encoder, "_load_model") as mock_load:
-
-            def set_model():
-                encoder._model = mock_model
-
-            mock_load.side_effect = set_model
-            result = encoder.get_model()
-            mock_load.assert_called_once()
-            assert result == mock_model
+    def test_get_model_returns_same_instance(self, encoder):
+        """get_model returns the same model instance on multiple calls."""
+        model1 = encoder.get_model()
+        model2 = encoder.get_model()
+        assert model1 is model2
 
     def test_embed_texts_delegates_to_model(self, encoder):
         """embed_texts delegates to the loaded model."""

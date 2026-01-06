@@ -1,16 +1,15 @@
 """Embedding encoder providing model loading, cached corpus build, and ad-hoc embedding."""
 
-from __future__ import annotations
-
 import hashlib
 import logging
 import pickle
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
 from imas_codex import dd_version
 from imas_codex.core.progress_monitor import create_progress_monitor
@@ -18,11 +17,6 @@ from imas_codex.resource_path_accessor import ResourcePathAccessor
 
 from .cache import EmbeddingCache
 from .config import EncoderConfig
-
-# Lazy import to avoid loading sentence_transformers at module import time
-# This defers ~200s of import overhead until model is actually needed
-if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
 
 
 class Encoder:
@@ -35,6 +29,9 @@ class Encoder:
         self._cache: EmbeddingCache | None = None
         self._cache_path: Path | None = None
         self._lock = threading.RLock()
+
+        # Load model eagerly at initialization time
+        self._load_model()
 
     def build_document_embeddings(
         self,
@@ -139,15 +136,10 @@ class Encoder:
             return removed
 
     def get_model(self) -> SentenceTransformer:
-        if self._model is None:
-            self._load_model()
         return self._model  # type: ignore[return-value]
 
     def _load_model(self) -> None:
         """Load local SentenceTransformer model."""
-        # Import here to defer ~200s import overhead until model is actually needed
-        from sentence_transformers import SentenceTransformer
-
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:

@@ -527,12 +527,9 @@ def merge_relationship_query(
 # Module-level singleton for convenience
 # =============================================================================
 
-_schema: GraphSchema | None = None
+_schema = GraphSchema()
 
 
 def get_schema() -> GraphSchema:
-    """Get the global GraphSchema instance (lazy singleton)."""
-    global _schema
-    if _schema is None:
-        _schema = GraphSchema()
+    """Get the global GraphSchema instance."""
     return _schema

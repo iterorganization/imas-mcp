@@ -47,7 +47,7 @@ class ClustersTool(BaseTool):
     """
 
     def __init__(self, *args, **kwargs):
-        """Initialize clusters tool with lazy loading."""
+        """Initialize clusters tool with deferred cluster loading."""
         super().__init__(*args, **kwargs)
 
         # Create encoder config
@@ -67,14 +67,14 @@ class ClustersTool(BaseTool):
             use_rich=False,
         )
 
-        # Lazy-loaded state - defer heavy initialization until first use
+        # Deferred loading - clusters may trigger expensive rebuild if missing
         self._clusters: Clusters | None = None
         self._searcher: ClusterSearcher | None = None
         self._encoder: Encoder | None = None
         self._initialized: bool = False
 
     def _ensure_initialized(self) -> None:
-        """Lazy initialization of clusters - called on first use."""
+        """Initialize clusters on first use - may trigger rebuild if missing."""
         if self._initialized:
             return
         self._initialized = True
@@ -169,7 +169,7 @@ class ClustersTool(BaseTool):
                 context={"tool": "search_imas_clusters"},
             )
 
-        # Lazy initialization - defer heavy loading until first use
+        # Initialize clusters on first use (may trigger rebuild if missing)
         self._ensure_initialized()
 
         if not self._searcher:

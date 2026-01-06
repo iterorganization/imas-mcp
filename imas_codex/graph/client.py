@@ -13,20 +13,15 @@ Example:
     ...     client.create_node("Facility", "epfl", {"name": "EPFL/TCV"})
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any, Self
 
 from neo4j import Driver, GraphDatabase, Session
 
-# Lazy import for schema - only needed for admin operations, not queries
-# This avoids ~25s linkml_runtime import overhead for query-only usage
-if TYPE_CHECKING:
-    from imas_codex.graph.schema import GraphSchema
+from imas_codex.graph.schema import GraphSchema, get_schema
 
 # Suppress noisy Neo4j warnings about unknown property keys
 # These are harmless (e.g., retry_count doesn't exist until first failure)
@@ -57,20 +52,12 @@ class GraphClient:
         self._driver = GraphDatabase.driver(
             self.uri, auth=(self.username, self.password)
         )
-        # Schema loaded lazily on first access to avoid linkml_runtime import
+        self._schema = get_schema()
 
     @property
     def schema(self) -> GraphSchema:
-        """Get the graph schema (lazy loaded).
-
-        The schema is only loaded when first accessed, avoiding the ~25s
-        linkml_runtime import overhead for query-only operations.
-        """
-        if self._schema is None:
-            from imas_codex.graph.schema import get_schema
-
-            self._schema = get_schema()
-        return self._schema
+        """Get the graph schema."""
+        return self._schema  # type: ignore[return-value]
 
     def close(self) -> None:
         """Close the Neo4j driver."""
@@ -78,7 +65,7 @@ class GraphClient:
             self._driver.close()
             self._driver = None
 
-    def __enter__(self) -> GraphClient:
+    def __enter__(self) -> Self:
         """Enter context manager."""
         return self
 
