@@ -37,16 +37,19 @@ Guidelines:
 - If uncertain, gather more information using tools before describing
 - Set description to null rather than guessing
 
-Available context:
-- Neo4j graph with TreeNodes, code examples, and facility data
-- SSH access to MDSplus database for real node metadata
-- Code examples showing how paths are used
-- IMAS Data Dictionary for standard physics definitions
+Tool priority (use in this order):
+1. search_code_examples - ALWAYS try this first, finds real usage patterns with units/descriptions
+2. query_neo4j - Check existing TreeNode metadata and relationships in the graph
+3. get_tree_structure - Understand sibling nodes and hierarchy
+4. ssh_mdsplus_query - Only if graph/code search is insufficient (slow, ~5s per query)
+
+IMPORTANT: The knowledge graph and code examples contain rich metadata already.
+SSH queries are slow and should be a last resort, not a first step.
 
 When enriching a path:
-1. Check existing graph data for context
-2. Search code examples for usage patterns
-3. Query MDSplus via SSH if needed
+1. Search code examples for usage patterns (often includes units and descriptions)
+2. Query the graph for existing context and related nodes
+3. Only use SSH if the above don't provide enough information
 4. Synthesize into a concise, accurate description
 """
 

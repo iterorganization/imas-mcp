@@ -89,26 +89,34 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
 
 
 def _ssh_mdsplus_query(
-    tree_name: str,
     path: str,
+    tree_name: str | None = None,
     shot: int = 80000,
     facility: str = "epfl",
 ) -> str:
     """
     Query MDSplus database via SSH for node metadata.
 
-    Use this to get the actual description, units, and usage type
-    of an MDSplus node directly from the TCV database.
+    Use this as a LAST RESORT after searching code examples and the graph.
+    SSH queries are slow (~5s each). The graph already contains most metadata.
 
     Args:
-        tree_name: MDSplus tree name (e.g., 'results', 'magnetics', 'tcv_shot')
-        path: MDSplus path (e.g., '\\RESULTS::TOP.ASTRA')
+        path: MDSplus path (e.g., '\\RESULTS::THOMSON:NE') - tree name is auto-detected
+        tree_name: Optional override (auto-detected from path if not provided)
         shot: Shot number to query (default: 80000)
         facility: SSH host alias (default: 'epfl')
 
     Returns:
         Node metadata: usage, description, units, dtype
     """
+    # Auto-detect tree name from path (e.g., \RESULTS::X -> results)
+    if tree_name is None:
+        if "::" in path:
+            # Extract tree name from path like \RESULTS::THOMSON:NE
+            tree_part = path.lstrip("\\").split("::")[0].lower()
+            tree_name = tree_part
+        else:
+            tree_name = "tcv_shot"  # Default fallback
     escaped_path = path.replace("\\", "\\\\").replace("'", "\\'")
     cmd = f'''python3 -c "
 import MDSplus
@@ -460,8 +468,8 @@ def get_exploration_tools() -> list[FunctionTool]:
             fn=_ssh_mdsplus_query,
             name="ssh_mdsplus_query",
             description=(
-                "Query MDSplus database via SSH for node metadata. "
-                "Gets description, units, usage type directly from TCV."
+                "LAST RESORT: Query MDSplus via SSH (~5s latency). "
+                "Tree name auto-detected from path. Use search_code_examples first!"
             ),
         ),
         FunctionTool.from_defaults(
