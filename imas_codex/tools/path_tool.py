@@ -5,10 +5,10 @@ Provides both fast validation and rich data retrieval for IMAS paths,
 with migration suggestions for deprecated paths and rename history.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
+
+from fastmcp import Context
 
 from imas_codex.mappings import PathMap, get_path_map
 from imas_codex.models.constants import SearchMode
@@ -32,8 +32,6 @@ from .base import BaseTool
 from .utils import normalize_paths_input
 
 if TYPE_CHECKING:
-    from fastmcp import Context
-
     from imas_codex.clusters.search import ClusterSearcher
 
 logger = logging.getLogger(__name__)
@@ -66,7 +64,7 @@ class PathTool(BaseTool):
         return self._path_map
 
     @property
-    def cluster_searcher(self) -> ClusterSearcher | None:
+    def cluster_searcher(self) -> "ClusterSearcher | None":
         """Get the cluster searcher (lazy loaded)."""
         if self._cluster_searcher is None:
             try:

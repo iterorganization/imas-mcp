@@ -8,10 +8,10 @@ Provides search over hierarchical clusters of related paths using:
 - Composite relevance ranking
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
+
+from fastmcp import Context
 
 from imas_codex.clusters.models import ClusterScope
 from imas_codex.clusters.search import ClusterSearcher, ClusterSearchResult
@@ -23,9 +23,6 @@ from imas_codex.search.decorators import cache_results, handle_errors, mcp_tool
 
 from .base import BaseTool
 from .utils import normalize_ids_filter, validate_query
-
-if TYPE_CHECKING:
-    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 

@@ -20,7 +20,7 @@ from .path_tool import PathTool
 from .search_tool import SearchTool
 
 if TYPE_CHECKING:
-    from fastmcp import FastMCP
+    from fastmcp import FastMCP  # Only used in type hints, not function signatures
 
 
 class Tools(MCPProvider):

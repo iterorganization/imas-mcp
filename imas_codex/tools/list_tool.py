@@ -4,10 +4,10 @@ List tool implementation for lightweight path enumeration.
 Provides minimal-overhead path listing with multiple output formats optimized for LLM consumption.
 """
 
-from __future__ import annotations
-
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from fastmcp import Context
 
 from imas_codex.models.error_models import ToolError
 from imas_codex.models.request_models import ListPathsInput
@@ -20,9 +20,6 @@ from imas_codex.search.decorators import (
 )
 
 from .base import BaseTool
-
-if TYPE_CHECKING:
-    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 

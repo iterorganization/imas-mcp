@@ -6,13 +6,12 @@ serving as the primary entry point for users to discover and navigate
 the IMAS data dictionary structure.
 """
 
-from __future__ import annotations
-
 import importlib.metadata
 import importlib.resources
 import json
 import logging
-from typing import TYPE_CHECKING
+
+from fastmcp import Context
 
 from imas_codex import dd_version
 from imas_codex.core.physics_categorization import physics_categorizer
@@ -28,9 +27,6 @@ from imas_codex.search.decorators import (
 )
 
 from .base import BaseTool
-
-if TYPE_CHECKING:
-    from fastmcp import Context
 
 logger = logging.getLogger(__name__)
 
