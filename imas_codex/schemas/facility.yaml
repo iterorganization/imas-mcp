@@ -262,13 +262,15 @@ enums:
     description: >-
       Lifecycle status of metadata enrichment for TreeNodes.
       Controls which nodes are selected for LLM enrichment passes.
+      Link status (HAS_UNIT, HAS_ERROR, MAPS_TO) is computed from graph,
+      not stored as status.
     permissible_values:
       pending:
         description: Never enriched, awaiting first LLM pass
       enriched:
         description: LLM-enriched with description and metadata
-      reviewed:
-        description: Human validated, never auto-overwrite
+      stale:
+        description: Marked for re-enrichment (new context available)
 
   DataReferenceType:
     description: Type of data reference found in source code

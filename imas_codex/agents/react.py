@@ -594,6 +594,7 @@ def _get_nodes_for_enrichment(
 def discover_nodes_to_enrich(
     tree_name: str | None = None,
     status: str = "pending",
+    unlinked: bool = False,
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
@@ -602,17 +603,18 @@ def discover_nodes_to_enrich(
 
     Uses enrichment_status to control workflow:
     - 'pending': Never enriched (default target)
-    - 'enriched': Already processed, skip unless --force
-    - 'reviewed': Human validated, never auto-overwrite
+    - 'enriched': Already processed, use with --force to re-enrich
+    - 'stale': Marked for re-enrichment, includes existing description
 
     Args:
         tree_name: Filter to specific tree (e.g., "results")
         status: Target enrichment_status (default: "pending")
+        unlinked: Only return enriched nodes without HAS_UNIT or HAS_ERROR links
         with_context_only: Only return nodes with code context
         limit: Maximum nodes to return
 
     Returns:
-        List of node dicts with path, tree, units, has_context, snippets
+        List of node dicts with path, tree, units, has_context, snippets, description
     """
     with GraphClient() as gc:
         # Build WHERE clauses based on status
@@ -628,9 +630,15 @@ def discover_nodes_to_enrich(
         if tree_name:
             where_clauses.append(f't.tree_name = "{tree_name}"')
 
+        # Filter to unlinked nodes (enriched but missing relationships)
+        if unlinked:
+            where_clauses.append("NOT EXISTS ((t)-[:HAS_UNIT]->(:Unit))")
+            where_clauses.append("NOT EXISTS ((t)-[:HAS_ERROR]->(:TreeNode))")
+
         limit_clause = f"LIMIT {limit}" if limit else ""
 
         # Compute has_context from graph relationships, not stored metadata
+        # Include existing description for stale node re-enrichment
         query = f"""
             MATCH (t:TreeNode)
             WHERE {" AND ".join(where_clauses)}
@@ -639,6 +647,7 @@ def discover_nodes_to_enrich(
             WITH t, collect(DISTINCT substring(c.content, 0, 300)) AS snippets
             RETURN t.path AS path, t.tree_name AS tree, t.units AS units,
                    t.enrichment_status AS status, t.enrichment_confidence AS confidence,
+                   t.description AS description,
                    size(snippets) > 0 AS has_context, snippets
             ORDER BY has_context DESC, t.path
             {limit_clause}
@@ -659,6 +668,7 @@ def discover_nodes_to_enrich(
                     "units": r["units"],
                     "status": r["status"],
                     "confidence": r["confidence"],
+                    "description": r["description"],
                     "has_context": r["has_context"],
                     "snippets": r["snippets"] or [],
                 }
