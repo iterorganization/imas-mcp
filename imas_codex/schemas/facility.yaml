@@ -34,6 +34,7 @@ default_range: string
 
 imports:
   - linkml:types
+  - common
   - imas_dd
 
 # =============================================================================
@@ -256,6 +257,20 @@ enums:
         description: Ingestion failed (check error field)
       stale:
         description: Source may have changed, needs re-fetch
+
+  EnrichmentStatus:
+    description: >-
+      Lifecycle status of metadata enrichment for TreeNodes.
+      Controls which nodes are selected for LLM enrichment passes.
+      Link status (HAS_UNIT, HAS_ERROR, MAPS_TO) is computed from graph,
+      not stored as status.
+    permissible_values:
+      pending:
+        description: Never enriched, awaiting first LLM pass
+      enriched:
+        description: LLM-enriched with description and metadata
+      stale:
+        description: Marked for re-enrichment (new context available)
 
   DataReferenceType:
     description: Type of data reference found in source code
@@ -563,9 +578,9 @@ classes:
       node_type:
         description: MDSplus node data type
         range: TreeNodeType
-      units:
-        description: Physical units (SI, validated by pint)
-        required: true
+      unit:
+        description: Physical units for this node (linked via HAS_UNIT relationship)
+        range: Unit
       description:
         description: Node description
       physics_domain:
@@ -636,14 +651,26 @@ classes:
           E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"].
           Critical for IMAS mapping where dimension semantics matter.
         multivalued: true
-      error_node:
+      error_nodes:
         description: >-
-          Path to associated error/uncertainty node if it exists.
-          E.g., \\RESULTS::THOMSON:NE:ERROR_BAR
+          Associated error/uncertainty TreeNodes linked via HAS_ERROR relationship.
+          E.g., for a data node like \\RESULTS::THOMSON:NE, links to error nodes
+          like \\RESULTS::THOMSON:NE:ERROR_BAR or \\RESULTS::THOMSON:NE:ERROR_UPPER.
+        multivalued: true
+        range: TreeNode
       enrichment_source:
         description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
       enrichment_confidence:
-        description: Confidence level of enriched metadata (high, medium, low)
+        description: >-
+          Computed confidence score (0.0-1.0) based on objective signals:
+          has code context, has IMAS mapping, has units, description quality.
+        range: float
+      enrichment_status:
+        description: >-
+          Lifecycle status controlling enrichment workflow.
+          Nodes start as 'pending', become 'enriched' after LLM pass,
+          and 'reviewed' after human validation.
+        range: EnrichmentStatus
       enrichment_notes:
         description: Agent reasoning or notes about the enrichment
 

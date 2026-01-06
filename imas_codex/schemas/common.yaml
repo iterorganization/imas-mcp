@@ -1,0 +1,54 @@
+# Common Graph Schema
+#
+# This schema defines shared graph entities used across multiple domains.
+# These are cross-cutting types that bridge IMAS DD and facility-specific data.
+#
+# Generated models: imas_codex/graph/models.py
+# To regenerate: uv run build-models --force
+
+id: https://imas.iter.org/schemas/common
+name: common
+title: Common Graph Schema
+description: >-
+  Shared graph entities used across IMAS DD and facility-specific schemas.
+  These types enable cross-linking between different data domains.
+
+license: MIT
+version: 0.4.0
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+  common: https://imas.iter.org/schemas/common/
+
+default_prefix: common
+default_range: string
+
+imports:
+  - linkml:types
+
+# =============================================================================
+# Classes
+# =============================================================================
+
+classes:
+  Unit:
+    description: >-
+      A physical unit used in both IMAS Data Dictionary and facility-specific
+      data. Units are deduplicated across all paths to enable unit-based queries
+      and cross-linking between IMAS paths and MDSplus TreeNodes.
+      
+      Both IMASPath and TreeNode link to Unit via HAS_UNIT relationships,
+      enabling queries like "find all paths (IMAS or facility) using Weber".
+    class_uri: common:Unit
+    attributes:
+      symbol:
+        identifier: true
+        description: Unit symbol (e.g., "Wb", "m.s^-1", "eV", "A")
+        required: true
+      name:
+        description: Human-readable name (e.g., "Weber", "meters per second")
+      dimension:
+        description: Physical dimension category (e.g., "magnetic_flux", "velocity")
+      is_si:
+        description: Whether this is an SI base or derived unit
+        range: boolean

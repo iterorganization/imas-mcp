@@ -144,6 +144,7 @@ def build_models(
         graph_dir.mkdir(parents=True, exist_ok=True)
 
         schema_file = schemas_dir / "facility.yaml"
+        common_schema_file = schemas_dir / "common.yaml"
         output_file = graph_dir / "models.py"
 
         # Validate schema exists
@@ -154,8 +155,13 @@ def build_models(
 
         # Check if output already exists
         if output_file.exists() and not force:
-            # Check if schema is newer than output
-            if schema_file.stat().st_mtime <= output_file.stat().st_mtime:
+            # Check if any schema (facility or common) is newer than output
+            facility_mtime = schema_file.stat().st_mtime
+            common_mtime = (
+                common_schema_file.stat().st_mtime if common_schema_file.exists() else 0
+            )
+            output_mtime = output_file.stat().st_mtime
+            if max(facility_mtime, common_mtime) <= output_mtime:
                 logger.info(f"Models up to date at {output_file}")
                 click.echo(f"Models up to date: {output_file}")
             else:
@@ -210,12 +216,25 @@ To regenerate:
         imas_schema_file = schemas_dir / "imas_dd.yaml"
         imas_output_file = graph_dir / "dd_models.py"
 
+        # Also check common.yaml which is imported by both facility and imas_dd
+        common_schema_file = schemas_dir / "common.yaml"
+
         if imas_schema_file.exists():
             needs_regen = not imas_output_file.exists() or force
             if imas_output_file.exists() and not force:
-                if imas_schema_file.stat().st_mtime > imas_output_file.stat().st_mtime:
+                # Check both imas_dd.yaml and common.yaml timestamps
+                imas_mtime = imas_schema_file.stat().st_mtime
+                common_mtime = (
+                    common_schema_file.stat().st_mtime
+                    if common_schema_file.exists()
+                    else 0
+                )
+                output_mtime = imas_output_file.stat().st_mtime
+                if max(imas_mtime, common_mtime) > output_mtime:
                     needs_regen = True
-                    logger.info("IMAS DD schema newer than models, regenerating...")
+                    logger.info(
+                        "IMAS DD or common schema newer than models, regenerating..."
+                    )
 
             if needs_regen:
                 logger.info(f"Generating IMAS DD models from {imas_schema_file}")

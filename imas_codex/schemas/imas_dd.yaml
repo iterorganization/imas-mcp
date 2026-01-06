@@ -33,6 +33,7 @@ default_range: string
 
 imports:
   - linkml:types
+  - common
 
 # =============================================================================
 # Enums
@@ -323,23 +324,7 @@ classes:
         multivalued: true
         range: IMASPath
 
-  Unit:
-    description: >-
-      A physical unit used in the Data Dictionary. Units are deduplicated
-      across all paths to enable unit-based queries.
-    class_uri: imas_dd:Unit
-    attributes:
-      symbol:
-        identifier: true
-        description: Unit symbol (e.g., "Wb", "m.s^-1", "eV")
-        required: true
-      name:
-        description: Human-readable name (e.g., "Weber", "meters per second")
-      dimension:
-        description: Physical dimension category
-      is_si:
-        description: Whether this is an SI base or derived unit
-        range: boolean
+  # Unit is now defined in common.yaml and imported
 
   CoordinateSpec:
     description: >-

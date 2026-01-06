@@ -21,6 +21,7 @@ def get_llm(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
     context_window: int = 1_000_000,
+    max_tokens: int = 4096,
 ) -> OpenRouter:
     """
     Get a configured LLM for use with LlamaIndex agents.
@@ -32,6 +33,7 @@ def get_llm(
         model: Model identifier (default: google/gemini-3-flash-preview)
         temperature: Sampling temperature (0.0-1.0)
         context_window: Context window size for the model
+        max_tokens: Maximum tokens in the response (default: 4096)
 
     Returns:
         Configured OpenRouter LLM instance
@@ -64,7 +66,7 @@ def get_llm(
         api_key=api_key,
         temperature=temperature,
         context_window=context_window,
-        max_tokens=4096,
+        max_tokens=max_tokens,
     )
 
 

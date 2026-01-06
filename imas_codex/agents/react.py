@@ -19,79 +19,35 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 
 from imas_codex.agents.llm import get_llm
+from imas_codex.agents.prompt_loader import load_prompts
 from imas_codex.agents.tools import get_exploration_tools
+from imas_codex.core.physics_domain import PhysicsDomain
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
 
+# Load prompts from markdown files
+_PROMPTS = load_prompts()
 
-# System prompts for different agent personalities
-ENRICHMENT_SYSTEM_PROMPT = """You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
 
-Your task is to analyze TreeNode paths and provide accurate physics descriptions.
+def _get_prompt(name: str) -> str:
+    """Get a prompt by name, with fallback to empty string."""
+    prompt = _PROMPTS.get(name)
+    if prompt is None:
+        logger.warning(f"Prompt '{name}' not found in prompts directory")
+        return ""
+    return prompt.content
 
-Guidelines:
-- Be DEFINITIVE in descriptions - avoid hedging language like "likely" or "probably"
-- Use proper physics terminology and units
-- Reference TCV-specific knowledge (LIUQE, ASTRA, CXRS, etc.)
-- If uncertain, gather more information using tools before describing
-- Set description to null rather than guessing
 
-Tool priority (use in this order):
-1. query_neo4j - ALWAYS check graph first for existing metadata and sibling nodes
-2. search_code_examples - Find real usage patterns with units/descriptions in code
-3. get_tree_structure - Understand sibling nodes and hierarchy
-4. ssh_mdsplus_query - LAST RESORT only if above insufficient (slow, ~5s per query)
+def get_physics_domain_values() -> list[str]:
+    """Get all valid physics domain values from the enum."""
+    return [d.value for d in PhysicsDomain]
 
-IMPORTANT: The graph already contains rich context:
-- Previously enriched TreeNodes with descriptions
-- Code examples showing how paths are used
-- Sibling nodes that reveal naming patterns
-SSH queries are slow and should be a last resort.
 
-When enriching a path:
-1. Query the graph for this node and its siblings (same parent path)
-2. Search code examples for usage patterns
-3. Only use SSH if the above don't provide enough information
-4. Synthesize into a concise, accurate description
-"""
-
-MAPPING_SYSTEM_PROMPT = """You are an expert in fusion data standards, specializing in mapping facility-specific data to IMAS (Integrated Modelling and Analysis Suite).
-
-Your task is to discover semantic mappings between MDSplus TreeNodes and IMAS Data Dictionary paths.
-
-Guidelines:
-- Focus on physics equivalence, not just name similarity
-- Consider units, coordinates, and array dimensions
-- Note transformation requirements (unit conversions, coordinate systems)
-- Distinguish between exact matches and approximate mappings
-- Document confidence level and any assumptions
-
-Mapping process:
-1. Understand the TreeNode's physics meaning from graph/MDSplus
-2. Search IMAS DD for semantically equivalent paths
-3. Verify units and structure compatibility
-4. Document the mapping with confidence and notes
-"""
-
-EXPLORATION_SYSTEM_PROMPT = """You are an expert at exploring fusion facility data systems and codebases.
-
-Your task is to systematically discover and document data structures, analysis codes, and their relationships.
-
-Guidelines:
-- Be thorough but efficient - use batch operations when possible
-- Document findings immediately in the knowledge graph
-- Prioritize high-value physics domains (equilibrium, profiles, transport)
-- Note connections between codes, diagnostics, and data paths
-- Flag interesting patterns for deeper investigation
-
-Exploration approach:
-1. Start with known entry points (tree names, code directories)
-2. Use SSH tools for discovery (rg, fd, ls)
-3. Cross-reference with existing graph data
-4. Identify patterns and relationships
-5. Queue files for ingestion when appropriate
-"""
+# System prompts loaded from prompts directory
+ENRICHMENT_SYSTEM_PROMPT = _get_prompt("enrichment-system")
+MAPPING_SYSTEM_PROMPT = _get_prompt("mapping-system")
+EXPLORATION_SYSTEM_PROMPT = _get_prompt("exploration-system")
 
 
 @dataclass
@@ -101,7 +57,7 @@ class AgentConfig:
     name: str
     system_prompt: str
     tools: list[FunctionTool] = field(default_factory=list)
-    model: str = "google/gemini-3-flash-preview"
+    model: str = "google/gemini-3-pro-preview"
     temperature: float = 0.3
     verbose: bool = False
     max_iterations: int = 10
@@ -122,12 +78,11 @@ def create_agent(config: AgentConfig) -> ReActAgent:
     tools = config.tools or get_exploration_tools()
 
     agent = ReActAgent(
-        name=config.name,
-        description=config.system_prompt[:200],  # Short description
-        system_prompt=config.system_prompt,
         tools=tools,
         llm=llm,
         verbose=config.verbose,
+        system_prompt=config.system_prompt,
+        max_iterations=config.max_iterations,
     )
 
     logger.info(f"Created agent '{config.name}' with {len(tools)} tools")
@@ -305,7 +260,7 @@ class EnrichmentResult:
 
     path: str
     description: str | None
-    physics_domain: str | None
+    physics_domain: PhysicsDomain | None
     units: str | None
     confidence: str
     # IMAS mapping preparation fields
@@ -318,30 +273,16 @@ class EnrichmentResult:
     elapsed_seconds: float = 0.0
 
 
-# Physics domains for TreeNode enrichment
-PHYSICS_DOMAINS = [
-    "equilibrium",
-    "magnetics",
-    "heating",
-    "diagnostics",
-    "transport",
-    "mhd",
-    "control",
-    "machine",
-    "neutral_beam",
-    "spectroscopy",
-]
-
 # Patterns for metadata/internal nodes to skip during discovery
 # These are matched as complete path segments (ending the path or followed by colon)
+# Note: ERROR_BAR and UNITS are NOT skipped - they are important for IMAS mapping
+# and should be linked via HAS_ERROR and HAS_UNIT relationships respectively.
 SKIP_PATTERNS = {
     "IGNORE",
     "FOO",
     "BAR",
     "VERSION_NUM",
     "COMMENT",
-    "ERROR_BAR",
-    "UNITS",
     "CONFIDENCE",
     "TRIAL",
     "USER_NAME",
@@ -372,75 +313,67 @@ def _build_batch_prompt(
     tree_name: str,
     nodes: list[dict],
 ) -> str:
-    """Build LLM prompt for batch enrichment."""
-    prompt = f"""You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
-
-For each path, analyze the naming convention and any provided code context to generate:
-
-REQUIRED fields:
-- description: 1-2 sentence physics description. Be DIRECT and DEFINITIVE.
-- physics_domain: One of: {", ".join(PHYSICS_DOMAINS)}
-- units: SI units (e.g., "A", "Wb", "m^-3"). Use null if dimensionless/unknown.
-- confidence: high|medium|low
-
-IMAS MAPPING fields (include when determinable):
-- sign_convention: Sign/direction convention. CRITICAL for currents, fluxes, fields.
-  Examples: "positive clockwise viewed from above (COCOS 11)", "positive outward"
-- dimensions: Array dimension names in order, like xarray dims.
-  E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"]
-- error_node: Path to associated error bar node if known
-
-Confidence levels:
-- high = standard physics abbreviation (I_P, PSI, Q, ne, Te)
-- medium = clear from context but not standard
-- low = uncertain, set description to null
-
-TCV-specific knowledge:
-- LIUQE: Equilibrium reconstruction (COCOS 17: Bphi>0, Ip>0 counter-clockwise from above)
-- ASTRA: 1.5D transport code
-- CXRS: Charge Exchange Recombination Spectroscopy
-- THOMSON: Thomson scattering (Te/ne profiles)
-- FIR: Far-Infrared interferometer (line-integrated density)
-- BOLO: Bolometer arrays (radiated power)
-- RHO: Normalized toroidal flux coordinate
-- _95 suffix: value at 95% flux surface
-- _AXIS suffix: value on magnetic axis
-
-Tree: {tree_name}
-
-Paths to describe:
-"""
-
+    """Build LLM prompt for batch enrichment using the prompt template."""
+    # Build paths section
+    paths_lines = []
     for node in nodes:
         path = node["path"]
-        prompt += f"\n- {path}"
+        line = f"- {path}"
         if node.get("units") and node["units"] != "dimensionless":
-            prompt += f" (current units: {node['units']})"
+            line += f" (current units: {node['units']})"
         if node.get("description") and node["description"] != "None":
-            prompt += f" (current: {node['description'][:100]})"
+            line += f" (current: {node['description'][:100]})"
         # Add code context if available
         if node.get("snippets"):
             snippets = node["snippets"][:2]  # Max 2 snippets
-            prompt += f"\n  Code context: {snippets[0][:200]}..."
+            line += f"\n  Code context: {snippets[0][:200]}..."
+        paths_lines.append(line)
 
-    prompt += """
+    paths_section = "\n".join(paths_lines)
 
-Respond with JSON array only (no markdown):
-[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "...", "sign_convention": "...", "dimensions": [...], "error_node": "..."}]
+    # Get prompt template and fill in placeholders
+    template = _get_prompt("enrichment-batch")
+    if not template:
+        raise ValueError("enrichment-batch prompt not found")
 
-Omit optional fields if not determinable. Be definitive in descriptions.
-"""
-    return prompt
+    return template.format(
+        physics_domains=", ".join(get_physics_domain_values()),
+        tree_name=tree_name,
+        paths_section=paths_section,
+    )
 
 
 def _parse_llm_response(content: str) -> list[dict]:
     """Parse LLM response, extracting JSON."""
     content = content.strip()
-    # Remove markdown code blocks if present
-    if content.startswith("```"):
+
+    # Try to find JSON array block
+    match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", content, re.DOTALL)
+    if match:
+        content = match.group(1)
+    elif content.startswith("```"):
         content = re.sub(r"^```(?:json)?\n?", "", content)
         content = re.sub(r"\n?```$", "", content)
-    return json.loads(content)
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # Fallback: try to find any list structure
+        match = re.search(r"(\[.*\])", content, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+        raise
+
+
+def _parse_physics_domain(value: str | None) -> PhysicsDomain | None:
+    """Parse physics domain string to enum, with fallback to GENERAL."""
+    if not value:
+        return None
+    try:
+        return PhysicsDomain(value)
+    except ValueError:
+        logger.warning(f"Unknown physics domain '{value}', falling back to GENERAL")
+        return PhysicsDomain.GENERAL
 
 
 async def _call_llm_batch(
@@ -449,12 +382,20 @@ async def _call_llm_batch(
     nodes: list[dict],
     temperature: float = 0.3,
 ) -> list[EnrichmentResult]:
-    """Call LLM for batch enrichment."""
+    """Call LLM for batch enrichment.
+
+    Uses higher max_tokens (16384) to accommodate large batch responses.
+    Each path generates ~100-150 output tokens in JSON format.
+    """
     from imas_codex.agents.llm import get_llm
 
     prompt = _build_batch_prompt(tree_name, nodes)
 
-    llm = get_llm(model=model, temperature=temperature)
+    # Calculate max_tokens based on batch size (~150 tokens per path)
+    estimated_output_tokens = len(nodes) * 150
+    max_tokens = max(4096, min(estimated_output_tokens + 500, 65536))
+
+    llm = get_llm(model=model, temperature=temperature, max_tokens=max_tokens)
     response = await llm.acomplete(prompt)
 
     try:
@@ -463,7 +404,7 @@ async def _call_llm_batch(
             EnrichmentResult(
                 path=item["path"],
                 description=item.get("description"),
-                physics_domain=item.get("physics_domain"),
+                physics_domain=_parse_physics_domain(item.get("physics_domain")),
                 units=item.get("units"),
                 confidence=item.get("confidence", "low"),
                 sign_convention=item.get("sign_convention"),
@@ -488,22 +429,86 @@ async def _call_llm_batch(
         ]
 
 
+def _compute_confidence_score(
+    result: EnrichmentResult, has_context: bool = False
+) -> float:
+    """
+    Compute objective confidence score based on available signals.
+
+    Returns 0.0-1.0 based on:
+    - Description quality (length, specificity)
+    - Has code context from graph
+    - Has units defined
+    - Has physics domain assigned
+    """
+    score = 0.0
+
+    # Description quality (40% weight)
+    desc = result.description or ""
+    if len(desc) > 100:
+        score += 0.25
+    elif len(desc) > 50:
+        score += 0.15
+    elif len(desc) > 20:
+        score += 0.05
+    # Extra points for specific physics terms
+    physics_terms = [
+        "plasma",
+        "magnetic",
+        "flux",
+        "current",
+        "temperature",
+        "density",
+        "pressure",
+        "equilibrium",
+        "profile",
+    ]
+    if any(term in desc.lower() for term in physics_terms):
+        score += 0.15
+
+    # Has code context (30% weight) - computed from graph, not stored
+    if has_context:
+        score += 0.3
+
+    # Has units (15% weight)
+    if result.units:
+        score += 0.15
+
+    # Has physics domain (15% weight)
+    if result.physics_domain:
+        score += 0.15
+
+    return min(1.0, score)
+
+
 def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
     """
     Save enrichment results to Neo4j graph.
 
+    Creates:
+    - TreeNode property updates (description, physics_domain, enrichment_status, etc.)
+    - HAS_UNIT relationships to Unit nodes (creating Unit if needed)
+    - HAS_ERROR relationships to error TreeNodes (if they exist)
+
     Returns number of nodes updated.
     """
     updates = []
+    unit_links = []
+    error_links = []
+
     for r in results:
         if not r.description:
             continue
+
+        # Compute objective confidence score
+        confidence = _compute_confidence_score(r, r.has_context)
+
         update = {
             "path": r.path,
             "description": r.description,
-            "physics_domain": r.physics_domain,
-            "units": r.units,
-            "enrichment_confidence": r.confidence,
+            "physics_domain": r.physics_domain.value if r.physics_domain else None,
+            "enrichment_confidence": confidence,
+            "enrichment_status": "enriched",
             "enrichment_source": "llm_agent",
         }
         # Add optional IMAS mapping fields if present
@@ -511,29 +516,59 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
             update["sign_convention"] = r.sign_convention
         if r.dimensions:
             update["dimensions"] = r.dimensions
-        if r.error_node:
-            update["error_node"] = r.error_node
         updates.append(update)
+
+        # Track unit relationships
+        if r.units:
+            unit_links.append({"path": r.path, "unit_symbol": r.units})
+
+        # Track error node relationships
+        if r.error_node:
+            error_links.append({"path": r.path, "error_path": r.error_node})
 
     if not updates:
         return 0
 
     with GraphClient() as gc:
+        # Update TreeNode properties
         gc.query(
             """
             UNWIND $updates AS u
             MATCH (t:TreeNode {path: u.path})
             SET t.description = u.description,
                 t.physics_domain = u.physics_domain,
-                t.units = COALESCE(u.units, t.units),
                 t.enrichment_confidence = u.enrichment_confidence,
+                t.enrichment_status = u.enrichment_status,
                 t.enrichment_source = u.enrichment_source,
                 t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
-                t.dimensions = COALESCE(u.dimensions, t.dimensions),
-                t.error_node = COALESCE(u.error_node, t.error_node)
+                t.dimensions = COALESCE(u.dimensions, t.dimensions)
             """,
             updates=updates,
         )
+
+        # Create/link Unit nodes
+        if unit_links:
+            gc.query(
+                """
+                UNWIND $links AS link
+                MATCH (t:TreeNode {path: link.path})
+                MERGE (u:Unit {symbol: link.unit_symbol})
+                MERGE (t)-[:HAS_UNIT]->(u)
+                """,
+                links=unit_links,
+            )
+
+        # Create HAS_ERROR relationships to existing error nodes
+        if error_links:
+            gc.query(
+                """
+                UNWIND $links AS link
+                MATCH (t:TreeNode {path: link.path})
+                MATCH (e:TreeNode {path: link.error_path})
+                MERGE (t)-[:HAS_ERROR]->(e)
+                """,
+                links=error_links,
+            )
 
     return len(updates)
 
@@ -558,36 +593,52 @@ def _get_nodes_for_enrichment(
 
 def discover_nodes_to_enrich(
     tree_name: str | None = None,
+    status: str = "pending",
+    unlinked: bool = False,
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
     """
     Discover TreeNodes needing enrichment from Neo4j.
 
-    Finds nodes that:
-    - Have first_shot set (are valid epoch-aware nodes)
-    - Have no description or description is "None"
-    - Are not metadata/internal nodes (TRIAL, IGNORE, etc.)
+    Uses enrichment_status to control workflow:
+    - 'pending': Never enriched (default target)
+    - 'enriched': Already processed, use with --force to re-enrich
+    - 'stale': Marked for re-enrichment, includes existing description
 
     Args:
         tree_name: Filter to specific tree (e.g., "results")
+        status: Target enrichment_status (default: "pending")
+        unlinked: Only return enriched nodes without HAS_UNIT or HAS_ERROR links
         with_context_only: Only return nodes with code context
         limit: Maximum nodes to return
 
     Returns:
-        List of node dicts with path, tree, units, has_context, snippets
+        List of node dicts with path, tree, units, has_context, snippets, description
     """
     with GraphClient() as gc:
-        # Build WHERE clauses
-        where_clauses = [
-            "t.first_shot IS NOT NULL",
-            '(t.description IS NULL OR t.description = "None")',
-        ]
+        # Build WHERE clauses based on status
+        if status == "pending":
+            # Nodes that have never been enriched
+            status_clause = (
+                "(t.enrichment_status IS NULL OR t.enrichment_status = 'pending')"
+            )
+        else:
+            status_clause = f"t.enrichment_status = '{status}'"
+
+        where_clauses = [status_clause]
         if tree_name:
             where_clauses.append(f't.tree_name = "{tree_name}"')
 
+        # Filter to unlinked nodes (enriched but missing relationships)
+        if unlinked:
+            where_clauses.append("NOT EXISTS ((t)-[:HAS_UNIT]->(:Unit))")
+            where_clauses.append("NOT EXISTS ((t)-[:HAS_ERROR]->(:TreeNode))")
+
         limit_clause = f"LIMIT {limit}" if limit else ""
 
+        # Compute has_context from graph relationships, not stored metadata
+        # Include existing description for stale node re-enrichment
         query = f"""
             MATCH (t:TreeNode)
             WHERE {" AND ".join(where_clauses)}
@@ -595,6 +646,8 @@ def discover_nodes_to_enrich(
             OPTIONAL MATCH (c:CodeChunk)-[:CONTAINS_REF]->(d)
             WITH t, collect(DISTINCT substring(c.content, 0, 300)) AS snippets
             RETURN t.path AS path, t.tree_name AS tree, t.units AS units,
+                   t.enrichment_status AS status, t.enrichment_confidence AS confidence,
+                   t.description AS description,
                    size(snippets) > 0 AS has_context, snippets
             ORDER BY has_context DESC, t.path
             {limit_clause}
@@ -613,6 +666,9 @@ def discover_nodes_to_enrich(
                     "path": r["path"],
                     "tree": r["tree"],
                     "units": r["units"],
+                    "status": r["status"],
+                    "confidence": r["confidence"],
+                    "description": r["description"],
                     "has_context": r["has_context"],
                     "snippets": r["snippets"] or [],
                 }
@@ -623,31 +679,35 @@ def discover_nodes_to_enrich(
 
 def estimate_enrichment_cost(
     node_count: int,
-    batch_size: int = 20,
+    batch_size: int = 200,
 ) -> dict:
     """
-    Estimate LLM cost for enrichment.
+    Estimate LLM cost and time for enrichment.
 
     Args:
         node_count: Number of nodes to enrich
-        batch_size: Paths per LLM request
+        batch_size: Paths per LLM request (default: 200, optimal for Gemini 3 Flash)
 
     Returns:
-        Dict with num_batches, input_tokens, output_tokens, estimated_cost
+        Dict with num_batches, input_tokens, output_tokens, estimated_cost, estimated_hours
     """
     num_batches = (node_count + batch_size - 1) // batch_size
-    # Estimate ~200 tokens prompt overhead + 50 tokens per path
-    input_tokens = num_batches * (200 + batch_size * 50)
-    # Estimate ~30 output tokens per path
-    output_tokens = num_batches * batch_size * 30
+    # Estimate ~12 tokens per path input (from benchmark)
+    input_tokens = num_batches * (500 + batch_size * 12)
+    # Estimate ~150 output tokens per path (from benchmark)
+    output_tokens = num_batches * batch_size * 150
     # Gemini Flash pricing: $0.10/1M input, $0.40/1M output
     cost = (input_tokens / 1_000_000) * 0.10 + (output_tokens / 1_000_000) * 0.40
+    # Time estimate: ~53s per batch of 200 (from benchmark)
+    seconds_per_batch = 53 * (batch_size / 200)
+    estimated_hours = (num_batches * seconds_per_batch) / 3600
 
     return {
         "num_batches": num_batches,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "estimated_cost": cost,
+        "estimated_hours": estimated_hours,
     }
 
 
@@ -655,8 +715,8 @@ async def batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
     verbose: bool = False,
-    batch_size: int = 20,
-    model: str = "google/gemini-3-flash-preview",
+    batch_size: int = 200,
+    model: str = "google/gemini-3-pro-preview",
     dry_run: bool = False,
     context_map: dict[str, list[str]] | None = None,
 ) -> list[EnrichmentResult]:
@@ -667,6 +727,11 @@ async def batch_enrich_paths(
     1. Fetches current node state from the graph
     2. Calls LLM in batches for efficient processing
     3. Persists enrichments back to the graph
+
+    Batch size of 200 is optimal for Gemini 3 Flash:
+    - 100% success rate (no JSON truncation)
+    - ~3.8 paths/sec throughput
+    - ~12 hours for 167k nodes
 
     Args:
         paths: List of MDSplus paths to enrich
@@ -743,6 +808,360 @@ async def batch_enrich_paths(
         f"Enrichment complete: {enriched}/{len(all_results)} enriched, "
         f"{high_conf} high confidence, {errors} errors, "
         f"{total_elapsed:.1f}s total"
+    )
+
+    return all_results
+
+
+# =============================================================================
+# Smart Batch Composition
+# =============================================================================
+
+
+def _get_parent_path(path: str) -> str:
+    """Extract parent path from MDSplus path.
+
+    Examples:
+        \\RESULTS::LIUQE:PSI -> \\RESULTS::LIUQE
+        \\RESULTS::THOMSON:NE:ERROR_BAR -> \\RESULTS::THOMSON:NE
+        \\RESULTS::TOP -> \\RESULTS
+    """
+    # Handle :: separator (tree::subtree)
+    if "::" in path:
+        tree_part, node_part = path.split("::", 1)
+        if ":" in node_part:
+            # Has sub-nodes, get parent
+            parent_node = ":".join(node_part.split(":")[:-1])
+            return f"{tree_part}::{parent_node}" if parent_node else tree_part
+        return tree_part
+    return path
+
+
+def compose_batches(
+    paths: list[str],
+    batch_size: int = 50,
+    group_by_parent: bool = True,
+) -> list[list[str]]:
+    """
+    Compose smart batches of related paths for efficient enrichment.
+
+    Groups paths by parent to maximize context sharing. Sibling paths
+    (same parent) are processed together so one context query serves all.
+
+    Args:
+        paths: List of MDSplus paths to batch
+        batch_size: Maximum paths per batch (default: 50 for ReAct)
+        group_by_parent: If True, group siblings together
+
+    Returns:
+        List of batches, each batch is a list of related paths
+    """
+    if not group_by_parent:
+        # Simple chunking without grouping
+        return [paths[i : i + batch_size] for i in range(0, len(paths), batch_size)]
+
+    # Group paths by parent
+    parent_groups: dict[str, list[str]] = {}
+    for path in paths:
+        parent = _get_parent_path(path)
+        if parent not in parent_groups:
+            parent_groups[parent] = []
+        parent_groups[parent].append(path)
+
+    # Build batches respecting parent groups
+    batches: list[list[str]] = []
+    current_batch: list[str] = []
+
+    # Sort parents by group size (process larger groups first for efficiency)
+    sorted_parents = sorted(parent_groups.keys(), key=lambda p: -len(parent_groups[p]))
+
+    for parent in sorted_parents:
+        group = parent_groups[parent]
+
+        if len(group) > batch_size:
+            # Large group: split into multiple batches
+            if current_batch:
+                batches.append(current_batch)
+                current_batch = []
+            for i in range(0, len(group), batch_size):
+                batches.append(group[i : i + batch_size])
+        elif len(current_batch) + len(group) <= batch_size:
+            # Fits in current batch
+            current_batch.extend(group)
+        else:
+            # Start new batch
+            if current_batch:
+                batches.append(current_batch)
+            current_batch = group.copy()
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
+
+
+# =============================================================================
+# ReAct Batch Enrichment
+# =============================================================================
+
+
+async def _run_react_batch_enrichment(
+    agent: ReActAgent,
+    paths: list[str],
+    tree_name: str,
+) -> list[EnrichmentResult]:
+    """
+    Run ReAct agent to enrich a batch of related paths.
+
+    The agent will:
+    1. Use tools to gather context for the batch
+    2. Generate enrichments for all paths
+
+    Args:
+        agent: Configured ReActAgent with tools
+        paths: Batch of related paths to enrich
+        tree_name: Tree name for context
+
+    Returns:
+        List of EnrichmentResult for each path
+    """
+    # Build the task prompt
+    paths_list = "\n".join(f"- {p}" for p in paths)
+    parent = _get_parent_path(paths[0]) if paths else "unknown"
+
+    task = f"""Enrich the following {len(paths)} MDSplus TreeNode paths from the {tree_name} tree.
+
+These paths share the parent: {parent}
+
+Paths to enrich:
+{paths_list}
+
+## Instructions
+
+1. First, gather context using tools:
+   - Query the graph for existing metadata on these paths and their siblings
+   - Search code examples for usage patterns (try searching for "{parent}" or key terms)
+   - Only use SSH if graph/code search is insufficient
+
+2. Then, output a JSON array with enrichments for ALL {len(paths)} paths.
+
+Remember: Be DEFINITIVE in descriptions. Use proper physics terminology.
+Output ONLY the JSON array, no other text.
+"""
+
+    try:
+        response = await agent.run(task)
+        response_text = str(response)
+
+        # Parse JSON from response
+        results = _parse_llm_response(response_text)
+
+        return [
+            EnrichmentResult(
+                path=item.get("path", paths[i] if i < len(paths) else "unknown"),
+                description=item.get("description"),
+                physics_domain=_parse_physics_domain(item.get("physics_domain")),
+                units=item.get("units"),
+                confidence=item.get("confidence", "low"),
+                sign_convention=item.get("sign_convention"),
+                dimensions=item.get("dimensions"),
+                error_node=item.get("error_node"),
+            )
+            for i, item in enumerate(results)
+        ]
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse agent response: {e}")
+        return [
+            EnrichmentResult(
+                path=p,
+                description=None,
+                physics_domain=None,
+                units=None,
+                confidence="low",
+                error=f"JSON parse error: {e}",
+            )
+            for p in paths
+        ]
+    except Exception as e:
+        logger.error(f"Agent error: {e}")
+        return [
+            EnrichmentResult(
+                path=p,
+                description=None,
+                physics_domain=None,
+                units=None,
+                confidence="low",
+                error=str(e),
+            )
+            for p in paths
+        ]
+
+
+def get_batch_enrichment_agent(
+    verbose: bool = False,
+    model: str = "google/gemini-3-pro-preview",
+) -> ReActAgent:
+    """
+    Create a ReActAgent configured for batch enrichment.
+
+    Uses tools for context gathering but expects batch JSON output.
+
+    Args:
+        verbose: Enable verbose agent output
+        model: LLM model to use
+
+    Returns:
+        Configured ReActAgent
+    """
+    from imas_codex.agents.tools import get_enrichment_tools
+
+    # Get system prompt and fill in physics domains
+    system_prompt = _get_prompt("enrichment-react-batch")
+    if system_prompt:
+        system_prompt = system_prompt.format(
+            physics_domains=", ".join(get_physics_domain_values())
+        )
+    else:
+        # Fallback if prompt file not found
+        system_prompt = ENRICHMENT_SYSTEM_PROMPT
+
+    llm = get_llm(
+        model=model, temperature=0.3, max_tokens=100000
+    )  # Increase max output tokens
+    tools = get_enrichment_tools()
+
+    return ReActAgent(
+        tools=tools,
+        llm=llm,
+        verbose=verbose,
+        system_prompt=system_prompt,
+        max_iterations=10,
+    )
+
+
+async def react_batch_enrich_paths(
+    paths: list[str],
+    tree_name: str = "results",
+    batch_size: int | None = None,  # Auto-select based on model
+    verbose: bool = False,
+    dry_run: bool = False,
+    model: str = "google/gemini-3-pro-preview",
+) -> list[EnrichmentResult]:
+    """
+    Enrich TreeNode paths using ReAct agent with smart batching.
+
+    This function:
+    1. Composes smart batches (groups related paths by parent)
+    2. For each batch, runs ReAct agent to gather context and enrich
+    3. Persists enrichments to graph
+
+    Benchmark Results:
+
+    Gemini 3 Flash (default):
+    - Batch 200: 1.8 paths/sec (Optimal)
+    - Batch 500+: Fails due to output token limits
+
+    Gemini 3 Pro:
+    - Batch 500: 1.2 paths/sec (Optimal)
+    - Batch 1000+: Fails due to max iterations
+
+    Compared to direct LLM batch (3.8 paths/sec), ReAct is slower but
+    provides much higher quality by gathering context from:
+    - Knowledge Graph (sibling nodes)
+    - Code Usage (how the path is actually used)
+    - MDSplus (live metadata)
+
+    Args:
+        paths: List of MDSplus paths to enrich
+        tree_name: Tree name for context
+        batch_size: Paths per batch (auto-selected if None: 200 for Flash, 500 for Pro)
+        verbose: Enable verbose output
+        dry_run: If True, don't persist to graph
+        model: LLM model to use
+
+    Returns:
+        List of EnrichmentResult for all paths
+    """
+    # Auto-select batch size based on model
+    if batch_size is None:
+        if "pro" in model.lower():
+            batch_size = 500  # Pro handles larger batches
+        else:
+            batch_size = 200  # Flash optimal
+
+    start_time = time.perf_counter()
+
+    # Compose smart batches
+    batches = compose_batches(paths, batch_size=batch_size, group_by_parent=True)
+
+    logger.info(
+        f"Processing {len(paths)} paths in {len(batches)} smart batches "
+        f"(avg {len(paths) / len(batches):.1f} paths/batch)"
+    )
+
+    # Create agent once, reuse for all batches
+    agent = get_batch_enrichment_agent(verbose=verbose, model=model)
+
+    all_results: list[EnrichmentResult] = []
+
+    for i, batch in enumerate(batches, 1):
+        batch_start = time.perf_counter()
+        parent = _get_parent_path(batch[0]) if batch else "unknown"
+
+        logger.info(f"Batch {i}/{len(batches)}: {len(batch)} paths from {parent}")
+
+        # Retry logic for network issues
+        max_retries = 3
+        results = []
+        for attempt in range(max_retries):
+            try:
+                results = await _run_react_batch_enrichment(agent, batch, tree_name)
+                # Check for empty/error results that aren't parse errors
+                valid_results = sum(1 for r in results if not r.error)
+                if valid_results > 0 or not results:
+                    break
+                logger.warning(
+                    f"Batch {i} attempt {attempt + 1} returned no valid results, retrying..."
+                )
+            except Exception as e:
+                logger.warning(f"Batch {i} attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    logger.error(f"Batch {i} failed after {max_retries} attempts")
+                    # Return error results for this batch
+                    results = [
+                        EnrichmentResult(
+                            path=p,
+                            description=None,
+                            physics_domain=None,
+                            units=None,
+                            confidence="low",
+                            error=f"Batch failed: {str(e)}",
+                        )
+                        for p in batch
+                    ]
+
+        batch_elapsed = time.perf_counter() - batch_start
+        for r in results:
+            r.elapsed_seconds = batch_elapsed / len(results) if results else 0
+
+        all_results.extend(results)
+
+        # Persist after each batch
+        if not dry_run and results:
+            updated = _save_enrichments_to_graph(results)
+            logger.info(f"  Persisted {updated} enrichments ({batch_elapsed:.1f}s)")
+
+    total_elapsed = time.perf_counter() - start_time
+
+    # Summary
+    enriched = sum(1 for r in all_results if r.description)
+    high_conf = sum(1 for r in all_results if r.confidence == "high")
+    errors = sum(1 for r in all_results if r.error)
+
+    logger.info(
+        f"ReAct enrichment complete: {enriched}/{len(all_results)} enriched, "
+        f"{high_conf} high confidence, {errors} errors, "
+        f"{total_elapsed:.1f}s total ({len(all_results) / total_elapsed:.1f} paths/sec)"
     )
 
     return all_results

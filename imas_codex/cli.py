@@ -1885,21 +1885,34 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 
 @agent.command("enrich")
 @click.argument("paths", nargs=-1)
-@click.option("--limit", "-n", default=20, type=int, help="Max nodes to enrich")
+@click.option(
+    "--limit", "-n", default=None, type=int, help="Max nodes to enrich (default: all)"
+)
 @click.option("--tree", default=None, help="Filter to specific tree name")
+@click.option(
+    "--status", default="pending", help="Target status (pending, enriched, stale)"
+)
+@click.option("--force", is_flag=True, help="Re-enrich already enriched nodes")
+@click.option(
+    "--unlinked", is_flag=True, help="Only enriched nodes without HAS_UNIT/HAS_ERROR"
+)
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def agent_enrich(
     paths: tuple[str, ...],
-    limit: int,
+    limit: int | None,
     tree: str | None,
+    status: str,
+    force: bool,
+    unlinked: bool,
     dry_run: bool,
     verbose: bool,
 ) -> None:
     """Enrich TreeNode metadata using ReAct agent with SSH access.
 
-    By default, discovers unenriched nodes from the graph. You can also
-    provide explicit paths to enrich.
+    By default, discovers and processes ALL nodes with status='pending'.
+    Use --tree to filter to a specific tree.
+    Use --limit to cap the number of nodes processed.
 
     The agent uses ReAct reasoning to:
     - Query the knowledge graph for context
@@ -1909,11 +1922,23 @@ def agent_enrich(
 
     \b
     EXAMPLES:
-        # Enrich up to 20 discovered nodes (default)
+        # Enrich all pending nodes in the results tree
+        imas-codex agent enrich --tree results
+
+        # Enrich all pending nodes across all trees
         imas-codex agent enrich
 
-        # Enrich more nodes
-        imas-codex agent enrich --limit 100
+        # Limit to first 100 nodes
+        imas-codex agent enrich --tree tcv_shot --limit 100
+
+        # Process stale nodes (marked for re-enrichment)
+        imas-codex agent enrich --status stale
+
+        # Find enriched nodes without links (second pass)
+        imas-codex agent enrich --unlinked
+
+        # Re-enrich already processed nodes
+        imas-codex agent enrich --force --status enriched
 
         # Enrich specific paths
         imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
@@ -1935,19 +1960,27 @@ def agent_enrich(
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    # Determine target status
+    target_status = "enriched" if force else status
+
     # Get paths - either from args or discover from graph
     if paths:
         path_list = list(paths)
         click.echo(f"Enriching {len(path_list)} specified paths...")
     else:
-        click.echo("Discovering nodes needing enrichment...")
+        filter_desc = f"status='{target_status}'"
+        if unlinked:
+            filter_desc += ", unlinked"
+        click.echo(f"Discovering nodes with {filter_desc}...")
         nodes = discover_nodes_to_enrich(
             tree_name=tree,
+            status=target_status,
+            unlinked=unlinked,
             with_context_only=False,
             limit=limit,
         )
         if not nodes:
-            click.echo("No nodes found needing enrichment.")
+            click.echo(f"No nodes found with {filter_desc}.")
             return
         path_list = [n["path"] for n in nodes]
         with_ctx = sum(1 for n in nodes if n["has_context"])
@@ -2039,6 +2072,81 @@ Respond with a JSON object:
     click.echo(f"Total time: {elapsed:.1f}s")
     if results:
         click.echo(f"Avg per path: {elapsed / len(results):.1f}s")
+
+
+@agent.command("mark-stale")
+@click.argument("pattern")
+@click.option("--tree", default=None, help="Filter to specific tree name")
+@click.option("--dry-run", is_flag=True, help="Preview without updating")
+def agent_mark_stale(
+    pattern: str,
+    tree: str | None,
+    dry_run: bool,
+) -> None:
+    """Mark TreeNodes as stale for re-enrichment.
+
+    Matches nodes by path pattern and sets enrichment_status='stale'.
+    Use this when new context is available and you want to re-process nodes.
+
+    \b
+    EXAMPLES:
+        # Mark all LIUQE nodes as stale
+        imas-codex agent mark-stale "LIUQE"
+
+        # Mark nodes in results tree matching pattern
+        imas-codex agent mark-stale "THOMSON" --tree results
+
+        # Preview what would be marked
+        imas-codex agent mark-stale "BOLO" --dry-run
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        where_clauses = [
+            "t.enrichment_status = 'enriched'",
+            f"t.path CONTAINS '{pattern}'",
+        ]
+        if tree:
+            where_clauses.append(f't.tree_name = "{tree}"')
+
+        # Count matching nodes
+        count_query = f"""
+            MATCH (t:TreeNode)
+            WHERE {" AND ".join(where_clauses)}
+            RETURN count(t) AS count
+        """
+        result = gc.query(count_query)
+        count = result[0]["count"] if result else 0
+
+        if count == 0:
+            click.echo(f"No enriched nodes matching '{pattern}' found.")
+            return
+
+        if dry_run:
+            click.echo(f"[DRY RUN] Would mark {count} nodes as stale")
+            # Show sample
+            sample_query = f"""
+                MATCH (t:TreeNode)
+                WHERE {" AND ".join(where_clauses)}
+                RETURN t.path AS path LIMIT 10
+            """
+            samples = gc.query(sample_query)
+            for s in samples:
+                click.echo(f"  {s['path']}")
+            if count > 10:
+                click.echo(f"  ... and {count - 10} more")
+            return
+
+        # Mark as stale
+        update_query = f"""
+            MATCH (t:TreeNode)
+            WHERE {" AND ".join(where_clauses)}
+            SET t.enrichment_status = 'stale'
+            RETURN count(t) AS updated
+        """
+        result = gc.query(update_query)
+        updated = result[0]["updated"] if result else 0
+        click.echo(f"✓ Marked {updated} nodes as stale")
 
 
 # ============================================================================
