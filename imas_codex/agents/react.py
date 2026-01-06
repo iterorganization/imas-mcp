@@ -38,17 +38,20 @@ Guidelines:
 - Set description to null rather than guessing
 
 Tool priority (use in this order):
-1. search_code_examples - ALWAYS try this first, finds real usage patterns with units/descriptions
-2. query_neo4j - Check existing TreeNode metadata and relationships in the graph
+1. query_neo4j - ALWAYS check graph first for existing metadata and sibling nodes
+2. search_code_examples - Find real usage patterns with units/descriptions in code
 3. get_tree_structure - Understand sibling nodes and hierarchy
-4. ssh_mdsplus_query - Only if graph/code search is insufficient (slow, ~5s per query)
+4. ssh_mdsplus_query - LAST RESORT only if above insufficient (slow, ~5s per query)
 
-IMPORTANT: The knowledge graph and code examples contain rich metadata already.
-SSH queries are slow and should be a last resort, not a first step.
+IMPORTANT: The graph already contains rich context:
+- Previously enriched TreeNodes with descriptions
+- Code examples showing how paths are used
+- Sibling nodes that reveal naming patterns
+SSH queries are slow and should be a last resort.
 
 When enriching a path:
-1. Search code examples for usage patterns (often includes units and descriptions)
-2. Query the graph for existing context and related nodes
+1. Query the graph for this node and its siblings (same parent path)
+2. Search code examples for usage patterns
 3. Only use SSH if the above don't provide enough information
 4. Synthesize into a concise, accurate description
 """
@@ -305,6 +308,14 @@ class EnrichmentResult:
     physics_domain: str | None
     units: str | None
     confidence: str
+    # IMAS mapping preparation fields
+    sign_convention: str | None = None
+    coordinate_system: str | None = None
+    array_structure: str | None = None
+    normalization: str | None = None
+    error_node: str | None = None
+    data_quality: str | None = None
+    # Metadata
     has_context: bool = False
     error: str | None = None
     elapsed_seconds: float = 0.0
@@ -368,33 +379,38 @@ def _build_batch_prompt(
     prompt = f"""You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
 
 For each path, analyze the naming convention and any provided code context to generate:
-- description: 1-2 sentence physics description. Be DIRECT and DEFINITIVE - do NOT use hedging language like "likely", "probably", "may represent". State what the node IS, not what it "might be".
-- physics_domain: One of: {", ".join(PHYSICS_DOMAINS)}
-- units: SI units for this quantity (e.g., "A", "Wb", "m", "s", "eV", "m^-3"). Use null if dimensionless or unknown.
-- confidence:
-  - high = standard physics quantity with well-known abbreviation (I_P, PSI, Q, ne, Te, etc.)
-  - medium = clear from context or naming pattern but not a standard abbreviation
-  - low = uncertain, set description to null instead of guessing
 
-If you cannot determine the meaning with confidence, set description to null rather than guessing.
+REQUIRED fields:
+- description: 1-2 sentence physics description. Be DIRECT and DEFINITIVE.
+- physics_domain: One of: {", ".join(PHYSICS_DOMAINS)}
+- units: SI units (e.g., "A", "Wb", "m^-3"). Use null if dimensionless/unknown.
+- confidence: high|medium|low
+
+IMAS MAPPING fields (include when determinable):
+- sign_convention: Sign/direction convention. CRITICAL for currents, fluxes, fields.
+  Examples: "positive clockwise viewed from above (COCOS 11)", "positive outward"
+- array_structure: Dimension semantics for arrays. E.g., "(time, rho)", "(R, Z, time)"
+- error_node: Path to associated error bar node if known
+
+Confidence levels:
+- high = standard physics abbreviation (I_P, PSI, Q, ne, Te)
+- medium = clear from context but not standard
+- low = uncertain, set description to null
 
 TCV-specific knowledge:
-- LIUQE: TCV's main equilibrium reconstruction code (both FORTRAN and MATLAB versions)
-- ASTRA: 1.5D transport code for plasma simulations
-- CXRS: Charge Exchange Recombination Spectroscopy diagnostic
-- THOMSON: Thomson scattering diagnostic for Te/ne profiles
-- FIR: Far-Infrared interferometer for line-integrated density
-- BOLO: Bolometer arrays for radiated power
-- GPI: Gas Puff Imaging diagnostic
-- PROFFIT: Profile fitting analysis code
-- IBS: Integrated Beam Simulation or Ion Beam System
-- RHO: Normalized toroidal flux coordinate (sqrt of normalized toroidal flux)
-- _95 suffix: quantity at 95% normalized flux surface
-- _AXIS suffix: quantity on magnetic axis
+- LIUQE: Equilibrium reconstruction (COCOS 17: Bphi>0, Ip>0 counter-clockwise from above)
+- ASTRA: 1.5D transport code
+- CXRS: Charge Exchange Recombination Spectroscopy
+- THOMSON: Thomson scattering (Te/ne profiles)
+- FIR: Far-Infrared interferometer (line-integrated density)
+- BOLO: Bolometer arrays (radiated power)
+- RHO: Normalized toroidal flux coordinate
+- _95 suffix: value at 95% flux surface
+- _AXIS suffix: value on magnetic axis
 
 Tree: {tree_name}
 
-Paths to describe (respond with JSON array):
+Paths to describe:
 """
 
     for node in nodes:
@@ -411,8 +427,10 @@ Paths to describe (respond with JSON array):
 
     prompt += """
 
-Respond with a JSON array only, no markdown. Be definitive in descriptions:
-[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "high|medium|low"}]
+Respond with JSON array only (no markdown):
+[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "...", "sign_convention": "...", "array_structure": "...", "error_node": "..."}]
+
+Omit optional fields if not determinable. Be definitive in descriptions.
 """
     return prompt
 
@@ -450,6 +468,9 @@ async def _call_llm_batch(
                 physics_domain=item.get("physics_domain"),
                 units=item.get("units"),
                 confidence=item.get("confidence", "low"),
+                sign_convention=item.get("sign_convention"),
+                array_structure=item.get("array_structure"),
+                error_node=item.get("error_node"),
             )
             for item in results
         ]
@@ -475,8 +496,11 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
 
     Returns number of nodes updated.
     """
-    updates = [
-        {
+    updates = []
+    for r in results:
+        if not r.description:
+            continue
+        update = {
             "path": r.path,
             "description": r.description,
             "physics_domain": r.physics_domain,
@@ -484,9 +508,14 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
             "enrichment_confidence": r.confidence,
             "enrichment_source": "llm_agent",
         }
-        for r in results
-        if r.description  # Only update if we got a description
-    ]
+        # Add optional IMAS mapping fields if present
+        if r.sign_convention:
+            update["sign_convention"] = r.sign_convention
+        if r.array_structure:
+            update["array_structure"] = r.array_structure
+        if r.error_node:
+            update["error_node"] = r.error_node
+        updates.append(update)
 
     if not updates:
         return 0
@@ -500,7 +529,10 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
                 t.physics_domain = u.physics_domain,
                 t.units = COALESCE(u.units, t.units),
                 t.enrichment_confidence = u.enrichment_confidence,
-                t.enrichment_source = u.enrichment_source
+                t.enrichment_source = u.enrichment_source,
+                t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
+                t.array_structure = COALESCE(u.array_structure, t.array_structure),
+                t.error_node = COALESCE(u.error_node, t.error_node)
             """,
             updates=updates,
         )

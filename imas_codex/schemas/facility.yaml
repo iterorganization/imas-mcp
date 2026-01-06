@@ -623,6 +623,50 @@ classes:
       removed_version:
         description: The tree model version that removed this node (rare)
         range: TreeModelVersion
+      # IMAS mapping preparation fields
+      sign_convention:
+        description: >-
+          Sign convention for this quantity. Critical for IMAS mapping.
+          Examples: "positive clockwise from above", "positive outward",
+          "positive = current flowing counter-clockwise (COCOS 11)".
+          Include COCOS reference if known.
+      coordinate_system:
+        description: >-
+          Coordinate system for vector/tensor quantities.
+          E.g., "cylindrical (R, phi, Z)", "flux coordinates (rho, theta, phi)"
+      normalization:
+        description: >-
+          How this quantity is normalized, if applicable.
+          E.g., "normalized to Ip", "normalized to axis value"
+      reference_frame:
+        description: >-
+          Reference frame for time-dependent quantities.
+          E.g., "lab frame", "plasma rotating frame"
+      array_structure:
+        description: >-
+          Array dimension semantics for multi-dimensional data.
+          E.g., "(time, rho)", "(R, Z, time)", "(channel, time)".
+          Critical for IMAS mapping where array ordering matters.
+      time_basis:
+        description: >-
+          Time basis identifier for synchronized quantities.
+          E.g., "thomson_time", "equilibrium_time", "control_cycle"
+      error_node:
+        description: >-
+          Path to associated error/uncertainty node if it exists.
+          E.g., \\RESULTS::THOMSON:NE:ERROR_BAR
+      data_quality:
+        description: >-
+          Known data quality issues or caveats.
+          E.g., "unreliable before shot 50000", "requires FIR correction"
+      enrichment_source:
+        description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
+      enrichment_confidence:
+        description: Confidence level of enriched metadata (high, medium, low)
+      enrichment_notes:
+        description: Agent reasoning or notes about the enrichment
+      wiki_source:
+        description: URL or reference to TCV wiki documentation for this node
 
   TDIFunction:
     description: >-
