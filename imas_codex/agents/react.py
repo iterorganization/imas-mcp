@@ -8,22 +8,37 @@ Provides pre-configured agents for:
 - Code analysis
 """
 
-import asyncio
-import json
-import logging
-import re
-import time
-from collections.abc import Callable
-from dataclasses import dataclass, field
+import warnings
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
+# Suppress Pydantic deprecation warnings from LlamaIndex internals
+# These are upstream issues that will be fixed in future LlamaIndex releases
+warnings.filterwarnings("ignore", message=".*__fields__.*", category=DeprecationWarning)
+warnings.filterwarnings(
+    "ignore", message=".*__fields_set__.*", category=DeprecationWarning
+)
+warnings.filterwarnings(
+    "ignore", message=".*model_computed_fields.*", category=DeprecationWarning
+)
+warnings.filterwarnings(
+    "ignore", message=".*model_fields.*", category=DeprecationWarning
+)
 
-from imas_codex.agents.llm import get_llm
-from imas_codex.agents.prompt_loader import load_prompts
-from imas_codex.agents.tools import get_exploration_tools
-from imas_codex.core.physics_domain import PhysicsDomain
-from imas_codex.graph import GraphClient
+import asyncio  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import re  # noqa: E402
+import time  # noqa: E402
+from collections.abc import Callable  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+
+from llama_index.core.agent import ReActAgent  # noqa: E402
+from llama_index.core.tools import FunctionTool  # noqa: E402
+
+from imas_codex.agents.llm import get_llm  # noqa: E402
+from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.agents.tools import get_exploration_tools  # noqa: E402
+from imas_codex.core.physics_domain import PhysicsDomain  # noqa: E402
+from imas_codex.graph import GraphClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

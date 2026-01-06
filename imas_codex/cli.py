@@ -1906,8 +1906,8 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.option(
     "--model",
     "-m",
-    default="google/gemini-3-flash",
-    help="LLM model to use (default: google/gemini-3-flash)",
+    default="google/gemini-3-pro-preview",
+    help="LLM model to use (default: google/gemini-3-pro-preview)",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
