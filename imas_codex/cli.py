@@ -1885,7 +1885,9 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 
 @agent.command("enrich")
 @click.argument("paths", nargs=-1)
-@click.option("--limit", "-n", default=20, type=int, help="Max nodes to enrich")
+@click.option(
+    "--limit", "-n", default=None, type=int, help="Max nodes to enrich (default: all)"
+)
 @click.option("--tree", default=None, help="Filter to specific tree name")
 @click.option(
     "--status", default="pending", help="Target status (pending, enriched, stale)"
@@ -1898,7 +1900,7 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def agent_enrich(
     paths: tuple[str, ...],
-    limit: int,
+    limit: int | None,
     tree: str | None,
     status: str,
     force: bool,
@@ -1908,9 +1910,9 @@ def agent_enrich(
 ) -> None:
     """Enrich TreeNode metadata using ReAct agent with SSH access.
 
-    By default, discovers nodes with status='pending' from the graph.
-    Use --force to re-enrich already enriched nodes.
-    Use --status stale to process nodes marked for re-enrichment.
+    By default, discovers and processes ALL nodes with status='pending'.
+    Use --tree to filter to a specific tree.
+    Use --limit to cap the number of nodes processed.
 
     The agent uses ReAct reasoning to:
     - Query the knowledge graph for context
@@ -1920,20 +1922,20 @@ def agent_enrich(
 
     \b
     EXAMPLES:
-        # Enrich up to 20 pending nodes (default)
+        # Enrich all pending nodes in the results tree
+        imas-codex agent enrich --tree results
+
+        # Enrich all pending nodes across all trees
         imas-codex agent enrich
 
-        # Enrich more nodes
-        imas-codex agent enrich --limit 100
-
-        # Enrich specific tree
-        imas-codex agent enrich --tree results
+        # Limit to first 100 nodes
+        imas-codex agent enrich --tree tcv_shot --limit 100
 
         # Process stale nodes (marked for re-enrichment)
         imas-codex agent enrich --status stale
 
         # Find enriched nodes without links (second pass)
-        imas-codex agent enrich --unlinked --limit 100
+        imas-codex agent enrich --unlinked
 
         # Re-enrich already processed nodes
         imas-codex agent enrich --force --status enriched
