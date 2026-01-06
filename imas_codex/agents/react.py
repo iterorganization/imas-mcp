@@ -310,11 +310,8 @@ class EnrichmentResult:
     confidence: str
     # IMAS mapping preparation fields
     sign_convention: str | None = None
-    coordinate_system: str | None = None
-    array_structure: str | None = None
-    normalization: str | None = None
+    dimensions: list[str] | None = None
     error_node: str | None = None
-    data_quality: str | None = None
     # Metadata
     has_context: bool = False
     error: str | None = None
@@ -389,7 +386,8 @@ REQUIRED fields:
 IMAS MAPPING fields (include when determinable):
 - sign_convention: Sign/direction convention. CRITICAL for currents, fluxes, fields.
   Examples: "positive clockwise viewed from above (COCOS 11)", "positive outward"
-- array_structure: Dimension semantics for arrays. E.g., "(time, rho)", "(R, Z, time)"
+- dimensions: Array dimension names in order, like xarray dims.
+  E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"]
 - error_node: Path to associated error bar node if known
 
 Confidence levels:
@@ -428,7 +426,7 @@ Paths to describe:
     prompt += """
 
 Respond with JSON array only (no markdown):
-[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "...", "sign_convention": "...", "array_structure": "...", "error_node": "..."}]
+[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "...", "sign_convention": "...", "dimensions": [...], "error_node": "..."}]
 
 Omit optional fields if not determinable. Be definitive in descriptions.
 """
@@ -469,7 +467,7 @@ async def _call_llm_batch(
                 units=item.get("units"),
                 confidence=item.get("confidence", "low"),
                 sign_convention=item.get("sign_convention"),
-                array_structure=item.get("array_structure"),
+                dimensions=item.get("dimensions"),
                 error_node=item.get("error_node"),
             )
             for item in results
@@ -511,8 +509,8 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
         # Add optional IMAS mapping fields if present
         if r.sign_convention:
             update["sign_convention"] = r.sign_convention
-        if r.array_structure:
-            update["array_structure"] = r.array_structure
+        if r.dimensions:
+            update["dimensions"] = r.dimensions
         if r.error_node:
             update["error_node"] = r.error_node
         updates.append(update)
@@ -531,7 +529,7 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
                 t.enrichment_confidence = u.enrichment_confidence,
                 t.enrichment_source = u.enrichment_source,
                 t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
-                t.array_structure = COALESCE(u.array_structure, t.array_structure),
+                t.dimensions = COALESCE(u.dimensions, t.dimensions),
                 t.error_node = COALESCE(u.error_node, t.error_node)
             """,
             updates=updates,

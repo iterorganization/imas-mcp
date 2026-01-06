@@ -123,20 +123,26 @@ Link TreeNodes to AnalysisCode entities:
 
 ## Implementation
 
-### Script: `scripts/enrich_tree_metadata.py`
+### CLI: `imas-codex agent enrich`
 
 ```bash
-# Full enrichment with SSH capability
-uv run enrich-tree-metadata --facility epfl --model google/gemini-3-flash-preview
+# Discover and enrich nodes needing metadata
+uv run imas-codex agent enrich --discover
 
 # Dry run to preview
-uv run enrich-tree-metadata --facility epfl --dry-run
+uv run imas-codex agent enrich --discover --dry-run
 
 # Specific tree only
-uv run enrich-tree-metadata --facility epfl --tree results
+uv run imas-codex agent enrich --discover --tree results
 
 # High-context nodes first (have code examples)
-uv run enrich-tree-metadata --facility epfl --with-context-only
+uv run imas-codex agent enrich --discover --with-context-only
+
+# Limit number of nodes
+uv run imas-codex agent enrich --discover --limit 100
+
+# Explicit paths (for targeted enrichment)
+uv run imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
 ```
 
 ### Cost Estimate

@@ -73,7 +73,7 @@ for tree in "${TREES[@]}"; do
     # Run discover-mdsplus with full re-scan and legacy cleanup
     # --full to force complete re-scan (fixes epochs with old hash fingerprints)
     # --clean to merge and cleanup legacy nodes after ingestion
-    if uv run discover-mdsplus "$FACILITY" "$tree" --full --clean 2>&1 | tee "$logfile"; then
+    if uv run discover-mdsplus "$FACILITY" "$tree" 2>&1 | tee "$logfile"; then
         echo "✓ $tree completed successfully"
         SUCCEEDED+=("$tree")
     else
