@@ -34,6 +34,7 @@ default_range: string
 
 imports:
   - linkml:types
+  - common
   - imas_dd
 
 # =============================================================================
@@ -563,9 +564,9 @@ classes:
       node_type:
         description: MDSplus node data type
         range: TreeNodeType
-      units:
-        description: Physical units (SI, validated by pint)
-        required: true
+      unit:
+        description: Physical units for this node (linked via HAS_UNIT relationship)
+        range: Unit
       description:
         description: Node description
       physics_domain:
@@ -636,10 +637,13 @@ classes:
           E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"].
           Critical for IMAS mapping where dimension semantics matter.
         multivalued: true
-      error_node:
+      error_nodes:
         description: >-
-          Path to associated error/uncertainty node if it exists.
-          E.g., \\RESULTS::THOMSON:NE:ERROR_BAR
+          Associated error/uncertainty TreeNodes linked via HAS_ERROR relationship.
+          E.g., for a data node like \\RESULTS::THOMSON:NE, links to error nodes
+          like \\RESULTS::THOMSON:NE:ERROR_BAR or \\RESULTS::THOMSON:NE:ERROR_UPPER.
+        multivalued: true
+        range: TreeNode
       enrichment_source:
         description: Source of enrichment (llm_agent, manual, wiki, mdsplus)
       enrichment_confidence:

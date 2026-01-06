@@ -19,79 +19,35 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 
 from imas_codex.agents.llm import get_llm
+from imas_codex.agents.prompt_loader import load_prompts
 from imas_codex.agents.tools import get_exploration_tools
+from imas_codex.core.physics_domain import PhysicsDomain
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
 
+# Load prompts from markdown files
+_PROMPTS = load_prompts()
 
-# System prompts for different agent personalities
-ENRICHMENT_SYSTEM_PROMPT = """You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
 
-Your task is to analyze TreeNode paths and provide accurate physics descriptions.
+def _get_prompt(name: str) -> str:
+    """Get a prompt by name, with fallback to empty string."""
+    prompt = _PROMPTS.get(name)
+    if prompt is None:
+        logger.warning(f"Prompt '{name}' not found in prompts directory")
+        return ""
+    return prompt.content
 
-Guidelines:
-- Be DEFINITIVE in descriptions - avoid hedging language like "likely" or "probably"
-- Use proper physics terminology and units
-- Reference TCV-specific knowledge (LIUQE, ASTRA, CXRS, etc.)
-- If uncertain, gather more information using tools before describing
-- Set description to null rather than guessing
 
-Tool priority (use in this order):
-1. query_neo4j - ALWAYS check graph first for existing metadata and sibling nodes
-2. search_code_examples - Find real usage patterns with units/descriptions in code
-3. get_tree_structure - Understand sibling nodes and hierarchy
-4. ssh_mdsplus_query - LAST RESORT only if above insufficient (slow, ~5s per query)
+def get_physics_domain_values() -> list[str]:
+    """Get all valid physics domain values from the enum."""
+    return [d.value for d in PhysicsDomain]
 
-IMPORTANT: The graph already contains rich context:
-- Previously enriched TreeNodes with descriptions
-- Code examples showing how paths are used
-- Sibling nodes that reveal naming patterns
-SSH queries are slow and should be a last resort.
 
-When enriching a path:
-1. Query the graph for this node and its siblings (same parent path)
-2. Search code examples for usage patterns
-3. Only use SSH if the above don't provide enough information
-4. Synthesize into a concise, accurate description
-"""
-
-MAPPING_SYSTEM_PROMPT = """You are an expert in fusion data standards, specializing in mapping facility-specific data to IMAS (Integrated Modelling and Analysis Suite).
-
-Your task is to discover semantic mappings between MDSplus TreeNodes and IMAS Data Dictionary paths.
-
-Guidelines:
-- Focus on physics equivalence, not just name similarity
-- Consider units, coordinates, and array dimensions
-- Note transformation requirements (unit conversions, coordinate systems)
-- Distinguish between exact matches and approximate mappings
-- Document confidence level and any assumptions
-
-Mapping process:
-1. Understand the TreeNode's physics meaning from graph/MDSplus
-2. Search IMAS DD for semantically equivalent paths
-3. Verify units and structure compatibility
-4. Document the mapping with confidence and notes
-"""
-
-EXPLORATION_SYSTEM_PROMPT = """You are an expert at exploring fusion facility data systems and codebases.
-
-Your task is to systematically discover and document data structures, analysis codes, and their relationships.
-
-Guidelines:
-- Be thorough but efficient - use batch operations when possible
-- Document findings immediately in the knowledge graph
-- Prioritize high-value physics domains (equilibrium, profiles, transport)
-- Note connections between codes, diagnostics, and data paths
-- Flag interesting patterns for deeper investigation
-
-Exploration approach:
-1. Start with known entry points (tree names, code directories)
-2. Use SSH tools for discovery (rg, fd, ls)
-3. Cross-reference with existing graph data
-4. Identify patterns and relationships
-5. Queue files for ingestion when appropriate
-"""
+# System prompts loaded from prompts directory
+ENRICHMENT_SYSTEM_PROMPT = _get_prompt("enrichment-system")
+MAPPING_SYSTEM_PROMPT = _get_prompt("mapping-system")
+EXPLORATION_SYSTEM_PROMPT = _get_prompt("exploration-system")
 
 
 @dataclass
@@ -305,7 +261,7 @@ class EnrichmentResult:
 
     path: str
     description: str | None
-    physics_domain: str | None
+    physics_domain: PhysicsDomain | None
     units: str | None
     confidence: str
     # IMAS mapping preparation fields
@@ -317,20 +273,6 @@ class EnrichmentResult:
     error: str | None = None
     elapsed_seconds: float = 0.0
 
-
-# Physics domains for TreeNode enrichment
-PHYSICS_DOMAINS = [
-    "equilibrium",
-    "magnetics",
-    "heating",
-    "diagnostics",
-    "transport",
-    "mhd",
-    "control",
-    "machine",
-    "neutral_beam",
-    "spectroscopy",
-]
 
 # Patterns for metadata/internal nodes to skip during discovery
 # These are matched as complete path segments (ending the path or followed by colon)
@@ -372,65 +314,34 @@ def _build_batch_prompt(
     tree_name: str,
     nodes: list[dict],
 ) -> str:
-    """Build LLM prompt for batch enrichment."""
-    prompt = f"""You are a tokamak physics expert enriching MDSplus TreeNode metadata for the TCV tokamak at EPFL.
-
-For each path, analyze the naming convention and any provided code context to generate:
-
-REQUIRED fields:
-- description: 1-2 sentence physics description. Be DIRECT and DEFINITIVE.
-- physics_domain: One of: {", ".join(PHYSICS_DOMAINS)}
-- units: SI units (e.g., "A", "Wb", "m^-3"). Use null if dimensionless/unknown.
-- confidence: high|medium|low
-
-IMAS MAPPING fields (include when determinable):
-- sign_convention: Sign/direction convention. CRITICAL for currents, fluxes, fields.
-  Examples: "positive clockwise viewed from above (COCOS 11)", "positive outward"
-- dimensions: Array dimension names in order, like xarray dims.
-  E.g., ["time", "rho"], ["R", "Z", "time"], ["channel", "time"]
-- error_node: Path to associated error bar node if known
-
-Confidence levels:
-- high = standard physics abbreviation (I_P, PSI, Q, ne, Te)
-- medium = clear from context but not standard
-- low = uncertain, set description to null
-
-TCV-specific knowledge:
-- LIUQE: Equilibrium reconstruction (COCOS 17: Bphi>0, Ip>0 counter-clockwise from above)
-- ASTRA: 1.5D transport code
-- CXRS: Charge Exchange Recombination Spectroscopy
-- THOMSON: Thomson scattering (Te/ne profiles)
-- FIR: Far-Infrared interferometer (line-integrated density)
-- BOLO: Bolometer arrays (radiated power)
-- RHO: Normalized toroidal flux coordinate
-- _95 suffix: value at 95% flux surface
-- _AXIS suffix: value on magnetic axis
-
-Tree: {tree_name}
-
-Paths to describe:
-"""
-
+    """Build LLM prompt for batch enrichment using the prompt template."""
+    # Build paths section
+    paths_lines = []
     for node in nodes:
         path = node["path"]
-        prompt += f"\n- {path}"
+        line = f"- {path}"
         if node.get("units") and node["units"] != "dimensionless":
-            prompt += f" (current units: {node['units']})"
+            line += f" (current units: {node['units']})"
         if node.get("description") and node["description"] != "None":
-            prompt += f" (current: {node['description'][:100]})"
+            line += f" (current: {node['description'][:100]})"
         # Add code context if available
         if node.get("snippets"):
             snippets = node["snippets"][:2]  # Max 2 snippets
-            prompt += f"\n  Code context: {snippets[0][:200]}..."
+            line += f"\n  Code context: {snippets[0][:200]}..."
+        paths_lines.append(line)
 
-    prompt += """
+    paths_section = "\n".join(paths_lines)
 
-Respond with JSON array only (no markdown):
-[{"path": "...", "description": "...", "physics_domain": "...", "units": "...", "confidence": "...", "sign_convention": "...", "dimensions": [...], "error_node": "..."}]
+    # Get prompt template and fill in placeholders
+    template = _get_prompt("enrichment-batch")
+    if not template:
+        raise ValueError("enrichment-batch prompt not found")
 
-Omit optional fields if not determinable. Be definitive in descriptions.
-"""
-    return prompt
+    return template.format(
+        physics_domains=", ".join(get_physics_domain_values()),
+        tree_name=tree_name,
+        paths_section=paths_section,
+    )
 
 
 def _parse_llm_response(content: str) -> list[dict]:
@@ -441,6 +352,17 @@ def _parse_llm_response(content: str) -> list[dict]:
         content = re.sub(r"^```(?:json)?\n?", "", content)
         content = re.sub(r"\n?```$", "", content)
     return json.loads(content)
+
+
+def _parse_physics_domain(value: str | None) -> PhysicsDomain | None:
+    """Parse physics domain string to enum, with fallback to GENERAL."""
+    if not value:
+        return None
+    try:
+        return PhysicsDomain(value)
+    except ValueError:
+        logger.warning(f"Unknown physics domain '{value}', falling back to GENERAL")
+        return PhysicsDomain.GENERAL
 
 
 async def _call_llm_batch(
@@ -463,7 +385,7 @@ async def _call_llm_batch(
             EnrichmentResult(
                 path=item["path"],
                 description=item.get("description"),
-                physics_domain=item.get("physics_domain"),
+                physics_domain=_parse_physics_domain(item.get("physics_domain")),
                 units=item.get("units"),
                 confidence=item.get("confidence", "low"),
                 sign_convention=item.get("sign_convention"),
@@ -492,17 +414,24 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
     """
     Save enrichment results to Neo4j graph.
 
+    Creates:
+    - TreeNode property updates (description, physics_domain, etc.)
+    - HAS_UNIT relationships to Unit nodes (creating Unit if needed)
+    - HAS_ERROR relationships to error TreeNodes (if they exist)
+
     Returns number of nodes updated.
     """
     updates = []
+    unit_links = []
+    error_links = []
+
     for r in results:
         if not r.description:
             continue
         update = {
             "path": r.path,
             "description": r.description,
-            "physics_domain": r.physics_domain,
-            "units": r.units,
+            "physics_domain": r.physics_domain.value if r.physics_domain else None,
             "enrichment_confidence": r.confidence,
             "enrichment_source": "llm_agent",
         }
@@ -511,29 +440,58 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
             update["sign_convention"] = r.sign_convention
         if r.dimensions:
             update["dimensions"] = r.dimensions
-        if r.error_node:
-            update["error_node"] = r.error_node
         updates.append(update)
+
+        # Track unit relationships
+        if r.units:
+            unit_links.append({"path": r.path, "unit_symbol": r.units})
+
+        # Track error node relationships
+        if r.error_node:
+            error_links.append({"path": r.path, "error_path": r.error_node})
 
     if not updates:
         return 0
 
     with GraphClient() as gc:
+        # Update TreeNode properties
         gc.query(
             """
             UNWIND $updates AS u
             MATCH (t:TreeNode {path: u.path})
             SET t.description = u.description,
                 t.physics_domain = u.physics_domain,
-                t.units = COALESCE(u.units, t.units),
                 t.enrichment_confidence = u.enrichment_confidence,
                 t.enrichment_source = u.enrichment_source,
                 t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
-                t.dimensions = COALESCE(u.dimensions, t.dimensions),
-                t.error_node = COALESCE(u.error_node, t.error_node)
+                t.dimensions = COALESCE(u.dimensions, t.dimensions)
             """,
             updates=updates,
         )
+
+        # Create/link Unit nodes
+        if unit_links:
+            gc.query(
+                """
+                UNWIND $links AS link
+                MATCH (t:TreeNode {path: link.path})
+                MERGE (u:Unit {symbol: link.unit_symbol})
+                MERGE (t)-[:HAS_UNIT]->(u)
+                """,
+                links=unit_links,
+            )
+
+        # Create HAS_ERROR relationships to existing error nodes
+        if error_links:
+            gc.query(
+                """
+                UNWIND $links AS link
+                MATCH (t:TreeNode {path: link.path})
+                MATCH (e:TreeNode {path: link.error_path})
+                MERGE (t)-[:HAS_ERROR]->(e)
+                """,
+                links=error_links,
+            )
 
     return len(updates)
 
