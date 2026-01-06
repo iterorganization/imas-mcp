@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from llama_index.core.agent import ReActAgent
@@ -818,7 +819,7 @@ async def batch_enrich_paths(
 # =============================================================================
 
 
-def _get_parent_path(path: str) -> str:
+def get_parent_path(path: str) -> str:
     """Extract parent path from MDSplus path.
 
     Examples:
@@ -863,7 +864,7 @@ def compose_batches(
     # Group paths by parent
     parent_groups: dict[str, list[str]] = {}
     for path in paths:
-        parent = _get_parent_path(path)
+        parent = get_parent_path(path)
         if parent not in parent_groups:
             parent_groups[parent] = []
         parent_groups[parent].append(path)
@@ -927,7 +928,7 @@ async def _run_react_batch_enrichment(
     """
     # Build the task prompt
     paths_list = "\n".join(f"- {p}" for p in paths)
-    parent = _get_parent_path(paths[0]) if paths else "unknown"
+    parent = get_parent_path(paths[0]) if paths else "unknown"
 
     task = f"""Enrich the following {len(paths)} MDSplus TreeNode paths from the {tree_name} tree.
 
@@ -1039,6 +1040,27 @@ def get_batch_enrichment_agent(
     )
 
 
+@dataclass
+class BatchProgress:
+    """Progress information for a batch enrichment operation."""
+
+    batch_num: int
+    total_batches: int
+    batch_paths: int
+    parent_path: str
+    tree_name: str
+    paths_processed: int
+    paths_total: int
+    enriched: int
+    errors: int
+    high_confidence: int
+    elapsed_seconds: float
+
+
+# Type alias for progress callback
+ProgressCallback = Callable[[BatchProgress], None] | None
+
+
 async def react_batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
@@ -1046,6 +1068,7 @@ async def react_batch_enrich_paths(
     verbose: bool = False,
     dry_run: bool = False,
     model: str = "google/gemini-3-pro-preview",
+    progress_callback: ProgressCallback = None,
 ) -> list[EnrichmentResult]:
     """
     Enrich TreeNode paths using ReAct agent with smart batching.
@@ -1078,6 +1101,7 @@ async def react_batch_enrich_paths(
         verbose: Enable verbose output
         dry_run: If True, don't persist to graph
         model: LLM model to use
+        progress_callback: Optional callback for progress updates
 
     Returns:
         List of EnrichmentResult for all paths
@@ -1103,10 +1127,14 @@ async def react_batch_enrich_paths(
     agent = get_batch_enrichment_agent(verbose=verbose, model=model)
 
     all_results: list[EnrichmentResult] = []
+    paths_processed = 0
+    enriched_count = 0
+    error_count = 0
+    high_conf_count = 0
 
     for i, batch in enumerate(batches, 1):
         batch_start = time.perf_counter()
-        parent = _get_parent_path(batch[0]) if batch else "unknown"
+        parent = get_parent_path(batch[0]) if batch else "unknown"
 
         logger.info(f"Batch {i}/{len(batches)}: {len(batch)} paths from {parent}")
 
@@ -1144,7 +1172,34 @@ async def react_batch_enrich_paths(
         for r in results:
             r.elapsed_seconds = batch_elapsed / len(results) if results else 0
 
+        # Update running statistics
+        for r in results:
+            paths_processed += 1
+            if r.description:
+                enriched_count += 1
+            if r.error:
+                error_count += 1
+            if r.confidence == "high":
+                high_conf_count += 1
+
         all_results.extend(results)
+
+        # Call progress callback if provided
+        if progress_callback:
+            progress = BatchProgress(
+                batch_num=i,
+                total_batches=len(batches),
+                batch_paths=len(batch),
+                parent_path=parent,
+                tree_name=tree_name,
+                paths_processed=paths_processed,
+                paths_total=len(paths),
+                enriched=enriched_count,
+                errors=error_count,
+                high_confidence=high_conf_count,
+                elapsed_seconds=time.perf_counter() - start_time,
+            )
+            progress_callback(progress)
 
         # Persist after each batch
         if not dry_run and results:

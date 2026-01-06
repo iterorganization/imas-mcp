@@ -1896,6 +1896,19 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.option(
     "--unlinked", is_flag=True, help="Only enriched nodes without HAS_UNIT/HAS_ERROR"
 )
+@click.option(
+    "--batch-size",
+    "-b",
+    default=None,
+    type=int,
+    help="Paths per batch (auto-selected if not set: 200 for Flash, 500 for Pro)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default="google/gemini-3-flash",
+    help="LLM model to use (default: google/gemini-3-flash)",
+)
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def agent_enrich(
@@ -1905,20 +1918,22 @@ def agent_enrich(
     status: str,
     force: bool,
     unlinked: bool,
+    batch_size: int | None,
+    model: str,
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using ReAct agent with SSH access.
+    """Enrich TreeNode metadata using ReAct agent with tool access.
+
+    The agent gathers context from the knowledge graph, code examples,
+    and IMAS DD before generating physics-accurate descriptions.
+
+    Paths are grouped by parent node for efficient batch processing.
+    A Rich progress display shows current batch, tree, and statistics.
 
     By default, discovers and processes ALL nodes with status='pending'.
     Use --tree to filter to a specific tree.
     Use --limit to cap the number of nodes processed.
-
-    The agent uses ReAct reasoning to:
-    - Query the knowledge graph for context
-    - Search code examples for usage patterns
-    - SSH to MDSplus for live metadata when needed
-    - Generate physics-accurate descriptions
 
     \b
     EXAMPLES:
@@ -1943,19 +1958,40 @@ def agent_enrich(
         # Enrich specific paths
         imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
 
+        # Use larger batch size with Pro model
+        imas-codex agent enrich --model google/gemini-3-pro-preview -b 500
+
         # Preview without saving
         imas-codex agent enrich --dry-run
     """
     import asyncio
     import logging
-    import time
+
+    from rich.console import Console, Group
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.progress import (
+        BarColumn,
+        MofNCompleteColumn,
+        Progress,
+        SpinnerColumn,
+        TaskProgressColumn,
+        TextColumn,
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+    )
+    from rich.table import Table
 
     from imas_codex.agents import (
+        BatchProgress,
+        compose_batches,
         discover_nodes_to_enrich,
-        get_enrichment_agent,
-        run_agent,
+        estimate_enrichment_cost,
+        get_parent_path,
+        react_batch_enrich_paths,
     )
-    from imas_codex.agents.react import EnrichmentResult, _save_enrichments_to_graph
+
+    console = Console()
 
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1966,12 +2002,13 @@ def agent_enrich(
     # Get paths - either from args or discover from graph
     if paths:
         path_list = list(paths)
-        click.echo(f"Enriching {len(path_list)} specified paths...")
+        console.print(f"[cyan]Enriching {len(path_list)} specified paths...[/cyan]")
+        tree_name = tree or "unknown"
     else:
         filter_desc = f"status='{target_status}'"
         if unlinked:
             filter_desc += ", unlinked"
-        click.echo(f"Discovering nodes with {filter_desc}...")
+        console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
         nodes = discover_nodes_to_enrich(
             tree_name=tree,
             status=target_status,
@@ -1980,98 +2017,181 @@ def agent_enrich(
             limit=limit,
         )
         if not nodes:
-            click.echo(f"No nodes found with {filter_desc}.")
+            console.print(f"[yellow]No nodes found with {filter_desc}.[/yellow]")
             return
         path_list = [n["path"] for n in nodes]
         with_ctx = sum(1 for n in nodes if n["has_context"])
-        click.echo(f"Found {len(path_list)} nodes ({with_ctx} with code context)")
+        console.print(
+            f"[green]Found {len(path_list)} nodes[/green] "
+            f"([dim]{with_ctx} with code context[/dim])"
+        )
+        tree_name = tree or nodes[0].get("tree", "unknown") if nodes else "unknown"
+
+    # Auto-select batch size based on model
+    effective_batch_size = batch_size
+    if effective_batch_size is None:
+        if "pro" in model.lower():
+            effective_batch_size = 500
+        else:
+            effective_batch_size = 200
+
+    # Compose smart batches grouped by parent (for preview)
+    batches = compose_batches(
+        path_list, batch_size=effective_batch_size, group_by_parent=True
+    )
+
+    # Show cost estimate
+    cost_est = estimate_enrichment_cost(len(path_list), effective_batch_size)
+    console.print()
+    console.print(
+        f"[dim]Batches: {len(batches)} | "
+        f"Est. time: {cost_est['estimated_hours'] * 60:.0f}min | "
+        f"Est. cost: ${cost_est['estimated_cost']:.2f}[/dim]"
+    )
 
     if dry_run:
-        click.echo("[DRY RUN] Will not persist to graph")
-        for p in path_list[:10]:
-            click.echo(f"  Would enrich: {p}")
-        if len(path_list) > 10:
-            click.echo(f"  ... and {len(path_list) - 10} more")
+        console.print("\n[yellow][DRY RUN] Will not persist to graph[/yellow]")
+        console.print("\n[cyan]Batch preview:[/cyan]")
+        for i, batch in enumerate(batches[:5], 1):
+            parent = get_parent_path(batch[0]) if batch else "?"
+            console.print(f"  Batch {i}: {len(batch)} paths from [bold]{parent}[/bold]")
+            for p in batch[:3]:
+                console.print(f"    {p}")
+            if len(batch) > 3:
+                console.print(f"    [dim]... and {len(batch) - 3} more[/dim]")
+        if len(batches) > 5:
+            console.print(f"\n  [dim]... and {len(batches) - 5} more batches[/dim]")
         return
 
-    # Create enrichment agent
-    agent = get_enrichment_agent(verbose=verbose)
-    click.echo(f"Using agent: {agent.name}")
-    click.echo()
+    # State for progress display (updated by callback)
+    class ProgressState:
+        def __init__(self) -> None:
+            self.batch_num = 0
+            self.total_batches = len(batches)
+            self.parent_path = ""
+            self.paths_processed = 0
+            self.paths_total = len(path_list)
+            self.enriched = 0
+            self.errors = 0
+            self.high_conf = 0
+            self.elapsed = 0.0
 
-    start_time = time.perf_counter()
-    results: list[EnrichmentResult] = []
+        def rate(self) -> float:
+            return self.paths_processed / self.elapsed if self.elapsed > 0 else 0
 
-    # Process each path with the ReAct agent
-    for i, path in enumerate(path_list, 1):
-        click.echo(f"[{i}/{len(path_list)}] {path}")
+    state = ProgressState()
 
-        try:
-            # Ask agent to enrich this path
-            task = f"""Enrich the MDSplus TreeNode at path: {path}
+    def create_progress_display() -> Group:
+        """Create the rich progress display."""
+        # Overall progress bar
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Enriching"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TextColumn("→"),
+            TimeRemainingColumn(),
+        )
+        task = progress.add_task("", total=state.paths_total)
+        progress.update(task, completed=state.paths_processed)
 
-Analyze this path and provide:
-1. A concise physics description (what this measurement/calculation represents)
-2. The physics domain (equilibrium, profiles, transport, machine, radiation, spectroscopy, heating, mhd, edge, neutral_beam)
-3. The physical units (if determinable)
-4. Your confidence level (high/medium/low)
+        # Current batch info
+        batch_info = Table.grid(padding=(0, 2))
+        batch_info.add_column(style="dim")
+        batch_info.add_column(style="bold")
+        batch_info.add_row(
+            "Batch:",
+            f"{state.batch_num}/{state.total_batches}",
+        )
+        batch_info.add_row("Tree:", tree_name)
+        batch_info.add_row("Group:", state.parent_path or "—")
 
-Use available tools to:
-- Search the graph for existing context
-- Look up code examples showing how this path is used
-- Query IMAS DD for similar quantities
+        # Statistics
+        stats = Table.grid(padding=(0, 2))
+        stats.add_column(style="dim")
+        stats.add_column(justify="right")
+        stats.add_row("Enriched:", f"[green]{state.enriched}[/green]")
+        stats.add_row("Errors:", f"[red]{state.errors}[/red]")
+        stats.add_row("High conf:", f"[cyan]{state.high_conf}[/cyan]")
+        stats.add_row("Rate:", f"{state.rate():.1f} paths/sec")
 
-Respond with a JSON object:
-{{"path": "{path}", "description": "...", "physics_domain": "...", "units": "...", "confidence": "..."}}
-"""
-            response = asyncio.run(run_agent(agent, task))
+        # Combine into panels
+        info_panel = Panel(
+            batch_info,
+            title="[bold]Current Batch[/bold]",
+            border_style="blue",
+            padding=(0, 1),
+        )
+        stats_panel = Panel(
+            stats,
+            title="[bold]Statistics[/bold]",
+            border_style="green",
+            padding=(0, 1),
+        )
 
-            # Parse response
-            import json
-            import re
+        # Layout with side-by-side panels
+        layout = Table.grid(expand=True)
+        layout.add_column(ratio=1)
+        layout.add_column(ratio=1)
+        layout.add_row(info_panel, stats_panel)
 
-            # Extract JSON from response
-            text = response.response if hasattr(response, "response") else str(response)
-            json_match = re.search(r"\{[^{}]+\}", text, re.DOTALL)
-            if json_match:
-                data = json.loads(json_match.group())
-                result = EnrichmentResult(
-                    path=path,
-                    description=data.get("description"),
-                    physics_domain=data.get("physics_domain"),
-                    units=data.get("units"),
-                    confidence=data.get("confidence", "low"),
-                )
-                results.append(result)
-                click.echo(
-                    f"  → {result.description[:60]}..."
-                    if result.description and len(result.description) > 60
-                    else f"  → {result.description}"
-                )
-            else:
-                click.echo("  → Failed to parse response", err=True)
-                results.append(EnrichmentResult(path=path, error="Parse error"))
+        return Group(progress, layout)
 
-        except Exception as e:
-            click.echo(f"  → Error: {e}", err=True)
-            results.append(EnrichmentResult(path=path, error=str(e)))
+    # Progress callback that updates state
+    live_display: Live | None = None
 
-    elapsed = time.perf_counter() - start_time
+    def on_progress(p: BatchProgress) -> None:
+        state.batch_num = p.batch_num
+        state.total_batches = p.total_batches
+        state.parent_path = p.parent_path
+        state.paths_processed = p.paths_processed
+        state.enriched = p.enriched
+        state.errors = p.errors
+        state.high_conf = p.high_confidence
+        state.elapsed = p.elapsed_seconds
+        if live_display:
+            live_display.update(create_progress_display())
 
-    # Save to graph
-    enriched = [r for r in results if r.description]
-    if enriched:
-        updated = _save_enrichments_to_graph(enriched)
-        click.echo(f"\n✓ Persisted {updated} enrichments to graph")
+    async def run_with_progress() -> list:
+        nonlocal live_display
+        with Live(
+            create_progress_display(), console=console, refresh_per_second=4
+        ) as live:
+            live_display = live
+            return await react_batch_enrich_paths(
+                paths=path_list,
+                tree_name=tree_name,
+                batch_size=effective_batch_size,
+                verbose=verbose,
+                dry_run=False,  # We handle dry_run above
+                model=model,
+                progress_callback=on_progress,
+            )
 
-    # Summary
-    click.echo("\n=== Summary ===")
-    click.echo(f"Enriched: {len(enriched)}/{len(results)}")
-    high_conf = sum(1 for r in results if r.confidence == "high")
-    click.echo(f"High confidence: {high_conf}")
-    click.echo(f"Total time: {elapsed:.1f}s")
-    if results:
-        click.echo(f"Avg per path: {elapsed / len(results):.1f}s")
+    console.print()
+    results = asyncio.run(run_with_progress())
+    console.print()
+
+    # Final summary
+    enriched_count = sum(1 for r in results if r.description)
+    error_count = sum(1 for r in results if r.error)
+    high_conf_count = sum(1 for r in results if r.confidence == "high")
+
+    summary = Table(title="Enrichment Summary", show_header=False, box=None)
+    summary.add_column(style="dim")
+    summary.add_column(justify="right")
+    summary.add_row("Total paths:", str(len(results)))
+    summary.add_row("Enriched:", f"[green]{enriched_count}[/green]")
+    summary.add_row("Errors:", f"[red]{error_count}[/red]")
+    summary.add_row("High confidence:", f"[cyan]{high_conf_count}[/cyan]")
+    summary.add_row("Time:", f"{state.elapsed:.1f}s")
+    if state.elapsed > 0:
+        summary.add_row("Rate:", f"{len(results) / state.elapsed:.1f} paths/sec")
+    summary.add_row("", "[green]✓ Persisted to graph[/green]")
+
+    console.print(Panel(summary, border_style="green"))
 
 
 @agent.command("mark-stale")

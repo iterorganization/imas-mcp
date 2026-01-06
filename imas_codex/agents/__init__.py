@@ -16,15 +16,19 @@ The ReActAgents can autonomously:
 from imas_codex.agents.llm import DEFAULT_MODEL, MODELS, get_llm, get_model_id
 from imas_codex.agents.react import (
     AgentConfig,
+    BatchProgress,
     EnrichmentResult,
     batch_enrich_paths,
+    compose_batches,
     create_agent,
     discover_nodes_to_enrich,
     estimate_enrichment_cost,
     get_enrichment_agent,
     get_exploration_agent,
     get_mapping_agent,
+    get_parent_path,
     quick_agent_task,
+    react_batch_enrich_paths,
     run_agent,
     run_agent_sync,
 )
@@ -57,9 +61,13 @@ __all__ = [
     "run_agent_sync",
     "quick_agent_task",
     "batch_enrich_paths",
+    "react_batch_enrich_paths",
     "discover_nodes_to_enrich",
     "estimate_enrichment_cost",
+    "compose_batches",
+    "get_parent_path",
     "EnrichmentResult",
+    "BatchProgress",
     # Tools
     "get_exploration_tools",
     "get_imas_tools",

@@ -70,10 +70,16 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
     """
     try:
         # Safety check for mutations
-        if not cypher.strip().upper().startswith("MATCH") and "CALL" not in cypher.upper():
-             # Basic read-only check (imperfect but helpful)
-             if any(kw in cypher.upper() for kw in ["CREATE", "DELETE", "SET", "MERGE", "REMOVE", "DROP"]):
-                 return "Error: Only read-only queries are allowed (MATCH, RETURN, CALL)"
+        if (
+            not cypher.strip().upper().startswith("MATCH")
+            and "CALL" not in cypher.upper()
+        ):
+            # Basic read-only check (imperfect but helpful)
+            if any(
+                kw in cypher.upper()
+                for kw in ["CREATE", "DELETE", "SET", "MERGE", "REMOVE", "DROP"]
+            ):
+                return "Error: Only read-only queries are allowed (MATCH, RETURN, CALL)"
 
         with GraphClient() as gc:
             result = gc.query(cypher, **(params or {}))
@@ -84,7 +90,7 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
                 output.append(str(dict(r)))
             if len(result) > 20:
                 output.append(f"... and {len(result) - 20} more rows")
-            
+
             # Truncate total output to avoid context window issues
             full_output = "\n".join(output)
             if len(full_output) > 10000:
