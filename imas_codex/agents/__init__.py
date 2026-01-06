@@ -19,6 +19,8 @@ from imas_codex.agents.react import (
     EnrichmentResult,
     batch_enrich_paths,
     create_agent,
+    discover_nodes_to_enrich,
+    estimate_enrichment_cost,
     get_enrichment_agent,
     get_exploration_agent,
     get_mapping_agent,
@@ -55,6 +57,8 @@ __all__ = [
     "run_agent_sync",
     "quick_agent_task",
     "batch_enrich_paths",
+    "discover_nodes_to_enrich",
+    "estimate_enrichment_cost",
     "EnrichmentResult",
     # Tools
     "get_exploration_tools",

@@ -1885,99 +1885,160 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 
 @agent.command("enrich")
 @click.argument("paths", nargs=-1)
-@click.option("--tree", default="results", help="Tree name for context")
-@click.option("--batch-size", "-b", default=20, help="Paths per LLM request")
-@click.option(
-    "--model",
-    "-m",
-    default="google/gemini-2.0-flash-001",
-    help="LLM model to use",
-)
+@click.option("--limit", "-n", default=20, type=int, help="Max nodes to enrich")
+@click.option("--tree", default=None, help="Filter to specific tree name")
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def agent_enrich(
     paths: tuple[str, ...],
-    tree: str,
-    batch_size: int,
-    model: str,
+    limit: int,
+    tree: str | None,
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using batch LLM inference.
+    """Enrich TreeNode metadata using ReAct agent with SSH access.
 
-    The tool will analyze each path, generate physics descriptions,
-    and persist enrichments to the Neo4j graph.
+    By default, discovers unenriched nodes from the graph. You can also
+    provide explicit paths to enrich.
 
-    Examples:
-        imas-codex agent enrich "\\RESULTS::IBS"
+    The agent uses ReAct reasoning to:
+    - Query the knowledge graph for context
+    - Search code examples for usage patterns
+    - SSH to MDSplus for live metadata when needed
+    - Generate physics-accurate descriptions
 
-        imas-codex agent enrich "\\RESULTS::ASTRA" "\\RESULTS::LIUQE" --tree results
+    \b
+    EXAMPLES:
+        # Enrich up to 20 discovered nodes (default)
+        imas-codex agent enrich
 
-        # Dry run to preview without saving
-        imas-codex agent enrich "\\RESULTS::IBS:BOLO_CHORD" --dry-run
+        # Enrich more nodes
+        imas-codex agent enrich --limit 100
+
+        # Enrich specific paths
+        imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
+
+        # Preview without saving
+        imas-codex agent enrich --dry-run
     """
     import asyncio
     import logging
     import time
 
-    from imas_codex.agents import batch_enrich_paths
-
-    if not paths:
-        click.echo("No paths provided", err=True)
-        raise SystemExit(1)
+    from imas_codex.agents import (
+        discover_nodes_to_enrich,
+        get_enrichment_agent,
+        run_agent,
+    )
+    from imas_codex.agents.react import EnrichmentResult, _save_enrichments_to_graph
 
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    click.echo(f"Enriching {len(paths)} paths from {tree} tree...")
-    click.echo(f"Model: {model}")
-    click.echo(f"Batch size: {batch_size}")
+    # Get paths - either from args or discover from graph
+    if paths:
+        path_list = list(paths)
+        click.echo(f"Enriching {len(path_list)} specified paths...")
+    else:
+        click.echo("Discovering nodes needing enrichment...")
+        nodes = discover_nodes_to_enrich(
+            tree_name=tree,
+            with_context_only=False,
+            limit=limit,
+        )
+        if not nodes:
+            click.echo("No nodes found needing enrichment.")
+            return
+        path_list = [n["path"] for n in nodes]
+        with_ctx = sum(1 for n in nodes if n["has_context"])
+        click.echo(f"Found {len(path_list)} nodes ({with_ctx} with code context)")
+
     if dry_run:
         click.echo("[DRY RUN] Will not persist to graph")
+        for p in path_list[:10]:
+            click.echo(f"  Would enrich: {p}")
+        if len(path_list) > 10:
+            click.echo(f"  ... and {len(path_list) - 10} more")
+        return
+
+    # Create enrichment agent
+    agent = get_enrichment_agent(verbose=verbose)
+    click.echo(f"Using agent: {agent.name}")
     click.echo()
 
     start_time = time.perf_counter()
+    results: list[EnrichmentResult] = []
 
-    try:
-        results = asyncio.run(
-            batch_enrich_paths(
-                list(paths),
-                tree,
-                verbose=verbose,
-                batch_size=batch_size,
-                model=model,
-                dry_run=dry_run,
-            )
-        )
+    # Process each path with the ReAct agent
+    for i, path in enumerate(path_list, 1):
+        click.echo(f"[{i}/{len(path_list)}] {path}")
 
-        elapsed = time.perf_counter() - start_time
+        try:
+            # Ask agent to enrich this path
+            task = f"""Enrich the MDSplus TreeNode at path: {path}
 
-        # Display results
-        for r in results:
-            click.echo(f"\n=== {r.path} ===")
-            if r.error:
-                click.echo(f"Error: {r.error}")
+Analyze this path and provide:
+1. A concise physics description (what this measurement/calculation represents)
+2. The physics domain (equilibrium, profiles, transport, machine, radiation, spectroscopy, heating, mhd, edge, neutral_beam)
+3. The physical units (if determinable)
+4. Your confidence level (high/medium/low)
+
+Use available tools to:
+- Search the graph for existing context
+- Look up code examples showing how this path is used
+- Query IMAS DD for similar quantities
+
+Respond with a JSON object:
+{{"path": "{path}", "description": "...", "physics_domain": "...", "units": "...", "confidence": "..."}}
+"""
+            response = asyncio.run(run_agent(agent, task))
+
+            # Parse response
+            import json
+            import re
+
+            # Extract JSON from response
+            text = response.response if hasattr(response, "response") else str(response)
+            json_match = re.search(r"\{[^{}]+\}", text, re.DOTALL)
+            if json_match:
+                data = json.loads(json_match.group())
+                result = EnrichmentResult(
+                    path=path,
+                    description=data.get("description"),
+                    physics_domain=data.get("physics_domain"),
+                    units=data.get("units"),
+                    confidence=data.get("confidence", "low"),
+                )
+                results.append(result)
+                click.echo(
+                    f"  → {result.description[:60]}..."
+                    if result.description and len(result.description) > 60
+                    else f"  → {result.description}"
+                )
             else:
-                click.echo(f"Description: {r.description}")
-                click.echo(f"Domain: {r.physics_domain}")
-                click.echo(f"Units: {r.units}")
-                click.echo(f"Confidence: {r.confidence}")
+                click.echo("  → Failed to parse response", err=True)
+                results.append(EnrichmentResult(path=path, error="Parse error"))
 
-        # Summary
-        click.echo("\n=== Summary ===")
-        enriched = sum(1 for r in results if r.description)
-        high_conf = sum(1 for r in results if r.confidence == "high")
-        click.echo(f"Enriched: {enriched}/{len(results)}")
-        click.echo(f"High confidence: {high_conf}")
-        click.echo(f"Total time: {elapsed:.1f}s")
-        click.echo(f"Avg per path: {elapsed / len(results):.2f}s")
+        except Exception as e:
+            click.echo(f"  → Error: {e}", err=True)
+            results.append(EnrichmentResult(path=path, error=str(e)))
 
-        if not dry_run and enriched > 0:
-            click.echo(f"\n✓ Persisted {enriched} enrichments to graph")
+    elapsed = time.perf_counter() - start_time
 
-    except Exception as e:
-        click.echo(f"Enrichment error: {e}", err=True)
-        raise SystemExit(1) from None
+    # Save to graph
+    enriched = [r for r in results if r.description]
+    if enriched:
+        updated = _save_enrichments_to_graph(enriched)
+        click.echo(f"\n✓ Persisted {updated} enrichments to graph")
+
+    # Summary
+    click.echo("\n=== Summary ===")
+    click.echo(f"Enriched: {len(enriched)}/{len(results)}")
+    high_conf = sum(1 for r in results if r.confidence == "high")
+    click.echo(f"High confidence: {high_conf}")
+    click.echo(f"Total time: {elapsed:.1f}s")
+    if results:
+        click.echo(f"Avg per path: {elapsed / len(results):.1f}s")
 
 
 # ============================================================================

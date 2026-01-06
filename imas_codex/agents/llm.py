@@ -2,12 +2,15 @@
 LLM configuration for LlamaIndex agents.
 
 Provides factory functions for creating LLMs configured for OpenRouter.
+
+Gemini 3 models have a "thinking mode" with dynamic thinking by default.
+For agentic tasks, the model automatically adjusts reasoning depth.
 """
 
 import os
 from functools import lru_cache
 
-from llama_index.llms.openai_like import OpenAILike
+from llama_index.llms.openrouter import OpenRouter
 
 # Default model - Gemini 3 Flash Preview via OpenRouter
 DEFAULT_MODEL = "google/gemini-3-flash-preview"
@@ -18,49 +21,50 @@ def get_llm(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
     context_window: int = 1_000_000,
-) -> OpenAILike:
+) -> OpenRouter:
     """
     Get a configured LLM for use with LlamaIndex agents.
 
-    Uses OpenRouter as the API endpoint, configured via OPENAI_API_KEY
-    environment variable (OpenRouter uses OpenAI-compatible API).
+    Uses OpenRouter as the API endpoint with the dedicated LlamaIndex
+    OpenRouter integration.
 
     Args:
-        model: Model identifier (default: google/gemini-2.5-flash-preview-05-20)
+        model: Model identifier (default: google/gemini-3-flash-preview)
         temperature: Sampling temperature (0.0-1.0)
         context_window: Context window size for the model
 
     Returns:
-        Configured OpenAILike LLM instance
+        Configured OpenRouter LLM instance
 
     Raises:
-        ValueError: If OPENAI_API_KEY environment variable is not set
+        ValueError: If OPENROUTER_API_KEY environment variable is not set
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         # Try loading from .env file
         try:
             from dotenv import load_dotenv
 
             load_dotenv()
-            api_key = os.environ.get("OPENAI_API_KEY")
+            api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get(
+                "OPENAI_API_KEY"
+            )
         except ImportError:
             pass
 
     if not api_key:
         msg = (
-            "OPENAI_API_KEY environment variable not set. "
+            "OPENROUTER_API_KEY environment variable not set. "
             "Set it to your OpenRouter API key."
         )
         raise ValueError(msg)
 
-    return OpenAILike(
+    return OpenRouter(
         model=model,
         api_key=api_key,
-        api_base="https://openrouter.ai/api/v1",
         temperature=temperature,
-        is_chat_model=True,
         context_window=context_window,
+        max_tokens=4096,
     )
 
 

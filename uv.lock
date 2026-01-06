@@ -1082,6 +1082,7 @@ dependencies = [
     { name = "llama-index-embeddings-huggingface" },
     { name = "llama-index-llms-openai" },
     { name = "llama-index-llms-openai-like" },
+    { name = "llama-index-llms-openrouter" },
     { name = "llama-index-tools-mcp" },
     { name = "llama-index-vector-stores-neo4jvector" },
     { name = "neo4j" },
@@ -1159,6 +1160,7 @@ requires-dist = [
     { name = "llama-index-embeddings-huggingface", specifier = ">=0.6.1" },
     { name = "llama-index-llms-openai", specifier = ">=0.6.12" },
     { name = "llama-index-llms-openai-like", specifier = ">=0.5.3" },
+    { name = "llama-index-llms-openrouter", specifier = ">=0.4.2" },
     { name = "llama-index-tools-mcp", specifier = ">=0.4.5" },
     { name = "llama-index-vector-stores-neo4jvector", specifier = ">=0.4.0" },
     { name = "neo4j", specifier = ">=5.28.0,<6.0.0" },
@@ -1825,6 +1827,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9b/fd/aed635d298380cfdc84a4e475a8367d8fcdd4677cd8914de2f495edea28d/llama_index_llms_openai_like-0.5.3.tar.gz", hash = "sha256:84bdfc88bb5d9ea806bdd1be4b4378357781c0637c78c548242aac857f165090", size = 4993, upload-time = "2025-09-28T23:48:26.659Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/aa/22/3d15a3f0f2c4befecb8e7a81a4a0bbd3121f567b22b9ac34817ecf15a155/llama_index_llms_openai_like-0.5.3-py3-none-any.whl", hash = "sha256:9ef2374916427e1a21db0ea5f624056fb323e13308c6722b3de0384dfecd467b", size = 4689, upload-time = "2025-09-28T23:48:25.557Z" },
+]
+
+[[package]]
+name = "llama-index-llms-openrouter"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "llama-index-core" },
+    { name = "llama-index-llms-openai-like" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/82/92/1931afb4edf2e4a4ecef9f64bcc33143449bc70f56287a4b495d4a1043ad/llama_index_llms_openrouter-0.4.2.tar.gz", hash = "sha256:af09829b2ebc8ccb22b7afe7ad92fe8ce35ea9a3be2430ec811416bad7d7edb9", size = 4565, upload-time = "2025-09-29T16:59:26.159Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/6b/80c7259de8020e1f64e0c746e3f8cde3bc48288f842bbba8f8ab9810ae24/llama_index_llms_openrouter-0.4.2-py3-none-any.whl", hash = "sha256:a7c91ddc90b2c68c47722e81a72641a423045499773d2c38ed74b622be45c18a", size = 4502, upload-time = "2025-09-29T16:59:25.119Z" },
 ]
 
 [[package]]

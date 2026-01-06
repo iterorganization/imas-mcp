@@ -82,6 +82,7 @@ dependencies = [
     "llama-index-llms-openai>=0.6.12",
     "llama-index-llms-openai-like>=0.5.3",
     "llama-index-tools-mcp>=0.4.5",
+    "llama-index-llms-openrouter>=0.4.2",
 ]
 
 [project.optional-dependencies]
@@ -139,7 +140,6 @@ build-models = "scripts.build_models:build_models"
 gen-physics-domains = "scripts.gen_physics_domains:gen_physics_domains"
 ingest-mdsplus = "scripts.ingest_mdsplus:ingest_mdsplus"
 discover-mdsplus = "scripts.discover_mdsplus:main"
-enrich-tree-metadata = "scripts.enrich_tree_metadata:main"
 build-dd-graph = "scripts.build_dd_graph:build_dd_graph_cli"
 
 [tool.hatch.version]

@@ -288,7 +288,11 @@ async def quick_agent_task(
     return await run_agent(agent, task, stream_events=verbose)
 
 
-# Batch processing utilities
+# =============================================================================
+# TreeNode Enrichment
+# =============================================================================
+
+
 @dataclass
 class EnrichmentResult:
     """Result of enriching a single TreeNode."""
@@ -298,6 +302,7 @@ class EnrichmentResult:
     physics_domain: str | None
     units: str | None
     confidence: str
+    has_context: bool = False
     error: str | None = None
     elapsed_seconds: float = 0.0
 
@@ -315,6 +320,41 @@ PHYSICS_DOMAINS = [
     "neutral_beam",
     "spectroscopy",
 ]
+
+# Patterns for metadata/internal nodes to skip during discovery
+# These are matched as complete path segments (ending the path or followed by colon)
+SKIP_PATTERNS = {
+    "IGNORE",
+    "FOO",
+    "BAR",
+    "VERSION_NUM",
+    "COMMENT",
+    "ERROR_BAR",
+    "UNITS",
+    "CONFIDENCE",
+    "TRIAL",
+    "USER_NAME",
+    "TIME_INDEX",
+    "QUALITY",
+}
+
+
+def _should_skip_path(path: str) -> bool:
+    """Check if path should be skipped (metadata/internal node).
+
+    Matches patterns as complete path segments, not substrings.
+    E.g., "BAR" matches ":BAR" but not ":BARATRON".
+    """
+    upper = path.upper()
+    for pattern in SKIP_PATTERNS:
+        # Check if pattern appears as a complete segment
+        # Pattern at end: path ends with :PATTERN
+        if upper.endswith(":" + pattern):
+            return True
+        # Pattern in middle: path contains :PATTERN:
+        if ":" + pattern + ":" in upper:
+            return True
+    return False
 
 
 def _build_batch_prompt(
@@ -361,6 +401,10 @@ Paths to describe (respond with JSON array):
             prompt += f" (current units: {node['units']})"
         if node.get("description") and node["description"] != "None":
             prompt += f" (current: {node['description'][:100]})"
+        # Add code context if available
+        if node.get("snippets"):
+            snippets = node["snippets"][:2]  # Max 2 snippets
+            prompt += f"\n  Code context: {snippets[0][:200]}..."
 
     prompt += """
 
@@ -479,13 +523,109 @@ def _get_nodes_for_enrichment(
         return [dict(r) for r in result]
 
 
+def discover_nodes_to_enrich(
+    tree_name: str | None = None,
+    with_context_only: bool = False,
+    limit: int | None = None,
+) -> list[dict]:
+    """
+    Discover TreeNodes needing enrichment from Neo4j.
+
+    Finds nodes that:
+    - Have first_shot set (are valid epoch-aware nodes)
+    - Have no description or description is "None"
+    - Are not metadata/internal nodes (TRIAL, IGNORE, etc.)
+
+    Args:
+        tree_name: Filter to specific tree (e.g., "results")
+        with_context_only: Only return nodes with code context
+        limit: Maximum nodes to return
+
+    Returns:
+        List of node dicts with path, tree, units, has_context, snippets
+    """
+    with GraphClient() as gc:
+        # Build WHERE clauses
+        where_clauses = [
+            "t.first_shot IS NOT NULL",
+            '(t.description IS NULL OR t.description = "None")',
+        ]
+        if tree_name:
+            where_clauses.append(f't.tree_name = "{tree_name}"')
+
+        limit_clause = f"LIMIT {limit}" if limit else ""
+
+        query = f"""
+            MATCH (t:TreeNode)
+            WHERE {" AND ".join(where_clauses)}
+            OPTIONAL MATCH (d:DataReference)-[:RESOLVES_TO_TREE_NODE]->(t)
+            OPTIONAL MATCH (c:CodeChunk)-[:CONTAINS_REF]->(d)
+            WITH t, collect(DISTINCT substring(c.content, 0, 300)) AS snippets
+            RETURN t.path AS path, t.tree_name AS tree, t.units AS units,
+                   size(snippets) > 0 AS has_context, snippets
+            ORDER BY has_context DESC, t.path
+            {limit_clause}
+        """
+
+        result = gc.query(query)
+
+        nodes = []
+        for r in result:
+            if _should_skip_path(r["path"]):
+                continue
+            if with_context_only and not r["has_context"]:
+                continue
+            nodes.append(
+                {
+                    "path": r["path"],
+                    "tree": r["tree"],
+                    "units": r["units"],
+                    "has_context": r["has_context"],
+                    "snippets": r["snippets"] or [],
+                }
+            )
+
+        return nodes
+
+
+def estimate_enrichment_cost(
+    node_count: int,
+    batch_size: int = 20,
+) -> dict:
+    """
+    Estimate LLM cost for enrichment.
+
+    Args:
+        node_count: Number of nodes to enrich
+        batch_size: Paths per LLM request
+
+    Returns:
+        Dict with num_batches, input_tokens, output_tokens, estimated_cost
+    """
+    num_batches = (node_count + batch_size - 1) // batch_size
+    # Estimate ~200 tokens prompt overhead + 50 tokens per path
+    input_tokens = num_batches * (200 + batch_size * 50)
+    # Estimate ~30 output tokens per path
+    output_tokens = num_batches * batch_size * 30
+    # Gemini Flash pricing: $0.10/1M input, $0.40/1M output
+    cost = (input_tokens / 1_000_000) * 0.10 + (output_tokens / 1_000_000) * 0.40
+
+    return {
+        "num_batches": num_batches,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "estimated_cost": cost,
+    }
+
+
 async def batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
     verbose: bool = False,
     batch_size: int = 20,
-    model: str = "google/gemini-2.0-flash-001",
+    model: str = "google/gemini-3-flash-preview",
     dry_run: bool = False,
+    context_map: dict[str, list[str]] | None = None,
 ) -> list[EnrichmentResult]:
     """
     Batch enrich multiple TreeNode paths with LLM-generated metadata.
@@ -502,11 +642,13 @@ async def batch_enrich_paths(
         batch_size: Paths per LLM request (default: 20)
         model: LLM model to use
         dry_run: If True, don't persist to graph
+        context_map: Optional dict mapping paths to code snippets
 
     Returns:
         List of EnrichmentResult for each path
     """
     start_time = time.perf_counter()
+    context_map = context_map or {}
 
     # Get current node state
     nodes = _get_nodes_for_enrichment(paths, tree_name)
@@ -518,8 +660,18 @@ async def batch_enrich_paths(
             for p in paths
         ]
 
+    # Merge context snippets into nodes
+    for node in nodes:
+        path = node["path"]
+        if path in context_map:
+            node["snippets"] = context_map[path]
+
     if verbose:
-        logger.info(f"Processing {len(nodes)} nodes in batches of {batch_size}")
+        with_ctx = sum(1 for n in nodes if n.get("snippets"))
+        logger.info(
+            f"Processing {len(nodes)} nodes ({with_ctx} with context) "
+            f"in batches of {batch_size}"
+        )
 
     all_results: list[EnrichmentResult] = []
 
