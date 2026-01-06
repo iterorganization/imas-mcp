@@ -346,7 +346,7 @@ def _build_batch_prompt(
 def _parse_llm_response(content: str) -> list[dict]:
     """Parse LLM response, extracting JSON."""
     content = content.strip()
-    
+
     # Try to find JSON array block
     match = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", content, re.DOTALL)
     if match:
@@ -354,7 +354,7 @@ def _parse_llm_response(content: str) -> list[dict]:
     elif content.startswith("```"):
         content = re.sub(r"^```(?:json)?\n?", "", content)
         content = re.sub(r"\n?```$", "", content)
-        
+
     try:
         return json.loads(content)
     except json.JSONDecodeError:
@@ -946,7 +946,9 @@ def get_batch_enrichment_agent(
         # Fallback if prompt file not found
         system_prompt = ENRICHMENT_SYSTEM_PROMPT
 
-    llm = get_llm(model=model, temperature=0.3, max_tokens=16384)
+    llm = get_llm(
+        model=model, temperature=0.3, max_tokens=100000
+    )  # Increase max output tokens
     tools = get_enrichment_tools()
 
     return ReActAgent(
@@ -961,7 +963,7 @@ def get_batch_enrichment_agent(
 async def react_batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
-    batch_size: int = 200,  # Updated default based on benchmark (optimal throughput)
+    batch_size: int | None = None,  # Auto-select based on model
     verbose: bool = False,
     dry_run: bool = False,
     model: str = "google/gemini-3-flash-preview",
@@ -974,11 +976,16 @@ async def react_batch_enrich_paths(
     2. For each batch, runs ReAct agent to gather context and enrich
     3. Persists enrichments to graph
 
-    Benchmark Results (Gemini 3 Flash):
-    - Batch 10: 0.7 paths/sec
-    - Batch 50: 1.1 paths/sec
+    Benchmark Results:
+
+    Gemini 3 Flash (default):
     - Batch 200: 1.8 paths/sec (Optimal)
-    
+    - Batch 500+: Fails due to output token limits
+
+    Gemini 3 Pro:
+    - Batch 500: 1.2 paths/sec (Optimal)
+    - Batch 1000+: Fails due to max iterations
+
     Compared to direct LLM batch (3.8 paths/sec), ReAct is slower but
     provides much higher quality by gathering context from:
     - Knowledge Graph (sibling nodes)
@@ -988,7 +995,7 @@ async def react_batch_enrich_paths(
     Args:
         paths: List of MDSplus paths to enrich
         tree_name: Tree name for context
-        batch_size: Paths per ReAct batch (default: 200)
+        batch_size: Paths per batch (auto-selected if None: 200 for Flash, 500 for Pro)
         verbose: Enable verbose output
         dry_run: If True, don't persist to graph
         model: LLM model to use
@@ -996,6 +1003,13 @@ async def react_batch_enrich_paths(
     Returns:
         List of EnrichmentResult for all paths
     """
+    # Auto-select batch size based on model
+    if batch_size is None:
+        if "pro" in model.lower():
+            batch_size = 500  # Pro handles larger batches
+        else:
+            batch_size = 200  # Flash optimal
+
     start_time = time.perf_counter()
 
     # Compose smart batches
@@ -1003,7 +1017,7 @@ async def react_batch_enrich_paths(
 
     logger.info(
         f"Processing {len(paths)} paths in {len(batches)} smart batches "
-        f"(avg {len(paths)/len(batches):.1f} paths/batch)"
+        f"(avg {len(paths) / len(batches):.1f} paths/batch)"
     )
 
     # Create agent once, reuse for all batches
@@ -1026,10 +1040,12 @@ async def react_batch_enrich_paths(
                 # Check for empty/error results that aren't parse errors
                 valid_results = sum(1 for r in results if not r.error)
                 if valid_results > 0 or not results:
-                     break
-                logger.warning(f"Batch {i} attempt {attempt+1} returned no valid results, retrying...")
+                    break
+                logger.warning(
+                    f"Batch {i} attempt {attempt + 1} returned no valid results, retrying..."
+                )
             except Exception as e:
-                logger.warning(f"Batch {i} attempt {attempt+1} failed: {e}")
+                logger.warning(f"Batch {i} attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
                     logger.error(f"Batch {i} failed after {max_retries} attempts")
                     # Return error results for this batch
@@ -1066,7 +1082,7 @@ async def react_batch_enrich_paths(
     logger.info(
         f"ReAct enrichment complete: {enriched}/{len(all_results)} enriched, "
         f"{high_conf} high confidence, {errors} errors, "
-        f"{total_elapsed:.1f}s total ({len(all_results)/total_elapsed:.1f} paths/sec)"
+        f"{total_elapsed:.1f}s total ({len(all_results) / total_elapsed:.1f} paths/sec)"
     )
 
     return all_results
