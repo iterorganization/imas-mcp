@@ -1046,9 +1046,9 @@ def ingest() -> None:
     """Ingest code examples from remote facilities.
 
     \b
-      imas-codex ingest run <facility>   Process queued SourceFile nodes
+      imas-codex ingest run <facility>   Process discovered SourceFile nodes
       imas-codex ingest status <facility> Show queue statistics
-      imas-codex ingest list <facility>   List queued files
+      imas-codex ingest list <facility>   List discovered files
     """
     pass
 
@@ -1060,7 +1060,7 @@ def ingest() -> None:
     "-n",
     default=None,
     type=int,
-    help="Maximum files to process (default: all queued files)",
+    help="Maximum files to process (default: all discovered files)",
 )
 @click.option(
     "--min-score",
@@ -1085,14 +1085,14 @@ def ingest_run(
     force: bool,
     dry_run: bool,
 ) -> None:
-    """Process queued SourceFile nodes for a facility.
+    """Process discovered SourceFile nodes for a facility.
 
-    Scouts queue files for ingestion using the queue_source_files MCP tool.
+    Scouts discover files for ingestion using the queue_source_files MCP tool.
     This command fetches those files, generates embeddings, and creates
     CodeExample nodes with searchable chunks.
 
     Examples:
-        # Process all queued files
+        # Process all discovered files
         imas-codex ingest run epfl
 
         # Process only high-priority files
@@ -1120,19 +1120,21 @@ def ingest_run(
 
     console = Console()
 
-    # Get pending files from queue (no limit means get all)
-    console.print(f"[cyan]Fetching queued files for {facility}...[/cyan]")
+    # Get pending files (discovered, not yet ingested)
+    console.print(f"[cyan]Fetching discovered files for {facility}...[/cyan]")
     query_limit = limit if limit is not None else 10000  # Large number for "all"
     pending = get_pending_files(
         facility, limit=query_limit, min_interest_score=min_score
     )
 
     if not pending:
-        console.print("[yellow]No pending files in queue.[/yellow]")
-        console.print("Scouts can queue files using the queue_source_files MCP tool.")
+        console.print("[yellow]No discovered files awaiting ingestion.[/yellow]")
+        console.print(
+            "Scouts can discover files using the queue_source_files MCP tool."
+        )
         return
 
-    console.print(f"[green]Found {len(pending)} queued files[/green]")
+    console.print(f"[green]Found {len(pending)} discovered files[/green]")
 
     if dry_run:
         console.print("\n[cyan]Files that would be processed:[/cyan]")
@@ -1258,20 +1260,20 @@ def ingest_queue(
     interest_score: float,
     dry_run: bool,
 ) -> None:
-    """Queue source files for ingestion.
+    """Discover source files for ingestion.
 
     Accepts paths as arguments, from a file, or from stdin. Creates
-    SourceFile nodes with status='queued'. Already-queued or ingested
+    SourceFile nodes with status='discovered'. Already-discovered or ingested
     files are skipped automatically.
 
     Examples:
-        # Queue paths directly (LLM-friendly)
+        # Discover paths directly (LLM-friendly)
         imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
 
-        # Queue from file (for large batches)
+        # Discover from file (for large batches)
         imas-codex ingest queue epfl -f files.txt
 
-        # Queue from stdin (pipe from rg)
+        # Discover from stdin (pipe from rg)
         ssh epfl 'rg -l "IMAS" /home' | imas-codex ingest queue epfl --stdin
 
         # Set priority score
@@ -1312,10 +1314,10 @@ def ingest_queue(
         console.print("[yellow]No file paths provided[/yellow]")
         return
 
-    console.print(f"[cyan]Queueing {len(path_list)} files for {facility}...[/cyan]")
+    console.print(f"[cyan]Discovering {len(path_list)} files for {facility}...[/cyan]")
 
     if dry_run:
-        console.print("\n[cyan]Files that would be queued:[/cyan]")
+        console.print("\n[cyan]Files that would be discovered:[/cyan]")
         for i, path in enumerate(path_list[:20], 1):
             console.print(f"  {i}. {path}")
         if len(path_list) > 20:
@@ -1330,16 +1332,16 @@ def ingest_queue(
         discovered_by="cli",
     )
 
-    console.print(f"[green]✓ Queued: {result['queued']}[/green]")
+    console.print(f"[green]✓ Discovered: {result['discovered']}[/green]")
     console.print(
-        f"[yellow]↷ Skipped: {result['skipped']} (already queued/ingested)[/yellow]"
+        f"[yellow]↷ Skipped: {result['skipped']} (already discovered/ingested)[/yellow]"
     )
     if result["errors"]:
         for err in result["errors"]:
             console.print(f"[red]✗ Error: {err}[/red]")
 
     console.print(
-        f"\n[dim]Run ingestion: imas-codex ingest run {facility} -n {min(result['queued'], 500)}[/dim]"
+        f"\n[dim]Run ingestion: imas-codex ingest run {facility} -n {min(result['discovered'], 500)}[/dim]"
     )
 
 
@@ -1348,9 +1350,9 @@ def ingest_queue(
 @click.option(
     "--status",
     "-s",
-    default="queued",
-    type=click.Choice(["queued", "fetching", "embedding", "ready", "failed", "all"]),
-    help="Filter by status (default: queued)",
+    default="discovered",
+    type=click.Choice(["discovered", "ingested", "failed", "stale", "all"]),
+    help="Filter by status (default: discovered)",
 )
 @click.option(
     "--limit",
@@ -1363,7 +1365,7 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
     """List SourceFile nodes for a facility.
 
     Examples:
-        # List queued files
+        # List discovered files
         imas-codex ingest list epfl
 
         # List failed files

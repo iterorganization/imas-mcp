@@ -7,7 +7,7 @@ Features:
 - Graph-driven ingestion via SourceFile queue
 - Automatic deduplication (skips already-ingested files)
 - Per-file atomic commits (interrupt-safe)
-- Auto-updates FacilityPath status to 'ingested'
+- Auto-updates FacilityPath status to 'explored'
 - Links extracted MDSplus paths to TreeNode entities
 """
 
@@ -182,7 +182,7 @@ def _update_facility_path_status(
     source_file: str,
     example_id: str,
 ) -> None:
-    """Update FacilityPath status to 'ingested' and link to CodeExample.
+    """Update FacilityPath status to 'explored' and link to CodeExample.
 
     Finds the FacilityPath that contains this source file and updates it.
 
@@ -198,7 +198,7 @@ def _update_facility_path_status(
         MATCH (p:FacilityPath {facility_id: $facility})
         WHERE $source_file STARTS WITH p.path
         MATCH (e:CodeExample {id: $example_id})
-        SET p.status = 'ingested',
+        SET p.status = 'explored',
             p.last_ingested_at = datetime(),
             p.files_ingested = coalesce(p.files_ingested, 0) + 1
         MERGE (p)-[:PRODUCED]->(e)
@@ -295,7 +295,7 @@ async def ingest_code_files(
     Features:
     - **Deduplication**: Skips files that are already ingested (unless force=True)
     - **Interrupt-safe**: Each file is committed atomically
-    - **Auto status update**: SourceFile nodes are marked 'ready'
+    - **Auto status update**: SourceFile nodes are marked 'ingested'
     - **MDSplus linking**: Extracted paths are linked to TreeNode entities
 
     Args:
@@ -370,10 +370,11 @@ async def ingest_code_files(
         report(total_files, total_files, "All files already ingested")
         return stats
 
-    # Update SourceFile status to 'fetching'
+    # Update SourceFile status (they're about to be processed)
     for path in paths_to_ingest:
         if path in source_file_ids:
-            update_source_file_status(source_file_ids[path], "fetching")
+            # Status is already 'discovered', no need to update
+            pass
 
     # Group documents by language
     docs_by_language: dict[str, list[Document]] = {}
@@ -449,12 +450,14 @@ async def ingest_code_files(
                 f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
             )
 
-            # Update status to 'embedding' for this batch only
-            for doc in batch_docs:
-                example_id = doc.metadata.get("code_example_id")
-                meta = file_metadata.get(example_id, {})
-                if meta.get("_source_file_id"):
-                    update_source_file_status(meta["_source_file_id"], "embedding")
+            # Process documents in batches
+            report(
+                processed_files,
+                total_to_process,
+                f"Embedding {language} files {batch_start + 1}-{batch_end}/{len(documents)}",
+            )
+
+            # Status remains 'discovered' during processing
 
             try:
                 nodes = await pipeline.arun(documents=batch_docs)
@@ -522,10 +525,10 @@ async def ingest_code_files(
                         graph_client, facility, meta["source_file"], example_id
                     )
 
-                    # Mark SourceFile as ready
+                    # Mark SourceFile as ingested
                     if source_file_id:
                         update_source_file_status(
-                            source_file_id, "ready", code_example_id=example_id
+                            source_file_id, "ingested", code_example_id=example_id
                         )
 
                 # Link chunks to examples for this batch

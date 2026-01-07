@@ -168,17 +168,9 @@ enums:
       imas:
         description: IMAS data format
 
-  IngestionStatus:
-    description: Status of data ingestion for a tree or data source
-    permissible_values:
-      pending:
-        description: Not yet ingested
-      partial:
-        description: Some nodes ingested (in progress)
-      complete:
-        description: All known nodes ingested
-      stale:
-        description: Ingestion may be outdated (schema changed)
+  # Note: IngestionStatus, PathStatus, SourceFileStatus, AgentRunStatus,
+  # EnrichmentStatus are defined in common.yaml with unified terminology.
+  # See common.yaml for the design philosophy and value definitions.
 
   PopulationType:
     description: How tree nodes are populated with data
@@ -219,76 +211,6 @@ enums:
         description: Directory containing configuration files
       binary_directory:
         description: Directory containing executables
-
-  PathStatus:
-    description: Exploration status of a facility path (multi-pass workflow)
-    permissible_values:
-      discovered:
-        description: Path exists but nothing done yet
-      listed:
-        description: Directory contents enumerated, child paths created
-      scanned:
-        description: Searched for patterns (rg/grep), awaiting triage
-      flagged:
-        description: Marked for deeper investigation by scout
-      analyzed:
-        description: Files examined in detail, structure understood
-      ingested:
-        description: Code content extracted to graph (CodeExample nodes)
-      complete:
-        description: Fully explored, all files queued, ready for next phase
-      skipped:
-        description: Reviewed and deemed uninteresting
-      excluded:
-        description: Never explore (known junk paths)
-      stale:
-        description: Path may no longer exist, needs re-verification
-
-  SourceFileStatus:
-    description: Lifecycle status of a source file for ingestion pipeline
-    permissible_values:
-      queued:
-        description: Discovered by scout, awaiting ingestion
-      fetching:
-        description: Currently being transferred from remote
-      embedding:
-        description: Generating embeddings for chunks
-      ready:
-        description: Successfully ingested, CodeExample created
-      failed:
-        description: Ingestion failed (check error field)
-      stale:
-        description: Source may have changed, needs re-fetch
-
-  AgentRunStatus:
-    description: Status of an autonomous agent run
-    permissible_values:
-      pending:
-        description: Created but not yet started
-      running:
-        description: Currently executing
-      paused:
-        description: Paused by user, can be resumed
-      completed:
-        description: Successfully finished all work
-      failed:
-        description: Stopped due to error
-      cancelled:
-        description: Stopped by user request
-
-  EnrichmentStatus:
-    description: >-
-      Lifecycle status of metadata enrichment for TreeNodes.
-      Controls which nodes are selected for LLM enrichment passes.
-      Link status (HAS_UNIT, HAS_ERROR, MAPS_TO) is computed from graph,
-      not stored as status.
-    permissible_values:
-      pending:
-        description: Never enriched, awaiting first LLM pass
-      enriched:
-        description: LLM-enriched with description and metadata
-      stale:
-        description: Marked for re-enrichment (new context available)
 
   DataReferenceType:
     description: Type of data reference found in source code

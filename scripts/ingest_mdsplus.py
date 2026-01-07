@@ -245,7 +245,7 @@ def ingest_tree_nodes(
             """
             MATCH (t:MDSplusTree {name: $tree_name})
             SET t.node_count_ingested = $count,
-                t.ingestion_status = 'complete',
+                t.ingestion_status = 'ingested',
                 t.reference_shot = $shot,
                 t.last_ingested = datetime()
             """,

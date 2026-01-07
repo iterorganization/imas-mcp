@@ -70,7 +70,7 @@ SET c.embedding = $new_embedding
 | Queue files from stdin | `ssh epfl 'rg -l pattern /path' \| uv run imas-codex ingest queue epfl --stdin` |
 | Ingest queue status | `uv run imas-codex ingest status epfl` |
 | Run code ingestion | `uv run imas-codex ingest run epfl` |
-| List queued files | `uv run imas-codex ingest list epfl` |
+| List discovered files | `uv run imas-codex ingest list epfl` |
 | Create release | `uv run imas-codex release v1.0.0 -m 'message'` |
 | Run LLM agent task | `uv run imas-codex agent run "describe path"` |
 | Batch enrich paths | `uv run imas-codex agent enrich "\\RESULTS::IBS"` |
@@ -532,14 +532,14 @@ private("epfl")
 # Update private data (returns merged result)
 private("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 
-# Queue source files for ingestion (auto-deduplicates)
+# Discover source files for ingestion (auto-deduplicates)
 ingest_nodes("SourceFile", [
     {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-     "facility_id": "epfl", "status": "queued", "interest_score": 0.8,
+     "facility_id": "epfl", "status": "discovered", "interest_score": 0.8,
      "patterns_matched": ["equilibrium", "IMAS"]},
 ])
 # Returns: {"processed": 1, "skipped": 0, "errors": []}
-# Already-queued or ingested files are automatically skipped
+# Already-discovered or ingested files are automatically skipped
 
 # Batch persist FacilityPaths
 ingest_nodes("FacilityPath", [
@@ -576,62 +576,53 @@ ssh epfl "which python3; python3 --version; pip list | head"
 
 **Key principle**: If you `find` or `ls` a useful path during exploration, persist it immediately.
 
-### FacilityPath Multi-Pass Workflow
+### FacilityPath Workflow
 
-Track exploration progress using `FacilityPath` nodes with status progression:
+Track exploration progress using `FacilityPath` nodes with simplified status:
 
 ```
-┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  SCOUT PASS │   │ TRIAGE PASS │   │ INGEST PASS │
-│             │   │             │   │             │
-│ discovered  │   │ scanned     │   │ flagged     │
-│     ↓       │   │     ↓       │   │     ↓       │
-│  listed     │   │  flagged    │   │ analyzed    │
-│     ↓       │   │    or       │   │     ↓       │
-│  scanned    │   │  skipped    │   │ ingested    │
-└─────────────┘   └─────────────┘   └─────────────┘
+┌─────────────┐
+│  WORKFLOW   │
+│             │
+│ discovered  │  <- Path found, awaiting exploration
+│     ↓       │
+│  explored   │  <- Fully examined, files discovered
+│     or      │
+│  skipped    │  <- Intentionally not exploring
+│     or      │
+│   stale     │  <- May no longer exist
+└─────────────┘
 ```
 
-| Status | Pass | Meaning |
-|--------|------|---------|
-| `discovered` | Scout | Found but not examined |
-| `listed` | Scout | Contents counted (optional) |
-| `scanned` | Scout | Pattern search complete |
-| `flagged` | Triage | Interesting, should analyze |
-| `skipped` | Triage | Not interesting enough |
-| `analyzed` | Ingest | Structure understood |
-| `ingested` | Ingest | Code extracted to graph |
-| `excluded` | Any | Permanently skip (e.g., /tmp) |
-| `stale` | Any | May no longer exist |
+| Status | Meaning |
+|--------|---------|  
+| `discovered` | Path found, awaiting exploration |
+| `explored` | Fully examined, all files discovered for ingestion |
+| `skipped` | Intentionally not exploring (low value or blocklisted) |
+| `stale` | Path may no longer exist or has changed |
 
-**Scout Pass Example:**
+**Exploration Example:**
 ```python
 # 1. Get actionable paths (sorted by interest_score)
 result = get_facility("epfl")
 for path in result["actionable_paths"]:
     print(f"{path['status']}: {path['path']} (score: {path['interest_score']})")
 
-# 2. After pattern search, batch update status
+# 2. After exploration, mark as explored
 ingest_nodes("FacilityPath", [
     {
         "id": "epfl:/home/codes/transport",
-        "status": "scanned",
+        "status": "explored",
         "patterns_found": ["equilibrium", "IMAS", "write_ids"],
         "last_examined": "2025-01-15T10:30:00Z"
     }
 ])
 ```
 
-**Triage Pass Example:**
+**Skipping Paths Example:**
 ```python
-# Batch update paths after triage
+# Mark paths as skipped
 ingest_nodes("FacilityPath", [
-    {
-        "id": "epfl:/home/codes/transport",
-        "status": "flagged",
-        "interest_score": 0.9,
-        "notes": "Found IMAS integration, multiple IDS writes"
-    },
     {
         "id": "epfl:/home/codes/old_backup",
         "status": "skipped",
@@ -736,7 +727,7 @@ ssh epfl "timeout 30s ~/bin/rg -l 'pattern' /path --max-depth 3"
 
 ### Code Ingestion Workflow
 
-The ingestion pipeline uses a **graph-driven approach** with `SourceFile` nodes as the unit of work. Scouts queue files; the CLI processes them.
+The ingestion pipeline uses a **graph-driven approach** with `SourceFile` nodes as the unit of work. Scouts discover files; the CLI processes them.
 
 **Architecture:**
 ```
@@ -744,31 +735,31 @@ The ingestion pipeline uses a **graph-driven approach** with `SourceFile` nodes 
 │  SCOUT (LLM)    │     │   GRAPH (Neo4j) │     │    CLI (User)   │
 │                 │     │                 │     │                 │
 │  ssh + rg/fd    │────▶│  SourceFile     │────▶│  imas-codex     │
-│  queue_source_  │     │  status=queued  │     │  ingest run     │
-│  files()        │     │                 │     │                 │
+│  queue_source_  │     │  status=        │     │  ingest run     │
+│  files()        │     │  discovered     │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
 ```
 
 **SourceFile Lifecycle:**
 ```
-queued ──▶ fetching ──▶ embedding ──▶ ready
-  │                                    │
-  │         ┌── failed ◀───────────────┘
-  ▼         ▼
+discovered ──▶ ingested
+    │            │
+    │     ┌── failed ◀─┘
+    ▼     ▼
 stale ◀── (re-scan)
 ```
 
 **Key Features:**
-- **Graph-driven**: Scouts queue files, CLI processes the queue
+- **Graph-driven**: Scouts discover files, CLI processes the queue
 - **Deduplication**: Already-ingested files are automatically skipped
 - **Interrupt-safe**: Partial ingestion can be resumed safely
-- **Status tracking**: `SourceFile` nodes track progress through lifecycle
+- **Status tracking**: `SourceFile` nodes track progress (discovered → ingested)
 - **MDSplus linking**: Extracted paths are linked to `TreeNode` entities
 
 **Scout Workflow (CLI - Preferred):**
 
 ```bash
-# 1. Queue files directly (LLM-friendly)
+# 1. Discover files directly (LLM-friendly)
 imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
 
 # 2. Or pipe from SSH search for large batches
@@ -788,7 +779,7 @@ Do NOT fabricate `patterns_matched` metadata - let the pipeline do real extracti
 # Check queue status
 imas-codex ingest status epfl
 
-# Process queued files with progress bar
+# Process discovered files with progress bar
 imas-codex ingest run epfl
 
 # Process only high-priority files
@@ -800,7 +791,7 @@ imas-codex ingest run epfl -n 500
 # Preview what would be processed
 imas-codex ingest run epfl --dry-run
 
-# List queued files
+# List discovered files
 imas-codex ingest list epfl
 
 # List failed files
@@ -812,7 +803,7 @@ imas-codex ingest list epfl -s failed
 If ingestion is interrupted:
 - `SourceFile` nodes retain their status
 - Rerun `imas-codex ingest run epfl` to continue
-- Already-ready files are skipped automatically
+- Already-ingested files are skipped automatically
 
 **Force Re-ingestion:**
 

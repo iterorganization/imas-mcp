@@ -617,7 +617,7 @@ def _get_nodes_for_enrichment(
 
 def discover_nodes_to_enrich(
     tree_name: str | None = None,
-    status: str = "pending",
+    status: str = "discovered",
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
@@ -625,14 +625,14 @@ def discover_nodes_to_enrich(
     Discover TreeNodes needing enrichment from Neo4j.
 
     Uses enrichment_status to control workflow:
-    - 'pending': Never enriched (default target)
+    - 'discovered': Never enriched (default target)
     - 'enriched': Already processed, re-enrich these nodes
     - 'stale': Marked for re-enrichment, includes existing description
     - 'all': Include all nodes regardless of status (for --force)
 
     Args:
         tree_name: Filter to specific tree (e.g., "results")
-        status: Target enrichment_status (default: "pending")
+        status: Target enrichment_status (default: "discovered")
         with_context_only: Only return nodes with code context (--linked flag)
         limit: Maximum nodes to return
 
@@ -641,10 +641,10 @@ def discover_nodes_to_enrich(
     """
     with GraphClient() as gc:
         # Build WHERE clauses based on status
-        if status == "pending":
+        if status == "discovered":
             # Nodes that have never been enriched
             status_clause = (
-                "(t.enrichment_status IS NULL OR t.enrichment_status = 'pending')"
+                "(t.enrichment_status IS NULL OR t.enrichment_status = 'discovered')"
             )
         elif status == "all":
             # All nodes regardless of enrichment status (for --force)

@@ -1,7 +1,7 @@
-"""Source file queueing for the ingestion pipeline.
+"""Source file discovery for the ingestion pipeline.
 
-Scouts use queue_source_files() to mark files for ingestion.
-The CLI ingest command processes queued files.
+Scouts use queue_source_files() to mark files as discovered for ingestion.
+The CLI ingest command processes discovered files.
 """
 
 import logging
@@ -48,24 +48,24 @@ def queue_source_files(
     parent_path_id: str | None = None,
     discovered_by: str | None = None,
 ) -> dict[str, int]:
-    """Queue source files for ingestion.
+    """Discover source files for ingestion.
 
-    Creates SourceFile nodes with status='queued'. Files already in
-    queued/ready status are skipped (idempotent).
+    Creates SourceFile nodes with status='discovered'. Files already in
+    discovered/ingested status are skipped (idempotent).
 
     Args:
         facility: Facility ID (e.g., "epfl")
-        file_paths: List of remote file paths to queue
+        file_paths: List of remote file paths to discover
         interest_score: Priority score (0.0-1.0, higher = sooner)
         patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])
         parent_path_id: FacilityPath that contains these files
         discovered_by: Scout session identifier
 
     Returns:
-        Dict with counts: {"queued": N, "skipped": K, "errors": [...]}
+        Dict with counts: {"discovered": N, "skipped": K, "errors": [...]}
     """
     if not file_paths:
-        return {"queued": 0, "skipped": 0, "errors": []}
+        return {"discovered": 0, "skipped": 0, "errors": []}
 
     now = datetime.now(UTC).isoformat()
     items = []
@@ -76,7 +76,7 @@ def queue_source_files(
                 "facility_id": facility,
                 "path": path,
                 "language": _detect_language(path),
-                "status": "queued",
+                "status": "discovered",
                 "interest_score": interest_score,
                 "patterns_matched": patterns_matched or [],
                 "parent_path_id": parent_path_id,
@@ -104,15 +104,15 @@ def queue_source_files(
             # Filter out existing files
             skip_ids = set()
             for row in existing:
-                if row["sf_status"] in ("queued", "fetching", "embedding", "ready"):
+                if row["sf_status"] in ("discovered", "ingested"):
                     skip_ids.add(row["id"])
                 elif row["ce_id"] is not None:
                     skip_ids.add(row["id"])
 
-            to_queue = [item for item in items if item["id"] not in skip_ids]
+            to_discover = [item for item in items if item["id"] not in skip_ids]
 
-            if not to_queue:
-                return {"queued": 0, "skipped": len(skip_ids), "errors": []}
+            if not to_discover:
+                return {"discovered": 0, "skipped": len(skip_ids), "errors": []}
 
             # Create SourceFile nodes with UNWIND
             client.query(
@@ -124,7 +124,7 @@ def queue_source_files(
                 MATCH (f:Facility {id: item.facility_id})
                 MERGE (sf)-[:FACILITY_ID]->(f)
                 """,
-                items=to_queue,
+                items=to_discover,
             )
 
             # Link to parent FacilityPath if provided
@@ -140,19 +140,19 @@ def queue_source_files(
                 )
 
             logger.info(
-                "Queued %d files for ingestion (skipped %d)",
-                len(to_queue),
+                "Discovered %d files for ingestion (skipped %d)",
+                len(to_discover),
                 len(skip_ids),
             )
             return {
-                "queued": len(to_queue),
+                "discovered": len(to_discover),
                 "skipped": len(skip_ids),
                 "errors": [],
             }
 
     except Exception as e:
-        logger.exception("Failed to queue source files")
-        return {"queued": 0, "skipped": 0, "errors": [str(e)]}
+        logger.exception("Failed to discover source files")
+        return {"discovered": 0, "skipped": 0, "errors": [str(e)]}
 
 
 def get_pending_files(
@@ -163,9 +163,8 @@ def get_pending_files(
     """Get pending SourceFile nodes for ingestion.
 
     Returns files that need processing:
-    - queued: Not yet started
-    - fetching/embedding: Interrupted mid-processing (will be retried)
-    - failed: With retry count < 3
+    - discovered: Not yet processed
+    - failed: With retry count < 3 (will be retried)
 
     Ordered by interest_score descending.
 
@@ -181,7 +180,7 @@ def get_pending_files(
         result = client.query(
             """
             MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE sf.status IN ['queued', 'fetching', 'embedding']
+            WHERE sf.status = 'discovered'
                OR (sf.status = 'failed' AND coalesce(sf.retry_count, 0) < 3)
             AND coalesce(sf.interest_score, 0.5) >= $min_score
             RETURN sf.id AS id, sf.path AS path, sf.language AS language,
@@ -207,14 +206,14 @@ def update_source_file_status(
 
     Args:
         source_file_id: SourceFile ID
-        status: New status (queued, fetching, embedding, ready, failed)
-        code_example_id: CodeExample ID if status is 'ready'
+        status: New status (discovered, ingested, failed, stale)
+        code_example_id: CodeExample ID if status is 'ingested'
         error: Error message if status is 'failed'
     """
     now = datetime.now(UTC).isoformat()
 
     with GraphClient() as client:
-        if status == "ready" and code_example_id:
+        if status == "ingested" and code_example_id:
             client.query(
                 """
                 MATCH (sf:SourceFile {id: $id})
@@ -242,17 +241,6 @@ def update_source_file_status(
                 id=source_file_id,
                 status=status,
                 error=error,
-            )
-        elif status in ("fetching", "embedding"):
-            client.query(
-                """
-                MATCH (sf:SourceFile {id: $id})
-                SET sf.status = $status,
-                    sf.started_at = $now
-                """,
-                id=source_file_id,
-                status=status,
-                now=now,
             )
         else:
             client.query(

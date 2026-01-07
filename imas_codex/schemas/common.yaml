@@ -27,7 +27,95 @@ imports:
   - linkml:types
 
 # =============================================================================
-# Mixins
+# Status Enums - Unified Lifecycle Terminology
+# =============================================================================
+#
+# Design Philosophy:
+# - Status represents lifecycle phase, not current activity
+# - Progress is derived from graph relationships and properties
+# - Consistent vocabulary: same words mean the same thing everywhere
+#
+# Common Pattern:
+#   discovered -> [domain-specific completion] -> stale
+#
+# Where:
+#   - "discovered" = entity found, in graph, awaiting processing
+#   - completion term = domain-specific past tense (ingested/explored/enriched)
+#   - "stale" = may need re-processing (optional)
+#   - "skipped/failed/cancelled" = terminal alternatives where applicable
+
+enums:
+  IngestionStatus:
+    description: >-
+      Lifecycle status for MDSplus tree structure ingestion.
+      Tracks whether TreeNodes have been added to the graph.
+      Progress is graph-derived: compare node_count_ingested vs node_count_total.
+    permissible_values:
+      discovered:
+        description: Tree found in facility, awaiting node ingestion
+      ingested:
+        description: All known nodes added to graph
+      stale:
+        description: Tree may have new nodes, needs re-introspection
+
+  PathStatus:
+    description: >-
+      Lifecycle status for facility path exploration.
+      Progress is graph-derived: check file_count, child SourceFile nodes.
+    permissible_values:
+      discovered:
+        description: Path found, awaiting exploration
+      explored:
+        description: Fully examined, all files queued for ingestion
+      skipped:
+        description: Intentionally not exploring (low value or blocklisted)
+      stale:
+        description: Path may no longer exist or has changed
+
+  SourceFileStatus:
+    description: >-
+      Lifecycle status for source file ingestion pipeline.
+      Progress is graph-derived: count CodeExample nodes linked to file.
+    permissible_values:
+      discovered:
+        description: File found, awaiting ingestion
+      ingested:
+        description: Code extracted, CodeExample nodes created
+      failed:
+        description: Ingestion failed (check error property)
+      stale:
+        description: Source may have changed, needs re-fetch
+
+  AgentRunStatus:
+    description: >-
+      Lifecycle status for autonomous agent runs.
+      Progress is graph-derived: items_processed / items_total.
+    permissible_values:
+      created:
+        description: Run initialized, not yet started
+      running:
+        description: Currently executing
+      completed:
+        description: Successfully finished all work
+      failed:
+        description: Stopped due to error
+      cancelled:
+        description: Stopped by user request
+
+  EnrichmentStatus:
+    description: >-
+      Lifecycle status for LLM metadata enrichment of TreeNodes.
+      Progress is graph-derived: check for HAS_UNIT, MAPS_TO relationships.
+    permissible_values:
+      discovered:
+        description: Node in graph, awaiting LLM enrichment
+      enriched:
+        description: Successfully enriched with metadata
+      stale:
+        description: Needs re-enrichment (new context available)
+
+# =============================================================================
+# Classes
 # =============================================================================
 
 classes:
@@ -52,10 +140,6 @@ classes:
           ISO timestamp when LLM enrichment was performed.
           Enables time-based re-enrichment policies.
         range: datetime
-
-# =============================================================================
-# Classes
-# =============================================================================
 
   Unit:
     description: >-

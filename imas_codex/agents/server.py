@@ -49,6 +49,23 @@ NEO4J_NOT_RUNNING_MSG = (
 )
 
 
+def _serialize_neo4j_value(value: Any) -> Any:
+    """Serialize Neo4j values to JSON-compatible types.
+
+    Handles neo4j.time.DateTime, list, dict, and passes through primitives.
+    """
+    if value is None:
+        return None
+    # Check for Neo4j DateTime type (has isoformat method but isn't Python datetime)
+    if hasattr(value, "isoformat") and hasattr(value, "tzinfo"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _serialize_neo4j_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_serialize_neo4j_value(v) for v in value]
+    return value
+
+
 def _neo4j_error_message(e: Exception) -> str:
     """Format Neo4j errors with helpful instructions."""
     if isinstance(e, ServiceUnavailable):
@@ -148,7 +165,7 @@ class AgentsServer:
                 # Read queries - explore the graph
                 cypher("MATCH (f:Facility) RETURN f.id, f.name")
                 cypher("MATCH (f:Facility)-[:FACILITY_ID]-(d:Diagnostic) RETURN f.id, d.name")
-                cypher("MATCH (p:FacilityPath {status: 'flagged'}) RETURN p.path, p.interest_score")
+                cypher("MATCH (p:FacilityPath {status: 'discovered'}) RETURN p.path, p.interest_score")
             """
             if _is_cypher_mutation(query):
                 msg = (
@@ -180,7 +197,7 @@ class AgentsServer:
             fields (is_private: true in schema), then writes to the graph.
 
             Special handling by node type:
-            - SourceFile: Deduplicates automatically. Files already queued,
+            - SourceFile: Deduplicates automatically. Files already discovered,
               in progress, or with existing CodeExamples are skipped.
             - TreeNode: Auto-creates TREE_NAME and ACCESSOR_FUNCTION relationships.
             - FacilityPath: Links to parent Facility.
@@ -201,7 +218,7 @@ class AgentsServer:
                 # Queue source files for ingestion (idempotent, auto-deduplicates)
                 ingest_nodes("SourceFile", [
                     {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-                     "facility_id": "epfl", "status": "queued", "interest_score": 0.8,
+                     "facility_id": "epfl", "status": "discovered", "interest_score": 0.8,
                      "patterns_matched": ["equilibrium", "IMAS"]},
                 ])
 
@@ -262,7 +279,7 @@ class AgentsServer:
             # Batch write valid items
             try:
                 with GraphClient() as client:
-                    # For SourceFile, skip items that are already queued/ready or have CodeExamples
+                    # For SourceFile, skip items that are already discovered/ingested or have CodeExamples
                     skipped_dedup = 0
                     if node_type == "SourceFile":
                         existing = client.query(
@@ -279,10 +296,8 @@ class AgentsServer:
                         skip_ids = set()
                         for row in existing:
                             if row["sf_status"] in (
-                                "queued",
-                                "fetching",
-                                "embedding",
-                                "ready",
+                                "discovered",
+                                "ingested",
                             ):
                                 skip_ids.add(row["id"])
                             elif row["ce_id"] is not None:
@@ -293,7 +308,7 @@ class AgentsServer:
                             ]
                             skipped_dedup = len(skip_ids)
                             logger.info(
-                                f"Skipped {skipped_dedup} SourceFiles (already queued/ingested)"
+                                f"Skipped {skipped_dedup} SourceFiles (already discovered/ingested)"
                             )
                         if not valid_items:
                             return {
@@ -459,8 +474,8 @@ class AgentsServer:
             Merges public config, private data, and graph state.
             Call this before starting exploration to understand:
             - Available tools (rg, fd, etc.)
-            - Actionable paths (discovered/scanned/flagged) by interest_score
-            - Recently processed paths (analyzed/ingested)
+            - Actionable paths (discovered) by interest_score
+            - Recently processed paths (explored)
             - Known analysis codes and diagnostics
 
             Args:
@@ -509,11 +524,11 @@ class AgentsServer:
                     if summary:
                         result["graph_summary"] = summary[0]
 
-                    # Get actionable paths (discovered/scanned/flagged) for exploration
+                    # Get actionable paths (discovered) for exploration
                     actionable = client.query(
                         """
                         MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                        WHERE p.status IN ['discovered', 'listed', 'scanned', 'flagged']
+                        WHERE p.status = 'discovered'
                         RETURN p.id AS id, p.path AS path, p.path_type AS path_type,
                                p.status AS status, p.interest_score AS interest_score,
                                p.description AS description, p.depth AS depth
@@ -527,7 +542,7 @@ class AgentsServer:
                     processed = client.query(
                         """
                         MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                        WHERE p.status IN ['analyzed', 'ingested']
+                        WHERE p.status = 'explored'
                         RETURN p.id AS id, p.path AS path, p.status AS status,
                                p.last_examined AS last_examined, p.files_ingested AS files_ingested
                         ORDER BY p.last_examined DESC
@@ -537,17 +552,17 @@ class AgentsServer:
                     )
                     result["recent_paths"] = processed
 
-                    # Get excluded paths (so agent knows what to skip)
-                    excluded = client.query(
+                    # Get skipped paths (so agent knows what to skip)
+                    skipped = client.query(
                         """
                         MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
-                        WHERE p.status = 'excluded'
+                        WHERE p.status = 'skipped'
                         RETURN p.path AS path, p.description AS description
                         ORDER BY p.path
                         """,
                         fid=facility,
                     )
-                    result["excluded_paths"] = [e["path"] for e in excluded]
+                    result["skipped_paths"] = [s["path"] for s in skipped]
             except Exception as e:
                 result["graph_error"] = _neo4j_error_message(e)
 
@@ -622,10 +637,16 @@ class AgentsServer:
             Get exploration progress metrics for a facility.
 
             Calculates completion metrics based on FacilityPath status distribution,
-            MDSplus tree coverage, and TreeNode ingestion progress.
+            MDSplus tree coverage, and TreeNode graph population.
 
             Use this at the start of an exploration session to understand current
-            state and identify high-priority targets for ingestion.
+            state and identify high-priority targets.
+
+            Terminology:
+            - **ingested**: TreeNodes added to the graph (from tree introspection or
+              code extraction). See MDSplusTree.node_count_ingested in schema.
+            - **enriched**: TreeNodes enhanced by LLM with descriptions and metadata.
+              Tracked separately via TreeNode.enrichment_status (discovered/enriched/stale).
 
             Args:
                 facility: Facility ID (e.g., "epfl")
@@ -633,7 +654,7 @@ class AgentsServer:
             Returns:
                 Dict with:
                 - paths: FacilityPath status distribution and completion
-                - mdsplus_coverage: Per-tree expected vs ingested node counts
+                - mdsplus_coverage: Per-tree node counts (total vs ingested to graph)
                 - tree_node_coverage: TreeNodes by tree, domain, accessor function
                 - tdi_coverage: TDI functions by physics domain
                 - code_coverage: Analysis codes by type
@@ -729,20 +750,12 @@ class AgentsServer:
                 total = sum(counts.values())
 
                 # Categorize by workflow stage
-                actionable = (
-                    counts.get("discovered", 0)
-                    + counts.get("listed", 0)
-                    + counts.get("scanned", 0)
-                )
-                processed = (
-                    counts.get("flagged", 0)
-                    + counts.get("analyzed", 0)
-                    + counts.get("ingested", 0)
-                )
-                skipped = counts.get("skipped", 0) + counts.get("excluded", 0)
+                actionable = counts.get("discovered", 0)
+                explored = counts.get("explored", 0)
+                skipped = counts.get("skipped", 0)
 
                 completion_pct = (
-                    round(100 * (processed + skipped) / total, 1) if total else 0.0
+                    round(100 * (explored + skipped) / total, 1) if total else 0.0
                 )
 
                 # MDSplus tree coverage summary
@@ -752,14 +765,14 @@ class AgentsServer:
                     total_nodes = row["total_nodes"] or 0
                     ingested = row["ingested_nodes"] or row["nodes_in_graph"] or 0
                     mdsplus_coverage[tree_name] = {
-                        "status": row["status"] or "pending",
+                        "status": row["status"] or "discovered",
                         "population_type": row["population_type"],
                         "total_nodes": total_nodes,
                         "ingested_nodes": ingested,
                         "coverage_pct": round(100 * ingested / total_nodes, 1)
                         if total_nodes
                         else 0.0,
-                        "last_ingested": row["last_ingested"],
+                        "last_ingested": _serialize_neo4j_value(row["last_ingested"]),
                     }
 
                 # TreeNode coverage by tree and domain
@@ -899,10 +912,8 @@ class AgentsServer:
                 elif next_targets:
                     top = next_targets[0]
                     recommendation = top["action"]
-                elif actionable > processed:
-                    recommendation = "Run /score-paths to score discovered paths"
-                elif counts.get("flagged", 0) > counts.get("ingested", 0):
-                    recommendation = "Run /scout-code to ingest flagged paths"
+                elif actionable > explored:
+                    recommendation = "Run exploration to process discovered paths"
                 elif tdi_coverage["total"] == 0:
                     recommendation = (
                         "Run /ingest-tdi-functions to discover TDI functions"
@@ -915,7 +926,7 @@ class AgentsServer:
                     "paths": {
                         "total": total,
                         "actionable": actionable,
-                        "processed": processed,
+                        "explored": explored,
                         "skipped": skipped,
                         "completion_pct": completion_pct,
                         "by_status": counts,
@@ -947,9 +958,13 @@ class AgentsServer:
 
             Returns comprehensive state for resumable exploration:
             - Path statistics by status
-            - Files queued vs ingested
+            - Source file processing progress
             - Coverage percentage
             - Recommended next action
+
+            Terminology:
+            - **files_discovered**: SourceFiles discovered by scouts, awaiting processing
+            - **files_ingested**: SourceFiles successfully processed (CodeExamples extracted)
 
             Args:
                 facility: Facility ID (e.g., "epfl")
@@ -958,12 +973,11 @@ class AgentsServer:
 
             Returns:
                 Dict with:
-                - paths_discovered: Count of paths in discovered/listed/scanned
-                - paths_complete: Count of paths in complete/ingested
-                - paths_pending: Count of paths in flagged/analyzed
-                - files_queued: SourceFiles with status=queued
-                - files_ingested: SourceFiles with status=ready
-                - coverage_pct: Percentage of discovered paths that are complete
+                - paths_discovered: Count of paths in discovered status
+                - paths_explored: Count of paths in explored status
+                - files_discovered: SourceFiles awaiting processing (status=discovered)
+                - files_ingested: SourceFiles with code extracted (status=ingested)
+                - coverage_pct: Percentage of discovered paths that are explored
                 - recommended_next: Suggested next action based on state
 
             Examples:
@@ -1016,36 +1030,24 @@ class AgentsServer:
                     file_counts = {r["status"]: r["count"] for r in file_result}
 
                     # Calculate aggregates
-                    discovered = sum(
-                        path_counts.get(s, 0)
-                        for s in ["discovered", "listed", "scanned"]
-                    )
-                    complete = sum(
-                        path_counts.get(s, 0) for s in ["complete", "ingested"]
-                    )
-                    pending = sum(
-                        path_counts.get(s, 0) for s in ["flagged", "analyzed"]
-                    )
+                    discovered = path_counts.get("discovered", 0)
+                    explored = path_counts.get("explored", 0)
                     total = sum(path_counts.values())
 
-                    files_queued = file_counts.get("queued", 0)
-                    files_ingested = file_counts.get("ready", 0)
+                    files_discovered = file_counts.get("discovered", 0)
+                    files_ingested = file_counts.get("ingested", 0)
 
-                    coverage_pct = round(100 * complete / total, 1) if total else 0.0
+                    coverage_pct = round(100 * explored / total, 1) if total else 0.0
 
                     # Determine recommendation
                     if total == 0:
                         recommended = "Run discover paths to find code directories"
-                    elif discovered > complete * 3:
+                    elif discovered > explored * 3:
+                        recommended = "Run discover files to discover sources from discovered paths"
+                    elif files_discovered > files_ingested:
                         recommended = (
-                            "Run discover files to queue sources from flagged paths"
+                            f"Run ingest to process {files_discovered} discovered files"
                         )
-                    elif files_queued > files_ingested:
-                        recommended = (
-                            f"Run ingest to process {files_queued} queued files"
-                        )
-                    elif pending > 0:
-                        recommended = f"Review {pending} flagged/analyzed paths"
                     else:
                         recommended = "Exploration complete for this scope"
 
@@ -1053,10 +1055,9 @@ class AgentsServer:
                         "facility": facility,
                         "root_path": root_path,
                         "paths_discovered": discovered,
-                        "paths_complete": complete,
-                        "paths_pending": pending,
+                        "paths_explored": explored,
                         "paths_total": total,
-                        "files_queued": files_queued,
+                        "files_discovered": files_discovered,
                         "files_ingested": files_ingested,
                         "coverage_pct": coverage_pct,
                         "by_path_status": path_counts,
@@ -1088,8 +1089,8 @@ class AgentsServer:
             Args:
                 facility: Facility ID
                 path: Absolute path to mark
-                status: New PathStatus value (scanned, flagged, complete, etc.)
-                file_count: Optional file count (set during listing/scanning)
+                status: New PathStatus value (discovered, explored, skipped, stale)
+                file_count: Optional file count (set during listing)
                 patterns_found: Patterns that matched (e.g., ["equilibrium", "IMAS"])
                 interest_score: Priority score 0.0-1.0 (higher = more interesting)
                 notes: Free-form notes to append
@@ -1098,14 +1099,14 @@ class AgentsServer:
                 Updated path info: {id, path, status, interest_score, patterns_found}
 
             Examples:
-                # Mark as scanned with patterns found
-                mark_path_explored("epfl", "/home/codes/liuqe", "scanned",
+                # Mark as discovered with patterns found
+                mark_path_explored("epfl", "/home/codes/liuqe", "discovered",
                                   file_count=47, patterns_found=["equilibrium", "IMAS"],
                                   interest_score=0.9)
 
-                # Mark as complete (all files queued)
-                mark_path_explored("epfl", "/home/codes/liuqe", "complete",
-                                  notes="All 47 files queued for ingestion")
+                # Mark as explored (all files discovered for ingestion)
+                mark_path_explored("epfl", "/home/codes/liuqe", "explored",
+                                  notes="All 47 files discovered for ingestion")
             """
             # Validate status
             schema = get_schema()
@@ -1298,7 +1299,8 @@ class AgentsServer:
                                 )
                                 ar["budget_exceeded"] = remaining < 0
 
-                        runs.append(ar)
+                        # Serialize neo4j datetime values
+                        runs.append(_serialize_neo4j_value(ar))
 
                     return {"runs": runs} if len(runs) > 1 else runs[0]
             except Exception as e:
