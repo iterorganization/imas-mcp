@@ -25,6 +25,7 @@ import logging
 import re
 from collections.abc import Callable
 from html.parser import HTMLParser
+from typing import TypedDict
 
 from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
@@ -40,6 +41,18 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
+
+
+class PageIngestionStats(TypedDict):
+    """Statistics from ingesting a single wiki page."""
+
+    chunks: int
+    tree_nodes_linked: int
+    imas_paths_linked: int
+    conventions: int
+    units: int
+    content_preview: str
+    mdsplus_paths: list[str]
 
 
 # =============================================================================
@@ -215,30 +228,132 @@ def mark_wiki_page_status(
         )
 
 
-class HTMLTextExtractor(HTMLParser):
-    """Simple HTML to text converter preserving structure."""
+class MediaWikiExtractor(HTMLParser):
+    """MediaWiki-aware HTML to text converter.
+
+    Targets the main content area (mw-parser-output) and skips
+    navigation, sidebar, and footer elements.
+    """
+
+    # Tags that should be completely skipped
+    SKIP_TAGS = {"script", "style", "nav", "footer", "header", "noscript"}
+
+    # CSS classes that indicate navigation/sidebar content to skip
+    SKIP_CLASSES = {
+        "mw-navigation",
+        "mw-sidebar",
+        "mw-footer",
+        "printfooter",
+        "catlinks",
+        "mw-editsection",
+        "noprint",
+        "toc",
+        "navbox",
+        "metadata",
+        "mw-jump-link",
+        "portal",
+        "portlet",
+        "p-personal",
+        "p-navigation",
+        "p-search",
+        "p-tb",
+        "p-coll-print_export",
+    }
+
+    # CSS classes that indicate main content
+    CONTENT_CLASSES = {"mw-parser-output", "mw-body-content", "mw-content-text"}
 
     def __init__(self):
         super().__init__()
         self.text_parts: list[str] = []
         self.current_section: str = ""
         self.sections: dict[str, str] = {}
-        self._skip_tags = {"script", "style", "nav", "footer", "header"}
-        self._in_skip = 0
+        self._skip_depth = 0
+        self._content_depth = 0
         self._in_heading = False
         self._heading_text = ""
+        self._in_table = False
+        self._table_row: list[str] = []
+        self._in_pre = False
+        self._skipping_div = 0  # Track divs we're skipping
+
+    def _get_class(self, attrs: list[tuple[str, str | None]]) -> set[str]:
+        """Extract CSS classes from tag attributes."""
+        for name, value in attrs:
+            if name == "class" and value:
+                return set(value.split())
+        return set()
+
+    def _get_id(self, attrs: list[tuple[str, str | None]]) -> str | None:
+        """Extract id from tag attributes."""
+        for name, value in attrs:
+            if name == "id":
+                return value
+        return None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._skip_tags:
-            self._in_skip += 1
-        elif tag in ("h1", "h2", "h3", "h4"):
+        classes = self._get_class(attrs)
+        element_id = self._get_id(attrs)
+
+        # Check if this element should be skipped
+        if tag in self.SKIP_TAGS:
+            self._skip_depth += 1
+            return
+
+        if classes & self.SKIP_CLASSES:
+            self._skip_depth += 1
+            if tag == "div":
+                self._skipping_div += 1
+            return
+
+        # Skip by ID patterns (common MediaWiki navigation)
+        if element_id:
+            # Skip navigation/sidebar divs by ID
+            skip_ids = ("jump-to-nav", "siteSub", "contentSub")
+            if element_id in skip_ids or element_id.startswith(
+                ("mw-", "p-", "ca-", "n-")
+            ):
+                if element_id not in ("mw-content-text", "mw-body-content"):
+                    self._skip_depth += 1
+                    if tag == "div":
+                        self._skipping_div += 1
+                    return
+
+        # Track when we enter content area
+        if classes & self.CONTENT_CLASSES:
+            self._content_depth += 1
+
+        # Handle specific content tags
+        if tag in ("h1", "h2", "h3", "h4", "h5"):
             self._in_heading = True
             self._heading_text = ""
+        elif tag == "table":
+            self._in_table = True
+        elif tag == "tr":
+            self._table_row = []
+        elif tag == "pre":
+            self._in_pre = True
+            self.text_parts.append("\n```\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in self._skip_tags:
-            self._in_skip = max(0, self._in_skip - 1)
-        elif tag in ("h1", "h2", "h3", "h4"):
+        if tag in self.SKIP_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+
+        # Track end of skipped divs
+        if tag == "div" and self._skipping_div > 0:
+            self._skipping_div -= 1
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+            return
+
+        # Check for skip class divs - we don't track which specific div
+        # so we just decrement if we're in a skip state
+        if tag == "div" and self._skip_depth > 0:
+            self._skip_depth = max(0, self._skip_depth - 1)
+            return
+
+        if tag in ("h1", "h2", "h3", "h4", "h5"):
             self._in_heading = False
             if self._heading_text.strip():
                 # Save previous section
@@ -246,17 +361,40 @@ class HTMLTextExtractor(HTMLParser):
                     self.sections[self.current_section] = " ".join(self.text_parts)
                 self.current_section = self._heading_text.strip()
                 self.text_parts = []
-        elif tag in ("p", "div", "li", "tr"):
+                self.text_parts.append(f"\n## {self._heading_text.strip()}\n")
+        elif tag == "table":
+            self._in_table = False
             self.text_parts.append("\n")
+        elif tag == "tr":
+            if self._table_row:
+                self.text_parts.append(" | ".join(self._table_row) + "\n")
+            self._table_row = []
+        elif tag in ("td", "th"):
+            pass  # Cell content already added
+        elif tag in ("p", "div", "li"):
+            self.text_parts.append("\n")
+        elif tag == "br":
+            self.text_parts.append("\n")
+        elif tag == "pre":
+            self._in_pre = False
+            self.text_parts.append("\n```\n")
 
     def handle_data(self, data: str) -> None:
-        if self._in_skip > 0:
+        # Skip if we're in a skipped section
+        if self._skip_depth > 0:
             return
-        text = data.strip()
+
+        text = data.strip() if not self._in_pre else data
+
         if not text:
             return
+
         if self._in_heading:
             self._heading_text += text
+        elif self._in_table and self._table_row is not None:
+            # Collect table cell content
+            self._table_row.append(text)
+            self.text_parts.append(text + " ")
         else:
             self.text_parts.append(text)
 
@@ -265,30 +403,100 @@ class HTMLTextExtractor(HTMLParser):
         # Save final section
         if self.current_section and self.text_parts:
             self.sections[self.current_section] = " ".join(self.text_parts)
+
         full_text = " ".join(self.text_parts)
-        # Clean up whitespace
-        full_text = re.sub(r"\s+", " ", full_text)
-        return full_text, self.sections
+        # Clean up whitespace (but preserve code blocks)
+        full_text = re.sub(r"[ \t]+", " ", full_text)
+        full_text = re.sub(r"\n{3,}", "\n\n", full_text)
+        return full_text.strip(), self.sections
 
 
 def html_to_text(html: str) -> tuple[str, dict[str, str]]:
-    """Convert HTML to plain text with section extraction.
+    """Convert MediaWiki HTML to plain text with section extraction.
+
+    Specifically designed for MediaWiki HTML structure, targeting the
+    bodyContent or mw-parser-output div and skipping navigation/sidebar content.
+
+    Supports both modern MediaWiki (mw-parser-output class) and older versions
+    (bodyContent id).
 
     Args:
-        html: Raw HTML content
+        html: Raw HTML content from MediaWiki page
 
     Returns:
         Tuple of (full_text, sections_dict)
     """
-    extractor = HTMLTextExtractor()
-    try:
-        extractor.feed(html)
-    except Exception:
-        # Fallback: simple tag stripping
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"\s+", " ", text)
-        return text, {}
-    return extractor.get_result()
+    content_html = html
+
+    # Try older MediaWiki structure first (id="bodyContent") - common on many wikis
+    body_start = html.find('<div id="bodyContent">')
+    if body_start >= 0:
+        # End at printfooter (before footer/categories)
+        footer_start = html.find('<div class="printfooter">', body_start)
+        if footer_start > body_start:
+            content_html = html[body_start:footer_start]
+        else:
+            # No printfooter, try to find end of bodyContent div
+            # This is harder, so just take everything after bodyContent start
+            content_html = html[body_start:]
+    else:
+        # Try modern MediaWiki structure (class="mw-parser-output")
+        content_match = re.search(
+            r'<div[^>]*class="[^"]*mw-parser-output[^"]*"[^>]*>(.*?)</div>\s*'
+            r'(?:<div[^>]*class="[^"]*printfooter|$)',
+            html,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if content_match:
+            content_html = content_match.group(1)
+
+    # Use simple tag stripping instead of complex parser
+    # Remove script and style tags with their content
+    content_html = re.sub(
+        r"<script[^>]*>.*?</script>", " ", content_html, flags=re.DOTALL | re.IGNORECASE
+    )
+    content_html = re.sub(
+        r"<style[^>]*>.*?</style>", " ", content_html, flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # Remove HTML comments
+    content_html = re.sub(r"<!--.*?-->", " ", content_html, flags=re.DOTALL)
+
+    # Remove all HTML tags
+    text = re.sub(r"<[^>]+>", " ", content_html)
+
+    # Decode HTML entities
+    import html as html_module
+
+    text = html_module.unescape(text)
+
+    # Clean up whitespace
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = text.strip()
+
+    # Extract sections (simple heading detection)
+    sections: dict[str, str] = {}
+    lines = text.split("\n")
+    current_section = ""
+    current_text: list[str] = []
+
+    for line in lines:
+        # Detect headings (lines that look like section titles)
+        if len(line) < 100 and line.strip() and not line.strip().startswith("("):
+            # Could be a heading - save previous section
+            if current_section and current_text:
+                sections[current_section] = "\n".join(current_text).strip()
+            current_section = line.strip()
+            current_text = []
+        else:
+            current_text.append(line)
+
+    # Save final section
+    if current_section and current_text:
+        sections[current_section] = "\n".join(current_text).strip()
+
+    return text, sections
 
 
 def get_embed_model() -> HuggingFaceEmbedding:
@@ -352,21 +560,24 @@ class WikiIngestionPipeline:
         """Generate unique ID for a WikiChunk."""
         return f"{page_id}:chunk_{chunk_idx}"
 
-    async def ingest_page(self, page: WikiPage) -> dict[str, int]:
+    async def ingest_page(self, page: WikiPage) -> PageIngestionStats:
         """Ingest a single wiki page into the graph.
 
         Args:
             page: Scraped WikiPage instance
 
         Returns:
-            Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions}
+            Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions,
+                        content_preview, mdsplus_paths}
         """
-        stats = {
+        stats: PageIngestionStats = {
             "chunks": 0,
             "tree_nodes_linked": 0,
             "imas_paths_linked": 0,
             "conventions": 0,
             "units": 0,
+            "content_preview": "",
+            "mdsplus_paths": [],
         }
 
         page_id = self._generate_page_id(page.page_name)
@@ -376,6 +587,10 @@ class WikiIngestionPipeline:
         if not text_content or len(text_content) < 50:
             logger.warning("Skipping %s: insufficient content", page.page_name)
             return stats
+
+        # Add content preview and MDSplus paths for progress display
+        stats["content_preview"] = text_content[:300]
+        stats["mdsplus_paths"] = page.mdsplus_paths[:10] if page.mdsplus_paths else []
 
         # Create LlamaIndex document for chunking
         doc = Document(
@@ -394,7 +609,8 @@ class WikiIngestionPipeline:
 
         # Generate embeddings
         for node in nodes:
-            node.embedding = self.embed_model.get_text_embedding(node.text)
+            # LlamaIndex types BaseNode but actual nodes have .text
+            node.embedding = self.embed_model.get_text_embedding(node.text)  # type: ignore[attr-defined]
 
         # Store in Neo4j
         with GraphClient() as gc:
@@ -430,7 +646,7 @@ class WikiIngestionPipeline:
             # Create WikiChunk nodes with embeddings
             for i, node in enumerate(nodes):
                 chunk_id = self._generate_chunk_id(page_id, i)
-                chunk_text = node.text
+                chunk_text: str = node.text  # type: ignore[attr-defined]
 
                 # Extract entities from this specific chunk
                 from .scraper import (
@@ -608,7 +824,7 @@ class WikiIngestionPipeline:
                     total_stats["conventions"] += page_stats["conventions"]
                     total_stats["units"] += page_stats["units"]
 
-                    # Update progress monitor
+                    # Update progress monitor with content preview
                     monitor.update_scrape(
                         page_name,
                         chunks=page_stats["chunks"],
@@ -616,6 +832,8 @@ class WikiIngestionPipeline:
                         imas_paths=page_stats["imas_paths_linked"],
                         conventions=page_stats["conventions"],
                         units=page_stats["units"],
+                        content_preview=str(page_stats.get("content_preview", "")),
+                        mdsplus_paths=page_stats.get("mdsplus_paths"),
                     )
 
                 except Exception as e:

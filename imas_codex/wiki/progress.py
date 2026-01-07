@@ -101,6 +101,8 @@ class WikiProgressMonitor:
         self._task_scrape = None
         self._task_chunk = None
         self._task_link = None
+        self._content_preview = ""
+        self._mdsplus_preview: list[str] = []
 
     def start(self, total_pages: int) -> None:
         """Start progress tracking.
@@ -158,6 +160,8 @@ class WikiProgressMonitor:
         conventions: int = 0,
         units: int = 0,
         failed: bool = False,
+        content_preview: str = "",
+        mdsplus_paths: list[str] | None = None,
     ) -> None:
         """Update progress after scraping a page.
 
@@ -169,8 +173,12 @@ class WikiProgressMonitor:
             conventions: Number of conventions found
             units: Number of units found
             failed: Whether the page failed to process
+            content_preview: Optional preview of extracted content (first ~100 chars)
+            mdsplus_paths: Optional list of MDSplus paths found on page
         """
         self.stats.current_page = page_name
+        self._content_preview = content_preview[:200] if content_preview else ""
+        self._mdsplus_preview = (mdsplus_paths or [])[:5]
 
         if failed:
             self.stats.pages_failed += 1
@@ -247,6 +255,7 @@ class WikiProgressMonitor:
         from rich.console import Group
         from rich.panel import Panel
         from rich.table import Table
+        from rich.text import Text
 
         # Statistics panel
         stats_table = Table.grid(padding=(0, 2))
@@ -269,7 +278,38 @@ class WikiProgressMonitor:
             padding=(0, 1),
         )
 
-        return Group(self._progress, stats_panel)
+        # Content preview panel (shows extracted text sample)
+        content_parts = [self._progress, stats_panel]
+
+        if self._content_preview or self._mdsplus_preview:
+            preview_table = Table.grid(padding=(0, 1))
+            preview_table.add_column(style="dim", width=12)
+            preview_table.add_column()
+
+            if self._content_preview:
+                # Truncate and clean preview text
+                preview = self._content_preview.replace("\n", " ").strip()
+                if len(preview) > 150:
+                    preview = preview[:147] + "..."
+                preview_table.add_row(
+                    "Content:", Text(preview, style="italic", overflow="ellipsis")
+                )
+
+            if self._mdsplus_preview:
+                paths_text = ", ".join(self._mdsplus_preview)
+                if len(self._mdsplus_preview) >= 5:
+                    paths_text += "..."
+                preview_table.add_row("MDSplus:", Text(paths_text, style="green"))
+
+            preview_panel = Panel(
+                preview_table,
+                title=f"[bold]{self.stats.current_page}[/bold]",
+                border_style="dim",
+                padding=(0, 1),
+            )
+            content_parts.append(preview_panel)
+
+        return Group(*content_parts)
 
     def get_status(self) -> dict:
         """Get current status as a dictionary (for MCP tools).
