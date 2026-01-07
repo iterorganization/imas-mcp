@@ -10,17 +10,11 @@ Provides pre-configured agents for:
 
 import warnings
 
-# Suppress Pydantic deprecation warnings from LlamaIndex internals
-# These are upstream issues that will be fixed in future LlamaIndex releases
-# Note: Pydantic 2.11+ uses PydanticDeprecatedSince211, not DeprecationWarning
-warnings.filterwarnings("ignore", message=".*__fields__.*")
-warnings.filterwarnings("ignore", message=".*__fields_set__.*")
-warnings.filterwarnings("ignore", message=".*model_computed_fields.*")
-warnings.filterwarnings("ignore", message=".*model_fields.*")
-warnings.filterwarnings("ignore", message=".*Accessing the 'model_.*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
-
-# Suppress Neo4j driver deprecation warnings about close()
+# Suppress third-party deprecation warnings before importing other modules
+# These are upstream issues in Pydantic, LlamaIndex, and Neo4j that we cannot fix
+# Use simplefilter for broad suppression since Pydantic's custom warning classes
+# (PydanticDeprecatedSince20, etc.) bypass message-based filterwarnings
+warnings.simplefilter("ignore", DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
 import asyncio  # noqa: E402
@@ -632,8 +626,9 @@ def discover_nodes_to_enrich(
 
     Uses enrichment_status to control workflow:
     - 'pending': Never enriched (default target)
-    - 'enriched': Already processed, use with --force to re-enrich
+    - 'enriched': Already processed, re-enrich these nodes
     - 'stale': Marked for re-enrichment, includes existing description
+    - 'all': Include all nodes regardless of status (for --force)
 
     Args:
         tree_name: Filter to specific tree (e.g., "results")
@@ -651,6 +646,9 @@ def discover_nodes_to_enrich(
             status_clause = (
                 "(t.enrichment_status IS NULL OR t.enrichment_status = 'pending')"
             )
+        elif status == "all":
+            # All nodes regardless of enrichment status (for --force)
+            status_clause = "true"
         else:
             status_clause = f"t.enrichment_status = '{status}'"
 

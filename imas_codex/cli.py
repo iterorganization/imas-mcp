@@ -6,13 +6,10 @@ import warnings
 from typing import Literal, cast
 
 # Suppress third-party deprecation warnings before importing other modules
-# These are upstream issues in LlamaIndex and Neo4j that we cannot fix
-warnings.filterwarnings("ignore", message=".*__fields__.*")
-warnings.filterwarnings("ignore", message=".*__fields_set__.*")
-warnings.filterwarnings("ignore", message=".*model_computed_fields.*")
-warnings.filterwarnings("ignore", message=".*model_fields.*")
-warnings.filterwarnings("ignore", message=".*Accessing the 'model_.*")
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+# These are upstream issues in Pydantic, LlamaIndex, and Neo4j that we cannot fix
+# Use simplefilter for broad suppression since Pydantic's custom warning classes
+# (PydanticDeprecatedSince20, etc.) bypass message-based filterwarnings
+warnings.simplefilter("ignore", DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
 import click  # noqa: E402
@@ -1903,7 +1900,7 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.option(
     "--status", default="pending", help="Target status (pending, enriched, stale)"
 )
-@click.option("--force", is_flag=True, help="Re-enrich already enriched nodes")
+@click.option("--force", is_flag=True, help="Include all nodes regardless of status")
 @click.option(
     "--linked",
     is_flag=True,
@@ -1965,8 +1962,11 @@ def agent_enrich(
         # Only enrich nodes with code context (more reliable)
         imas-codex agent enrich --linked
 
-        # Re-enrich already processed nodes
-        imas-codex agent enrich --force --status enriched
+        # Include ALL nodes (pending + enriched) for (re-)enrichment
+        imas-codex agent enrich --force
+
+        # Re-enrich only already processed nodes
+        imas-codex agent enrich --status enriched
 
         # Enrich specific paths
         imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
@@ -2010,7 +2010,9 @@ def agent_enrich(
         logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     # Determine target status
-    target_status = "enriched" if force else status
+    # --force means "include all statuses" (both pending and already enriched)
+    # --status specifies a specific status to target
+    target_status = "all" if force else status
 
     # Get paths - either from args or discover from graph
     if paths:
@@ -2018,7 +2020,10 @@ def agent_enrich(
         console.print(f"[cyan]Enriching {len(path_list)} specified paths...[/cyan]")
         tree_name = tree or "unknown"
     else:
-        filter_desc = f"status='{target_status}'"
+        if force:
+            filter_desc = "all statuses (--force)"
+        else:
+            filter_desc = f"status='{target_status}'"
         if linked:
             filter_desc += ", with code context"
         console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
