@@ -1125,7 +1125,16 @@ classes:
     description: >-
       A wiki page from facility documentation (e.g., TCV wiki).
       Contains authoritative signal descriptions, conventions, and specs.
-      Chunks are created for semantic search via WikiChunk nodes.
+      
+      Lifecycle: discovered -> scraped -> chunked -> linked
+      On failure: any state -> failed (check error field)
+      On change detection: linked -> stale -> discovered (for re-ingestion)
+      
+      WikiPage is the unit of work for wiki ingestion pipeline.
+      CLI discover creates WikiPage nodes; CLI ingest processes them.
+      When linked, WikiChunk nodes are created with embeddings.
+    mixins:
+      - LLMProvenance
     class_uri: facility:WikiPage
     attributes:
       id:
@@ -1146,6 +1155,14 @@ classes:
         description: Ingestion lifecycle status
         range: WikiPageStatus
         required: true
+      discovered_at:
+        description: When this page was discovered/queued for ingestion
+        range: datetime
+      error:
+        description: Error message if status is failed
+      interest_score:
+        description: Priority score for ingestion (0.0-1.0, higher = more interesting)
+        range: float
       content_hash:
         description: SHA256 hash of content for change detection (first 16 chars)
       last_scraped:

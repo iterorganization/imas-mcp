@@ -1,18 +1,22 @@
 """Wiki ingestion pipeline using LlamaIndex.
 
 Processes wiki pages through a multi-stage pipeline:
-1. Fetch: SSH-based HTML retrieval from wiki
-2. Parse: Extract text content using BeautifulSoup
+1. Discover: Find wiki pages and queue them in Neo4j (status='discovered')
+2. Fetch: SSH-based HTML retrieval from wiki (status='scraped')
 3. Chunk: Split into semantic chunks with SentenceSplitter
 4. Embed: Generate vector embeddings with all-MiniLM-L6-v2
-5. Link: Connect to TreeNodes, IMASPaths, and SignConventions
+5. Link: Connect to TreeNodes, IMASPaths, and SignConventions (status='linked')
 
-The pipeline creates WikiPage and WikiChunk nodes in Neo4j with
-DOCUMENTS relationships to referenced entities.
+The pipeline is graph-driven: discover creates WikiPage nodes, ingest processes them.
+This follows the same pattern as SourceFile ingestion for code examples.
 
 Example:
+    # Step 1: Discover and queue pages
+    queue_wiki_pages("epfl", ["Thomson", "Ion_Temperature_Nodes"])
+
+    # Step 2: Process the queue
     pipeline = WikiIngestionPipeline(facility_id="epfl")
-    stats = await pipeline.ingest_pages(["Thomson", "Ion_Temperature_Nodes"])
+    stats = await pipeline.ingest_from_graph(limit=20)
     print(f"Created {stats['chunks']} chunks with {stats['links']} links")
 """
 
@@ -36,6 +40,179 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
+
+
+# =============================================================================
+# Graph-Driven Queue Functions
+# =============================================================================
+
+
+def queue_wiki_pages(
+    facility_id: str,
+    page_names: list[str],
+    interest_score: float = 0.5,
+    is_priority: bool = False,
+) -> dict[str, int]:
+    """Queue wiki pages for ingestion by creating WikiPage nodes.
+
+    Creates WikiPage nodes with status='discovered'. Already-discovered
+    or ingested pages are skipped (idempotent).
+
+    Args:
+        facility_id: Facility ID (e.g., "epfl")
+        page_names: List of page names to queue
+        interest_score: Priority score (0.0-1.0), higher = more interesting
+        is_priority: If True, use higher interest score (0.9)
+
+    Returns:
+        Dict with counts: {queued, skipped, total}
+    """
+    if is_priority:
+        interest_score = 0.9
+
+    stats = {"queued": 0, "skipped": 0, "total": len(page_names)}
+
+    with GraphClient() as gc:
+        for page_name in page_names:
+            page_id = f"{facility_id}:{page_name}"
+            url = f"https://spcwiki.epfl.ch/wiki/{page_name}"
+
+            # Use MERGE to avoid duplicates, only set properties if creating
+            result = gc.query(
+                """
+                MERGE (wp:WikiPage {id: $id})
+                ON CREATE SET
+                    wp.facility_id = $facility_id,
+                    wp.url = $url,
+                    wp.title = $page_name,
+                    wp.status = 'discovered',
+                    wp.discovered_at = datetime(),
+                    wp.interest_score = $interest_score
+                WITH wp
+                MATCH (f:Facility {id: $facility_id})
+                MERGE (wp)-[:FACILITY_ID]->(f)
+                RETURN wp.status AS status
+                """,
+                id=page_id,
+                facility_id=facility_id,
+                url=url,
+                page_name=page_name,
+                interest_score=interest_score,
+            )
+
+            if result and result[0]["status"] == "discovered":
+                stats["queued"] += 1
+            else:
+                stats["skipped"] += 1
+
+    logger.info(
+        "Queued %d wiki pages for %s (%d skipped)",
+        stats["queued"],
+        facility_id,
+        stats["skipped"],
+    )
+    return stats
+
+
+def get_pending_wiki_pages(
+    facility_id: str,
+    limit: int = 100,
+    min_interest_score: float = 0.0,
+) -> list[dict]:
+    """Get wiki pages pending ingestion from the graph.
+
+    Returns WikiPage nodes with status='discovered', sorted by interest_score.
+
+    Args:
+        facility_id: Facility ID
+        limit: Maximum pages to return
+        min_interest_score: Minimum interest score threshold
+
+    Returns:
+        List of page dicts with id, url, title, interest_score
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
+            WHERE wp.interest_score >= $min_score
+            RETURN wp.id AS id, wp.url AS url, wp.title AS title,
+                   wp.interest_score AS interest_score
+            ORDER BY wp.interest_score DESC, wp.discovered_at ASC
+            LIMIT $limit
+            """,
+            facility_id=facility_id,
+            min_score=min_interest_score,
+            limit=limit,
+        )
+        return [dict(r) for r in result] if result else []
+
+
+def get_wiki_queue_stats(facility_id: str) -> dict:
+    """Get wiki page queue statistics by status.
+
+    Args:
+        facility_id: Facility ID
+
+    Returns:
+        Dict with status counts and total:
+        {discovered, scraped, chunked, linked, failed, stale, total}
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id})
+            RETURN wp.status AS status, count(*) AS count
+            ORDER BY count DESC
+            """,
+            facility_id=facility_id,
+        )
+
+        # Initialize with zero counts for all expected statuses
+        stats = {
+            "discovered": 0,
+            "scraped": 0,
+            "chunked": 0,
+            "linked": 0,
+            "failed": 0,
+            "stale": 0,
+            "total": 0,
+        }
+
+        if result:
+            for r in result:
+                status = r["status"]
+                count = r["count"]
+                if status in stats:
+                    stats[status] = count
+                stats["total"] += count
+
+        return stats
+
+
+def mark_wiki_page_status(
+    page_id: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """Update the status of a wiki page.
+
+    Args:
+        page_id: WikiPage ID
+        status: New status (discovered, scraped, chunked, linked, failed, stale)
+        error: Error message if status is 'failed'
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (wp:WikiPage {id: $id})
+            SET wp.status = $status,
+                wp.error = $error
+            """,
+            id=page_id,
+            status=status,
+            error=error,
+        )
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -378,7 +555,9 @@ class WikiIngestionPipeline:
         progress_callback: ProgressCallback | None = None,
         rate_limit: float = 0.5,
     ) -> dict[str, int]:
-        """Ingest multiple wiki pages.
+        """Ingest multiple wiki pages by name (legacy method).
+
+        For graph-driven workflow, use ingest_from_graph() instead.
 
         Args:
             page_names: List of wiki page names to ingest
@@ -412,6 +591,7 @@ class WikiIngestionPipeline:
         try:
             for i, page_name in enumerate(page_names):
                 report(i, len(page_names), f"Processing {page_name}")
+                page_id = self._generate_page_id(page_name)
 
                 try:
                     # Fetch the page
@@ -442,6 +622,8 @@ class WikiIngestionPipeline:
                     logger.error("Failed to ingest %s: %s", page_name, e)
                     total_stats["pages_failed"] += 1
                     monitor.update_scrape(page_name, failed=True)
+                    # Mark as failed in graph
+                    mark_wiki_page_status(page_id, "failed", str(e))
 
                 # Rate limiting
                 await asyncio.sleep(rate_limit)
@@ -452,6 +634,65 @@ class WikiIngestionPipeline:
 
         report(len(page_names), len(page_names), "Ingestion complete")
         return total_stats
+
+    async def ingest_from_graph(
+        self,
+        limit: int = 50,
+        min_interest_score: float = 0.0,
+        progress_callback: ProgressCallback | None = None,
+        rate_limit: float = 0.5,
+    ) -> dict[str, int]:
+        """Ingest wiki pages from the graph queue (graph-driven workflow).
+
+        Reads WikiPage nodes with status='discovered', fetches content,
+        generates embeddings, and creates chunks with graph links.
+
+        This is the preferred method - discover creates the queue,
+        ingest processes it.
+
+        Args:
+            limit: Maximum pages to process
+            min_interest_score: Minimum interest score threshold
+            progress_callback: Optional callback for progress updates
+            rate_limit: Minimum seconds between requests
+
+        Returns:
+            Aggregate stats dict
+        """
+        # Get pending pages from graph
+        pending = get_pending_wiki_pages(
+            self.facility_id,
+            limit=limit,
+            min_interest_score=min_interest_score,
+        )
+
+        if not pending:
+            logger.info("No pending wiki pages for %s", self.facility_id)
+            return {
+                "pages": 0,
+                "pages_failed": 0,
+                "chunks": 0,
+                "tree_nodes_linked": 0,
+                "imas_paths_linked": 0,
+                "conventions": 0,
+                "units": 0,
+            }
+
+        # Extract page names from the graph results
+        page_names = [p["title"] for p in pending]
+
+        logger.info(
+            "Processing %d wiki pages from graph queue for %s",
+            len(page_names),
+            self.facility_id,
+        )
+
+        # Use the existing ingest_pages method
+        return await self.ingest_pages(
+            page_names,
+            progress_callback=progress_callback,
+            rate_limit=rate_limit,
+        )
 
 
 def create_wiki_vector_index() -> None:
@@ -517,6 +758,10 @@ __all__ = [
     "WikiIngestionPipeline",
     "create_wiki_vector_index",
     "get_embed_model",
+    "get_pending_wiki_pages",
+    "get_wiki_queue_stats",
     "get_wiki_stats",
     "html_to_text",
+    "mark_wiki_page_status",
+    "queue_wiki_pages",
 ]

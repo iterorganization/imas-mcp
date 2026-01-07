@@ -1873,61 +1873,67 @@ def wiki() -> None:
     is_flag=True,
     help="Only show priority pages (known high-value pages)",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview pages without queuing in graph",
+)
 def wiki_discover(
     facility: str,
     start_page: str,
     limit: int,
     priority_only: bool,
+    dry_run: bool,
 ) -> None:
-    """Discover wiki pages by crawling links.
+    """Discover wiki pages and queue them for ingestion.
 
-    Starts from a portal page and finds all internal wiki links.
-    Use --priority-only to see the known high-value pages for initial ingestion.
+    Starts from a portal page, finds all internal wiki links, and creates
+    WikiPage nodes with status='discovered' in the graph. The ingest command
+    then processes pages from the graph queue.
 
     Examples:
-        # Discover pages starting from Portal:TCV
+        # Discover and queue pages
         imas-codex wiki discover epfl
 
-        # Show only high-priority pages
+        # Queue priority pages (known high-value pages)
         imas-codex wiki discover epfl --priority-only
 
-        # Discover more pages
-        imas-codex wiki discover epfl --limit 200
+        # Preview without queuing
+        imas-codex wiki discover epfl --dry-run
     """
     from rich.console import Console
     from rich.table import Table
 
-    from imas_codex.wiki import discover_wiki_pages
+    from imas_codex.wiki import discover_wiki_pages, queue_wiki_pages
     from imas_codex.wiki.scraper import get_priority_pages
 
     console = Console()
 
+    # Get pages to queue
     if priority_only:
         pages = get_priority_pages()
-        console.print(f"[cyan]Priority wiki pages for {facility}:[/cyan]\n")
-        for i, page in enumerate(pages, 1):
-            console.print(f"  {i:2}. {page}")
-        console.print(f"\n[dim]Total: {len(pages)} priority pages[/dim]")
+        interest_score = 0.9  # Priority pages are high-value
+        is_priority = True
         console.print(
-            f"[dim]Ingest with: imas-codex wiki ingest {facility} --priority[/dim]"
+            f"[cyan]Queueing {len(pages)} priority wiki pages for {facility}...[/cyan]"
         )
-        return
-
-    console.print(f"[cyan]Discovering wiki pages for {facility}...[/cyan]")
-    console.print(f"[dim]Starting from: {start_page}, limit: {limit}[/dim]\n")
-
-    pages = discover_wiki_pages(
-        start_page=start_page,
-        facility=facility,
-        max_pages=limit,
-    )
+    else:
+        console.print(f"[cyan]Discovering wiki pages for {facility}...[/cyan]")
+        console.print(f"[dim]Starting from: {start_page}, limit: {limit}[/dim]\n")
+        pages = discover_wiki_pages(
+            start_page=start_page,
+            facility=facility,
+            max_pages=limit,
+        )
+        interest_score = 0.5  # Default score for discovered pages
+        is_priority = False
 
     if not pages:
         console.print("[yellow]No pages discovered[/yellow]")
         return
 
     # Display in table
-    table = Table(title=f"Discovered Wiki Pages ({len(pages)})")
+    table = Table(title=f"{'[DRY RUN] ' if dry_run else ''}Wiki Pages ({len(pages)})")
     table.add_column("#", style="dim", width=4)
     table.add_column("Page Name", style="cyan")
 
@@ -1938,9 +1944,24 @@ def wiki_discover(
         table.add_row("...", f"[dim]and {len(pages) - 50} more[/dim]")
 
     console.print(table)
-    console.print(
-        f"\n[dim]Ingest with: imas-codex wiki ingest {facility} --limit {min(limit, len(pages))}[/dim]"
+
+    if dry_run:
+        console.print(f"\n[yellow][DRY RUN] Would queue {len(pages)} pages[/yellow]")
+        console.print("[dim]Run without --dry-run to queue pages[/dim]")
+        return
+
+    # Queue pages in graph
+    result = queue_wiki_pages(
+        facility_id=facility,
+        page_names=pages,
+        interest_score=interest_score,
+        is_priority=is_priority,
     )
+
+    console.print(f"\n[green]Queued {result['queued']} pages[/green]")
+    if result["skipped"] > 0:
+        console.print(f"[dim]Skipped {result['skipped']} already-queued pages[/dim]")
+    console.print(f"\n[dim]Process with: imas-codex wiki ingest {facility}[/dim]")
 
 
 @wiki.command("ingest")
@@ -1953,15 +1974,16 @@ def wiki_discover(
     help="Maximum pages to ingest (default: 50)",
 )
 @click.option(
-    "--priority",
-    is_flag=True,
-    help="Ingest priority pages (known high-value pages)",
+    "--min-score",
+    default=0.0,
+    type=float,
+    help="Minimum interest score threshold (default: 0.0)",
 )
 @click.option(
     "--pages",
     "-p",
     multiple=True,
-    help="Specific page names to ingest (can be repeated)",
+    help="Specific page names to ingest (bypasses graph queue)",
 )
 @click.option(
     "--rate-limit",
@@ -1977,94 +1999,137 @@ def wiki_discover(
 def wiki_ingest(
     facility: str,
     limit: int,
-    priority: bool,
+    min_score: float,
     pages: tuple[str, ...],
     rate_limit: float,
     dry_run: bool,
 ) -> None:
-    """Ingest wiki pages into the knowledge graph.
+    """Ingest wiki pages from the graph queue.
 
-    Fetches wiki pages via SSH, chunks content, generates embeddings,
-    and creates graph relationships to TreeNodes and IMASPaths.
+    Processes WikiPage nodes with status='discovered' from the graph.
+    Use 'wiki discover' first to queue pages.
 
     Examples:
-        # Ingest priority pages
-        imas-codex wiki ingest epfl --priority
+        # Ingest queued pages
+        imas-codex wiki ingest epfl
 
-        # Ingest specific pages
+        # Ingest only high-score pages
+        imas-codex wiki ingest epfl --min-score 0.7
+
+        # Ingest specific pages (bypasses queue)
         imas-codex wiki ingest epfl -p Thomson -p Ion_Temperature_Nodes
 
-        # Ingest first 20 discovered pages
-        imas-codex wiki ingest epfl --limit 20
-
         # Preview without saving
-        imas-codex wiki ingest epfl --priority --dry-run
+        imas-codex wiki ingest epfl --dry-run
     """
     import asyncio
 
     from rich.console import Console
+    from rich.table import Table
 
-    from imas_codex.wiki import WikiIngestionPipeline
+    from imas_codex.wiki import WikiIngestionPipeline, get_pending_wiki_pages
     from imas_codex.wiki.pipeline import create_wiki_vector_index
-    from imas_codex.wiki.scraper import discover_wiki_pages, get_priority_pages
 
     console = Console()
 
     # Determine which pages to ingest
     if pages:
+        # Direct page list bypasses graph queue
         page_list = list(pages)
         console.print(f"[cyan]Ingesting {len(page_list)} specified pages...[/cyan]")
-    elif priority:
-        page_list = get_priority_pages()[:limit]
-        console.print(
-            f"[cyan]Ingesting {len(page_list)} priority pages for {facility}...[/cyan]"
-        )
+
+        if dry_run:
+            console.print("\n[yellow][DRY RUN] Pages that would be ingested:[/yellow]")
+            for i, page in enumerate(page_list[:20], 1):
+                console.print(f"  {i:2}. {page}")
+            if len(page_list) > 20:
+                console.print(f"  ... and {len(page_list) - 20} more")
+            return
+
+        # Create vector index if needed
+        try:
+            create_wiki_vector_index()
+        except Exception as e:
+            console.print(f"[dim]Vector index: {e}[/dim]")
+
+        # Run ingestion with explicit page list
+        pipeline = WikiIngestionPipeline(facility_id=facility, use_rich=True)
+
+        try:
+            stats = asyncio.run(pipeline.ingest_pages(page_list, rate_limit=rate_limit))
+        except Exception as e:
+            console.print(f"[red]Error during ingestion: {e}[/red]")
+            raise SystemExit(1) from e
     else:
-        console.print(f"[cyan]Discovering pages for {facility}...[/cyan]")
-        page_list = discover_wiki_pages(facility=facility, max_pages=limit)
-        console.print(f"[green]Found {len(page_list)} pages[/green]")
+        # Graph-driven: get pending pages from queue
+        console.print(f"[cyan]Checking graph queue for {facility}...[/cyan]")
+        pending = get_pending_wiki_pages(
+            facility_id=facility,
+            limit=limit,
+            min_interest_score=min_score,
+        )
 
-    if not page_list:
-        console.print("[yellow]No pages to ingest[/yellow]")
-        return
+        if not pending:
+            console.print(f"[yellow]No pending wiki pages for {facility}[/yellow]")
+            console.print(
+                f"[dim]Queue pages with: imas-codex wiki discover {facility}[/dim]"
+            )
+            return
 
-    if dry_run:
-        console.print("\n[yellow][DRY RUN] Pages that would be ingested:[/yellow]")
-        for i, page in enumerate(page_list[:20], 1):
-            console.print(f"  {i:2}. {page}")
-        if len(page_list) > 20:
-            console.print(f"  ... and {len(page_list) - 20} more")
-        return
+        console.print(f"[green]Found {len(pending)} pending pages[/green]")
 
-    # Create vector index if needed
-    try:
-        create_wiki_vector_index()
-    except Exception as e:
-        console.print(f"[dim]Vector index: {e}[/dim]")
+        if dry_run:
+            table = Table(title="[DRY RUN] Pages that would be ingested")
+            table.add_column("#", style="dim", width=4)
+            table.add_column("Page Name", style="cyan")
+            table.add_column("Score", style="dim", width=6)
 
-    # Run ingestion
-    pipeline = WikiIngestionPipeline(facility_id=facility, use_rich=True)
+            for i, page in enumerate(pending[:20], 1):
+                score = page.get("interest_score", 0.5)
+                table.add_row(str(i), page["title"], f"{score:.2f}")
+            if len(pending) > 20:
+                table.add_row("...", f"[dim]and {len(pending) - 20} more[/dim]", "")
 
-    try:
-        stats = asyncio.run(pipeline.ingest_pages(page_list, rate_limit=rate_limit))
+            console.print(table)
+            return
 
-        console.print("\n[green]Ingestion complete![/green]")
-        console.print(f"  Pages ingested:    {stats['pages']}")
-        console.print(f"  Pages failed:      {stats['pages_failed']}")
-        console.print(f"  Chunks created:    {stats['chunks']}")
-        console.print(f"  TreeNodes linked:  {stats['tree_nodes_linked']}")
-        console.print(f"  IMAS paths linked: {stats['imas_paths_linked']}")
-        console.print(f"  Conventions found: {stats['conventions']}")
+        # Create vector index if needed
+        try:
+            create_wiki_vector_index()
+        except Exception as e:
+            console.print(f"[dim]Vector index: {e}[/dim]")
 
-    except Exception as e:
-        console.print(f"[red]Error during ingestion: {e}[/red]")
-        raise SystemExit(1) from e
+        # Run graph-driven ingestion
+        pipeline = WikiIngestionPipeline(facility_id=facility, use_rich=True)
+
+        try:
+            stats = asyncio.run(
+                pipeline.ingest_from_graph(
+                    limit=limit,
+                    min_interest_score=min_score,
+                    rate_limit=rate_limit,
+                )
+            )
+        except Exception as e:
+            console.print(f"[red]Error during ingestion: {e}[/red]")
+            raise SystemExit(1) from e
+
+    console.print("\n[green]Ingestion complete![/green]")
+    console.print(f"  Pages ingested:    {stats['pages']}")
+    console.print(f"  Pages failed:      {stats['pages_failed']}")
+    console.print(f"  Chunks created:    {stats['chunks']}")
+    console.print(f"  TreeNodes linked:  {stats['tree_nodes_linked']}")
+    console.print(f"  IMAS paths linked: {stats['imas_paths_linked']}")
+    console.print(f"  Conventions found: {stats['conventions']}")
 
 
 @wiki.command("status")
 @click.argument("facility")
 def wiki_status(facility: str) -> None:
-    """Show wiki ingestion statistics for a facility.
+    """Show wiki queue and ingestion statistics.
+
+    Shows the queue status (discovered pages pending ingestion) and
+    statistics about already-ingested pages.
 
     Examples:
         imas-codex wiki status epfl
@@ -2073,35 +2138,66 @@ def wiki_status(facility: str) -> None:
     from rich.table import Table
 
     from imas_codex.graph import GraphClient
-    from imas_codex.wiki.pipeline import get_wiki_stats
+    from imas_codex.wiki.pipeline import get_wiki_queue_stats, get_wiki_stats
 
     console = Console()
 
-    stats = get_wiki_stats(facility)
+    # Get queue stats
+    queue_stats = get_wiki_queue_stats(facility)
 
-    if stats["pages"] == 0:
-        console.print(f"[yellow]No wiki pages ingested for {facility}[/yellow]")
+    # Get ingestion stats
+    ingestion_stats = get_wiki_stats(facility)
+
+    if queue_stats["total"] == 0 and ingestion_stats["pages"] == 0:
+        console.print(f"[yellow]No wiki pages for {facility}[/yellow]")
         console.print(
-            f"[dim]Start with: imas-codex wiki ingest {facility} --priority[/dim]"
+            f"[dim]Discover pages with: imas-codex wiki discover {facility}[/dim]"
         )
         return
 
-    # Get detailed breakdown
-    with GraphClient() as gc:
-        # Page status breakdown
-        status_result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility_id})
-            RETURN wp.status AS status, count(*) AS count
-            ORDER BY count DESC
-            """,
-            facility_id=facility,
+    # Display queue summary
+    queue_table = Table(title=f"Wiki Queue: {facility}")
+    queue_table.add_column("Status", style="cyan")
+    queue_table.add_column("Count", justify="right")
+
+    queue_table.add_row("Discovered (pending)", str(queue_stats["discovered"]))
+    queue_table.add_row("Scraped", str(queue_stats["scraped"]))
+    queue_table.add_row("Chunked", str(queue_stats["chunked"]))
+    queue_table.add_row("Linked (complete)", str(queue_stats["linked"]))
+    queue_table.add_row("Failed", str(queue_stats["failed"]))
+    queue_table.add_row("─" * 12, "─" * 6)
+    queue_table.add_row("[bold]Total[/bold]", f"[bold]{queue_stats['total']}[/bold]")
+
+    console.print(queue_table)
+
+    if queue_stats["discovered"] > 0:
+        console.print(
+            f"\n[dim]Process pending pages with: imas-codex wiki ingest {facility}[/dim]"
         )
 
+    if ingestion_stats["pages"] == 0:
+        return
+
+    # Display ingestion summary
+    console.print()
+    summary = Table(title="Ingestion Statistics")
+    summary.add_column("Metric", style="cyan")
+    summary.add_column("Value", justify="right")
+
+    summary.add_row("Pages ingested", str(ingestion_stats["pages"]))
+    summary.add_row("Chunks created", str(ingestion_stats["chunks"]))
+    summary.add_row("TreeNodes linked", str(ingestion_stats["tree_nodes_linked"]))
+    summary.add_row("IMAS paths linked", str(ingestion_stats["imas_paths_linked"]))
+
+    console.print(summary)
+
+    # Get detailed breakdown
+    with GraphClient() as gc:
         # Top linked pages
         top_pages = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility_id})
+            WHERE wp.status = 'linked'
             RETURN wp.title AS title, wp.chunk_count AS chunks,
                    wp.link_count AS links
             ORDER BY wp.link_count DESC
@@ -2119,24 +2215,6 @@ def wiki_status(facility: str) -> None:
             """,
             facility_id=facility,
         )
-
-    # Display summary table
-    summary = Table(title=f"Wiki Ingestion: {facility}")
-    summary.add_column("Metric", style="cyan")
-    summary.add_column("Value", justify="right")
-
-    summary.add_row("Pages", str(stats["pages"]))
-    summary.add_row("Chunks", str(stats["chunks"]))
-    summary.add_row("TreeNodes linked", str(stats["tree_nodes_linked"]))
-    summary.add_row("IMAS paths linked", str(stats["imas_paths_linked"]))
-
-    console.print(summary)
-
-    # Status breakdown
-    if status_result:
-        console.print("\n[bold]Page Status:[/bold]")
-        for row in status_result:
-            console.print(f"  {row['status']}: {row['count']}")
 
     # Top pages
     if top_pages:
