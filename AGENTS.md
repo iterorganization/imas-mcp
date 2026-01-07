@@ -4,6 +4,32 @@
 
 ## Critical Rules
 
+### Pre-commit Hooks Require Virtual Environment
+
+The pre-commit hook uses `.venv/bin/python3` to run checks. In worktrees, you must:
+
+```bash
+# Option 1: Use uv run for git commit (recommended)
+uv run git commit -m 'type: description'
+
+# Option 2: Activate venv first
+source .venv/bin/activate
+git commit -m 'type: description'
+```
+
+**Why**: Pre-commit hooks fail with "pre-commit not found" if the venv is not active or accessible.
+
+### Environment Variables (.env)
+
+The `.env` file contains secrets (API keys, tokens). **NEVER** expose its contents to chat or commit it.
+
+| Rule | Action |
+|------|--------|
+| Load in Python | `from dotenv import load_dotenv; load_dotenv(override=True)` |
+| Copy to worktrees | `cp /home/ITER/mcintos/Code/imas-codex/.env .` |
+| Check template | See `env.example` for required variables |
+| Gitignored | Yes - `.env` is in `.gitignore` |
+
 ### NEVER Delete Graph Data Without Backup
 
 Before ANY operation that modifies or deletes graph nodes:
@@ -24,6 +50,7 @@ SET c.embedding = $new_embedding
 
 | Task | Command |
 |------|---------|
+| Commit changes | `uv run git commit -m 'type: description'` |
 | Run Python | `uv run <script>` |
 | Run tests | `uv run pytest` |
 | Run tests with coverage | `uv run pytest --cov=imas_codex` |
@@ -86,8 +113,8 @@ uv run ruff format .
 # 3. Stage specific files (NEVER use git add -A)
 git add <file1> <file2> ...
 
-# 4. Commit with conventional format (use single quotes)
-git commit -m 'type: brief description
+# 4. Commit with conventional format (use uv run to ensure pre-commit runs)
+uv run git commit -m 'type: brief description
 
 Detailed body explaining what changed and why.'
 
@@ -143,7 +170,7 @@ uv run ruff format .
 
 # Stage and commit
 git add <file1> <file2> ...
-git commit -m 'type: description'
+uv run git commit -m 'type: description'
 ```
 
 **Step 2: Cherry-pick to main workspace**
