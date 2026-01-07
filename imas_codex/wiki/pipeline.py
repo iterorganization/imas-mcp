@@ -1,0 +1,522 @@
+"""Wiki ingestion pipeline using LlamaIndex.
+
+Processes wiki pages through a multi-stage pipeline:
+1. Fetch: SSH-based HTML retrieval from wiki
+2. Parse: Extract text content using BeautifulSoup
+3. Chunk: Split into semantic chunks with SentenceSplitter
+4. Embed: Generate vector embeddings with all-MiniLM-L6-v2
+5. Link: Connect to TreeNodes, IMASPaths, and SignConventions
+
+The pipeline creates WikiPage and WikiChunk nodes in Neo4j with
+DOCUMENTS relationships to referenced entities.
+
+Example:
+    pipeline = WikiIngestionPipeline(facility_id="epfl")
+    stats = await pipeline.ingest_pages(["Thomson", "Ion_Temperature_Nodes"])
+    print(f"Created {stats['chunks']} chunks with {stats['links']} links")
+"""
+
+import hashlib
+import logging
+import re
+from collections.abc import Callable
+from html.parser import HTMLParser
+
+from llama_index.core import Document
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
+from imas_codex.graph import GraphClient
+from imas_codex.settings import get_imas_embedding_model
+
+from .progress import WikiProgressMonitor, set_current_monitor
+from .scraper import WikiPage, fetch_wiki_page
+
+logger = logging.getLogger(__name__)
+
+# Progress callback type: (current, total, message) -> None
+ProgressCallback = Callable[[int, int, str], None]
+
+
+class HTMLTextExtractor(HTMLParser):
+    """Simple HTML to text converter preserving structure."""
+
+    def __init__(self):
+        super().__init__()
+        self.text_parts: list[str] = []
+        self.current_section: str = ""
+        self.sections: dict[str, str] = {}
+        self._skip_tags = {"script", "style", "nav", "footer", "header"}
+        self._in_skip = 0
+        self._in_heading = False
+        self._heading_text = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._skip_tags:
+            self._in_skip += 1
+        elif tag in ("h1", "h2", "h3", "h4"):
+            self._in_heading = True
+            self._heading_text = ""
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._skip_tags:
+            self._in_skip = max(0, self._in_skip - 1)
+        elif tag in ("h1", "h2", "h3", "h4"):
+            self._in_heading = False
+            if self._heading_text.strip():
+                # Save previous section
+                if self.current_section and self.text_parts:
+                    self.sections[self.current_section] = " ".join(self.text_parts)
+                self.current_section = self._heading_text.strip()
+                self.text_parts = []
+        elif tag in ("p", "div", "li", "tr"):
+            self.text_parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._in_skip > 0:
+            return
+        text = data.strip()
+        if not text:
+            return
+        if self._in_heading:
+            self._heading_text += text
+        else:
+            self.text_parts.append(text)
+
+    def get_result(self) -> tuple[str, dict[str, str]]:
+        """Get extracted text and sections dict."""
+        # Save final section
+        if self.current_section and self.text_parts:
+            self.sections[self.current_section] = " ".join(self.text_parts)
+        full_text = " ".join(self.text_parts)
+        # Clean up whitespace
+        full_text = re.sub(r"\s+", " ", full_text)
+        return full_text, self.sections
+
+
+def html_to_text(html: str) -> tuple[str, dict[str, str]]:
+    """Convert HTML to plain text with section extraction.
+
+    Args:
+        html: Raw HTML content
+
+    Returns:
+        Tuple of (full_text, sections_dict)
+    """
+    extractor = HTMLTextExtractor()
+    try:
+        extractor.feed(html)
+    except Exception:
+        # Fallback: simple tag stripping
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text)
+        return text, {}
+    return extractor.get_result()
+
+
+def get_embed_model() -> HuggingFaceEmbedding:
+    """Get the project's standard embedding model (all-MiniLM-L6-v2)."""
+    model_name = get_imas_embedding_model()
+    return HuggingFaceEmbedding(
+        model_name=model_name,
+        trust_remote_code=False,
+    )
+
+
+class WikiIngestionPipeline:
+    """Pipeline for ingesting wiki pages into the knowledge graph.
+
+    Handles the full lifecycle: fetch → chunk → embed → link.
+    Uses same embedding model as code examples for unified search.
+    """
+
+    def __init__(
+        self,
+        facility_id: str = "epfl",
+        chunk_size: int = 512,
+        chunk_overlap: int = 50,
+        use_rich: bool = True,
+    ):
+        """Initialize the pipeline.
+
+        Args:
+            facility_id: Facility ID (e.g., "epfl")
+            chunk_size: Target chunk size in characters
+            chunk_overlap: Overlap between chunks
+            use_rich: Use Rich progress display
+        """
+        self.facility_id = facility_id
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.use_rich = use_rich
+
+        # Initialize text splitter
+        self.splitter = SentenceSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separator="\n",
+        )
+
+        # Embedding model is loaded lazily
+        self._embed_model: HuggingFaceEmbedding | None = None
+
+    @property
+    def embed_model(self) -> HuggingFaceEmbedding:
+        """Lazy-load embedding model."""
+        if self._embed_model is None:
+            self._embed_model = get_embed_model()
+        return self._embed_model
+
+    def _generate_page_id(self, page_name: str) -> str:
+        """Generate unique ID for a WikiPage."""
+        return f"{self.facility_id}:{page_name}"
+
+    def _generate_chunk_id(self, page_id: str, chunk_idx: int) -> str:
+        """Generate unique ID for a WikiChunk."""
+        return f"{page_id}:chunk_{chunk_idx}"
+
+    async def ingest_page(self, page: WikiPage) -> dict[str, int]:
+        """Ingest a single wiki page into the graph.
+
+        Args:
+            page: Scraped WikiPage instance
+
+        Returns:
+            Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions}
+        """
+        stats = {
+            "chunks": 0,
+            "tree_nodes_linked": 0,
+            "imas_paths_linked": 0,
+            "conventions": 0,
+            "units": 0,
+        }
+
+        page_id = self._generate_page_id(page.page_name)
+
+        # Extract text content
+        text_content, sections = html_to_text(page.content_html)
+        if not text_content or len(text_content) < 50:
+            logger.warning("Skipping %s: insufficient content", page.page_name)
+            return stats
+
+        # Create LlamaIndex document for chunking
+        doc = Document(
+            text=text_content,
+            metadata={
+                "page_id": page_id,
+                "title": page.title,
+                "url": page.url,
+                "facility_id": self.facility_id,
+            },
+        )
+
+        # Split into chunks
+        nodes = self.splitter.get_nodes_from_documents([doc])
+        stats["chunks"] = len(nodes)
+
+        # Generate embeddings
+        for node in nodes:
+            node.embedding = self.embed_model.get_text_embedding(node.text)
+
+        # Store in Neo4j
+        with GraphClient() as gc:
+            # Create WikiPage node
+            gc.query(
+                """
+                MERGE (p:WikiPage {id: $id})
+                SET p.url = $url,
+                    p.title = $title,
+                    p.facility_id = $facility_id,
+                    p.status = 'chunked',
+                    p.content_hash = $hash,
+                    p.last_scraped = datetime(),
+                    p.chunk_count = $chunk_count,
+                    p.mdsplus_paths_found = $mdsplus_paths,
+                    p.imas_paths_found = $imas_paths,
+                    p.conventions_found = $conventions
+                WITH p
+                MATCH (f:Facility {id: $facility_id})
+                MERGE (p)-[:FACILITY_ID]->(f)
+                """,
+                id=page_id,
+                url=page.url,
+                title=page.title,
+                facility_id=self.facility_id,
+                hash=page.content_hash,
+                chunk_count=len(nodes),
+                mdsplus_paths=page.mdsplus_paths,
+                imas_paths=page.imas_paths,
+                conventions=[c.get("name", "") for c in page.conventions],
+            )
+
+            # Create WikiChunk nodes with embeddings
+            for i, node in enumerate(nodes):
+                chunk_id = self._generate_chunk_id(page_id, i)
+                chunk_text = node.text
+
+                # Extract entities from this specific chunk
+                from .scraper import (
+                    extract_conventions,
+                    extract_imas_paths,
+                    extract_mdsplus_paths,
+                    extract_units,
+                )
+
+                chunk_mdsplus = extract_mdsplus_paths(chunk_text)
+                chunk_imas = extract_imas_paths(chunk_text)
+                chunk_units = extract_units(chunk_text)
+                chunk_conventions = extract_conventions(chunk_text)
+
+                gc.query(
+                    """
+                    MERGE (c:WikiChunk {id: $id})
+                    SET c.wiki_page_id = $page_id,
+                        c.facility_id = $facility_id,
+                        c.content = $content,
+                        c.embedding = $embedding,
+                        c.mdsplus_paths_mentioned = $mdsplus_paths,
+                        c.imas_paths_mentioned = $imas_paths,
+                        c.units_mentioned = $units,
+                        c.conventions_mentioned = $conventions
+                    WITH c
+                    MATCH (p:WikiPage {id: $page_id})
+                    MERGE (p)-[:HAS_CHUNK]->(c)
+                    """,
+                    id=chunk_id,
+                    page_id=page_id,
+                    facility_id=self.facility_id,
+                    content=chunk_text,
+                    embedding=node.embedding,
+                    mdsplus_paths=chunk_mdsplus,
+                    imas_paths=chunk_imas,
+                    units=chunk_units,
+                    conventions=[c.get("name", "") for c in chunk_conventions],
+                )
+
+                # Link to TreeNodes (DOCUMENTS relationship)
+                for mds_path in chunk_mdsplus:
+                    result = gc.query(
+                        """
+                        MATCH (c:WikiChunk {id: $chunk_id})
+                        MATCH (t:TreeNode)
+                        WHERE t.path = $path
+                           OR t.path ENDS WITH $path_suffix
+                           OR t.canonical_path = $canonical
+                        MERGE (c)-[:DOCUMENTS]->(t)
+                        RETURN count(*) AS linked
+                        """,
+                        chunk_id=chunk_id,
+                        path=mds_path,
+                        path_suffix=mds_path.lstrip("\\"),
+                        canonical=mds_path.upper(),
+                    )
+                    if result and result[0]["linked"] > 0:
+                        stats["tree_nodes_linked"] += result[0]["linked"]
+
+                # Link to IMASPaths (MENTIONS_IMAS relationship)
+                for imas_path in chunk_imas:
+                    result = gc.query(
+                        """
+                        MATCH (c:WikiChunk {id: $chunk_id})
+                        MATCH (ip:IMASPath)
+                        WHERE ip.full_path CONTAINS $path
+                        MERGE (c)-[:MENTIONS_IMAS]->(ip)
+                        RETURN count(*) AS linked
+                        """,
+                        chunk_id=chunk_id,
+                        path=imas_path,
+                    )
+                    if result and result[0]["linked"] > 0:
+                        stats["imas_paths_linked"] += result[0]["linked"]
+
+                # Track units and conventions found
+                stats["units"] += len(chunk_units)
+                stats["conventions"] += len(chunk_conventions)
+
+            # Create SignConvention nodes from page conventions
+            for conv in page.conventions:
+                conv_id = f"{self.facility_id}:{conv.get('type', 'unknown')}:{hashlib.md5(conv.get('name', '').encode()).hexdigest()[:8]}"
+                gc.query(
+                    """
+                    MERGE (sc:SignConvention {id: $id})
+                    SET sc.facility_id = $facility_id,
+                        sc.convention_type = $type,
+                        sc.name = $name,
+                        sc.description = $context,
+                        sc.wiki_source = $url,
+                        sc.cocos_index = $cocos_index
+                    WITH sc
+                    MATCH (f:Facility {id: $facility_id})
+                    MERGE (sc)-[:FACILITY_ID]->(f)
+                    """,
+                    id=conv_id,
+                    facility_id=self.facility_id,
+                    type=conv.get("type", "sign"),
+                    name=conv.get("name", ""),
+                    context=conv.get("context", ""),
+                    url=page.url,
+                    cocos_index=conv.get("cocos_index"),
+                )
+
+            # Update link counts on WikiPage
+            gc.query(
+                """
+                MATCH (p:WikiPage {id: $page_id})
+                SET p.link_count = $links,
+                    p.status = 'linked'
+                """,
+                page_id=page_id,
+                links=stats["tree_nodes_linked"] + stats["imas_paths_linked"],
+            )
+
+        return stats
+
+    async def ingest_pages(
+        self,
+        page_names: list[str],
+        progress_callback: ProgressCallback | None = None,
+        rate_limit: float = 0.5,
+    ) -> dict[str, int]:
+        """Ingest multiple wiki pages.
+
+        Args:
+            page_names: List of wiki page names to ingest
+            progress_callback: Optional callback for progress updates
+            rate_limit: Minimum seconds between requests
+
+        Returns:
+            Aggregate stats dict
+        """
+        import asyncio
+
+        total_stats = {
+            "pages": 0,
+            "pages_failed": 0,
+            "chunks": 0,
+            "tree_nodes_linked": 0,
+            "imas_paths_linked": 0,
+            "conventions": 0,
+            "units": 0,
+        }
+
+        # Set up progress monitoring
+        monitor = WikiProgressMonitor(use_rich=self.use_rich)
+        set_current_monitor(monitor)
+        monitor.start(total_pages=len(page_names))
+
+        def report(current: int, total: int, message: str) -> None:
+            if progress_callback:
+                progress_callback(current, total, message)
+
+        try:
+            for i, page_name in enumerate(page_names):
+                report(i, len(page_names), f"Processing {page_name}")
+
+                try:
+                    # Fetch the page
+                    page = fetch_wiki_page(page_name, facility=self.facility_id)
+
+                    # Ingest it
+                    page_stats = await self.ingest_page(page)
+
+                    # Aggregate stats
+                    total_stats["pages"] += 1
+                    total_stats["chunks"] += page_stats["chunks"]
+                    total_stats["tree_nodes_linked"] += page_stats["tree_nodes_linked"]
+                    total_stats["imas_paths_linked"] += page_stats["imas_paths_linked"]
+                    total_stats["conventions"] += page_stats["conventions"]
+                    total_stats["units"] += page_stats["units"]
+
+                    # Update progress monitor
+                    monitor.update_scrape(
+                        page_name,
+                        chunks=page_stats["chunks"],
+                        tree_nodes=page_stats["tree_nodes_linked"],
+                        imas_paths=page_stats["imas_paths_linked"],
+                        conventions=page_stats["conventions"],
+                        units=page_stats["units"],
+                    )
+
+                except Exception as e:
+                    logger.error("Failed to ingest %s: %s", page_name, e)
+                    total_stats["pages_failed"] += 1
+                    monitor.update_scrape(page_name, failed=True)
+
+                # Rate limiting
+                await asyncio.sleep(rate_limit)
+
+        finally:
+            monitor.finish()
+            set_current_monitor(None)
+
+        report(len(page_names), len(page_names), "Ingestion complete")
+        return total_stats
+
+
+def create_wiki_vector_index() -> None:
+    """Create Neo4j vector index for WikiChunk embeddings.
+
+    Call this once after first ingestion to enable semantic search.
+    """
+    with GraphClient() as gc:
+        gc.query(
+            """
+            CREATE VECTOR INDEX wiki_chunk_embedding IF NOT EXISTS
+            FOR (c:WikiChunk) ON c.embedding
+            OPTIONS {
+                indexConfig: {
+                    `vector.dimensions`: 384,
+                    `vector.similarity_function`: 'cosine'
+                }
+            }
+            """
+        )
+        logger.info("Created wiki_chunk_embedding vector index")
+
+
+def get_wiki_stats(facility_id: str) -> dict:
+    """Get wiki ingestion statistics for a facility.
+
+    Args:
+        facility_id: Facility ID
+
+    Returns:
+        Stats dict with page/chunk counts and link statistics
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id})
+            OPTIONAL MATCH (wp)-[:HAS_CHUNK]->(wc:WikiChunk)
+            OPTIONAL MATCH (wc)-[:DOCUMENTS]->(t:TreeNode)
+            OPTIONAL MATCH (wc)-[:MENTIONS_IMAS]->(ip:IMASPath)
+            WITH wp, count(DISTINCT wc) AS chunks,
+                 count(DISTINCT t) AS tree_nodes,
+                 count(DISTINCT ip) AS imas_paths
+            RETURN count(wp) AS pages,
+                   sum(chunks) AS total_chunks,
+                   sum(tree_nodes) AS tree_nodes_linked,
+                   sum(imas_paths) AS imas_paths_linked
+            """,
+            facility_id=facility_id,
+        )
+
+        if result:
+            return {
+                "pages": result[0]["pages"],
+                "chunks": result[0]["total_chunks"],
+                "tree_nodes_linked": result[0]["tree_nodes_linked"],
+                "imas_paths_linked": result[0]["imas_paths_linked"],
+            }
+        return {"pages": 0, "chunks": 0, "tree_nodes_linked": 0, "imas_paths_linked": 0}
+
+
+__all__ = [
+    "ProgressCallback",
+    "WikiIngestionPipeline",
+    "create_wiki_vector_index",
+    "get_embed_model",
+    "get_wiki_stats",
+    "html_to_text",
+]

@@ -1,0 +1,301 @@
+"""Rich progress monitoring for wiki ingestion.
+
+Provides a multi-stage progress display for CLI and MCP tool status
+reporting. Tracks pages scraped, chunks created, and entities linked.
+
+Example:
+    monitor = WikiProgressMonitor()
+    monitor.start(total_pages=50)
+    monitor.update_scrape("Thomson", chunks=12, links=45)
+    monitor.finish()
+"""
+
+import logging
+import time
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class WikiIngestionStats:
+    """Statistics for a wiki ingestion run."""
+
+    pages_total: int = 0
+    pages_scraped: int = 0
+    pages_failed: int = 0
+    chunks_created: int = 0
+    tree_nodes_linked: int = 0
+    imas_paths_linked: int = 0
+    conventions_found: int = 0
+    units_found: int = 0
+    started_at: float = field(default_factory=time.time)
+    current_page: str = ""
+
+    @property
+    def elapsed_seconds(self) -> float:
+        """Elapsed time in seconds."""
+        return time.time() - self.started_at
+
+    @property
+    def pages_per_second(self) -> float:
+        """Processing rate in pages per second."""
+        if self.elapsed_seconds > 0 and self.pages_scraped > 0:
+            return self.pages_scraped / self.elapsed_seconds
+        return 0.0
+
+    @property
+    def eta_seconds(self) -> float:
+        """Estimated time remaining in seconds."""
+        remaining = self.pages_total - self.pages_scraped
+        if self.pages_per_second > 0:
+            return remaining / self.pages_per_second
+        return 0.0
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for MCP tool output."""
+        return {
+            "pages_total": self.pages_total,
+            "pages_scraped": self.pages_scraped,
+            "pages_failed": self.pages_failed,
+            "chunks_created": self.chunks_created,
+            "tree_nodes_linked": self.tree_nodes_linked,
+            "imas_paths_linked": self.imas_paths_linked,
+            "conventions_found": self.conventions_found,
+            "units_found": self.units_found,
+            "elapsed_seconds": round(self.elapsed_seconds, 1),
+            "pages_per_second": round(self.pages_per_second, 2),
+            "eta_seconds": round(self.eta_seconds, 1),
+            "current_page": self.current_page,
+            "completion_pct": round(
+                100 * self.pages_scraped / max(1, self.pages_total), 1
+            ),
+        }
+
+
+class WikiProgressMonitor:
+    """Progress monitor for wiki ingestion with Rich display support.
+
+    Provides two modes:
+    1. Rich console mode (for CLI): Live updating progress bars and panels
+    2. Logging mode (for MCP/background): Standard logger output
+
+    The monitor tracks multi-stage progress:
+    - Scrape: Fetching HTML from wiki
+    - Chunk: Splitting content and generating embeddings
+    - Link: Creating graph relationships to TreeNodes/IMASPaths
+    """
+
+    def __init__(self, use_rich: bool = True, logger: logging.Logger | None = None):
+        """Initialize progress monitor.
+
+        Args:
+            use_rich: If True, use Rich console display (requires terminal)
+            logger: Optional logger for non-Rich mode
+        """
+        self.use_rich = use_rich
+        self.logger = logger or logging.getLogger(__name__)
+        self.stats = WikiIngestionStats()
+        self._live = None
+        self._progress = None
+        self._task_scrape = None
+        self._task_chunk = None
+        self._task_link = None
+
+    def start(self, total_pages: int) -> None:
+        """Start progress tracking.
+
+        Args:
+            total_pages: Total number of pages to process
+        """
+        self.stats = WikiIngestionStats(pages_total=total_pages)
+
+        if self.use_rich:
+            try:
+                from rich.console import Console
+                from rich.live import Live
+                from rich.progress import (
+                    BarColumn,
+                    MofNCompleteColumn,
+                    Progress,
+                    SpinnerColumn,
+                    TextColumn,
+                    TimeElapsedColumn,
+                    TimeRemainingColumn,
+                )
+
+                self._console = Console()
+                self._progress = Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]{task.description}"),
+                    BarColumn(bar_width=30),
+                    MofNCompleteColumn(),
+                    TimeElapsedColumn(),
+                    TextColumn("→"),
+                    TimeRemainingColumn(),
+                )
+                self._task_scrape = self._progress.add_task(
+                    "Scraping", total=total_pages
+                )
+                self._live = Live(
+                    self._create_display(),
+                    console=self._console,
+                    refresh_per_second=4,
+                )
+                self._live.start()
+            except ImportError:
+                self.use_rich = False
+                self.logger.info("Starting wiki ingestion of %d pages", total_pages)
+        else:
+            self.logger.info("Starting wiki ingestion of %d pages", total_pages)
+
+    def update_scrape(
+        self,
+        page_name: str,
+        chunks: int = 0,
+        tree_nodes: int = 0,
+        imas_paths: int = 0,
+        conventions: int = 0,
+        units: int = 0,
+        failed: bool = False,
+    ) -> None:
+        """Update progress after scraping a page.
+
+        Args:
+            page_name: Name of the page just processed
+            chunks: Number of chunks created from this page
+            tree_nodes: Number of TreeNode links created
+            imas_paths: Number of IMASPath links created
+            conventions: Number of conventions found
+            units: Number of units found
+            failed: Whether the page failed to process
+        """
+        self.stats.current_page = page_name
+
+        if failed:
+            self.stats.pages_failed += 1
+        else:
+            self.stats.pages_scraped += 1
+            self.stats.chunks_created += chunks
+            self.stats.tree_nodes_linked += tree_nodes
+            self.stats.imas_paths_linked += imas_paths
+            self.stats.conventions_found += conventions
+            self.stats.units_found += units
+
+        if self.use_rich and self._progress and self._task_scrape is not None:
+            self._progress.update(
+                self._task_scrape,
+                completed=self.stats.pages_scraped + self.stats.pages_failed,
+                description=f"Scraping: {page_name[:30]}",
+            )
+            if self._live:
+                self._live.update(self._create_display())
+        else:
+            if failed:
+                self.logger.warning("Failed: %s", page_name)
+            else:
+                self.logger.info(
+                    "[%d/%d] %s: %d chunks, %d links",
+                    self.stats.pages_scraped,
+                    self.stats.pages_total,
+                    page_name,
+                    chunks,
+                    tree_nodes + imas_paths,
+                )
+
+    def finish(self) -> WikiIngestionStats:
+        """Finish progress tracking and return final statistics.
+
+        Returns:
+            Final WikiIngestionStats
+        """
+        if self.use_rich and self._live:
+            self._live.stop()
+            # Print final summary
+            from rich.console import Console
+            from rich.panel import Panel
+            from rich.table import Table
+
+            console = Console()
+            summary = Table(
+                title="Wiki Ingestion Complete", show_header=False, box=None
+            )
+            summary.add_column(style="dim")
+            summary.add_column(justify="right")
+            summary.add_row(
+                "Pages scraped:", f"[green]{self.stats.pages_scraped}[/green]"
+            )
+            summary.add_row("Pages failed:", f"[red]{self.stats.pages_failed}[/red]")
+            summary.add_row("Chunks created:", str(self.stats.chunks_created))
+            summary.add_row("TreeNodes linked:", str(self.stats.tree_nodes_linked))
+            summary.add_row("IMAS paths linked:", str(self.stats.imas_paths_linked))
+            summary.add_row("Conventions found:", str(self.stats.conventions_found))
+            summary.add_row("Time:", f"{self.stats.elapsed_seconds:.1f}s")
+            console.print(Panel(summary, border_style="green"))
+        else:
+            self.logger.info(
+                "Wiki ingestion complete: %d pages, %d chunks, %d links",
+                self.stats.pages_scraped,
+                self.stats.chunks_created,
+                self.stats.tree_nodes_linked + self.stats.imas_paths_linked,
+            )
+
+        return self.stats
+
+    def _create_display(self):
+        """Create Rich display for live updates."""
+        from rich.console import Group
+        from rich.panel import Panel
+        from rich.table import Table
+
+        # Statistics panel
+        stats_table = Table.grid(padding=(0, 2))
+        stats_table.add_column(style="dim")
+        stats_table.add_column(justify="right")
+        stats_table.add_row("Chunks:", str(self.stats.chunks_created))
+        stats_table.add_row(
+            "TreeNodes:", f"[cyan]{self.stats.tree_nodes_linked}[/cyan]"
+        )
+        stats_table.add_row(
+            "IMAS paths:", f"[cyan]{self.stats.imas_paths_linked}[/cyan]"
+        )
+        stats_table.add_row("Conventions:", str(self.stats.conventions_found))
+        stats_table.add_row("Rate:", f"{self.stats.pages_per_second:.2f} pages/sec")
+
+        stats_panel = Panel(
+            stats_table,
+            title="[bold]Statistics[/bold]",
+            border_style="blue",
+            padding=(0, 1),
+        )
+
+        return Group(self._progress, stats_panel)
+
+    def get_status(self) -> dict:
+        """Get current status as a dictionary (for MCP tools).
+
+        Returns:
+            Status dictionary suitable for JSON serialization
+        """
+        return self.stats.to_dict()
+
+
+# Global monitor instance for MCP tool access
+_current_monitor: WikiProgressMonitor | None = None
+
+
+def get_current_monitor() -> WikiProgressMonitor | None:
+    """Get the currently active progress monitor (if any).
+
+    Used by MCP tools to report ingestion progress.
+    """
+    return _current_monitor
+
+
+def set_current_monitor(monitor: WikiProgressMonitor | None) -> None:
+    """Set the current progress monitor.
+
+    Called by the pipeline when starting/stopping ingestion.
+    """
+    global _current_monitor
+    _current_monitor = monitor

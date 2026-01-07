@@ -1116,3 +1116,111 @@ classes:
       tokens_used:
         description: Total tokens consumed
         range: integer
+
+# =============================================================================
+# Wiki Documentation Classes
+# =============================================================================
+
+  WikiPage:
+    description: >-
+      A wiki page from facility documentation (e.g., TCV wiki).
+      Contains authoritative signal descriptions, conventions, and specs.
+      Chunks are created for semantic search via WikiChunk nodes.
+    class_uri: facility:WikiPage
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:page_path (e.g., "epfl:Diagnostics/Thomson")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      url:
+        description: Original wiki URL
+        required: true
+      title:
+        description: Page title
+        required: true
+      status:
+        description: Ingestion lifecycle status
+        range: WikiPageStatus
+        required: true
+      content_hash:
+        description: SHA256 hash of content for change detection (first 16 chars)
+      last_scraped:
+        description: When this page was last scraped
+        range: datetime
+      last_modified:
+        description: When wiki page was last modified (if available from headers)
+        range: datetime
+      chunk_count:
+        description: Number of WikiChunk nodes created from this page
+        range: integer
+      link_count:
+        description: Number of DOCUMENTS/MENTIONS relationships created
+        range: integer
+      mdsplus_paths_found:
+        description: MDSplus paths detected in page content
+        multivalued: true
+      imas_paths_found:
+        description: IMAS paths detected in page content
+        multivalued: true
+      conventions_found:
+        description: Sign conventions detected in page content
+        multivalued: true
+
+  WikiChunk:
+    description: >-
+      A searchable chunk from a wiki page with vector embeddings.
+      Links to TreeNodes, IMASPaths, Units, and SignConventions it documents.
+      Uses same embedding model as CodeChunk for unified semantic search.
+    class_uri: facility:WikiChunk
+    attributes:
+      id:
+        identifier: true
+        description: Unique chunk identifier (e.g., "epfl:Thomson:chunk_0")
+        required: true
+      wiki_page_id:
+        description: Parent WikiPage ID
+        required: true
+        range: WikiPage
+      facility_id:
+        description: Facility for efficient filtering
+        required: true
+        range: Facility
+      section:
+        description: Section heading this chunk belongs to
+      content:
+        description: The actual text content
+        required: true
+      start_char:
+        description: Starting character offset in original page
+        range: integer
+      end_char:
+        description: Ending character offset in original page
+        range: integer
+      embedding:
+        description: Vector embedding for semantic search (384-dim, all-MiniLM-L6-v2)
+        multivalued: true
+        range: float
+      # Entity mentions for linking
+      mdsplus_paths_mentioned:
+        description: MDSplus paths mentioned in this chunk (raw strings)
+        multivalued: true
+      imas_paths_mentioned:
+        description: IMAS paths mentioned in this chunk
+        multivalued: true
+      units_mentioned:
+        description: Physical units mentioned (e.g., "eV", "keV", "m^-3")
+        multivalued: true
+      conventions_mentioned:
+        description: Sign conventions referenced (e.g., "COCOS 11")
+        multivalued: true
+      # Relationship counts for stats
+      tree_nodes_linked:
+        description: Count of DOCUMENTS relationships to TreeNode
+        range: integer
+      imas_paths_linked:
+        description: Count of MENTIONS_IMAS relationships to IMASPath
+        range: integer

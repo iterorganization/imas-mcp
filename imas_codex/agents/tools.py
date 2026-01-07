@@ -591,6 +591,8 @@ def get_enrichment_tools() -> list[FunctionTool]:
     - search_code_examples: Critical for usage context
     - ssh_mdsplus_query: Last resort for live metadata
     - get_tree_structure: Helpful for hierarchy context
+    - get_wiki_context_for_path: Wiki documentation for paths
+    - get_sign_conventions: COCOS and sign conventions
     """
     return [
         FunctionTool.from_defaults(
@@ -623,6 +625,22 @@ def get_enrichment_tools() -> list[FunctionTool]:
             description=(
                 "Get TreeNode structure from the graph. "
                 "Shows hierarchical MDSplus tree structure."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_get_wiki_context_for_path,
+            name="get_wiki_context_for_path",
+            description=(
+                "Get wiki documentation for a specific MDSplus path. "
+                "Use to add authoritative descriptions from facility experts."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_get_sign_conventions,
+            name="get_sign_conventions",
+            description=(
+                "Get sign and COCOS conventions from wiki. "
+                "Critical for IMAS mapping correctness."
             ),
         ),
     ]
@@ -666,11 +684,258 @@ def get_all_tools() -> list[FunctionTool]:
     Combines:
     - Exploration tools (graph, SSH, code search)
     - IMAS DD tools (semantic search, path validation, structure)
+    - Wiki search tools
 
     The IMAS tools use a singleton DocumentStore, so embedding models
     are loaded only once regardless of how many times this is called.
 
     Returns:
-        Combined list of all FunctionTools (11 total)
+        Combined list of all FunctionTools (12+ total)
     """
-    return get_exploration_tools() + get_imas_tools()
+    return get_exploration_tools() + get_imas_tools() + get_wiki_tools()
+
+
+# =============================================================================
+# Wiki Search Tools
+# =============================================================================
+
+
+def _search_wiki(query: str, limit: int = 5, facility: str = "epfl") -> str:
+    """
+    Search wiki documentation using semantic vector search.
+
+    Use this for official signal descriptions, sign conventions, and diagnostic specs.
+    Wiki content is authoritative documentation from facility experts.
+
+    Args:
+        query: Natural language query (e.g., 'Thomson scattering calibration')
+        limit: Maximum number of results (default: 5)
+        facility: Facility ID (default: 'epfl')
+
+    Returns:
+        Matching wiki chunks with page titles, sections, and content
+    """
+    try:
+        # Get query embedding
+        from imas_codex.code_examples.pipeline import get_embed_model
+        from imas_codex.graph import GraphClient
+
+        embed_model = get_embed_model()
+        query_embedding = embed_model.get_text_embedding(query)
+
+        with GraphClient() as gc:
+            # Vector similarity search on WikiChunk embeddings
+            result = gc.query(
+                """
+                CALL db.index.vector.queryNodes('wiki_chunk_embedding', $limit, $embedding)
+                YIELD node, score
+                MATCH (p:WikiPage)-[:HAS_CHUNK]->(node)
+                WHERE p.facility_id = $facility
+                RETURN p.title AS page_title, p.url AS url,
+                       node.content AS content,
+                       node.mdsplus_paths_mentioned AS mdsplus_paths,
+                       node.conventions_mentioned AS conventions,
+                       score
+                ORDER BY score DESC
+                """,
+                limit=limit,
+                embedding=query_embedding,
+                facility=facility,
+            )
+
+            if not result:
+                return f"No wiki content found for '{query}' in {facility}"
+
+            output = []
+            for r in result:
+                output.append(f"=== {r['page_title']} (score: {r['score']:.3f}) ===")
+                output.append(f"URL: {r['url']}")
+                content = (
+                    r["content"][:500] + "..."
+                    if len(r["content"]) > 500
+                    else r["content"]
+                )
+                output.append(content)
+                if r.get("mdsplus_paths"):
+                    output.append(f"MDSplus paths: {', '.join(r['mdsplus_paths'][:5])}")
+                if r.get("conventions"):
+                    output.append(f"Conventions: {', '.join(r['conventions'])}")
+                output.append("")
+
+            return "\n".join(output)
+    except Exception as e:
+        return f"Wiki search error: {e}"
+
+
+def _get_sign_conventions(
+    facility: str = "epfl", convention_type: str | None = None
+) -> str:
+    """
+    Get sign conventions documented in the wiki.
+
+    Returns COCOS indices, sign definitions, and coordinate conventions
+    that are critical for IMAS mapping correctness.
+
+    Args:
+        facility: Facility ID (default: 'epfl')
+        convention_type: Filter by type ('cocos', 'sign', 'direction', 'coordinate')
+
+    Returns:
+        List of sign conventions with descriptions and affected paths
+    """
+    try:
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as gc:
+            if convention_type:
+                result = gc.query(
+                    """
+                    MATCH (sc:SignConvention {facility_id: $facility})
+                    WHERE sc.convention_type = $type
+                    RETURN sc.name AS name, sc.convention_type AS type,
+                           sc.description AS description, sc.cocos_index AS cocos,
+                           sc.wiki_source AS source
+                    ORDER BY sc.name
+                    """,
+                    facility=facility,
+                    type=convention_type,
+                )
+            else:
+                result = gc.query(
+                    """
+                    MATCH (sc:SignConvention {facility_id: $facility})
+                    RETURN sc.name AS name, sc.convention_type AS type,
+                           sc.description AS description, sc.cocos_index AS cocos,
+                           sc.wiki_source AS source
+                    ORDER BY sc.convention_type, sc.name
+                    """,
+                    facility=facility,
+                )
+
+            if not result:
+                return f"No sign conventions found for {facility}"
+
+            output = [f"Sign Conventions for {facility}:", ""]
+            for r in result:
+                line = f"[{r['type']}] {r['name']}"
+                if r.get("cocos"):
+                    line += f" (COCOS {r['cocos']})"
+                output.append(line)
+                if r.get("description"):
+                    desc = (
+                        r["description"][:200] + "..."
+                        if len(r["description"]) > 200
+                        else r["description"]
+                    )
+                    output.append(f"  {desc}")
+                output.append("")
+
+            return "\n".join(output)
+    except Exception as e:
+        return f"Convention lookup error: {e}"
+
+
+def _get_wiki_context_for_path(path: str, facility: str = "epfl") -> str:
+    """
+    Get wiki documentation for a specific MDSplus path.
+
+    Searches for WikiChunks that document a given path and returns
+    the relevant wiki content. Use this during enrichment to add
+    authoritative descriptions.
+
+    Args:
+        path: MDSplus path (e.g., '\\RESULTS::THOMSON:NE')
+        facility: Facility ID (default: 'epfl')
+
+    Returns:
+        Wiki content that documents this path
+    """
+    try:
+        from imas_codex.graph import GraphClient
+
+        # Normalize path for matching
+        normalized = path.lstrip("\\").upper()
+
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (wc:WikiChunk)-[:DOCUMENTS]->(t:TreeNode)
+                WHERE t.path CONTAINS $path OR t.canonical_path = $normalized
+                MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
+                RETURN wp.title AS page_title, wc.content AS content,
+                       t.path AS matched_path
+                LIMIT 5
+                """,
+                path=path,
+                normalized=normalized,
+            )
+
+            if not result:
+                # Try fuzzy match via mdsplus_paths_mentioned
+                result = gc.query(
+                    """
+                    MATCH (wc:WikiChunk {facility_id: $facility})
+                    WHERE ANY(p IN wc.mdsplus_paths_mentioned WHERE p CONTAINS $path_part)
+                    MATCH (wp:WikiPage)-[:HAS_CHUNK]->(wc)
+                    RETURN wp.title AS page_title, wc.content AS content
+                    LIMIT 5
+                    """,
+                    facility=facility,
+                    path_part=path.split("::")[-1] if "::" in path else path,
+                )
+
+            if not result:
+                return f"No wiki documentation found for {path}"
+
+            output = [f"Wiki documentation for {path}:", ""]
+            for r in result:
+                output.append(f"From: {r['page_title']}")
+                content = (
+                    r["content"][:400] + "..."
+                    if len(r["content"]) > 400
+                    else r["content"]
+                )
+                output.append(content)
+                output.append("")
+
+            return "\n".join(output)
+    except Exception as e:
+        return f"Wiki context error: {e}"
+
+
+def get_wiki_tools() -> list[FunctionTool]:
+    """
+    Get wiki search and convention tools.
+
+    Returns:
+        List of FunctionTool instances for:
+        - search_wiki: Semantic search over wiki content
+        - get_sign_conventions: Look up sign/COCOS conventions
+        - get_wiki_context_for_path: Get wiki docs for MDSplus path
+    """
+    return [
+        FunctionTool.from_defaults(
+            fn=_search_wiki,
+            name="search_wiki",
+            description=(
+                "Semantic search over wiki documentation. "
+                "Use for official signal descriptions, calibration info, and conventions."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_get_sign_conventions,
+            name="get_sign_conventions",
+            description=(
+                "Get sign and COCOS conventions from wiki. "
+                "Critical for IMAS mapping correctness."
+            ),
+        ),
+        FunctionTool.from_defaults(
+            fn=_get_wiki_context_for_path,
+            name="get_wiki_context_for_path",
+            description=(
+                "Get wiki documentation for a specific MDSplus path. "
+                "Use during enrichment to add authoritative descriptions."
+            ),
+        ),
+    ]
