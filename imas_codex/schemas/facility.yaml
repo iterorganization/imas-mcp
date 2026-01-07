@@ -235,6 +235,8 @@ enums:
         description: Files examined in detail, structure understood
       ingested:
         description: Code content extracted to graph (CodeExample nodes)
+      complete:
+        description: Fully explored, all files queued, ready for next phase
       skipped:
         description: Reviewed and deemed uninteresting
       excluded:
@@ -257,6 +259,22 @@ enums:
         description: Ingestion failed (check error field)
       stale:
         description: Source may have changed, needs re-fetch
+
+  AgentRunStatus:
+    description: Status of an autonomous agent run
+    permissible_values:
+      pending:
+        description: Created but not yet started
+      running:
+        description: Currently executing
+      paused:
+        description: Paused by user, can be resumed
+      completed:
+        description: Successfully finished all work
+      failed:
+        description: Stopped due to error
+      cancelled:
+        description: Stopped by user request
 
   EnrichmentStatus:
     description: >-
@@ -1102,3 +1120,77 @@ classes:
         description: IMAS path this reference resolves to (future)
         range: IMASPath
         multivalued: true
+
+  AgentRun:
+    description: >-
+      Tracks a long-running agent execution for resumability and audit.
+      
+      Agents (discover-paths, discover-files, discover-tdi, enrich, map)
+      create an AgentRun at start and update it periodically with checkpoints.
+      On crash, the agent can resume from last_item_id.
+      
+      Budget fields enable cost/time controls for autonomous execution.
+    class_uri: facility:AgentRun
+    attributes:
+      id:
+        identifier: true
+        description: UUID for this run (e.g., "epfl-discover-paths-20260107-1234")
+        required: true
+      facility_id:
+        description: Target facility for this agent run
+        required: true
+        range: Facility
+      agent_type:
+        description: Type of agent (discover-paths, discover-files, discover-tdi, enrich, map)
+        required: true
+      started_at:
+        description: When the agent run started
+        range: datetime
+        required: true
+      ended_at:
+        description: When the agent run completed (null if still running)
+        range: datetime
+      status:
+        description: Current run status
+        range: AgentRunStatus
+        required: true
+      budget_seconds:
+        description: Maximum allowed run time in seconds (null = no limit)
+        range: integer
+      budget_cost:
+        description: Maximum allowed cost in USD (null = no limit)
+        range: float
+      actual_cost:
+        description: Actual cost incurred so far
+        range: float
+      items_total:
+        description: Total items to process (if known at start)
+        range: integer
+      items_processed:
+        description: Number of items processed so far
+        range: integer
+      items_skipped:
+        description: Number of items skipped (already done, excluded)
+        range: integer
+      items_failed:
+        description: Number of items that failed processing
+        range: integer
+      last_item_id:
+        description: ID of last successfully processed item (for resumption)
+      last_checkpoint_at:
+        description: When the last checkpoint was saved
+        range: datetime
+      error_message:
+        description: Error message if status=failed
+      error_traceback:
+        description: Python traceback if available
+      config:
+        description: JSON-encoded agent configuration (root paths, patterns, etc.)
+      llm_model:
+        description: LLM model used (e.g., "google/gemini-3-flash-preview")
+      llm_calls:
+        description: Number of LLM calls made
+        range: integer
+      tokens_used:
+        description: Total tokens consumed
+        range: integer

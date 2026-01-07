@@ -15,6 +15,7 @@ Local use only - provides read access to graph, write via ingest_nodes only.
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import UTC
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -930,6 +931,483 @@ class AgentsServer:
                 logger.exception("Failed to get exploration progress")
                 raise RuntimeError(
                     f"Failed to get exploration progress: {_neo4j_error_message(e)}"
+                ) from e
+
+        # =====================================================================
+        # Agent State Tools (for autonomous agents)
+        # =====================================================================
+
+        @self.mcp.tool()
+        def get_exploration_state(
+            facility: str,
+            root_path: str | None = None,
+        ) -> dict[str, Any]:
+            """
+            Get current exploration state for a facility or subtree.
+
+            Returns comprehensive state for resumable exploration:
+            - Path statistics by status
+            - Files queued vs ingested
+            - Coverage percentage
+            - Recommended next action
+
+            Args:
+                facility: Facility ID (e.g., "epfl")
+                root_path: Optional root path to scope the query
+                           (e.g., "/home/codes" to get state for that subtree)
+
+            Returns:
+                Dict with:
+                - paths_discovered: Count of paths in discovered/listed/scanned
+                - paths_complete: Count of paths in complete/ingested
+                - paths_pending: Count of paths in flagged/analyzed
+                - files_queued: SourceFiles with status=queued
+                - files_ingested: SourceFiles with status=ready
+                - coverage_pct: Percentage of discovered paths that are complete
+                - recommended_next: Suggested next action based on state
+
+            Examples:
+                # Full facility state
+                get_exploration_state("epfl")
+
+                # Subtree state
+                get_exploration_state("epfl", "/home/codes/liuqe")
+            """
+            try:
+                with GraphClient() as client:
+                    # Query path status distribution with optional root filter
+                    if root_path:
+                        path_result = client.query(
+                            """
+                            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                            WHERE p.path STARTS WITH $root
+                            RETURN p.status AS status, count(*) AS count
+                            """,
+                            fid=facility,
+                            root=root_path,
+                        )
+                        file_result = client.query(
+                            """
+                            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                            WHERE sf.path STARTS WITH $root
+                            RETURN sf.status AS status, count(*) AS count
+                            """,
+                            fid=facility,
+                            root=root_path,
+                        )
+                    else:
+                        path_result = client.query(
+                            """
+                            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                            RETURN p.status AS status, count(*) AS count
+                            """,
+                            fid=facility,
+                        )
+                        file_result = client.query(
+                            """
+                            MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                            RETURN sf.status AS status, count(*) AS count
+                            """,
+                            fid=facility,
+                        )
+
+                    # Build status counts
+                    path_counts = {r["status"]: r["count"] for r in path_result}
+                    file_counts = {r["status"]: r["count"] for r in file_result}
+
+                    # Calculate aggregates
+                    discovered = sum(
+                        path_counts.get(s, 0)
+                        for s in ["discovered", "listed", "scanned"]
+                    )
+                    complete = sum(
+                        path_counts.get(s, 0) for s in ["complete", "ingested"]
+                    )
+                    pending = sum(
+                        path_counts.get(s, 0) for s in ["flagged", "analyzed"]
+                    )
+                    total = sum(path_counts.values())
+
+                    files_queued = file_counts.get("queued", 0)
+                    files_ingested = file_counts.get("ready", 0)
+
+                    coverage_pct = round(100 * complete / total, 1) if total else 0.0
+
+                    # Determine recommendation
+                    if total == 0:
+                        recommended = "Run discover paths to find code directories"
+                    elif discovered > complete * 3:
+                        recommended = (
+                            "Run discover files to queue sources from flagged paths"
+                        )
+                    elif files_queued > files_ingested:
+                        recommended = (
+                            f"Run ingest to process {files_queued} queued files"
+                        )
+                    elif pending > 0:
+                        recommended = f"Review {pending} flagged/analyzed paths"
+                    else:
+                        recommended = "Exploration complete for this scope"
+
+                    return {
+                        "facility": facility,
+                        "root_path": root_path,
+                        "paths_discovered": discovered,
+                        "paths_complete": complete,
+                        "paths_pending": pending,
+                        "paths_total": total,
+                        "files_queued": files_queued,
+                        "files_ingested": files_ingested,
+                        "coverage_pct": coverage_pct,
+                        "by_path_status": path_counts,
+                        "by_file_status": file_counts,
+                        "recommended_next": recommended,
+                    }
+            except Exception as e:
+                logger.exception("Failed to get exploration state")
+                raise RuntimeError(
+                    f"Failed to get exploration state: {_neo4j_error_message(e)}"
+                ) from e
+
+        @self.mcp.tool()
+        def mark_path_explored(
+            facility: str,
+            path: str,
+            status: str,
+            file_count: int | None = None,
+            patterns_found: list[str] | None = None,
+            interest_score: float | None = None,
+            notes: str | None = None,
+        ) -> dict[str, Any]:
+            """
+            Mark a FacilityPath as explored with the given status.
+
+            This is the primary tool for updating path exploration state.
+            Automatically sets last_examined timestamp. Creates the path if missing.
+
+            Args:
+                facility: Facility ID
+                path: Absolute path to mark
+                status: New PathStatus value (scanned, flagged, complete, etc.)
+                file_count: Optional file count (set during listing/scanning)
+                patterns_found: Patterns that matched (e.g., ["equilibrium", "IMAS"])
+                interest_score: Priority score 0.0-1.0 (higher = more interesting)
+                notes: Free-form notes to append
+
+            Returns:
+                Updated path info: {id, path, status, interest_score, patterns_found}
+
+            Examples:
+                # Mark as scanned with patterns found
+                mark_path_explored("epfl", "/home/codes/liuqe", "scanned",
+                                  file_count=47, patterns_found=["equilibrium", "IMAS"],
+                                  interest_score=0.9)
+
+                # Mark as complete (all files queued)
+                mark_path_explored("epfl", "/home/codes/liuqe", "complete",
+                                  notes="All 47 files queued for ingestion")
+            """
+            # Validate status
+            schema = get_schema()
+            valid_statuses = schema.get_enums().get("PathStatus", [])
+            if status not in valid_statuses:
+                raise ValueError(f"Invalid status '{status}'. Valid: {valid_statuses}")
+
+            try:
+                with GraphClient() as client:
+                    path_id = f"{facility}:{path}"
+
+                    # First try to update existing path
+                    set_parts = ["p.status = $status", "p.last_examined = datetime()"]
+                    params: dict[str, Any] = {
+                        "fid": facility,
+                        "path": path,
+                        "status": status,
+                    }
+
+                    if file_count is not None:
+                        set_parts.append("p.file_count = $file_count")
+                        params["file_count"] = file_count
+                    if patterns_found is not None:
+                        set_parts.append("p.patterns_found = $patterns_found")
+                        params["patterns_found"] = patterns_found
+                    if interest_score is not None:
+                        set_parts.append("p.interest_score = $interest_score")
+                        params["interest_score"] = interest_score
+                    if notes:
+                        set_parts.append(
+                            "p.notes = CASE WHEN p.notes IS NULL THEN $notes "
+                            "ELSE p.notes + '\\n' + $notes END"
+                        )
+                        params["notes"] = notes
+
+                    set_clause = ", ".join(set_parts)
+
+                    result = client.query(
+                        f"""
+                        MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $fid}})
+                        WHERE p.path = $path
+                        SET {set_clause}
+                        RETURN p.id AS id, p.path AS path, p.status AS status,
+                               p.interest_score AS interest_score,
+                               p.patterns_found AS patterns_found
+                        """,
+                        **params,
+                    )
+
+                    if result:
+                        return dict(result[0])
+
+                    # Path doesn't exist, create it
+                    create_props = {
+                        "id": path_id,
+                        "path": path,
+                        "path_type": "code_directory",
+                        "status": status,
+                        "facility_id": facility,
+                    }
+                    if file_count is not None:
+                        create_props["file_count"] = file_count
+                    if patterns_found is not None:
+                        create_props["patterns_found"] = patterns_found
+                    if interest_score is not None:
+                        create_props["interest_score"] = interest_score
+                    if notes:
+                        create_props["notes"] = notes
+
+                    result = client.query(
+                        """
+                        MATCH (f:Facility {id: $fid})
+                        CREATE (p:FacilityPath $props)-[:FACILITY_ID]->(f)
+                        SET p.discovered_at = datetime(), p.last_examined = datetime()
+                        RETURN p.id AS id, p.path AS path, p.status AS status,
+                               p.interest_score AS interest_score,
+                               p.patterns_found AS patterns_found
+                        """,
+                        fid=facility,
+                        props=create_props,
+                    )
+
+                    if result:
+                        return dict(result[0])
+
+                    return {"error": f"Failed to create path for facility {facility}"}
+            except Exception as e:
+                logger.exception("Failed to mark path explored")
+                raise RuntimeError(
+                    f"Failed to mark path: {_neo4j_error_message(e)}"
+                ) from e
+
+        @self.mcp.tool()
+        def get_agent_progress(
+            run_id: str | None = None,
+            facility: str | None = None,
+        ) -> dict[str, Any]:
+            """
+            Get progress for an agent run.
+
+            If run_id is provided, returns that specific run's progress.
+            If only facility is provided, returns the most recent run.
+            If neither, returns all running agents.
+
+            Args:
+                run_id: Specific AgentRun ID to query
+                facility: Facility to filter by (returns most recent)
+
+            Returns:
+                AgentRun info with progress metrics:
+                - Basic info: id, agent_type, status, started_at
+                - Progress: items_processed, items_total, completion_pct
+                - Budget: budget_seconds, actual elapsed, budget_cost, actual_cost
+                - Checkpoint: last_item_id, last_checkpoint_at
+                - For running agents: estimated time remaining
+
+            Examples:
+                # Get specific run
+                get_agent_progress(run_id="epfl-discover-paths-20260107-1234")
+
+                # Get most recent run for facility
+                get_agent_progress(facility="epfl")
+
+                # Get all running agents
+                get_agent_progress()
+            """
+            try:
+                with GraphClient() as client:
+                    if run_id:
+                        result = client.query(
+                            "MATCH (ar:AgentRun {id: $run_id}) RETURN ar",
+                            run_id=run_id,
+                        )
+                    elif facility:
+                        result = client.query(
+                            """
+                            MATCH (ar:AgentRun)-[:FACILITY_ID]->(f:Facility {id: $fid})
+                            RETURN ar
+                            ORDER BY ar.started_at DESC
+                            LIMIT 1
+                            """,
+                            fid=facility,
+                        )
+                    else:
+                        result = client.query(
+                            """
+                            MATCH (ar:AgentRun)
+                            WHERE ar.status = 'running'
+                            RETURN ar
+                            ORDER BY ar.started_at DESC
+                            """
+                        )
+
+                    if not result:
+                        return {"error": "No matching agent runs found"}
+
+                    from datetime import datetime
+
+                    runs = []
+                    for row in result:
+                        ar = dict(row["ar"])
+
+                        # Calculate completion percentage
+                        if ar.get("items_total") and ar.get("items_total") > 0:
+                            ar["completion_pct"] = round(
+                                100
+                                * (ar.get("items_processed", 0) / ar["items_total"]),
+                                1,
+                            )
+                        else:
+                            ar["completion_pct"] = None
+
+                        # Calculate elapsed time
+                        if ar.get("started_at"):
+                            started = ar["started_at"]
+                            if isinstance(started, str):
+                                started = datetime.fromisoformat(
+                                    started.replace("Z", "+00:00")
+                                )
+                            if hasattr(started, "tzinfo") and started.tzinfo is None:
+                                started = started.replace(tzinfo=UTC)
+                            elapsed = (datetime.now(UTC) - started).total_seconds()
+                            ar["elapsed_seconds"] = round(elapsed, 1)
+
+                            # Check budget
+                            if ar.get("budget_seconds"):
+                                remaining = ar["budget_seconds"] - elapsed
+                                ar["budget_remaining_seconds"] = max(
+                                    0, round(remaining, 1)
+                                )
+                                ar["budget_exceeded"] = remaining < 0
+
+                        runs.append(ar)
+
+                    return {"runs": runs} if len(runs) > 1 else runs[0]
+            except Exception as e:
+                logger.exception("Failed to get agent progress")
+                raise RuntimeError(
+                    f"Failed to get agent progress: {_neo4j_error_message(e)}"
+                ) from e
+
+        @self.mcp.tool()
+        def checkpoint_agent_run(
+            run_id: str,
+            last_item_id: str,
+            items_processed: int,
+            items_skipped: int = 0,
+            items_failed: int = 0,
+            actual_cost: float | None = None,
+            llm_calls: int | None = None,
+            tokens_used: int | None = None,
+        ) -> dict[str, Any]:
+            """
+            Save checkpoint for an agent run (for resumability).
+
+            Call this periodically (e.g., every 10 items or 60 seconds) to enable
+            crash recovery. On resume, query last_item_id to continue from there.
+
+            Args:
+                run_id: AgentRun ID to checkpoint
+                last_item_id: ID of last successfully processed item
+                items_processed: Total items processed so far
+                items_skipped: Items skipped (already done, excluded)
+                items_failed: Items that failed processing
+                actual_cost: Cumulative cost in USD
+                llm_calls: Cumulative LLM calls
+                tokens_used: Cumulative tokens
+
+            Returns:
+                Updated AgentRun with checkpoint info
+
+            Examples:
+                # Checkpoint after processing a batch
+                checkpoint_agent_run(
+                    run_id="epfl-discover-paths-20260107-1234",
+                    last_item_id="/home/codes/liuqe",
+                    items_processed=150,
+                    items_skipped=23,
+                    actual_cost=0.42
+                )
+            """
+            try:
+                with GraphClient() as client:
+                    # Build SET clause dynamically
+                    set_parts = [
+                        "ar.last_item_id = $last_item_id",
+                        "ar.items_processed = $items_processed",
+                        "ar.items_skipped = $items_skipped",
+                        "ar.items_failed = $items_failed",
+                        "ar.last_checkpoint_at = datetime()",
+                    ]
+                    params: dict[str, Any] = {
+                        "run_id": run_id,
+                        "last_item_id": last_item_id,
+                        "items_processed": items_processed,
+                        "items_skipped": items_skipped,
+                        "items_failed": items_failed,
+                    }
+
+                    if actual_cost is not None:
+                        set_parts.append("ar.actual_cost = $actual_cost")
+                        params["actual_cost"] = actual_cost
+                    if llm_calls is not None:
+                        set_parts.append("ar.llm_calls = $llm_calls")
+                        params["llm_calls"] = llm_calls
+                    if tokens_used is not None:
+                        set_parts.append("ar.tokens_used = $tokens_used")
+                        params["tokens_used"] = tokens_used
+
+                    set_clause = ", ".join(set_parts)
+
+                    result = client.query(
+                        f"""
+                        MATCH (ar:AgentRun {{id: $run_id}})
+                        SET {set_clause}
+                        RETURN ar.id AS id,
+                               ar.status AS status,
+                               ar.items_processed AS items_processed,
+                               ar.items_total AS items_total,
+                               ar.last_item_id AS last_item_id,
+                               ar.last_checkpoint_at AS last_checkpoint_at,
+                               ar.actual_cost AS actual_cost
+                        """,
+                        **params,
+                    )
+
+                    if not result:
+                        raise ValueError(f"AgentRun not found: {run_id}")
+
+                    row = dict(result[0])
+
+                    # Calculate completion percentage
+                    if row.get("items_total") and row["items_total"] > 0:
+                        row["completion_pct"] = round(
+                            100 * row["items_processed"] / row["items_total"], 1
+                        )
+
+                    return row
+            except Exception as e:
+                logger.exception("Failed to checkpoint agent run")
+                raise RuntimeError(
+                    f"Failed to checkpoint: {_neo4j_error_message(e)}"
                 ) from e
 
     def _register_prompts(self):
