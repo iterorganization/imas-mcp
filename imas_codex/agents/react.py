@@ -497,7 +497,10 @@ def _compute_confidence_score(
     return min(1.0, score)
 
 
-def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
+def _save_enrichments_to_graph(
+    results: list[EnrichmentResult],
+    model: str | None = None,
+) -> int:
     """
     Save enrichment results to Neo4j graph.
 
@@ -506,11 +509,18 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
     - HAS_UNIT relationships to Unit nodes (creating Unit if needed)
     - HAS_ERROR relationships to error TreeNodes (if they exist)
 
+    Args:
+        results: List of EnrichmentResult to persist
+        model: LLM model identifier for provenance tracking
+
     Returns number of nodes updated.
     """
+    from datetime import UTC, datetime
+
     updates = []
     unit_links = []
     error_links = []
+    enrichment_at = datetime.now(UTC).isoformat()
 
     for r in results:
         if not r.description:
@@ -526,6 +536,8 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
             "enrichment_confidence": confidence,
             "enrichment_status": "enriched",
             "enrichment_source": "llm_agent",
+            "enrichment_model": model,
+            "enrichment_at": enrichment_at,
         }
         # Add optional IMAS mapping fields if present
         if r.sign_convention:
@@ -556,6 +568,8 @@ def _save_enrichments_to_graph(results: list[EnrichmentResult]) -> int:
                 t.enrichment_confidence = u.enrichment_confidence,
                 t.enrichment_status = u.enrichment_status,
                 t.enrichment_source = u.enrichment_source,
+                t.enrichment_model = u.enrichment_model,
+                t.enrichment_at = datetime(u.enrichment_at),
                 t.sign_convention = COALESCE(u.sign_convention, t.sign_convention),
                 t.dimensions = COALESCE(u.dimensions, t.dimensions)
             """,
@@ -809,7 +823,7 @@ async def batch_enrich_paths(
 
         # Persist after each batch (not in dry run)
         if not dry_run:
-            updated = _save_enrichments_to_graph(results)
+            updated = _save_enrichments_to_graph(results, model=model)
             if verbose:
                 logger.info(f"  Persisted {updated} enrichments to graph")
 
@@ -1218,7 +1232,7 @@ async def react_batch_enrich_paths(
 
         # Persist after each batch
         if not dry_run and results:
-            updated = _save_enrichments_to_graph(results)
+            updated = _save_enrichments_to_graph(results, model=model)
             logger.info(f"  Persisted {updated} enrichments ({batch_elapsed:.1f}s)")
 
     total_elapsed = time.perf_counter() - start_time

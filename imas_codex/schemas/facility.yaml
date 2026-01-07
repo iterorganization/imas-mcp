@@ -561,6 +561,8 @@ classes:
       A node within an MDSplus tree. Represents a single data point that can
       be mapped to IMAS. Nodes with variants (PSI, PSI_2, PSI_3) are stored
       as a single node with a variants array, each linked to its source code.
+    mixins:
+      - LLMProvenance
     class_uri: facility:TreeNode
     attributes:
       path:
@@ -835,6 +837,8 @@ classes:
       A mapping from facility-specific data to IMAS paths.
       Contains all information needed to generate an Ambix Recipe for data pumping.
       Data flow is one-way (facility->IMAS) but searchable from either direction.
+    mixins:
+      - LLMProvenance
     class_uri: facility:IMASMapping
     attributes:
       id:

@@ -27,10 +27,36 @@ imports:
   - linkml:types
 
 # =============================================================================
-# Classes
+# Mixins
 # =============================================================================
 
 classes:
+  LLMProvenance:
+    description: >-
+      Mixin providing provenance tracking for LLM-generated or LLM-enriched content.
+      Use on any class where agents modify data to enable re-enrichment workflows.
+      
+      Enables queries like:
+      - Mark all nodes enriched by model X as stale
+      - Re-enrich all nodes enriched before date Y
+      - Compare quality across models
+    mixin: true
+    class_uri: common:LLMProvenance
+    attributes:
+      enrichment_model:
+        description: >-
+          LLM model identifier used for enrichment (e.g., "google/gemini-3-pro-preview").
+          Enables bulk re-enrichment when upgrading models.
+      enrichment_at:
+        description: >-
+          ISO timestamp when LLM enrichment was performed.
+          Enables time-based re-enrichment policies.
+        range: datetime
+
+# =============================================================================
+# Classes
+# =============================================================================
+
   Unit:
     description: >-
       A physical unit used in both IMAS Data Dictionary and facility-specific
