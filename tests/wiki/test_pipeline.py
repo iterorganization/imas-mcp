@@ -26,11 +26,24 @@ class TestHTMLToText:
         assert "Content" in text
 
     def test_strip_navigation(self):
-        """Navigation elements should be removed."""
-        html = "<html><nav>Menu</nav><article>Content</article></html>"
+        """Navigation elements pass through but bodyContent extraction isolates main content."""
+        # Simulate MediaWiki structure with bodyContent
+        html = """
+        <html>
+        <nav>Menu</nav>
+        <div id="bodyContent">
+        <p>Main content here</p>
+        <div class="printfooter">Retrieved from...</div>
+        </div>
+        </html>
+        """
         text, _ = html_to_text(html)
+        # Navigation before bodyContent is excluded
         assert "Menu" not in text
-        assert "Content" in text
+        # Main content is preserved
+        assert "Main content" in text
+        # Footer after bodyContent is excluded
+        assert "Retrieved from" not in text
 
     def test_preserve_paragraph_text(self):
         """Paragraph text should be preserved."""

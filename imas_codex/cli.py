@@ -2197,7 +2197,7 @@ def wiki_status(facility: str) -> None:
         top_pages = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility_id})
-            WHERE wp.status = 'linked'
+            WHERE wp.status = 'ingested'
             RETURN wp.title AS title, wp.chunk_count AS chunks,
                    wp.link_count AS links
             ORDER BY wp.link_count DESC

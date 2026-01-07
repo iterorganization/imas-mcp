@@ -117,16 +117,14 @@ enums:
   WikiPageStatus:
     description: >-
       Lifecycle status for wiki page ingestion.
-      Tracks scraping, chunking, and embedding progress.
+      Progress is graph-derived: check chunk_count, linked WikiChunk nodes.
     permissible_values:
       discovered:
-        description: Page URL found, awaiting scrape
-      scraped:
-        description: HTML content fetched
-      chunked:
-        description: Content split into chunks with embeddings
-      linked:
-        description: Chunks linked to graph entities (TreeNode, IMASPath)
+        description: Page URL found, awaiting ingestion
+      ingested:
+        description: Content scraped, chunked, embedded, and linked to graph
+      failed:
+        description: Ingestion failed (check error property)
       stale:
         description: Page may have changed, needs re-scrape
 

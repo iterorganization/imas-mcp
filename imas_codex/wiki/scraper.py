@@ -218,7 +218,7 @@ def fetch_wiki_page(
     Uses Python's urllib on the remote host to fetch HTML content.
 
     Args:
-        page_name: Wiki page name (e.g., "Thomson", "Diagnostics")
+        page_name: Wiki page name (e.g., "Thomson", "Ion Temperature Nodes")
         facility: SSH host alias (default: "epfl")
         timeout: SSH command timeout in seconds
 
@@ -228,7 +228,11 @@ def fetch_wiki_page(
     Raises:
         RuntimeError: If SSH command fails or times out
     """
-    url = f"{WIKI_BASE_URL}/{page_name}"
+    # URL-encode page name to handle spaces and special characters
+    import urllib.parse
+
+    encoded_page_name = urllib.parse.quote(page_name, safe="")
+    url = f"{WIKI_BASE_URL}/{encoded_page_name}"
 
     # Fetch via SSH with SSL verification disabled (self-signed cert)
     # Use urllib directly on the remote host

@@ -621,7 +621,7 @@ class WikiIngestionPipeline:
                 SET p.url = $url,
                     p.title = $title,
                     p.facility_id = $facility_id,
-                    p.status = 'chunked',
+                    p.status = 'ingested',
                     p.content_hash = $hash,
                     p.last_scraped = datetime(),
                     p.chunk_count = $chunk_count,
@@ -756,8 +756,7 @@ class WikiIngestionPipeline:
             gc.query(
                 """
                 MATCH (p:WikiPage {id: $page_id})
-                SET p.link_count = $links,
-                    p.status = 'linked'
+                SET p.link_count = $links
                 """,
                 page_id=page_id,
                 links=stats["tree_nodes_linked"] + stats["imas_paths_linked"],
