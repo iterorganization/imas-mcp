@@ -282,6 +282,26 @@ enums:
       imas_path:
         description: IMAS data dictionary path (future)
 
+  TreeNodeSource:
+    description: How a TreeNode was discovered and ingested
+    permissible_values:
+      tree_introspection:
+        description: >-
+          Discovered via MDSplus tree introspection (getNodeWild).
+          Path is the physical tree path. Has node_type.
+      code_extraction:
+        description: >-
+          Extracted from source code via code_examples pipeline.
+          Path may be abbreviated (no full hierarchy).
+          May represent accessor-level path, not physical node.
+      tdi_parameter:
+        description: >-
+          A parameter accepted by a TDI function (e.g., tcv_eq("PSI")).
+          Not a physical tree path but a logical data accessor name.
+          Links to TreeNode via accessor_function relationship.
+      manual:
+        description: Manually created during exploration or testing
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -580,6 +600,19 @@ classes:
       node_type:
         description: MDSplus node data type
         range: TreeNodeType
+      source:
+        description: How this node was discovered and ingested
+        range: TreeNodeSource
+      canonical_path:
+        description: >-
+          Canonical form of the path for deduplication and matching.
+          Normalized to single backslash, uppercase, no channel indices.
+          Used for fuzzy matching when exact path doesn't match.
+      physical_path:
+        description: >-
+          The actual MDSplus tree path (if different from accessor name).
+          For tdi_parameter nodes, this links to the physical storage.
+          E.g., tdi_parameter "I_P" -> physical_path "\RESULTS::TOP.EQ_RECON.TRACES:I_P"
       unit:
         description: Physical units for this node (linked via HAS_UNIT relationship)
         range: Unit
@@ -736,6 +769,15 @@ classes:
           E.g., ["I_P", "R_AXIS", "PSI_AXIS", "Q_95", ...] for tcv_eq.
           Use TreeNode.aliases for name translation (FORTRAN↔MATLAB).
         multivalued: true
+      quantity_definitions:
+        description: >-
+          JSON-encoded map of quantity name to definition.
+          E.g., {"AMIN": {"expression": "tcv_eq(\"R_CONTOUR\") - R_AXIS", 
+          "dependencies": ["R_CONTOUR", "R_AXIS"]}}
+      quantity_categories:
+        description: >-
+          JSON-encoded map of category to quantity names.
+          E.g., {"shape": ["AMIN", "KAPPA", "DELTA"], "energy": ["WE", "W_MHD"]}
 
   ShotRange:
     description: A range of shot numbers with common characteristics

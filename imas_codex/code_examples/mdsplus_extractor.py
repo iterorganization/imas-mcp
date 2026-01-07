@@ -45,12 +45,16 @@ TDI_FUNCTION_PATTERNS = [
 
 
 def normalize_mdsplus_path(path: str) -> str:
-    """Normalize an MDSplus path to canonical form.
+    """Normalize an MDSplus path to canonical form for graph storage.
 
+    Canonical form:
     - Uppercase
-    - Single backslash prefix
+    - Single backslash prefix (stored as \\ in JSON/Python strings)
     - Consistent :: separator
     - Strip trailing separators (: or .)
+
+    Note: The returned string has a single logical backslash, which appears
+    as \\\\ when printed or stored in JSON due to escaping.
 
     Args:
         path: Raw MDSplus path
@@ -66,6 +70,28 @@ def normalize_mdsplus_path(path: str) -> str:
     path = path.rstrip(":.")
     # Ensure single backslash prefix
     return f"\\{path}"
+
+
+def compute_canonical_path(path: str) -> str:
+    """Compute canonical path for deduplication and fuzzy matching.
+
+    Builds on normalize_mdsplus_path but additionally:
+    - Strips channel indices (CHANNEL_006 -> CHANNEL)
+    - Extracts just the node name if it's a TDI-style short path
+
+    Args:
+        path: Normalized MDSplus path
+
+    Returns:
+        Canonical path for matching
+    """
+    # First normalize
+    path = normalize_mdsplus_path(path)
+
+    # Strip channel indices for fuzzy matching
+    path = re.sub(r"_\d{2,3}$", "", path)
+
+    return path
 
 
 def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
