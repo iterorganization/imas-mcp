@@ -2,12 +2,23 @@
 
 import logging
 import os
+import warnings
 from typing import Literal, cast
 
-import click
-from dotenv import load_dotenv
+# Suppress third-party deprecation warnings before importing other modules
+# These are upstream issues in LlamaIndex and Neo4j that we cannot fix
+warnings.filterwarnings("ignore", message=".*__fields__.*")
+warnings.filterwarnings("ignore", message=".*__fields_set__.*")
+warnings.filterwarnings("ignore", message=".*model_computed_fields.*")
+warnings.filterwarnings("ignore", message=".*model_fields.*")
+warnings.filterwarnings("ignore", message=".*Accessing the 'model_.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
-from imas_codex import __version__, _get_dd_version
+import click  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+
+from imas_codex import __version__, _get_dd_version  # noqa: E402
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -1894,20 +1905,22 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 )
 @click.option("--force", is_flag=True, help="Re-enrich already enriched nodes")
 @click.option(
-    "--unlinked", is_flag=True, help="Only enriched nodes without HAS_UNIT/HAS_ERROR"
+    "--linked",
+    is_flag=True,
+    help="Only nodes with code context (more reliable enrichment)",
 )
 @click.option(
     "--batch-size",
     "-b",
     default=None,
     type=int,
-    help="Paths per batch (auto-selected if not set: 200 for Flash, 500 for Pro)",
+    help="Paths per batch (auto-selected if not set: 100 for Flash, 200 for Pro)",
 )
 @click.option(
     "--model",
     "-m",
-    default="google/gemini-3-pro-preview",
-    help="LLM model to use (default: google/gemini-3-pro-preview)",
+    default="google/gemini-3-flash-preview",
+    help="LLM model to use (default: google/gemini-3-flash-preview)",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
@@ -1917,7 +1930,7 @@ def agent_enrich(
     tree: str | None,
     status: str,
     force: bool,
-    unlinked: bool,
+    linked: bool,
     batch_size: int | None,
     model: str,
     dry_run: bool,
@@ -1949,8 +1962,8 @@ def agent_enrich(
         # Process stale nodes (marked for re-enrichment)
         imas-codex agent enrich --status stale
 
-        # Find enriched nodes without links (second pass)
-        imas-codex agent enrich --unlinked
+        # Only enrich nodes with code context (more reliable)
+        imas-codex agent enrich --linked
 
         # Re-enrich already processed nodes
         imas-codex agent enrich --force --status enriched
@@ -1958,8 +1971,8 @@ def agent_enrich(
         # Enrich specific paths
         imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
 
-        # Use larger batch size with Pro model
-        imas-codex agent enrich --model google/gemini-3-pro-preview -b 500
+        # Use Pro model for higher quality
+        imas-codex agent enrich --model google/gemini-3-pro-preview -b 200
 
         # Preview without saving
         imas-codex agent enrich --dry-run
@@ -2006,14 +2019,13 @@ def agent_enrich(
         tree_name = tree or "unknown"
     else:
         filter_desc = f"status='{target_status}'"
-        if unlinked:
-            filter_desc += ", unlinked"
+        if linked:
+            filter_desc += ", with code context"
         console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
         nodes = discover_nodes_to_enrich(
             tree_name=tree,
             status=target_status,
-            unlinked=unlinked,
-            with_context_only=False,
+            with_context_only=linked,
             limit=limit,
         )
         if not nodes:
@@ -2028,12 +2040,15 @@ def agent_enrich(
         tree_name = tree or nodes[0].get("tree", "unknown") if nodes else "unknown"
 
     # Auto-select batch size based on model
+    # Benchmarked optimal values:
+    # - Flash: batch 100 = 2.5 paths/sec, 100% success, 71% high confidence
+    # - Pro: batch 200 = 0.4 paths/sec, 100% success, 100% high confidence
     effective_batch_size = batch_size
     if effective_batch_size is None:
         if "pro" in model.lower():
-            effective_batch_size = 500
-        else:
             effective_batch_size = 200
+        else:
+            effective_batch_size = 100
 
     # Compose smart batches grouped by parent (for preview)
     batches = compose_batches(

@@ -12,16 +12,16 @@ import warnings
 
 # Suppress Pydantic deprecation warnings from LlamaIndex internals
 # These are upstream issues that will be fixed in future LlamaIndex releases
-warnings.filterwarnings("ignore", message=".*__fields__.*", category=DeprecationWarning)
-warnings.filterwarnings(
-    "ignore", message=".*__fields_set__.*", category=DeprecationWarning
-)
-warnings.filterwarnings(
-    "ignore", message=".*model_computed_fields.*", category=DeprecationWarning
-)
-warnings.filterwarnings(
-    "ignore", message=".*model_fields.*", category=DeprecationWarning
-)
+# Note: Pydantic 2.11+ uses PydanticDeprecatedSince211, not DeprecationWarning
+warnings.filterwarnings("ignore", message=".*__fields__.*")
+warnings.filterwarnings("ignore", message=".*__fields_set__.*")
+warnings.filterwarnings("ignore", message=".*model_computed_fields.*")
+warnings.filterwarnings("ignore", message=".*model_fields.*")
+warnings.filterwarnings("ignore", message=".*Accessing the 'model_.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+
+# Suppress Neo4j driver deprecation warnings about close()
+warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
 import asyncio  # noqa: E402
 import json  # noqa: E402
@@ -624,7 +624,6 @@ def _get_nodes_for_enrichment(
 def discover_nodes_to_enrich(
     tree_name: str | None = None,
     status: str = "pending",
-    unlinked: bool = False,
     with_context_only: bool = False,
     limit: int | None = None,
 ) -> list[dict]:
@@ -639,8 +638,7 @@ def discover_nodes_to_enrich(
     Args:
         tree_name: Filter to specific tree (e.g., "results")
         status: Target enrichment_status (default: "pending")
-        unlinked: Only return enriched nodes without HAS_UNIT or HAS_ERROR links
-        with_context_only: Only return nodes with code context
+        with_context_only: Only return nodes with code context (--linked flag)
         limit: Maximum nodes to return
 
     Returns:
@@ -659,11 +657,6 @@ def discover_nodes_to_enrich(
         where_clauses = [status_clause]
         if tree_name:
             where_clauses.append(f't.tree_name = "{tree_name}"')
-
-        # Filter to unlinked nodes (enriched but missing relationships)
-        if unlinked:
-            where_clauses.append("NOT EXISTS ((t)-[:HAS_UNIT]->(:Unit))")
-            where_clauses.append("NOT EXISTS ((t)-[:HAS_ERROR]->(:TreeNode))")
 
         limit_clause = f"LIMIT {limit}" if limit else ""
 
@@ -958,6 +951,7 @@ async def _run_react_batch_enrichment(
     # Build the task prompt
     paths_list = "\n".join(f"- {p}" for p in paths)
     parent = get_parent_path(paths[0]) if paths else "unknown"
+    physics_domains = ", ".join(get_physics_domain_values())
 
     task = f"""Enrich the following {len(paths)} MDSplus TreeNode paths from the {tree_name} tree.
 
@@ -975,7 +969,29 @@ Paths to enrich:
 
 2. Then, output a JSON array with enrichments for ALL {len(paths)} paths.
 
-Remember: Be DEFINITIVE in descriptions. Use proper physics terminology.
+## Required JSON Schema
+
+Each object in the array MUST have these fields:
+- "path": string - The exact MDSplus path from the list above
+- "description": string or null - 1-2 sentence physics description. Be DEFINITIVE.
+- "physics_domain": string - One of: {physics_domains}
+- "units": string or null - SI units (e.g., "A", "Wb", "m^-3")
+- "confidence": "high" | "medium" | "low"
+
+Optional fields (include when known):
+- "sign_convention": string - Sign/direction convention
+- "dimensions": array of strings - Dimension names like ["time", "rho"]
+- "error_node": string - Path to associated error bar node
+
+## Example Output
+
+```json
+[
+  {{"path": "\\\\RESULTS::LIUQE:PSI", "description": "Poloidal magnetic flux from LIUQE equilibrium reconstruction", "physics_domain": "equilibrium", "units": "Wb", "confidence": "high"}},
+  {{"path": "\\\\RESULTS::LIUQE:IP", "description": "Plasma current from LIUQE reconstruction", "physics_domain": "equilibrium", "units": "A", "confidence": "high", "sign_convention": "positive counter-clockwise (COCOS 17)"}}
+]
+```
+
 Output ONLY the JSON array, no other text.
 """
 
@@ -1107,15 +1123,15 @@ async def react_batch_enrich_paths(
     2. For each batch, runs ReAct agent to gather context and enrich
     3. Persists enrichments to graph
 
-    Benchmark Results:
+    Benchmark Results (2026-01 testing):
 
-    Gemini 3 Flash (default):
-    - Batch 200: 1.8 paths/sec (Optimal)
-    - Batch 500+: Fails due to output token limits
+    Gemini 3 Flash:
+    - Batch 100: 2.5 paths/sec (Optimal), 100% success, 71% high confidence
+    - Batch 200: 0.7 paths/sec, works but slower
 
     Gemini 3 Pro:
-    - Batch 500: 1.2 paths/sec (Optimal)
-    - Batch 1000+: Fails due to max iterations
+    - Batch 200: 0.4 paths/sec (Optimal), 100% success, 100% high confidence
+    - Batch 500+: Fails due to JSON truncation
 
     Compared to direct LLM batch (3.8 paths/sec), ReAct is slower but
     provides much higher quality by gathering context from:
@@ -1126,7 +1142,7 @@ async def react_batch_enrich_paths(
     Args:
         paths: List of MDSplus paths to enrich
         tree_name: Tree name for context
-        batch_size: Paths per batch (auto-selected if None: 200 for Flash, 500 for Pro)
+        batch_size: Paths per batch (auto-selected if None: 100 for Flash, 200 for Pro)
         verbose: Enable verbose output
         dry_run: If True, don't persist to graph
         model: LLM model to use
@@ -1135,12 +1151,12 @@ async def react_batch_enrich_paths(
     Returns:
         List of EnrichmentResult for all paths
     """
-    # Auto-select batch size based on model
+    # Auto-select batch size based on model (benchmarked optimal values)
     if batch_size is None:
         if "pro" in model.lower():
-            batch_size = 500  # Pro handles larger batches
+            batch_size = 200  # Pro optimal: 0.4/sec, 100% high confidence
         else:
-            batch_size = 200  # Flash optimal
+            batch_size = 100  # Flash optimal: 2.5/sec, 71% high confidence
 
     start_time = time.perf_counter()
 
