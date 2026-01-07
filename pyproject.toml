@@ -83,6 +83,9 @@ dependencies = [
     "llama-index-llms-openai-like>=0.5",
     "llama-index-tools-mcp>=0.4",
     "llama-index-llms-openrouter>=0.4",
+    "llama-index-readers-web>=0.5.6",
+    "beautifulsoup4>=4.14.3",
+    "html2text>=2024.2.26",
 ]
 
 [project.optional-dependencies]
