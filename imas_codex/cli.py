@@ -1904,10 +1904,28 @@ def wiki_discover(
     from rich.console import Console
     from rich.table import Table
 
+    from imas_codex.graph import GraphClient
     from imas_codex.wiki import discover_wiki_pages, queue_wiki_pages
     from imas_codex.wiki.scraper import get_priority_pages
 
     console = Console()
+
+    # Show current graph state
+    if not priority_only:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility_id})
+                RETURN count(wp) AS total
+                """,
+                facility_id=facility,
+            )
+            existing_count = result[0]["total"] if result else 0
+            if existing_count > 0:
+                console.print(
+                    f"[dim]Graph already has {existing_count} pages. "
+                    f"Discovery will find up to {limit} NEW pages.[/dim]\n"
+                )
 
     # Get pages to queue
     if priority_only:
@@ -1929,11 +1947,20 @@ def wiki_discover(
         is_priority = False
 
     if not pages:
-        console.print("[yellow]No pages discovered[/yellow]")
+        console.print("[yellow]No new pages discovered[/yellow]")
+        if not priority_only:
+            console.print(
+                "[dim]All reachable pages from this start point are already in the graph.[/dim]"
+            )
+            console.print(
+                "[dim]Try a different --start-page or increase --limit to explore deeper.[/dim]"
+            )
         return
 
     # Display in table
-    table = Table(title=f"{'[DRY RUN] ' if dry_run else ''}Wiki Pages ({len(pages)})")
+    table = Table(
+        title=f"{'[DRY RUN] ' if dry_run else ''}New Wiki Pages ({len(pages)})"
+    )
     table.add_column("#", style="dim", width=4)
     table.add_column("Page Name", style="cyan")
 

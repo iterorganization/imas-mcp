@@ -313,19 +313,41 @@ def discover_wiki_pages(
 ) -> list[str]:
     """Discover wiki pages by crawling links.
 
+    Graph-aware crawler that skips already-discovered pages and continues
+    finding new pages. Subsequent runs will explore deeper into the wiki
+    beyond the previous limit.
+
     Starts from a page and finds all internal wiki links.
     Filters out special pages (File:, Category:, Special:, etc.)
 
     Args:
         start_page: Page to start crawling from
         facility: SSH host alias
-        max_pages: Maximum pages to discover
+        max_pages: Maximum NEW pages to discover (skips existing)
         rate_limit: Minimum seconds between requests
 
     Returns:
-        List of discovered page names
+        List of newly discovered page names (excludes already-queued pages)
     """
-    discovered: set[str] = set()
+    from imas_codex.graph import GraphClient
+
+    # Query graph for already-discovered pages
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id})
+            RETURN wp.title AS title
+            """,
+            facility_id=facility,
+        )
+        already_discovered = {r["title"] for r in result} if result else set()
+
+    logger.info(
+        "Skipping %d already-discovered pages from graph", len(already_discovered)
+    )
+
+    discovered: set[str] = already_discovered.copy()
+    new_pages: set[str] = set()  # Track only newly found pages
     to_crawl = [start_page]
     crawled: set[str] = set()
 
@@ -344,8 +366,9 @@ def discover_wiki_pages(
     for page in priority_pages:
         if page not in discovered:
             discovered.add(page)
+            new_pages.add(page)
 
-    while to_crawl and len(discovered) < max_pages:
+    while to_crawl and len(new_pages) < max_pages:
         page = to_crawl.pop(0)
         if page in crawled:
             continue
@@ -375,6 +398,7 @@ def discover_wiki_pages(
                         and link not in discovered
                     ):
                         discovered.add(link)
+                        new_pages.add(link)
                         to_crawl.append(link)
 
         except subprocess.TimeoutExpired:
@@ -384,10 +408,21 @@ def discover_wiki_pages(
         # Rate limiting
         time.sleep(rate_limit)
 
-        if len(discovered) % 10 == 0:
-            logger.info("Discovered %d pages...", len(discovered))
+        if len(new_pages) % 10 == 0 and len(new_pages) > 0:
+            logger.info(
+                "Discovered %d new pages (%d total in graph)...",
+                len(new_pages),
+                len(discovered),
+            )
 
-    return sorted(discovered)[:max_pages]
+    # Return only NEW pages
+    result = sorted(new_pages)[:max_pages]
+    logger.info(
+        "Discovery complete: %d new pages (graph had %d existing)",
+        len(result),
+        len(already_discovered),
+    )
+    return result
 
 
 def get_priority_pages() -> list[str]:
