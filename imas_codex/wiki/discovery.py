@@ -17,13 +17,17 @@ import logging
 import subprocess
 import time
 import urllib.parse
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
-from rich.console import Console
-from rich.progress import (
+# Suppress pydantic deprecation warnings from llama-index internals
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+
+from llama_index.core.agent import ReActAgent  # noqa: E402
+from llama_index.core.tools import FunctionTool  # noqa: E402
+from rich.console import Console  # noqa: E402
+from rich.progress import (  # noqa: E402
     BarColumn,
     Progress,
     SpinnerColumn,
@@ -31,10 +35,10 @@ from rich.progress import (
     TextColumn,
 )
 
-from imas_codex.agents.llm import get_llm, get_model_for_task
-from imas_codex.agents.prompt_loader import load_prompts
-from imas_codex.graph import GraphClient
-from imas_codex.wiki.progress import (
+from imas_codex.agents.llm import get_llm, get_model_for_task  # noqa: E402
+from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.graph import GraphClient  # noqa: E402
+from imas_codex.wiki.progress import (  # noqa: E402
     CrawlProgressMonitor,
     ScoreProgressMonitor,
 )
