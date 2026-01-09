@@ -925,18 +925,46 @@ class WikiDiscovery:
             else self._get_default_scorer_prompt()
         )
 
-        # Get total unscored pages for progress
-        total_result = gc.query(
+        # Query graph for current state (resume from previous runs)
+        state_result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
-            RETURN count(*) AS total
+            MATCH (wp:WikiPage {facility_id: $facility_id})
+            WITH wp,
+                 CASE WHEN wp.status IN ['discovered', 'skipped'] THEN 1 ELSE 0 END AS scored,
+                 CASE WHEN wp.interest_score >= 0.7 THEN 1 ELSE 0 END AS high,
+                 CASE WHEN wp.interest_score IS NOT NULL AND wp.interest_score < 0.3 THEN 1 ELSE 0 END AS low
+            RETURN count(*) AS total_pages,
+                   sum(scored) AS already_scored,
+                   sum(high) AS high_score,
+                   sum(low) AS low_score,
+                   count(*) - sum(scored) AS remaining
             """,
             facility_id=self.config.facility_id,
         )
-        total_unscored = total_result[0]["total"] if total_result else 0
+
+        if state_result:
+            state = state_result[0]
+            total_pages = state["total_pages"]
+            already_scored = state["already_scored"]
+            remaining = state["remaining"]
+            # Sync stats with graph state
+            self.stats.pages_scored = already_scored
+            self.stats.high_score_count = state["high_score"]
+            self.stats.low_score_count = state["low_score"]
+        else:
+            total_pages = 0
+            already_scored = 0
+            remaining = 0
 
         if monitor:
-            monitor.stats.total_pages = total_unscored + self.stats.pages_scored
+            monitor.stats.total_pages = total_pages
+            monitor.stats.pages_scored = already_scored
+            monitor.stats.high_score_count = self.stats.high_score_count
+            monitor.stats.low_score_count = self.stats.low_score_count
+
+        if remaining == 0:
+            logger.info("All pages already scored")
+            return self.stats.pages_scored
 
         session_scored = 0
 
@@ -1164,22 +1192,24 @@ Your goal is to assign interest_score (0.0-1.0) based on filename and context.
 ## Scoring Guidelines
 
 HIGH SCORE (0.7-1.0):
-- Filename contains: manual, guide, tutorial, Thomson, CXRS, LIUQE, diagnostic
+- Filename contains physics terms: Thomson, CXRS, LIUQE, equilibrium, MHD, diagnostic
+- Filename contains data terms: manual, guide, calibration, nodes, signals
 - Type: pdf with technical documentation
 - in_degree > 3: Many pages reference this
 
 MEDIUM SCORE (0.4-0.7):
-- Technical content but not central
-- Presentations with useful content
+- Technical presentations with useful content
+- Code documentation, analysis tools
 - in_degree 1-3
 
 LOW SCORE (0.0-0.4):
-- Filename contains: meeting, workshop, notes, draft
-- Type: images, temporary files
-- in_degree = 0: No pages reference this
+- Filename contains: meeting, workshop, notes, draft, minutes
+- Type: generic images without technical content
+- in_degree = 0 AND no physics/data keywords
 
 ## Important
 
+- PDFs with physics terms are almost always valuable
 - Base scores on filename keywords and artifact_type
 - Use get_artifact_context for ambiguous filenames
 - Process all artifacts in a single update_artifact_scores call
@@ -1194,25 +1224,28 @@ Your goal is to assign interest_score (0.0-1.0) to each page based on measurable
 ## Scoring Guidelines
 
 HIGH SCORE (0.7-1.0):
+- Title contains physics terms: Thomson, CXRS, LIUQE, equilibrium, MHD, diagnostic
+- Title contains data terms: nodes, signals, fields, parameters, calibration
+- Leaf nodes (out_degree=0) with technical titles are DATA SOURCES - score HIGH
 - in_degree > 5: Many pages link here - indicates importance
-- Title contains: Thomson, CXRS, LIUQE, signals, nodes, calibration
-- link_depth <= 2: Close to portal, central to documentation
+- Code documentation: DDJ, mdsopen, tcvget, TDI
 
 MEDIUM SCORE (0.4-0.7):
 - in_degree 1-5: Some references
-- Technical content but not central
-- link_depth 3-4
+- Administrative but useful content
+- link_depth 3-5 with generic titles
 
 LOW SCORE (0.0-0.4):
-- in_degree = 0: Orphan page, nobody references it
-- Title contains: Meeting, Workshop, Mission, personal
-- link_depth > 5: Far from main documentation
+- Title contains: Meeting, Workshop, Mission, personal, ToDo, draft
+- Old dated pages (2008, 2012) with no updates
+- in_degree = 0 AND no physics/data keywords: True orphan pages
 
 ## Important
 
+- LEAF NODES with physics terms are VALUABLE data sources, not low priority
+- Low out_degree does NOT mean low value - it often means focused content
 - ALWAYS provide reasoning for scores
 - Skip pages with skip_reason if score < 0.5
-- Use neighbor_info to check context when title is ambiguous
 - Process in batches of 20-50 pages
 - Stop when all pages scored or budget exhausted"""
 
