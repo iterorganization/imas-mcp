@@ -1,23 +1,20 @@
 """Wiki ingestion pipeline using LlamaIndex.
 
 Processes wiki pages through a multi-stage pipeline:
-1. Discover: Find wiki pages and queue them in Neo4j (status='discovered')
-2. Fetch: SSH-based HTML retrieval from wiki (status='scraped')
-3. Chunk: Split into semantic chunks with SentenceSplitter
-4. Embed: Generate vector embeddings with all-MiniLM-L6-v2
-5. Link: Connect to TreeNodes, IMASPaths, and SignConventions (status='linked')
+1. Discover: Scout agent evaluates pages and creates WikiPage nodes
+2. Ingest: Fetch full content, chunk, embed, and link to graph
 
-The pipeline is graph-driven: discover creates WikiPage nodes, ingest processes them.
-This follows the same pattern as SourceFile ingestion for code examples.
+The pipeline is graph-driven: scout agent creates WikiPage nodes with
+status='discovered', ingestion processes them creating WikiChunks.
 
 Example:
-    # Step 1: Discover and queue pages
-    queue_wiki_pages("epfl", ["Thomson", "Ion_Temperature_Nodes"])
+    # Step 1: Agent discovers pages (via CLI or programmatically)
+    # imas-codex wiki discover epfl
 
     # Step 2: Process the queue
     pipeline = WikiIngestionPipeline(facility_id="epfl")
     stats = await pipeline.ingest_from_graph(limit=20)
-    print(f"Created {stats['chunks']} chunks with {stats['links']} links")
+    print(f"Created {stats['chunks']} chunks")
 """
 
 import hashlib
@@ -56,75 +53,8 @@ class PageIngestionStats(TypedDict):
 
 
 # =============================================================================
-# Graph-Driven Queue Functions
+# Graph Query Functions
 # =============================================================================
-
-
-def queue_wiki_pages(
-    facility_id: str,
-    page_names: list[str],
-    interest_score: float = 0.5,
-    is_priority: bool = False,
-) -> dict[str, int]:
-    """Queue wiki pages for ingestion by creating WikiPage nodes.
-
-    Creates WikiPage nodes with status='discovered'. Already-discovered
-    or ingested pages are skipped (idempotent).
-
-    Args:
-        facility_id: Facility ID (e.g., "epfl")
-        page_names: List of page names to queue
-        interest_score: Priority score (0.0-1.0), higher = more interesting
-        is_priority: If True, use higher interest score (0.9)
-
-    Returns:
-        Dict with counts: {queued, skipped, total}
-    """
-    if is_priority:
-        interest_score = 0.9
-
-    stats = {"queued": 0, "skipped": 0, "total": len(page_names)}
-
-    with GraphClient() as gc:
-        for page_name in page_names:
-            page_id = f"{facility_id}:{page_name}"
-            url = f"https://spcwiki.epfl.ch/wiki/{page_name}"
-
-            # Use MERGE to avoid duplicates, only set properties if creating
-            result = gc.query(
-                """
-                MERGE (wp:WikiPage {id: $id})
-                ON CREATE SET
-                    wp.facility_id = $facility_id,
-                    wp.url = $url,
-                    wp.title = $page_name,
-                    wp.status = 'discovered',
-                    wp.discovered_at = datetime(),
-                    wp.interest_score = $interest_score
-                WITH wp
-                MATCH (f:Facility {id: $facility_id})
-                MERGE (wp)-[:FACILITY_ID]->(f)
-                RETURN wp.status AS status
-                """,
-                id=page_id,
-                facility_id=facility_id,
-                url=url,
-                page_name=page_name,
-                interest_score=interest_score,
-            )
-
-            if result and result[0]["status"] == "discovered":
-                stats["queued"] += 1
-            else:
-                stats["skipped"] += 1
-
-    logger.info(
-        "Queued %d wiki pages for %s (%d skipped)",
-        stats["queued"],
-        facility_id,
-        stats["skipped"],
-    )
-    return stats
 
 
 def get_pending_wiki_pages(
@@ -344,7 +274,6 @@ class MediaWikiExtractor(HTMLParser):
         if tag == "div" and self._skipping_div > 0:
             self._skipping_div -= 1
             self._skip_depth = max(0, self._skip_depth - 1)
-            return
             return
 
         # Check for skip class divs - we don't track which specific div
@@ -980,5 +909,4 @@ __all__ = [
     "get_wiki_stats",
     "html_to_text",
     "mark_wiki_page_status",
-    "queue_wiki_pages",
 ]

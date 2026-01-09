@@ -13,7 +13,13 @@ The ReActAgents can autonomously:
 - Synthesize information across multiple sources
 """
 
-from imas_codex.agents.llm import DEFAULT_MODEL, MODELS, get_llm, get_model_id
+from imas_codex.agents.llm import (
+    DEFAULT_MODEL,
+    MODELS,
+    get_llm,
+    get_model_for_task,
+    get_model_id,
+)
 from imas_codex.agents.react import (
     AgentConfig,
     BatchProgress,
@@ -48,6 +54,7 @@ __all__ = [
     # LLM configuration
     "get_llm",
     "get_model_id",
+    "get_model_for_task",
     "DEFAULT_MODEL",
     "MODELS",
     # Agent factories

@@ -116,17 +116,23 @@ enums:
 
   WikiPageStatus:
     description: >-
-      Lifecycle status for wiki page ingestion.
-      Progress is graph-derived: check chunk_count, linked WikiChunk nodes.
+      Lifecycle status for wiki page discovery and ingestion.
+      Three-phase process: crawl (link extraction) -> score (agent evaluation) -> ingest (content).
     permissible_values:
+      crawled:
+        description: Page discovered via link crawl, graph structure captured, not yet scored
+      scored:
+        description: Agent has evaluated graph metrics and assigned interest_score
       discovered:
-        description: Page URL found, awaiting ingestion
+        description: High interest_score, ready for ingestion
+      skipped:
+        description: Low interest_score, agent decided not to ingest (check skip_reason)
       ingested:
-        description: Content scraped, chunked, embedded, and linked to graph
+        description: Full content scraped, chunked, embedded, and linked to graph
       failed:
-        description: Ingestion failed (check error property)
+        description: Processing failed at any phase (check error property)
       stale:
-        description: Page may have changed, needs re-scrape
+        description: Previously processed but content may have changed
 
   ConventionType:
     description: >-
@@ -170,6 +176,21 @@ classes:
           ISO timestamp when LLM enrichment was performed.
           Enables time-based re-enrichment policies.
         range: datetime
+
+  PhysicsDomain:
+    description: >-
+      Physics domain for categorizing fusion data and documentation.
+      Used to link WikiPages, TreeNodes, and IMASPaths by physics topic.
+      
+      Examples: equilibrium, transport, mhd, heating, diagnostics
+    class_uri: common:PhysicsDomain
+    attributes:
+      name:
+        identifier: true
+        description: Domain name (e.g., "equilibrium", "transport", "mhd")
+        required: true
+      description:
+        description: Human-readable description of the domain
 
   Unit:
     description: >-

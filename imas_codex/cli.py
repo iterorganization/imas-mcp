@@ -1847,8 +1847,8 @@ def wiki() -> None:
     """Ingest wiki documentation from remote facilities.
 
     \b
-      imas-codex wiki discover <facility>  Discover wiki pages
-      imas-codex wiki ingest <facility>    Ingest wiki pages
+      imas-codex wiki discover <facility>  Discover and evaluate wiki pages using agent
+      imas-codex wiki ingest <facility>    Ingest discovered wiki pages
       imas-codex wiki status <facility>    Show ingestion statistics
     """
     pass
@@ -1859,136 +1859,74 @@ def wiki() -> None:
 @click.option(
     "--start-page",
     default="Portal:TCV",
-    help="Page to start crawling from (default: Portal:TCV)",
+    help="Page to start discovery from (default: Portal:TCV)",
 )
 @click.option(
-    "--limit",
-    "-n",
-    default=100,
+    "--cost-limit",
+    "-c",
+    default=10.00,
+    type=float,
+    help="Maximum cost budget in USD (default: 10.00)",
+)
+@click.option(
+    "--max-pages",
+    default=2000,
     type=int,
-    help="Maximum pages to discover (default: 100)",
+    help="Maximum pages to crawl (default: 2000)",
 )
 @click.option(
-    "--priority-only",
-    is_flag=True,
-    help="Only show priority pages (known high-value pages)",
+    "--max-depth",
+    default=10,
+    type=int,
+    help="Maximum link depth from portal (default: 10)",
 )
 @click.option(
-    "--dry-run",
+    "--verbose",
+    "-v",
     is_flag=True,
-    help="Preview pages without queuing in graph",
+    help="Show agent reasoning",
 )
 def wiki_discover(
     facility: str,
     start_page: str,
-    limit: int,
-    priority_only: bool,
-    dry_run: bool,
+    cost_limit: float,
+    max_pages: int,
+    max_depth: int,
+    verbose: bool,
 ) -> None:
-    """Discover wiki pages and queue them for ingestion.
+    """Discover wiki pages using three-phase pipeline.
 
-    Starts from a portal page, finds all internal wiki links, and creates
-    WikiPage nodes with status='discovered' in the graph. The ingest command
-    then processes pages from the graph queue.
+    Phase 1 (CRAWL): Fast link extraction, builds wiki graph structure
+    Phase 2 (SCORE): Agent evaluates graph metrics, assigns interest scores
+    Phase 3 (INGEST): Fetch content for high-score pages (via wiki ingest)
+
+    The pipeline preserves wiki link structure as LINKS_TO relationships
+    and uses graph metrics (in_degree, out_degree, link_depth) for scoring.
 
     Examples:
-        # Discover and queue pages
+        # Full discovery with default settings
         imas-codex wiki discover epfl
 
-        # Queue priority pages (known high-value pages)
-        imas-codex wiki discover epfl --priority-only
+        # Limit crawl scope
+        imas-codex wiki discover epfl --max-pages 500 --max-depth 3
 
-        # Preview without queuing
-        imas-codex wiki discover epfl --dry-run
+        # Verbose mode to see agent reasoning
+        imas-codex wiki discover epfl -v
     """
-    from rich.console import Console
-    from rich.table import Table
+    import asyncio
 
-    from imas_codex.graph import GraphClient
-    from imas_codex.wiki import discover_wiki_pages, queue_wiki_pages
-    from imas_codex.wiki.scraper import get_priority_pages
+    from imas_codex.wiki.discovery import run_wiki_discovery
 
-    console = Console()
-
-    # Show current graph state
-    if not priority_only:
-        with GraphClient() as gc:
-            result = gc.query(
-                """
-                MATCH (wp:WikiPage {facility_id: $facility_id})
-                RETURN count(wp) AS total
-                """,
-                facility_id=facility,
-            )
-            existing_count = result[0]["total"] if result else 0
-            if existing_count > 0:
-                console.print(
-                    f"[dim]Graph already has {existing_count} pages. "
-                    f"Discovery will find up to {limit} NEW pages.[/dim]\n"
-                )
-
-    # Get pages to queue
-    if priority_only:
-        pages = get_priority_pages()
-        interest_score = 0.9  # Priority pages are high-value
-        is_priority = True
-        console.print(
-            f"[cyan]Queueing {len(pages)} priority wiki pages for {facility}...[/cyan]"
-        )
-    else:
-        console.print(f"[cyan]Discovering wiki pages for {facility}...[/cyan]")
-        console.print(f"[dim]Starting from: {start_page}, limit: {limit}[/dim]\n")
-        pages = discover_wiki_pages(
-            start_page=start_page,
+    # Run discovery
+    asyncio.run(
+        run_wiki_discovery(
             facility=facility,
-            max_pages=limit,
+            cost_limit_usd=cost_limit,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            verbose=verbose,
         )
-        interest_score = 0.5  # Default score for discovered pages
-        is_priority = False
-
-    if not pages:
-        console.print("[yellow]No new pages discovered[/yellow]")
-        if not priority_only:
-            console.print(
-                "[dim]All reachable pages from this start point are already in the graph.[/dim]"
-            )
-            console.print(
-                "[dim]Try a different --start-page or increase --limit to explore deeper.[/dim]"
-            )
-        return
-
-    # Display in table
-    table = Table(
-        title=f"{'[DRY RUN] ' if dry_run else ''}New Wiki Pages ({len(pages)})"
     )
-    table.add_column("#", style="dim", width=4)
-    table.add_column("Page Name", style="cyan")
-
-    for i, page in enumerate(pages[:50], 1):
-        table.add_row(str(i), page)
-
-    if len(pages) > 50:
-        table.add_row("...", f"[dim]and {len(pages) - 50} more[/dim]")
-
-    console.print(table)
-
-    if dry_run:
-        console.print(f"\n[yellow][DRY RUN] Would queue {len(pages)} pages[/yellow]")
-        console.print("[dim]Run without --dry-run to queue pages[/dim]")
-        return
-
-    # Queue pages in graph
-    result = queue_wiki_pages(
-        facility_id=facility,
-        page_names=pages,
-        interest_score=interest_score,
-        is_priority=is_priority,
-    )
-
-    console.print(f"\n[green]Queued {result['queued']} pages[/green]")
-    if result["skipped"] > 0:
-        console.print(f"[dim]Skipped {result['skipped']} already-queued pages[/dim]")
-    console.print(f"\n[dim]Process with: imas-codex wiki ingest {facility}[/dim]")
 
 
 @wiki.command("ingest")

@@ -175,6 +175,25 @@ include-ggd = true
 # Include error fields (_error_upper, _error_lower, _error_index)
 include-error-fields = false
 
+# LLM model configuration for different agent tasks
+# All models accessed via OpenRouter API
+[tool.imas-codex.models]
+# Default model for general agent tasks
+default = "anthropic/claude-haiku-4.5"
+# Fast model for discovery/crawl phases (high throughput)
+discovery = "anthropic/claude-haiku-4.5"
+# More capable model for evaluation/scoring (better reasoning)
+evaluation = "anthropic/claude-sonnet-4.5"
+# Best model for physics understanding and enrichment
+enrichment = "google/gemini-3-pro-preview"
+# Available model presets
+[tool.imas-codex.models.presets]
+gemini-flash = "google/gemini-3-flash-preview"
+gemini-pro = "google/gemini-3-pro-preview"
+claude-haiku = "anthropic/claude-haiku-4.5"
+claude-sonnet = "anthropic/claude-sonnet-4.5"
+claude-opus = "anthropic/claude-opus-4.5"
+
 [tool.hatch.envs.test]
 dependencies = [
     "pytest>=8.3.5,<9.0.0",

@@ -1,5 +1,8 @@
 # Wiki Ingestion Strategy
 
+> **Status**: Strategic pivot in progress (2026-01-08)
+> Previous crawler-based discovery deprecated. Moving to ReAct agent evaluation.
+
 ## Problem
 
 The EPFL TCV wiki (https://spcwiki.epfl.ch/wiki/Main_Page) contains authoritative documentation about diagnostics, signals, and conventions that would significantly improve TreeNode enrichment. Currently the agent relies on:
@@ -15,6 +18,139 @@ Wiki content would provide:
 - Diagnostic specifications
 - Data quality notes
 - Historical context
+
+## Strategic Pivot: ReAct Agent Evaluation (2026-01-08)
+
+### Problem with Current Approach
+
+The existing `wiki discover` command uses a dumb breadth-first crawler that queues ALL internal wiki links. Observations:
+
+- Many low-value pages discovered (e.g., "Missions 2025", meeting notes)
+- No intelligence about page value before queuing
+- Wastes ingestion time and graph space
+- Dilutes semantic search quality
+
+### New Architecture: Wiki Scout Agent
+
+Replace the crawler with a ReAct agent that evaluates pages before queuing:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                     Wiki Scout Agent                                  │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  Phase 1: Link Discovery (lightweight, unchanged)                    │
+│  ────────────────────────────────────────────────                   │
+│  - Crawl from portal page to find all internal links                │
+│  - Return list of page names (NO WikiPage nodes yet)                │
+│                                                                       │
+│  Phase 2: Agent Evaluation (NEW - ReAct Agent)                       │
+│  ────────────────────────────────────────────────                   │
+│  For batches of discovered pages:                                    │
+│                                                                       │
+│  ┌─────────────────────────┐                                         │
+│  │  Wiki Scout Agent       │                                         │
+│  │  (LlamaIndex ReAct)     │                                         │
+│  │                         │                                         │
+│  │  Tools:                 │                                         │
+│  │  - fetch_wiki_preview() │  Title + first 500 chars               │
+│  │  - check_categories()   │  MediaWiki categories                  │
+│  │  - update_wiki_page()   │  Queue or skip in graph                │
+│  └─────────────────────────┘                                         │
+│                                                                       │
+│  Agent Decision Output (per page):                                   │
+│  - interest_score: 0.0-1.0                                           │
+│  - skip_reason: null | "administrative" | "event" | "stub" | ...    │
+│  - recommended_status: "discovered" | "skipped"                      │
+│                                                                       │
+│  Phase 3: Ingestion (unchanged)                                      │
+│  ────────────────────────────────                                   │
+│  - Process pages with status='discovered'                           │
+│  - Full fetch, chunk, embed, link                                   │
+│                                                                       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Skip Patterns the Agent Should Recognize
+
+| Pattern | Example Pages | Skip Reason |
+|---------|--------------|-------------|
+| Events/Missions | "Missions 2025", "Workshop 2024" | `event_or_mission` |
+| Personal pages | "User:Simon", "John's Notes" | `personal_page` |
+| Administrative | "Help:Editing", "Template:Box" | `administrative` |
+| Stubs | Pages with <100 chars content | `stub_or_empty` |
+| Categories | "Category:Diagnostics" (meta pages) | `category_page` |
+
+### High-Value Page Indicators
+
+| Indicator | Weight | Example |
+|-----------|--------|---------|
+| MDSplus paths in preview | High | `\RESULTS::THOMSON:NE` |
+| Signal tables | High | Tables with "Path", "Units" columns |
+| Diagnostic names | Medium | "Thomson", "CXRS", "ECE" |
+| COCOS/convention mentions | Medium | "COCOS 11", "positive clockwise" |
+| IMAS path mentions | Medium | `equilibrium/time_slice` |
+
+### Batch Evaluation Strategy
+
+Process pages in batches of 30-50 for cost efficiency:
+
+| Approach | Pages | LLM Calls | Est. Cost |
+|----------|-------|-----------|-----------|
+| Per-page agent | 500 | 500 | ~$5-10 |
+| Batch 30 | 500 | 17 | ~$0.50-1.00 |
+| Batch 50 | 500 | 10 | ~$0.30-0.60 |
+
+### Implementation Plan
+
+1. **Create wiki scout module** (`imas_codex/wiki/scout.py`)
+   - `fetch_wiki_preview(page_name, facility)` - lightweight SSH fetch
+   - `PageEvaluation` dataclass for agent output
+   - `evaluate_wiki_pages(page_names, batch_size)` - main entry point
+
+2. **Create scout prompt** (`imas_codex/agents/prompts/wiki-scout.md`)
+   - System prompt for batch evaluation
+   - JSON output schema
+   - Examples of high/low value pages
+
+3. **Update CLI** (`imas-codex wiki discover`)
+   - Add `--evaluate` flag to run agent evaluation after discovery
+   - Keep existing `--priority-only` for known high-value pages
+
+4. **Update WikiPageStatus enum** (already simplified to: discovered, ingested, failed, stale)
+
+### CLI Changes
+
+```bash
+# Current (unchanged for backward compat)
+imas-codex wiki discover epfl
+
+# New: with agent evaluation
+imas-codex wiki discover epfl --evaluate
+
+# Evaluate already-discovered pages (e.g., after schema change)
+imas-codex wiki evaluate epfl [--limit 100] [--batch-size 30]
+```
+
+### Files to Create/Modify
+
+| File | Action | Description |
+|------|--------|-------------|
+| `imas_codex/wiki/scout.py` | Create | Wiki scout agent with preview fetching |
+| `imas_codex/agents/prompts/wiki-scout.md` | Create | System prompt for batch evaluation |
+| `imas_codex/cli.py` | Modify | Add `wiki evaluate` command and `--evaluate` flag |
+| `imas_codex/wiki/pipeline.py` | Minor | Remove duplicate return statement (line 348) |
+
+### Cost and Time Estimates
+
+For initial EPFL wiki (~500 pages):
+- Discovery: ~10 min (existing crawler)
+- Evaluation: ~10 min (17 batch calls × 30s each)
+- Total cost: ~$0.50-1.00
+
+For ongoing maintenance:
+- Re-evaluate stale pages weekly
+- New pages discovered incrementally
 
 ## Wiki Access (Verified 2026-01-07)
 
@@ -470,24 +606,32 @@ Phase 2 - Medium Value (100 pages):
 
 ## Implementation Checklist
 
-1. [x] ~~Add dependencies~~ - `llama-index-readers-web beautifulsoup4 html2text` installed
-2. [x] ~~Verify wiki access~~ - Confirmed accessible from EPFL without auth
-3. [x] ~~Document wiki structure~~ - Key pages and categories identified
-4. [ ] Extend schema with `WikiPage` and `WikiChunk` classes
-5. [ ] Run `uv run build-models --force` to regenerate Pydantic models  
-6. [ ] Implement scraper module `imas_codex/wiki/scraper.py`
-7. [ ] Implement pipeline `imas_codex/wiki/pipeline.py`
-8. [ ] Create Neo4j vector index: `CREATE VECTOR INDEX wiki_chunk_embedding FOR (c:WikiChunk) ON (c.embedding)`
-9. [ ] Add `_search_wiki` tool to agents
-10. [ ] Add CLI commands for wiki management
-11. [ ] Initial ingestion of priority pages
+### Phase 1: Core Infrastructure ✅ Complete
+1. [x] Add dependencies - `llama-index-readers-web beautifulsoup4 html2text` installed
+2. [x] Verify wiki access - Confirmed accessible from EPFL without auth
+3. [x] Document wiki structure - Key pages and categories identified
+4. [x] Extend schema with `WikiPage` and `WikiChunk` classes
+5. [x] Run `uv run build-models --force` to regenerate Pydantic models  
+6. [x] Implement scraper module `imas_codex/wiki/scraper.py`
+7. [x] Implement pipeline `imas_codex/wiki/pipeline.py`
+8. [x] Add `_search_wiki` tool to agents
+9. [x] Add CLI commands for wiki management
 
-## Next Steps
+### Phase 2: ReAct Agent Scout (In Progress)
+10. [ ] Create wiki scout module `imas_codex/wiki/scout.py`
+    - `fetch_wiki_preview()` - lightweight preview fetching
+    - `PageEvaluation` dataclass
+    - `evaluate_wiki_pages()` - batch evaluation entry point
+11. [ ] Create scout prompt `imas_codex/agents/prompts/wiki-scout.md`
+12. [ ] Add `wiki evaluate` CLI command
+13. [ ] Add `--evaluate` flag to `wiki discover`
+14. [ ] Delete existing wiki nodes (graph cleanup) ✅ Done 2026-01-08
+15. [x] Fix duplicate return in pipeline.py line 348
 
-1. **Implement scraper** - Create `imas_codex/wiki/` module with SSH-based scraper
-2. **Extend schema** - Add `WikiPage` and `WikiChunk` to `facility.yaml`
-3. **Build pipeline** - Chunk, embed, and ingest to Neo4j
-4. **Add agent tool** - Enable wiki search in enrichment workflow
+### Phase 3: Ingestion with Agent Filtering
+16. [ ] Create Neo4j vector index for wiki chunks
+17. [ ] Initial ingestion using agent-evaluated high-value pages
+18. [ ] Re-run TreeNode enrichment with wiki context
 
 ## Notes
 
@@ -495,3 +639,4 @@ Phase 2 - Medium Value (100 pages):
 - Include `wiki_source` URL on TreeNodes enriched from wiki
 - Re-run enrichment for high-value nodes (equilibrium, profiles) after wiki ingestion
 - Consider rate limiting to avoid overloading the wiki server
+- Neo4j now runs as persistent systemd user service: `systemctl --user start neo4j`
