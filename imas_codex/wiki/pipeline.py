@@ -1,19 +1,23 @@
 """Wiki ingestion pipeline using LlamaIndex.
 
-Processes wiki pages through a multi-stage pipeline:
-1. Discover: Scout agent evaluates pages and creates WikiPage nodes
-2. Ingest: Fetch full content, chunk, embed, and link to graph
+Processes wiki pages and artifacts through a deterministic pipeline:
+1. Crawl: Discover pages/artifacts via link traversal (creates nodes with status='crawled')
+2. Score: Agent evaluates interest_score (sets status='scored' or 'skipped')
+3. Ingest: Fetch content, chunk, embed, and link to graph (sets status='ingested')
 
-The pipeline is graph-driven: scout agent creates WikiPage nodes with
-status='discovered', ingestion processes them creating WikiChunks.
+The pipeline is graph-driven and fully deterministic (no LLM calls during ingestion).
+Entity extraction uses regex patterns for MDSplus paths, IMAS paths, units, conventions.
 
 Example:
-    # Step 1: Agent discovers pages (via CLI or programmatically)
-    # imas-codex wiki discover epfl
+    # Step 1: Crawl wiki (link extraction, no content fetch)
+    # imas-codex wiki crawl epfl
 
-    # Step 2: Process the queue
+    # Step 2: Score pages with LLM agent
+    # imas-codex wiki score epfl
+
+    # Step 3: Ingest high-score pages (deterministic)
     pipeline = WikiIngestionPipeline(facility_id="epfl")
-    stats = await pipeline.ingest_from_graph(limit=20)
+    stats = await pipeline.ingest_from_graph(min_interest_score=0.7)
     print(f"Created {stats['chunks']} chunks")
 """
 
@@ -35,6 +39,9 @@ from .progress import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
 
 logger = logging.getLogger(__name__)
+
+# Batch size for UNWIND operations
+BATCH_SIZE = 50
 
 # Progress callback type: (current, total, message) -> None
 ProgressCallback = Callable[[int, int, str], None]
@@ -64,7 +71,8 @@ def get_pending_wiki_pages(
 ) -> list[dict]:
     """Get wiki pages pending ingestion from the graph.
 
-    Returns WikiPage nodes with status='discovered', sorted by interest_score.
+    Returns WikiPage nodes with status='scored' (passed agent evaluation),
+    sorted by interest_score descending.
 
     Args:
         facility_id: Facility ID
@@ -77,7 +85,7 @@ def get_pending_wiki_pages(
     with GraphClient() as gc:
         result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'scored'})
             WHERE wp.interest_score >= $min_score
             RETURN wp.id AS id, wp.url AS url, wp.title AS title,
                    wp.interest_score AS interest_score
@@ -98,8 +106,7 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
         facility_id: Facility ID
 
     Returns:
-        Dict with status counts and total:
-        {discovered, scraped, chunked, linked, failed, stale, total}
+        Dict with status counts for pages and artifacts
     """
     with GraphClient() as gc:
         result = gc.query(
@@ -113,10 +120,10 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
 
         # Initialize with zero counts for all expected statuses
         stats = {
-            "discovered": 0,
-            "scraped": 0,
-            "chunked": 0,
-            "linked": 0,
+            "crawled": 0,
+            "scored": 0,
+            "skipped": 0,
+            "ingested": 0,
             "failed": 0,
             "stale": 0,
             "total": 0,
@@ -133,6 +140,42 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
         return stats
 
 
+def get_pending_wiki_artifacts(
+    facility_id: str,
+    limit: int = 100,
+    min_interest_score: float = 0.0,
+) -> list[dict]:
+    """Get wiki artifacts pending ingestion from the graph.
+
+    Returns WikiArtifact nodes with status='scored' (passed agent evaluation),
+    sorted by interest_score descending.
+
+    Args:
+        facility_id: Facility ID
+        limit: Maximum artifacts to return
+        min_interest_score: Minimum interest score threshold
+
+    Returns:
+        List of artifact dicts with id, url, filename, artifact_type, interest_score
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'scored'})
+            WHERE wa.interest_score >= $min_score
+            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
+                   wa.artifact_type AS artifact_type,
+                   wa.interest_score AS interest_score
+            ORDER BY wa.interest_score DESC
+            LIMIT $limit
+            """,
+            facility_id=facility_id,
+            min_score=min_interest_score,
+            limit=limit,
+        )
+        return [dict(r) for r in result] if result else []
+
+
 def mark_wiki_page_status(
     page_id: str,
     status: str,
@@ -142,7 +185,7 @@ def mark_wiki_page_status(
 
     Args:
         page_id: WikiPage ID
-        status: New status (discovered, scraped, chunked, linked, failed, stale)
+        status: New status (crawled, scored, skipped, ingested, failed, stale)
         error: Error message if status is 'failed'
     """
     with GraphClient() as gc:
@@ -156,6 +199,94 @@ def mark_wiki_page_status(
             status=status,
             error=error,
         )
+
+
+def persist_chunks_batch(chunks: list[dict]) -> int:
+    """Persist a batch of WikiChunk nodes using UNWIND for efficiency.
+
+    Args:
+        chunks: List of chunk dicts with required fields:
+            - id, wiki_page_id, facility_id, content, embedding
+            - mdsplus_paths, imas_paths, units, conventions (optional)
+
+    Returns:
+        Number of chunks persisted
+    """
+    if not chunks:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $chunks AS chunk
+            MERGE (c:WikiChunk {id: chunk.id})
+            SET c.wiki_page_id = chunk.wiki_page_id,
+                c.facility_id = chunk.facility_id,
+                c.content = chunk.content,
+                c.embedding = chunk.embedding,
+                c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
+                c.imas_paths_mentioned = chunk.imas_paths,
+                c.units_mentioned = chunk.units,
+                c.conventions_mentioned = chunk.conventions
+            WITH c, chunk
+            MATCH (p:WikiPage {id: chunk.wiki_page_id})
+            MERGE (p)-[:HAS_CHUNK]->(c)
+            """,
+            chunks=chunks,
+        )
+        return len(chunks)
+
+
+def link_chunks_to_entities(facility_id: str) -> dict[str, int]:
+    """Create DOCUMENTS and MENTIONS relationships from chunk metadata.
+
+    Uses batched queries to link WikiChunks to TreeNodes and IMASPaths
+    based on the paths stored in chunk properties during ingestion.
+
+    Args:
+        facility_id: Facility to process
+
+    Returns:
+        Dict with counts: {tree_nodes_linked, imas_paths_linked}
+    """
+    stats = {"tree_nodes_linked": 0, "imas_paths_linked": 0}
+
+    with GraphClient() as gc:
+        # Link to TreeNodes via MDSplus paths
+        result = gc.query(
+            """
+            MATCH (c:WikiChunk {facility_id: $facility_id})
+            WHERE c.mdsplus_paths_mentioned IS NOT NULL
+            UNWIND c.mdsplus_paths_mentioned AS mds_path
+            MATCH (t:TreeNode)
+            WHERE t.path = mds_path
+               OR t.path ENDS WITH replace(mds_path, '\\\\', '')
+               OR t.canonical_path = toUpper(mds_path)
+            MERGE (c)-[:DOCUMENTS]->(t)
+            RETURN count(*) AS linked
+            """,
+            facility_id=facility_id,
+        )
+        if result:
+            stats["tree_nodes_linked"] = result[0]["linked"]
+
+        # Link to IMASPaths
+        result = gc.query(
+            """
+            MATCH (c:WikiChunk {facility_id: $facility_id})
+            WHERE c.imas_paths_mentioned IS NOT NULL
+            UNWIND c.imas_paths_mentioned AS imas_path
+            MATCH (ip:IMASPath)
+            WHERE ip.full_path CONTAINS imas_path
+            MERGE (c)-[:MENTIONS_IMAS]->(ip)
+            RETURN count(*) AS linked
+            """,
+            facility_id=facility_id,
+        )
+        if result:
+            stats["imas_paths_linked"] = result[0]["linked"]
+
+    return stats
 
 
 class MediaWikiExtractor(HTMLParser):
@@ -492,6 +623,9 @@ class WikiIngestionPipeline:
     async def ingest_page(self, page: WikiPage) -> PageIngestionStats:
         """Ingest a single wiki page into the graph.
 
+        Deterministic pipeline: fetch → extract → chunk → embed → persist.
+        No LLM calls - all entity extraction uses regex patterns.
+
         Args:
             page: Scraped WikiPage instance
 
@@ -499,6 +633,13 @@ class WikiIngestionPipeline:
             Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions,
                         content_preview, mdsplus_paths}
         """
+        from .scraper import (
+            extract_conventions,
+            extract_imas_paths,
+            extract_mdsplus_paths,
+            extract_units,
+        )
+
         stats: PageIngestionStats = {
             "chunks": 0,
             "tree_nodes_linked": 0,
@@ -536,14 +677,44 @@ class WikiIngestionPipeline:
         nodes = self.splitter.get_nodes_from_documents([doc])
         stats["chunks"] = len(nodes)
 
-        # Generate embeddings
-        for node in nodes:
-            # LlamaIndex types BaseNode but actual nodes have .text
-            node.embedding = self.embed_model.get_text_embedding(node.text)  # type: ignore[attr-defined]
+        # Generate embeddings and prepare batch data
+        chunk_batch: list[dict] = []
+        all_mdsplus: set[str] = set()
+        all_imas: set[str] = set()
 
-        # Store in Neo4j
+        for i, node in enumerate(nodes):
+            chunk_text: str = node.text  # type: ignore[attr-defined]
+            node.embedding = self.embed_model.get_text_embedding(chunk_text)
+
+            # Extract entities from this chunk
+            chunk_mdsplus = extract_mdsplus_paths(chunk_text)
+            chunk_imas = extract_imas_paths(chunk_text)
+            chunk_units = extract_units(chunk_text)
+            chunk_conventions = extract_conventions(chunk_text)
+
+            # Track for stats
+            all_mdsplus.update(chunk_mdsplus)
+            all_imas.update(chunk_imas)
+            stats["units"] += len(chunk_units)
+            stats["conventions"] += len(chunk_conventions)
+
+            chunk_batch.append(
+                {
+                    "id": self._generate_chunk_id(page_id, i),
+                    "wiki_page_id": page_id,
+                    "facility_id": self.facility_id,
+                    "content": chunk_text,
+                    "embedding": node.embedding,
+                    "mdsplus_paths": chunk_mdsplus,
+                    "imas_paths": chunk_imas,
+                    "units": chunk_units,
+                    "conventions": [c.get("name", "") for c in chunk_conventions],
+                }
+            )
+
+        # Persist all chunks in batches
         with GraphClient() as gc:
-            # Create WikiPage node
+            # Update WikiPage status to ingested
             gc.query(
                 """
                 MERGE (p:WikiPage {id: $id})
@@ -572,113 +743,96 @@ class WikiIngestionPipeline:
                 conventions=[c.get("name", "") for c in page.conventions],
             )
 
-            # Create WikiChunk nodes with embeddings
-            for i, node in enumerate(nodes):
-                chunk_id = self._generate_chunk_id(page_id, i)
-                chunk_text: str = node.text  # type: ignore[attr-defined]
-
-                # Extract entities from this specific chunk
-                from .scraper import (
-                    extract_conventions,
-                    extract_imas_paths,
-                    extract_mdsplus_paths,
-                    extract_units,
-                )
-
-                chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-                chunk_imas = extract_imas_paths(chunk_text)
-                chunk_units = extract_units(chunk_text)
-                chunk_conventions = extract_conventions(chunk_text)
-
+            # Batch persist chunks using UNWIND
+            for i in range(0, len(chunk_batch), BATCH_SIZE):
+                batch = chunk_batch[i : i + BATCH_SIZE]
                 gc.query(
                     """
-                    MERGE (c:WikiChunk {id: $id})
-                    SET c.wiki_page_id = $page_id,
-                        c.facility_id = $facility_id,
-                        c.content = $content,
-                        c.embedding = $embedding,
-                        c.mdsplus_paths_mentioned = $mdsplus_paths,
-                        c.imas_paths_mentioned = $imas_paths,
-                        c.units_mentioned = $units,
-                        c.conventions_mentioned = $conventions
-                    WITH c
-                    MATCH (p:WikiPage {id: $page_id})
+                    UNWIND $chunks AS chunk
+                    MERGE (c:WikiChunk {id: chunk.id})
+                    SET c.wiki_page_id = chunk.wiki_page_id,
+                        c.facility_id = chunk.facility_id,
+                        c.content = chunk.content,
+                        c.embedding = chunk.embedding,
+                        c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
+                        c.imas_paths_mentioned = chunk.imas_paths,
+                        c.units_mentioned = chunk.units,
+                        c.conventions_mentioned = chunk.conventions
+                    WITH c, chunk
+                    MATCH (p:WikiPage {id: chunk.wiki_page_id})
                     MERGE (p)-[:HAS_CHUNK]->(c)
                     """,
-                    id=chunk_id,
-                    page_id=page_id,
-                    facility_id=self.facility_id,
-                    content=chunk_text,
-                    embedding=node.embedding,
-                    mdsplus_paths=chunk_mdsplus,
-                    imas_paths=chunk_imas,
-                    units=chunk_units,
-                    conventions=[c.get("name", "") for c in chunk_conventions],
+                    chunks=batch,
                 )
 
-                # Link to TreeNodes (DOCUMENTS relationship)
-                for mds_path in chunk_mdsplus:
-                    result = gc.query(
-                        """
-                        MATCH (c:WikiChunk {id: $chunk_id})
-                        MATCH (t:TreeNode)
-                        WHERE t.path = $path
-                           OR t.path ENDS WITH $path_suffix
-                           OR t.canonical_path = $canonical
-                        MERGE (c)-[:DOCUMENTS]->(t)
-                        RETURN count(*) AS linked
-                        """,
-                        chunk_id=chunk_id,
-                        path=mds_path,
-                        path_suffix=mds_path.lstrip("\\"),
-                        canonical=mds_path.upper(),
+            # Batch link chunks to TreeNodes
+            if all_mdsplus:
+                result = gc.query(
+                    """
+                    MATCH (c:WikiChunk {wiki_page_id: $page_id})
+                    WHERE c.mdsplus_paths_mentioned IS NOT NULL
+                    UNWIND c.mdsplus_paths_mentioned AS mds_path
+                    MATCH (t:TreeNode)
+                    WHERE t.path = mds_path
+                       OR t.path ENDS WITH replace(mds_path, '\\\\', '')
+                       OR t.canonical_path = toUpper(mds_path)
+                    MERGE (c)-[:DOCUMENTS]->(t)
+                    RETURN count(*) AS linked
+                    """,
+                    page_id=page_id,
+                )
+                if result and result[0]["linked"]:
+                    stats["tree_nodes_linked"] = result[0]["linked"]
+
+            # Batch link chunks to IMASPaths
+            if all_imas:
+                result = gc.query(
+                    """
+                    MATCH (c:WikiChunk {wiki_page_id: $page_id})
+                    WHERE c.imas_paths_mentioned IS NOT NULL
+                    UNWIND c.imas_paths_mentioned AS imas_path
+                    MATCH (ip:IMASPath)
+                    WHERE ip.full_path CONTAINS imas_path
+                    MERGE (c)-[:MENTIONS_IMAS]->(ip)
+                    RETURN count(*) AS linked
+                    """,
+                    page_id=page_id,
+                )
+                if result and result[0]["linked"]:
+                    stats["imas_paths_linked"] = result[0]["linked"]
+
+            # Create SignConvention nodes from page conventions (batch)
+            if page.conventions:
+                conv_batch = []
+                for conv in page.conventions:
+                    conv_id = f"{self.facility_id}:{conv.get('type', 'unknown')}:{hashlib.md5(conv.get('name', '').encode()).hexdigest()[:8]}"
+                    conv_batch.append(
+                        {
+                            "id": conv_id,
+                            "facility_id": self.facility_id,
+                            "type": conv.get("type", "sign"),
+                            "name": conv.get("name", ""),
+                            "context": conv.get("context", ""),
+                            "url": page.url,
+                            "cocos_index": conv.get("cocos_index"),
+                        }
                     )
-                    if result and result[0]["linked"] > 0:
-                        stats["tree_nodes_linked"] += result[0]["linked"]
 
-                # Link to IMASPaths (MENTIONS_IMAS relationship)
-                for imas_path in chunk_imas:
-                    result = gc.query(
-                        """
-                        MATCH (c:WikiChunk {id: $chunk_id})
-                        MATCH (ip:IMASPath)
-                        WHERE ip.full_path CONTAINS $path
-                        MERGE (c)-[:MENTIONS_IMAS]->(ip)
-                        RETURN count(*) AS linked
-                        """,
-                        chunk_id=chunk_id,
-                        path=imas_path,
-                    )
-                    if result and result[0]["linked"] > 0:
-                        stats["imas_paths_linked"] += result[0]["linked"]
-
-                # Track units and conventions found
-                stats["units"] += len(chunk_units)
-                stats["conventions"] += len(chunk_conventions)
-
-            # Create SignConvention nodes from page conventions
-            for conv in page.conventions:
-                conv_id = f"{self.facility_id}:{conv.get('type', 'unknown')}:{hashlib.md5(conv.get('name', '').encode()).hexdigest()[:8]}"
                 gc.query(
                     """
-                    MERGE (sc:SignConvention {id: $id})
-                    SET sc.facility_id = $facility_id,
-                        sc.convention_type = $type,
-                        sc.name = $name,
-                        sc.description = $context,
-                        sc.wiki_source = $url,
-                        sc.cocos_index = $cocos_index
-                    WITH sc
-                    MATCH (f:Facility {id: $facility_id})
+                    UNWIND $convs AS conv
+                    MERGE (sc:SignConvention {id: conv.id})
+                    SET sc.facility_id = conv.facility_id,
+                        sc.convention_type = conv.type,
+                        sc.name = conv.name,
+                        sc.description = conv.context,
+                        sc.wiki_source = conv.url,
+                        sc.cocos_index = conv.cocos_index
+                    WITH sc, conv
+                    MATCH (f:Facility {id: conv.facility_id})
                     MERGE (sc)-[:FACILITY_ID]->(f)
                     """,
-                    id=conv_id,
-                    facility_id=self.facility_id,
-                    type=conv.get("type", "sign"),
-                    name=conv.get("name", ""),
-                    context=conv.get("context", ""),
-                    url=page.url,
-                    cocos_index=conv.get("cocos_index"),
+                    convs=conv_batch,
                 )
 
             # Update link counts on WikiPage
@@ -899,14 +1053,327 @@ def get_wiki_stats(facility_id: str) -> dict:
         return {"pages": 0, "chunks": 0, "tree_nodes_linked": 0, "imas_paths_linked": 0}
 
 
+# =============================================================================
+# Artifact Ingestion
+# =============================================================================
+
+
+class ArtifactIngestionStats(TypedDict):
+    """Statistics from ingesting a single artifact."""
+
+    chunks: int
+    content_preview: str
+    artifact_type: str
+
+
+async def fetch_artifact_content(
+    url: str,
+    facility: str = "epfl",
+    timeout: int = 120,
+) -> tuple[str, bytes]:
+    """Fetch artifact content via SSH.
+
+    Args:
+        url: Full URL to artifact
+        facility: SSH host alias
+        timeout: Timeout in seconds
+
+    Returns:
+        Tuple of (content_type, raw_bytes)
+    """
+    import subprocess
+
+    # Fetch via SSH with SSL verification disabled
+    cmd = f'curl -skL -o /dev/stdout "{url}"'
+    result = subprocess.run(
+        ["ssh", facility, cmd],
+        capture_output=True,
+        timeout=timeout,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to fetch {url}: {result.stderr.decode()}")
+
+    # Determine content type from URL extension
+    ext = url.rsplit(".", 1)[-1].lower()
+    content_types = {
+        "pdf": "application/pdf",
+        "ppt": "application/vnd.ms-powerpoint",
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "doc": "application/msword",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls": "application/vnd.ms-excel",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+    }
+
+    return content_types.get(ext, "application/octet-stream"), result.stdout
+
+
+class WikiArtifactPipeline:
+    """Pipeline for ingesting wiki artifacts (PDFs, presentations, etc.).
+
+    Uses LlamaIndex readers for PDF extraction. Other artifact types
+    are currently marked as deferred (require OCR or specialized parsers).
+
+    Supported types:
+    - PDF: Full text extraction via pypdf
+    - Others: Deferred for future implementation
+    """
+
+    def __init__(
+        self,
+        facility_id: str = "epfl",
+        chunk_size: int = 512,
+        chunk_overlap: int = 50,
+        use_rich: bool = True,
+    ):
+        """Initialize the artifact pipeline.
+
+        Args:
+            facility_id: Facility ID
+            chunk_size: Target chunk size in characters
+            chunk_overlap: Overlap between chunks
+            use_rich: Use Rich progress display
+        """
+        self.facility_id = facility_id
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.use_rich = use_rich
+
+        self.splitter = SentenceSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separator="\n",
+        )
+
+        self._embed_model: HuggingFaceEmbedding | None = None
+
+    @property
+    def embed_model(self) -> HuggingFaceEmbedding:
+        """Lazy-load embedding model."""
+        if self._embed_model is None:
+            self._embed_model = get_embed_model()
+        return self._embed_model
+
+    async def ingest_pdf(
+        self,
+        artifact_id: str,
+        pdf_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest a PDF artifact.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            pdf_bytes: Raw PDF content
+
+        Returns:
+            Ingestion stats
+        """
+        import tempfile
+        from pathlib import Path
+
+        from llama_index.readers.file import PDFReader
+
+        from .scraper import (
+            extract_conventions,
+            extract_imas_paths,
+            extract_mdsplus_paths,
+            extract_units,
+        )
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "pdf",
+        }
+
+        # Write to temp file for PDFReader
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            reader = PDFReader()
+            documents = reader.load_data(temp_path)
+
+            if not documents:
+                logger.warning("No content extracted from PDF: %s", artifact_id)
+                return stats
+
+            # Combine all pages
+            full_text = "\n\n".join(doc.text for doc in documents if doc.text)
+            stats["content_preview"] = full_text[:300]
+
+            # Split into chunks
+            combined_doc = Document(
+                text=full_text,
+                metadata={
+                    "artifact_id": artifact_id,
+                    "facility_id": self.facility_id,
+                },
+            )
+            nodes = self.splitter.get_nodes_from_documents([combined_doc])
+            stats["chunks"] = len(nodes)
+
+            # Generate embeddings and prepare batch
+            chunk_batch: list[dict] = []
+            for i, node in enumerate(nodes):
+                chunk_text: str = node.text  # type: ignore[attr-defined]
+                node.embedding = self.embed_model.get_text_embedding(chunk_text)
+
+                chunk_mdsplus = extract_mdsplus_paths(chunk_text)
+                chunk_imas = extract_imas_paths(chunk_text)
+                chunk_units = extract_units(chunk_text)
+                chunk_conventions = extract_conventions(chunk_text)
+
+                chunk_batch.append(
+                    {
+                        "id": f"{artifact_id}:chunk_{i}",
+                        "artifact_id": artifact_id,
+                        "facility_id": self.facility_id,
+                        "content": chunk_text,
+                        "embedding": node.embedding,
+                        "mdsplus_paths": chunk_mdsplus,
+                        "imas_paths": chunk_imas,
+                        "units": chunk_units,
+                        "conventions": [c.get("name", "") for c in chunk_conventions],
+                    }
+                )
+
+            # Persist chunks
+            with GraphClient() as gc:
+                # Update artifact status
+                gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {id: $id})
+                    SET wa.status = 'ingested',
+                        wa.chunk_count = $chunks,
+                        wa.ingested_at = datetime()
+                    """,
+                    id=artifact_id,
+                    chunks=len(nodes),
+                )
+
+                # Batch persist chunks (WikiChunk for artifacts too)
+                for i in range(0, len(chunk_batch), BATCH_SIZE):
+                    batch = chunk_batch[i : i + BATCH_SIZE]
+                    gc.query(
+                        """
+                        UNWIND $chunks AS chunk
+                        MERGE (c:WikiChunk {id: chunk.id})
+                        SET c.artifact_id = chunk.artifact_id,
+                            c.facility_id = chunk.facility_id,
+                            c.content = chunk.content,
+                            c.embedding = chunk.embedding,
+                            c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
+                            c.imas_paths_mentioned = chunk.imas_paths,
+                            c.units_mentioned = chunk.units,
+                            c.conventions_mentioned = chunk.conventions
+                        WITH c, chunk
+                        MATCH (wa:WikiArtifact {id: chunk.artifact_id})
+                        MERGE (wa)-[:HAS_CHUNK]->(c)
+                        """,
+                        chunks=batch,
+                    )
+
+            return stats
+
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    async def ingest_from_graph(
+        self,
+        limit: int = 20,
+        min_interest_score: float = 0.5,
+    ) -> dict[str, int]:
+        """Ingest artifacts from the graph queue.
+
+        Currently only processes PDFs. Other types are marked as deferred.
+
+        Args:
+            limit: Maximum artifacts to process
+            min_interest_score: Minimum score threshold
+
+        Returns:
+            Stats dict
+        """
+        total_stats = {
+            "artifacts": 0,
+            "artifacts_failed": 0,
+            "artifacts_deferred": 0,
+            "chunks": 0,
+        }
+
+        pending = get_pending_wiki_artifacts(
+            self.facility_id,
+            limit=limit,
+            min_interest_score=min_interest_score,
+        )
+
+        if not pending:
+            logger.info("No pending artifacts for %s", self.facility_id)
+            return total_stats
+
+        for artifact in pending:
+            artifact_id = artifact["id"]
+            artifact_type = artifact.get("artifact_type", "unknown")
+            url = artifact["url"]
+
+            try:
+                if artifact_type == "pdf":
+                    _, content = await fetch_artifact_content(
+                        url, facility=self.facility_id
+                    )
+                    stats = await self.ingest_pdf(artifact_id, content)
+                    total_stats["artifacts"] += 1
+                    total_stats["chunks"] += stats["chunks"]
+                else:
+                    # Mark non-PDF as deferred
+                    with GraphClient() as gc:
+                        gc.query(
+                            """
+                            MATCH (wa:WikiArtifact {id: $id})
+                            SET wa.status = 'deferred',
+                                wa.skip_reason = 'Artifact type not yet supported'
+                            """,
+                            id=artifact_id,
+                        )
+                    total_stats["artifacts_deferred"] += 1
+
+            except Exception as e:
+                logger.error("Failed to ingest artifact %s: %s", artifact_id, e)
+                with GraphClient() as gc:
+                    gc.query(
+                        """
+                        MATCH (wa:WikiArtifact {id: $id})
+                        SET wa.status = 'failed', wa.error = $error
+                        """,
+                        id=artifact_id,
+                        error=str(e),
+                    )
+                total_stats["artifacts_failed"] += 1
+
+        return total_stats
+
+
 __all__ = [
+    "ArtifactIngestionStats",
     "ProgressCallback",
+    "WikiArtifactPipeline",
     "WikiIngestionPipeline",
     "create_wiki_vector_index",
+    "fetch_artifact_content",
     "get_embed_model",
+    "get_pending_wiki_artifacts",
     "get_pending_wiki_pages",
     "get_wiki_queue_stats",
     "get_wiki_stats",
     "html_to_text",
+    "link_chunks_to_entities",
     "mark_wiki_page_status",
+    "persist_chunks_batch",
 ]

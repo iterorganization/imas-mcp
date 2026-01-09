@@ -4,7 +4,7 @@ Provides a three-phase pipeline for discovering and ingesting wiki content:
 
 Phase 1 - CRAWL: Fast link extraction, builds wiki graph structure
 Phase 2 - SCORE: Agent evaluates graph metrics, assigns interest scores
-Phase 3 - INGEST: Fetch content for high-score pages, create chunks
+Phase 3 - INGEST: Fetch content for high-score pages/artifacts, create chunks
 
 Facility-agnostic design - wiki configuration comes from facility YAML.
 
@@ -26,10 +26,14 @@ from .discovery import (
     run_wiki_discovery,
 )
 from .pipeline import (
+    WikiArtifactPipeline,
     WikiIngestionPipeline,
+    get_pending_wiki_artifacts,
     get_pending_wiki_pages,
     get_wiki_queue_stats,
+    link_chunks_to_entities,
     mark_wiki_page_status,
+    persist_chunks_batch,
 )
 from .progress import CrawlProgressMonitor, WikiProgressMonitor
 from .scraper import (
@@ -48,6 +52,7 @@ __all__ = [
     "WikiDiscovery",
     "run_wiki_discovery",
     # Ingestion
+    "WikiArtifactPipeline",
     "WikiIngestionPipeline",
     "WikiPage",
     "WikiProgressMonitor",
@@ -59,7 +64,11 @@ __all__ = [
     "extract_units",
     "fetch_wiki_page",
     # Queue management
+    "get_pending_wiki_artifacts",
     "get_pending_wiki_pages",
     "get_wiki_queue_stats",
     "mark_wiki_page_status",
+    # Batch operations
+    "link_chunks_to_entities",
+    "persist_chunks_batch",
 ]

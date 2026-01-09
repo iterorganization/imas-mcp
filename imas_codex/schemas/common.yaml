@@ -122,9 +122,7 @@ enums:
       crawled:
         description: Page discovered via link crawl, graph structure captured, not yet scored
       scored:
-        description: Agent has evaluated graph metrics and assigned interest_score
-      discovered:
-        description: High interest_score, ready for ingestion
+        description: Agent has evaluated and assigned interest_score, ready for ingestion if score >= threshold
       skipped:
         description: Low interest_score, agent decided not to ingest (check skip_reason)
       ingested:
@@ -137,15 +135,16 @@ enums:
   WikiArtifactStatus:
     description: >-
       Lifecycle status for wiki-linked artifacts (PDFs, presentations, etc.).
-      Artifacts are discovered during crawl, scored by filename/context, but
-      ingestion requires specialized processing (OCR, parsers).
+      Same phases as pages: crawl -> score -> ingest (PDF only, others deferred).
     permissible_values:
-      discovered:
+      crawled:
         description: Artifact found during crawl, awaiting scoring
       scored:
         description: Agent has evaluated filename/context and assigned interest_score
+      ingested:
+        description: Content extracted, chunked, and embedded (PDF only)
       deferred:
-        description: High-value but requires manual/OCR processing (future work)
+        description: High-value but requires unsupported parser (OCR, etc.)
       skipped:
         description: Low-value artifact, not worth processing
       failed:

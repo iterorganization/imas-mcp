@@ -86,6 +86,7 @@ dependencies = [
     "llama-index-readers-web>=0.5.6",
     "beautifulsoup4>=4.14.3",
     "html2text>=2024.2.26",
+    "llama-index-readers-file>=0.5.6",
 ]
 
 [project.optional-dependencies]

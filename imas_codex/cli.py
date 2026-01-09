@@ -2026,8 +2026,8 @@ def wiki() -> None:
     \b
       imas-codex wiki discover <facility>  Full pipeline: crawl + score
       imas-codex wiki crawl <facility>     Crawl links only (no LLM)
-      imas-codex wiki score <facility>     Score crawled pages (uses LLM)
-      imas-codex wiki ingest <facility>    Ingest high-score pages
+      imas-codex wiki score <facility>     Score pages and artifacts (uses LLM)
+      imas-codex wiki ingest <facility>    Ingest pages and artifacts
       imas-codex wiki status <facility>    Show ingestion statistics
     """
     pass
@@ -2268,7 +2268,7 @@ def wiki_score(
     "-n",
     default=50,
     type=int,
-    help="Maximum pages to ingest (default: 50)",
+    help="Maximum items to ingest (default: 50)",
 )
 @click.option(
     "--min-score",
@@ -2289,6 +2289,13 @@ def wiki_score(
     help="Seconds between requests (default: 0.5)",
 )
 @click.option(
+    "--type",
+    "content_type",
+    default="all",
+    type=click.Choice(["all", "pages", "artifacts"]),
+    help="Content type to ingest (default: all)",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Preview without ingesting",
@@ -2299,18 +2306,25 @@ def wiki_ingest(
     min_score: float,
     pages: tuple[str, ...],
     rate_limit: float,
+    content_type: str,
     dry_run: bool,
 ) -> None:
-    """Ingest wiki pages from the graph queue.
+    """Ingest wiki pages and artifacts from the graph queue.
 
-    Processes WikiPage nodes with status='discovered' from the graph.
-    Use 'wiki discover' first to queue pages.
+    Processes WikiPage and WikiArtifact nodes with status='scored'.
+    Use 'wiki score' first to evaluate and queue content.
 
     Examples:
-        # Ingest queued pages
+        # Ingest all scored content (pages + artifacts)
         imas-codex wiki ingest epfl
 
-        # Ingest only high-score pages
+        # Ingest only pages
+        imas-codex wiki ingest epfl --type pages
+
+        # Ingest only artifacts (PDFs, etc.)
+        imas-codex wiki ingest epfl --type artifacts
+
+        # Ingest only high-score content
         imas-codex wiki ingest epfl --min-score 0.7
 
         # Ingest specific pages (bypasses queue)
@@ -2324,14 +2338,31 @@ def wiki_ingest(
     from rich.console import Console
     from rich.table import Table
 
-    from imas_codex.wiki import WikiIngestionPipeline, get_pending_wiki_pages
+    from imas_codex.wiki import (
+        WikiArtifactPipeline,
+        WikiIngestionPipeline,
+        get_pending_wiki_artifacts,
+        get_pending_wiki_pages,
+    )
     from imas_codex.wiki.pipeline import create_wiki_vector_index
 
     console = Console()
 
-    # Determine which pages to ingest
+    # Track combined stats
+    total_stats = {
+        "pages": 0,
+        "pages_failed": 0,
+        "artifacts": 0,
+        "artifacts_deferred": 0,
+        "artifacts_failed": 0,
+        "chunks": 0,
+        "tree_nodes_linked": 0,
+        "imas_paths_linked": 0,
+        "conventions": 0,
+    }
+
+    # Handle explicit page list (bypasses type filter)
     if pages:
-        # Direct page list bypasses graph queue
         page_list = list(pages)
         console.print(f"[cyan]Ingesting {len(page_list)} specified pages...[/cyan]")
 
@@ -2343,81 +2374,161 @@ def wiki_ingest(
                 console.print(f"  ... and {len(page_list) - 20} more")
             return
 
-        # Create vector index if needed
         try:
             create_wiki_vector_index()
         except Exception as e:
             console.print(f"[dim]Vector index: {e}[/dim]")
 
-        # Run ingestion with explicit page list
         pipeline = WikiIngestionPipeline(facility_id=facility, use_rich=True)
-
         try:
             stats = asyncio.run(pipeline.ingest_pages(page_list, rate_limit=rate_limit))
+            total_stats.update(stats)
         except Exception as e:
             console.print(f"[red]Error during ingestion: {e}[/red]")
             raise SystemExit(1) from e
+
     else:
-        # Graph-driven: get pending pages from queue
+        # Graph-driven ingestion based on type
         console.print(f"[cyan]Checking graph queue for {facility}...[/cyan]")
-        pending = get_pending_wiki_pages(
-            facility_id=facility,
-            limit=limit,
-            min_interest_score=min_score,
-        )
 
-        if not pending:
-            console.print(f"[yellow]No pending wiki pages for {facility}[/yellow]")
-            console.print(
-                f"[dim]Queue pages with: imas-codex wiki discover {facility}[/dim]"
-            )
-            return
-
-        console.print(f"[green]Found {len(pending)} pending pages[/green]")
-
-        if dry_run:
-            table = Table(title="[DRY RUN] Pages that would be ingested")
-            table.add_column("#", style="dim", width=4)
-            table.add_column("Page Name", style="cyan")
-            table.add_column("Score", style="dim", width=6)
-
-            for i, page in enumerate(pending[:20], 1):
-                score = page.get("interest_score", 0.5)
-                table.add_row(str(i), page["title"], f"{score:.2f}")
-            if len(pending) > 20:
-                table.add_row("...", f"[dim]and {len(pending) - 20} more[/dim]", "")
-
-            console.print(table)
-            return
-
-        # Create vector index if needed
+        # Create vector index once
         try:
             create_wiki_vector_index()
         except Exception as e:
             console.print(f"[dim]Vector index: {e}[/dim]")
 
-        # Run graph-driven ingestion
-        pipeline = WikiIngestionPipeline(facility_id=facility, use_rich=True)
-
-        try:
-            stats = asyncio.run(
-                pipeline.ingest_from_graph(
-                    limit=limit,
-                    min_interest_score=min_score,
-                    rate_limit=rate_limit,
-                )
+        # Process pages if requested
+        if content_type in ("all", "pages"):
+            pending_pages = get_pending_wiki_pages(
+                facility_id=facility,
+                limit=limit,
+                min_interest_score=min_score,
             )
-        except Exception as e:
-            console.print(f"[red]Error during ingestion: {e}[/red]")
-            raise SystemExit(1) from e
 
+            if pending_pages:
+                console.print(
+                    f"[green]Found {len(pending_pages)} pending pages[/green]"
+                )
+
+                if dry_run:
+                    table = Table(title="[DRY RUN] Pages that would be ingested")
+                    table.add_column("#", style="dim", width=4)
+                    table.add_column("Page Name", style="cyan")
+                    table.add_column("Score", style="dim", width=6)
+
+                    for i, page in enumerate(pending_pages[:20], 1):
+                        score = page.get("interest_score", 0.5)
+                        table.add_row(str(i), page["title"], f"{score:.2f}")
+                    if len(pending_pages) > 20:
+                        table.add_row(
+                            "...", f"[dim]and {len(pending_pages) - 20} more[/dim]", ""
+                        )
+                    console.print(table)
+                else:
+                    pipeline = WikiIngestionPipeline(
+                        facility_id=facility, use_rich=True
+                    )
+                    try:
+                        stats = asyncio.run(
+                            pipeline.ingest_from_graph(
+                                limit=limit,
+                                min_interest_score=min_score,
+                                rate_limit=rate_limit,
+                            )
+                        )
+                        for k, v in stats.items():
+                            if k in total_stats:
+                                total_stats[k] += v
+                    except Exception as e:
+                        console.print(f"[red]Error during page ingestion: {e}[/red]")
+                        raise SystemExit(1) from e
+            else:
+                console.print(f"[dim]No pending pages for {facility}[/dim]")
+
+        # Process artifacts if requested
+        if content_type in ("all", "artifacts"):
+            pending_artifacts = get_pending_wiki_artifacts(
+                facility_id=facility,
+                limit=limit,
+                min_interest_score=min_score,
+            )
+
+            if pending_artifacts:
+                console.print(
+                    f"[green]Found {len(pending_artifacts)} pending artifacts[/green]"
+                )
+
+                # Show type breakdown
+                type_counts: dict[str, int] = {}
+                for a in pending_artifacts:
+                    t = a.get("artifact_type", "unknown")
+                    type_counts[t] = type_counts.get(t, 0) + 1
+                console.print(
+                    "[dim]By type:[/dim] "
+                    + ", ".join(f"{t}: {c}" for t, c in type_counts.items())
+                )
+
+                if dry_run:
+                    table = Table(title="[DRY RUN] Artifacts that would be ingested")
+                    table.add_column("#", style="dim", width=4)
+                    table.add_column("Filename", style="cyan")
+                    table.add_column("Type", width=8)
+                    table.add_column("Score", style="dim", width=6)
+
+                    for i, artifact in enumerate(pending_artifacts[:20], 1):
+                        score = artifact.get("interest_score", 0.5)
+                        table.add_row(
+                            str(i),
+                            artifact["filename"],
+                            artifact.get("artifact_type", "?"),
+                            f"{score:.2f}",
+                        )
+                    if len(pending_artifacts) > 20:
+                        table.add_row(
+                            "...",
+                            f"[dim]and {len(pending_artifacts) - 20} more[/dim]",
+                            "",
+                            "",
+                        )
+                    console.print(table)
+                else:
+                    artifact_pipeline = WikiArtifactPipeline(
+                        facility_id=facility, use_rich=True
+                    )
+                    try:
+                        stats = asyncio.run(
+                            artifact_pipeline.ingest_from_graph(
+                                limit=limit,
+                                min_interest_score=min_score,
+                            )
+                        )
+                        for k, v in stats.items():
+                            if k in total_stats:
+                                total_stats[k] += v
+                    except Exception as e:
+                        console.print(
+                            f"[red]Error during artifact ingestion: {e}[/red]"
+                        )
+                        raise SystemExit(1) from e
+            else:
+                console.print(f"[dim]No pending artifacts for {facility}[/dim]")
+
+        if dry_run:
+            return
+
+    # Print combined summary
     console.print("\n[green]Ingestion complete![/green]")
-    console.print(f"  Pages ingested:    {stats['pages']}")
-    console.print(f"  Pages failed:      {stats['pages_failed']}")
-    console.print(f"  Chunks created:    {stats['chunks']}")
-    console.print(f"  TreeNodes linked:  {stats['tree_nodes_linked']}")
-    console.print(f"  IMAS paths linked: {stats['imas_paths_linked']}")
-    console.print(f"  Conventions found: {stats['conventions']}")
+    if total_stats["pages"] > 0 or content_type in ("all", "pages"):
+        console.print(f"  Pages ingested:      {total_stats['pages']}")
+        console.print(f"  Pages failed:        {total_stats['pages_failed']}")
+    if total_stats["artifacts"] > 0 or content_type in ("all", "artifacts"):
+        console.print(f"  Artifacts ingested:  {total_stats['artifacts']}")
+        console.print(f"  Artifacts deferred:  {total_stats['artifacts_deferred']}")
+        console.print(f"  Artifacts failed:    {total_stats['artifacts_failed']}")
+    console.print(f"  Chunks created:      {total_stats['chunks']}")
+    console.print(f"  TreeNodes linked:    {total_stats['tree_nodes_linked']}")
+    console.print(f"  IMAS paths linked:   {total_stats['imas_paths_linked']}")
+    console.print(f"  Conventions found:   {total_stats['conventions']}")
 
 
 @wiki.command("status")
@@ -2457,19 +2568,23 @@ def wiki_status(facility: str) -> None:
     queue_table.add_column("Status", style="cyan")
     queue_table.add_column("Count", justify="right")
 
-    queue_table.add_row("Discovered (pending)", str(queue_stats["discovered"]))
-    queue_table.add_row("Scraped", str(queue_stats["scraped"]))
-    queue_table.add_row("Chunked", str(queue_stats["chunked"]))
-    queue_table.add_row("Linked (complete)", str(queue_stats["linked"]))
+    queue_table.add_row("Crawled (pending score)", str(queue_stats["crawled"]))
+    queue_table.add_row("Scored (pending ingest)", str(queue_stats["scored"]))
+    queue_table.add_row("Skipped", str(queue_stats["skipped"]))
+    queue_table.add_row("Ingested", str(queue_stats["ingested"]))
     queue_table.add_row("Failed", str(queue_stats["failed"]))
-    queue_table.add_row("─" * 12, "─" * 6)
+    queue_table.add_row("─" * 20, "─" * 6)
     queue_table.add_row("[bold]Total[/bold]", f"[bold]{queue_stats['total']}[/bold]")
 
     console.print(queue_table)
 
-    if queue_stats["discovered"] > 0:
+    if queue_stats["crawled"] > 0:
         console.print(
-            f"\n[dim]Process pending pages with: imas-codex wiki ingest {facility}[/dim]"
+            f"\n[dim]Score pending pages with: imas-codex wiki score {facility}[/dim]"
+        )
+    if queue_stats["scored"] > 0:
+        console.print(
+            f"\n[dim]Process scored pages with: imas-codex wiki ingest {facility}[/dim]"
         )
 
     if ingestion_stats["pages"] == 0:
