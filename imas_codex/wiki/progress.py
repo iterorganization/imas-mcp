@@ -345,7 +345,6 @@ def set_current_monitor(monitor: WikiProgressMonitor | None) -> None:
 class CrawlStats:
     """Statistics for wiki crawl progress."""
 
-    max_pages: int = 2000
     pages_crawled: int = 0
     pages_skipped: int = 0
     links_discovered: int = 0
@@ -367,8 +366,10 @@ class CrawlStats:
 
     @property
     def progress_pct(self) -> float:
-        if self.max_pages > 0:
-            return min(100, 100 * self.pages_crawled / self.max_pages)
+        """Dynamic progress: crawled / (crawled + remaining frontier)."""
+        total = self.pages_crawled + self.frontier_size
+        if total > 0:
+            return 100 * self.pages_crawled / total
         return 0.0
 
 
@@ -376,16 +377,17 @@ class CrawlProgressMonitor:
     """Progress monitor for wiki crawl with clean Rich display.
 
     Displays running totals integrated into the progress bar,
-    avoiding verbose output corruption.
+    avoiding verbose output corruption. Progress percentage is
+    dynamic: crawled / (crawled + frontier).
 
     Example:
-        with CrawlProgressMonitor(max_pages=2000) as monitor:
+        with CrawlProgressMonitor() as monitor:
             for page, links in crawl_generator():
                 monitor.update(page, links_found=len(links), depth=depth)
     """
 
-    def __init__(self, max_pages: int = 2000):
-        self.stats = CrawlStats(max_pages=max_pages)
+    def __init__(self):
+        self.stats = CrawlStats()
         self._live = None
         self._console = None
 
@@ -446,15 +448,19 @@ class CrawlProgressMonitor:
         from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
         from rich.table import Table
 
-        # Progress bar
+        # Dynamic total: crawled + frontier remaining
+        total = self.stats.pages_crawled + self.stats.frontier_size
+        pct = self.stats.progress_pct
+
+        # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
             TextColumn("[bold cyan]Crawling wiki"),
             BarColumn(bar_width=40),
-            TextColumn(f"[green]{self.stats.pages_crawled}[/]/{self.stats.max_pages}"),
+            TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,
         )
-        task = progress.add_task("", total=self.stats.max_pages)
+        task = progress.add_task("", total=max(1, total))
         progress.update(task, completed=self.stats.pages_crawled)
 
         # Stats table - compact 2-column layout
@@ -465,8 +471,8 @@ class CrawlProgressMonitor:
         stats.add_column(justify="right", width=8)
 
         stats.add_row(
-            "Discovered:",
-            f"[cyan]{self.stats.links_discovered}[/]",
+            "Crawled:",
+            f"[green]{self.stats.pages_crawled}[/]",
             "Frontier:",
             f"[yellow]{self.stats.frontier_size}[/]",
         )

@@ -119,7 +119,7 @@ class WikiDiscovery:
         self,
         facility: str,
         cost_limit_usd: float = 10.0,
-        max_pages: int = 2000,
+        max_pages: int | None = None,
         max_depth: int = 10,
         verbose: bool = False,
     ):
@@ -225,25 +225,41 @@ class WikiDiscovery:
     def phase1_crawl(self, monitor: CrawlProgressMonitor | None = None) -> int:
         """Phase 1: Crawl wiki and build link structure.
 
+        Graph-driven: resumes from existing state. Already-crawled pages
+        are loaded from the graph, and pending pages form the frontier.
+
         Args:
             monitor: Optional CrawlProgressMonitor for Rich display.
-                     If verbose mode is enabled, pass a monitor to see
-                     running totals integrated into the progress display.
 
         Returns:
-            Number of pages crawled.
+            Number of pages crawled in this session.
         """
         self.stats.phase = "CRAWL"
         gc = self._get_gc()
 
-        # Start from portal
-        portal = self.config.portal_page
-        visited: set[str] = set()
-        frontier: set[str] = {portal}
-        depth_map: dict[str, int] = {portal: 0}
-        all_results: dict[str, list[str]] = {}
+        # Load existing state from graph
+        visited, frontier, depth_map = self._load_crawl_state(gc)
 
-        while frontier and len(visited) < self.max_pages:
+        # If no frontier and no visited, start from portal
+        if not frontier and not visited:
+            portal = self.config.portal_page
+            frontier = {portal}
+            depth_map = {portal: 0}
+
+        all_results: dict[str, list[str]] = {}
+        session_crawled = 0
+
+        # Update stats with loaded state
+        self.stats.pages_crawled = len(visited)
+        self.stats.frontier_size = len(frontier)
+        if depth_map:
+            self.stats.max_depth_reached = max(depth_map.values())
+
+        # Crawl until frontier is empty or max_pages reached
+        while frontier:
+            if self.max_pages is not None and session_crawled >= self.max_pages:
+                break
+
             # Get next batch from frontier
             batch = list(frontier)[:50]
             frontier -= set(batch)
@@ -294,7 +310,10 @@ class WikiDiscovery:
                         if current_depth + 1 <= self.max_depth:
                             frontier.add(link)
                             depth_map[link] = current_depth + 1
+                            # Persist pending page to graph
+                            self._persist_pending_page(gc, link, current_depth + 1)
 
+                session_crawled += 1
                 self.stats.pages_crawled += 1
                 self.stats.links_found += len(links)
 
@@ -322,7 +341,58 @@ class WikiDiscovery:
             facility_id=self.config.facility_id,
         )
 
-        return len(visited)
+        return session_crawled
+
+    def _load_crawl_state(
+        self, gc: GraphClient
+    ) -> tuple[set[str], set[str], dict[str, int]]:
+        """Load crawl state from graph.
+
+        Returns:
+            (visited, frontier, depth_map)
+        """
+        # Get already-crawled pages
+        crawled_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+            RETURN wp.title AS title, wp.link_depth AS depth
+            """,
+            facility_id=self.config.facility_id,
+        )
+        visited = {r["title"] for r in crawled_result}
+        depth_map = {r["title"]: r["depth"] or 0 for r in crawled_result}
+
+        # Get pending pages (discovered but not crawled)
+        pending_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'pending'})
+            RETURN wp.title AS title, wp.link_depth AS depth
+            """,
+            facility_id=self.config.facility_id,
+        )
+        frontier = {r["title"] for r in pending_result}
+        for r in pending_result:
+            depth_map[r["title"]] = r["depth"] or 0
+
+        return visited, frontier, depth_map
+
+    def _persist_pending_page(self, gc: GraphClient, page: str, depth: int) -> None:
+        """Persist a pending page to the graph."""
+        page_id = f"{self.config.facility_id}:{page}"
+        gc.query(
+            """
+            MERGE (wp:WikiPage {id: $id})
+            ON CREATE SET wp.title = $title,
+                          wp.status = 'pending',
+                          wp.facility_id = $facility_id,
+                          wp.link_depth = $depth,
+                          wp.discovered_at = datetime()
+            """,
+            id=page_id,
+            title=page,
+            facility_id=self.config.facility_id,
+            depth=depth,
+        )
 
     def _create_link_relationships(
         self, results: dict[str, list[str]], gc: GraphClient
@@ -643,7 +713,7 @@ LOW SCORE (0.0-0.4):
 async def run_wiki_discovery(
     facility: str = "epfl",
     cost_limit_usd: float = 10.0,
-    max_pages: int = 2000,
+    max_pages: int | None = None,
     max_depth: int = 10,
     verbose: bool = False,
 ) -> dict:
@@ -652,7 +722,7 @@ async def run_wiki_discovery(
     Args:
         facility: Facility ID (e.g., "epfl")
         cost_limit_usd: Maximum cost budget
-        max_pages: Maximum pages to crawl
+        max_pages: Maximum pages to crawl (None = unlimited)
         max_depth: Maximum link depth from portal
         verbose: Enable verbose output
 

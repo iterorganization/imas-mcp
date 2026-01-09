@@ -17,17 +17,20 @@ This document tracks which CLI commands use Rich progress monitoring.
 
 Uses `CrawlProgressMonitor` with live updating display showing:
 
-- **Progress Bar**: Current page count with spinner
+- **Progress Bar**: Dynamic percentage (crawled / (crawled + frontier))
 - **Statistics Grid** (compact 2-column layout):
-  - Discovered (links found) / Frontier (queue size)
+  - Crawled (pages processed) / Frontier (queue size)
   - Current depth / Max depth reached
   - Skipped pages / Processing rate
 - **Current Page**: Shows page being crawled
 
+Graph-driven: restarts resume from existing state. Already-crawled
+pages are loaded from the graph; pending pages form the frontier.
+
 **Example output:**
 ```
-⠧ Crawling wiki ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 188/2000
-Discovered:        645    Frontier:         512
+⠧ Crawling wiki ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  23.4%
+Crawled:           188    Frontier:         612
 Depth:               6    Max depth:          6
 Rate:           4.2/s
 → Thomson_scattering

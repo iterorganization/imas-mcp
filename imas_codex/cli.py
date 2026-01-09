@@ -2049,9 +2049,10 @@ def wiki() -> None:
 )
 @click.option(
     "--max-pages",
-    default=2000,
+    "-n",
+    default=None,
     type=int,
-    help="Maximum pages to crawl (default: 2000)",
+    help="Maximum pages to crawl (default: unlimited)",
 )
 @click.option(
     "--max-depth",
@@ -2069,7 +2070,7 @@ def wiki_discover(
     facility: str,
     start_page: str,
     cost_limit: float,
-    max_pages: int,
+    max_pages: int | None,
     max_depth: int,
     verbose: bool,
 ) -> None:
@@ -2079,15 +2080,14 @@ def wiki_discover(
     Phase 2 (SCORE): Agent evaluates graph metrics, assigns interest scores
     Phase 3 (INGEST): Fetch content for high-score pages (via wiki ingest)
 
-    The pipeline preserves wiki link structure as LINKS_TO relationships
-    and uses graph metrics (in_degree, out_degree, link_depth) for scoring.
+    Graph-driven: restarts resume from existing state.
 
     Examples:
         # Full discovery with default settings
         imas-codex wiki discover epfl
 
         # Limit crawl scope
-        imas-codex wiki discover epfl --max-pages 500 --max-depth 3
+        imas-codex wiki discover epfl -n 500 --max-depth 3
 
         # Verbose mode to see agent reasoning
         imas-codex wiki discover epfl -v
@@ -2112,9 +2112,10 @@ def wiki_discover(
 @click.argument("facility")
 @click.option(
     "--max-pages",
-    default=2000,
+    "-n",
+    default=None,
     type=int,
-    help="Maximum pages to crawl (default: 2000)",
+    help="Maximum pages to crawl this session (default: unlimited)",
 )
 @click.option(
     "--max-depth",
@@ -2130,7 +2131,7 @@ def wiki_discover(
 )
 def wiki_crawl(
     facility: str,
-    max_pages: int,
+    max_pages: int | None,
     max_depth: int,
     verbose: bool,
 ) -> None:
@@ -2140,15 +2141,15 @@ def wiki_crawl(
     the wiki graph structure. Use 'wiki score' afterwards
     to evaluate pages.
 
-    This is graph-driven: subsequent runs continue from
-    the frontier (pages with status='pending_crawl').
+    Graph-driven: restarts resume from existing state. Already-crawled
+    pages are skipped, pending pages form the frontier.
 
     Examples:
-        # Initial crawl
+        # Full crawl to completion
         imas-codex wiki crawl epfl
 
-        # Continue previous crawl
-        imas-codex wiki crawl epfl --max-pages 500
+        # Crawl up to 500 pages this session
+        imas-codex wiki crawl epfl -n 500
 
         # Shallow crawl
         imas-codex wiki crawl epfl --max-depth 3
@@ -2167,7 +2168,7 @@ def wiki_crawl(
     )
 
     try:
-        with CrawlProgressMonitor(max_pages=max_pages) as monitor:
+        with CrawlProgressMonitor() as monitor:
             discovery.phase1_crawl(monitor)
 
         console.print(f"  Links found: {discovery.stats.links_found}")
