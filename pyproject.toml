@@ -180,8 +180,8 @@ include-error-fields = false
 [tool.imas-codex.models]
 # Default model for general agent tasks
 default = "anthropic/claude-haiku-4.5"
-# Fast model for discovery/crawl phases (high throughput)
-discovery = "anthropic/claude-haiku-4.5"
+# Model for wiki discovery phases (scoring pages/artifacts)
+discovery = "anthropic/claude-sonnet-4.5"
 # More capable model for evaluation/scoring (better reasoning)
 evaluation = "anthropic/claude-sonnet-4.5"
 # Best model for physics understanding and enrichment
