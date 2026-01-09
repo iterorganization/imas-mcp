@@ -2154,15 +2154,9 @@ def wiki_crawl(
         imas-codex wiki crawl epfl --max-depth 3
     """
     from rich.console import Console
-    from rich.progress import (
-        BarColumn,
-        Progress,
-        SpinnerColumn,
-        TaskProgressColumn,
-        TextColumn,
-    )
 
     from imas_codex.wiki.discovery import WikiDiscovery
+    from imas_codex.wiki.progress import CrawlProgressMonitor
 
     console = Console()
     discovery = WikiDiscovery(
@@ -2173,19 +2167,12 @@ def wiki_crawl(
     )
 
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            crawled = discovery.phase1_crawl(progress)
+        with CrawlProgressMonitor(max_pages=max_pages) as monitor:
+            discovery.phase1_crawl(monitor)
 
-        console.print(f"\n[green]Crawled {crawled} pages[/green]")
-        console.print(f"Links found: {discovery.stats.links_found}")
-        console.print(f"Max depth: {discovery.stats.max_depth_reached}")
-        console.print(f"Frontier: {discovery.stats.frontier_size} pages pending")
+        console.print(f"  Links found: {discovery.stats.links_found}")
+        console.print(f"  Max depth: {discovery.stats.max_depth_reached}")
+        console.print(f"  Frontier: {discovery.stats.frontier_size} pages pending")
         console.print("\nRun 'imas-codex wiki score epfl' to evaluate pages")
     finally:
         discovery.close()

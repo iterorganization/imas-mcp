@@ -31,7 +31,7 @@ from .pipeline import (
     get_wiki_queue_stats,
     mark_wiki_page_status,
 )
-from .progress import WikiProgressMonitor
+from .progress import CrawlProgressMonitor, WikiProgressMonitor
 from .scraper import (
     WikiPage,
     extract_conventions,
@@ -51,6 +51,7 @@ __all__ = [
     "WikiIngestionPipeline",
     "WikiPage",
     "WikiProgressMonitor",
+    "CrawlProgressMonitor",
     # Extraction utilities
     "extract_conventions",
     "extract_imas_paths",

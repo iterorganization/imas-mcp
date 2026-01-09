@@ -6,11 +6,34 @@ This document tracks which CLI commands use Rich progress monitoring.
 
 | Command | Rich Progress | Progress Features |
 |---------|---------------|-------------------|
+| `wiki crawl` | ✅ Yes | Live progress bar with running totals (discovered, frontier, depth) |
 | `wiki ingest` | ✅ Yes | Multi-stage progress bars, live statistics panel, content preview with MDSplus paths |
-| `wiki discover` | ❌ No | Simple console output |
+| `wiki discover` | ✅ Yes | Uses CrawlProgressMonitor for phase 1, standard progress for phase 2 |
 | `wiki status` | ❌ No | Table output only |
 
 ## Implementation Details
+
+### `wiki crawl`
+
+Uses `CrawlProgressMonitor` with live updating display showing:
+
+- **Progress Bar**: Current page count with spinner
+- **Statistics Grid** (compact 2-column layout):
+  - Discovered (links found) / Frontier (queue size)
+  - Current depth / Max depth reached
+  - Skipped pages / Processing rate
+- **Current Page**: Shows page being crawled
+
+**Example output:**
+```
+⠧ Crawling wiki ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 188/2000
+Discovered:        645    Frontier:         512
+Depth:               6    Max depth:          6
+Rate:           4.2/s
+→ Thomson_scattering
+
+✓ Crawled 188 pages in 45.2s
+```
 
 ### `wiki ingest`
 
@@ -55,6 +78,7 @@ Potential Rich progress additions:
 
 ## Related Files
 
-- `imas_codex/wiki/progress.py` - WikiProgressMonitor implementation
+- `imas_codex/wiki/progress.py` - WikiProgressMonitor and CrawlProgressMonitor implementations
 - `imas_codex/wiki/pipeline.py` - Pipeline that uses the monitor
+- `imas_codex/wiki/discovery.py` - Discovery pipeline using CrawlProgressMonitor
 - `imas_codex/cli.py` - CLI command implementations

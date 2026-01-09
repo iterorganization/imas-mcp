@@ -34,6 +34,7 @@ from rich.progress import (
 from imas_codex.agents.llm import get_llm, get_model_for_task
 from imas_codex.agents.prompt_loader import load_prompts
 from imas_codex.graph import GraphClient
+from imas_codex.wiki.progress import CrawlProgressMonitor
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -221,10 +222,16 @@ class WikiDiscovery:
 
         return results
 
-    def phase1_crawl(self, progress: Progress | None = None) -> int:
+    def phase1_crawl(self, monitor: CrawlProgressMonitor | None = None) -> int:
         """Phase 1: Crawl wiki and build link structure.
 
-        Returns number of pages crawled.
+        Args:
+            monitor: Optional CrawlProgressMonitor for Rich display.
+                     If verbose mode is enabled, pass a monitor to see
+                     running totals integrated into the progress display.
+
+        Returns:
+            Number of pages crawled.
         """
         self.stats.phase = "CRAWL"
         gc = self._get_gc()
@@ -234,10 +241,7 @@ class WikiDiscovery:
         visited: set[str] = set()
         frontier: set[str] = {portal}
         depth_map: dict[str, int] = {portal: 0}
-
-        task_id = None
-        if progress:
-            task_id = progress.add_task("Crawling wiki...", total=self.max_pages)
+        all_results: dict[str, list[str]] = {}
 
         while frontier and len(visited) < self.max_pages:
             # Get next batch from frontier
@@ -246,9 +250,12 @@ class WikiDiscovery:
 
             # Crawl batch
             results = self._crawl_batch(batch)
+            all_results.update(results)
 
             for page, links in results.items():
                 if page in visited:
+                    if monitor:
+                        monitor.update(page=page, skipped=True)
                     continue
 
                 visited.add(page)
@@ -291,18 +298,18 @@ class WikiDiscovery:
                 self.stats.pages_crawled += 1
                 self.stats.links_found += len(links)
 
-                if progress and task_id is not None:
-                    progress.update(task_id, completed=len(visited))
+                if monitor:
+                    monitor.update(
+                        page=page,
+                        links_found=len(links),
+                        frontier_size=len(frontier),
+                        depth=current_depth,
+                    )
 
             self.stats.frontier_size = len(frontier)
 
-            if self.verbose:
-                console.print(
-                    f"  Crawled {len(visited)}, frontier: {len(frontier)}, depth: {self.stats.max_depth_reached}"
-                )
-
         # Create LINKS_TO relationships in bulk
-        self._create_link_relationships(results, gc)
+        self._create_link_relationships(all_results, gc)
 
         # Compute in_degree for all pages
         gc.query(
@@ -314,9 +321,6 @@ class WikiDiscovery:
         """,
             facility_id=self.config.facility_id,
         )
-
-        if progress and task_id is not None:
-            progress.update(task_id, completed=self.max_pages)
 
         return len(visited)
 
@@ -598,6 +602,13 @@ LOW SCORE (0.0-0.4):
         console.print(f"Cost limit: ${self.stats.cost_limit_usd:.2f}")
         console.print()
 
+        # Phase 1: Crawl with integrated progress display
+        console.print("[cyan]Phase 1: CRAWL[/cyan]")
+        with CrawlProgressMonitor(max_pages=self.max_pages) as monitor:
+            self.phase1_crawl(monitor)
+
+        # Phase 2: Score
+        console.print("\n[cyan]Phase 2: SCORE[/cyan]")
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -605,24 +616,15 @@ LOW SCORE (0.0-0.4):
             TaskProgressColumn(),
             console=console,
         ) as progress:
-            # Phase 1: Crawl
-            console.print("[cyan]Phase 1: CRAWL[/cyan]")
-            crawled = self.phase1_crawl(progress)
-            console.print(
-                f"  Crawled {crawled} pages, {self.stats.links_found} links, depth {self.stats.max_depth_reached}"
-            )
-
-            # Phase 2: Score
-            console.print("\n[cyan]Phase 2: SCORE[/cyan]")
             scored = await self.phase2_score(progress)
-            console.print(
-                f"  Scored {scored} pages: {self.stats.high_score_count} high, {self.stats.low_score_count} low"
-            )
+        console.print(
+            f"  Scored {scored} pages: {self.stats.high_score_count} high, {self.stats.low_score_count} low"
+        )
 
-            # Phase 3: Ingest (placeholder)
-            # console.print("\n[cyan]Phase 3: INGEST[/cyan]")
-            # ingested = await self.phase3_ingest(progress)
-            # console.print(f"  Ingested {ingested} pages")
+        # Phase 3: Ingest (placeholder)
+        # console.print("\n[cyan]Phase 3: INGEST[/cyan]")
+        # ingested = await self.phase3_ingest(progress)
+        # console.print(f"  Ingested {ingested} pages")
 
         console.print(
             f"\n[green]Discovery complete in {self.stats.elapsed_seconds():.1f}s[/green]"

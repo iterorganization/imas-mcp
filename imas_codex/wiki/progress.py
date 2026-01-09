@@ -339,3 +339,179 @@ def set_current_monitor(monitor: WikiProgressMonitor | None) -> None:
     """
     global _current_monitor
     _current_monitor = monitor
+
+
+@dataclass
+class CrawlStats:
+    """Statistics for wiki crawl progress."""
+
+    max_pages: int = 2000
+    pages_crawled: int = 0
+    pages_skipped: int = 0
+    links_discovered: int = 0
+    frontier_size: int = 0
+    max_depth: int = 0
+    current_depth: int = 0
+    current_page: str = ""
+    started_at: float = field(default_factory=time.time)
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return time.time() - self.started_at
+
+    @property
+    def pages_per_second(self) -> float:
+        if self.elapsed_seconds > 0 and self.pages_crawled > 0:
+            return self.pages_crawled / self.elapsed_seconds
+        return 0.0
+
+    @property
+    def progress_pct(self) -> float:
+        if self.max_pages > 0:
+            return min(100, 100 * self.pages_crawled / self.max_pages)
+        return 0.0
+
+
+class CrawlProgressMonitor:
+    """Progress monitor for wiki crawl with clean Rich display.
+
+    Displays running totals integrated into the progress bar,
+    avoiding verbose output corruption.
+
+    Example:
+        with CrawlProgressMonitor(max_pages=2000) as monitor:
+            for page, links in crawl_generator():
+                monitor.update(page, links_found=len(links), depth=depth)
+    """
+
+    def __init__(self, max_pages: int = 2000):
+        self.stats = CrawlStats(max_pages=max_pages)
+        self._live = None
+        self._console = None
+
+    def __enter__(self) -> "CrawlProgressMonitor":
+        self.start()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.finish()
+
+    def start(self) -> None:
+        """Start the live display."""
+        from rich.console import Console
+        from rich.live import Live
+
+        self._console = Console()
+        self._live = Live(
+            self._render(),
+            console=self._console,
+            refresh_per_second=4,
+        )
+        self._live.start()
+
+    def update(
+        self,
+        page: str = "",
+        links_found: int = 0,
+        frontier_size: int = 0,
+        depth: int = 0,
+        skipped: bool = False,
+    ) -> None:
+        """Update crawl progress.
+
+        Args:
+            page: Current page being crawled
+            links_found: New links discovered from this page
+            frontier_size: Current frontier queue size
+            depth: Current link depth
+            skipped: Whether this page was skipped
+        """
+        if page:
+            self.stats.current_page = page
+        if skipped:
+            self.stats.pages_skipped += 1
+        else:
+            self.stats.pages_crawled += 1
+        self.stats.links_discovered += links_found
+        self.stats.frontier_size = frontier_size
+        self.stats.current_depth = depth
+        self.stats.max_depth = max(self.stats.max_depth, depth)
+
+        if self._live:
+            self._live.update(self._render())
+
+    def _render(self):
+        """Render the progress display."""
+        from rich.console import Group
+        from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+        from rich.table import Table
+
+        # Progress bar
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Crawling wiki"),
+            BarColumn(bar_width=40),
+            TextColumn(f"[green]{self.stats.pages_crawled}[/]/{self.stats.max_pages}"),
+            expand=False,
+        )
+        task = progress.add_task("", total=self.stats.max_pages)
+        progress.update(task, completed=self.stats.pages_crawled)
+
+        # Stats table - compact 2-column layout
+        stats = Table.grid(padding=(0, 2))
+        stats.add_column(style="dim", width=12)
+        stats.add_column(justify="right", width=8)
+        stats.add_column(style="dim", width=12)
+        stats.add_column(justify="right", width=8)
+
+        stats.add_row(
+            "Discovered:",
+            f"[cyan]{self.stats.links_discovered}[/]",
+            "Frontier:",
+            f"[yellow]{self.stats.frontier_size}[/]",
+        )
+        stats.add_row(
+            "Depth:",
+            f"[magenta]{self.stats.current_depth}[/]",
+            "Max depth:",
+            f"[magenta]{self.stats.max_depth}[/]",
+        )
+        if self.stats.pages_skipped > 0:
+            stats.add_row(
+                "Skipped:",
+                f"[dim]{self.stats.pages_skipped}[/]",
+                "Rate:",
+                f"[dim]{self.stats.pages_per_second:.1f}/s[/]",
+            )
+        else:
+            stats.add_row(
+                "Rate:",
+                f"[dim]{self.stats.pages_per_second:.1f}/s[/]",
+                "",
+                "",
+            )
+
+        # Current page
+        current = ""
+        if self.stats.current_page:
+            page_display = self.stats.current_page
+            if len(page_display) > 50:
+                page_display = page_display[:47] + "..."
+            current = f"[dim]→ {page_display}[/]"
+
+        return Group(progress, stats, current) if current else Group(progress, stats)
+
+    def finish(self) -> CrawlStats:
+        """Stop the live display and return final stats."""
+        if self._live:
+            self._live.stop()
+            self._live = None
+
+        if self._console:
+            elapsed = self.stats.elapsed_seconds
+            self._console.print(
+                f"\n[green]✓[/] Crawled [bold]{self.stats.pages_crawled}[/] pages "
+                f"in [bold]{elapsed:.1f}s[/]"
+            )
+
+        return self.stats
