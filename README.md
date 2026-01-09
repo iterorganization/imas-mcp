@@ -333,7 +333,7 @@ Models are configured centrally in `pyproject.toml`:
 
 ```toml
 [tool.imas-codex.models]
-discovery = "anthropic/claude-haiku-4.5"    # Fast crawl/discover
+discovery = "anthropic/claude-sonnet-4.5"   # Accurate scoring for discovery
 scoring = "anthropic/claude-sonnet-4.5"     # Accurate evaluation
 enrichment = "google/gemini-3-pro-preview"  # Physics understanding
 ```
