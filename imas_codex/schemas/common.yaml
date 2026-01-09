@@ -134,6 +134,23 @@ enums:
       stale:
         description: Previously processed but content may have changed
 
+  WikiArtifactStatus:
+    description: >-
+      Lifecycle status for wiki-linked artifacts (PDFs, presentations, etc.).
+      Artifacts are discovered during crawl, scored by filename/context, but
+      ingestion requires specialized processing (OCR, parsers).
+    permissible_values:
+      discovered:
+        description: Artifact found during crawl, awaiting scoring
+      scored:
+        description: Agent has evaluated filename/context and assigned interest_score
+      deferred:
+        description: High-value but requires manual/OCR processing (future work)
+      skipped:
+        description: Low-value artifact, not worth processing
+      failed:
+        description: Processing failed (check error property)
+
   ConventionType:
     description: >-
       Types of physics conventions documented in wiki content.

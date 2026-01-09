@@ -347,6 +347,7 @@ class CrawlStats:
 
     pages_crawled: int = 0
     pages_skipped: int = 0
+    artifacts_found: int = 0
     links_discovered: int = 0
     frontier_size: int = 0
     max_depth: int = 0
@@ -357,6 +358,20 @@ class CrawlStats:
     @property
     def elapsed_seconds(self) -> float:
         return time.time() - self.started_at
+
+    def elapsed_formatted(self) -> str:
+        """Format elapsed time as human-readable string."""
+        seconds = int(self.elapsed_seconds)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, secs = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {secs}s"
+        hours, mins = divmod(minutes, 60)
+        if hours < 24:
+            return f"{hours}h {mins}m {secs}s"
+        days, hrs = divmod(hours, 24)
+        return f"{days}d {hrs}h {mins}m {secs}s"
 
     @property
     def pages_per_second(self) -> float:
@@ -415,6 +430,7 @@ class CrawlProgressMonitor:
         self,
         page: str = "",
         links_found: int = 0,
+        artifacts_found: int = 0,
         frontier_size: int = 0,
         depth: int = 0,
         skipped: bool = False,
@@ -423,7 +439,8 @@ class CrawlProgressMonitor:
 
         Args:
             page: Current page being crawled
-            links_found: New links discovered from this page
+            links_found: New page links discovered from this page
+            artifacts_found: New artifact links discovered from this page
             frontier_size: Current frontier queue size
             depth: Current link depth
             skipped: Whether this page was skipped
@@ -435,6 +452,7 @@ class CrawlProgressMonitor:
         else:
             self.stats.pages_crawled += 1
         self.stats.links_discovered += links_found
+        self.stats.artifacts_found += artifacts_found
         self.stats.frontier_size = frontier_size
         self.stats.current_depth = depth
         self.stats.max_depth = max(self.stats.max_depth, depth)
@@ -477,6 +495,12 @@ class CrawlProgressMonitor:
             f"[yellow]{self.stats.frontier_size}[/]",
         )
         stats.add_row(
+            "Artifacts:",
+            f"[blue]{self.stats.artifacts_found}[/]",
+            "Elapsed:",
+            f"[dim]{self.stats.elapsed_formatted()}[/]",
+        )
+        stats.add_row(
             "Depth:",
             f"[magenta]{self.stats.current_depth}[/]",
             "Max depth:",
@@ -514,10 +538,13 @@ class CrawlProgressMonitor:
             self._live = None
 
         if self._console:
-            elapsed = self.stats.elapsed_seconds
+            elapsed = self.stats.elapsed_formatted()
+            artifacts_msg = ""
+            if self.stats.artifacts_found > 0:
+                artifacts_msg = f", [blue]{self.stats.artifacts_found}[/] artifacts"
             self._console.print(
-                f"\n[green]✓[/] Crawled [bold]{self.stats.pages_crawled}[/] pages "
-                f"in [bold]{elapsed:.1f}s[/]"
+                f"\n[green]✓[/] Crawled [bold]{self.stats.pages_crawled}[/] pages"
+                f"{artifacts_msg} in [bold]{elapsed}[/]"
             )
 
         return self.stats

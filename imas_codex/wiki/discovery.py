@@ -46,6 +46,7 @@ class DiscoveryStats:
 
     # Phase 1: Crawl
     pages_crawled: int = 0
+    artifacts_found: int = 0
     links_found: int = 0
     max_depth_reached: int = 0
     frontier_size: int = 0
@@ -69,6 +70,20 @@ class DiscoveryStats:
 
     def elapsed_seconds(self) -> float:
         return time.time() - self.start_time
+
+    def elapsed_formatted(self) -> str:
+        """Format elapsed time as human-readable string."""
+        seconds = int(self.elapsed_seconds())
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, secs = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {secs}s"
+        hours, mins = divmod(minutes, 60)
+        if hours < 24:
+            return f"{hours}h {mins}m {secs}s"
+        days, hrs = divmod(hours, 24)
+        return f"{days}d {hrs}h {mins}m {secs}s"
 
     def cost_remaining(self) -> float:
         return max(0, self.cost_limit_usd - self.cost_spent_usd)
@@ -115,6 +130,47 @@ class WikiConfig:
 class WikiDiscovery:
     """Three-phase wiki discovery pipeline."""
 
+    # File extensions that indicate artifacts (not wiki pages)
+    ARTIFACT_EXTENSIONS = {
+        # Documents
+        ".pdf": "pdf",
+        ".doc": "document",
+        ".docx": "document",
+        ".odt": "document",
+        ".rtf": "document",
+        # Presentations
+        ".ppt": "presentation",
+        ".pptx": "presentation",
+        ".key": "presentation",
+        # Spreadsheets
+        ".xls": "spreadsheet",
+        ".xlsx": "spreadsheet",
+        ".csv": "spreadsheet",
+        # Images
+        ".png": "image",
+        ".jpg": "image",
+        ".jpeg": "image",
+        ".gif": "image",
+        ".svg": "image",
+        ".bmp": "image",
+        # Notebooks
+        ".nb": "notebook",
+        ".ipynb": "notebook",
+        # Data files
+        ".mat": "data",
+        ".hdf5": "data",
+        ".h5": "data",
+        ".nc": "data",
+        ".npy": "data",
+        # Archives
+        ".zip": "archive",
+        ".tar": "archive",
+        ".gz": "archive",
+        ".tgz": "archive",
+        # Text
+        ".txt": "document",
+    }
+
     def __init__(
         self,
         facility: str,
@@ -137,20 +193,46 @@ class WikiDiscovery:
             self._gc = GraphClient()
         return self._gc
 
+    def _classify_link(self, link: str) -> tuple[str, str | None]:
+        """Classify a link as 'page' or 'artifact'.
+
+        Returns:
+            (link_type, artifact_type) where link_type is 'page' or 'artifact',
+            and artifact_type is the ArtifactType enum value (or None for pages).
+        """
+        link_lower = link.lower()
+        for ext, artifact_type in self.ARTIFACT_EXTENSIONS.items():
+            if link_lower.endswith(ext):
+                return ("artifact", artifact_type)
+        return ("page", None)
+
+    def _extract_filename(self, url: str) -> str:
+        """Extract filename from a URL path."""
+        decoded = urllib.parse.unquote(url)
+        # Handle wiki/images/a/ab/filename.pdf format
+        parts = decoded.split("/")
+        return parts[-1] if parts else decoded
+
     # =========================================================================
     # Phase 1: CRAWL - Fast link extraction
     # =========================================================================
 
-    def _extract_links_from_page(self, page_name: str) -> list[str]:
+    def _extract_links_from_page(
+        self, page_name: str
+    ) -> tuple[list[str], list[tuple[str, str]]]:
         """Extract all internal wiki links from a page via SSH.
 
-        Returns list of page names (not full URLs).
+        Returns:
+            (page_links, artifact_links) where:
+            - page_links: list of page names to crawl
+            - artifact_links: list of (url_path, artifact_type) tuples
         """
         encoded = urllib.parse.quote(page_name, safe="")
         url = f"{self.config.base_url}/{encoded}"
 
-        # Extract hrefs that point to internal wiki pages
-        cmd = f'''curl -sk "{url}" | grep -oP 'href="/wiki/[^"#:]+' | sed 's|href="/wiki/||' | sort -u'''
+        # Extract ALL hrefs that point to internal wiki paths (including images/)
+        # Allow colons in path for images/a/ab/filename.pdf pattern
+        cmd = f'''curl -sk "{url}" | grep -oP 'href="/wiki/[^"#]+' | sed 's|href="/wiki/||' | sort -u'''
 
         try:
             result = subprocess.run(
@@ -161,9 +243,11 @@ class WikiDiscovery:
             )
 
             if result.returncode != 0:
-                return []
+                return [], []
 
-            links = []
+            page_links: list[str] = []
+            artifact_links: list[tuple[str, str]] = []
+
             excluded_prefixes = (
                 "Special:",
                 "File:",
@@ -177,7 +261,8 @@ class WikiDiscovery:
                 "skins/",
                 "opensearch",
             )
-            excluded_extensions = (".css", ".js", ".php", ".png", ".jpg", ".gif")
+            # Only exclude code/style files, not document artifacts
+            excluded_extensions = (".css", ".js", ".php")
 
             for line in result.stdout.strip().split("\n"):
                 if not line:
@@ -185,25 +270,39 @@ class WikiDiscovery:
                 # Skip excluded prefixes
                 if line.startswith(excluded_prefixes):
                     continue
-                # Skip file extensions
-                if any(line.endswith(ext) for ext in excluded_extensions):
+                # Skip code/style files
+                if any(line.lower().endswith(ext) for ext in excluded_extensions):
                     continue
                 # Skip query strings
                 if "?" in line or "&" in line:
                     continue
+
                 # Decode URL encoding
                 decoded = urllib.parse.unquote(line)
-                links.append(decoded)
 
-            return links
+                # Classify as page or artifact
+                link_type, artifact_type = self._classify_link(decoded)
+
+                if link_type == "artifact" and artifact_type:
+                    artifact_links.append((decoded, artifact_type))
+                else:
+                    page_links.append(decoded)
+
+            return page_links, artifact_links
 
         except subprocess.TimeoutExpired:
             logger.warning("Timeout extracting links from %s", page_name)
-            return []
+            return [], []
 
-    def _crawl_batch(self, pages: list[str]) -> dict[str, list[str]]:
-        """Crawl multiple pages in parallel, return {page: [links]}."""
-        results = {}
+    def _crawl_batch(
+        self, pages: list[str]
+    ) -> dict[str, tuple[list[str], list[tuple[str, str]]]]:
+        """Crawl multiple pages in parallel.
+
+        Returns:
+            Dict mapping page -> (page_links, artifact_links)
+        """
+        results: dict[str, tuple[list[str], list[tuple[str, str]]]] = {}
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = {
@@ -214,11 +313,11 @@ class WikiDiscovery:
             for future in as_completed(futures):
                 page = futures[future]
                 try:
-                    links = future.result()
-                    results[page] = links
+                    page_links, artifact_links = future.result()
+                    results[page] = (page_links, artifact_links)
                 except Exception as e:
                     logger.warning("Error crawling %s: %s", page, e)
-                    results[page] = []
+                    results[page] = ([], [])
 
         return results
 
@@ -227,6 +326,9 @@ class WikiDiscovery:
 
         Graph-driven: resumes from existing state. Already-crawled pages
         are loaded from the graph, and pending pages form the frontier.
+
+        Creates WikiPage nodes for pages and WikiArtifact nodes for linked
+        documents (PDFs, presentations, etc.).
 
         Args:
             monitor: Optional CrawlProgressMonitor for Rich display.
@@ -239,6 +341,7 @@ class WikiDiscovery:
 
         # Load existing state from graph
         visited, frontier, depth_map = self._load_crawl_state(gc)
+        known_artifacts = self._load_known_artifacts(gc)
 
         # If no frontier and no visited, start from portal
         if not frontier and not visited:
@@ -246,7 +349,10 @@ class WikiDiscovery:
             frontier = {portal}
             depth_map = {portal: 0}
 
-        all_results: dict[str, list[str]] = {}
+        # Track all page->page links for relationship creation
+        all_page_links: dict[str, list[str]] = {}
+        # Track all page->artifact links for relationship creation
+        all_artifact_links: dict[str, list[str]] = {}
         session_crawled = 0
 
         # Update stats with loaded state
@@ -264,11 +370,10 @@ class WikiDiscovery:
             batch = list(frontier)[:50]
             frontier -= set(batch)
 
-            # Crawl batch
+            # Crawl batch - returns {page: (page_links, artifact_links)}
             results = self._crawl_batch(batch)
-            all_results.update(results)
 
-            for page, links in results.items():
+            for page, (page_links, artifact_links) in results.items():
                 if page in visited:
                     if monitor:
                         monitor.update(page=page, skipped=True)
@@ -279,6 +384,8 @@ class WikiDiscovery:
                 self.stats.max_depth_reached = max(
                     self.stats.max_depth_reached, current_depth
                 )
+
+                total_out_degree = len(page_links) + len(artifact_links)
 
                 # Create WikiPage node
                 page_id = f"{self.config.facility_id}:{page}"
@@ -301,34 +408,52 @@ class WikiDiscovery:
                     url=f"{self.config.base_url}/{urllib.parse.quote(page, safe='')}",
                     facility_id=self.config.facility_id,
                     depth=current_depth,
-                    out_degree=len(links),
+                    out_degree=total_out_degree,
                 )
 
-                # Add new links to frontier
-                for link in links:
+                # Track page links for later relationship creation
+                all_page_links[page] = page_links
+
+                # Add new page links to frontier
+                for link in page_links:
                     if link not in visited and link not in frontier:
                         if current_depth + 1 <= self.max_depth:
                             frontier.add(link)
                             depth_map[link] = current_depth + 1
-                            # Persist pending page to graph
                             self._persist_pending_page(gc, link, current_depth + 1)
+
+                # Process artifact links - create WikiArtifact nodes
+                artifact_ids_for_page = []
+                for artifact_path, artifact_type in artifact_links:
+                    artifact_id = self._persist_artifact(
+                        gc, artifact_path, artifact_type, current_depth, known_artifacts
+                    )
+                    if artifact_id:
+                        artifact_ids_for_page.append(artifact_id)
+
+                if artifact_ids_for_page:
+                    all_artifact_links[page] = artifact_ids_for_page
 
                 session_crawled += 1
                 self.stats.pages_crawled += 1
-                self.stats.links_found += len(links)
+                self.stats.links_found += total_out_degree
 
                 if monitor:
                     monitor.update(
                         page=page,
-                        links_found=len(links),
+                        links_found=len(page_links),
+                        artifacts_found=len(artifact_links),
                         frontier_size=len(frontier),
                         depth=current_depth,
                     )
 
             self.stats.frontier_size = len(frontier)
 
-        # Create LINKS_TO relationships in bulk
-        self._create_link_relationships(all_results, gc)
+        # Create LINKS_TO relationships between pages
+        self._create_page_link_relationships(all_page_links, gc)
+
+        # Create LINKS_TO_ARTIFACT relationships
+        self._create_artifact_link_relationships(all_artifact_links, gc)
 
         # Compute in_degree for all pages
         gc.query(
@@ -337,11 +462,83 @@ class WikiDiscovery:
             OPTIONAL MATCH (wp)<-[:LINKS_TO]-(source)
             WITH wp, count(source) AS in_deg
             SET wp.in_degree = in_deg
-        """,
+            """,
+            facility_id=self.config.facility_id,
+        )
+
+        # Compute in_degree for all artifacts
+        gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility_id})
+            OPTIONAL MATCH (wa)<-[:LINKS_TO_ARTIFACT]-(source)
+            WITH wa, count(source) AS in_deg
+            SET wa.in_degree = in_deg
+            """,
             facility_id=self.config.facility_id,
         )
 
         return session_crawled
+
+    def _load_known_artifacts(self, gc: GraphClient) -> set[str]:
+        """Load known artifact IDs from graph."""
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility_id})
+            RETURN wa.id AS id
+            """,
+            facility_id=self.config.facility_id,
+        )
+        return {r["id"] for r in result}
+
+    def _persist_artifact(
+        self,
+        gc: GraphClient,
+        artifact_path: str,
+        artifact_type: str,
+        linking_depth: int,
+        known_artifacts: set[str],
+    ) -> str | None:
+        """Persist a WikiArtifact node.
+
+        Returns:
+            artifact_id if created/updated, None if error
+        """
+        filename = self._extract_filename(artifact_path)
+        artifact_id = f"{self.config.facility_id}:{filename}"
+        url = f"{self.config.base_url}/{urllib.parse.quote(artifact_path, safe='')}"
+
+        is_new = artifact_id not in known_artifacts
+
+        gc.query(
+            """
+            MERGE (wa:WikiArtifact {id: $id})
+            ON CREATE SET wa.facility_id = $facility_id,
+                          wa.url = $url,
+                          wa.filename = $filename,
+                          wa.artifact_type = $artifact_type,
+                          wa.status = 'discovered',
+                          wa.link_depth = $link_depth,
+                          wa.discovered_at = datetime()
+            ON MATCH SET wa.link_depth = CASE
+                WHEN wa.link_depth IS NULL OR wa.link_depth > $link_depth
+                THEN $link_depth ELSE wa.link_depth END
+            WITH wa
+            MATCH (f:Facility {id: $facility_id})
+            MERGE (wa)-[:FACILITY_ID]->(f)
+            """,
+            id=artifact_id,
+            facility_id=self.config.facility_id,
+            url=url,
+            filename=filename,
+            artifact_type=artifact_type,
+            link_depth=linking_depth,
+        )
+
+        if is_new:
+            known_artifacts.add(artifact_id)
+            self.stats.artifacts_found += 1
+
+        return artifact_id
 
     def _load_crawl_state(
         self, gc: GraphClient
@@ -394,10 +591,10 @@ class WikiDiscovery:
             depth=depth,
         )
 
-    def _create_link_relationships(
+    def _create_page_link_relationships(
         self, results: dict[str, list[str]], gc: GraphClient
     ) -> None:
-        """Create LINKS_TO relationships in bulk."""
+        """Create LINKS_TO relationships between WikiPages in bulk."""
         for source_page, target_pages in results.items():
             if not target_pages:
                 continue
@@ -414,6 +611,27 @@ class WikiDiscovery:
                 """,
                 source_id=source_id,
                 target_ids=target_ids,
+            )
+
+    def _create_artifact_link_relationships(
+        self, results: dict[str, list[str]], gc: GraphClient
+    ) -> None:
+        """Create LINKS_TO_ARTIFACT relationships from WikiPages to WikiArtifacts."""
+        for source_page, artifact_ids in results.items():
+            if not artifact_ids:
+                continue
+
+            source_id = f"{self.config.facility_id}:{source_page}"
+
+            gc.query(
+                """
+                MATCH (source:WikiPage {id: $source_id})
+                UNWIND $artifact_ids AS artifact_id
+                MATCH (artifact:WikiArtifact {id: artifact_id})
+                MERGE (source)-[:LINKS_TO_ARTIFACT]->(artifact)
+                """,
+                source_id=source_id,
+                artifact_ids=artifact_ids,
             )
 
     # =========================================================================
@@ -674,7 +892,7 @@ LOW SCORE (0.0-0.4):
 
         # Phase 1: Crawl with integrated progress display
         console.print("[cyan]Phase 1: CRAWL[/cyan]")
-        with CrawlProgressMonitor(max_pages=self.max_pages) as monitor:
+        with CrawlProgressMonitor() as monitor:
             self.phase1_crawl(monitor)
 
         # Phase 2: Score
@@ -697,7 +915,10 @@ LOW SCORE (0.0-0.4):
         # console.print(f"  Ingested {ingested} pages")
 
         console.print(
-            f"\n[green]Discovery complete in {self.stats.elapsed_seconds():.1f}s[/green]"
+            f"\n[green]Discovery complete in {self.stats.elapsed_formatted()}[/green]"
+        )
+        console.print(
+            f"Pages: {self.stats.pages_crawled}, Artifacts: {self.stats.artifacts_found}"
         )
         console.print(f"Cost: ${self.stats.cost_spent_usd:.4f}")
 
@@ -741,6 +962,7 @@ async def run_wiki_discovery(
         stats = await discovery.run()
         return {
             "pages_crawled": stats.pages_crawled,
+            "artifacts_found": stats.artifacts_found,
             "links_found": stats.links_found,
             "pages_scored": stats.pages_scored,
             "high_score_count": stats.high_score_count,
@@ -748,6 +970,7 @@ async def run_wiki_discovery(
             "pages_ingested": stats.pages_ingested,
             "cost_spent_usd": stats.cost_spent_usd,
             "elapsed_seconds": stats.elapsed_seconds(),
+            "elapsed_formatted": stats.elapsed_formatted(),
         }
     finally:
         discovery.close()

@@ -242,6 +242,28 @@ enums:
       manual:
         description: Manually created during exploration or testing
 
+  ArtifactType:
+    description: Types of wiki-linked artifacts (non-HTML files)
+    permissible_values:
+      pdf:
+        description: PDF document (manuals, papers, reports)
+      presentation:
+        description: PowerPoint/Keynote slides (.ppt, .pptx, .key)
+      document:
+        description: Word/text documents (.doc, .docx, .odt, .rtf)
+      spreadsheet:
+        description: Spreadsheet files (.xls, .xlsx, .csv)
+      image:
+        description: Image files (.png, .jpg, .gif, .svg)
+      notebook:
+        description: Computational notebooks (.nb, .ipynb)
+      data:
+        description: Data files (.mat, .hdf5, .nc)
+      archive:
+        description: Archive files (.zip, .tar, .gz)
+      other:
+        description: Other file types
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -1255,3 +1277,83 @@ classes:
         description: Vector embedding for semantic search (384-dim, all-MiniLM-L6-v2)
         multivalued: true
         range: float
+
+  WikiArtifact:
+    description: >-
+      A linked artifact (PDF, PowerPoint, image, etc.) discovered during wiki crawl.
+      Created during Phase 1 when links to non-wiki files are found.
+      
+      These artifacts are NOT crawlable wiki pages - they are binary files.
+      The scoring phase (Phase 2) evaluates them based on:
+      - Filename keywords (e.g., "ASTRA_manual", "IpB0signs")
+      - in_degree: how many wiki pages link to this artifact
+      - Linking page context (if linked from diagnostic pages -> likely technical)
+      
+      Phase 3 ingestion is deferred - requires OCR or specialized parsers.
+      
+      Relationships:
+      - FACILITY_ID -> Facility
+      - LINKED_FROM -> WikiPage (pages that link to this artifact)
+    class_uri: facility:WikiArtifact
+    attributes:
+      id:
+        identifier: true
+        description: Composite key as facility:filename (e.g., "epfl:ASTRA_manual.pdf")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      url:
+        description: Full URL to artifact
+        required: true
+      filename:
+        description: Extracted filename (e.g., "ASTRA_manual_with_index.pdf")
+        required: true
+      artifact_type:
+        description: Type of artifact
+        range: ArtifactType
+        required: true
+      status:
+        description: Lifecycle status
+        range: WikiArtifactStatus
+        required: true
+      
+      # Graph metrics (computed during crawl)
+      in_degree:
+        description: Number of wiki pages linking TO this artifact
+        range: integer
+      link_depth:
+        description: Minimum link depth of pages linking to this artifact
+        range: integer
+      
+      # Scoring fields (set by agent during score phase)
+      interest_score:
+        description: >-
+          Agent-assigned priority score (0.0-1.0). Computed from:
+          filename keywords, in_degree, linking page context.
+        range: float
+      score_reasoning:
+        description: Agent's explanation for the interest_score assignment
+      skip_reason:
+        description: Why the agent marked this artifact as skipped
+      
+      # Content hints inferred from filename/context
+      physics_domains:
+        description: Physics domains inferred from filename/context
+        multivalued: true
+      codes_mentioned:
+        description: Analysis codes inferred from filename
+        multivalued: true
+      
+      # Timestamps
+      discovered_at:
+        description: When this artifact was first discovered
+        range: datetime
+      scored_at:
+        description: When the agent assigned interest_score
+        range: datetime
+      
+      # Error tracking
+      error:
+        description: Error message if status is failed
