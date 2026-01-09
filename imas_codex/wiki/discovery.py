@@ -39,7 +39,10 @@ from llama_index.core.tools import FunctionTool  # noqa: E402
 from imas_codex.agents.llm import get_llm, get_model_for_task  # noqa: E402
 from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
 from imas_codex.graph import GraphClient  # noqa: E402
-from imas_codex.wiki.progress import CrawlProgressMonitor  # noqa: E402
+from imas_codex.wiki.progress import (  # noqa: E402
+    CrawlProgressMonitor,
+    ScoreProgressMonitor,
+)
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -782,61 +785,154 @@ class WikiDiscovery:
             ),
         ]
 
-    async def phase2_score(self, progress: Progress | None = None) -> int:
+    async def phase2_score(
+        self,
+        monitor: ScoreProgressMonitor | None = None,
+        batch_size: int = 100,
+    ) -> int:
         """Phase 2: Score pages using agent with graph metrics.
 
-        Returns number of pages scored.
+        Uses CLI-orchestrated batching with fresh agents to avoid context
+        overflow. Each agent processes one batch, then a new agent is spawned.
+
+        Args:
+            monitor: Optional ScoreProgressMonitor for Rich display
+            batch_size: Pages to fetch per agent iteration
+
+        Returns:
+            Number of pages scored in this session.
         """
         self.stats.phase = "SCORE"
+        gc = self._get_gc()
 
         # Load prompt
         prompts = load_prompts()
         system_prompt = prompts.get("wiki-scorer")
-
-        if system_prompt is None:
-            # Use default prompt
-            system_prompt_text = self._get_default_scorer_prompt()
-        else:
-            system_prompt_text = system_prompt.content
-
-        # Get model for scoring
-        model = get_model_for_task("discovery")
-        llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
-
-        tools = self._get_scoring_tools()
-        agent = ReActAgent(
-            tools=tools,
-            llm=llm,
-            verbose=self.verbose,
-            system_prompt=system_prompt_text,
-            max_iterations=100,
+        system_prompt_text = (
+            system_prompt.content
+            if system_prompt
+            else self._get_default_scorer_prompt()
         )
 
-        # Run agent
-        task = f"""Score ALL crawled wiki pages for {self.config.facility_id}.
+        # Get total unscored pages for progress
+        total_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+            RETURN count(*) AS total
+            """,
+            facility_id=self.config.facility_id,
+        )
+        total_unscored = total_result[0]["total"] if total_result else 0
 
-Use get_pages_to_score to get batches of pages with their graph metrics.
+        if monitor:
+            monitor.stats.total_pages = total_unscored + self.stats.pages_scored
+
+        session_scored = 0
+
+        # Orchestration loop: spawn fresh agents until done or budget exhausted
+        while True:
+            # Check cost limit
+            if self.stats.budget_exhausted():
+                logger.info("Cost limit reached: $%.2f", self.stats.cost_spent_usd)
+                break
+
+            # Check page limit if set
+            if self.max_pages and session_scored >= self.max_pages:
+                logger.info("Page limit reached: %d", self.max_pages)
+                break
+
+            # Get batch of unscored pages
+            pages_result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+                RETURN wp.id AS id,
+                       wp.title AS title,
+                       wp.link_depth AS depth,
+                       wp.in_degree AS in_degree,
+                       wp.out_degree AS out_degree
+                ORDER BY wp.in_degree DESC
+                LIMIT $limit
+                """,
+                facility_id=self.config.facility_id,
+                limit=batch_size,
+            )
+
+            if not pages_result:
+                logger.info("All pages scored")
+                break
+
+            # Create fresh agent for this batch
+            model = get_model_for_task("discovery")
+            llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
+
+            tools = self._get_scoring_tools()
+            agent = ReActAgent(
+                tools=tools,
+                llm=llm,
+                verbose=self.verbose,
+                system_prompt=system_prompt_text,
+                max_iterations=20,
+            )
+
+            # Prepare batch info for agent
+            import json
+
+            batch_json = json.dumps(pages_result)
+            task = f"""Score this batch of {len(pages_result)} wiki pages for {self.config.facility_id}.
+
+Here are the pages with their graph metrics:
+{batch_json}
+
 For each page, compute interest_score (0.0-1.0) based on:
-- in_degree: Pages with many incoming links are likely important
-- out_degree: Hub pages that link to many others
-- link_depth: Pages closer to portal (lower depth) are more central
-- title: Keywords like Thomson, LIUQE, signals indicate high value
-- neighbor_scores: If neighbors are high-value, this page may be too
+- in_degree: >5 high value, 0 low value
+- link_depth: ≤2 high value, >5 low value
+- title keywords: Thomson, LIUQE, signals = high; Meeting, Workshop = low
 
-Use get_neighbor_info to check what a page links to when uncertain.
+Call update_page_scores with ALL pages in a single call.
+Provide reasoning for each score."""
 
-Call update_page_scores with batches of 50-100 pages at a time for efficiency.
+            batch_high = 0
+            batch_low = 0
+            batch_scored = 0
 
-IMPORTANT: Keep calling get_pages_to_score until it returns 0 pages (all scored).
-Check get_scoring_progress periodically to track progress."""
+            try:
+                await agent.run(task)
+                # Count what was scored in this batch
+                batch_scored = (
+                    self.stats.pages_scored
+                    - session_scored
+                    - (
+                        self.stats.pages_scored - session_scored - len(pages_result)
+                        if self.stats.pages_scored > session_scored
+                        else 0
+                    )
+                )
+                # Estimate: assume all pages in batch were scored
+                batch_scored = len(pages_result)
 
-        try:
-            response = await agent.run(task)
-            if self.verbose and hasattr(response, "response"):
-                resp_text = str(response.response)[:200] if response.response else ""
-                console.print(f"[dim]Agent response: {resp_text}...[/dim]")
-        except Exception as e:
-            logger.error("Scoring agent error: %s", e)
+            except Exception as e:
+                logger.error("Agent error on batch: %s", e)
+
+            # Update session counter
+            session_scored = self.stats.pages_scored
+
+            # Update monitor
+            if monitor:
+                # Sample a page for display
+                if pages_result:
+                    sample = pages_result[0]
+                    monitor.set_current(sample["title"], 0.5)
+                monitor.add_batch(
+                    scored=batch_scored,
+                    high=self.stats.high_score_count - batch_high,
+                    low=self.stats.low_score_count - batch_low,
+                    cost=0.05,  # Estimated cost per batch
+                )
+                batch_high = self.stats.high_score_count
+                batch_low = self.stats.low_score_count
+
+            # Estimate cost (rough: ~$0.05 per batch with Sonnet)
+            self.stats.cost_spent_usd += 0.05
 
         return self.stats.pages_scored
 

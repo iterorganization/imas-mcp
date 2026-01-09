@@ -548,3 +548,234 @@ class CrawlProgressMonitor:
             )
 
         return self.stats
+
+
+@dataclass
+class ScoreStats:
+    """Statistics for wiki scoring progress."""
+
+    total_pages: int = 0
+    pages_scored: int = 0
+    high_score_count: int = 0
+    low_score_count: int = 0
+    current_page: str = ""
+    current_score: float = 0.0
+    cost_spent_usd: float = 0.0
+    cost_limit_usd: float = 20.0
+    agent_iterations: int = 0
+    started_at: float = field(default_factory=time.time)
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return time.time() - self.started_at
+
+    def elapsed_formatted(self) -> str:
+        """Format elapsed time as human-readable string."""
+        seconds = int(self.elapsed_seconds)
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, secs = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {secs}s"
+        hours, mins = divmod(minutes, 60)
+        if hours < 24:
+            return f"{hours}h {mins}m {secs}s"
+        days, hrs = divmod(hours, 24)
+        return f"{days}d {hrs}h {mins}m {secs}s"
+
+    @property
+    def pages_per_second(self) -> float:
+        if self.elapsed_seconds > 0 and self.pages_scored > 0:
+            return self.pages_scored / self.elapsed_seconds
+        return 0.0
+
+    @property
+    def progress_pct(self) -> float:
+        """Progress percentage: scored / total."""
+        if self.total_pages > 0:
+            return 100 * self.pages_scored / self.total_pages
+        return 0.0
+
+    @property
+    def cost_remaining(self) -> float:
+        return max(0, self.cost_limit_usd - self.cost_spent_usd)
+
+    @property
+    def budget_exhausted(self) -> bool:
+        return self.cost_spent_usd >= self.cost_limit_usd
+
+
+class ScoreProgressMonitor:
+    """Progress monitor for wiki scoring with Rich display.
+
+    Displays scoring progress with cost tracking.
+
+    Example:
+        with ScoreProgressMonitor(total=3000, cost_limit=20.0) as monitor:
+            for page, score in score_generator():
+                monitor.update(page=page, score=score, cost=0.01)
+    """
+
+    def __init__(self, total: int = 0, cost_limit: float = 20.0):
+        self.stats = ScoreStats(total_pages=total, cost_limit_usd=cost_limit)
+        self._live = None
+        self._console = None
+
+    def __enter__(self) -> "ScoreProgressMonitor":
+        self.start()
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.finish()
+
+    def start(self) -> None:
+        """Start the live display."""
+        from rich.console import Console
+        from rich.live import Live
+
+        self._console = Console()
+        self._live = Live(
+            self._render(),
+            console=self._console,
+            refresh_per_second=4,
+        )
+        self._live.start()
+
+    def update(
+        self,
+        page: str = "",
+        score: float = 0.0,
+        is_high: bool = False,
+        is_low: bool = False,
+        cost: float = 0.0,
+        batch_size: int = 0,
+    ) -> None:
+        """Update scoring progress.
+
+        Args:
+            page: Current page being scored
+            score: Score assigned to this page
+            is_high: Whether this was a high score (>=0.7)
+            is_low: Whether this was a low score (<0.3)
+            cost: Cost incurred for this batch
+            batch_size: Number of pages scored in this batch
+        """
+        if page:
+            self.stats.current_page = page
+            self.stats.current_score = score
+        if batch_size > 0:
+            self.stats.pages_scored += batch_size
+        if is_high:
+            self.stats.high_score_count += 1
+        if is_low:
+            self.stats.low_score_count += 1
+        if cost > 0:
+            self.stats.cost_spent_usd += cost
+
+        if self._live:
+            self._live.update(self._render())
+
+    def add_batch(self, scored: int, high: int, low: int, cost: float = 0.0) -> None:
+        """Add a batch of scored pages."""
+        self.stats.pages_scored += scored
+        self.stats.high_score_count += high
+        self.stats.low_score_count += low
+        self.stats.cost_spent_usd += cost
+        self.stats.agent_iterations += 1
+
+        if self._live:
+            self._live.update(self._render())
+
+    def set_current(self, page: str, score: float) -> None:
+        """Set current page being displayed."""
+        self.stats.current_page = page
+        self.stats.current_score = score
+        if self._live:
+            self._live.update(self._render())
+
+    def _render(self):
+        """Render the progress display."""
+        from rich.console import Group
+        from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+        from rich.table import Table
+
+        pct = self.stats.progress_pct
+
+        # Progress bar with percentage
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]Scoring pages"),
+            BarColumn(bar_width=40),
+            TextColumn(f"[green]{pct:5.1f}%[/]"),
+            expand=False,
+        )
+        task = progress.add_task("", total=max(1, self.stats.total_pages))
+        progress.update(task, completed=self.stats.pages_scored)
+
+        # Stats table - compact 2-column layout
+        stats = Table.grid(padding=(0, 2))
+        stats.add_column(style="dim", width=12)
+        stats.add_column(justify="right", width=8)
+        stats.add_column(style="dim", width=12)
+        stats.add_column(justify="right", width=8)
+
+        stats.add_row(
+            "Scored:",
+            f"[green]{self.stats.pages_scored}[/]/{self.stats.total_pages}",
+            "Elapsed:",
+            f"[dim]{self.stats.elapsed_formatted()}[/]",
+        )
+        stats.add_row(
+            "High (≥0.7):",
+            f"[cyan]{self.stats.high_score_count}[/]",
+            "Low (<0.3):",
+            f"[yellow]{self.stats.low_score_count}[/]",
+        )
+        stats.add_row(
+            "Cost:",
+            f"[magenta]${self.stats.cost_spent_usd:.2f}[/]",
+            "Limit:",
+            f"[dim]${self.stats.cost_limit_usd:.2f}[/]",
+        )
+        stats.add_row(
+            "Rate:",
+            f"[dim]{self.stats.pages_per_second:.1f}/s[/]",
+            "Iterations:",
+            f"[dim]{self.stats.agent_iterations}[/]",
+        )
+
+        # Current page
+        current = ""
+        if self.stats.current_page:
+            page_display = self.stats.current_page
+            if len(page_display) > 40:
+                page_display = page_display[:37] + "..."
+            score_color = (
+                "green"
+                if self.stats.current_score >= 0.7
+                else ("yellow" if self.stats.current_score >= 0.3 else "red")
+            )
+            current = f"[dim]→ {page_display}[/] [{score_color}]{self.stats.current_score:.2f}[/]"
+
+        return Group(progress, stats, current) if current else Group(progress, stats)
+
+    def finish(self) -> ScoreStats:
+        """Stop the live display and return final stats."""
+        if self._live:
+            self._live.stop()
+            self._live = None
+
+        if self._console:
+            elapsed = self.stats.elapsed_formatted()
+            self._console.print(
+                f"\n[green]✓[/] Scored [bold]{self.stats.pages_scored}[/] pages "
+                f"in [bold]{elapsed}[/] (${self.stats.cost_spent_usd:.2f})"
+            )
+            self._console.print(
+                f"  High score (≥0.7): [cyan]{self.stats.high_score_count}[/]"
+            )
+            self._console.print(
+                f"  Low score (<0.3): [yellow]{self.stats.low_score_count}[/]"
+            )
+
+        return self.stats

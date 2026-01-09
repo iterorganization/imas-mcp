@@ -2182,11 +2182,25 @@ def wiki_crawl(
 @wiki.command("score")
 @click.argument("facility")
 @click.option(
+    "--limit",
+    "-n",
+    default=None,
+    type=int,
+    help="Maximum pages to score (default: unlimited)",
+)
+@click.option(
     "--cost-limit",
     "-c",
     default=20.0,
     type=float,
     help="Maximum cost budget in USD (default: 20.0)",
+)
+@click.option(
+    "--batch-size",
+    "-b",
+    default=100,
+    type=int,
+    help="Pages per agent batch (default: 100)",
 )
 @click.option(
     "--verbose",
@@ -2196,7 +2210,9 @@ def wiki_crawl(
 )
 def wiki_score(
     facility: str,
+    limit: int | None,
     cost_limit: float,
+    batch_size: int,
     verbose: bool,
 ) -> None:
     """Score crawled wiki pages using ReAct agent.
@@ -2204,8 +2220,9 @@ def wiki_score(
     Evaluates pages based on graph metrics (in_degree, out_degree,
     link_depth) and assigns interest_score (0.0-1.0).
 
-    Uses the scoring model from pyproject.toml (default: Claude Sonnet 4.5).
-    Continues until all pages are scored or cost limit is reached.
+    Uses CLI-orchestrated batching with fresh agents per batch to avoid
+    context overflow. Continues until all pages are scored, page limit
+    is reached, or cost limit is exceeded.
 
     Examples:
         # Score all crawled pages (up to $20 cost)
@@ -2214,36 +2231,32 @@ def wiki_score(
         # Score with verbose agent output
         imas-codex wiki score epfl -v
 
+        # Limit to 500 pages
+        imas-codex wiki score epfl -n 500
+
         # Limit cost to $5
         imas-codex wiki score epfl --cost-limit 5.0
     """
     import asyncio
-    import warnings
-
-    from rich.console import Console
 
     from imas_codex.wiki.discovery import WikiDiscovery
+    from imas_codex.wiki.progress import ScoreProgressMonitor
 
-    # Suppress Pydantic deprecation warnings from LlamaIndex
-    warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
-
-    console = Console()
     discovery = WikiDiscovery(
         facility=facility,
         cost_limit_usd=cost_limit,
+        max_pages=limit,
         verbose=verbose,
     )
 
     try:
-        console.print(f"[bold]Scoring wiki pages: {facility}[/bold]")
-        console.print(f"Cost limit: ${cost_limit:.2f}")
+        with ScoreProgressMonitor(cost_limit=cost_limit) as monitor:
+            scored = asyncio.run(
+                discovery.phase2_score(monitor=monitor, batch_size=batch_size)
+            )
 
-        scored = asyncio.run(discovery.phase2_score())
-
-        console.print(f"\n[green]Scored {scored} pages[/green]")
-        console.print(f"High score (≥0.7): {discovery.stats.high_score_count}")
-        console.print(f"Low score (<0.3): {discovery.stats.low_score_count}")
-        console.print("\nRun 'imas-codex wiki ingest epfl' to fetch content")
+        if scored == 0:
+            monitor._console.print("[yellow]No pages to score[/yellow]")
     finally:
         discovery.close()
 
