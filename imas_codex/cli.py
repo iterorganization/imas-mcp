@@ -2182,18 +2182,11 @@ def wiki_crawl(
 @wiki.command("score")
 @click.argument("facility")
 @click.option(
-    "--limit",
-    "-n",
-    default=750,
-    type=int,
-    help="Maximum pages to score per run (default: 750)",
-)
-@click.option(
     "--cost-limit",
     "-c",
-    default=5.0,
+    default=20.0,
     type=float,
-    help="Maximum cost budget in USD (default: 5.0)",
+    help="Maximum cost budget in USD (default: 20.0)",
 )
 @click.option(
     "--verbose",
@@ -2203,7 +2196,6 @@ def wiki_crawl(
 )
 def wiki_score(
     facility: str,
-    limit: int,
     cost_limit: float,
     verbose: bool,
 ) -> None:
@@ -2213,28 +2205,32 @@ def wiki_score(
     link_depth) and assigns interest_score (0.0-1.0).
 
     Uses the scoring model from pyproject.toml (default: Claude Sonnet 4.5).
+    Continues until all pages are scored or cost limit is reached.
 
     Examples:
-        # Score all crawled pages
+        # Score all crawled pages (up to $20 cost)
         imas-codex wiki score epfl
 
         # Score with verbose agent output
         imas-codex wiki score epfl -v
 
-        # Limit cost
-        imas-codex wiki score epfl --cost-limit 2.0
+        # Limit cost to $5
+        imas-codex wiki score epfl --cost-limit 5.0
     """
     import asyncio
+    import warnings
 
     from rich.console import Console
 
     from imas_codex.wiki.discovery import WikiDiscovery
 
+    # Suppress Pydantic deprecation warnings from LlamaIndex
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+
     console = Console()
     discovery = WikiDiscovery(
         facility=facility,
         cost_limit_usd=cost_limit,
-        max_pages=limit,
         verbose=verbose,
     )
 

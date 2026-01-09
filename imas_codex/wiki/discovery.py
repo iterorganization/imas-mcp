@@ -17,11 +17,10 @@ import logging
 import subprocess
 import time
 import urllib.parse
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -31,10 +30,16 @@ from rich.progress import (
     TextColumn,
 )
 
-from imas_codex.agents.llm import get_llm, get_model_for_task
-from imas_codex.agents.prompt_loader import load_prompts
-from imas_codex.graph import GraphClient
-from imas_codex.wiki.progress import CrawlProgressMonitor
+# Suppress Pydantic deprecation warnings from LlamaIndex before importing it
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+
+from llama_index.core.agent import ReActAgent  # noqa: E402
+from llama_index.core.tools import FunctionTool  # noqa: E402
+
+from imas_codex.agents.llm import get_llm, get_model_for_task  # noqa: E402
+from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.graph import GraphClient  # noqa: E402
+from imas_codex.wiki.progress import CrawlProgressMonitor  # noqa: E402
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -804,11 +809,11 @@ class WikiDiscovery:
             llm=llm,
             verbose=self.verbose,
             system_prompt=system_prompt_text,
-            max_iterations=30,
+            max_iterations=100,
         )
 
         # Run agent
-        task = f"""Score all crawled wiki pages for {self.config.facility_id}.
+        task = f"""Score ALL crawled wiki pages for {self.config.facility_id}.
 
 Use get_pages_to_score to get batches of pages with their graph metrics.
 For each page, compute interest_score (0.0-1.0) based on:
@@ -820,9 +825,10 @@ For each page, compute interest_score (0.0-1.0) based on:
 
 Use get_neighbor_info to check what a page links to when uncertain.
 
-Call update_page_scores with batches of 20-50 pages at a time.
-Continue until all crawled pages are scored or budget is exhausted.
-Check get_scoring_progress periodically."""
+Call update_page_scores with batches of 50-100 pages at a time for efficiency.
+
+IMPORTANT: Keep calling get_pages_to_score until it returns 0 pages (all scored).
+Check get_scoring_progress periodically to track progress."""
 
         try:
             response = await agent.run(task)
