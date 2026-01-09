@@ -66,7 +66,7 @@ class PageIngestionStats(TypedDict):
 
 def get_pending_wiki_pages(
     facility_id: str,
-    limit: int = 100,
+    limit: int | None = None,
     min_interest_score: float = 0.0,
 ) -> list[dict]:
     """Get wiki pages pending ingestion from the graph.
@@ -76,25 +76,28 @@ def get_pending_wiki_pages(
 
     Args:
         facility_id: Facility ID
-        limit: Maximum pages to return
+        limit: Maximum pages to return (None for all)
         min_interest_score: Minimum interest score threshold
 
     Returns:
         List of page dicts with id, url, title, interest_score
     """
+    # Build query with optional LIMIT clause
+    query = """
+        MATCH (wp:WikiPage {facility_id: $facility_id, status: 'scored'})
+        WHERE wp.interest_score >= $min_score
+        RETURN wp.id AS id, wp.url AS url, wp.title AS title,
+               wp.interest_score AS interest_score
+        ORDER BY wp.interest_score DESC, wp.discovered_at ASC
+    """
+    if limit is not None:
+        query += f"LIMIT {limit}"
+
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'scored'})
-            WHERE wp.interest_score >= $min_score
-            RETURN wp.id AS id, wp.url AS url, wp.title AS title,
-                   wp.interest_score AS interest_score
-            ORDER BY wp.interest_score DESC, wp.discovered_at ASC
-            LIMIT $limit
-            """,
+            query,
             facility_id=facility_id,
             min_score=min_interest_score,
-            limit=limit,
         )
         return [dict(r) for r in result] if result else []
 
@@ -142,7 +145,7 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
 
 def get_pending_wiki_artifacts(
     facility_id: str,
-    limit: int = 100,
+    limit: int | None = None,
     min_interest_score: float = 0.0,
 ) -> list[dict]:
     """Get wiki artifacts pending ingestion from the graph.
@@ -152,26 +155,29 @@ def get_pending_wiki_artifacts(
 
     Args:
         facility_id: Facility ID
-        limit: Maximum artifacts to return
+        limit: Maximum artifacts to return (None for all)
         min_interest_score: Minimum interest score threshold
 
     Returns:
         List of artifact dicts with id, url, filename, artifact_type, interest_score
     """
+    # Build query with optional LIMIT clause
+    query = """
+        MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'scored'})
+        WHERE wa.interest_score >= $min_score
+        RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
+               wa.artifact_type AS artifact_type,
+               wa.interest_score AS interest_score
+        ORDER BY wa.interest_score DESC
+    """
+    if limit is not None:
+        query += f"LIMIT {limit}"
+
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'scored'})
-            WHERE wa.interest_score >= $min_score
-            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type,
-                   wa.interest_score AS interest_score
-            ORDER BY wa.interest_score DESC
-            LIMIT $limit
-            """,
+            query,
             facility_id=facility_id,
             min_score=min_interest_score,
-            limit=limit,
         )
         return [dict(r) for r in result] if result else []
 
@@ -937,21 +943,21 @@ class WikiIngestionPipeline:
 
     async def ingest_from_graph(
         self,
-        limit: int = 50,
+        limit: int | None = None,
         min_interest_score: float = 0.0,
         progress_callback: ProgressCallback | None = None,
         rate_limit: float = 0.5,
     ) -> dict[str, int]:
         """Ingest wiki pages from the graph queue (graph-driven workflow).
 
-        Reads WikiPage nodes with status='discovered', fetches content,
+        Reads WikiPage nodes with status='scored', fetches content,
         generates embeddings, and creates chunks with graph links.
 
         This is the preferred method - discover creates the queue,
         ingest processes it.
 
         Args:
-            limit: Maximum pages to process
+            limit: Maximum pages to process (None for all)
             min_interest_score: Minimum interest score threshold
             progress_callback: Optional callback for progress updates
             rate_limit: Minimum seconds between requests
@@ -1358,8 +1364,8 @@ class WikiArtifactPipeline:
 
     async def ingest_from_graph(
         self,
-        limit: int = 20,
-        min_interest_score: float = 0.5,
+        limit: int | None = None,
+        min_interest_score: float = 0.0,
     ) -> dict[str, int]:
         """Ingest artifacts from the graph queue.
 
@@ -1368,7 +1374,7 @@ class WikiArtifactPipeline:
         Currently only processes PDFs. Other types are marked as deferred.
 
         Args:
-            limit: Maximum artifacts to process
+            limit: Maximum artifacts to process (None for all)
             min_interest_score: Minimum score threshold
 
         Returns:

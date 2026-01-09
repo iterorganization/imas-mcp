@@ -2266,9 +2266,9 @@ def wiki_score(
 @click.option(
     "--limit",
     "-n",
-    default=50,
+    default=None,
     type=int,
-    help="Maximum items to ingest (default: 50)",
+    help="Maximum items to ingest (default: all)",
 )
 @click.option(
     "--min-score",
@@ -2308,7 +2308,7 @@ def wiki_score(
 )
 def wiki_ingest(
     facility: str,
-    limit: int,
+    limit: int | None,
     min_score: float,
     pages: tuple[str, ...],
     rate_limit: float,
