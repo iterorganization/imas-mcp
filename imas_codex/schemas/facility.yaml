@@ -267,8 +267,8 @@ enums:
   WikiPageStatus:
     description: Lifecycle status of a wiki page through the discovery pipeline
     permissible_values:
-      crawled:
-        description: Page discovered and links extracted during crawl phase
+      discovered:
+        description: Page found and links extracted during crawl phase
       skipped:
         description: Page intentionally not crawled (external, filtered, or low priority)
       scored:
@@ -283,10 +283,14 @@ enums:
     permissible_values:
       discovered:
         description: Artifact link found during crawl phase
+      skipped:
+        description: Artifact intentionally not processed
       scored:
         description: Artifact has been evaluated by scoring agent
-      skipped:
-        description: Artifact intentionally not processed (low score)
+      ingested:
+        description: Artifact content downloaded and processed
+      failed:
+        description: Error occurred during processing
 
 # =============================================================================
 # Core Classes

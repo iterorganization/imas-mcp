@@ -398,7 +398,7 @@ class WikiDiscovery:
                     MERGE (wp:WikiPage {id: $id})
                     SET wp.title = $title,
                         wp.url = $url,
-                        wp.status = 'crawled',
+                        wp.status = 'discovered',
                         wp.facility_id = $facility_id,
                         wp.link_depth = $depth,
                         wp.out_degree = $out_degree,
@@ -555,7 +555,7 @@ class WikiDiscovery:
         # Get already-crawled pages
         crawled_result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
             RETURN wp.title AS title, wp.link_depth AS depth
             """,
             facility_id=self.config.facility_id,
@@ -653,7 +653,7 @@ class WikiDiscovery:
 
             result = gc.query(
                 """
-                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
                 RETURN wp.id AS id,
                        wp.title AS title,
                        wp.link_depth AS depth,
@@ -977,7 +977,7 @@ class WikiDiscovery:
             # Get batch of unscored pages
             pages_result = gc.query(
                 """
-                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'crawled'})
+                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
                 RETURN wp.id AS id,
                        wp.title AS title,
                        wp.link_depth AS depth,
