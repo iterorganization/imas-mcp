@@ -365,7 +365,8 @@ class WikiDiscovery:
         # Get pending pages (discovered but not crawled)
         pending_result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'pending'})
+            MATCH (wp:WikiPage {facility_id: $facility_id})
+            WHERE wp.status IN ['pending', 'pending_crawl']
             RETURN wp.title AS title, wp.link_depth AS depth
             """,
             facility_id=self.config.facility_id,
@@ -383,7 +384,7 @@ class WikiDiscovery:
             """
             MERGE (wp:WikiPage {id: $id})
             ON CREATE SET wp.title = $title,
-                          wp.status = 'pending',
+                          wp.status = 'pending_crawl',
                           wp.facility_id = $facility_id,
                           wp.link_depth = $depth,
                           wp.discovered_at = datetime()
