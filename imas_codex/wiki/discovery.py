@@ -56,6 +56,7 @@ class DiscoveryStats:
 
     # Phase 2: Score
     pages_scored: int = 0
+    artifacts_scored: int = 0
     high_score_count: int = 0  # interest_score >= 0.7
     low_score_count: int = 0  # interest_score < 0.3
 
@@ -780,6 +781,121 @@ class WikiDiscovery:
             ),
         ]
 
+    def _get_artifact_scoring_tools(self) -> list[FunctionTool]:
+        """Get tools for scoring artifacts."""
+        gc = self._get_gc()
+        facility_id = self.config.facility_id
+
+        def get_artifacts_to_score(limit: int = 100) -> str:
+            """Get discovered artifacts that need scoring, with graph metrics."""
+            import json
+
+            result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'discovered'})
+                WHERE wa.interest_score IS NULL
+                RETURN wa.id AS id,
+                       wa.filename AS filename,
+                       wa.artifact_type AS artifact_type,
+                       wa.in_degree AS in_degree,
+                       wa.link_depth AS link_depth
+                ORDER BY wa.in_degree DESC
+                LIMIT $limit
+                """,
+                facility_id=facility_id,
+                limit=limit,
+            )
+
+            return json.dumps({"artifacts": result, "count": len(result)})
+
+        def update_artifact_scores(scores_json: str) -> str:
+            """Update interest_score for artifacts. Input: JSON array of {id, score, reasoning, skip_reason}."""
+            import json
+
+            try:
+                scores = json.loads(scores_json)
+            except json.JSONDecodeError as e:
+                return json.dumps({"error": f"Invalid JSON: {e}"})
+
+            updated = 0
+            for s in scores:
+                artifact_id = s.get("id")
+                score = s.get("score", 0.5)
+                reasoning = s.get("reasoning", "")
+                skip_reason = s.get("skip_reason")
+
+                # Determine status based on score
+                if score >= 0.5:
+                    status = "scored"
+                else:
+                    status = "skipped"
+
+                gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {id: $id})
+                    SET wa.interest_score = $score,
+                        wa.score_reasoning = $reasoning,
+                        wa.skip_reason = $skip_reason,
+                        wa.status = $status,
+                        wa.scored_at = datetime()
+                    """,
+                    id=artifact_id,
+                    score=score,
+                    reasoning=reasoning,
+                    skip_reason=skip_reason,
+                    status=status,
+                )
+                updated += 1
+
+                # Track stats
+                if score >= 0.7:
+                    self.stats.high_score_count += 1
+                elif score < 0.3:
+                    self.stats.low_score_count += 1
+
+            self.stats.artifacts_scored += updated
+            return json.dumps({"updated": updated})
+
+        def get_artifact_context(artifact_id: str) -> str:
+            """Get pages that link to this artifact for context."""
+            import json
+
+            result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {id: $artifact_id})
+                OPTIONAL MATCH (page:WikiPage)-[:LINKS_TO_ARTIFACT]->(wa)
+                WITH wa, collect(DISTINCT {
+                    title: page.title,
+                    score: page.interest_score,
+                    in_degree: page.in_degree
+                }) AS linking_pages
+                RETURN linking_pages
+                """,
+                artifact_id=artifact_id,
+            )
+
+            if result:
+                return json.dumps(result[0])
+            return json.dumps({"linking_pages": []})
+
+        return [
+            FunctionTool.from_defaults(
+                fn=get_artifacts_to_score,
+                name="get_artifacts_to_score",
+                description="Get artifacts needing scores. Returns id, filename, artifact_type, in_degree, link_depth.",
+            ),
+            FunctionTool.from_defaults(
+                fn=update_artifact_scores,
+                name="update_artifact_scores",
+                description="Update scores for artifacts. Pass JSON array: [{id, score, reasoning, skip_reason}]",
+            ),
+            FunctionTool.from_defaults(
+                fn=get_artifact_context,
+                name="get_artifact_context",
+                description="Get pages that link to an artifact. Use to assess value from context.",
+            ),
+        ]
+
     async def phase2_score(
         self,
         monitor: ScoreProgressMonitor | None = None,
@@ -929,7 +1045,145 @@ Provide reasoning for each score."""
             # Estimate cost (rough: ~$0.05 per batch with Sonnet)
             self.stats.cost_spent_usd += 0.05
 
-        return self.stats.pages_scored
+        # Now score artifacts
+        await self._score_artifacts(monitor, batch_size)
+
+        return self.stats.pages_scored + self.stats.artifacts_scored
+
+    async def _score_artifacts(
+        self,
+        monitor: ScoreProgressMonitor | None = None,
+        batch_size: int = 100,
+    ) -> int:
+        """Score artifacts based on filename and linking pages."""
+        gc = self._get_gc()
+
+        # Get artifact scorer prompt
+        artifact_prompt = self._get_artifact_scorer_prompt()
+
+        # Get total unscored artifacts
+        total_result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility_id})
+            WHERE wa.interest_score IS NULL
+            RETURN count(*) AS total
+            """,
+            facility_id=self.config.facility_id,
+        )
+        total_unscored = total_result[0]["total"] if total_result else 0
+
+        if total_unscored == 0:
+            logger.info("No artifacts to score")
+            return 0
+
+        if monitor:
+            monitor.stats.total_pages += total_unscored
+
+        while True:
+            # Check cost limit
+            if self.stats.budget_exhausted():
+                logger.info("Cost limit reached during artifact scoring")
+                break
+
+            # Get batch of unscored artifacts
+            artifacts_result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $facility_id})
+                WHERE wa.interest_score IS NULL
+                RETURN wa.id AS id,
+                       wa.filename AS filename,
+                       wa.artifact_type AS artifact_type,
+                       wa.in_degree AS in_degree,
+                       wa.link_depth AS link_depth
+                ORDER BY wa.in_degree DESC
+                LIMIT $limit
+                """,
+                facility_id=self.config.facility_id,
+                limit=batch_size,
+            )
+
+            if not artifacts_result:
+                logger.info("All artifacts scored")
+                break
+
+            # Create fresh agent for this batch
+            model = get_model_for_task("discovery")
+            llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
+
+            tools = self._get_artifact_scoring_tools()
+            agent = ReActAgent(
+                tools=tools,
+                llm=llm,
+                verbose=self.verbose,
+                system_prompt=artifact_prompt,
+                max_iterations=20,
+            )
+
+            import json
+
+            batch_json = json.dumps(artifacts_result)
+            task = f"""Score this batch of {len(artifacts_result)} wiki artifacts for {self.config.facility_id}.
+
+Here are the artifacts with their metadata:
+{batch_json}
+
+For each artifact, compute interest_score (0.0-1.0) based on:
+- filename keywords: manual, guide, Thomson, LIUQE = high; meeting, workshop = low
+- artifact_type: pdf manuals = high, presentations = medium, images = low
+- in_degree: >3 high value, 0 low value
+
+Call update_artifact_scores with ALL artifacts in a single call.
+Provide reasoning for each score."""
+
+            try:
+                await agent.run(task)
+            except Exception as e:
+                logger.error("Agent error on artifact batch: %s", e)
+
+            # Update monitor
+            if monitor and artifacts_result:
+                sample = artifacts_result[0]
+                monitor.set_current(sample["filename"], 0.5)
+                monitor.add_batch(
+                    scored=len(artifacts_result),
+                    high=0,
+                    low=0,
+                    cost=0.05,
+                )
+
+            self.stats.cost_spent_usd += 0.05
+
+        return self.stats.artifacts_scored
+
+    def _get_artifact_scorer_prompt(self) -> str:
+        """System prompt for artifact scoring agent."""
+        return """You are scoring wiki artifacts (PDFs, presentations, documents) for a fusion research facility.
+
+Your goal is to assign interest_score (0.0-1.0) based on filename and context.
+
+## Scoring Guidelines
+
+HIGH SCORE (0.7-1.0):
+- Filename contains: manual, guide, tutorial, Thomson, CXRS, LIUQE, diagnostic
+- Type: pdf with technical documentation
+- in_degree > 3: Many pages reference this
+
+MEDIUM SCORE (0.4-0.7):
+- Technical content but not central
+- Presentations with useful content
+- in_degree 1-3
+
+LOW SCORE (0.0-0.4):
+- Filename contains: meeting, workshop, notes, draft
+- Type: images, temporary files
+- in_degree = 0: No pages reference this
+
+## Important
+
+- Base scores on filename keywords and artifact_type
+- Use get_artifact_context for ambiguous filenames
+- Process all artifacts in a single update_artifact_scores call
+- Provide reasoning for each score"""
 
     def _get_default_scorer_prompt(self) -> str:
         """Default system prompt for scoring agent."""
