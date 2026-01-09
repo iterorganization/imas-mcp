@@ -289,6 +289,8 @@ enums:
         description: Artifact has been evaluated by scoring agent
       ingested:
         description: Artifact content downloaded and processed
+      deferred:
+        description: High-value but deferred (oversized, requires OCR, etc.)
       failed:
         description: Error occurred during processing
 
@@ -1374,6 +1376,17 @@ classes:
         description: Analysis codes inferred from filename
         multivalued: true
       
+      # Size and resource tracking
+      size_bytes:
+        description: File size in bytes (fetched via HTTP HEAD during ingest)
+        range: integer
+      page_count:
+        description: Number of pages (for PDFs)
+        range: integer
+      chunk_count:
+        description: Number of WikiChunk nodes created from this artifact
+        range: integer
+      
       # Timestamps
       discovered_at:
         description: When this artifact was first discovered
@@ -1381,7 +1394,12 @@ classes:
       scored_at:
         description: When the agent assigned interest_score
         range: datetime
+      ingested_at:
+        description: When content was extracted and embedded
+        range: datetime
       
       # Error tracking
       error:
         description: Error message if status is failed
+      defer_reason:
+        description: Why this artifact was deferred (e.g., size limit, unsupported format)

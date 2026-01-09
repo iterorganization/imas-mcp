@@ -1066,6 +1066,66 @@ class ArtifactIngestionStats(TypedDict):
     artifact_type: str
 
 
+# Default size limits for artifact ingestion
+DEFAULT_MAX_ARTIFACT_SIZE_MB = 5.0  # 5 MB default
+MAX_ARTIFACT_SIZE_BYTES = int(DEFAULT_MAX_ARTIFACT_SIZE_MB * 1024 * 1024)
+
+
+def _decode_url(url: str) -> str:
+    """Decode URL-encoded path components.
+
+    Wiki artifact URLs may have encoded slashes (%2F) that need decoding.
+    """
+    from urllib.parse import unquote
+
+    return unquote(url)
+
+
+def fetch_artifact_size(
+    url: str,
+    facility: str = "epfl",
+    timeout: int = 30,
+) -> int | None:
+    """Fetch artifact file size via HTTP HEAD request.
+
+    Uses SSH to fetch Content-Length header without downloading content.
+
+    Args:
+        url: Full URL to artifact (will be URL-decoded)
+        facility: SSH host alias
+        timeout: Timeout in seconds
+
+    Returns:
+        File size in bytes, or None if size cannot be determined
+    """
+    import subprocess
+
+    decoded_url = _decode_url(url)
+    cmd = f'curl -skI "{decoded_url}" 2>/dev/null | grep -i content-length | head -1'
+    try:
+        result = subprocess.run(
+            ["ssh", facility, cmd],
+            capture_output=True,
+            timeout=timeout,
+            text=True,
+        )
+
+        if result.returncode == 0 and result.stdout:
+            # Parse "Content-Length: 12345"
+            for line in result.stdout.strip().split("\n"):
+                if "content-length" in line.lower():
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        try:
+                            return int(parts[1].strip())
+                        except ValueError:
+                            pass
+    except subprocess.TimeoutExpired:
+        logger.warning("Timeout fetching size for %s", url)
+
+    return None
+
+
 async def fetch_artifact_content(
     url: str,
     facility: str = "epfl",
@@ -1074,7 +1134,7 @@ async def fetch_artifact_content(
     """Fetch artifact content via SSH.
 
     Args:
-        url: Full URL to artifact
+        url: Full URL to artifact (will be URL-decoded)
         facility: SSH host alias
         timeout: Timeout in seconds
 
@@ -1083,8 +1143,11 @@ async def fetch_artifact_content(
     """
     import subprocess
 
+    # Decode URL-encoded paths
+    decoded_url = _decode_url(url)
+
     # Fetch via SSH with SSL verification disabled
-    cmd = f'curl -skL -o /dev/stdout "{url}"'
+    cmd = f'curl -skL -o /dev/stdout "{decoded_url}"'
     result = subprocess.run(
         ["ssh", facility, cmd],
         capture_output=True,
@@ -1120,8 +1183,13 @@ class WikiArtifactPipeline:
     are currently marked as deferred (require OCR or specialized parsers).
 
     Supported types:
-    - PDF: Full text extraction via pypdf
+    - PDF: Full text extraction via pypdf (up to max_size_mb limit)
     - Others: Deferred for future implementation
+
+    Size limits:
+    - Artifacts larger than max_size_mb are marked as 'deferred' with size_bytes stored
+    - This prevents flooding the graph with oversized content
+    - Deferred artifacts can still be searched via metadata (filename, linked pages)
     """
 
     def __init__(
@@ -1130,6 +1198,7 @@ class WikiArtifactPipeline:
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         use_rich: bool = True,
+        max_size_mb: float = DEFAULT_MAX_ARTIFACT_SIZE_MB,
     ):
         """Initialize the artifact pipeline.
 
@@ -1138,11 +1207,13 @@ class WikiArtifactPipeline:
             chunk_size: Target chunk size in characters
             chunk_overlap: Overlap between chunks
             use_rich: Use Rich progress display
+            max_size_mb: Maximum artifact size in MB (default 5.0)
         """
         self.facility_id = facility_id
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.use_rich = use_rich
+        self.max_size_bytes = int(max_size_mb * 1024 * 1024)
 
         self.splitter = SentenceSplitter(
             chunk_size=chunk_size,
@@ -1292,6 +1363,8 @@ class WikiArtifactPipeline:
     ) -> dict[str, int]:
         """Ingest artifacts from the graph queue.
 
+        Pre-checks file size via HTTP HEAD before downloading. Artifacts
+        exceeding max_size_bytes are marked as 'deferred' with size stored.
         Currently only processes PDFs. Other types are marked as deferred.
 
         Args:
@@ -1305,6 +1378,7 @@ class WikiArtifactPipeline:
             "artifacts": 0,
             "artifacts_failed": 0,
             "artifacts_deferred": 0,
+            "artifacts_oversized": 0,
             "chunks": 0,
         }
 
@@ -1322,8 +1396,50 @@ class WikiArtifactPipeline:
             artifact_id = artifact["id"]
             artifact_type = artifact.get("artifact_type", "unknown")
             url = artifact["url"]
+            filename = artifact.get("filename", "unknown")
 
             try:
+                # Check size before downloading
+                size_bytes = fetch_artifact_size(url, facility=self.facility_id)
+
+                if size_bytes is not None:
+                    # Update size in graph
+                    with GraphClient() as gc:
+                        gc.query(
+                            """
+                            MATCH (wa:WikiArtifact {id: $id})
+                            SET wa.size_bytes = $size
+                            """,
+                            id=artifact_id,
+                            size=size_bytes,
+                        )
+
+                    # Check against limit
+                    if size_bytes > self.max_size_bytes:
+                        size_mb = size_bytes / (1024 * 1024)
+                        max_mb = self.max_size_bytes / (1024 * 1024)
+                        defer_reason = (
+                            f"File size {size_mb:.1f} MB exceeds limit {max_mb:.1f} MB"
+                        )
+                        logger.info(
+                            "Deferring oversized artifact %s: %s",
+                            filename,
+                            defer_reason,
+                        )
+                        with GraphClient() as gc:
+                            gc.query(
+                                """
+                                MATCH (wa:WikiArtifact {id: $id})
+                                SET wa.status = 'deferred',
+                                    wa.defer_reason = $reason
+                                """,
+                                id=artifact_id,
+                                reason=defer_reason,
+                            )
+                        total_stats["artifacts_deferred"] += 1
+                        total_stats["artifacts_oversized"] += 1
+                        continue
+
                 if artifact_type == "pdf":
                     _, content = await fetch_artifact_content(
                         url, facility=self.facility_id
@@ -1338,9 +1454,10 @@ class WikiArtifactPipeline:
                             """
                             MATCH (wa:WikiArtifact {id: $id})
                             SET wa.status = 'deferred',
-                                wa.skip_reason = 'Artifact type not yet supported'
+                                wa.defer_reason = $reason
                             """,
                             id=artifact_id,
+                            reason=f"Artifact type '{artifact_type}' not yet supported",
                         )
                     total_stats["artifacts_deferred"] += 1
 
@@ -1362,11 +1479,13 @@ class WikiArtifactPipeline:
 
 __all__ = [
     "ArtifactIngestionStats",
+    "DEFAULT_MAX_ARTIFACT_SIZE_MB",
     "ProgressCallback",
     "WikiArtifactPipeline",
     "WikiIngestionPipeline",
     "create_wiki_vector_index",
     "fetch_artifact_content",
+    "fetch_artifact_size",
     "get_embed_model",
     "get_pending_wiki_artifacts",
     "get_pending_wiki_pages",

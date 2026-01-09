@@ -2296,6 +2296,12 @@ def wiki_score(
     help="Content type to ingest (default: all)",
 )
 @click.option(
+    "--max-size-mb",
+    default=5.0,
+    type=float,
+    help="Maximum artifact size in MB (default: 5.0). Larger files are deferred.",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Preview without ingesting",
@@ -2307,12 +2313,17 @@ def wiki_ingest(
     pages: tuple[str, ...],
     rate_limit: float,
     content_type: str,
+    max_size_mb: float,
     dry_run: bool,
 ) -> None:
     """Ingest wiki pages and artifacts from the graph queue.
 
     Processes WikiPage and WikiArtifact nodes with status='scored'.
     Use 'wiki score' first to evaluate and queue content.
+
+    Artifacts larger than --max-size-mb are marked as 'deferred' with
+    their size stored. They remain searchable via metadata but don't
+    flood the graph with heavy embeddings.
 
     Examples:
         # Ingest all scored content (pages + artifacts)
@@ -2326,6 +2337,9 @@ def wiki_ingest(
 
         # Ingest only high-score content
         imas-codex wiki ingest epfl --min-score 0.7
+
+        # Allow larger artifacts (10 MB)
+        imas-codex wiki ingest epfl --max-size-mb 10
 
         # Ingest specific pages (bypasses queue)
         imas-codex wiki ingest epfl -p Thomson -p Ion_Temperature_Nodes
@@ -2493,7 +2507,9 @@ def wiki_ingest(
                     console.print(table)
                 else:
                     artifact_pipeline = WikiArtifactPipeline(
-                        facility_id=facility, use_rich=True
+                        facility_id=facility,
+                        use_rich=True,
+                        max_size_mb=max_size_mb,
                     )
                     try:
                         stats = asyncio.run(
@@ -2505,6 +2521,12 @@ def wiki_ingest(
                         for k, v in stats.items():
                             if k in total_stats:
                                 total_stats[k] += v
+                        # Track oversized separately if available
+                        if "artifacts_oversized" in stats:
+                            total_stats["artifacts_oversized"] = (
+                                total_stats.get("artifacts_oversized", 0)
+                                + stats["artifacts_oversized"]
+                            )
                     except Exception as e:
                         console.print(
                             f"[red]Error during artifact ingestion: {e}[/red]"
@@ -2523,7 +2545,12 @@ def wiki_ingest(
         console.print(f"  Pages failed:        {total_stats['pages_failed']}")
     if total_stats["artifacts"] > 0 or content_type in ("all", "artifacts"):
         console.print(f"  Artifacts ingested:  {total_stats['artifacts']}")
-        console.print(f"  Artifacts deferred:  {total_stats['artifacts_deferred']}")
+        deferred = total_stats["artifacts_deferred"]
+        oversized = total_stats.get("artifacts_oversized", 0)
+        if oversized > 0:
+            console.print(f"  Artifacts deferred:  {deferred} ({oversized} oversized)")
+        else:
+            console.print(f"  Artifacts deferred:  {deferred}")
         console.print(f"  Artifacts failed:    {total_stats['artifacts_failed']}")
     console.print(f"  Chunks created:      {total_stats['chunks']}")
     console.print(f"  TreeNodes linked:    {total_stats['tree_nodes_linked']}")
