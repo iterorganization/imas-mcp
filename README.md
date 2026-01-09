@@ -295,6 +295,65 @@ EOF
 uv run imas-codex epfl --discard
 ```
 
+#### ReAct Agents (Autonomous Discovery)
+
+ReAct agents provide autonomous discovery and evaluation of remote resources using LlamaIndex and OpenRouter.
+
+**Prerequisites:**
+- SSH configured for the target facility (see above)
+- OpenRouter API key in `.env`: `OPENROUTER_API_KEY=sk-or-...`
+- Neo4j running: `imas-codex neo4j start`
+
+**Wiki Discovery Pipeline:**
+
+Discover and evaluate wiki pages in three phases:
+
+```bash
+# Full discovery (crawl + score in one command)
+imas-codex wiki discover epfl
+
+# Or run phases separately for more control:
+
+# Phase 1: Fast link crawling (no LLM, builds graph structure)
+imas-codex wiki crawl epfl --max-pages 500
+
+# Phase 2: Agent-based scoring (evaluates pages using graph metrics)
+imas-codex wiki score epfl -v  # -v for verbose agent reasoning
+
+# Phase 3: Ingest high-score pages
+imas-codex wiki ingest epfl --min-score 0.7
+
+# Check progress
+imas-codex wiki status epfl
+```
+
+**Model Configuration:**
+
+Models are configured centrally in `pyproject.toml`:
+
+```toml
+[tool.imas-codex.models]
+discovery = "anthropic/claude-haiku-4.5"    # Fast crawl/discover
+scoring = "anthropic/claude-sonnet-4.5"     # Accurate evaluation
+enrichment = "google/gemini-3-pro-preview"  # Physics understanding
+```
+
+**Cost Control:**
+
+Discovery uses a cost budget (default $10) tracked via OpenRouter:
+
+```bash
+# Set lower cost limit for testing
+imas-codex wiki discover epfl --cost-limit 2.0
+```
+
+**Graph-Driven Workflow:**
+
+The pipeline is graph-driven - it persists progress to Neo4j so you can:
+- Resume interrupted crawls
+- Run scoring on pages crawled in previous sessions
+- Track which pages are queued, scored, skipped, or ingested
+
 ### Docker Setup
 
 Run locally in a container (pre-built indexes included):

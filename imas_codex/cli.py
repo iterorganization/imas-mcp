@@ -350,6 +350,8 @@ def neo4j() -> None:
       imas-codex neo4j dump    Export graph to dump file
       imas-codex neo4j push    Push graph artifact to GHCR
       imas-codex neo4j pull    Pull graph artifact from GHCR
+      imas-codex neo4j load    Load graph dump into database
+      imas-codex neo4j service Manage as systemd user service
     """
     pass
 
@@ -1034,6 +1036,181 @@ def neo4j_load(
 
     click.echo("Graph loaded successfully")
     click.echo("Start Neo4j with: imas-codex neo4j start")
+
+
+@neo4j.command("service")
+@click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
+@click.option(
+    "--image",
+    envvar="NEO4J_IMAGE",
+    default=None,
+    help="Path to Neo4j SIF image (env: NEO4J_IMAGE)",
+)
+@click.option(
+    "--data-dir",
+    envvar="NEO4J_DATA",
+    default=None,
+    help="Data directory (env: NEO4J_DATA)",
+)
+@click.option(
+    "--password",
+    envvar="NEO4J_PASSWORD",
+    default="imas-codex",
+    help="Neo4j password (env: NEO4J_PASSWORD)",
+)
+def neo4j_service(
+    action: str,
+    image: str | None,
+    data_dir: str | None,
+    password: str,
+) -> None:
+    """Manage Neo4j as a systemd user service.
+
+    This creates a persistent user-level systemd service that starts
+    Neo4j on login and survives reboots.
+
+    Examples:
+        # Install and enable the service
+        imas-codex neo4j service install
+
+        # Check service status
+        imas-codex neo4j service status
+
+        # Remove the service
+        imas-codex neo4j service uninstall
+
+    After install, use systemctl to control:
+        systemctl --user start imas-codex-neo4j
+        systemctl --user stop imas-codex-neo4j
+        systemctl --user restart imas-codex-neo4j
+        journalctl --user -u imas-codex-neo4j -f
+    """
+    import platform
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    # Check platform
+    if platform.system() != "Linux":
+        click.echo("Error: systemd services only supported on Linux", err=True)
+        click.echo("On Windows/Mac, use Docker instead:", err=True)
+        click.echo("  docker compose up -d neo4j", err=True)
+        raise SystemExit(1)
+
+    # Check systemctl
+    if not shutil.which("systemctl"):
+        click.echo("Error: systemctl not found", err=True)
+        click.echo("systemd is required for the service command", err=True)
+        raise SystemExit(1)
+
+    # Check apptainer
+    if not shutil.which("apptainer"):
+        click.echo("Error: apptainer not found in PATH", err=True)
+        raise SystemExit(1)
+
+    home = Path.home()
+    service_dir = home / ".config" / "systemd" / "user"
+    service_file = service_dir / "imas-codex-neo4j.service"
+
+    image_path = (
+        Path(image) if image else home / "apptainer" / "neo4j_2025.11-community.sif"
+    )
+    data_path = (
+        Path(data_dir)
+        if data_dir
+        else home / ".local" / "share" / "imas-codex" / "neo4j"
+    )
+    apptainer_path = shutil.which("apptainer")
+
+    if action == "install":
+        if not image_path.exists():
+            click.echo(f"Error: Neo4j image not found at {image_path}", err=True)
+            click.echo(
+                "Pull it with: apptainer pull docker://neo4j:2025.11-community",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        # Create directories
+        service_dir.mkdir(parents=True, exist_ok=True)
+        for subdir in ["data", "logs", "conf", "import"]:
+            (data_path / subdir).mkdir(parents=True, exist_ok=True)
+
+        # Create service file
+        service_content = f"""[Unit]
+Description=Neo4j Graph Database (IMAS Codex)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={apptainer_path} exec \\
+    --bind {data_path}/data:/data \\
+    --bind {data_path}/logs:/logs \\
+    --bind {data_path}/import:/import \\
+    --writable-tmpfs \\
+    --env NEO4J_AUTH=neo4j/{password} \\
+    {image_path} \\
+    neo4j console
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"""
+        service_file.write_text(service_content)
+        click.echo(f"Created {service_file}")
+
+        # Reload and enable
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(
+            ["systemctl", "--user", "enable", "imas-codex-neo4j"], check=True
+        )
+
+        click.echo("Service installed and enabled")
+        click.echo()
+        click.echo("Control the service with:")
+        click.echo("  systemctl --user start imas-codex-neo4j")
+        click.echo("  systemctl --user stop imas-codex-neo4j")
+        click.echo("  systemctl --user status imas-codex-neo4j")
+        click.echo("  journalctl --user -u imas-codex-neo4j -f")
+        click.echo()
+        click.echo("The service will auto-start on login.")
+
+    elif action == "uninstall":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+
+        # Stop and disable
+        subprocess.run(
+            ["systemctl", "--user", "stop", "imas-codex-neo4j"],
+            capture_output=True,
+        )
+        subprocess.run(
+            ["systemctl", "--user", "disable", "imas-codex-neo4j"],
+            capture_output=True,
+        )
+
+        service_file.unlink()
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+        click.echo("Service uninstalled")
+        click.echo("Data remains at:", data_path)
+
+    elif action == "status":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            click.echo("Install with: imas-codex neo4j service install")
+            return
+
+        result = subprocess.run(
+            ["systemctl", "--user", "status", "imas-codex-neo4j"],
+            capture_output=True,
+            text=True,
+        )
+        click.echo(result.stdout)
+        if result.returncode != 0 and result.stderr:
+            click.echo(result.stderr, err=True)
 
 
 # ============================================================================
@@ -1844,11 +2021,13 @@ def release(
 
 @main.group()
 def wiki() -> None:
-    """Ingest wiki documentation from remote facilities.
+    """Discover and ingest wiki documentation from remote facilities.
 
     \b
-      imas-codex wiki discover <facility>  Discover and evaluate wiki pages using agent
-      imas-codex wiki ingest <facility>    Ingest discovered wiki pages
+      imas-codex wiki discover <facility>  Full pipeline: crawl + score
+      imas-codex wiki crawl <facility>     Crawl links only (no LLM)
+      imas-codex wiki score <facility>     Score crawled pages (uses LLM)
+      imas-codex wiki ingest <facility>    Ingest high-score pages
       imas-codex wiki status <facility>    Show ingestion statistics
     """
     pass
@@ -1927,6 +2106,162 @@ def wiki_discover(
             verbose=verbose,
         )
     )
+
+
+@wiki.command("crawl")
+@click.argument("facility")
+@click.option(
+    "--max-pages",
+    default=2000,
+    type=int,
+    help="Maximum pages to crawl (default: 2000)",
+)
+@click.option(
+    "--max-depth",
+    default=10,
+    type=int,
+    help="Maximum link depth from portal (default: 10)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show progress details",
+)
+def wiki_crawl(
+    facility: str,
+    max_pages: int,
+    max_depth: int,
+    verbose: bool,
+) -> None:
+    """Crawl wiki links without scoring (no LLM).
+
+    Fast breadth-first crawl that extracts links and builds
+    the wiki graph structure. Use 'wiki score' afterwards
+    to evaluate pages.
+
+    This is graph-driven: subsequent runs continue from
+    the frontier (pages with status='pending_crawl').
+
+    Examples:
+        # Initial crawl
+        imas-codex wiki crawl epfl
+
+        # Continue previous crawl
+        imas-codex wiki crawl epfl --max-pages 500
+
+        # Shallow crawl
+        imas-codex wiki crawl epfl --max-depth 3
+    """
+    from rich.console import Console
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TaskProgressColumn,
+        TextColumn,
+    )
+
+    from imas_codex.wiki.discovery import WikiDiscovery
+
+    console = Console()
+    discovery = WikiDiscovery(
+        facility=facility,
+        max_pages=max_pages,
+        max_depth=max_depth,
+        verbose=verbose,
+    )
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=console,
+        ) as progress:
+            crawled = discovery.phase1_crawl(progress)
+
+        console.print(f"\n[green]Crawled {crawled} pages[/green]")
+        console.print(f"Links found: {discovery.stats.links_found}")
+        console.print(f"Max depth: {discovery.stats.max_depth_reached}")
+        console.print(f"Frontier: {discovery.stats.frontier_size} pages pending")
+        console.print("\nRun 'imas-codex wiki score epfl' to evaluate pages")
+    finally:
+        discovery.close()
+
+
+@wiki.command("score")
+@click.argument("facility")
+@click.option(
+    "--limit",
+    "-n",
+    default=750,
+    type=int,
+    help="Maximum pages to score per run (default: 750)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=5.0,
+    type=float,
+    help="Maximum cost budget in USD (default: 5.0)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show agent reasoning",
+)
+def wiki_score(
+    facility: str,
+    limit: int,
+    cost_limit: float,
+    verbose: bool,
+) -> None:
+    """Score crawled wiki pages using ReAct agent.
+
+    Evaluates pages based on graph metrics (in_degree, out_degree,
+    link_depth) and assigns interest_score (0.0-1.0).
+
+    Uses the scoring model from pyproject.toml (default: Claude Sonnet 4.5).
+
+    Examples:
+        # Score all crawled pages
+        imas-codex wiki score epfl
+
+        # Score with verbose agent output
+        imas-codex wiki score epfl -v
+
+        # Limit cost
+        imas-codex wiki score epfl --cost-limit 2.0
+    """
+    import asyncio
+
+    from rich.console import Console
+
+    from imas_codex.wiki.discovery import WikiDiscovery
+
+    console = Console()
+    discovery = WikiDiscovery(
+        facility=facility,
+        cost_limit_usd=cost_limit,
+        max_pages=limit,
+        verbose=verbose,
+    )
+
+    try:
+        console.print(f"[bold]Scoring wiki pages: {facility}[/bold]")
+        console.print(f"Cost limit: ${cost_limit:.2f}")
+
+        scored = asyncio.run(discovery.phase2_score())
+
+        console.print(f"\n[green]Scored {scored} pages[/green]")
+        console.print(f"High score (≥0.7): {discovery.stats.high_score_count}")
+        console.print(f"Low score (<0.3): {discovery.stats.low_score_count}")
+        console.print("\nRun 'imas-codex wiki ingest epfl' to fetch content")
+    finally:
+        discovery.close()
 
 
 @wiki.command("ingest")
