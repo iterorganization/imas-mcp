@@ -269,6 +269,8 @@ enums:
     permissible_values:
       crawled:
         description: Page discovered and links extracted during crawl phase
+      skipped:
+        description: Page intentionally not crawled (external, filtered, or low priority)
       scored:
         description: Page has been evaluated by scoring agent (interest_score set)
       ingested:
