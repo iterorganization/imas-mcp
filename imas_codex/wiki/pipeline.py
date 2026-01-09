@@ -67,7 +67,7 @@ class PageIngestionStats(TypedDict):
 def get_pending_wiki_pages(
     facility_id: str,
     limit: int | None = None,
-    min_interest_score: float = 0.0,
+    min_interest_score: float = 0.5,
 ) -> list[dict]:
     """Get wiki pages pending ingestion from the graph.
 
@@ -146,7 +146,7 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
 def get_pending_wiki_artifacts(
     facility_id: str,
     limit: int | None = None,
-    min_interest_score: float = 0.0,
+    min_interest_score: float = 0.5,
 ) -> list[dict]:
     """Get wiki artifacts pending ingestion from the graph.
 
@@ -944,7 +944,7 @@ class WikiIngestionPipeline:
     async def ingest_from_graph(
         self,
         limit: int | None = None,
-        min_interest_score: float = 0.0,
+        min_interest_score: float = 0.5,
         progress_callback: ProgressCallback | None = None,
         rate_limit: float = 0.5,
     ) -> dict[str, int]:
@@ -1365,7 +1365,7 @@ class WikiArtifactPipeline:
     async def ingest_from_graph(
         self,
         limit: int | None = None,
-        min_interest_score: float = 0.0,
+        min_interest_score: float = 0.5,
     ) -> dict[str, int]:
         """Ingest artifacts from the graph queue.
 

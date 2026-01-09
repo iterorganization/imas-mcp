@@ -2272,9 +2272,9 @@ def wiki_score(
 )
 @click.option(
     "--min-score",
-    default=0.0,
+    default=0.5,
     type=float,
-    help="Minimum interest score threshold (default: 0.0)",
+    help="Minimum interest score threshold (default: 0.5)",
 )
 @click.option(
     "--pages",
