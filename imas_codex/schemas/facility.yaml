@@ -264,6 +264,28 @@ enums:
       other:
         description: Other file types
 
+  WikiPageStatus:
+    description: Lifecycle status of a wiki page through the discovery pipeline
+    permissible_values:
+      crawled:
+        description: Page discovered and links extracted during crawl phase
+      scored:
+        description: Page has been evaluated by scoring agent (interest_score set)
+      ingested:
+        description: Page content has been chunked and embedded
+      failed:
+        description: Error occurred during processing
+
+  WikiArtifactStatus:
+    description: Lifecycle status of a wiki artifact
+    permissible_values:
+      discovered:
+        description: Artifact link found during crawl phase
+      scored:
+        description: Artifact has been evaluated by scoring agent
+      skipped:
+        description: Artifact intentionally not processed (low score)
+
 # =============================================================================
 # Core Classes
 # =============================================================================

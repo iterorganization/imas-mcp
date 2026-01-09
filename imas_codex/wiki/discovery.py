@@ -705,26 +705,20 @@ class WikiDiscovery:
                 reasoning = s.get("reasoning", "")
                 skip_reason = s.get("skip_reason")
 
-                # Determine status based on score
-                if score >= 0.5:
-                    status = "discovered"
-                else:
-                    status = "skipped"
-
+                # All scored pages get status='scored', interest_score distinguishes value
                 gc.query(
                     """
                     MATCH (wp:WikiPage {id: $id})
                     SET wp.interest_score = $score,
                         wp.score_reasoning = $reasoning,
                         wp.skip_reason = $skip_reason,
-                        wp.status = $status,
+                        wp.status = 'scored',
                         wp.scored_at = datetime()
                     """,
                     id=page_id,
                     score=score,
                     reasoning=reasoning,
                     skip_reason=skip_reason,
-                    status=status,
                 )
                 updated += 1
 
@@ -930,7 +924,7 @@ class WikiDiscovery:
             """
             MATCH (wp:WikiPage {facility_id: $facility_id})
             WITH wp,
-                 CASE WHEN wp.status IN ['discovered', 'skipped'] THEN 1 ELSE 0 END AS scored,
+                 CASE WHEN wp.status = 'scored' THEN 1 ELSE 0 END AS scored,
                  CASE WHEN wp.interest_score >= 0.7 THEN 1 ELSE 0 END AS high,
                  CASE WHEN wp.interest_score IS NOT NULL AND wp.interest_score < 0.3 THEN 1 ELSE 0 END AS low
             RETURN count(*) AS total_pages,
