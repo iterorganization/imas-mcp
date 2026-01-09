@@ -1028,8 +1028,8 @@ For each page, compute interest_score (0.0-1.0) based on:
 Call update_page_scores with ALL pages in a single call.
 Provide reasoning for each score."""
 
-            batch_high = 0
-            batch_low = 0
+            batch_high = self.stats.high_score_count
+            batch_low = self.stats.low_score_count
             batch_scored = 0
 
             try:
