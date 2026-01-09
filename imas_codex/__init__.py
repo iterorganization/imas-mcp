@@ -4,8 +4,14 @@ IMAS Codex Server - A server providing Model Context Protocol (MCP) access to IM
 
 import importlib.metadata
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
+
+# Suppress third-party deprecation warnings early, before any imports
+# These are upstream issues in Pydantic, LlamaIndex, and Neo4j that we cannot fix
+warnings.simplefilter("ignore", DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 
 
 @lru_cache(maxsize=1)

@@ -2168,7 +2168,7 @@ def wiki_crawl(
     )
 
     try:
-        with CrawlProgressMonitor() as monitor:
+        with CrawlProgressMonitor(facility=facility) as monitor:
             discovery.phase1_crawl(monitor)
 
         console.print(f"  Links found: {discovery.stats.links_found}")
@@ -2250,7 +2250,7 @@ def wiki_score(
     )
 
     try:
-        with ScoreProgressMonitor(cost_limit=cost_limit) as monitor:
+        with ScoreProgressMonitor(cost_limit=cost_limit, facility=facility) as monitor:
             scored = asyncio.run(
                 discovery.phase2_score(monitor=monitor, batch_size=batch_size)
             )

@@ -401,8 +401,9 @@ class CrawlProgressMonitor:
                 monitor.update(page, links_found=len(links), depth=depth)
     """
 
-    def __init__(self):
+    def __init__(self, facility: str = "wiki"):
         self.stats = CrawlStats()
+        self.facility = facility
         self._live = None
         self._console = None
 
@@ -473,7 +474,7 @@ class CrawlProgressMonitor:
         # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
-            TextColumn("[bold cyan]Crawling wiki"),
+            TextColumn(f"[bold cyan]Crawling {self.facility} wiki"),
             BarColumn(bar_width=40),
             TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,
@@ -616,8 +617,11 @@ class ScoreProgressMonitor:
                 monitor.update(page=page, score=score, cost=0.01)
     """
 
-    def __init__(self, total: int = 0, cost_limit: float = 20.0):
+    def __init__(
+        self, total: int = 0, cost_limit: float = 20.0, facility: str = "wiki"
+    ):
         self.stats = ScoreStats(total_pages=total, cost_limit_usd=cost_limit)
+        self.facility = facility
         self._live = None
         self._console = None
 
@@ -704,7 +708,7 @@ class ScoreProgressMonitor:
         # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
-            TextColumn("[bold cyan]Scoring pages"),
+            TextColumn(f"[bold cyan]Scoring {self.facility} wiki"),
             BarColumn(bar_width=40),
             TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,
