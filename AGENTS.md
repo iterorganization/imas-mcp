@@ -560,6 +560,23 @@ SSH directly using host aliases from `~/.ssh/config`:
 ssh epfl "which python3; python3 --version; pip list | head"
 ```
 
+### EPFL Wiki Access
+
+The EPFL SPC wiki requires SSL certificate skip due to missing CA bundle on the cluster:
+
+```bash
+# Always use -k (insecure) flag when accessing wiki from EPFL
+ssh epfl 'curl -skL "https://spcwiki.epfl.ch/wiki/PageName" | grep -oP "(?<=<title>)[^<]+"'
+
+# Fetch page content
+ssh epfl 'curl -skL "https://spcwiki.epfl.ch/wiki/Thomson/DDJ"' > page.html
+
+# Check if page exists
+ssh epfl 'curl -skI "https://spcwiki.epfl.ch/wiki/PageName" | head -1'
+```
+
+**Why `-k` is required**: The EPFL cluster's CA bundle (`/etc/pki/tls/certs/ca-bundle.crt`) doesn't include the wiki's certificate chain, causing `SSL certificate problem: unable to get local issuer certificate`.
+
 ### Exploration Persistence Checklist
 
 **After every exploration session, persist ALL discoveries:**
