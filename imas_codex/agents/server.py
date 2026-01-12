@@ -2,9 +2,15 @@
 Agents MCP Server - Tools for LLM-driven facility exploration.
 
 This server provides MCP tools for:
+- python: Persistent Python REPL with graph utilities (keyword + semantic search)
 - Executing Cypher queries (READ ONLY - mutations blocked)
 - Ingesting validated nodes to the knowledge graph (private fields filtered)
 - Reading/updating sensitive private facility files
+
+The python() tool provides a persistent REPL that:
+- Loads embedding model once (~21s first call, instant after)
+- Pre-loads: gc, query(), semantic_search(), embed(), ssh()
+- Maintains variable state between calls
 
 Note: IMAS DD tools are NOT included to keep startup fast (~2s vs ~40s).
 Use the separate IMAS server (imas-codex serve imas) for DD search.
@@ -12,8 +18,11 @@ Use the separate IMAS server (imas-codex serve imas) for DD search.
 Local use only - provides read access to graph, write via ingest_nodes only.
 """
 
+import io
 import logging
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC
 from typing import Any, Literal
@@ -114,18 +123,116 @@ def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> Commented
     return base
 
 
+# =============================================================================
+# Persistent Python REPL
+# =============================================================================
+
+_repl_globals: dict[str, Any] | None = None
+
+
+def _get_repl() -> dict[str, Any]:
+    """Get or initialize the persistent REPL environment.
+
+    First call loads the embedding model (~21s), subsequent calls are instant.
+    Pre-loaded utilities:
+    - gc: GraphClient (persistent connection)
+    - embed_model: HuggingFace embedding model for vector search
+    - ssh(cmd, facility): Run SSH commands on remote facilities
+    - query(cypher, **params): Shorthand for gc.query()
+    - semantic_search(text, index, k): Vector similarity search
+    - embed(text): Get embedding vector for text
+    """
+    global _repl_globals
+    if _repl_globals is None:
+        logger.info("Initializing Python REPL (loading embedding model...)")
+
+        from imas_codex.code_examples.pipeline import get_embed_model
+        from imas_codex.graph import GraphClient
+
+        gc = GraphClient()
+        embed_model = get_embed_model()
+
+        def ssh(cmd: str, facility: str = "epfl", timeout: int = 60) -> str:
+            """Run SSH command on remote facility."""
+            result = subprocess.run(
+                ["ssh", facility, cmd],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            output = result.stdout
+            if result.stderr:
+                output += f"\n[stderr]: {result.stderr}"
+            return output.strip() or "(no output)"
+
+        def query(cypher: str, **params: Any) -> list[dict[str, Any]]:
+            """Execute Cypher query and return results."""
+            return gc.query(cypher, **params)
+
+        def embed(text: str) -> list[float]:
+            """Get embedding vector for text."""
+            return embed_model.get_text_embedding(text)
+
+        def semantic_search(
+            text: str,
+            index: str = "imas_path_embedding",
+            k: int = 5,
+        ) -> list[dict[str, Any]]:
+            """Vector similarity search on graph embeddings.
+
+            Args:
+                text: Query text to embed and search
+                index: Vector index name (imas_path_embedding, code_chunk_embedding,
+                       wiki_chunk_embedding, cluster_centroid)
+                k: Number of results to return
+
+            Returns:
+                List of {node: ..., score: float} dicts
+            """
+            embedding = embed_model.get_text_embedding(text)
+            return gc.query(
+                f'CALL db.index.vector.queryNodes("{index}", $k, $embedding) '
+                "YIELD node, score RETURN node, score ORDER BY score DESC",
+                k=k,
+                embedding=embedding,
+            )
+
+        _repl_globals = {
+            # Pre-loaded utilities
+            "gc": gc,
+            "embed_model": embed_model,
+            "ssh": ssh,
+            "query": query,
+            "embed": embed,
+            "semantic_search": semantic_search,
+            # Standard library
+            "subprocess": subprocess,
+            # Result storage
+            "_": None,  # Last expression result
+        }
+        logger.info("Python REPL initialized with graph utilities")
+
+    return _repl_globals
+
+
 @dataclass
 class AgentsServer:
     """
     MCP server for facility exploration and knowledge graph management.
 
     Provides tools for:
+    - python: Persistent Python REPL with pre-loaded graph utilities
     - cypher: Execute Cypher queries (read any, write only _Discovery)
     - ingest_nodes: Schema-validated node creation (single or batch)
     - read_infrastructure: Read sensitive infrastructure files
     - update_infrastructure: Merge updates to infrastructure files
     - get_graph_schema: Get complete schema for Cypher generation
     - get_facilities: List available facilities with SSH hosts
+
+    The python() tool provides a persistent REPL with:
+    - gc: GraphClient, query(): Cypher queries
+    - embed_model, embed(), semantic_search(): Vector search
+    - ssh(): Remote facility commands
 
     Note: IMAS DD tools are NOT included here to keep startup fast (~2s vs ~40s).
     Use the separate IMAS server (imas-codex serve imas) for DD search.
@@ -1411,6 +1518,82 @@ class AgentsServer:
                 raise RuntimeError(
                     f"Failed to checkpoint: {_neo4j_error_message(e)}"
                 ) from e
+
+        @self.mcp.tool()
+        def python(code: str) -> str:
+            """
+            Execute Python code in a persistent REPL with pre-loaded graph utilities.
+
+            The REPL maintains state between calls - variables persist, and the
+            embedding model is loaded only once (~21s first call, instant after).
+
+            Pre-loaded utilities:
+            - gc: GraphClient (persistent Neo4j connection)
+            - embed_model: HuggingFace embedding model
+            - query(cypher, **params): Execute Cypher, return list of dicts
+            - ssh(cmd, facility="epfl", timeout=60): Run SSH command
+            - embed(text): Get embedding vector for text
+            - semantic_search(text, index="imas_path_embedding", k=5): Vector search
+
+            Available vector indexes:
+            - imas_path_embedding: IMAS Data Dictionary paths (61k)
+            - code_chunk_embedding: Code examples (8.5k chunks)
+            - wiki_chunk_embedding: Wiki documentation (25k chunks)
+            - cluster_centroid: Semantic clusters
+
+            Args:
+                code: Python code to execute (multi-line supported)
+
+            Returns:
+                stdout output, or repr of last expression if no print
+
+            Examples:
+                # Keyword search (instant)
+                python("result = query('MATCH (t:TreeNode) WHERE t.path CONTAINS \"LIUQE\" RETURN t.path LIMIT 5')")
+                python("for r in result: print(r['t.path'])")
+
+                # Semantic search (first call loads model ~21s, then instant)
+                python("hits = semantic_search('plasma current equilibrium')")
+                python("for h in hits: print(f'{h[\"score\"]:.3f} {h[\"node\"][\"id\"]}')")
+
+                # SSH to facility
+                python("print(ssh('ls /home/codes/liuqe'))")
+
+                # Variables persist between calls
+                python("x = 42")
+                python("print(x * 2)")  # prints 84
+            """
+            repl = _get_repl()
+
+            # Capture stdout
+            stdout_capture = io.StringIO()
+            old_stdout = sys.stdout
+
+            try:
+                sys.stdout = stdout_capture
+
+                # Try to eval as expression first (for REPL-like behavior)
+                try:
+                    result = eval(code, repl)
+                    if result is not None:
+                        repl["_"] = result
+                        print(repr(result))
+                except SyntaxError:
+                    # Not an expression, exec as statements
+                    exec(code, repl)
+
+                output = stdout_capture.getvalue()
+                return output if output else "(no output)"
+
+            except Exception as e:
+                # Include traceback for debugging
+                import traceback
+
+                tb = traceback.format_exc()
+                return f"Error: {e}\n\n{tb}"
+
+            finally:
+                sys.stdout = old_stdout
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files."""
