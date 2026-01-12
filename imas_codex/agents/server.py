@@ -1541,6 +1541,14 @@ class AgentsServer:
             - wiki_chunk_embedding: Wiki documentation (25k chunks)
             - cluster_centroid: Semantic clusters
 
+            IMPORTANT: Use this tool for computation and data retrieval only.
+            Do NOT use print() to format text for display - write formatted text
+            directly in your response instead. Reserve this tool for:
+            - Graph queries and data extraction
+            - SSH commands to remote facilities
+            - Semantic search over embeddings
+            - Complex calculations or data transformations
+
             Args:
                 code: Python code to execute (multi-line supported)
 
