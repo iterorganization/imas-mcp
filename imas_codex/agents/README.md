@@ -2,12 +2,55 @@
 
 The `imas_codex.agents` module provides two complementary agent systems:
 
-1. **MCP Server** (`AgentsServer`) - Tool-based exploration via Model Context Protocol
+1. **MCP Server** (`AgentsServer`) - REPL-first exploration via Model Context Protocol
 2. **LlamaIndex ReActAgents** - Autonomous agents with tool-use capabilities
 
 ## Quick Start
 
-### CLI Usage
+### MCP Server (Primary Interface)
+
+The MCP server provides **4 core tools** with a Python REPL as the primary interface:
+
+```bash
+# Start the agents server
+imas-codex serve agents
+```
+
+**Core Tools:**
+
+| Tool | Purpose |
+|------|---------|
+| `python` | Persistent REPL with pre-loaded utilities (primary interface) |
+| `get_graph_schema` | Schema introspection for Cypher query generation |
+| `ingest_nodes` | Schema-validated node creation with privacy filtering |
+| `private` | Read/update sensitive infrastructure files |
+
+The `python()` REPL includes rich pre-loaded utilities:
+
+**Graph:**
+- `query(cypher, **params)` - Execute Cypher, return list of dicts
+- `semantic_search(text, index, k)` - Vector similarity search
+- `embed(text)` - Get 384-dim embedding vector
+
+**Remote:**
+- `ssh(cmd, facility, timeout)` - Run SSH command on remote facility
+
+**Facility:**
+- `get_facility(facility)` - Comprehensive facility info + graph state
+- `get_exploration_targets(facility, limit)` - Prioritized work items
+- `get_tree_structure(tree, prefix, limit)` - TreeNode hierarchy
+
+**Code Search:**
+- `search_code(query, top_k, facility, min_score)` - Semantic code search
+
+**IMAS Data Dictionary:**
+- `search_imas(query, ids_filter, max_results)` - Semantic DD search
+- `fetch_imas(paths)` - Full documentation for paths
+- `list_imas(paths, leaf_only, max_paths)` - List IDS structure
+- `check_imas(paths)` - Validate path existence
+- `get_imas_overview(query)` - High-level DD summary
+
+### CLI Agent Usage
 
 ```bash
 # Run a quick agent task
@@ -42,6 +85,49 @@ agent = get_enrichment_agent(verbose=True)
 result = await run_agent(agent, "Analyze this path...")
 ```
 
+## MCP Server REPL Examples
+
+The `python()` tool is the primary interface. Examples:
+
+```python
+# Graph query
+python("paths = query('MATCH (t:TreeNode) RETURN t.path LIMIT 5')")
+
+# Semantic search on code
+python("hits = semantic_search('plasma current', 'code_chunk_embedding', 3)")
+
+# SSH command
+python("print(ssh('ls /home/codes | head -5'))")
+
+# IMAS search
+python("print(search_imas('electron temperature profile'))")
+
+# Facility info
+python("info = get_facility('epfl'); print(info['graph_summary'])")
+
+# Variables persist between calls
+python("x = 42")
+python("print(x * 2)")  # prints 84
+
+# Complex multi-step workflow
+python("""
+paths = query('MATCH (t:TreeNode {tree_name: \"results\"}) RETURN t.path LIMIT 10')
+for p in paths:
+    print(p['t.path'])
+""")
+```
+
+## Vector Indexes
+
+Available for `semantic_search()`:
+
+| Index | Content | Size |
+|-------|---------|------|
+| `imas_path_embedding` | IMAS Data Dictionary paths | 61k |
+| `code_chunk_embedding` | Code examples | 8.5k |
+| `wiki_chunk_embedding` | Wiki documentation | 25k |
+| `cluster_centroid` | Semantic clusters | ~500 |
+
 ## Agent Types
 
 | Agent | Use Case | System Prompt Focus |
@@ -50,25 +136,17 @@ result = await run_agent(agent, "Analyze this path...")
 | **Mapping** | IMAS ↔ MDSplus discovery | Semantic equivalence, unit compatibility |
 | **Exploration** | Facility exploration | Systematic discovery, graph persistence |
 
-## Available Tools
+## LlamaIndex Tools
 
-Agents use `get_exploration_tools()` by default for fast startup:
-
-| Tool | Description |
-|------|-------------|
-| `query_neo4j` | Execute Cypher queries on the knowledge graph |
-| `ssh_mdsplus_query` | Query MDSplus database via SSH for node metadata |
-| `ssh_command` | Execute arbitrary SSH commands on remote facilities |
-| `search_code_examples` | Find usage patterns in ingested code |
-| `get_tree_structure` | View TreeNode hierarchy from the graph |
-
-### IMAS DD Tools (Optional)
-
-IMAS DD tools have ~30s startup cost for embedding model loading.
-Add them explicitly if needed:
+For ReActAgents (not MCP server), use `tools.py`:
 
 ```python
-from imas_codex.agents import get_exploration_tools, get_imas_tools
+from imas_codex.agents.tools import (
+    get_exploration_tools,  # Fast startup
+    get_imas_tools,         # IMAS DD tools (~30s startup)
+    get_wiki_tools,         # Wiki search
+    get_enrichment_tools,   # Optimized for enrichment
+)
 
 # Fast agents (default)
 tools = get_exploration_tools()
@@ -77,20 +155,11 @@ tools = get_exploration_tools()
 tools = get_exploration_tools() + get_imas_tools()
 ```
 
-| IMAS Tool | Description |
-|-----------|-------------|
-| `search_imas_paths` | Search IMAS Data Dictionary semantically |
-| `check_imas_paths` | Fast path validation |
-| `fetch_imas_paths` | Full path documentation |
-| `list_imas_paths` | Structure exploration |
-| `get_imas_overview` | High-level DD summary |
-| `search_imas_clusters` | Find related paths |
-
 ## Configuration
 
 ### LLM Setup
 
-Agents use OpenRouter for LLM access. Configure via environment:
+Agents use OpenRouter for LLM access:
 
 ```bash
 # Required: OpenRouter API key (in .env)
@@ -111,153 +180,28 @@ llm = get_llm(model=MODELS["gemini-pro"])
 llm = get_llm(model="anthropic/claude-sonnet-4")
 ```
 
-Available presets in `MODELS`:
-- `gemini-flash` - google/gemini-3-flash-preview (default)
-- `gemini-2.5-flash` - google/gemini-2.5-flash
-- `gemini-pro` - google/gemini-2.5-pro-preview
-- `claude-sonnet` - anthropic/claude-sonnet-4
-- `gpt-4o` - openai/gpt-4o
-
 ## Architecture
 
 ```
 imas_codex/agents/
 ├── __init__.py      # Public API exports
 ├── llm.py           # OpenRouter LLM configuration
-├── tools.py         # Reusable FunctionTools
+├── tools.py         # LlamaIndex FunctionTools
 ├── react.py         # ReActAgent configurations
-├── server.py        # MCP server (AgentsServer)
+├── server.py        # MCP server with 4 core tools
 ├── prompt_loader.py # Prompt template loading
-└── prompts/         # System prompts (YAML)
+└── prompts/         # System prompts (markdown)
 ```
 
 ### MCP Server vs ReActAgents
 
 | Feature | MCP Server | ReActAgents |
 |---------|------------|-------------|
+| Interface | `python()` REPL | Multi-step reasoning |
 | Orchestration | External (Claude, Copilot) | Self (LlamaIndex) |
-| Tool calls | One at a time | Multi-step reasoning |
-| State | Stateless | Conversation context |
+| Tool calls | Code generation | Function calls |
+| State | Persistent REPL | Conversation context |
 | Use case | Interactive exploration | Batch processing |
-
-## Examples
-
-### Enrichment Agent
-
-```python
-from imas_codex.agents import get_enrichment_agent, run_agent
-
-agent = get_enrichment_agent(verbose=True)
-
-result = await run_agent(agent, """
-Analyze the TreeNode path \\RESULTS::LIUQE.
-
-1. Query the graph for existing metadata
-2. Search code examples for usage patterns  
-3. Query MDSplus via SSH if needed
-4. Provide a physics description
-""")
-```
-
-### Mapping Agent
-
-```python
-from imas_codex.agents import get_mapping_agent, run_agent
-
-agent = get_mapping_agent()
-
-result = await run_agent(agent, """
-Find IMAS equivalents for these TCV TreeNodes:
-- \\RESULTS::THOMSON:NE (electron density from Thomson)
-- \\RESULTS::LIUQE:IP (plasma current)
-- \\RESULTS::ASTRA:TE (electron temperature profile)
-
-For each, provide:
-- IMAS path
-- Unit compatibility
-- Required transformations
-""")
-```
-
-### Exploration Agent
-
-```python
-from imas_codex.agents import get_exploration_agent, run_agent
-
-agent = get_exploration_agent()
-
-result = await run_agent(agent, """
-Explore the CXRS diagnostic data in TCV:
-1. Find TreeNodes containing 'CXRS' in the graph
-2. List the structure using SSH if needed
-3. Identify which IMAS IDS this maps to
-4. Document key quantities and their units
-""")
-```
-
-### Batch Enrichment
-
-```python
-from imas_codex.agents import batch_enrich_paths
-
-paths = [
-    "\\RESULTS::IBS",
-    "\\RESULTS::ASTRA",
-    "\\RESULTS::LIUQE",
-]
-
-results = await batch_enrich_paths(paths, tree_name="results", verbose=True)
-
-for r in results:
-    print(f"{r.path}: {r.description[:100]}...")
-```
-
-## Extending Agents
-
-### Custom Tools
-
-```python
-from llama_index.core.tools import FunctionTool
-from imas_codex.agents import create_agent, AgentConfig, get_exploration_tools
-
-def my_custom_tool(query: str) -> str:
-    """Custom analysis tool."""
-    return f"Analyzed: {query}"
-
-custom_tool = FunctionTool.from_defaults(
-    fn=my_custom_tool,
-    name="custom_analysis",
-    description="Custom analysis for specific use case",
-)
-
-# Add to standard tools
-tools = get_exploration_tools() + [custom_tool]
-
-config = AgentConfig(
-    name="custom-agent",
-    system_prompt="You are a specialized agent...",
-    tools=tools,
-)
-
-agent = create_agent(config)
-```
-
-### Custom System Prompts
-
-```python
-from imas_codex.agents import AgentConfig, create_agent
-
-config = AgentConfig(
-    name="transport-agent",
-    system_prompt="""You are an expert in tokamak transport physics.
-    Focus on heat and particle transport analysis.
-    Use ASTRA, GENE, and TGLF references when relevant.""",
-    model="google/gemini-3-flash-preview",
-    temperature=0.2,  # Lower for more deterministic output
-)
-
-agent = create_agent(config)
-```
 
 ## Related Documentation
 
