@@ -478,7 +478,7 @@ def _init_repl() -> dict[str, Any]:
                 return f"No IMAS paths found for '{query_text}'"
             output = []
             for hit in result.hits:
-                line = f"{hit.full_path} (score: {hit.score:.2f})"
+                line = f"{hit.path} (score: {hit.score:.2f})"
                 output.append(line)
                 if hit.documentation:
                     output.append(f"  {hit.documentation[:150]}...")
