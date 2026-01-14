@@ -71,7 +71,7 @@ change_detection:
 # Retry settings for failed files
 retry:
   max_attempts: 3
-  backoff_hours: [2, 4, 8]  # exponential backoff
+  backoff_seconds: [5, 30, 120]  # 5s, 30s, 2min then fail
 
 # Scoring dimensions - each file gets a score per dimension
 dimensions:

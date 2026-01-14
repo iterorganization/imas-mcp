@@ -16,6 +16,58 @@ Key innovations:
 - **Tool requirements** as project-level, not facility-specific
 - **Graph-driven workflow** using existing SourceFile/FacilityPath nodes
 
+## Project Phases
+
+### Phase 0: Foundation (Current)
+**Status**: ✅ Complete
+
+- [x] Core MCP server with 4 tools (python, get_graph_schema, ingest_nodes, private)
+- [x] Pattern configuration YAML (`config/patterns/discovery.yaml`)
+- [x] Tool requirements specification (`config/tool_requirements.yaml`)
+- [x] `check_tools()` REPL utility
+- [x] Strategy document with resolved design decisions
+
+### Phase 1: Map Agent (Week 1-2)
+**Status**: 🔄 Next
+
+Implement exhaustive file enumeration without LLM:
+- [ ] `MapAgent` class with fd/rg-based discovery
+- [ ] Fingerprint-based change detection (size+mtime)
+- [ ] Multi-dimensional pattern scoring
+- [ ] SourceFile node creation with dimension scores
+- [ ] CLI: `uv run imas-codex discover epfl`
+
+### Phase 2: Score Agent (Week 2-3)
+**Status**: ⬜ Planned
+
+Implement LLM-driven semantic enrichment:
+- [ ] `ScoreAgent` ReAct loop for file analysis
+- [ ] Batch prioritization with budget tracking
+- [ ] Code summarization and relationship discovery
+- [ ] Quality assessment scoring
+- [ ] CLI: `uv run imas-codex enrich epfl`
+
+### Phase 3: Streaming Ingestion (Week 3-4)
+**Status**: ⬜ Planned
+
+Optimize the ingestion pipeline:
+- [ ] Streaming file fetch via SSH
+- [ ] Tree-sitter parsing for all supported languages
+- [ ] Parallel embedding with batching
+- [ ] CodeChunk node creation
+- [ ] Resume capability for interrupted runs
+
+### Phase 4: Operationalization (Week 5+)
+**Status**: ⬜ Future
+
+Production-ready deployment:
+- [ ] Incremental discovery scheduling (cron)
+- [ ] Monitoring and alerting
+- [ ] Multi-facility support
+- [ ] Documentation and runbooks
+
+---
+
 ## Current State Assessment
 
 ### Graph Entities (EPFL)
@@ -542,7 +594,11 @@ if interest_score > 0.7:
 | C/C++ | ✅ | Full AST |
 | MATLAB | ✅ | Full AST |
 | Julia | ✅ | Full AST |
-| IDL (.pro) | ❌ | Use regex fallback |
+| IDL (.pro) | ❌ | Regex fallback (no tree-sitter grammar exists) |
+
+> **Note on IDL**: Interactive Data Language (IDL/GDL) is widely used in fusion
+> and astronomy but has no tree-sitter grammar. This is a community contribution
+> opportunity - creating `tree-sitter-idl` would benefit many scientific projects.
 
 **Implementation**:
 ```python
@@ -649,9 +705,9 @@ uv run imas-codex discover epfl --incremental
     "next_retry": "2025-01-16T10:30:00Z",
 }
 
-# Retry logic
+# Retry logic - fast backoff in seconds/minutes
 MAX_RETRIES = 3
-BACKOFF_BASE = 2  # hours
+BACKOFF_SECONDS = [5, 30, 120]  # 5s, 30s, 2min
 
 def handle_failure(file: SourceFile, error: Exception):
     file.retry_count += 1
@@ -661,11 +717,12 @@ def handle_failure(file: SourceFile, error: Exception):
         file.status = "failed"
         file.next_retry = None
     else:
-        backoff = BACKOFF_BASE ** file.retry_count
-        file.next_retry = now() + timedelta(hours=backoff)
+        backoff = BACKOFF_SECONDS[file.retry_count - 1]
+        file.next_retry = now() + timedelta(seconds=backoff)
         file.status = "retry_pending"
 
-# Retry schedule: 2h, 4h, 8h, then fail
+# Retry schedule: 5s, 30s, 2min, then mark failed
+# Total time to failure: ~2.5 minutes (not hours)
 ```
 
 **CLI Support**:
