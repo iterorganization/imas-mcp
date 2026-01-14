@@ -12,6 +12,7 @@ The python() REPL is the primary interface, providing:
 - Remote: ssh(), check_tools()
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
+- COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
 - Code: search_code()
 
 REPL state is loaded eagerly on server startup for instant tool response.
@@ -561,6 +562,152 @@ def _init_repl() -> dict[str, Any]:
             return f"Overview error: {e}"
 
     # =========================================================================
+    # COCOS utilities
+    # =========================================================================
+
+    def validate_cocos(
+        declared_cocos: int,
+        psi_axis: float,
+        psi_edge: float,
+        ip: float,
+        b0: float,
+        q: float | None = None,
+        dp_dpsi: float | None = None,
+    ) -> dict[str, Any]:
+        """Validate declared COCOS against physics data.
+
+        Uses Eq. 23 from Sauter & Medvedev paper to check consistency
+        between declared COCOS and equilibrium physics quantities.
+
+        Args:
+            declared_cocos: COCOS value to validate (1-8 or 11-18)
+            psi_axis: Poloidal flux at magnetic axis [Wb]
+            psi_edge: Poloidal flux at plasma edge [Wb]
+            ip: Plasma current [A] (sign matters)
+            b0: Toroidal field at axis [T] (sign matters)
+            q: Safety factor at mid-radius (optional)
+            dp_dpsi: Pressure gradient dp/dψ (optional)
+
+        Returns:
+            Dict with is_consistent, calculated_cocos, confidence, inconsistencies
+
+        Example:
+            validate_cocos(17, psi_axis=0.5, psi_edge=-0.2, ip=-1e6, b0=-5.0, q=3.0)
+        """
+        from imas_codex.cocos import validate_cocos_from_data
+
+        result = validate_cocos_from_data(
+            declared_cocos=declared_cocos,
+            psi_axis=psi_axis,
+            psi_edge=psi_edge,
+            ip=ip,
+            b0=b0,
+            q=q,
+            dp_dpsi=dp_dpsi,
+        )
+        return {
+            "is_consistent": result.is_consistent,
+            "declared_cocos": result.declared_cocos,
+            "calculated_cocos": result.calculated_cocos,
+            "confidence": round(result.confidence, 2),
+            "inconsistencies": result.inconsistencies,
+        }
+
+    def determine_cocos(
+        psi_axis: float,
+        psi_edge: float,
+        ip: float,
+        b0: float,
+        q: float | None = None,
+        dp_dpsi: float | None = None,
+    ) -> dict[str, Any]:
+        """Determine COCOS from equilibrium physics quantities.
+
+        Uses Eq. 23 from Sauter & Medvedev paper to infer COCOS.
+
+        Args:
+            psi_axis: Poloidal flux at magnetic axis [Wb]
+            psi_edge: Poloidal flux at plasma edge [Wb]
+            ip: Plasma current [A] (sign matters)
+            b0: Toroidal field at axis [T] (sign matters)
+            q: Safety factor at mid-radius (optional)
+            dp_dpsi: Pressure gradient dp/dψ (optional)
+
+        Returns:
+            Dict with cocos value and confidence
+
+        Example:
+            determine_cocos(psi_axis=0.5, psi_edge=-0.2, ip=-1e6, b0=-5.0)
+        """
+        from imas_codex.cocos import determine_cocos as _determine_cocos
+
+        cocos, confidence = _determine_cocos(
+            psi_axis=psi_axis,
+            psi_edge=psi_edge,
+            ip=ip,
+            b0=b0,
+            q=q,
+            dp_dpsi=dp_dpsi,
+        )
+        return {"cocos": cocos, "confidence": round(confidence, 2)}
+
+    def cocos_sign_flip_paths(ids_name: str | None = None) -> dict[str, Any]:
+        """Get paths requiring COCOS sign flip between DD3/DD4.
+
+        Args:
+            ids_name: IDS name (e.g., 'equilibrium'). If None, lists all IDS.
+
+        Returns:
+            Dict with IDS name(s) and their sign-flip paths
+
+        Example:
+            cocos_sign_flip_paths('equilibrium')
+            cocos_sign_flip_paths()  # List all IDS with sign flips
+        """
+        from imas_codex.cocos import get_sign_flip_paths, list_ids_with_sign_flips
+
+        if ids_name:
+            paths = get_sign_flip_paths(ids_name)
+            return {"ids": ids_name, "paths": paths, "count": len(paths)}
+        else:
+            ids_list = list_ids_with_sign_flips()
+            return {
+                "ids_with_sign_flips": [
+                    {"ids": ids, "count": len(get_sign_flip_paths(ids))}
+                    for ids in ids_list
+                ],
+                "total_ids": len(ids_list),
+            }
+
+    def cocos_info(cocos_value: int) -> dict[str, Any]:
+        """Get COCOS parameters for a given value.
+
+        Args:
+            cocos_value: COCOS index (1-8 or 11-18)
+
+        Returns:
+            Dict with the four COCOS parameters from Sauter Table I
+
+        Example:
+            cocos_info(17)  # IMAS DD4 / TCV convention
+        """
+        from imas_codex.cocos import KNOWN_CODE_COCOS, VALID_COCOS, cocos_to_parameters
+
+        if cocos_value not in VALID_COCOS:
+            return {"error": f"Invalid COCOS {cocos_value}. Valid: 1-8, 11-18"}
+
+        params = cocos_to_parameters(cocos_value)
+        codes = [code for code, val in KNOWN_CODE_COCOS.items() if val == cocos_value]
+        return {
+            "cocos": cocos_value,
+            "sigma_bp": params.sigma_bp,
+            "e_bp": params.e_bp,
+            "sigma_r_phi_z": params.sigma_r_phi_z,
+            "sigma_rho_theta_phi": params.sigma_rho_theta_phi,
+            "used_by": codes,
+        }
+
+    # =========================================================================
     # Tool checking utilities
     # =========================================================================
 
@@ -677,13 +824,20 @@ def _init_repl() -> dict[str, Any]:
         "list_imas": list_imas,
         "check_imas": check_imas,
         "get_imas_overview": get_imas_overview,
+        # COCOS utilities
+        "validate_cocos": validate_cocos,
+        "determine_cocos": determine_cocos,
+        "cocos_sign_flip_paths": cocos_sign_flip_paths,
+        "cocos_info": cocos_info,
         # Standard library
         "subprocess": subprocess,
         # Result storage
         "_": None,
     }
 
-    logger.info("Python REPL initialized with graph, IMAS, and facility utilities")
+    logger.info(
+        "Python REPL initialized with graph, IMAS, COCOS, and facility utilities"
+    )
     return _repl_globals
 
 
@@ -716,6 +870,7 @@ class AgentsServer:
     - Remote: ssh(), check_tools()
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
     - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
+    - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
     - Code: search_code()
     """
 

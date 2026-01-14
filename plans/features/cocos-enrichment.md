@@ -1,6 +1,6 @@
 # COCOS Enrichment
 
-> **Status**: Pending  
+> **Status**: In Progress (4/5 items complete)  
 > **Dependencies**: `imas_codex.cocos` module (implemented)
 
 ## Overview
@@ -180,8 +180,8 @@ LLM agents are valuable for **orchestration and interpretation**, not calculatio
 
 ## Success Criteria
 
-- [ ] `path_needs_cocos_transform()` function with tests
-- [ ] `ValidationResult` dataclass and `validate_cocos_from_data()` function
-- [ ] CLI commands: `cocos validate`, `cocos check`
-- [ ] Data loaders for IMAS IDS and EQDSK formats
+- [x] `path_needs_cocos_transform()` function with tests
+- [x] `ValidationResult` dataclass and `validate_cocos_from_data()` function
+- [x] CLI commands: `cocos validate`, `cocos check`
+- [x] Data loaders for IMAS IDS and EQDSK formats
 - [ ] TreeNode enrichment for facilities with COCOS MDSplus nodes
