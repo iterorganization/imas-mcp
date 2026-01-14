@@ -22,13 +22,13 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 | Component | Status | Notes |
 |-----------|--------|-------|
 | MCP Server (python, ingest_nodes, private, get_graph_schema) | ✅ Complete | 4 core tools operational |
-| GraphClient and Cypher query API | ✅ Complete | CALL subqueries for efficient multi-counts |
-| SourceFile queue management | ✅ Complete | 1.8k files tracked with status |
-| Code ingestion pipeline | ✅ Complete | 8.5k CodeChunks embedded |
-| Wiki ingestion pipeline | ✅ Complete | 25k WikiChunks embedded |
+| GraphClient and Cypher query API | ✅ Complete | Schema-driven, CALL subqueries |
+| SourceFile queue management | ✅ Complete | Status tracking, resume capability |
+| Code ingestion pipeline | ✅ Complete | LlamaIndex chunking + embedding |
+| Wiki ingestion pipeline | ✅ Complete | Semantic chunking + embedding |
 | TreeNode enrichment agent | 🔄 Partial | Manual via VS Code chat |
 | Autonomous ReAct agents | ⬜ Planned | Budget controls not yet implemented |
-| Multi-facility support | ⬜ Planned | Only EPFL currently |
+| Multi-facility support | ⬜ Planned | First facility (EPFL) complete |
 
 ## Design Principles
 
@@ -292,13 +292,12 @@ complete:
 
 ## Success Metrics
 
-| Metric | Target | Current |
-|--------|--------|---------|
-| TDI functions ingested | >500 | 21 |
-| TreeNodes ingested | >50,000 | 171,155 ✅ |
-| IMAS mappings discovered | >200 | 0 |
-| Code files queued | >2000 | 1,822 ✅ |
-| CodeChunks embedded | >5000 | 8,586 ✅ |
-| WikiChunks embedded | >10000 | 25,468 ✅ |
-| Agent resume success | >95% | N/A |
-| Multi-facility support | 2+ (JET + EPFL) | 1 (EPFL) |
+| Metric | Target | Notes |
+|--------|--------|-------|
+| TDI functions per facility | >100 | Parsed and linked to TreeNodes |
+| TreeNodes per facility | >10,000 | From tree introspection |
+| IMAS mappings per facility | >200 | With confidence scores |
+| Code files ingested | >1,000 | Per facility |
+| CodeChunks embedded | >5,000 | Per facility |
+| Agent resume success | >95% | Crash recovery |
+| Facilities onboarded | 3+ | EPFL, JET, DIII-D |

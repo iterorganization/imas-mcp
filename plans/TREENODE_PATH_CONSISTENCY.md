@@ -1,29 +1,19 @@
 # TreeNode Path Consistency and TDI Function Integration
 
-> **Status**: Partially Implemented (January 2026)
-> TreeNode ingestion complete (171k nodes). Path normalization and TDI linking pending.
+> **Status**: Schema complete, implementation in progress
+> Applicable to any facility with MDSplus or similar tree-structured data.
 
-## Summary
+## Problem Statement
 
-Investigation revealed two path format patterns in the graph:
-- **Nodes with single backslash**: `\RESULTS::TOP.EQ_RECON.TRACES:I_P` (from MDSplus ingestion script)
-- **Nodes with double backslash**: `\\RESULTS::I_P` (from code extraction pipeline)
+TreeNodes can be discovered from multiple sources, each with different path formats:
+- **Tree introspection**: Physical paths from MDSplus `getNodeWild()`
+- **Code extraction**: Abbreviated paths from source code analysis
+- **TDI parameters**: Logical accessor names (e.g., "I_P", "AMIN")
 
-"Unknown" paths (AMIN, BT, W_MHD, SPLASMA) are **valid TDI function parameters**, not hallucinations:
-- `tcv_get.fun`: 114 computed quantities (AMIN, BT, KAPPA, SPLASMA, etc.)
-- `tcv_eq.fun`: 76 quantities (PSI, I_P, W_MHD, VLOOP_SURF, etc.)
-
-These represent different "views" of the same data:
-- **Direct paths**: Physical tree structure from MDSplus introspection
-- **Accessor paths**: High-level abstractions exposed by TDI functions
-
-## Current Graph State
-
-| Entity | Count | Notes |
-|--------|-------|-------|
-| TreeNode | 171,155 | All from tree introspection |
-| TDIFunction | 21 | Discovered, not yet parsed |
-| ACCESSES relationships | 0 | TDI-to-TreeNode linking pending |
+These represent different "views" of the same data and require:
+1. **Path normalization** for deduplication and matching
+2. **Source tracking** for provenance
+3. **Relationship linking** between accessor and physical paths
 
 ## Proposed Schema Changes
 

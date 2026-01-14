@@ -1,17 +1,27 @@
 # Wiki Ingestion Strategy
 
-> **Status**: Phase 1 Complete, Phase 2 In Progress (2026-01-16)
-> Core pipeline operational with 2.9k WikiPages and 25k WikiChunks ingested.
-> ReAct agent evaluation for quality filtering is next priority.
+> **Status**: Core pipeline complete, quality filtering next priority
+> Applicable to any facility with MediaWiki-based documentation.
 
-## Current State
+## Overview
 
-| Metric | Count | Notes |
-|--------|-------|-------|
-| WikiPage | 2,973 | Pages discovered and scraped |
-| WikiChunk | 25,468 | Content chunks with embeddings |
-| Vector Index | ✅ | `wiki_chunk_embedding` operational |
-| Semantic Search | ✅ | `search_wiki()` tool available |
+Many fusion facilities maintain internal wikis with authoritative documentation about diagnostics, signals, and conventions. This strategy describes how to:
+
+1. **Discover** wiki pages via crawling or portal enumeration
+2. **Evaluate** page value using ReAct agent assessment
+3. **Ingest** high-value content with semantic chunking and embedding
+4. **Link** wiki content to TreeNodes and IMAS paths
+
+## Multi-Facility Applicability
+
+| Facility | Wiki System | Access Method |
+|----------|-------------|---------------|
+| EPFL/TCV | MediaWiki | HTTPS from internal network |
+| JET | Confluence | API or SSH tunnel |
+| DIII-D | MediaWiki | TBD |
+| ITER | Confluence | API |
+
+The pipeline is designed to be wiki-system agnostic with facility-specific scrapers.
 
 ## Problem
 
@@ -616,33 +626,23 @@ Phase 2 - Medium Value (100 pages):
 
 ## Implementation Checklist
 
-### Phase 1: Core Infrastructure ✅ Complete
-1. [x] Add dependencies - `llama-index-readers-web beautifulsoup4 html2text` installed
-2. [x] Verify wiki access - Confirmed accessible from EPFL without auth
-3. [x] Document wiki structure - Key pages and categories identified
-4. [x] Extend schema with `WikiPage` and `WikiChunk` classes
-5. [x] Run `uv run build-models --force` to regenerate Pydantic models  
-6. [x] Implement scraper module `imas_codex/wiki/scraper.py`
-7. [x] Implement pipeline `imas_codex/wiki/pipeline.py`
-8. [x] Add `search_wiki` tool to agents (via `semantic_search()` REPL utility)
-9. [x] Add CLI commands for wiki management (`wiki discover/ingest/status`)
-10. [x] Initial ingestion complete (2.9k pages, 25k chunks)
+### Phase 1: Core Infrastructure ✅
+- [x] Schema with `WikiPage` and `WikiChunk` classes
+- [x] Scraper module with facility-agnostic design
+- [x] LlamaIndex chunking and embedding pipeline
+- [x] CLI commands (`wiki discover/ingest/status`)
+- [x] Vector index for semantic search
 
-### Phase 2: ReAct Agent Scout 🔄 In Progress
-11. [ ] Create wiki scout module `imas_codex/wiki/scout.py`
-    - `fetch_wiki_preview()` - lightweight preview fetching
-    - `PageEvaluation` dataclass
-    - `evaluate_wiki_pages()` - batch evaluation entry point
-12. [ ] Create scout prompt `imas_codex/agents/prompts/wiki-scout.md`
-13. [ ] Add `wiki evaluate` CLI command
-14. [ ] Add `--evaluate` flag to `wiki discover`
-15. [x] Fix duplicate return in pipeline.py (resolved)
+### Phase 2: Quality Filtering 🔄
+- [ ] Wiki scout module with preview fetching
+- [ ] ReAct agent for batch page evaluation
+- [ ] Skip patterns (administrative, stubs, events)
+- [ ] High-value indicators (signal tables, paths)
 
-### Phase 3: Quality Filtering ⬜ Planned
-16. [ ] Re-evaluate existing pages with scout agent
-17. [ ] Mark low-value pages (administrative, stubs) as skipped
-18. [ ] Remove low-value WikiChunks to improve search quality
-19. [ ] Re-run TreeNode enrichment with filtered wiki context
+### Phase 3: Multi-Facility ⬜
+- [ ] Abstract scraper interface
+- [ ] Confluence adapter (for JET, ITER)
+- [ ] Per-facility portal configuration
 
 ## Notes
 

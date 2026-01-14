@@ -236,15 +236,15 @@ We treat the Database as an Artifact.
 - [x] Vector indexes for semantic search (IMAS, code, wiki)
 
 ### Phase 4: Content Ingestion ✅
-- [x] MDSplus tree ingestion (171k TreeNodes for EPFL)
-- [x] Wiki ingestion pipeline (2.9k WikiPages, 25k WikiChunks)
-- [x] Code example pipeline (1.3k CodeExamples, 8.5k CodeChunks)
-- [x] TDI function discovery (21 TDIFunctions)
-- [x] SourceFile queue management (1.8k files tracked)
+- [x] MDSplus tree structure ingestion pipeline
+- [x] Wiki ingestion pipeline with semantic chunking
+- [x] Code example pipeline with LlamaIndex embedding
+- [x] TDI function discovery and parsing
+- [x] SourceFile queue management with status tracking
 
 ### Phase 5: Discovery Automation 🔜 (Current Focus)
-- [x] FacilityPath tracking (65 paths with status)
-- [x] Multi-dimensional pattern scoring
+- [x] FacilityPath tracking with exploration status
+- [x] Multi-dimensional pattern scoring design
 - [ ] MapAgent for exhaustive file enumeration (fd/rg)
 - [ ] ScoreAgent for LLM-driven semantic enrichment
 - [ ] Incremental discovery scheduling

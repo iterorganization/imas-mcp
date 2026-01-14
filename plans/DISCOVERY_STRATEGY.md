@@ -22,24 +22,23 @@ Key innovations:
 **Status**: Complete
 
 - [x] Core MCP server with 4 tools (python, get_graph_schema, ingest_nodes, private)
-- [x] Pattern configuration YAML concept (not yet implemented in files)
-- [x] Tool requirements specification (in AGENTS.md)
-- [x] `check_tools()` REPL utility concept
+- [x] Pattern configuration YAML design
+- [x] Tool requirements specification
 - [x] Strategy document with resolved design decisions
-- [x] CodeChunk pipeline operational (8.5k chunks embedded)
+- [x] CodeChunk embedding pipeline operational
 
-### Phase 1: Map Agent (Weeks 1-2)
+### Phase 1: Map Agent
 **Status**: 🔄 Partially Complete
 
-Exhaustive file enumeration implemented via CLI:
+Exhaustive file enumeration:
 - [x] SourceFile node creation and status tracking
 - [x] CLI: `uv run imas-codex ingest queue/status/run`
 - [x] Pattern-based file discovery via SSH + rg
-- [ ] `MapAgent` class with formal fd/rg pipeline
+- [ ] Formal `MapAgent` class with fd/rg pipeline
 - [ ] Multi-dimensional pattern scoring (config/patterns/*.yaml)
 - [ ] Fingerprint-based change detection (size+mtime)
 
-### Phase 2: Score Agent (Weeks 2-3)
+### Phase 2: Score Agent
 **Status**: ⬜ Planned
 
 LLM-driven semantic enrichment:
@@ -47,82 +46,64 @@ LLM-driven semantic enrichment:
 - [ ] Batch prioritization with budget tracking
 - [ ] Code summarization and relationship discovery
 - [ ] Quality assessment scoring
-- [ ] CLI: `uv run imas-codex enrich epfl`
 
-### Phase 3: Streaming Ingestion (Weeks 3-4)
-**Status**: ✅ Complete (via LlamaIndex pipeline)
+### Phase 3: Streaming Ingestion ✅
+**Status**: Complete
 
 Ingestion pipeline operational:
 - [x] Streaming file fetch via SSH
 - [x] Tree-sitter parsing for Python (other languages via regex)
-- [x] Parallel embedding with batching (8.5k CodeChunks)
+- [x] Parallel embedding with batching
 - [x] CodeChunk node creation with FACILITY_ID relationships
 - [x] Resume capability for interrupted runs
 
-### Phase 4: Operationalization (Week 5+)
+### Phase 4: Multi-Facility Operationalization
 **Status**: ⬜ Future
 
 Production-ready deployment:
 - [ ] Incremental discovery scheduling (cron)
 - [ ] Monitoring and alerting
-- [ ] Multi-facility support (JET, DIII-D)
+- [ ] Second facility onboarding (JET or DIII-D)
 - [ ] Documentation and runbooks
 
 ---
 
-## Current State Assessment
+## Multi-Facility Strategy
 
-> **Last updated**: 2026-01-16 (from live graph queries)
+### Target Facilities
 
-### Graph Entities (EPFL)
+| Facility | Machine | Data System | Status |
+|----------|---------|-------------|--------|
+| EPFL | TCV | MDSplus | ✅ First implementation |
+| JET | JET | PPF + MDSplus | 🔜 Next target |
+| DIII-D | DIII-D | MDSplus | 🔜 Planned |
+| ITER | ITER | IMAS native | 🔜 Future |
 
-| Entity | Count | Notes |
-|--------|-------|-------|
-| FacilityPath | 65 | Directories with exploration metadata |
-| SourceFile | 1,822 | Files queued/processed |
-| CodeExample | 1,017 | Processed files with metadata |
-| CodeChunk | 8,586 | Embedded code chunks (not 0!) |
-| TreeNode | 171,155 | MDSplus tree nodes |
-| WikiPage | 2,973 | Wiki pages ingested |
-| WikiChunk | 25,468 | Wiki content chunks |
-| TDIFunction | 21 | TDI function definitions |
-| MDSplusTree | 29 | MDSplus tree structures |
+### Facility Onboarding Workflow
 
-### FacilityPath Status Distribution
+```
+1. Infrastructure Discovery (1 day)
+   └── SSH access, tool availability, data system detection
 
-| Status | Count | Meaning |
-|--------|-------|---------|
-| ingested | 28 | Fully processed |
-| discovered | 13 | Found, awaiting exploration |
-| excluded | 8 | Intentionally skipped |
-| flagged | 8 | Needs review |
-| scanned | 6 | Pattern search complete |
-| analyzed | 2 | Deep analysis done |
+2. Tree Structure Ingestion (1-2 days)
+   └── MDSplus/PPF tree enumeration, TreeNode creation
 
-### SourceFile Status Distribution
+3. Code Discovery (1 week)
+   └── Map → Score → Ingest pipeline execution
 
-| Status | Count | Meaning |
-|--------|-------|---------|
-| ready | 1,312 | Processing complete |
-| fetching | 460 | Content retrieval in progress |
-| failed | 25 | Error during processing |
-| embedding | 25 | Embedding generation in progress |
+4. Wiki/Documentation (if available)
+   └── Portal discovery, page evaluation, chunk embedding
 
-### Remote Environment (EPFL)
+5. IMAS Mapping (ongoing)
+   └── Semantic search for equivalents, confidence scoring
+```
 
-| Resource | Details |
-|----------|---------|
-| Python | 3.9.25 with pip 21.3.1 |
-| GPU | Not available (no nvidia-smi) |
-| Fast tools | rg 14.1.1, fd 10.2.0, scc 3.4.0, tokei 12.1.2, dust 1.1.1 |
-| Filesystem | ~1035 home directories, ~1960 IMAS/MDSplus files (depth 4) |
+### Facility-Agnostic Design Principles
 
-### Implications
-
-- **Remote embedding not feasible**: No GPU, PyTorch unavailable
-- **Remote chunking possible**: Python 3.9 supports tree-sitter
-- **Fast tools available**: All enumeration can use fd/rg
-- **Scale manageable**: ~2K files per facility is tractable
+1. **No hardcoded paths**: All facility paths in `config/facilities/<facility>.yaml`
+2. **Tool abstraction**: Required tools defined at project level, not per-facility
+3. **Pattern composition**: Base patterns + facility-specific overrides
+4. **Graph isolation**: Each facility in separate FACILITY_ID namespace
 
 ## Phase 1: Map Agent (No LLM)
 
@@ -302,11 +283,11 @@ class MapAgent:
 
 ### Frontier Management
 
-Instead of tracking "explored" directories separately, use FacilityPath nodes:
+Use FacilityPath nodes to track exploration progress:
 
 ```cypher
 -- Get unexplored paths ordered by priority
-MATCH (fp:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: "epfl"})
+MATCH (fp:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
 WHERE fp.status IN ["discovered", "scanned"]
 RETURN fp.path, fp.interest_score
 ORDER BY fp.interest_score DESC
@@ -578,13 +559,6 @@ RETURN
 
 **Decision**: Use **metadata fingerprinting** (size + mtime) for all files, with optional content hashes for high-value files.
 
-**Performance Data** (EPFL):
-| Method | Files | Time | Rate |
-|--------|-------|------|------|
-| md5sum (content) | 500 | 3.6s | 138/sec |
-| stat (size+mtime) | 500 | 2.9s | 172/sec |
-| Full scan (depth 4) | 7561 | 20.7s | 365/sec |
-
 **Implementation**:
 ```python
 # Lightweight fingerprint for all files (fast change detection)
@@ -598,7 +572,7 @@ if interest_score > 0.7:
 **Benefits**:
 - Fast incremental discovery: Compare fingerprints to detect changes
 - Content hashes for reproducibility on high-value code
-- ~365 files/sec allows full facility scan in ~1 minute
+- Typical facility scan completes in ~1 minute
 
 ### 2. Tree-sitter for Parsing ✅
 
