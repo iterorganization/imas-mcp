@@ -11,6 +11,8 @@ The `imas_codex.cocos` module provides utilities for working with tokamak coordi
 - Convert between COCOS representations
 - Validate COCOS consistency against data
 - Map IMAS DD versions to COCOS (3.x→11, 4.x→17)
+- Identify paths requiring sign flips between DD versions
+- Load equilibrium data from IMAS IDS or EQDSK files
 
 ## COCOS Fundamentals
 
@@ -38,6 +40,32 @@ COCOS is a single integer (1-8 or 11-18) encoding four parameters:
 | IMAS DD v4.x | 17 | DD version change |
 | ORB5 | 3 | Sauter paper |
 
+## MCP Tool Access
+
+COCOS utilities are available in the Agents MCP server python() REPL:
+
+```python
+# Validate declared COCOS against physics data
+validate_cocos(17, psi_axis=0.5, psi_edge=-0.2, ip=-1e6, b0=-5.0, q=3.0)
+# Returns: {'is_consistent': True, 'calculated_cocos': 17, 'confidence': 0.7, ...}
+
+# Determine COCOS from equilibrium quantities
+determine_cocos(psi_axis=0.5, psi_edge=-0.2, ip=-1e6, b0=-5.0)
+# Returns: {'cocos': 17, 'confidence': 0.6}
+
+# Get paths requiring sign flip between DD3/DD4
+cocos_sign_flip_paths('equilibrium')
+# Returns: {'ids': 'equilibrium', 'paths': ['time_slice/boundary/psi', ...], 'count': 3}
+
+# List all IDS with sign-flip paths
+cocos_sign_flip_paths()
+# Returns: {'ids_with_sign_flips': [{'ids': 'equilibrium', 'count': 3}, ...], 'total_ids': 22}
+
+# Get COCOS parameters from Sauter Table I
+cocos_info(17)
+# Returns: {'cocos': 17, 'sigma_bp': -1, 'e_bp': 1, 'sigma_r_phi_z': 1, ...}
+```
+
 ## API Reference
 
 ### Core Functions
@@ -45,6 +73,7 @@ COCOS is a single integer (1-8 or 11-18) encoding four parameters:
 ```python
 from imas_codex.cocos import (
     VALID_COCOS,           # frozenset of valid values {1-8, 11-18}
+    KNOWN_CODE_COCOS,      # dict mapping code names to COCOS
     COCOSParameters,       # Dataclass with 4 parameters
     ValidationResult,      # Result of COCOS validation
     cocos_to_parameters,   # int → COCOSParameters
@@ -53,6 +82,45 @@ from imas_codex.cocos import (
     validate_cocos_consistency,  # Check COCOS against data → list[str]
     validate_cocos_from_data,    # Full validation → ValidationResult
 )
+```
+
+### Path Transforms
+
+```python
+from imas_codex.cocos import (
+    path_needs_cocos_transform,  # Check if path needs DD3→DD4 sign flip
+    get_sign_flip_paths,         # Get all sign-flip paths for an IDS
+    list_ids_with_sign_flips,    # List IDS names with sign-flip paths
+)
+
+# Check if specific path needs sign flip
+path_needs_cocos_transform("equilibrium", "time_slice/boundary/psi")  # True
+
+# Get all sign-flip paths for an IDS
+get_sign_flip_paths("equilibrium")
+# ['time_slice/boundary/psi', 'time_slice/ggd/psi/values', ...]
+```
+
+### Data Loaders
+
+```python
+from imas_codex.cocos import (
+    EquilibriumData,       # Dataclass for physics quantities
+    load_from_imas_ids,    # Load from IMAS IDS object
+    load_from_eqdsk,       # Load from G-EQDSK file
+)
+
+# Load from EQDSK file
+data = load_from_eqdsk("g012345.00100")
+cocos, conf = determine_cocos(
+    psi_axis=data.psi_axis,
+    psi_edge=data.psi_edge,
+    ip=data.ip,
+    b0=data.b0,
+)
+
+# Load from IMAS IDS
+data = load_from_imas_ids(equilibrium_ids)
 ```
 
 ### Determining COCOS from Data
@@ -148,6 +216,12 @@ MATCH (ac:AnalysisCode)
 WHERE ac.cocos_native IS NOT NULL
 RETURN ac.name, ac.cocos_native, ac.cocos_determination
 ```
+
+## Future Work
+
+**TreeNode COCOS enrichment**: Facilities with COCOS stored in MDSplus nodes 
+(e.g., `\RESULTS::*.COCOS`) could have their TreeNodes enriched with COCOS 
+metadata. This would require facility-specific MDSplus data access.
 
 ## References
 
