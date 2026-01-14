@@ -265,6 +265,7 @@ git checkout -- .  # Discard any remaining changes
 ```
 imas_codex/
 ├── agents/         # MCP server for exploration prompts
+├── cocos/          # COCOS coordinate convention identification
 ├── config/         # Facility and core configuration (YAML)
 ├── core/           # Data models, XML parsing, physics domains
 ├── discovery/      # Facility config loading
