@@ -9,7 +9,7 @@ This server provides 4 core MCP tools:
 
 The python() REPL is the primary interface, providing:
 - Graph: query(), semantic_search(), embed()
-- Remote: ssh()
+- Remote: ssh(), check_tools()
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - Code: search_code()
@@ -561,6 +561,98 @@ def _init_repl() -> dict[str, Any]:
             return f"Overview error: {e}"
 
     # =========================================================================
+    # Tool checking utilities
+    # =========================================================================
+
+    def check_tools(facility: str = "epfl") -> dict[str, Any]:
+        """Check availability and versions of required tools on remote facility.
+
+        Args:
+            facility: SSH host alias (default: 'epfl')
+
+        Returns:
+            Dict with tool availability, versions, and overall status
+
+        Example:
+            check_tools('epfl')
+            # Returns: {'fd': {'available': True, 'version': '10.2.0', ...}, ...}
+        """
+        from pathlib import Path
+
+        import yaml
+
+        # Load tool requirements from config
+        config_path = Path(__file__).parent.parent / "config" / "tool_requirements.yaml"
+        try:
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+        except FileNotFoundError:
+            return {"error": f"Tool requirements not found: {config_path}"}
+
+        results: dict[str, Any] = {"facility": facility, "tools": {}}
+
+        # Check required tools
+        all_ok = True
+        for tool in config.get("required_tools", []):
+            name = tool["name"]
+            min_version = tool.get("min_version", "0.0.0")
+            version_cmd = tool.get("version_command", f"{name} --version")
+
+            # Check ~/bin first, then PATH
+            try:
+                output = ssh(
+                    f"~/bin/{name} --version 2>/dev/null || {version_cmd}", facility
+                )
+                version = output.strip().split("\n")[0] if output else ""
+                # Extract version number (handle various formats)
+                import re
+
+                version_match = re.search(r"(\d+\.\d+\.?\d*)", version)
+                version_str = version_match.group(1) if version_match else version
+                available = bool(version_str)
+            except Exception:
+                available = False
+                version_str = ""
+
+            results["tools"][name] = {
+                "available": available,
+                "version": version_str,
+                "required": min_version,
+                "ok": available,  # TODO: version comparison
+                "purpose": tool.get("purpose", ""),
+            }
+            if not available:
+                all_ok = False
+
+        # Check optional tools
+        for tool in config.get("optional_tools", []):
+            name = tool["name"]
+            version_cmd = tool.get("version_command", f"{name} --version")
+            try:
+                output = ssh(
+                    f"~/bin/{name} --version 2>/dev/null || {version_cmd}", facility
+                )
+                version = output.strip().split("\n")[0] if output else ""
+                import re
+
+                version_match = re.search(r"(\d+\.\d+\.?\d*)", version)
+                version_str = version_match.group(1) if version_match else version
+                available = bool(version_str)
+            except Exception:
+                available = False
+                version_str = ""
+
+            results["tools"][name] = {
+                "available": available,
+                "version": version_str,
+                "optional": True,
+                "purpose": tool.get("purpose", ""),
+            }
+
+        results["all_required_ok"] = all_ok
+        return results
+
+    # =========================================================================
     # Build REPL globals
     # =========================================================================
 
@@ -576,6 +668,7 @@ def _init_repl() -> dict[str, Any]:
         "get_facility": get_facility,
         "get_exploration_targets": get_exploration_targets,
         "get_tree_structure": get_tree_structure,
+        "check_tools": check_tools,
         # Code search
         "search_code": search_code,
         # IMAS DD utilities
@@ -620,7 +713,7 @@ class AgentsServer:
 
     The python() REPL provides access to:
     - Graph: query(), semantic_search(), embed()
-    - Remote: ssh()
+    - Remote: ssh(), check_tools()
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
     - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
     - Code: search_code()
@@ -669,6 +762,7 @@ class AgentsServer:
 
             REMOTE:
             - ssh(cmd, facility="epfl", timeout=60): Run SSH command
+            - check_tools(facility): Check tool availability and versions
 
             FACILITY:
             - get_facility(facility): Comprehensive facility info + graph state
