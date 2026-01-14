@@ -166,6 +166,20 @@ enums:
       normalization:
         description: Normalization convention
 
+  COCOSDetermination:
+    description: >-
+      How a COCOS value was determined. Used for confidence assessment
+      and re-validation workflows.
+    permissible_values:
+      metadata:
+        description: From DD version, file header, or MDSplus node
+      calculated:
+        description: Computed from physics quantities (ψ, q, Ip, B0)
+      documented:
+        description: From code documentation, paper, or wiki
+      asserted:
+        description: User-provided, not verified
+
 # =============================================================================
 # Classes
 # =============================================================================
@@ -192,6 +206,45 @@ classes:
           ISO timestamp when LLM enrichment was performed.
           Enables time-based re-enrichment policies.
         range: datetime
+
+  COCOSMixin:
+    description: >-
+      Mixin providing COCOS-related attributes for entities that handle
+      equilibrium data. Apply to AnalysisCode, TreeNode, or Dataset.
+      
+      Based on Sauter & Medvedev, CPC 184 (2013) 293-302.
+      COCOS values are integers 1-8 (ψ/2π) or 11-18 (full ψ).
+      
+      Many codes support input/output transformation between COCOS.
+      For example, CHEASE internally uses COCOS 2 but can read/write any COCOS.
+    mixin: true
+    class_uri: common:COCOSMixin
+    attributes:
+      cocos_native:
+        description: >-
+          Native COCOS convention used internally by this code.
+          Single value (e.g., 2 for CHEASE, 17 for LIUQE).
+        range: integer
+      cocos_input:
+        description: >-
+          COCOS values this code can accept as input.
+          If auto-transform is supported, may include all 16 values.
+        multivalued: true
+        range: integer
+      cocos_output:
+        description: >-
+          COCOS values this code can produce as output.
+          If auto-transform is supported, may include all 16 values.
+        multivalued: true
+        range: integer
+      cocos_determination:
+        description: How the COCOS value was determined
+        range: COCOSDetermination
+      cocos_confidence:
+        description: >-
+          Confidence in COCOS assignment (0.0-1.0).
+          Higher when validated against physics quantities.
+        range: float
 
   PhysicsDomain:
     description: >-

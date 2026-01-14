@@ -821,6 +821,8 @@ classes:
       Links to the TreeNode variants it produces (e.g., LIUQE writes PSI, PSI_2).
       Version info tracks which shots used which code version.
     class_uri: facility:AnalysisCode
+    mixins:
+      - COCOSMixin
     attributes:
       name:
         identifier: true
