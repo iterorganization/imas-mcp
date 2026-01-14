@@ -308,6 +308,100 @@ def validate_cocos_consistency(
     return errors
 
 
+@dataclass(frozen=True)
+class ValidationResult:
+    """Result of COCOS validation against physics data.
+
+    Attributes:
+        is_consistent: Whether declared COCOS matches physics data
+        declared_cocos: The COCOS value being validated
+        calculated_cocos: COCOS inferred from physics quantities
+        confidence: Confidence in calculated COCOS (0.0-1.0)
+        inconsistencies: List of specific physics inconsistencies
+    """
+
+    is_consistent: bool
+    declared_cocos: int
+    calculated_cocos: int
+    confidence: float
+    inconsistencies: list[str]
+
+
+def validate_cocos_from_data(
+    declared_cocos: int,
+    *,
+    # Required physics quantities
+    psi_axis: float,
+    psi_edge: float,
+    ip: float,
+    b0: float,
+    # Optional - improve confidence
+    q: float | None = None,
+    dp_dpsi: float | None = None,
+) -> ValidationResult:
+    """Validate declared COCOS against physics data.
+
+    This is deterministic - uses Eq. 23 from Sauter paper.
+    No LLM involvement. Data source agnostic.
+
+    The caller is responsible for loading physics quantities from their
+    data source (MDSplus, IMAS IDS, EQDSK, HDF5, etc.).
+
+    Args:
+        declared_cocos: The COCOS value to validate
+        psi_axis: Poloidal flux at magnetic axis [Wb]
+        psi_edge: Poloidal flux at plasma edge [Wb]
+        ip: Plasma current [A] (sign matters)
+        b0: Toroidal field at axis [T] (sign matters)
+        q: Safety factor at mid-radius (optional, improves confidence)
+        dp_dpsi: Pressure gradient dp/dψ (optional, validates σBp)
+
+    Returns:
+        ValidationResult with consistency check, calculated COCOS,
+        confidence score, and list of specific inconsistencies.
+
+    Example:
+        >>> result = validate_cocos_from_data(
+        ...     declared_cocos=17,
+        ...     psi_axis=0.5, psi_edge=-0.2,
+        ...     ip=-1e6, b0=-5.0, q=3.0,
+        ... )
+        >>> if not result.is_consistent:
+        ...     print(f"COCOS mismatch: declared {result.declared_cocos}, "
+        ...           f"calculated {result.calculated_cocos}")
+        ...     for error in result.inconsistencies:
+        ...         print(f"  - {error}")
+    """
+    # Calculate COCOS from physics
+    calculated, confidence = determine_cocos(
+        psi_axis=psi_axis,
+        psi_edge=psi_edge,
+        ip=ip,
+        b0=b0,
+        q=q,
+        dp_dpsi=dp_dpsi,
+    )
+
+    # Validate declared COCOS against physics
+    inconsistencies = validate_cocos_consistency(
+        cocos=declared_cocos,
+        psi_axis=psi_axis,
+        psi_edge=psi_edge,
+        ip=ip,
+        b0=b0,
+        q=q,
+        dp_dpsi=dp_dpsi,
+    )
+
+    return ValidationResult(
+        is_consistent=len(inconsistencies) == 0,
+        declared_cocos=declared_cocos,
+        calculated_cocos=calculated,
+        confidence=confidence,
+        inconsistencies=inconsistencies,
+    )
+
+
 # Known COCOS values for common codes (from Sauter paper Table IV and Appendix A)
 KNOWN_CODE_COCOS: dict[str, int] = {
     "CHEASE": 2,

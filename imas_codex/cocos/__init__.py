@@ -12,17 +12,21 @@ Key functionality:
 from imas_codex.cocos.calculator import (
     VALID_COCOS,
     COCOSParameters,
+    ValidationResult,
     cocos_from_dd_version,
     cocos_to_parameters,
     determine_cocos,
     validate_cocos_consistency,
+    validate_cocos_from_data,
 )
 
 __all__ = [
     "VALID_COCOS",
     "COCOSParameters",
+    "ValidationResult",
     "cocos_from_dd_version",
     "cocos_to_parameters",
     "determine_cocos",
     "validate_cocos_consistency",
+    "validate_cocos_from_data",
 ]

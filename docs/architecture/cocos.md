@@ -46,10 +46,12 @@ COCOS is a single integer (1-8 or 11-18) encoding four parameters:
 from imas_codex.cocos import (
     VALID_COCOS,           # frozenset of valid values {1-8, 11-18}
     COCOSParameters,       # Dataclass with 4 parameters
+    ValidationResult,      # Result of COCOS validation
     cocos_to_parameters,   # int → COCOSParameters
     cocos_from_dd_version, # "3.41.0" → 11, "4.0.0" → 17
     determine_cocos,       # Physics quantities → (cocos, confidence)
-    validate_cocos_consistency,  # Check COCOS against data
+    validate_cocos_consistency,  # Check COCOS against data → list[str]
+    validate_cocos_from_data,    # Full validation → ValidationResult
 )
 ```
 
@@ -78,16 +80,31 @@ print(f"COCOS={cocos} (confidence={confidence:.2f})")
 ### Validating COCOS
 
 ```python
-from imas_codex.cocos import validate_cocos_consistency
+from imas_codex.cocos import validate_cocos_from_data
 
-errors = validate_cocos_consistency(
-    cocos=11,
-    psi_axis=0.5, psi_edge=-0.2,
-    ip=-1e6, b0=-5.0, q=3.0,
+# Data-agnostic: works with any source (MDSplus, IMAS IDS, EQDSK, etc.)
+# Caller loads physics quantities from their data source
+result = validate_cocos_from_data(
+    declared_cocos=17,
+    psi_axis=0.5, psi_edge=-0.2,  # Required
+    ip=-1e6, b0=-5.0,             # Required
+    q=3.0,                        # Optional: improves confidence
+    dp_dpsi=-1e3,                 # Optional: validates σBp
 )
-if errors:
-    print("Inconsistencies:", errors)
+
+if not result.is_consistent:
+    print(f"COCOS mismatch: declared {result.declared_cocos}, "
+          f"calculated {result.calculated_cocos}")
+    for error in result.inconsistencies:
+        print(f"  - {error}")
 ```
+
+`ValidationResult` contains:
+- `is_consistent`: bool - Whether declared COCOS matches physics
+- `declared_cocos`: int - The COCOS being validated
+- `calculated_cocos`: int - COCOS inferred from data
+- `confidence`: float - Confidence in calculation (0.0-1.0)
+- `inconsistencies`: list[str] - Specific physics mismatches
 
 ### DD Version Mapping
 

@@ -8,10 +8,12 @@ import pytest
 from imas_codex.cocos import (
     VALID_COCOS,
     COCOSParameters,
+    ValidationResult,
     cocos_from_dd_version,
     cocos_to_parameters,
     determine_cocos,
     validate_cocos_consistency,
+    validate_cocos_from_data,
 )
 from imas_codex.cocos.calculator import KNOWN_CODE_COCOS
 
@@ -261,3 +263,84 @@ class TestCOCOSParametersRoundtrip:
             params = cocos_to_parameters(cocos)
             # The params.cocos property should return the original value
             assert params.cocos == cocos, f"Roundtrip failed for COCOS {cocos}"
+
+
+class TestValidateCOCOSFromData:
+    """Test the combined validation function.
+
+    This is the main entry point for data-agnostic COCOS validation.
+    """
+
+    def test_consistent_data_returns_valid(self):
+        """Consistent physics data validates successfully."""
+        result = validate_cocos_from_data(
+            declared_cocos=11,
+            psi_axis=0.0,
+            psi_edge=1.0,  # Increasing outward
+            ip=1e6,  # Positive Ip
+            b0=5.0,
+            q=2.0,
+        )
+        assert isinstance(result, ValidationResult)
+        assert result.declared_cocos == 11
+        assert result.calculated_cocos in VALID_COCOS
+        assert 0.0 <= result.confidence <= 1.0
+
+    def test_inconsistent_data_returns_errors(self):
+        """Inconsistent physics data returns validation errors."""
+        # COCOS 11 with positive Ip expects ψ increasing outward
+        # But we provide ψ decreasing - should be inconsistent
+        result = validate_cocos_from_data(
+            declared_cocos=11,
+            psi_axis=1.0,
+            psi_edge=0.0,  # Decreasing - inconsistent with COCOS 11 + positive Ip
+            ip=1e6,
+            b0=5.0,
+        )
+        assert isinstance(result, ValidationResult)
+        assert result.is_consistent is False
+        assert len(result.inconsistencies) > 0
+
+    def test_invalid_cocos_detected(self):
+        """Invalid COCOS value returns error."""
+        result = validate_cocos_from_data(
+            declared_cocos=20,  # Invalid
+            psi_axis=0.0,
+            psi_edge=1.0,
+            ip=1e6,
+            b0=5.0,
+        )
+        assert result.is_consistent is False
+        assert any("Invalid" in e for e in result.inconsistencies)
+
+    def test_optional_q_improves_confidence(self):
+        """Providing q improves confidence."""
+        result_without = validate_cocos_from_data(
+            declared_cocos=11,
+            psi_axis=0.0,
+            psi_edge=1.0,
+            ip=1e6,
+            b0=5.0,
+        )
+        result_with = validate_cocos_from_data(
+            declared_cocos=11,
+            psi_axis=0.0,
+            psi_edge=1.0,
+            ip=1e6,
+            b0=5.0,
+            q=2.0,
+        )
+        # With q should have higher or equal confidence
+        assert result_with.confidence >= result_without.confidence
+
+    def test_dataclass_is_frozen(self):
+        """ValidationResult is immutable."""
+        result = validate_cocos_from_data(
+            declared_cocos=11,
+            psi_axis=0.0,
+            psi_edge=1.0,
+            ip=1e6,
+            b0=5.0,
+        )
+        with pytest.raises(AttributeError):
+            result.is_consistent = True  # type: ignore
