@@ -4,39 +4,41 @@
 
 ## Document Classification
 
-| Type | Purpose | Naming |
-|------|---------|--------|
-| **Strategy** | High-level vision, architecture, multi-phase roadmaps | `*_STRATEGY.md` |
+| Type | Purpose | Location |
+|------|---------|----------|
+| **Strategy** | High-level vision, architecture, multi-phase roadmaps | `STRATEGY.md` |
 | **Feature** | Tactical implementation plans for specific capabilities | `features/*.md` |
 
-## Strategic Plans
+## Strategic Plan
 
-### [CODEX_PLAN.md](CODEX_PLAN.md)
+### [STRATEGY.md](STRATEGY.md)
 **The Master Document** - Overall vision, four-zone architecture, and 7-phase roadmap for the Federated Fusion Knowledge Graph. Start here to understand the project.
-
-### [DISCOVERY_STRATEGY.md](DISCOVERY_STRATEGY.md)
-**Discovery & Ingestion** - Three-phase approach (Map → Score → Ingest) for code discovery across fusion facilities. Includes multi-facility onboarding workflow and autonomous agent architecture.
 
 ## Feature Plans
 
 Tactical implementation plans for specific capabilities:
 
+### [features/discovery-agents.md](features/discovery-agents.md)
+Discovery & ingestion pipeline with Map → Score → Ingest phases. Includes multi-facility onboarding workflow and autonomous ReAct agent architecture.
+
 ### [features/wiki-ingestion.md](features/wiki-ingestion.md)
 Wiki content ingestion pipeline with ReAct agent evaluation, semantic chunking, and facility-agnostic design.
-
-### [features/enrichment.md](features/enrichment.md)
-TreeNode LLM enrichment using Gemini Flash for metadata generation and graph relationship discovery.
 
 ### [features/mcp-tool-fixes.md](features/mcp-tool-fixes.md)
 IMAS MCP tool improvements in three phases: input handling, error recovery, and description updates.
 
-### [features/path-consistency.md](features/path-consistency.md)
+### [features/path-normalization.md](features/path-normalization.md)
 TreeNode path normalization and TDI function integration for deduplication and matching.
 
 ## Related Projects
 
 - **[imas-ambix](https://github.com/iterorganization/imas-ambix)** - Universal Fusion Data Client (runtime Recipe execution)
 - **[tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl)** - Tree-sitter grammar for GDL/IDL parsing
+
+## Related Documentation
+
+- **[docs/architecture/](../docs/architecture/)** - How things work (implemented systems)
+- **[docs/workflows/](../docs/workflows/)** - How to do things (runbooks)
 
 ## Document Lifecycle
 
