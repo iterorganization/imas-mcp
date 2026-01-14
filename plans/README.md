@@ -18,6 +18,9 @@
 
 Tactical implementation plans for specific capabilities:
 
+### [features/cocos-enrichment.md](features/cocos-enrichment.md)
+COCOS graph enrichment and imas-python integration. Extends the implemented `imas_codex.cocos` module.
+
 ### [features/discovery-agents.md](features/discovery-agents.md)
 Discovery & ingestion pipeline with Map → Score → Ingest phases. Includes multi-facility onboarding workflow and autonomous ReAct agent architecture.
 

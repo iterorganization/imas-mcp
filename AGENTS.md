@@ -260,6 +260,23 @@ git checkout -- .  # Discard any remaining changes
 - Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
 - Don't use "new", "refactored", "enhanced" in names
 
+## Documentation vs Plans
+
+**`docs/`** - How implemented systems work. Timeless, facility-agnostic reference.
+- ✅ API reference, usage examples, architecture diagrams
+- ✅ Query examples (not hardcoded results)
+- ❌ Future work, TODOs, remaining tasks
+- ❌ Facility-specific data (use graph queries instead)
+
+**`plans/`** - What we're building. Tactical work items with success criteria.
+- ✅ Implementation phases, remaining work
+- ✅ Success criteria, open questions
+- ✅ Facility-specific discovery notes
+
+**Rule**: If it might become stale or needs implementation, it's a plan.
+When completing a feature, move *only* the stable API/architecture content to docs.
+Keep remaining work items in `plans/features/` so they're tracked.
+
 ## Project Structure
 
 ```

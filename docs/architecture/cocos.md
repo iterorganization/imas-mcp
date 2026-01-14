@@ -123,15 +123,14 @@ COCOSMixin:
 
 ## Graph Data
 
-Current graph state:
-- **AnalysisCode.cocos_native**: CHEASE=2, LIUQE/LIUQE.M/LIUQE02/LIUQE03/FBTE=17
-- **SignConvention nodes**: Valid COCOS 2, 11, 17 nodes exist
+AnalysisCodes with known COCOS are enriched via `COCOSMixin` attributes.
+Query the graph for current state:
 
-## Future Work
-
-- Integration with imas-python `_3to4_sign_flip_paths` for path-level transforms
-- TreeNode enrichment from MDSplus COCOS nodes (`\RESULTS::*.COCOS`)
-- Agent tools for automated COCOS determination
+```cypher
+MATCH (ac:AnalysisCode)
+WHERE ac.cocos_native IS NOT NULL
+RETURN ac.name, ac.cocos_native, ac.cocos_determination
+```
 
 ## References
 
