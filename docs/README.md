@@ -1,6 +1,6 @@
 # Documentation
 
-> Documentation for implemented systems and operational workflows.
+> Documentation for implemented systems.
 
 ## Architecture
 
@@ -10,12 +10,6 @@ How things work - documentation for implemented systems:
 - [graph.md](architecture/graph.md) - Neo4j knowledge graph structure and operations
 - [imas_dd.md](architecture/imas_dd.md) - IMAS Data Dictionary MCP server
 - [mdsplus.md](architecture/mdsplus.md) - MDSplus integration and TreeNode ingestion
-
-## Workflows
-
-How to do things - operational runbooks:
-
-- [enrichment.md](workflows/enrichment.md) - TreeNode LLM enrichment workflow
 
 ## Related
 

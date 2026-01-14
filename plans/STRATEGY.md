@@ -260,3 +260,19 @@ We treat the Database as an Artifact.
 - [ ] GHCR publishing pipeline
 - [ ] Version traceability with `_GraphMeta` node
 - [ ] Graph artifact integrity validation
+
+---
+
+## 8. Feature Plans
+
+Detailed implementation plans for pending features:
+
+| Plan | Phase | Description |
+|------|-------|-------------|
+| [discovery-agents.md](features/discovery-agents.md) | 5-6 | Multi-facility discovery pipeline with Map → Score → Ingest |
+| [wiki-ingestion.md](features/wiki-ingestion.md) | 4 | Wiki content ingestion with ReAct agent evaluation |
+| [enrichment.md](features/enrichment.md) | 6 | TreeNode LLM enrichment for metadata generation |
+| [path-normalization.md](features/path-normalization.md) | 5 | TreeNode path normalization and TDI integration |
+| [mcp-tool-fixes.md](features/mcp-tool-fixes.md) | 3 | IMAS MCP tool input handling and error recovery |
+
+See [plans/README.md](README.md) for the complete index.

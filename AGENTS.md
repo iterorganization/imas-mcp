@@ -2,6 +2,24 @@
 
 > **TL;DR**: Use MCP `python()` tool for exploration, `uv run` for CLI commands, `ruff` for linting, conventional commits with single quotes, and `pytest` for testing. No backward compatibility constraints.
 
+## Project Planning
+
+Before implementing new features, check the planning documents:
+
+| Document | Purpose |
+|----------|--------|
+| [plans/STRATEGY.md](plans/STRATEGY.md) | Overall vision, 4-zone architecture, 7-phase roadmap |
+| [plans/features/](plans/features/) | Tactical implementation plans for specific features |
+
+**Feature Plans** (pending implementation):
+- `discovery-agents.md` - Multi-facility discovery with Map → Score → Ingest pipeline
+- `wiki-ingestion.md` - Wiki content ingestion with ReAct agent evaluation
+- `mcp-tool-fixes.md` - IMAS MCP tool input handling and error recovery
+- `path-normalization.md` - TreeNode path normalization and TDI integration
+- `enrichment.md` - TreeNode LLM enrichment for metadata generation
+
+When working on features covered by these plans, read the relevant plan first to understand the design decisions and implementation approach.
+
 ## Critical Rules
 
 ### MCP Server is the Primary Interface

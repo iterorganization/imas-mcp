@@ -30,6 +30,9 @@ IMAS MCP tool improvements in three phases: input handling, error recovery, and 
 ### [features/path-normalization.md](features/path-normalization.md)
 TreeNode path normalization and TDI function integration for deduplication and matching.
 
+### [features/enrichment.md](features/enrichment.md)
+TreeNode LLM enrichment for metadata generation and graph relationship discovery.
+
 ## Related Projects
 
 - **[imas-ambix](https://github.com/iterorganization/imas-ambix)** - Universal Fusion Data Client (runtime Recipe execution)
@@ -38,7 +41,6 @@ TreeNode path normalization and TDI function integration for deduplication and m
 ## Related Documentation
 
 - **[docs/architecture/](../docs/architecture/)** - How things work (implemented systems)
-- **[docs/workflows/](../docs/workflows/)** - How to do things (runbooks)
 
 ## Document Lifecycle
 

@@ -1,23 +1,23 @@
 # TreeNode LLM Enrichment Plan
 
-> Using Gemini Flash to generate metadata and discover graph relationships for MDSplus TreeNodes.
+> **Status**: Pending implementation  
+> Using LLM inference to generate metadata and discover graph relationships for MDSplus TreeNodes.
 
 ## Overview
 
-We have ~17,000 TreeNodes with missing descriptions and physics domain assignments. This plan describes a two-phase enrichment approach using LLM inference to:
+We have TreeNodes with missing descriptions and physics domain assignments. This plan describes a two-phase enrichment approach using LLM inference to:
 
 1. **Generate metadata** - descriptions, units validation, physics domain classification
 2. **Discover graph links** - IMAS path mappings, diagnostic relationships, analysis code connections
 
 ## Current State
 
-| Metric | Value |
+| Metric | Notes |
 |--------|-------|
-| Total epoch-aware TreeNodes | 17,458 |
-| Missing description | 17,369 |
-| Missing physics_domain | 17,386 |
-| Nodes with code references | 663 |
-| Nodes with path only | ~16,700 |
+| TreeNodes | Per-facility, varying counts |
+| Missing description | Most nodes lack descriptions |
+| Missing physics_domain | Most nodes unclassified |
+| Nodes with code references | Subset with DataReference links |
 
 ## Phase 1: Metadata Enrichment
 
@@ -147,19 +147,18 @@ uv run imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
 
 ### Cost Estimate
 
-| Configuration | Requests | Input Tokens | Output Tokens | Cost |
-|--------------|----------|--------------|---------------|------|
-| Basic (path only) | 348 | 2.1M | 0.5M | $0.42 |
-| With code context | 348 | 2.5M | 0.5M | $0.50 |
-| With SSH queries | 500 | 3.0M | 0.6M | $0.70 |
+Cost depends on model choice and batch size. Use OpenRouter for model flexibility.
 
-**Total estimated cost: $0.50 - $0.70**
+| Configuration | Notes |
+|--------------|-------|
+| Basic (path only) | Lowest cost, limited context |
+| With code context | Better accuracy, moderate cost |
+| With SSH queries | Best accuracy, higher latency |
 
 ### Rate Limiting
 
-- OpenRouter rate limit: ~100 requests/minute for Flash
-- Batch size: 50 paths/request
-- Expected duration: 5-10 minutes
+- Batch size: 50 paths/request recommended
+- Use OpenRouter for model selection and rate limit management
 
 ## Success Criteria
 
