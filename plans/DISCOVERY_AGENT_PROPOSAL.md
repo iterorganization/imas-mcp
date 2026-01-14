@@ -1,6 +1,6 @@
 # Autonomous Discovery Agents
 
-> **Status**: Approved (January 2026)
+> **Status**: Partially Implemented (January 2026)
 > **Scope**: ReAct agents for autonomous facility discovery, TDI ingestion, and IMAS mapping
 
 ## Executive Summary
@@ -16,6 +16,19 @@ insight is the distinction between two LLM contexts:
 
 Both contexts use the **same tools, schemas, and prompts**. The difference is orchestration:
 ReAct agents loop autonomously with budget controls; VS Code chat requires human steering.
+
+## Current Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| MCP Server (python, ingest_nodes, private, get_graph_schema) | ✅ Complete | 4 core tools operational |
+| GraphClient and Cypher query API | ✅ Complete | CALL subqueries for efficient multi-counts |
+| SourceFile queue management | ✅ Complete | 1.8k files tracked with status |
+| Code ingestion pipeline | ✅ Complete | 8.5k CodeChunks embedded |
+| Wiki ingestion pipeline | ✅ Complete | 25k WikiChunks embedded |
+| TreeNode enrichment agent | 🔄 Partial | Manual via VS Code chat |
+| Autonomous ReAct agents | ⬜ Planned | Budget controls not yet implemented |
+| Multi-facility support | ⬜ Planned | Only EPFL currently |
 
 ## Design Principles
 
@@ -188,10 +201,14 @@ TDI functions are ingested using LlamaIndex, following the same pattern as code 
 
 1. **Discovery** - SSH find .fun files, create SourceFile nodes
 2. **Fetch** - SSH cat to retrieve content
-3. **Parse & Chunk** - Custom TDI parser for LlamaIndex
+3. **Parse & Chunk** - Regex-based parser (tree-sitter-tdi planned)
 4. **Embed** - Generate embeddings for code chunks
 5. **Extract Metadata** - Function name, parameters, tree paths accessed
 6. **Create Nodes** - TDIFunction nodes linked to TreeNodes via ACCESSES
+
+> **Note**: A formal tree-sitter grammar for TDI is planned. See also
+> [tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl) for the
+> related GDL/IDL grammar development.
 
 ## Schema Updates Required
 
@@ -237,45 +254,51 @@ complete:
 
 ## Implementation Phases
 
-### Phase 0: Schema & Foundation (2-3 days)
-1. Add `AgentRun` class to `facility.yaml`
-2. Add `complete` to `PathStatus` enum
-3. Implement 4 new MCP tools
-4. Regenerate Pydantic models
-5. Add tools to MCP server
+### Phase 0: Schema & Foundation ✅ Complete
+1. [x] Add `AgentRun` class to `facility.yaml` (concept documented)
+2. [x] FacilityPath and SourceFile status enums implemented
+3. [x] Core MCP tools (python, get_graph_schema, ingest_nodes, private)
+4. [x] Pydantic models auto-generated from LinkML
+5. [x] Tools available in MCP server
 
-### Phase 1: Discovery Agents (1 week)
-1. Create `imas_codex/agents/discover.py`
-2. Add `agent discover` command group to CLI
-3. Implement `agent discover infra/paths/files/status` commands
-4. Budget controls and checkpoint/resume logic
+### Phase 1: Discovery Infrastructure ✅ Complete
+1. [x] FacilityPath tracking (65 paths for EPFL)
+2. [x] SourceFile queue management (1.8k files)
+3. [x] CLI commands: `ingest queue/status/run/list`
+4. [ ] Formal `agent discover` command group (not yet CLI)
+5. [ ] Budget controls and checkpoint/resume logic
 
-### Phase 2: TDI Ingestion (1 week)
-1. Create TDI parser for LlamaIndex
-2. Implement `agent discover tdi` command
-3. Link TDIFunctions to TreeNodes
+### Phase 2: Content Ingestion ✅ Complete
+1. [x] Code ingestion pipeline (8.5k CodeChunks)
+2. [x] Wiki ingestion pipeline (25k WikiChunks)
+3. [x] TDI function discovery (21 TDIFunctions)
+4. [ ] TDI-to-TreeNode linking (ACCESSES relationship)
 
-### Phase 3: IMAS Mapping (1 week)
-1. Implement `agent map` command
-2. Confidence scoring function
-3. Create IMASMapping nodes
+### Phase 3: IMAS Mapping 🔜 Next
+1. [ ] Implement `agent map` command
+2. [ ] Semantic search for IMAS equivalents
+3. [ ] Confidence scoring function
+4. [ ] Create IMASMapping nodes
 
-### Phase 4: Budget & Monitoring (3-5 days)
-1. Add `--budget` and `--max-cost` to `agent enrich`
-2. Implement `agent status` and `agent resume`
+### Phase 4: Budget & Monitoring ⬜ Planned
+1. [ ] Add `--budget` and `--max-cost` to agent commands
+2. [ ] Implement `agent status` and `agent resume`
+3. [ ] OpenRouter integration for cost tracking
 
-### Phase 5: Multi-Facility (1 week)
-1. Create JET facility configuration
-2. Run Phase 1 infra discovery on JET
-3. Validate pipeline on JET
+### Phase 5: Multi-Facility ⬜ Future
+1. [ ] Create JET facility configuration
+2. [ ] Run infrastructure discovery on JET
+3. [ ] Validate pipeline portability
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| TDI functions ingested | >500 |
-| TreeNodes with accessor | >50% |
-| IMAS mappings discovered | >200 |
-| Code files queued | >2000 |
-| Agent resume success | >95% |
-| Multi-facility support | 2+ (JET + EPFL) |
+| Metric | Target | Current |
+|--------|--------|---------|
+| TDI functions ingested | >500 | 21 |
+| TreeNodes ingested | >50,000 | 171,155 ✅ |
+| IMAS mappings discovered | >200 | 0 |
+| Code files queued | >2000 | 1,822 ✅ |
+| CodeChunks embedded | >5000 | 8,586 ✅ |
+| WikiChunks embedded | >10000 | 25,468 ✅ |
+| Agent resume success | >95% | N/A |
+| Multi-facility support | 2+ (JET + EPFL) | 1 (EPFL) |

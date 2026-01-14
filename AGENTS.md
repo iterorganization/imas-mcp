@@ -1,8 +1,34 @@
 # Agent Guidelines
 
-> **TL;DR**: Use `uv run` for Python commands, `ruff` for linting, conventional commits with single quotes, and `pytest` for testing. No backward compatibility constraints.
+> **TL;DR**: Use MCP `python()` tool for exploration, `uv run` for CLI commands, `ruff` for linting, conventional commits with single quotes, and `pytest` for testing. No backward compatibility constraints.
 
 ## Critical Rules
+
+### MCP Server is the Primary Interface
+
+When the Codex MCP server is running, **prefer the `python()` REPL tool** over terminal commands:
+
+| Task | Preferred (MCP running) | Fallback (MCP not running) |
+|------|-------------------------|---------------------------|
+| Graph queries | `python("query('MATCH ...')")` | `uv run imas-codex neo4j shell` |
+| Remote exploration | `python("ssh('ls /path')")` | Direct SSH in terminal |
+| IMAS DD search | `python("search_imas('query')")` | `uv run imas-codex` CLI |
+| Code search | `python("search_code('query')")` | CLI or grep |
+| Package info | `python("import pkg; ...")` | `uv run python -c "..."` |
+| Local file ops | `python("from pathlib import ...")` | Shell commands |
+
+**Why MCP `python()` is preferred:**
+- Persistent state (variables survive between calls)
+- Pre-loaded utilities (graph, embedding, SSH, IMAS tools)
+- Unified interface for local and remote operations
+- Faster iteration (no subprocess overhead)
+
+**Use terminal (`uv run`) for:**
+- Git operations (commit, push, status)
+- Linting and formatting (`ruff`)
+- Running tests (`pytest`)
+- CLI commands that modify state (`neo4j start/stop`, `ingest run`)
+- Installing packages (`uv add`)
 
 ### Pre-commit Hooks Require Virtual Environment
 

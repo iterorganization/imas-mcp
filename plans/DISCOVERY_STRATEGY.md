@@ -18,44 +18,46 @@ Key innovations:
 
 ## Project Phases
 
-### Phase 0: Foundation (Current)
-**Status**: ✅ Complete
+### Phase 0: Foundation ✅
+**Status**: Complete
 
 - [x] Core MCP server with 4 tools (python, get_graph_schema, ingest_nodes, private)
-- [x] Pattern configuration YAML (`config/patterns/discovery.yaml`)
-- [x] Tool requirements specification (`config/tool_requirements.yaml`)
-- [x] `check_tools()` REPL utility
+- [x] Pattern configuration YAML concept (not yet implemented in files)
+- [x] Tool requirements specification (in AGENTS.md)
+- [x] `check_tools()` REPL utility concept
 - [x] Strategy document with resolved design decisions
+- [x] CodeChunk pipeline operational (8.5k chunks embedded)
 
-### Phase 1: Map Agent (Week 1-2)
-**Status**: 🔄 Next
+### Phase 1: Map Agent (Weeks 1-2)
+**Status**: 🔄 Partially Complete
 
-Implement exhaustive file enumeration without LLM:
-- [ ] `MapAgent` class with fd/rg-based discovery
+Exhaustive file enumeration implemented via CLI:
+- [x] SourceFile node creation and status tracking
+- [x] CLI: `uv run imas-codex ingest queue/status/run`
+- [x] Pattern-based file discovery via SSH + rg
+- [ ] `MapAgent` class with formal fd/rg pipeline
+- [ ] Multi-dimensional pattern scoring (config/patterns/*.yaml)
 - [ ] Fingerprint-based change detection (size+mtime)
-- [ ] Multi-dimensional pattern scoring
-- [ ] SourceFile node creation with dimension scores
-- [ ] CLI: `uv run imas-codex discover epfl`
 
-### Phase 2: Score Agent (Week 2-3)
+### Phase 2: Score Agent (Weeks 2-3)
 **Status**: ⬜ Planned
 
-Implement LLM-driven semantic enrichment:
+LLM-driven semantic enrichment:
 - [ ] `ScoreAgent` ReAct loop for file analysis
 - [ ] Batch prioritization with budget tracking
 - [ ] Code summarization and relationship discovery
 - [ ] Quality assessment scoring
 - [ ] CLI: `uv run imas-codex enrich epfl`
 
-### Phase 3: Streaming Ingestion (Week 3-4)
-**Status**: ⬜ Planned
+### Phase 3: Streaming Ingestion (Weeks 3-4)
+**Status**: ✅ Complete (via LlamaIndex pipeline)
 
-Optimize the ingestion pipeline:
-- [ ] Streaming file fetch via SSH
-- [ ] Tree-sitter parsing for all supported languages
-- [ ] Parallel embedding with batching
-- [ ] CodeChunk node creation
-- [ ] Resume capability for interrupted runs
+Ingestion pipeline operational:
+- [x] Streaming file fetch via SSH
+- [x] Tree-sitter parsing for Python (other languages via regex)
+- [x] Parallel embedding with batching (8.5k CodeChunks)
+- [x] CodeChunk node creation with FACILITY_ID relationships
+- [x] Resume capability for interrupted runs
 
 ### Phase 4: Operationalization (Week 5+)
 **Status**: ⬜ Future
@@ -63,21 +65,28 @@ Optimize the ingestion pipeline:
 Production-ready deployment:
 - [ ] Incremental discovery scheduling (cron)
 - [ ] Monitoring and alerting
-- [ ] Multi-facility support
+- [ ] Multi-facility support (JET, DIII-D)
 - [ ] Documentation and runbooks
 
 ---
 
 ## Current State Assessment
 
+> **Last updated**: 2026-01-16 (from live graph queries)
+
 ### Graph Entities (EPFL)
 
 | Entity | Count | Notes |
 |--------|-------|-------|
 | FacilityPath | 65 | Directories with exploration metadata |
-| SourceFile | 1822 | Files queued/processed |
-| CodeExample | 1017 | Processed files with metadata |
-| CodeChunk | 0 | Not yet implemented |
+| SourceFile | 1,822 | Files queued/processed |
+| CodeExample | 1,017 | Processed files with metadata |
+| CodeChunk | 8,586 | Embedded code chunks (not 0!) |
+| TreeNode | 171,155 | MDSplus tree nodes |
+| WikiPage | 2,973 | Wiki pages ingested |
+| WikiChunk | 25,468 | Wiki content chunks |
+| TDIFunction | 21 | TDI function definitions |
+| MDSplusTree | 29 | MDSplus tree structures |
 
 ### FacilityPath Status Distribution
 
@@ -89,6 +98,15 @@ Production-ready deployment:
 | flagged | 8 | Needs review |
 | scanned | 6 | Pattern search complete |
 | analyzed | 2 | Deep analysis done |
+
+### SourceFile Status Distribution
+
+| Status | Count | Meaning |
+|--------|-------|---------|
+| ready | 1,312 | Processing complete |
+| fetching | 460 | Content retrieval in progress |
+| failed | 25 | Error during processing |
+| embedding | 25 | Embedding generation in progress |
 
 ### Remote Environment (EPFL)
 
@@ -594,11 +612,15 @@ if interest_score > 0.7:
 | C/C++ | ✅ | Full AST |
 | MATLAB | ✅ | Full AST |
 | Julia | ✅ | Full AST |
-| IDL (.pro) | ❌ | Regex fallback (no tree-sitter grammar exists) |
+| IDL/GDL (.pro) | 🔜 | See [tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl) |
+| TDI (.fun) | 🔜 | Planned as tree-sitter-tdi |
 
-> **Note on IDL**: Interactive Data Language (IDL/GDL) is widely used in fusion
-> and astronomy but has no tree-sitter grammar. This is a community contribution
-> opportunity - creating `tree-sitter-idl` would benefit many scientific projects.
+> **Note on IDL/GDL**: A tree-sitter grammar for GNU Data Language (GDL) and IDL is under
+> development at [tree-sitter-gdl](https://github.com/iterorganization/tree-sitter-gdl).
+> This will enable semantic parsing of .pro files common in fusion and astronomy.
+
+> **Note on TDI**: MDSplus TDI functions (.fun files) will use a future tree-sitter-tdi
+> grammar. Currently parsed via regex patterns.
 
 **Implementation**:
 ```python

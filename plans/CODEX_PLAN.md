@@ -36,9 +36,9 @@ The graph is structured into four distinct zones of "Truth":
 We reject the "Waterfall" approach to ontology. The schema must evolve as we discover new patterns in the wild.
 
 ### 3.1 The "Core" vs. "Wild" Split
-The LinkML definitions (stored in `ontology/`) are divided:
-*   **`ontology/core.yaml`**: Rigid definitions for Zone A (IMAS) and base classes.
-*   **`ontology/wild.yaml`**: Permissive definitions for Zone B (Facility). Initially contains generic `RawArtifact` nodes.
+The LinkML definitions (stored in `schemas/`) are divided:
+*   **`schemas/imas_dd.yaml`**: Rigid definitions for Zone A (IMAS) and base classes.
+*   **`schemas/facility.yaml`**: Permissive definitions for Zone B (Facility). Contains FacilityPath, SourceFile, TreeNode, etc.
 
 ### 3.2 The "LLM-as-Ontologist" Loop
 1.  **Discover:** Subagents scan the facility and return structured findings.
@@ -216,39 +216,47 @@ We treat the Database as an Artifact.
 ## 7. Roadmap
 
 ### Phase 1: Foundation ✅
-- [x] Setup `imas-codex` repo with `ontology/` folder
-- [x] Implement basic LinkML setup
-- [x] IMAS DD MCP server with semantic search
+- [x] Setup `imas-codex` repo with `schemas/` folder (LinkML)
+- [x] Implement LinkML schema with auto-generated Pydantic models
+- [x] IMAS DD MCP server with semantic search (61k paths indexed)
 
 ### Phase 2: Command/Deploy Architecture ✅
 - [x] Restructure CLI (`serve imas`, `serve agents`)
 - [x] Agent knowledge hierarchy (common → facility → specialist)
 - [x] File Explorer subagent demonstrator
-- [x] Agents MCP server for prompts
+- [x] Agents MCP server with persistent Python REPL
 
 ### Phase 3: Neo4j Knowledge Graph ✅
-- [x] Neo4j integration with Apptainer
+- [x] Neo4j integration with Apptainer (v2025.11.2 community)
 - [x] GraphClient with Cypher query API
-- [x] Schema-driven graph structure from LinkML
+- [x] Schema-driven graph structure from LinkML (`GraphSchema`)
 - [x] OCI artifact versioning (GHCR push/pull)
 - [x] `get_exploration_progress` with per-tree coverage
 - [x] `get_graph_schema` for LLM Cypher generation
+- [x] Vector indexes for semantic search (IMAS, code, wiki)
 
-### Phase 4: MDSplus Ingestion 🔜 (Current Focus)
-- [x] TDI function discovery (VERSION.FUN pattern)
-- [x] Variant/source mapping (tcv_eq pattern)
-- [x] Shot-range validity tracking
-- [x] Analysis code versioning
-- [ ] Tree structure ingestion (equilibrium subtree)
-- [ ] IMAS mapping generation
+### Phase 4: Content Ingestion ✅
+- [x] MDSplus tree ingestion (171k TreeNodes for EPFL)
+- [x] Wiki ingestion pipeline (2.9k WikiPages, 25k WikiChunks)
+- [x] Code example pipeline (1.3k CodeExamples, 8.5k CodeChunks)
+- [x] TDI function discovery (21 TDIFunctions)
+- [x] SourceFile queue management (1.8k files tracked)
 
-### Phase 5: Subagent Expansion 🔜
-- [ ] Code Search agent
-- [ ] Data Inspector agent (HDF5, MDSplus)
-- [ ] Environment Probe agent
-- [ ] TDI Parser agent
+### Phase 5: Discovery Automation 🔜 (Current Focus)
+- [x] FacilityPath tracking (65 paths with status)
+- [x] Multi-dimensional pattern scoring
+- [ ] MapAgent for exhaustive file enumeration (fd/rg)
+- [ ] ScoreAgent for LLM-driven semantic enrichment
+- [ ] Incremental discovery scheduling
 
-### Phase 6: CI/CD & Artifacts 🔜
-- [ ] Automated graph builds
+### Phase 6: Agent Enrichment 🔜
+- [ ] ReAct agents for TreeNode metadata enrichment
+- [ ] IMAS mapping discovery with confidence scoring
+- [ ] Budget controls and checkpoint/resume logic
+- [ ] Multi-facility expansion (JET, DIII-D)
+
+### Phase 7: CI/CD & Production 🔜
+- [ ] Automated graph builds on commit
 - [ ] GHCR publishing pipeline
-- [ ] Version traceability
+- [ ] Version traceability with `_GraphMeta` node
+- [ ] Graph artifact integrity validation

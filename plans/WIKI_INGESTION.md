@@ -1,7 +1,17 @@
 # Wiki Ingestion Strategy
 
-> **Status**: Strategic pivot in progress (2026-01-08)
-> Previous crawler-based discovery deprecated. Moving to ReAct agent evaluation.
+> **Status**: Phase 1 Complete, Phase 2 In Progress (2026-01-16)
+> Core pipeline operational with 2.9k WikiPages and 25k WikiChunks ingested.
+> ReAct agent evaluation for quality filtering is next priority.
+
+## Current State
+
+| Metric | Count | Notes |
+|--------|-------|-------|
+| WikiPage | 2,973 | Pages discovered and scraped |
+| WikiChunk | 25,468 | Content chunks with embeddings |
+| Vector Index | ✅ | `wiki_chunk_embedding` operational |
+| Semantic Search | ✅ | `search_wiki()` tool available |
 
 ## Problem
 
@@ -614,24 +624,25 @@ Phase 2 - Medium Value (100 pages):
 5. [x] Run `uv run build-models --force` to regenerate Pydantic models  
 6. [x] Implement scraper module `imas_codex/wiki/scraper.py`
 7. [x] Implement pipeline `imas_codex/wiki/pipeline.py`
-8. [x] Add `_search_wiki` tool to agents
-9. [x] Add CLI commands for wiki management
+8. [x] Add `search_wiki` tool to agents (via `semantic_search()` REPL utility)
+9. [x] Add CLI commands for wiki management (`wiki discover/ingest/status`)
+10. [x] Initial ingestion complete (2.9k pages, 25k chunks)
 
-### Phase 2: ReAct Agent Scout (In Progress)
-10. [ ] Create wiki scout module `imas_codex/wiki/scout.py`
+### Phase 2: ReAct Agent Scout 🔄 In Progress
+11. [ ] Create wiki scout module `imas_codex/wiki/scout.py`
     - `fetch_wiki_preview()` - lightweight preview fetching
     - `PageEvaluation` dataclass
     - `evaluate_wiki_pages()` - batch evaluation entry point
-11. [ ] Create scout prompt `imas_codex/agents/prompts/wiki-scout.md`
-12. [ ] Add `wiki evaluate` CLI command
-13. [ ] Add `--evaluate` flag to `wiki discover`
-14. [ ] Delete existing wiki nodes (graph cleanup) ✅ Done 2026-01-08
-15. [x] Fix duplicate return in pipeline.py line 348
+12. [ ] Create scout prompt `imas_codex/agents/prompts/wiki-scout.md`
+13. [ ] Add `wiki evaluate` CLI command
+14. [ ] Add `--evaluate` flag to `wiki discover`
+15. [x] Fix duplicate return in pipeline.py (resolved)
 
-### Phase 3: Ingestion with Agent Filtering
-16. [ ] Create Neo4j vector index for wiki chunks
-17. [ ] Initial ingestion using agent-evaluated high-value pages
-18. [ ] Re-run TreeNode enrichment with wiki context
+### Phase 3: Quality Filtering ⬜ Planned
+16. [ ] Re-evaluate existing pages with scout agent
+17. [ ] Mark low-value pages (administrative, stubs) as skipped
+18. [ ] Remove low-value WikiChunks to improve search quality
+19. [ ] Re-run TreeNode enrichment with filtered wiki context
 
 ## Notes
 

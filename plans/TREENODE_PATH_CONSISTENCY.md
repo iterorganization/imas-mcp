@@ -1,10 +1,13 @@
 # TreeNode Path Consistency and TDI Function Integration
 
+> **Status**: Partially Implemented (January 2026)
+> TreeNode ingestion complete (171k nodes). Path normalization and TDI linking pending.
+
 ## Summary
 
 Investigation revealed two path format patterns in the graph:
-- **211 nodes** with single backslash: `\RESULTS::TOP.EQ_RECON.TRACES:I_P` (from MDSplus ingestion script)
-- **236 nodes** with double backslash: `\\RESULTS::I_P` (from code extraction pipeline)
+- **Nodes with single backslash**: `\RESULTS::TOP.EQ_RECON.TRACES:I_P` (from MDSplus ingestion script)
+- **Nodes with double backslash**: `\\RESULTS::I_P` (from code extraction pipeline)
 
 "Unknown" paths (AMIN, BT, W_MHD, SPLASMA) are **valid TDI function parameters**, not hallucinations:
 - `tcv_get.fun`: 114 computed quantities (AMIN, BT, KAPPA, SPLASMA, etc.)
@@ -13,6 +16,14 @@ Investigation revealed two path format patterns in the graph:
 These represent different "views" of the same data:
 - **Direct paths**: Physical tree structure from MDSplus introspection
 - **Accessor paths**: High-level abstractions exposed by TDI functions
+
+## Current Graph State
+
+| Entity | Count | Notes |
+|--------|-------|-------|
+| TreeNode | 171,155 | All from tree introspection |
+| TDIFunction | 21 | Discovered, not yet parsed |
+| ACCESSES relationships | 0 | TDI-to-TreeNode linking pending |
 
 ## Proposed Schema Changes
 
@@ -183,25 +194,27 @@ def parse_tdi_dependencies(content: str, quantity: str) -> list[str]:
 
 ## Implementation Plan
 
-### Phase 1: Schema Updates (Low Risk)
-1. Add `TreeNodeSource` enum
-2. Add `source`, `canonical_path`, `physical_path` fields to TreeNode
-3. Regenerate models: `uv run build-models --force`
+### Phase 1: Schema Updates ✅ Complete
+1. [x] TreeNodeSource enum defined in LinkML schema
+2. [x] Source, canonical_path, physical_path fields available
+3. [x] Pydantic models regenerated
 
-### Phase 2: Migration (Medium Risk)
-1. Set `source=tree_introspection` for nodes with `node_type`
-2. Set `source=code_extraction` for nodes without `node_type`
-3. Compute and set `canonical_path` for all nodes
+### Phase 2: Migration 🔄 Partial
+1. [x] TreeNodes ingested from tree introspection (171k)
+2. [ ] Set `source=tree_introspection` for nodes with `node_type`
+3. [ ] Set `source=code_extraction` for nodes from code pipeline
+4. [ ] Compute and set `canonical_path` for all nodes
 
-### Phase 3: TDI Ingestion (New Feature)
-1. Create TDI parser script
-2. Ingest tcv_get.fun and tcv_eq.fun quantities
-3. Link to physical tree paths where known
+### Phase 3: TDI Ingestion ⬜ Planned
+1. [ ] Create TDI parser script (or use tree-sitter-tdi when available)
+2. [ ] Parse tcv_get.fun and tcv_eq.fun quantities
+3. [ ] Create TreeNodes with `source=tdi_parameter`
+4. [ ] Link to physical tree paths via ACCESSES relationship
 
-### Phase 4: Deduplication (High Risk)
-1. Merge nodes that share `canonical_path`
-2. Preserve relationships from both sources
-3. Update code references to canonical nodes
+### Phase 4: Deduplication ⬜ Future
+1. [ ] Merge nodes that share `canonical_path`
+2. [ ] Preserve relationships from both sources
+3. [ ] Update code references to canonical nodes
 
 ## Open Questions
 

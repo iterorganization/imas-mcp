@@ -34,6 +34,7 @@ The `python()` REPL includes rich pre-loaded utilities:
 
 **Remote:**
 - `ssh(cmd, facility, timeout)` - Run SSH command on remote facility
+- `check_tools(facility)` - Verify required tools are available
 
 **Facility:**
 - `get_facility(facility)` - Comprehensive facility info + graph state
