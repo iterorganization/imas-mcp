@@ -1,3 +1,38 @@
+# Configuration Directory
+
+This directory contains all runtime configuration for imas-codex.
+
+## Directory Structure
+
+```
+config/
+├── README.md                    # This file
+├── facilities/                  # Per-facility configuration
+│   ├── epfl.yaml               # Public (git tracked)
+│   └── epfl_infrastructure.yaml # Private (gitignored)
+├── patterns/                    # Discovery patterns
+│   └── discovery.yaml          # Multi-dimensional scoring patterns
+└── tool_requirements.yaml       # Required CLI tools
+```
+
+## YAML Organization Principles
+
+The project uses YAML files organized by purpose:
+
+| Directory | Purpose | Composable? | Version Controlled? |
+|-----------|---------|-------------|---------------------|
+| `schemas/` | LinkML data models (source of truth) | No | Yes |
+| `definitions/` | Static domain knowledge | Yes (by domain) | Yes |
+| `config/` | Runtime configuration | Yes (per-facility) | Partial |
+
+### What Goes Where?
+
+- **`schemas/`**: Data model definitions - defines node types and relationships
+- **`definitions/`**: Static knowledge - physics domains, cluster labels, units
+- **`config/`**: Runtime config - facility connections, discovery patterns, tools
+
+---
+
 # Facility Configuration Guide
 
 ## File Structure

@@ -502,17 +502,272 @@ RETURN
     count(CASE WHEN sf.score_physics > 0.5 THEN 1 END) AS high_physics
 ```
 
-## Open Questions
+## Open Questions — RESOLVED
 
-1. **Hash storage**: Store file hashes for all files or only high-value? (Storage vs. change detection)
+### 1. File Hashing for Change Detection ✅
 
-2. **Fortran parsing**: tree-sitter-fortran is experimental. Fall back to regex-based chunking?
+**Decision**: Use **metadata fingerprinting** (size + mtime) for all files, with optional content hashes for high-value files.
 
-3. **Cross-facility patterns**: Same YAML or per-facility customization allowed?
+**Performance Data** (EPFL):
+| Method | Files | Time | Rate |
+|--------|-------|------|------|
+| md5sum (content) | 500 | 3.6s | 138/sec |
+| stat (size+mtime) | 500 | 2.9s | 172/sec |
+| Full scan (depth 4) | 7561 | 20.7s | 365/sec |
 
-4. **Incremental discovery**: How often to re-run Map Agent? Weekly? On-demand?
+**Implementation**:
+```python
+# Lightweight fingerprint for all files (fast change detection)
+file_fingerprint = f"{file_size}:{file_mtime}"
 
-5. **Failed file retry**: Automatic retry with exponential backoff? Manual triage?
+# Content hash only for high-value files (score > 0.7)
+if interest_score > 0.7:
+    content_hash = md5sum(file_path)
+```
+
+**Benefits**:
+- Fast incremental discovery: Compare fingerprints to detect changes
+- Content hashes for reproducibility on high-value code
+- ~365 files/sec allows full facility scan in ~1 minute
+
+### 2. Tree-sitter for Parsing ✅
+
+**Decision**: Use **tree-sitter for all supported languages**, with regex fallback only for unsupported languages.
+
+**Supported Languages** (via `tree-sitter-language-pack`):
+| Language | Support | Notes |
+|----------|---------|-------|
+| Python | ✅ | Full AST |
+| Fortran | ✅ | Full AST (both F77 and F90) |
+| C/C++ | ✅ | Full AST |
+| MATLAB | ✅ | Full AST |
+| Julia | ✅ | Full AST |
+| IDL (.pro) | ❌ | Use regex fallback |
+
+**Implementation**:
+```python
+from tree_sitter_language_pack import get_language, get_parser
+
+TREE_SITTER_LANGS = {'python', 'fortran', 'c', 'cpp', 'matlab', 'julia'}
+REGEX_FALLBACK = {'idl', 'pro'}
+
+def parse_file(path: str, language: str) -> list[Chunk]:
+    if language in TREE_SITTER_LANGS:
+        return tree_sitter_parse(path, language)
+    else:
+        return regex_chunker(path, language)
+```
+
+### 3. YAML Configuration Structure ✅
+
+**Decision**: Consolidate all YAML into a **coherent directory structure** with clear purposes.
+
+**Current Structure** (needs consolidation):
+```
+imas_codex/
+├── config/              # Runtime configuration
+│   ├── facilities/      # Per-facility config (public + private)
+│   ├── patterns/        # Discovery patterns
+│   └── tool_requirements.yaml
+├── definitions/         # Static domain knowledge
+│   ├── physics/         # Physics domains, units
+│   └── clusters/        # Semantic cluster labels
+└── schemas/             # LinkML data models (source of truth)
+    ├── facility.yaml
+    ├── imas_dd.yaml
+    └── common.yaml
+```
+
+**Design Principles**:
+| Directory | Purpose | Composable? | Version Controlled? |
+|-----------|---------|-------------|---------------------|
+| `schemas/` | Data model definitions | No (source of truth) | Yes |
+| `definitions/` | Static domain knowledge | Yes (by physics domain) | Yes |
+| `config/` | Runtime configuration | Yes (per-facility) | Partial (secrets gitignored) |
+
+**Pattern Composition**:
+```yaml
+# config/patterns/discovery.yaml - Base patterns (all facilities)
+# config/patterns/epfl.yaml - EPFL-specific overrides (optional)
+# config/patterns/iter.yaml - ITER-specific overrides (optional)
+
+# Loading order (merges with override):
+patterns = load_patterns("discovery.yaml")
+if facility_patterns := load_patterns(f"{facility}.yaml"):
+    patterns = deep_merge(patterns, facility_patterns)
+```
+
+### 4. Incremental Discovery Schedule ✅
+
+**Decision**: **Daily during initial exploration, then weekly, then on-demand**.
+
+**Implementation**:
+```python
+# SourceFile properties for change tracking
+{
+    "fingerprint": "12345:1705312200",  # size:mtime
+    "last_scanned": "2025-01-15T10:30:00Z",
+    "scan_count": 3,
+    "change_detected": false,
+}
+
+# Discovery schedule logic
+def should_rescan(file: SourceFile, now: datetime) -> bool:
+    age = now - file.last_scanned
+    
+    if file.scan_count < 7:  # First week: daily
+        return age > timedelta(days=1)
+    elif file.scan_count < 30:  # Month 1: weekly
+        return age > timedelta(weeks=1)
+    else:  # After: on-demand or monthly
+        return age > timedelta(weeks=4)
+```
+
+**CLI Support**:
+```bash
+# Full discovery (first run or forced)
+uv run imas-codex discover epfl --full
+
+# Incremental (only changed files)
+uv run imas-codex discover epfl --incremental
+
+# Scheduled via cron
+0 6 * * * uv run imas-codex discover epfl --incremental --quiet
+```
+
+### 5. Failed File Retry Strategy ✅
+
+**Decision**: **Automatic retry with exponential backoff**, then mark as `failed` for manual review.
+
+**Implementation**:
+```python
+# SourceFile retry properties
+{
+    "status": "failed",
+    "retry_count": 3,
+    "last_error": "UnicodeDecodeError: 'utf-8' codec can't decode...",
+    "next_retry": "2025-01-16T10:30:00Z",
+}
+
+# Retry logic
+MAX_RETRIES = 3
+BACKOFF_BASE = 2  # hours
+
+def handle_failure(file: SourceFile, error: Exception):
+    file.retry_count += 1
+    file.last_error = str(error)
+    
+    if file.retry_count >= MAX_RETRIES:
+        file.status = "failed"
+        file.next_retry = None
+    else:
+        backoff = BACKOFF_BASE ** file.retry_count
+        file.next_retry = now() + timedelta(hours=backoff)
+        file.status = "retry_pending"
+
+# Retry schedule: 2h, 4h, 8h, then fail
+```
+
+**CLI Support**:
+```bash
+# Process retry queue
+uv run imas-codex ingest retry epfl
+
+# List failed files for review
+uv run imas-codex ingest list epfl --status failed
+
+# Force retry specific files
+uv run imas-codex ingest retry epfl --file /path/to/file.py
+```
+
+## Additional Recommendations
+
+### 1. Directory Fingerprinting
+
+For quick change detection at directory level:
+
+```python
+def dir_fingerprint(path: str) -> str:
+    """Generate fingerprint from all file metadata in directory."""
+    result = ssh(f"""
+        ~/bin/fd -t f . {path} | while read f; do
+            stat -c '%s %Y' "$f" 2>/dev/null
+        done | sort | md5sum | cut -d' ' -f1
+    """)
+    return result.strip()
+
+# Store in FacilityPath
+{
+    "id": "epfl:/home/codes/liuqe",
+    "dir_fingerprint": "a1b2c3d4...",
+    "last_fingerprint_at": "2025-01-15T10:30:00Z",
+}
+```
+
+### 2. Composable Pattern Library
+
+Organize patterns as reusable modules:
+
+```yaml
+# config/patterns/modules/mdsplus.yaml
+mdsplus:
+  description: "MDSplus data access patterns"
+  patterns:
+    - pattern: "MDSplus|mdsplus"
+      weight: 1.0
+    - pattern: "Tree\\(|openTree"
+      weight: 0.9
+
+# config/patterns/modules/imas.yaml
+imas:
+  description: "IMAS/IDS patterns"
+  patterns:
+    - pattern: "imas\\.imasdef"
+      weight: 1.0
+
+# config/patterns/discovery.yaml
+includes:
+  - modules/mdsplus.yaml
+  - modules/imas.yaml
+  - modules/physics.yaml
+```
+
+### 3. SourceFile Status State Machine
+
+```
+                ┌─────────────────────────────────────┐
+                │         STATE MACHINE               │
+                │                                     │
+discovered ────► scanned ────► queued ────► fetching ─┬──► parsing ────► embedding ────► ready
+     │              │              │            │     │        │              │
+     │              │              │            └─────┤        └──────────────┤
+     │              │              │                  ▼                       ▼
+     │              │              │           retry_pending ◄──────────  failed
+     │              │              │                  │                       │
+     └──────────────┴──────────────┴──────────────────┴───────────────────────┘
+                                    (fingerprint change resets to scanned)
+```
+
+### 4. Configuration Validation
+
+Add JSON Schema validation for YAML configs:
+
+```python
+# imas_codex/config/validate.py
+
+def validate_patterns(config: dict) -> list[str]:
+    """Validate pattern configuration."""
+    errors = []
+    
+    for dim, dim_config in config.get("dimensions", {}).items():
+        for pattern in dim_config.get("patterns", []):
+            if "pattern" not in pattern:
+                errors.append(f"Dimension {dim}: missing 'pattern' key")
+            if "weight" in pattern and not 0 <= pattern["weight"] <= 1:
+                errors.append(f"Dimension {dim}: weight must be 0-1")
+    
+    return errors
+```
 
 ## Appendix: Current Schema (Relevant Nodes)
 

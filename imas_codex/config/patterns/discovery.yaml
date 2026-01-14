@@ -1,8 +1,25 @@
 # Discovery Pattern Configuration
 # Used by Map Agent for multi-dimensional file scoring
+#
+# YAML Structure Guidelines (see plans/DISCOVERY_STRATEGY.md):
+# - config/patterns/: Discovery patterns (base + facility overrides)
+# - config/facilities/: Per-facility runtime config
+# - definitions/: Static domain knowledge (physics, clusters)
+# - schemas/: LinkML data models (source of truth)
 
 version: "1.0"
 description: "Multi-dimensional discovery patterns for fusion code exploration"
+
+# Tree-sitter language support (verified in tree-sitter-language-pack)
+# Languages not listed here use regex fallback chunking
+tree_sitter_languages:
+  - python
+  - fortran
+  - c
+  - cpp
+  - matlab
+  - julia
+  - bash
 
 # File extensions to include in discovery
 file_extensions:
@@ -11,7 +28,7 @@ file_extensions:
     - f90      # Modern Fortran
     - f        # Legacy Fortran
     - f77      # Fortran 77
-    - pro      # IDL
+    - pro      # IDL (regex fallback)
     - m        # MATLAB
     - c        # C
     - cpp      # C++
@@ -43,6 +60,18 @@ exclude_paths:
   - ".config"
   - "anaconda*"
   - "miniconda*"
+
+# Change detection settings
+change_detection:
+  # Use fingerprint (size:mtime) for all files - fast change detection
+  fingerprint_all: true
+  # Compute content hash (md5) only for high-value files
+  content_hash_threshold: 0.7  # score > 0.7 gets content hash
+  
+# Retry settings for failed files
+retry:
+  max_attempts: 3
+  backoff_hours: [2, 4, 8]  # exponential backoff
 
 # Scoring dimensions - each file gets a score per dimension
 dimensions:
