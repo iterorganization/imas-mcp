@@ -1,7 +1,57 @@
 # Wiki Ingestion Strategy
 
-> **Status**: Core pipeline complete, quality filtering next priority
+> **Status**: Core pipeline complete, **CRITICAL BUG** blocking ingestion of scored pages
 > Applicable to any facility with MediaWiki-based documentation.
+> Last audit: 2026-01-14
+
+## Current State (2026-01-14 Audit)
+
+### Graph Statistics
+
+| Status | Count | Notes |
+|--------|-------|-------|
+| `scored` | 2,240 | Awaiting ingestion |
+| `ingested` | 606 | Successfully processed |
+| `failed` | 127 | HTTP 404 errors (mostly subpages with `/`) |
+
+**45 pages** have `status='scored'` AND `interest_score >= 0.5` (ingest threshold), but **are not being processed** by `wiki ingest`.
+
+### Root Cause: WikiPage ID Mismatch Bug 🐛
+
+**Critical Bug**: Discovery and ingestion create duplicate WikiPage nodes with different IDs for the same page.
+
+```
+Discovery Phase:
+  Creates: WikiPage {id: "epfl:Portal:TCV", title: "Portal:TCV", status: "scored"}
+
+Ingestion Phase:
+  Creates: WikiPage {id: "epfl:TCV", title: "Portal:TCV", status: "ingested"}
+  OR
+  Creates: WikiPage {id: "epfl:Portal%3ATCV", title: "Portal:TCV", status: "ingested"}
+```
+
+**Impact**: 55 titles have duplicate nodes with different IDs and statuses. The `scored` pages are never updated because ingestion creates new nodes instead of matching existing ones.
+
+**Cause**: 
+1. `discovery.py` uses `page_name` from crawl link as ID: `id = f"{facility}:{page}"`
+2. `pipeline.py` uses `page.page_name` from fetched URL: `page_id = f"{facility_id}:{page.page_name}"`
+3. URL encoding differs: `Portal:TCV` vs `Portal%3ATCV` vs just `TCV` (redirect)
+
+### 404 Failures (127 pages)
+
+Pages with `/` in their titles fail because `urllib.parse.quote(page_name, safe="")` encodes `/` as `%2F`:
+- `Thomson/DDJ` → `Thomson%2FDDJ` → 404
+- Wiki expects literal `/` for subpages: `Thomson/DDJ`
+
+**Fix**: Change to `urllib.parse.quote(page_name, safe="/")` to preserve slashes.
+
+### Truly Pending Pages (No Duplicate)
+
+After filtering out pages that have ingested duplicates, **~20 truly pending** pages remain:
+- `Portal:TCV_Ports` (score=0.95)
+- `Portal:TCV_PdJ` (score=0.90)
+- `Service_Mécanique` (score=0.85)
+- Various other Portal pages
 
 ## Overview
 
@@ -630,19 +680,173 @@ Phase 2 - Medium Value (100 pages):
 - [x] Schema with `WikiPage` and `WikiChunk` classes
 - [x] Scraper module with facility-agnostic design
 - [x] LlamaIndex chunking and embedding pipeline
-- [x] CLI commands (`wiki discover/ingest/status`)
+- [x] CLI commands (`wiki discover/crawl/score/ingest/status`)
 - [x] Vector index for semantic search
+- [x] Three-phase pipeline (crawl → score → ingest)
+- [x] WikiArtifact support (PDFs, presentations)
+- [x] ReAct agent scoring with graph metrics
 
-### Phase 2: Quality Filtering 🔄
-- [ ] Wiki scout module with preview fetching
-- [ ] ReAct agent for batch page evaluation
-- [ ] Skip patterns (administrative, stubs, events)
-- [ ] High-value indicators (signal tables, paths)
+### Phase 1.5: Bug Fixes 🔧 ✅ (COMPLETED 2026-01-14)
+- [x] **ID normalization**: Added `canonical_page_id()` function used by discovery and ingestion
+- [x] **URL encoding fix**: Changed to `safe="/"` to preserve subpage slashes
+- [x] **Duplicate cleanup**: Merged 58 duplicate WikiPage nodes by title
+- [x] **Ingest updates**: Pipeline now matches by (facility_id, title) instead of creating new nodes
 
-### Phase 3: Multi-Facility ⬜
+### Phase 2: Quality Filtering ✅ (Implemented but needs fixes)
+- [x] Wiki scout module with preview fetching (`scout.py`)
+- [x] ReAct agent for batch page evaluation (`discovery.py`)
+- [x] Skip patterns (administrative, stubs, events)
+- [x] High-value indicators (signal tables, paths)
+- [ ] Fix agent to properly handle special characters in page names
+
+### Phase 3: MCP Integration 📡 ✅ (Use python() REPL - No New Tools)
+
+**Decision (2026-01-14)**: Use existing `python()` REPL tool instead of adding wiki-specific MCP tools.
+
+The MCP server's `python()` REPL provides everything needed:
+- `query()` for Neo4j operations
+- `ssh()` for remote wiki fetching
+- `semantic_search()` with `wiki_chunk_embedding` index
+- Full Python import capability for wiki modules
+
+**Example Usage in python() REPL:**
+```python
+# Search wiki content
+hits = semantic_search("Thomson calibration", "wiki_chunk_embedding", k=5)
+
+# Ingest a page interactively
+from imas_codex.wiki.scraper import fetch_wiki_page
+from imas_codex.wiki.pipeline import WikiIngestionPipeline
+page = fetch_wiki_page("Thomson", facility="epfl")
+pipeline = WikiIngestionPipeline(facility_id="epfl")
+stats = await pipeline.ingest_page(page)
+```
+
+**No new MCP tools needed.** This avoids tool proliferation and leverages the REPL's flexibility.
+
+### Phase 4: Multi-Facility ⬜
 - [ ] Abstract scraper interface
 - [ ] Confluence adapter (for JET, ITER)
 - [ ] Per-facility portal configuration
+
+## Immediate Fix Plan (Priority Order)
+
+### Fix 1: ID Normalization (scraper.py + pipeline.py)
+
+```python
+# imas_codex/wiki/scraper.py - Add canonical ID function
+def canonical_page_id(page_name: str, facility_id: str) -> str:
+    """Generate canonical WikiPage ID.
+    
+    Uses decoded page name with colons preserved (not URL-encoded).
+    Example: "Portal:TCV" → "epfl:Portal:TCV"
+    """
+    import urllib.parse
+    decoded = urllib.parse.unquote(page_name)
+    return f"{facility_id}:{decoded}"
+
+
+# imas_codex/wiki/pipeline.py - Use canonical ID
+def ingest_page(self, page: WikiPage) -> PageIngestionStats:
+    from .scraper import canonical_page_id
+    page_id = canonical_page_id(page.page_name, self.facility_id)
+    # ... rest of method
+```
+
+### Fix 2: URL Encoding for Subpages (scraper.py)
+
+```diff
+# imas_codex/wiki/scraper.py
+def fetch_wiki_page(page_name: str, ...):
+-    encoded_page_name = urllib.parse.quote(page_name, safe="")
++    encoded_page_name = urllib.parse.quote(page_name, safe="/")
+```
+
+### Fix 3: Duplicate Cleanup (one-time Cypher)
+
+```cypher
+-- Find duplicates and merge to canonical ID
+MATCH (w:WikiPage {facility_id: 'epfl'})
+WITH w.title AS title, collect(w) AS pages, count(*) AS cnt
+WHERE cnt > 1
+WITH title, pages, [p IN pages WHERE p.status = 'ingested'][0] AS keeper
+WHERE keeper IS NOT NULL
+UNWIND [p IN pages WHERE p <> keeper] AS dup
+// Move relationships from dup to keeper
+MATCH (dup)-[r:HAS_CHUNK]->(c)
+MERGE (keeper)-[:HAS_CHUNK]->(c)
+DELETE r
+// Delete duplicate
+DETACH DELETE dup
+```
+
+### Fix 4: Ingest Updates Existing Nodes (pipeline.py)
+
+```diff
+# imas_codex/wiki/pipeline.py
+-    gc.query("""
+-        MERGE (p:WikiPage {id: $id})
+-        SET p.url = $url, ...
++    gc.query("""
++        MATCH (p:WikiPage {facility_id: $facility_id, title: $title})
++        SET p.id = $id,  -- Normalize to canonical ID
++            p.url = $url,
++            p.status = 'ingested', ...
+```
+
+## MCP Python REPL Integration Strategy
+
+With the Codex MCP server providing a persistent `python()` REPL, wiki operations can be more interactive:
+
+### Current Approach (CLI-driven)
+```bash
+imas-codex wiki discover epfl   # Separate process
+imas-codex wiki score epfl      # Separate agent process  
+imas-codex wiki ingest epfl     # Separate process
+```
+
+### Proposed Approach (MCP-driven)
+```python
+# In MCP python() REPL - persistent state, immediate feedback
+
+# 1. Check current wiki state
+result = query("""
+    MATCH (w:WikiPage {facility_id: 'epfl'})
+    RETURN w.status, count(*) AS count
+    ORDER BY count DESC
+""")
+print(result)
+
+# 2. Fetch and preview a specific page
+from imas_codex.wiki.scraper import fetch_wiki_page
+page = fetch_wiki_page("Thomson", facility="epfl")
+print(f"Title: {page.title}")
+print(f"MDSplus paths: {page.mdsplus_paths[:5]}")
+
+# 3. Interactive ingestion with preview
+from imas_codex.wiki import WikiIngestionPipeline
+pipeline = WikiIngestionPipeline(facility_id="epfl")
+stats = await pipeline.ingest_page(page)
+print(f"Created {stats['chunks']} chunks")
+
+# 4. Semantic search across wiki content
+hits = semantic_search("Thomson scattering calibration", "wiki_chunk_embedding", k=5)
+for h in hits:
+    print(f"{h['score']:.3f}: {h['content'][:100]}")
+```
+
+### Benefits of MCP Integration
+1. **Persistent state**: Variables survive between calls
+2. **Interactive debugging**: Inspect page content before ingesting
+3. **Immediate feedback**: See graph changes in real-time
+4. **Unified interface**: Same `query()` for wiki and other graph data
+5. **No subprocess overhead**: Faster iteration
+
+**No new MCP tools needed** - the existing `python()` REPL provides all functionality:
+- `query()` for graph operations
+- `ssh()` for remote wiki fetching
+- `semantic_search()` with `wiki_chunk_embedding` index
+- Direct module imports for wiki pipeline
 
 ## Notes
 
@@ -651,3 +855,22 @@ Phase 2 - Medium Value (100 pages):
 - Re-run enrichment for high-value nodes (equilibrium, profiles) after wiki ingestion
 - Consider rate limiting to avoid overloading the wiki server
 - Neo4j now runs as persistent systemd user service: `systemctl --user start neo4j`
+
+## Audit History
+
+### 2026-01-14: Comprehensive Audit
+- **Found**: ID mismatch bug causing duplicate WikiPage nodes
+- **Found**: 127 failed pages due to `/` encoding in URLs
+- **Found**: 45 scored pages stuck, not being ingested
+- **Analyzed**: MCP `python()` REPL as alternative to CLI commands
+- **Proposed**: 4 immediate fixes + MCP integration strategy
+
+### 2026-01-08: Strategic Pivot
+- Replaced dumb BFS crawler with ReAct agent evaluation
+- Added three-phase pipeline (crawl → score → ingest)
+- Added WikiArtifact support for PDFs
+
+### 2026-01-07: Initial Implementation
+- Verified wiki access from EPFL network
+- Implemented scraper, pipeline, CLI commands
+- Created WikiPage and WikiChunk schema

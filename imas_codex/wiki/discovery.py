@@ -395,8 +395,10 @@ class WikiDiscovery:
 
                 total_out_degree = len(page_links) + len(artifact_links)
 
-                # Create WikiPage node
-                page_id = f"{self.config.facility_id}:{page}"
+                # Create WikiPage node with canonical ID
+                from imas_codex.wiki.scraper import canonical_page_id
+
+                page_id = canonical_page_id(page, self.config.facility_id)
                 gc.query(
                     """
                     MERGE (wp:WikiPage {id: $id})
@@ -413,7 +415,7 @@ class WikiDiscovery:
                     """,
                     id=page_id,
                     title=page,
-                    url=f"{self.config.base_url}/{urllib.parse.quote(page, safe='')}",
+                    url=f"{self.config.base_url}/{urllib.parse.quote(page, safe='/')}",
                     facility_id=self.config.facility_id,
                     depth=current_depth,
                     out_degree=total_out_degree,
@@ -583,7 +585,9 @@ class WikiDiscovery:
 
     def _persist_pending_page(self, gc: GraphClient, page: str, depth: int) -> None:
         """Persist a pending page to the graph."""
-        page_id = f"{self.config.facility_id}:{page}"
+        from imas_codex.wiki.scraper import canonical_page_id
+
+        page_id = canonical_page_id(page, self.config.facility_id)
         gc.query(
             """
             MERGE (wp:WikiPage {id: $id})
@@ -603,12 +607,16 @@ class WikiDiscovery:
         self, results: dict[str, list[str]], gc: GraphClient
     ) -> None:
         """Create LINKS_TO relationships between WikiPages in bulk."""
+        from imas_codex.wiki.scraper import canonical_page_id
+
         for source_page, target_pages in results.items():
             if not target_pages:
                 continue
 
-            source_id = f"{self.config.facility_id}:{source_page}"
-            target_ids = [f"{self.config.facility_id}:{t}" for t in target_pages]
+            source_id = canonical_page_id(source_page, self.config.facility_id)
+            target_ids = [
+                canonical_page_id(t, self.config.facility_id) for t in target_pages
+            ]
 
             gc.query(
                 """

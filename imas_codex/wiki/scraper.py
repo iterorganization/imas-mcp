@@ -80,6 +80,36 @@ SIGN_CONVENTION_PATTERN = re.compile(
 
 
 # =============================================================================
+# ID Normalization
+# =============================================================================
+
+
+def canonical_page_id(page_name: str, facility_id: str) -> str:
+    """Generate canonical WikiPage ID.
+
+    Ensures consistent ID format regardless of URL encoding.
+    Uses decoded page name with special characters preserved.
+
+    Args:
+        page_name: Page name (may be URL-encoded or decoded)
+        facility_id: Facility identifier (e.g., 'epfl')
+
+    Returns:
+        Canonical ID like 'epfl:Portal:TCV' or 'epfl:Thomson/DDJ'
+
+    Examples:
+        >>> canonical_page_id('Portal%3ATCV', 'epfl')
+        'epfl:Portal:TCV'
+        >>> canonical_page_id('Thomson/DDJ', 'epfl')
+        'epfl:Thomson/DDJ'
+    """
+    import urllib.parse
+
+    decoded = urllib.parse.unquote(page_name)
+    return f"{facility_id}:{decoded}"
+
+
+# =============================================================================
 # Data Classes
 # =============================================================================
 
@@ -105,8 +135,11 @@ class WikiPage:
 
     @property
     def page_name(self) -> str:
-        """Extract page name from URL."""
-        return self.url.split("/wiki/")[-1] if "/wiki/" in self.url else self.url
+        """Extract page name from URL (URL-decoded)."""
+        import urllib.parse
+
+        raw = self.url.split("/wiki/")[-1] if "/wiki/" in self.url else self.url
+        return urllib.parse.unquote(raw)
 
 
 # =============================================================================
@@ -229,9 +262,10 @@ def fetch_wiki_page(
         RuntimeError: If SSH command fails or times out
     """
     # URL-encode page name to handle spaces and special characters
+    # Use safe="/" to preserve subpage slashes (e.g., Thomson/DDJ)
     import urllib.parse
 
-    encoded_page_name = urllib.parse.quote(page_name, safe="")
+    encoded_page_name = urllib.parse.quote(page_name, safe="/")
     url = f"{WIKI_BASE_URL}/{encoded_page_name}"
 
     # Fetch via SSH with SSL verification disabled (self-signed cert)

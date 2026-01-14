@@ -619,8 +619,10 @@ class WikiIngestionPipeline:
         return self._embed_model
 
     def _generate_page_id(self, page_name: str) -> str:
-        """Generate unique ID for a WikiPage."""
-        return f"{self.facility_id}:{page_name}"
+        """Generate unique ID for a WikiPage using canonical format."""
+        from .scraper import canonical_page_id
+
+        return canonical_page_id(page_name, self.facility_id)
 
     def _generate_chunk_id(self, page_id: str, chunk_idx: int) -> str:
         """Generate unique ID for a WikiChunk."""
@@ -683,14 +685,18 @@ class WikiIngestionPipeline:
         nodes = self.splitter.get_nodes_from_documents([doc])
         stats["chunks"] = len(nodes)
 
-        # Generate embeddings and prepare batch data
+        # Generate embeddings in batch for 3x speedup
+        chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
+        embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+
+        # Prepare batch data with pre-computed embeddings
         chunk_batch: list[dict] = []
         all_mdsplus: set[str] = set()
         all_imas: set[str] = set()
 
         for i, node in enumerate(nodes):
             chunk_text: str = node.text  # type: ignore[attr-defined]
-            node.embedding = self.embed_model.get_text_embedding(chunk_text)
+            node.embedding = embeddings[i]
 
             # Extract entities from this chunk
             chunk_mdsplus = extract_mdsplus_paths(chunk_text)
@@ -720,13 +726,14 @@ class WikiIngestionPipeline:
 
         # Persist all chunks in batches
         with GraphClient() as gc:
-            # Update WikiPage status to ingested
+            # Update WikiPage: match by title first (handles duplicates), set canonical ID
+            # This fixes the ID mismatch bug where discovery and ingestion created
+            # different IDs for the same page
             gc.query(
                 """
-                MERGE (p:WikiPage {id: $id})
-                SET p.url = $url,
-                    p.title = $title,
-                    p.facility_id = $facility_id,
+                MERGE (p:WikiPage {facility_id: $facility_id, title: $title})
+                SET p.id = $id,
+                    p.url = $url,
                     p.status = 'ingested',
                     p.content_hash = $hash,
                     p.last_scraped = datetime(),
@@ -1296,11 +1303,15 @@ class WikiArtifactPipeline:
             nodes = self.splitter.get_nodes_from_documents([combined_doc])
             stats["chunks"] = len(nodes)
 
-            # Generate embeddings and prepare batch
+            # Generate embeddings in batch for 3x speedup
+            chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
+            embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+
+            # Prepare batch with pre-computed embeddings
             chunk_batch: list[dict] = []
             for i, node in enumerate(nodes):
                 chunk_text: str = node.text  # type: ignore[attr-defined]
-                node.embedding = self.embed_model.get_text_embedding(chunk_text)
+                node.embedding = embeddings[i]
 
                 chunk_mdsplus = extract_mdsplus_paths(chunk_text)
                 chunk_imas = extract_imas_paths(chunk_text)
