@@ -4,6 +4,7 @@ Creates TreeModelVersion and TreeNode entities with proper relationships.
 """
 
 import logging
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,30 @@ def normalize_mdsplus_path(path: str) -> str:
     path = path.upper()
     # Ensure single backslash prefix
     return f"\\{path}"
+
+
+def compute_canonical_path(path: str) -> str:
+    """Compute canonical path for deduplication and fuzzy matching.
+
+    Builds on normalize_mdsplus_path but additionally:
+    - Strips channel indices (CHANNEL_006 -> CHANNEL, _001 -> removed)
+    - Strips trailing numeric suffixes for variant matching
+
+    Args:
+        path: Raw or normalized MDSplus path
+
+    Returns:
+        Canonical path suitable for matching across sources
+    """
+    # First normalize
+    path = normalize_mdsplus_path(path)
+
+    # Strip channel indices and numeric suffixes for fuzzy matching
+    # Pattern: _NNN at end (2-3 digits) or CHANNEL_NNN
+    path = re.sub(r"[_:]CHANNEL_?\d{2,3}$", "", path, flags=re.IGNORECASE)
+    path = re.sub(r"_\d{2,3}$", "", path)
+
+    return path
 
 
 def ingest_epochs(
@@ -177,11 +202,13 @@ def ingest_super_tree(
     for path, ranges in path_ranges.items():
         parent_path = _compute_parent_path(path)
         node_id = f"{facility}:{tree_name}:{path}"
+        canonical = compute_canonical_path(path)
 
         nodes.append(
             {
                 "id": node_id,
                 "path": path,
+                "canonical_path": canonical,
                 "tree_name": tree_name,
                 "facility_id": facility,
                 "parent_path": parent_path,
@@ -190,6 +217,7 @@ def ingest_super_tree(
                 "introduced_version": ranges["introduced_version"],
                 "removed_version": ranges["removed_version"],
                 "node_type": "STRUCTURE",  # Default, can be enhanced later
+                "source": "tree_introspection",
                 "units": "dimensionless",
             }
         )
@@ -214,12 +242,14 @@ def ingest_super_tree(
             MERGE (n:TreeNode {path: node.path, facility_id: node.facility_id})
             SET n.id = node.id,
                 n.tree_name = node.tree_name,
+                n.canonical_path = node.canonical_path,
                 n.parent_path = node.parent_path,
                 n.first_shot = node.first_shot,
                 n.last_shot = node.last_shot,
                 n.introduced_version = node.introduced_version,
                 n.removed_version = node.removed_version,
                 n.node_type = COALESCE(n.node_type, node.node_type),
+                n.source = COALESCE(n.source, node.source),
                 n.units = COALESCE(n.units, node.units)
         """,
             nodes=batch,

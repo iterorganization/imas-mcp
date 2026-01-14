@@ -7,6 +7,7 @@ from imas_codex.code_examples.mdsplus_extractor import (
     extract_mdsplus_paths,
     normalize_mdsplus_path,
 )
+from imas_codex.mdsplus.ingestion import compute_canonical_path
 
 
 class TestNormalizeMDSplusPath:
@@ -27,6 +28,27 @@ class TestNormalizeMDSplusPath:
             normalize_mdsplus_path("results::thomson.profiles.auto:te")
             == "\\RESULTS::THOMSON.PROFILES.AUTO:TE"
         )
+
+
+class TestComputeCanonicalPath:
+    """Tests for compute_canonical_path function."""
+
+    def test_strips_channel_index(self) -> None:
+        """Should strip channel indices from paths."""
+        assert compute_canonical_path("\\ATLAS::DT196:CHANNEL_006") == "\\ATLAS::DT196"
+        assert compute_canonical_path("\\RESULTS::DATA_001") == "\\RESULTS::DATA"
+
+    def test_strips_numeric_suffix(self) -> None:
+        """Should strip numeric suffixes from paths."""
+        assert compute_canonical_path("\\RESULTS::TOP.BOLO_12") == "\\RESULTS::TOP.BOLO"
+
+    def test_preserves_path_without_suffix(self) -> None:
+        """Should not modify paths without channel indices."""
+        assert compute_canonical_path("\\RESULTS::I_P") == "\\RESULTS::I_P"
+
+    def test_normalizes_first(self) -> None:
+        """Should normalize before stripping indices."""
+        assert compute_canonical_path("results::data_001") == "\\RESULTS::DATA"
 
 
 class TestExtractMDSplusPaths:

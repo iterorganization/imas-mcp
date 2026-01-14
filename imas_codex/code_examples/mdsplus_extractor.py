@@ -72,28 +72,6 @@ def normalize_mdsplus_path(path: str) -> str:
     return f"\\{path}"
 
 
-def compute_canonical_path(path: str) -> str:
-    """Compute canonical path for deduplication and fuzzy matching.
-
-    Builds on normalize_mdsplus_path but additionally:
-    - Strips channel indices (CHANNEL_006 -> CHANNEL)
-    - Extracts just the node name if it's a TDI-style short path
-
-    Args:
-        path: Normalized MDSplus path
-
-    Returns:
-        Canonical path for matching
-    """
-    # First normalize
-    path = normalize_mdsplus_path(path)
-
-    # Strip channel indices for fuzzy matching
-    path = re.sub(r"_\d{2,3}$", "", path)
-
-    return path
-
-
 def extract_mdsplus_paths(text: str) -> list[MDSplusReference]:
     """Extract MDSplus paths from code text.
 

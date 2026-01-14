@@ -44,6 +44,7 @@ from imas_codex.mdsplus.discovery import (
 )
 from imas_codex.mdsplus.ingestion import (
     cleanup_legacy_nodes,
+    compute_canonical_path,
     enrich_node_metadata,
     ingest_epochs,
     ingest_super_tree,
@@ -60,6 +61,7 @@ __all__ = [
     "DiscoveryCheckpoint",
     "TreeDiscovery",
     "cleanup_legacy_nodes",
+    "compute_canonical_path",
     "discover_epochs",
     "discover_epochs_optimized",
     "enrich_graph_metadata",

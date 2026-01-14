@@ -189,11 +189,12 @@ def parse_tdi_dependencies(content: str, quantity: str) -> list[str]:
 2. [x] Source, canonical_path, physical_path fields available
 3. [x] Pydantic models regenerated
 
-### Phase 2: Migration 🔄 Partial
+### Phase 2: Migration ✅ Complete
 1. [x] TreeNodes ingested from tree introspection (171k)
-2. [ ] Set `source=tree_introspection` for nodes with `node_type`
-3. [ ] Set `source=code_extraction` for nodes from code pipeline
-4. [ ] Compute and set `canonical_path` for all nodes
+2. [x] `migrate_tree_nodes()` sets `source=tree_introspection` for nodes with `node_type`
+3. [x] `migrate_tree_nodes()` sets `source=code_extraction` for nodes from code pipeline
+4. [x] `compute_canonical_path()` function implemented
+5. [x] `ingest_super_tree()` now sets `source` and `canonical_path` on new nodes
 
 ### Phase 3: TDI Ingestion ⬜ Planned
 1. [ ] Create TDI parser script (or use tree-sitter-tdi when available)
@@ -201,22 +202,27 @@ def parse_tdi_dependencies(content: str, quantity: str) -> list[str]:
 3. [ ] Create TreeNodes with `source=tdi_parameter`
 4. [ ] Link to physical tree paths via ACCESSES relationship
 
-### Phase 4: Deduplication ⬜ Future
-1. [ ] Merge nodes that share `canonical_path`
-2. [ ] Preserve relationships from both sources
-3. [ ] Update code references to canonical nodes
+### Phase 4: Deduplication ⬜ Future (Deferred)
+Decision: Keep separate paths, link in graph via relationships.
+1. [ ] Create ACCESSES relationships between TDI parameters and physical paths
+2. [ ] Preserve all paths with their source provenance
+3. [ ] Update code references to link via DataReference nodes
 
-## Open Questions
+## Design Decisions
 
-1. **Merging strategy**: Should we merge `\\RESULTS::I_P` and `\RESULTS::TOP.EQ_RECON.TRACES:I_P`?
-   - Pro: Reduces duplication, single enrichment target
-   - Con: Loses provenance information, path semantics differ
+1. **Merging strategy**: Keep separate paths, link in graph
+   - TDI parameter nodes (e.g., `\RESULTS::I_P` from `tcv_eq("I_P")`) remain distinct
+   - Physical tree nodes (e.g., `\RESULTS::TOP.EQ_RECON.TRACES:I_P`) remain distinct
+   - ACCESSES relationship links them: `(tdi_param)-[:ACCESSES]->(physical_node)`
+   - Rationale: Preserves provenance, path semantics differ, enables enrichment on both
 
-2. **Priority**: Which source is authoritative?
-   - `tree_introspection`: Accurate structure, may miss aliases
-   - `code_extraction`: Reflects actual usage, may miss nodes
-   - `tdi_parameter`: User-facing API, authoritative for accessor functions
+2. **Source authority**: Use heuristics, not code inspection
+   - `tree_introspection`: Authoritative for structure (has `node_type`)
+   - `code_extraction`: Nodes without `node_type` assumed from code pipeline
+   - `tdi_parameter`: Future - from TDI function parsing
+   - Rationale: Code inspection unreliable for broken/incomplete code
 
-3. **TDI versioning**: How to handle shot-range validity of quantities?
-   - Some quantities only exist for certain shot ranges
-   - VERSION.FUN provides version info but mapping to quantities is complex
+3. **TDI versioning**: Use epochs approach (like TreeModelVersion)
+   - TDIFunction has `valid_from_shot`, `valid_to_shot`, `version_history`
+   - Matches existing MDSplus tree versioning pattern
+   - Rationale: Consistent with existing architecture
