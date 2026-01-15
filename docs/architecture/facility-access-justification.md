@@ -3,7 +3,7 @@
 > **Document Purpose**: Technical architecture overview for facility system administrators  
 > **Author**: Simon McIntosh, ITER Organization  
 > **Date**: January 2026  
-> **Proven at**: EPFL Swiss Plasma Center (TCV Tokamak)
+> **Example Deployment**: EPFL Swiss Plasma Center (TCV Tokamak)
 
 ---
 
@@ -12,13 +12,35 @@
 IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture, security controls, and justifies SSH access for metadata discovery.
 
 **Key Points**:
-- All LLM queries originate from **ITER (SDCC)**, never from the target facility
+- All LLM queries originate from **ITER (SDCC)**, never from fusion facilities
 - SSH access executes **read commands** — no modifications to facility systems
-- **No routine bulk data downloads** — primarily metadata, paths, and code snippets
+- **Infrequent bulk data transfers** — primarily metadata, paths, and code snippets; facility-side processing is preferred
 - Code analysis uses **Zero Data Retention (ZDR)** LLM endpoints
 - Mappings are **frozen** in imas-ambix for deterministic runtime use (no LLM at runtime)
 
-**Proven Track Record**: This approach has been successfully deployed at EPFL (TCV), where we have mapped 171,000+ TreeNodes, ingested 8,500+ code chunks, and indexed 2,900+ wiki pages — all via read-only SSH access.
+**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped 171,000+ TreeNodes, ingested 8,500+ code chunks, and indexed 2,900+ wiki pages — all via read-only SSH access.
+
+---
+
+## Facility-Side Requirements
+
+A small set of fast search tools are installed into the user's home directory (`~/bin`) on the facility side. These are statically-compiled binaries with no external dependencies.
+
+| Tool | Purpose | Size |
+|------|---------|------|
+| `rg` (ripgrep) | Fast content search | ~5 MB |
+| `fd` | Fast file finding | ~3 MB |
+| `tokei` | Lines of code counting | ~3 MB |
+| `scc` | Code complexity metrics | ~3 MB |
+| `dust` | Disk usage visualization | ~2 MB |
+
+**What is NOT installed**:
+- No Python environment or packages
+- No conda/pip dependencies
+- No system-wide packages
+- No modifications to system paths
+
+The imas-codex project itself runs entirely on ITER infrastructure. Only the search tools above are installed on facility systems.
 
 ---
 
@@ -28,33 +50,45 @@ IMAS Codex is a knowledge graph builder that maps facility-specific data structu
 
 ```mermaid
 flowchart LR
-    FACILITY["Target
-    Facility"]
+    subgraph ITER_BOX["ITER (SDCC)"]
+        GRAPH["Knowledge Graph
+        imas-codex"]
+    end
     
-    ITER["ITER
-    (SDCC)"]
+    subgraph FACILITIES["Fusion Facilities"]
+        direction TB
+        EPFL["EPFL
+        TCV"]
+        WEST["WEST
+        CEA"]
+        JET["JET
+        UKAEA"]
+        MORE["..."]
+    end
     
-    LLM["LLM
-    Providers"]
+    subgraph LLM_BOX["LLM Providers"]
+        LLM["OpenRouter
+        Copilot"]
+    end
     
-    FACILITY -->|"SSH: read commands
-    metadata, snippets"| ITER
+    GRAPH -->|"SSH read"| FACILITIES
+    FACILITIES -->|"metadata
+    snippets"| GRAPH
     
-    ITER -->|"Prompts
-    (ZDR enforced)"| LLM
+    GRAPH -->|"prompts
+    (ZDR)"| LLM_BOX
+    LLM_BOX -->|"responses"| GRAPH
     
-    LLM -->|"Responses"| ITER
-    
-    style FACILITY fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px,color:#000
-    style ITER fill:#bbdefb,stroke:#0d47a1,stroke-width:3px,color:#000
-    style LLM fill:#fff3e0,stroke:#e65100,stroke-width:3px,color:#000
+    style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
+    style FACILITIES fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px
+    style LLM_BOX fill:#fff3e0,stroke:#e65100,stroke-width:3px
 ```
 
-### Facility Data Sources
+### Fusion Facility Data Sources
 
 ```mermaid
 flowchart LR
-    subgraph FACILITY["Target Facility"]
+    subgraph FACILITY["Fusion Facility"]
         CODE["Code
         .py .f90 .pro
         Analysis scripts"]
@@ -77,53 +111,42 @@ flowchart LR
 ### Complete System Architecture
 
 ```mermaid
-flowchart TB
-    subgraph FACILITY["Target Facility"]
-        direction LR
-        
-        CODE["Code
-        .py .f90 .pro"]
-        
-        DATA["Data
-        MDSplus
-        HDF5"]
-        
-        DOCS["Documents
-        Wiki, PDFs"]
-    end
-
-    subgraph ITER["ITER (SDCC)"]
+flowchart LR
+    subgraph ITER_BOX["ITER (SDCC)"]
         GRAPH["Knowledge Graph
-        IMAS DD + Facility Mappings
-        Multi-facility: TCV, WEST, ..."]
+        IMAS DD + Mappings"]
     end
-
-    subgraph LLM["LLM Providers"]
+    
+    subgraph FACILITIES["Fusion Facilities"]
+        direction TB
+        EPFL["EPFL/TCV"]
+        WEST["WEST"]
+        JET["JET"]
+        MORE["..."]
+    end
+    
+    subgraph LLM_BOX["LLM Providers"]
+        direction TB
         OPENROUTER["OpenRouter
         ZDR Enforced"]
         COPILOT["Copilot
         Interactive"]
     end
 
-    CODE -->|"ssh: rg, fd, cat
-    code snippets"| ITER
+    GRAPH -->|"ssh: rg, fd, cat"| FACILITIES
+    FACILITIES -->|"code snippets
+    metadata"| GRAPH
     
-    DATA -->|"ssh: python3 -c
-    metadata queries"| ITER
-    
-    DOCS -->|"ssh: curl
-    text content"| ITER
-    
-    ITER -->|"prompts"| LLM
-    LLM -->|"responses"| ITER
+    GRAPH -->|"prompts"| LLM_BOX
+    LLM_BOX -->|"responses"| GRAPH
 
-    style FACILITY fill:#ffebee,stroke:#c62828,stroke-width:4px
-    style ITER fill:#e3f2fd,stroke:#1565c0,stroke-width:4px
-    style LLM fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
+    style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:4px
+    style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:4px
+    style LLM_BOX fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
 ```
 
 **Key clarifications:**
-- **No routine bulk data downloads** — We query metadata and extract sample values for validation, not entire datasets
+- **Infrequent bulk data transfers** — We query metadata and extract sample values for validation; facility-side processing is preferred (e.g., extract Ip at a time point on facility, send scalar rather than entire waveform)
 - **Knowledge Graph** — Contains IMAS Data Dictionary structure AND facility-specific mappings from multiple facilities
 - **Mappings persisted** — The IMAS↔facility path mappings discovered by LLM analysis are written to the graph for reuse
 
@@ -131,14 +154,16 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph FAC_NET["Target Facility"]
-        F["Facility
-        Resources"]
+    subgraph ITER_NET["ITER (SDCC)"]
+        S["Codex Agent"]
     end
     
-    subgraph ITER_NET["ITER (SDCC)"]
-        S["Codex
-        Agent"]
+    subgraph FACILITIES["Fusion Facilities"]
+        direction TB
+        EPFL["EPFL"]
+        WEST["WEST"]
+        JET["JET"]
+        MORE["..."]
     end
     
     subgraph LLM_NET["LLM Providers"]
@@ -146,36 +171,47 @@ flowchart LR
         Copilot"]
     end
 
-    F <-->|"SSH Port 22
-    Read Commands"| S
+    S -->|"SSH 22
+    read commands"| FACILITIES
+    FACILITIES -->|"metadata
+    snippets"| S
     
     S -->|"HTTPS 443
-    ZDR Enforced"| L
+    ZDR"| LLM_NET
 
-    style FAC_NET fill:#ffcdd2,stroke:#c62828,stroke-width:3px
     style ITER_NET fill:#bbdefb,stroke:#1565c0,stroke-width:3px
+    style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:3px
     style LLM_NET fill:#fff9c4,stroke:#f57f17,stroke-width:3px
 ```
 
 ### Key Security Point
 
+```mermaid
+flowchart LR
+    F["Fusion
+    Facilities"]
+    I["ITER
+    (SDCC)"]
+    L["LLM
+    Providers"]
+    
+    F -->|"SSH
+    (read only)"| I
+    I -->|"HTTPS
+    (ZDR)"| L
+    
+    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
+    style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
+    style L fill:#fff9c4,stroke:#f57f17,stroke-width:2px
 ```
-╔═══════════════════════════════════════════════════════════════════╗
-║                                                                   ║
-║   Facility ─────────►  ITER  ───────────►  LLM Providers         ║
-║            SSH (read)        HTTPS (ZDR)                         ║
-║                                                                   ║
-║   ALL LLM TRAFFIC ORIGINATES FROM ITER                           ║
-║   NO DIRECT CONNECTION FROM FACILITY TO LLM PROVIDERS            ║
-║                                                                   ║
-╚═══════════════════════════════════════════════════════════════════╝
-```
+
+**Critical**: All LLM traffic originates from ITER. There is no direct network path from fusion facilities to LLM providers.
 
 ---
 
-## Proven Example: EPFL/TCV Access
+## Example: EPFL/TCV Deployment
 
-This section documents the actual SSH commands and data volumes from our successful deployment at EPFL (TCV Tokamak). These serve as concrete examples of what we would do at any new facility.
+This section documents the actual SSH commands and data volumes from our deployment at EPFL (TCV Tokamak). These serve as concrete examples of what we do at fusion facilities.
 
 ### SSH Command Categories
 
@@ -413,38 +449,35 @@ The mappings discovered by Codex are exported to **imas-ambix** for deterministi
 ### Mapping Export Flow
 
 ```mermaid
-flowchart LR
-    subgraph ITER["ITER (Codex)"]
+flowchart TB
+    subgraph DISCOVERY["Discovery Phase (ITER)"]
         GRAPH["Knowledge Graph
-        LLM-discovered mappings
-        WEST, TCV, ..."]
+        LLM-discovered mappings"]
     end
     
-    subgraph EXPORT["Export Process"]
-        QUERY["Cypher Query
-        Extract validated mappings"]
-        
-        FREEZE["Version Freeze
-        Tag mapping set"]
-    end
+    QUERY["Cypher Query:
+    Extract validated mappings"]
     
-    subgraph AMBIX["imas-ambix"]
-        YAML["Mapping Files
-        YAML / JSON"]
-        
-        RUNTIME["Deterministic
+    FREEZE["Version Freeze
+    Tag mapping set"]
+    
+    subgraph RUNTIME_PHASE["Runtime Phase (Facilities)"]
+        YAML["imas-ambix
+        Frozen YAML mappings"]
+        ACCESS["Deterministic
         Data Access
-        No LLM"]
+        (No LLM)"]
     end
     
     GRAPH --> QUERY
     QUERY --> FREEZE
     FREEZE -->|"PR to ambix repo"| YAML
-    YAML --> RUNTIME
+    YAML --> ACCESS
 
-    style ITER fill:#e3f2fd,stroke:#1565c0,stroke-width:3px
-    style EXPORT fill:#f3e5f5,stroke:#7b1fa2,stroke-width:3px
-    style AMBIX fill:#e8f5e9,stroke:#2e7d32,stroke-width:3px
+    style DISCOVERY fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style RUNTIME_PHASE fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style QUERY fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
+    style FREEZE fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
 ```
 
 ### Separation of Concerns
@@ -503,16 +536,26 @@ ORDER BY tn.path
 
 ### Critical Security Point
 
+```mermaid
+flowchart LR
+    F["Fusion
+    Facilities"]
+    I["ITER
+    (SDCC)"]
+    L["LLM
+    Providers"]
+    
+    F -->|"SSH
+    (read only)"| I
+    I -->|"HTTPS
+    (ZDR)"| L
+    
+    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
+    style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
+    style L fill:#fff9c4,stroke:#f57f17,stroke-width:2px
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  ALL LLM QUERIES ORIGINATE FROM ITER, NEVER FROM FACILITY      │
-│                                                                 │
-│  Facility ──SSH──► ITER ──HTTPS──► OpenRouter / Copilot        │
-│            (read)       (prompts)                               │
-│                                                                 │
-│  No network traffic from Facility to LLM providers              │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+All LLM queries originate from ITER. No network traffic flows from facilities to LLM providers.
 
 ---
 
@@ -534,12 +577,12 @@ ORDER BY tn.path
 
 | Data Type | Source | Leaves? | Notes |
 |-----------|--------|---------|-------|
-| Raw shot data | MDSplus | **Never (routine)** | Time series, profiles not accessed |
-| Waveform arrays | MDSplus/HDF5 | **Never (routine)** | Only scalar quantities queried |
-| Complete source files | Filesystem | **Never** | Only snippets extracted |
-| Compiled binaries | Filesystem | **Never** | Not relevant |
-| User credentials | System | **Never** | SSH keys on ITER side |
-| Internal hostnames | System | **Never** | In gitignored config |
+| Raw shot data | MDSplus | **Infrequent** | Time series, profiles: facility-side extraction preferred |
+| Waveform arrays | MDSplus/HDF5 | **Infrequent** | Extract scalars on facility, send values not arrays |
+| Complete source files | Filesystem | **No** | Only snippets extracted |
+| Compiled binaries | Filesystem | **No** | Not relevant |
+| User credentials | System | **No** | SSH keys on ITER side |
+| Internal hostnames | System | **No** | In gitignored config |
 
 ### What Stays at ITER (Not Version Controlled)
 
@@ -593,44 +636,26 @@ provider = {
 - Data is **not used for model training**
 - Processing is **transient** — data discarded after response
 
-### OpenRouter Privacy Settings
+### OpenRouter Configuration
 
-Account-level settings at [openrouter.ai/settings/privacy](https://openrouter.ai/settings/privacy):
+ZDR-capable endpoints are specified in OpenRouter requests:
 - ✅ Disable providers that store inputs for training
-- ✅ Enforce ZDR for all requests
-- ✅ EU data residency (enterprise option)
+- ✅ Specify ZDR-capable model endpoints
 
 ---
 
-## SSH Access Controls
+## SSH Access
 
-### Command Whitelist
+SSH commands are executed by the LLM agent, which is prompted to use only read operations. The agent uses standard shell commands for exploration:
 
-The Codex agent enforces a strict command whitelist:
-
-```python
-# Safe operations only
-SAFE_COMMANDS = [
-    # Reading
-    "cat", "head", "tail", "less", "grep", "rg",
-    # Listing
-    "ls", "find", "fd", "tree", "du", "df",
-    # System info
-    "uname", "hostname", "whoami", "which",
-    # Package queries
-    "pip list", "python --version",
-    # MDSplus queries (read-only)
-    "python -c 'import MDSplus; ...'"
-]
-
-# BLOCKED - Never executed
-BLOCKED_COMMANDS = [
-    "rm", "mv", "cp", "chmod", "chown",    # File modification
-    "sudo", "su", "doas",                   # Privilege escalation
-    "kill", "pkill", "shutdown", "reboot",  # System control
-    "curl", "wget", "nc", "ssh",            # Network operations
-    "pip install", "conda install",         # Package installation
-]
+```bash
+# Typical commands used
+rg -l "pattern" /path          # Search file contents
+fd -e py /path                 # Find files by extension
+cat /path/file.py              # Read file contents
+head -n 100 /path/file.py      # Read file header
+python3 -c "import MDSplus..." # Query MDSplus metadata
+curl -sk "https://wiki/..."    # Fetch wiki pages
 ```
 
 ### SSH Configuration
@@ -639,109 +664,24 @@ Recommended SSH setup for ControlMaster (connection reuse):
 
 ```bash
 # ~/.ssh/config on ITER operator machine
-# Example: EPFL configuration
 Host epfl
     HostName <epfl-gateway>
     User <username>
     ControlMaster auto
     ControlPath ~/.ssh/sockets/%r@%h-%p
     ControlPersist 600
-    
-    # Security hardening
-    ForwardAgent no
-    ForwardX11 no
 ```
 
 ---
 
-## Security Recommendations
+## Optional: SSH Command Logging
 
-### For Facility System Administrators
+Facilities may choose to enable SSH command logging for audit purposes:
 
-| Recommendation | Rationale | Implementation |
-|----------------|-----------|----------------|
-| **Dedicated service account** | Audit trail, revocable access | Create `codex-reader` user with minimal permissions |
-| **Read-only shell** | Prevent accidental modification | Use `rbash` or custom restricted shell |
-| **Command logging** | Audit all executed commands | Enable `auditd` for SSH sessions |
-| **Rate limiting** | Prevent excessive queries | Limit SSH connections per minute |
-| **IP allowlist** | Restrict to ITER source IPs | Configure firewall rules |
-| **Time-limited access** | Review periodically | Set account expiry, renew on request |
-
-### For ITER Operators
-
-| Recommendation | Rationale | Implementation |
-|----------------|-----------|----------------|
-| **Enable command audit log** | Local transparency | Log all SSH commands to file |
-| **Rotate API keys monthly** | Limit exposure window | Scheduled key rotation |
-| **Use path blocklist** | Exclude sensitive directories | Configure in facility YAML |
-| **Limit snippet size** | Reduce code exposure | Configure `max_chunk_chars: 10000` |
-| **Enforce ZDR at account level** | Belt and suspenders | OpenRouter privacy settings |
-
-### Implementation: Command Audit Logging
-
-```python
-# Add to SSH wrapper for full transparency
-import logging
-from datetime import datetime
-
-audit_logger = logging.getLogger("codex.audit")
-audit_handler = logging.FileHandler("~/.codex_audit.log")
-audit_logger.addHandler(audit_handler)
-
-def ssh_command_with_audit(command: str, facility: str) -> str:
-    """Execute SSH command with audit logging."""
-    audit_logger.info(f"{datetime.now().isoformat()} | {facility} | {command}")
-    return subprocess.run(["ssh", facility, command], ...)
-```
-
-### Implementation: Path Blocklist
-
-```yaml
-# config/facilities/<facility>.yaml
-security:
-  blocklist:
-    paths:
-      - /home/*/private
-      - /restricted/*
-      - /etc/shadow
-      - /etc/passwd
-    patterns:
-      - "*password*"
-      - "*secret*"
-      - "*credential*"
-    
-  max_chunk_chars: 10000
-  max_file_size_kb: 100
-```
-
----
-
-## Proposed Access Model
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                    PROPOSED ACCESS ARCHITECTURE                     │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  ITER                                Target Facility               │
-│  ────                                ───────────────               │
-│                                                                    │
-│  ┌──────────────┐                   ┌──────────────┐               │
-│  │ Operator     │                   │ codex-reader │               │
-│  │ Workstation  │◄── SSH (22) ─────►│ (restricted) │               │
-│  │              │    read commands  │              │               │
-│  └──────┬───────┘                   └──────────────┘               │
-│         │                                                          │
-│         │ HTTPS (443)                                              │
-│         ▼                                                          │
-│  ┌──────────────┐                                                  │
-│  │ OpenRouter   │◄─── ZDR Enforced (CLI/batch)                     │
-│  │ Copilot      │◄─── Enterprise (interactive)                     │
-│  └──────────────┘                                                  │
-│                                                                    │
-│  ⚠️ NO direct network path from Facility to LLM providers          │
-│                                                                    │
-└────────────────────────────────────────────────────────────────────┘
+```bash
+# Example: Enable auditd for SSH sessions
+# This is a facility-side configuration option
+auditctl -a always,exit -F arch=b64 -S execve -F auid>=1000
 ```
 
 ---
@@ -752,14 +692,14 @@ security:
 |--------|--------|----------|
 | **Access Type** | Read SSH commands | `rg`, `fd`, `cat`, `head`, `python3 -c` |
 | **Data Extracted** | Metadata + code chunks | Avg ~1,700 chars per chunk |
-| **Raw Data** | Never routine extraction | No time series, profiles, or waveforms |
+| **Raw Data** | Infrequent extraction | Facility-side processing preferred |
 | **LLM Origin** | ITER only | No Facility→LLM traffic |
-| **LLM Retention** | Zero | ZDR enforced (OpenRouter) |
+| **LLM Retention** | Zero | ZDR endpoints specified |
 | **LLM Providers** | OpenRouter + Copilot | CLI batch / interactive |
 | **Graph Storage** | Private GHCR | Authenticated access only |
-| **Audit Trail** | Available | Can enable `auditd` logging |
+| **Audit Trail** | Optional | Facility can enable `auditd` |
 | **Revocable** | Yes | Standard account management |
-| **Proven Track Record** | Yes | EPFL/TCV successfully deployed |
+| **Track Record** | Yes | EPFL/TCV deployed |
 
 ---
 
