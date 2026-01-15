@@ -137,9 +137,11 @@ flowchart TB
     end
 
     subgraph ITER["ITER"]
-        DISCOVER["Discover"]
-        CHUNK["Chunk"]
-        EMBED["Embed"]
+        subgraph PIPE["Pipeline"]
+            DISCOVER["Discover"]
+            CHUNK["Chunk"]
+            EMBED["Embed"]
+        end
         GRAPH[("Graph")]
     end
 
@@ -154,8 +156,9 @@ flowchart TB
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
     style ITER fill:#e8f0f8,stroke:#4a6785
+    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
-    style GRAPH fill:#e6f0e6,stroke:#5a7a5a
+    style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
 **Pipeline stages:**
@@ -188,9 +191,11 @@ flowchart TB
     end
 
     subgraph ITER["ITER"]
-        WALK["Walk"]
-        EXTRACT["Extract"]
-        ENRICH["Enrich"]
+        subgraph PIPE["Pipeline"]
+            WALK["Walk"]
+            EXTRACT["Extract"]
+            ENRICH["Enrich"]
+        end
         GRAPH[("Graph")]
     end
 
@@ -205,8 +210,9 @@ flowchart TB
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
     style ITER fill:#e8f0f8,stroke:#4a6785
+    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
-    style GRAPH fill:#e6f0e6,stroke:#5a7a5a
+    style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
 **Pipeline stages:**
@@ -239,9 +245,11 @@ flowchart TB
     end
 
     subgraph ITER["ITER"]
-        CRAWL["Crawl"]
-        SCORE["Score"]
-        INGEST["Ingest"]
+        subgraph PIPE["Pipeline"]
+            CRAWL["Crawl"]
+            SCORE["Score"]
+            INGEST["Ingest"]
+        end
         GRAPH[("Graph")]
     end
 
@@ -256,8 +264,9 @@ flowchart TB
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
     style ITER fill:#e8f0f8,stroke:#4a6785
+    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
-    style GRAPH fill:#e6f0e6,stroke:#5a7a5a
+    style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
 **Pipeline stages:**
