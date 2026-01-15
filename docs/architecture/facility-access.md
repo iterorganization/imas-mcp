@@ -39,22 +39,26 @@ flowchart TB
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
+            direction LR
             INGEST["Ingestion"]
             AGENTS["Agents"]
         end
-        GRAPH[("Knowledge Graph
+        GRAPH[("Fusion Knowledge Graph
 (private)")]
-        AMBIX["imas-ambix
-(public)"]
     end
 
-    F -- "code, metadata" --> INGEST
+    AMBIX["imas-ambix
+(public)"]
+
+    F -- "documents,
+    code,
+    metadata" --> INGEST
     INGEST -- "SSH" --> F
-    INGEST --> GRAPH
-    AGENTS --> GRAPH
-    GRAPH --> AMBIX
     L -- "responses" --> AGENTS
     AGENTS -- "prompts" --> L
+    INGEST --> GRAPH
+    AGENTS --> GRAPH
+    GRAPH -- "IMAS mappings" --> AMBIX
 
     style TOP fill:none,stroke:none
     style LLM fill:#f5f0e6,stroke:#8b7355
@@ -67,7 +71,7 @@ flowchart TB
 
 **Components:**
 - **imas-codex** — Graph builder that connects to facilities via SSH and uses LLMs for semantic analysis
-- **Knowledge Graph** — Neo4j database storing IMAS Data Dictionary, facility mappings, and code examples  
+- **Fusion Knowledge Graph** — Neo4j database storing IMAS Data Dictionary, facility mappings, and code examples  
 - **imas-ambix** — Runtime library that reads frozen mappings from the graph to enable data transformation (no LLM, no SSH)
 
 **Build-time vs Runtime:**
@@ -76,7 +80,7 @@ flowchart TB
 
 **Key clarifications:**
 - **Infrequent bulk data transfers** — We query metadata and extract sample values for validation; facility-side processing is preferred (e.g., extract Ip at a time point on facility, send scalar rather than entire waveform)
-- **Knowledge Graph** — Contains IMAS Data Dictionary structure AND facility-specific mappings from multiple facilities
+- **Fusion Knowledge Graph** — Contains IMAS Data Dictionary structure AND facility-specific mappings from multiple facilities
 - **Mappings persisted** — The IMAS↔facility path mappings discovered by LLM analysis are written to the graph for reuse
 
 ---
@@ -120,7 +124,7 @@ flowchart LR
     style DOCS fill:#f0e8e8,stroke:#7a5050
 ```
 
-### Code Chunking Pipeline
+### Code Ingestion Pipeline
 
 At EPFL, we've ingested **8,500+ code chunks** from analysis scripts and library code.
 
@@ -128,9 +132,8 @@ At EPFL, we've ingested **8,500+ code chunks** from analysis scripts and library
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Fusion Facilities"]
-            CODE["Source Code
-.py .f90 .pro"]
+        subgraph FAC["Fusion Facility"]
+            CODE["Source Code"]
         end
         subgraph LLM["LLM Providers"]
             L["OpenRouter (ZDR)"]
@@ -139,19 +142,20 @@ flowchart TB
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            FETCH["Fetch & Chunk"]
-            EMBED["Embed"]
+            direction LR
+            MAP["Map & Ingest"]
+            SCORE["Score"]
         end
-        GRAPH[("Fusion Knowledge
-Graph")]
+        GRAPH[("Fusion Knowledge Graph
+(private)")]
     end
 
-    CODE -- "code" --> FETCH
-    FETCH -- "SSH" --> CODE
-    FETCH --> GRAPH
-    EMBED --> GRAPH
-    L -- "embeddings" --> EMBED
-    EMBED -- "text" --> L
+    CODE -- "code" --> MAP
+    MAP -- "SSH" --> CODE
+    L -- "responses" --> SCORE
+    SCORE -- "prompts" --> L
+    MAP --> GRAPH
+    SCORE --> GRAPH
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -162,8 +166,11 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Fetch & Chunk** — Find files via `rg -l` and `fd -e`, extract function signatures (~1,700 chars avg)
-2. **Embed** — Generate vector embeddings for semantic search
+1. **Map** — Enumerate files via `fd -e py`, pattern matching with `rg -l`, create SourceFile nodes
+2. **Score** — LLM-assisted relevance scoring (ReAct agent evaluates high-value candidates)
+3. **Ingest** — Fetch code, chunk with tree-sitter, embed with **local SentenceTransformer** (`all-MiniLM-L6-v2`)
+
+**LLM Usage:** **Score phase only** — Map and Ingest phases use no LLM. The Score phase uses a ReAct agent to evaluate file relevance and assign interest scores, prioritizing high-value code for ingestion.
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -181,9 +188,8 @@ At EPFL, we've mapped **171,000+ TreeNodes** from 29 MDSplus trees.
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Fusion Facilities"]
-            TREE["MDSplus Trees
-29 trees"]
+        subgraph FAC["Fusion Facility"]
+            TREE["MDSplus Trees"]
         end
         subgraph LLM["LLM Providers"]
             L["OpenRouter (ZDR)"]
@@ -192,19 +198,20 @@ flowchart TB
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            WALK["Walk & Extract"]
+            direction LR
+            WALK["Walk"]
             ENRICH["Enrich"]
         end
-        GRAPH[("Fusion Knowledge
-Graph")]
+        GRAPH[("Fusion Knowledge Graph
+(private)")]
     end
 
     TREE -- "metadata" --> WALK
     WALK -- "SSH" --> TREE
+    L -- "responses" --> ENRICH
+    ENRICH -- "prompts" --> L
     WALK --> GRAPH
     ENRICH --> GRAPH
-    L -- "mappings" --> ENRICH
-    ENRICH -- "prompts" --> L
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -215,8 +222,10 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Walk & Extract** — Traverse tree structure, capture node metadata (path, dtype, units)
-2. **Enrich** — LLM-assisted IMAS path mapping and COCOS identification
+1. **Walk & Extract** — Traverse tree structure via SSH, capture node metadata (path, dtype, units)
+2. **Enrich** (optional) — LLM-assisted IMAS path mapping and COCOS identification
+
+**LLM Usage:** **Optional (Enrich phase only)** — The Walk & Extract phase uses no LLM. The Enrich phase uses LLM for generating descriptions, physics domain classification, and IMAS mapping suggestions. Enrichment can be skipped or run selectively on high-value nodes.
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -234,9 +243,8 @@ At EPFL, we've ingested **2,972 wiki pages** from `spcwiki.epfl.ch` into **26,44
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Fusion Facilities"]
-            WIKI["Wiki Pages
-MediaWiki"]
+        subgraph FAC["Fusion Facility"]
+            WIKI["Wiki Pages"]
         end
         subgraph LLM["LLM Providers"]
             L["OpenRouter (ZDR)"]
@@ -245,19 +253,20 @@ MediaWiki"]
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            CRAWL["Crawl & Chunk"]
+            direction LR
+            CRAWL["Crawl & Ingest"]
             SCORE["Score"]
         end
-        GRAPH[("Fusion Knowledge
-Graph")]
+        GRAPH[("Fusion Knowledge Graph
+(private)")]
     end
 
     WIKI -- "pages" --> CRAWL
     CRAWL -- "SSH" --> WIKI
+    L -- "responses" --> SCORE
+    SCORE -- "prompts" --> L
     CRAWL --> GRAPH
     SCORE --> GRAPH
-    L -- "scores" --> SCORE
-    SCORE -- "prompts" --> L
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -268,8 +277,11 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Crawl & Chunk** — Follow links from portal via `curl -sk`, extract text chunks
-2. **Score** — LLM-assisted relevance scoring (ReAct agent)
+1. **Crawl** — Follow links from portal via `curl -sk`, extract page metadata
+2. **Score** — LLM-assisted relevance scoring (ReAct agent evaluates each page)
+3. **Ingest** — Fetch content, chunk text, generate embeddings with **local SentenceTransformer**, link entities with regex patterns
+
+**LLM Usage:** **Score phase only** — Crawl and Ingest phases use no LLM. The Score phase uses a ReAct agent to evaluate page relevance and assign interest scores, allowing selective ingestion of high-value content.
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -279,6 +291,25 @@ Graph")]
 | Units | Physics units | `eV`, `Tesla`, `m^-3` |
 | COCOS Values | `COCOS N` | `COCOS 17` (LIUQE) |
 | Sign Conventions | Direction patterns | `positive clockwise` |
+
+### LLM Usage Summary
+
+| Pipeline | Phase | LLM Used? | Technology |
+|----------|-------|-----------|------------|
+| **Code Ingestion** | Map | ❌ No | SSH + fd/rg |
+| | Score | ✅ Yes | OpenRouter ReAct Agent (ZDR) |
+| | Ingest & Embed | ❌ No | tree-sitter + local SentenceTransformer |
+| **MDSplus Tree Walking** | Walk & Extract | ❌ No | SSH + MDSplus Python |
+| | Enrich (optional) | ✅ Yes | OpenRouter LLM (ZDR) |
+| **Wiki Ingestion** | Crawl | ❌ No | SSH + curl |
+| | Score | ✅ Yes | OpenRouter ReAct Agent (ZDR) |
+| | Ingest & Embed | ❌ No | Local SentenceTransformer |
+
+**Key Insight**: The majority of ingestion work uses **no LLM**. LLM calls are used only for:
+1. **Relevance scoring** (code and wiki) — deciding *which* content is valuable
+2. **Enrichment** (MDSplus node descriptions) — adding *meaning* to raw metadata
+
+All vector embeddings use a **local SentenceTransformer model** running entirely on ITER infrastructure, ensuring no data leaves the SDCC network during embedding operations.
 
 ---
 
