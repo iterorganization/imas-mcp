@@ -11,7 +11,7 @@
 
 IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture and SSH access patterns used for facility discovery.
 
-**imas-ambix** is a partner project that consumes distilled mappings from the Codex knowledge graph. It is a deterministic runtime product with no LLM usage — end users employ ambix to transform facility data to IMAS format or to generate UDA mapping files, all derived from validated mapping links exported from the Codex graph.
+IMAS Ambix is a partner project that consumes distilled mappings from the Codex knowledge graph. It is a deterministic runtime product with no LLM usage; end users employ Ambix to transform facility data to IMAS format or to generate UDA mapping files, all derived from validated mapping links exported from the Codex graph.
 
 **Key Points**:
 - All LLM queries originate from **ITER (SDCC)**, never from fusion facilities
@@ -45,42 +45,34 @@ These tools are optional performance optimizations — standard shell commands (
 
 ```mermaid
 flowchart LR
-    subgraph LLM_BOX["LLM Providers"]
-        LLM["OpenRouter
-        Copilot"]
-    end
-
-    subgraph ITER_BOX["ITER (SDCC)"]
-        CODEX["imas-codex
-        (graph builder)"]
-        GRAPH[("Knowledge
-        Graph")]
-        AMBIX["imas-ambix
-        (data transform)"]
-        
-        CODEX --> GRAPH
-        GRAPH --> AMBIX
-    end
-    
-    subgraph FACILITIES["Fusion Facilities"]
+    subgraph LLM["LLM Providers"]
         direction TB
-        EPFL["EPFL/TCV"]
-        WEST["WEST/CEA"]
-        JET["JET/UKAEA"]
-        MORE["..."]
+        LLM1["OpenRouter"]
+        LLM2["Copilot"]
     end
 
-    LLM_BOX -->|"responses"| CODEX
-    CODEX -->|"prompts
-    (ZDR)"| LLM_BOX
+    subgraph ITER["ITER (SDCC)"]
+        direction TB
+        CODEX["imas-codex"]
+        GRAPH[("Knowledge Graph")]
+        AMBIX["imas-ambix"]
+        CODEX --> GRAPH --> AMBIX
+    end
     
-    CODEX -->|"SSH"| FACILITIES
-    FACILITIES -->|"metadata
-    chunks"| CODEX
+    subgraph FAC["Fusion Facilities"]
+        direction TB
+        F1["EPFL/TCV"]
+        F2["WEST/CEA"]
+        F3["JET/UKAEA"]
+        F4["..."]
+    end
+
+    LLM <-->|"prompts / responses"| CODEX
+    CODEX <-->|"SSH"| FAC
     
-    style LLM_BOX fill:#fff3e0,stroke:#e65100,stroke-width:3px
-    style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
-    style FACILITIES fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px
+    style LLM fill:#fff3e0,stroke:#e65100,stroke-width:3px
+    style ITER fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
+    style FAC fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px
 ```
 
 **Components:**
@@ -116,67 +108,44 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph LLM_BOX["LLM Providers"]
+    subgraph LLM["LLM Providers"]
         direction TB
-        OPENROUTER["OpenRouter
-        (ZDR Enforced)"]
-        COPILOT["Copilot
-        (Interactive)"]
+        LLM1["OpenRouter (ZDR)"]
+        LLM2["Copilot"]
     end
 
-    subgraph ITER_BOX["ITER (SDCC)"]
+    subgraph ITER["ITER (SDCC)"]
         direction TB
-        
-        subgraph BUILD["Graph Building (imas-codex)"]
-            INGEST["File Ingestion
-            mdsplus_extractor
-            ids_extractor"]
-            EMBED["Embeddings
-            all-MiniLM-L6-v2"]
-            CLUSTER["Clustering
-            semantic grouping"]
-            AGENTS["LLM Agents
-            ReAct pattern"]
+        subgraph BUILD["imas-codex"]
+            direction TB
+            INGEST["Ingestion"]
+            EMBED["Embeddings"]
+            CLUSTER["Clustering"]
+            AGENTS["LLM Agents"]
         end
-        
-        GRAPH[("Neo4j
-        Knowledge Graph")]
-        
-        subgraph RUNTIME["Data Transform (imas-ambix)"]
+        GRAPH[("Neo4j Graph")]
+        subgraph RUNTIME["imas-ambix"]
+            direction TB
             MAPPER["Mapping Loader"]
             TRANSFORM["COCOS Transform"]
         end
-        
-        INGEST --> GRAPH
-        EMBED --> GRAPH
-        CLUSTER --> GRAPH
-        AGENTS --> GRAPH
-        GRAPH --> MAPPER
-        MAPPER --> TRANSFORM
+        BUILD --> GRAPH --> RUNTIME
     end
     
-    subgraph FACILITIES["Fusion Facilities"]
+    subgraph FAC["Fusion Facilities"]
         direction TB
-        EPFL["EPFL/TCV
-        MDSplus, Wiki"]
-        WEST["WEST
-        MDSplus, IMAS"]
-        JET["JET
-        PPF, MDSplus"]
-        MORE["Other
-        Facilities"]
+        F1["EPFL/TCV"]
+        F2["WEST"]
+        F3["JET"]
+        F4["..."]
     end
 
-    LLM_BOX -->|"responses"| AGENTS
-    AGENTS -->|"prompts"| LLM_BOX
-    
-    INGEST -->|"SSH: rg, fd, cat"| FACILITIES
-    FACILITIES -->|"code chunks
-    tree structures"| INGEST
+    LLM <-->|"prompts"| AGENTS
+    INGEST <-->|"SSH"| FAC
 
-    style LLM_BOX fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
-    style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:4px
-    style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:4px
+    style LLM fill:#fff8e1,stroke:#ff8f00,stroke-width:3px
+    style ITER fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
+    style FAC fill:#ffcdd2,stroke:#c62828,stroke-width:3px
     style BUILD fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     style RUNTIME fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 ```
@@ -194,54 +163,44 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph LLM_NET["LLM Providers"]
-        L["OpenRouter
-        Copilot"]
+    subgraph LLM["LLM Providers"]
+        L["OpenRouter / Copilot"]
     end
 
-    subgraph ITER_NET["ITER (SDCC)"]
+    subgraph ITER["ITER (SDCC)"]
         S["Codex Agent"]
     end
     
-    subgraph FACILITIES["Fusion Facilities"]
+    subgraph FAC["Fusion Facilities"]
         direction TB
-        EPFL["EPFL"]
-        WEST["WEST"]
-        JET["JET"]
-        MORE["..."]
+        F1["EPFL"]
+        F2["WEST"]
+        F3["JET"]
+        F4["..."]
     end
 
-    S -->|"HTTPS 443
-    ZDR"| LLM_NET
-    LLM_NET -->|"responses"| S
-    
-    S -->|"SSH 22"| FACILITIES
-    FACILITIES -->|"metadata
-    chunks"| S
+    LLM <-->|"HTTPS 443"| S
+    S <-->|"SSH 22"| FAC
 
-    style LLM_NET fill:#fff9c4,stroke:#f57f17,stroke-width:3px
-    style ITER_NET fill:#bbdefb,stroke:#1565c0,stroke-width:3px
-    style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:3px
+    style LLM fill:#fff9c4,stroke:#f57f17,stroke-width:3px
+    style ITER fill:#bbdefb,stroke:#1565c0,stroke-width:3px
+    style FAC fill:#ffcdd2,stroke:#c62828,stroke-width:3px
 ```
 
 ### Key Security Point
 
 ```mermaid
 flowchart LR
-    L["LLM
-    Providers"]
-    I["ITER
-    (SDCC)"]
-    F["Fusion
-    Facilities"]
+    LLM["LLM Providers"]
+    ITER["ITER (SDCC)"]
+    FAC["Fusion Facilities"]
     
-    I -->|"HTTPS
-    (ZDR)"| L
-    I -->|"SSH"| F
+    LLM <-->|"HTTPS (ZDR)"| ITER
+    ITER <-->|"SSH"| FAC
     
-    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
-    style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
-    style L fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style LLM fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style ITER fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
+    style FAC fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
 ```
 
 **Critical**: All LLM traffic originates from ITER. There is no direct network path from fusion facilities to LLM providers.
@@ -490,33 +449,22 @@ The mappings discovered by Codex are exported to **imas-ambix** for deterministi
 ```mermaid
 flowchart TB
     subgraph DISCOVERY["Discovery Phase (ITER)"]
-        GRAPH["Knowledge Graph
-        LLM-discovered mappings"]
+        GRAPH["Knowledge Graph"]
+        QUERY["Extract validated mappings"]
+        FREEZE["Version freeze"]
+        GRAPH --> QUERY --> FREEZE
     end
     
-    QUERY["Cypher Query:
-    Extract validated mappings"]
-    
-    FREEZE["Version Freeze
-    Tag mapping set"]
-    
-    subgraph RUNTIME_PHASE["Runtime Phase (Facilities)"]
-        YAML["imas-ambix
-        Frozen YAML mappings"]
-        ACCESS["Deterministic
-        Data Access
-        (No LLM)"]
+    subgraph RUNTIME["Runtime Phase"]
+        YAML["imas-ambix"]
+        ACCESS["Deterministic Data Access"]
+        YAML --> ACCESS
     end
     
-    GRAPH --> QUERY
-    QUERY --> FREEZE
-    FREEZE -->|"PR to ambix repo"| YAML
-    YAML --> ACCESS
+    FREEZE --> YAML
 
     style DISCOVERY fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    style RUNTIME_PHASE fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style QUERY fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
-    style FREEZE fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
+    style RUNTIME fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
 ```
 
 ### Separation of Concerns
@@ -577,20 +525,16 @@ ORDER BY tn.path
 
 ```mermaid
 flowchart LR
-    L["LLM
-    Providers"]
-    I["ITER
-    (SDCC)"]
-    F["Fusion
-    Facilities"]
+    LLM["LLM Providers"]
+    ITER["ITER (SDCC)"]
+    FAC["Fusion Facilities"]
     
-    I -->|"HTTPS
-    (ZDR)"| L
-    I -->|"SSH"| F
+    LLM <-->|"HTTPS (ZDR)"| ITER
+    ITER <-->|"SSH"| FAC
     
-    style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
-    style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
-    style L fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style LLM fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style ITER fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
+    style FAC fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
 ```
 
 All LLM queries originate from ITER. No network traffic flows from facilities to LLM providers.
