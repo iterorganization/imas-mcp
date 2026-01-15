@@ -74,6 +74,10 @@ flowchart TB
 - **Fusion Knowledge Graph** — Neo4j database storing IMAS Data Dictionary, facility mappings, and code examples  
 - **imas-ambix** — Runtime library that reads frozen mappings from the graph to enable data transformation (no LLM, no SSH)
 
+**Data flows** (not all shown in diagram for layout clarity):
+- **Agents read from Graph** — Agents query the knowledge graph to retrieve context for LLM prompts
+- **Ingestion triggers Agents** — Ingestion pipelines invoke agents for scoring and enrichment tasks
+
 **Build-time vs Runtime:**
 - **imas-codex (build-time)** — Connects to facilities via SSH, uses LLMs for semantic analysis, builds the knowledge graph
 - **imas-ambix (runtime)** — Reads frozen mappings from graph, performs data transformation; no SSH or LLM access needed
@@ -133,7 +137,7 @@ flowchart TB
     subgraph TOP[" "]
         direction LR
         subgraph FAC["Fusion Facility"]
-            CODE["Source Code"]
+            CODE["User / Facility Code"]
         end
         subgraph LLM["LLM Providers"]
             L["OpenRouter (ZDR)"]
@@ -150,7 +154,7 @@ flowchart TB
 (private)")]
     end
 
-    CODE -- "code" --> MAP
+    CODE -- "files" --> MAP
     MAP -- "SSH" --> CODE
     L -- "responses" --> SCORE
     SCORE -- "prompts" --> L
