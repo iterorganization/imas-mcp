@@ -104,13 +104,17 @@ Three parallel pipelines extract knowledge from facility data sources. Each pipe
 ### Facility Data Sources
 
 ```mermaid
-block-beta
-    columns 3
-    block:FACILITY["Fusion Facility"]:3
-        CODE["Code"] DATA["Data"] DOCS["Docs"]
+flowchart LR
+    subgraph FAC["Fusion Facility"]
+        CODE["Code
+        .py .f90 .pro"]
+        DATA["Data
+        MDSplus HDF5"]
+        DOCS["Docs
+        Wiki PDF"]
     end
 
-    style FACILITY fill:#f5e6e6,stroke:#8b5a5a
+    style FAC fill:#f5e6e6,stroke:#8b5a5a
     style CODE fill:#f0e8e8,stroke:#7a5050
     style DATA fill:#f0e8e8,stroke:#7a5050
     style DOCS fill:#f0e8e8,stroke:#7a5050
