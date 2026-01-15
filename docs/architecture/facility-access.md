@@ -1,4 +1,4 @@
-# IMAS Codex Architecture: Facility Access Justification
+# IMAS Codex Architecture: Facility Access
 
 > **Document Purpose**: Technical architecture overview for facility system administrators  
 > **Author**: Simon McIntosh, ITER Organization  
@@ -9,22 +9,21 @@
 
 ## Executive Summary
 
-IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture, security controls, and justifies SSH access for metadata discovery.
+IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture and SSH access patterns used for facility discovery.
 
 **Key Points**:
 - All LLM queries originate from **ITER (SDCC)**, never from fusion facilities
-- SSH access executes **read commands** — no modifications to facility systems
-- **Infrequent bulk data transfers** — primarily metadata, paths, and code snippets; facility-side processing is preferred
+- SSH access is used for **facility discovery** — exploring code, data structures, and documentation
 - Code analysis uses **Zero Data Retention (ZDR)** LLM endpoints
 - Mappings are **frozen** in imas-ambix for deterministic runtime use (no LLM at runtime)
 
-**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped 171,000+ TreeNodes, ingested 8,500+ code chunks, and indexed 2,900+ wiki pages — all via read-only SSH access.
+**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped 171,000+ TreeNodes, ingested 8,500+ code chunks, and indexed 2,900+ wiki pages.
 
 ---
 
-## Facility-Side Requirements
+## Facility-Side Tools (Optional)
 
-A small set of fast search tools are installed into the user's home directory (`~/bin`) on the facility side. These are statically-compiled binaries with no external dependencies.
+For performance optimization, a small set of fast search tools may be installed into the user's home directory (`~/bin`). These are statically-compiled binaries with no external dependencies.
 
 | Tool | Purpose | Size |
 |------|---------|------|
@@ -34,13 +33,7 @@ A small set of fast search tools are installed into the user's home directory (`
 | `scc` | Code complexity metrics | ~3 MB |
 | `dust` | Disk usage visualization | ~2 MB |
 
-**What is NOT installed**:
-- No Python environment or packages
-- No conda/pip dependencies
-- No system-wide packages
-- No modifications to system paths
-
-The imas-codex project itself runs entirely on ITER infrastructure. Only the search tools above are installed on facility systems.
+These tools are optional performance optimizations — standard shell commands (`grep`, `find`) work but are slower on large codebases. The imas-codex project itself runs entirely on ITER infrastructure.
 
 ---
 
@@ -50,39 +43,48 @@ The imas-codex project itself runs entirely on ITER infrastructure. Only the sea
 
 ```mermaid
 flowchart LR
-    subgraph ITER_BOX["ITER (SDCC)"]
-        GRAPH["Knowledge Graph
-        imas-codex"]
-    end
-    
-    subgraph FACILITIES["Fusion Facilities"]
-        direction TB
-        EPFL["EPFL
-        TCV"]
-        WEST["WEST
-        CEA"]
-        JET["JET
-        UKAEA"]
-        MORE["..."]
-    end
-    
     subgraph LLM_BOX["LLM Providers"]
         LLM["OpenRouter
         Copilot"]
     end
+
+    subgraph ITER_BOX["ITER (SDCC)"]
+        CODEX["imas-codex
+        (graph builder)"]
+        GRAPH[("Knowledge
+        Graph")]
+        AMBIX["imas-ambix
+        (data transform)"]
+        
+        CODEX --> GRAPH
+        GRAPH --> AMBIX
+    end
     
-    GRAPH -->|"SSH read"| FACILITIES
+    subgraph FACILITIES["Fusion Facilities"]
+        direction TB
+        EPFL["EPFL/TCV"]
+        WEST["WEST/CEA"]
+        JET["JET/UKAEA"]
+        MORE["..."]
+    end
+
+    CODEX -->|"SSH"| FACILITIES
     FACILITIES -->|"metadata
-    snippets"| GRAPH
+    snippets"| CODEX
     
-    GRAPH -->|"prompts
+    CODEX -->|"prompts
     (ZDR)"| LLM_BOX
-    LLM_BOX -->|"responses"| GRAPH
+    LLM_BOX -->|"responses"| CODEX
     
     style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
     style FACILITIES fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px
     style LLM_BOX fill:#fff3e0,stroke:#e65100,stroke-width:3px
 ```
+
+**Components:**
+- **imas-codex** — Graph builder that connects to facilities via SSH and uses LLMs for semantic analysis
+- **Knowledge Graph** — Neo4j database storing IMAS Data Dictionary, facility mappings, and code examples  
+- **imas-ambix** — Runtime library that reads frozen mappings from the graph to enable data transformation (no LLM, no SSH)
 
 ### Fusion Facility Data Sources
 
@@ -112,38 +114,74 @@ flowchart LR
 
 ```mermaid
 flowchart LR
+    subgraph LLM_BOX["LLM Providers"]
+        direction TB
+        OPENROUTER["OpenRouter
+        (ZDR Enforced)"]
+        COPILOT["Copilot
+        (Interactive)"]
+    end
+
     subgraph ITER_BOX["ITER (SDCC)"]
-        GRAPH["Knowledge Graph
-        IMAS DD + Mappings"]
+        direction TB
+        
+        subgraph BUILD["Graph Building (imas-codex)"]
+            INGEST["File Ingestion
+            mdsplus_extractor
+            ids_extractor"]
+            EMBED["Embeddings
+            all-MiniLM-L6-v2"]
+            CLUSTER["Clustering
+            semantic grouping"]
+            AGENTS["LLM Agents
+            ReAct pattern"]
+        end
+        
+        GRAPH[("Neo4j
+        Knowledge Graph")]
+        
+        subgraph RUNTIME["Data Transform (imas-ambix)"]
+            MAPPER["Mapping Loader"]
+            TRANSFORM["COCOS Transform"]
+        end
+        
+        INGEST --> GRAPH
+        EMBED --> GRAPH
+        CLUSTER --> GRAPH
+        AGENTS --> GRAPH
+        GRAPH --> MAPPER
+        MAPPER --> TRANSFORM
     end
     
     subgraph FACILITIES["Fusion Facilities"]
         direction TB
-        EPFL["EPFL/TCV"]
-        WEST["WEST"]
-        JET["JET"]
-        MORE["..."]
-    end
-    
-    subgraph LLM_BOX["LLM Providers"]
-        direction TB
-        OPENROUTER["OpenRouter
-        ZDR Enforced"]
-        COPILOT["Copilot
-        Interactive"]
+        EPFL["EPFL/TCV
+        MDSplus, Wiki"]
+        WEST["WEST
+        MDSplus, IMAS"]
+        JET["JET
+        PPF, MDSplus"]
+        MORE["Other
+        Facilities"]
     end
 
-    GRAPH -->|"ssh: rg, fd, cat"| FACILITIES
+    INGEST -->|"SSH: rg, fd, cat"| FACILITIES
     FACILITIES -->|"code snippets
-    metadata"| GRAPH
+    tree structures"| INGEST
     
-    GRAPH -->|"prompts"| LLM_BOX
-    LLM_BOX -->|"responses"| GRAPH
+    AGENTS -->|"prompts"| LLM_BOX
+    LLM_BOX -->|"responses"| AGENTS
 
     style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:4px
     style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:4px
     style LLM_BOX fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
+    style BUILD fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    style RUNTIME fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 ```
+
+**Build-time vs Runtime:**
+- **imas-codex (build-time)** — Connects to facilities via SSH, uses LLMs for semantic analysis, builds the knowledge graph
+- **imas-ambix (runtime)** — Reads frozen mappings from graph, performs data transformation; no SSH or LLM access needed
 
 **Key clarifications:**
 - **Infrequent bulk data transfers** — We query metadata and extract sample values for validation; facility-side processing is preferred (e.g., extract Ip at a time point on facility, send scalar rather than entire waveform)
@@ -154,6 +192,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
+    subgraph LLM_NET["LLM Providers"]
+        L["OpenRouter
+        Copilot"]
+    end
+
     subgraph ITER_NET["ITER (SDCC)"]
         S["Codex Agent"]
     end
@@ -165,14 +208,8 @@ flowchart LR
         JET["JET"]
         MORE["..."]
     end
-    
-    subgraph LLM_NET["LLM Providers"]
-        L["OpenRouter
-        Copilot"]
-    end
 
-    S -->|"SSH 22
-    read commands"| FACILITIES
+    S -->|"SSH 22"| FACILITIES
     FACILITIES -->|"metadata
     snippets"| S
     
@@ -188,17 +225,16 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    F["Fusion
-    Facilities"]
-    I["ITER
-    (SDCC)"]
     L["LLM
     Providers"]
+    I["ITER
+    (SDCC)"]
+    F["Fusion
+    Facilities"]
     
-    F -->|"SSH
-    (read only)"| I
     I -->|"HTTPS
     (ZDR)"| L
+    I -->|"SSH"| F
     
     style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
     style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
@@ -526,7 +562,7 @@ ORDER BY tn.path
 
 | Step | Data | From | To | Retention |
 |------|------|------|-----|-----------|
-| 1 | SSH commands (read) | ITER | Facility | Session only |
+| 1 | SSH commands | ITER | Facility | Session only |
 | 2 | Command output (paths, snippets) | Facility | ITER | Local graph |
 | 3 | Physics quantities (psi, Ip, B0) | Facility | ITER | Local graph |
 | 4 | Wiki content (HTML text) | Facility | ITER | Local graph |
@@ -538,17 +574,16 @@ ORDER BY tn.path
 
 ```mermaid
 flowchart LR
-    F["Fusion
-    Facilities"]
-    I["ITER
-    (SDCC)"]
     L["LLM
     Providers"]
+    I["ITER
+    (SDCC)"]
+    F["Fusion
+    Facilities"]
     
-    F -->|"SSH
-    (read only)"| I
     I -->|"HTTPS
     (ZDR)"| L
+    I -->|"SSH"| F
     
     style F fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px
     style I fill:#bbdefb,stroke:#0d47a1,stroke-width:2px
