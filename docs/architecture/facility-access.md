@@ -11,6 +11,8 @@
 
 IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture and SSH access patterns used for facility discovery.
 
+**imas-ambix** is a partner project that consumes distilled mappings from the Codex knowledge graph. It is a deterministic runtime product with no LLM usage — end users employ ambix to transform facility data to IMAS format or to generate UDA mapping files, all derived from validated mapping links exported from the Codex graph.
+
 **Key Points**:
 - All LLM queries originate from **ITER (SDCC)**, never from fusion facilities
 - SSH access is used for **facility discovery** — exploring code, data structures, and documentation
@@ -68,17 +70,17 @@ flowchart LR
         MORE["..."]
     end
 
-    CODEX -->|"SSH"| FACILITIES
-    FACILITIES -->|"metadata
-    snippets"| CODEX
-    
+    LLM_BOX -->|"responses"| CODEX
     CODEX -->|"prompts
     (ZDR)"| LLM_BOX
-    LLM_BOX -->|"responses"| CODEX
     
+    CODEX -->|"SSH"| FACILITIES
+    FACILITIES -->|"metadata
+    chunks"| CODEX
+    
+    style LLM_BOX fill:#fff3e0,stroke:#e65100,stroke-width:3px
     style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:3px
     style FACILITIES fill:#ffcdd2,stroke:#b71c1c,stroke-width:3px
-    style LLM_BOX fill:#fff3e0,stroke:#e65100,stroke-width:3px
 ```
 
 **Components:**
@@ -165,16 +167,16 @@ flowchart LR
         Facilities"]
     end
 
-    INGEST -->|"SSH: rg, fd, cat"| FACILITIES
-    FACILITIES -->|"code snippets
-    tree structures"| INGEST
-    
-    AGENTS -->|"prompts"| LLM_BOX
     LLM_BOX -->|"responses"| AGENTS
+    AGENTS -->|"prompts"| LLM_BOX
+    
+    INGEST -->|"SSH: rg, fd, cat"| FACILITIES
+    FACILITIES -->|"code chunks
+    tree structures"| INGEST
 
+    style LLM_BOX fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
     style ITER_BOX fill:#bbdefb,stroke:#0d47a1,stroke-width:4px
     style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:4px
-    style LLM_BOX fill:#fff8e1,stroke:#ff8f00,stroke-width:4px
     style BUILD fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     style RUNTIME fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
 ```
@@ -209,16 +211,17 @@ flowchart LR
         MORE["..."]
     end
 
-    S -->|"SSH 22"| FACILITIES
-    FACILITIES -->|"metadata
-    snippets"| S
-    
     S -->|"HTTPS 443
     ZDR"| LLM_NET
+    LLM_NET -->|"responses"| S
+    
+    S -->|"SSH 22"| FACILITIES
+    FACILITIES -->|"metadata
+    chunks"| S
 
+    style LLM_NET fill:#fff9c4,stroke:#f57f17,stroke-width:3px
     style ITER_NET fill:#bbdefb,stroke:#1565c0,stroke-width:3px
     style FACILITIES fill:#ffcdd2,stroke:#c62828,stroke-width:3px
-    style LLM_NET fill:#fff9c4,stroke:#f57f17,stroke-width:3px
 ```
 
 ### Key Security Point
@@ -254,7 +257,7 @@ This section documents the actual SSH commands and data volumes from our deploym
 | Category | Command Pattern | Data Returned | Size |
 |----------|-----------------|---------------|------|
 | **Code Discovery** | `rg -l`, `fd -e`, `ls` | File paths | Paths only |
-| **Code Reading** | `cat`, `head -n` | Source code snippets | Varies (avg ~1,700 chars) |
+| **Code Reading** | `cat`, `head -n` | Source code chunks | Varies (avg ~1,700 chars) |
 | **MDSplus Metadata** | `python3 -c "import MDSplus..."` | Node info | Scalar values |
 | **Wiki Fetch** | `curl -sk` | Page HTML | Text content |
 | **Directory Stats** | `tokei`, `scc`, `dust` | LOC counts | Numbers only |
@@ -563,10 +566,10 @@ ORDER BY tn.path
 | Step | Data | From | To | Retention |
 |------|------|------|-----|-----------|
 | 1 | SSH commands | ITER | Facility | Session only |
-| 2 | Command output (paths, snippets) | Facility | ITER | Local graph |
+| 2 | Command output (paths, chunks) | Facility | ITER | Local graph |
 | 3 | Physics quantities (psi, Ip, B0) | Facility | ITER | Local graph |
 | 4 | Wiki content (HTML text) | Facility | ITER | Local graph |
-| 5 | Prompts + snippets | ITER | LLM Provider | **Zero (ZDR)** |
+| 5 | Prompts + chunks | ITER | LLM Provider | **Zero (ZDR)** |
 | 6 | Structured responses | LLM Provider | ITER | Local graph |
 | 7 | Graph snapshots | ITER | GHCR | **Private** (authenticated) |
 
@@ -601,7 +604,7 @@ All LLM queries originate from ITER. No network traffic flows from facilities to
 | Data Type | Source | Leaves? | Example (EPFL) | Purpose |
 |-----------|--------|---------|----------------|---------|
 | File paths | Filesystem | Yes | `/home/agostini/tcv/lib/tcv_diag.py` | Code discovery |
-| Code snippets | Source files | Yes | Function signatures (~1,700 chars avg) | IMAS mapping |
+| Code chunks | Source files | Yes | Function signatures (~1,700 chars avg) | IMAS mapping |
 | Signal names | MDSplus | Yes | `\MAGNETICS::IPLASMA` | Metadata |
 | Physics quantities | MDSplus | Yes | `psi_axis=0.5`, `ip=-1e6` | COCOS validation |
 | Wiki text | MediaWiki | Yes | Signal descriptions | Documentation |
@@ -614,7 +617,7 @@ All LLM queries originate from ITER. No network traffic flows from facilities to
 |-----------|--------|---------|-------|
 | Raw shot data | MDSplus | **Infrequent** | Time series, profiles: facility-side extraction preferred |
 | Waveform arrays | MDSplus/HDF5 | **Infrequent** | Extract scalars on facility, send values not arrays |
-| Complete source files | Filesystem | **No** | Only snippets extracted |
+| Complete source files | Filesystem | **No** | Only chunks extracted |
 | Compiled binaries | Filesystem | **No** | Not relevant |
 | User credentials | System | **No** | SSH keys on ITER side |
 | Internal hostnames | System | **No** | In gitignored config |
@@ -635,11 +638,15 @@ All LLM queries originate from ITER. No network traffic flows from facilities to
 | Graph dump (`.dump`) | `ghcr.io/iterorganization/imas-codex-graph` | **Authenticated only** |
 | Schema version | OCI annotations | **Authenticated only** |
 
-**Important**: The graph is stored on GHCR for version control but is **not public**. Access requires GHCR authentication tokens. The graph contains:
+**Important**: The graph is stored on GHCR for version control but is **not public**. Access requires GHCR authentication tokens.
+
+**OCI Annotations**: OCI (Open Container Initiative) annotations are metadata labels stored alongside container images. The schema version is embedded in image annotations on GHCR, allowing version tracking without pulling the full image.
+
+The graph contains:
 - Signal names and descriptions (from wiki/code)
 - IMAS path mappings
-- Vector embeddings (dimensionality-reduced, not reversible to source)
-- **No complete source code** — snippets ≤600 chars for context
+- Vector embeddings with associated code chunks (avg ~1,700 chars)
+- **No complete source files** — only relevant code chunks for context
 
 ---
 
