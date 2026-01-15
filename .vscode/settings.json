@@ -64,6 +64,10 @@
   "gistpad.mcp.enabled": false,
   "markdown-pdf.highlightStyle": "solarized-light.css",
   "markdown-pdf.includeDefaultStyles": false,
+  "markdown-pdf.mermaidServer": "https://unpkg.com/mermaid/dist/mermaid.min.js",
+  "markdown-preview-enhanced.mermaidTheme": "default",
+  "markdown-preview-enhanced.enableScriptExecution": true,
+  "markdown-preview-enhanced.chromePath": "/usr/bin/google-chrome",
   "chat.mcp.autostart": "never",
   "github.copilot.chat.cli.mcp.enabled": true
 }
