@@ -139,21 +139,19 @@ flowchart TB
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            direction LR
-            DISCOVER["Discover"]
-            CHUNK["Chunk"]
+            FETCH["Fetch & Chunk"]
             EMBED["Embed"]
         end
         GRAPH[("Fusion Knowledge
 Graph")]
     end
 
-    CODE -- "paths" --> DISCOVER
-    DISCOVER -- "SSH" --> CODE
+    CODE -- "code" --> FETCH
+    FETCH -- "SSH" --> CODE
+    FETCH --> GRAPH
     EMBED --> GRAPH
     L -- "embeddings" --> EMBED
     EMBED -- "text" --> L
-    DISCOVER --> CHUNK --> EMBED
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -164,9 +162,8 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Discover** — Find Python/Fortran/IDL files via `rg -l` and `fd -e`
-2. **Chunk** — Extract function signatures and code blocks (~1,700 chars avg)
-3. **Embed** — Generate vector embeddings for semantic search
+1. **Fetch & Chunk** — Find files via `rg -l` and `fd -e`, extract function signatures (~1,700 chars avg)
+2. **Embed** — Generate vector embeddings for semantic search
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -195,9 +192,7 @@ flowchart TB
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            direction LR
-            WALK["Walk"]
-            EXTRACT["Extract"]
+            WALK["Walk & Extract"]
             ENRICH["Enrich"]
         end
         GRAPH[("Fusion Knowledge
@@ -206,10 +201,10 @@ Graph")]
 
     TREE -- "metadata" --> WALK
     WALK -- "SSH" --> TREE
+    WALK --> GRAPH
     ENRICH --> GRAPH
     L -- "mappings" --> ENRICH
     ENRICH -- "prompts" --> L
-    WALK --> EXTRACT --> ENRICH
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -220,9 +215,8 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Walk** — Traverse tree structure via `python3 -c "import MDSplus..."`
-2. **Extract** — Capture node metadata (path, dtype, description, units)
-3. **Enrich** — LLM-assisted IMAS path mapping and COCOS identification
+1. **Walk & Extract** — Traverse tree structure, capture node metadata (path, dtype, units)
+2. **Enrich** — LLM-assisted IMAS path mapping and COCOS identification
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -251,10 +245,8 @@ MediaWiki"]
 
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
-            direction LR
-            CRAWL["Crawl"]
+            CRAWL["Crawl & Chunk"]
             SCORE["Score"]
-            INGEST["Ingest"]
         end
         GRAPH[("Fusion Knowledge
 Graph")]
@@ -262,10 +254,10 @@ Graph")]
 
     WIKI -- "pages" --> CRAWL
     CRAWL -- "SSH" --> WIKI
-    INGEST --> GRAPH
+    CRAWL --> GRAPH
+    SCORE --> GRAPH
     L -- "scores" --> SCORE
     SCORE -- "prompts" --> L
-    CRAWL --> SCORE --> INGEST
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
@@ -276,9 +268,8 @@ Graph")]
 ```
 
 **Pipeline stages:**
-1. **Crawl** — Follow links from portal page via `curl -sk`
+1. **Crawl & Chunk** — Follow links from portal via `curl -sk`, extract text chunks
 2. **Score** — LLM-assisted relevance scoring (ReAct agent)
-3. **Ingest** — Chunk text, generate embeddings, link to TreeNodes
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
