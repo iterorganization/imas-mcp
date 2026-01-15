@@ -128,36 +128,38 @@ At EPFL, we've ingested **8,500+ code chunks** from analysis scripts and library
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Facility"]
-            CODE["Source Code"]
+        subgraph FAC["Fusion Facilities"]
+            CODE["Source Code
+.py .f90 .pro"]
         end
-        subgraph LLM["LLM"]
-            L["OpenRouter"]
+        subgraph LLM["LLM Providers"]
+            L["OpenRouter (ZDR)"]
         end
     end
 
-    subgraph ITER["ITER"]
-        subgraph PIPE["Pipeline"]
+    subgraph ITER["ITER (SDCC)"]
+        subgraph BUILD["imas-codex"]
+            direction LR
             DISCOVER["Discover"]
             CHUNK["Chunk"]
             EMBED["Embed"]
         end
-        GRAPH[("Graph")]
+        GRAPH[("Fusion Knowledge
+Graph")]
     end
 
     CODE -- "paths" --> DISCOVER
     DISCOVER -- "SSH" --> CODE
-    DISCOVER --> CHUNK
-    CHUNK --> EMBED
     EMBED --> GRAPH
     L -- "embeddings" --> EMBED
     EMBED -- "text" --> L
+    DISCOVER --> CHUNK --> EMBED
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
-    style ITER fill:#e8f0f8,stroke:#4a6785
-    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
+    style ITER fill:#e8f0f8,stroke:#4a6785
+    style BUILD fill:#dde8f0,stroke:#4a6785
     style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
@@ -182,36 +184,38 @@ At EPFL, we've mapped **171,000+ TreeNodes** from 29 MDSplus trees.
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Facility"]
-            TREE["MDSplus Trees"]
+        subgraph FAC["Fusion Facilities"]
+            TREE["MDSplus Trees
+29 trees"]
         end
-        subgraph LLM["LLM"]
-            L["OpenRouter"]
+        subgraph LLM["LLM Providers"]
+            L["OpenRouter (ZDR)"]
         end
     end
 
-    subgraph ITER["ITER"]
-        subgraph PIPE["Pipeline"]
+    subgraph ITER["ITER (SDCC)"]
+        subgraph BUILD["imas-codex"]
+            direction LR
             WALK["Walk"]
             EXTRACT["Extract"]
             ENRICH["Enrich"]
         end
-        GRAPH[("Graph")]
+        GRAPH[("Fusion Knowledge
+Graph")]
     end
 
     TREE -- "metadata" --> WALK
     WALK -- "SSH" --> TREE
-    WALK --> EXTRACT
-    EXTRACT --> ENRICH
     ENRICH --> GRAPH
     L -- "mappings" --> ENRICH
     ENRICH -- "prompts" --> L
+    WALK --> EXTRACT --> ENRICH
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
-    style ITER fill:#e8f0f8,stroke:#4a6785
-    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
+    style ITER fill:#e8f0f8,stroke:#4a6785
+    style BUILD fill:#dde8f0,stroke:#4a6785
     style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
@@ -236,36 +240,38 @@ At EPFL, we've ingested **2,972 wiki pages** from `spcwiki.epfl.ch` into **26,44
 flowchart TB
     subgraph TOP[" "]
         direction LR
-        subgraph FAC["Facility"]
-            WIKI["Wiki"]
+        subgraph FAC["Fusion Facilities"]
+            WIKI["Wiki Pages
+MediaWiki"]
         end
-        subgraph LLM["LLM"]
-            L["OpenRouter"]
+        subgraph LLM["LLM Providers"]
+            L["OpenRouter (ZDR)"]
         end
     end
 
-    subgraph ITER["ITER"]
-        subgraph PIPE["Pipeline"]
+    subgraph ITER["ITER (SDCC)"]
+        subgraph BUILD["imas-codex"]
+            direction LR
             CRAWL["Crawl"]
             SCORE["Score"]
             INGEST["Ingest"]
         end
-        GRAPH[("Graph")]
+        GRAPH[("Fusion Knowledge
+Graph")]
     end
 
     WIKI -- "pages" --> CRAWL
     CRAWL -- "SSH" --> WIKI
-    CRAWL --> SCORE
-    SCORE --> INGEST
     INGEST --> GRAPH
     L -- "scores" --> SCORE
     SCORE -- "prompts" --> L
+    CRAWL --> SCORE --> INGEST
 
     style TOP fill:none,stroke:none
     style FAC fill:#f5e6e6,stroke:#8b5a5a
-    style ITER fill:#e8f0f8,stroke:#4a6785
-    style PIPE fill:#dde8f0,stroke:#4a6785
     style LLM fill:#f5f0e6,stroke:#8b7355
+    style ITER fill:#e8f0f8,stroke:#4a6785
+    style BUILD fill:#dde8f0,stroke:#4a6785
     style GRAPH fill:#d8e4ec,stroke:#3a5a75
 ```
 
