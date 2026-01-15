@@ -952,6 +952,88 @@ except IOError:
     raise ProcessingError("failed to process")
 ```
 
+## Documentation
+
+### Mermaid Diagrams
+
+When creating architecture diagrams in documentation, follow these guidelines for compact, readable layouts.
+
+**Color Palette:**
+
+| Element | Color | Use |
+|---------|-------|-----|
+| Fusion Facilities | `#f5e6e6` | External facility boxes |
+| LLM Providers | `#f5f0e6` | External LLM service boxes |
+| ITER (SDCC) | `#e8f0f8` | ITER network boundary |
+| imas-codex | `#dde8f0` | Build/pipeline subgraphs |
+| Fusion Knowledge Graph | `#d8e4ec` | Neo4j graph database |
+| Alternative systems | `#e6f0e6` | AMBIX, other systems |
+
+**Compact Layout Pattern:**
+
+The `direction LR` directive is unreliable inside nested subgraphs. To force horizontal layout, use exactly **2 nodes** inside inner subgraphs with symmetric external connections:
+
+```mermaid
+flowchart TB
+    subgraph TOP[" "]
+        direction LR
+        subgraph FAC["Fusion Facilities"]
+            F1["Source"]
+        end
+        subgraph LLM["LLM Providers"]
+            L1["Model"]
+        end
+    end
+    subgraph ITER["ITER (SDCC)"]
+        subgraph BUILD["imas-codex"]
+            LEFT["Fetch"]   %% Connected to FAC
+            RIGHT["Process"] %% Connected to LLM
+        end
+        GRAPH[("Fusion Knowledge Graph")]
+    end
+    F1 --> LEFT
+    LEFT --> F1
+    LEFT --> GRAPH
+    RIGHT --> GRAPH
+    L1 --> RIGHT
+    RIGHT --> L1
+
+    style FAC fill:#f5e6e6,stroke:#666
+    style LLM fill:#f5f0e6,stroke:#666
+    style ITER fill:#e8f0f8,stroke:#333
+    style BUILD fill:#dde8f0,stroke:#666
+    style GRAPH fill:#d8e4ec,stroke:#666
+```
+
+**Why this works:**
+- 2 nodes in inner subgraph (not 3) forces side-by-side arrangement
+- External nodes connect to different inner nodes (FAC→LEFT, LLM→RIGHT)
+- Both inner nodes connect to same target (GRAPH)
+- Symmetric connection pattern prevents vertical stacking
+
+**Testing Diagrams:**
+
+Use Mermaid CLI to verify layouts before committing:
+
+```bash
+# Write diagram to temp file
+cat > /tmp/test.mmd << 'EOF'
+flowchart TB
+    A --> B
+EOF
+
+# Render to SVG
+npx --yes @mermaid-js/mermaid-cli -i /tmp/test.mmd -o /tmp/test.svg
+
+# Check dimensions (wide = good, square/tall = layout issue)
+grep -oP 'viewBox="[^"]+"' /tmp/test.svg
+```
+
+**Avoid:**
+- `block-beta` for simple diagrams (rendering artifacts)
+- 3+ nodes inside inner subgraphs (causes vertical stacking)
+- Relying on `direction LR` in nested contexts
+
 ## Philosophy
 
 This is a **green field project**:
