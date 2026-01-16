@@ -175,3 +175,31 @@ query("MATCH (n) WHERE n.path CONTAINS '/sauter/' RETURN labels(n) as type, n.id
 ```
 
 Cost impact: returning 10 nodes with embeddings costs ~$0.30 extra per query.
+
+## Prefer Cypher Aggregations Over Python Post-Processing
+
+Each tool call has overhead (~$0.01-0.05). Use Cypher's built-in aggregations instead of fetching raw data and processing in Python.
+
+```python
+# BAD - multiple calls, Python aggregation
+files = query("MATCH (f:SourceFile) WHERE f.id CONTAINS 'CHEASE' RETURN f.status, f.language")
+# Then Counter(f['status'] for f in files) in another call
+
+# GOOD - single call, Cypher aggregation
+query("""
+MATCH (f:SourceFile)
+WHERE f.id CONTAINS 'CHEASE'
+RETURN f.status AS status, f.language AS lang, count(*) AS count
+ORDER BY count DESC
+""")
+
+# GOOD - combine related queries with collect()
+query("""
+MATCH (f:SourceFile)
+WHERE f.id CONTAINS 'CHEASE'
+WITH f.status AS status, collect(f.path)[..5] AS sample_paths
+RETURN status, size(sample_paths) AS count, sample_paths
+""")
+```
+
+Useful Cypher aggregations: `count()`, `collect()`, `sum()`, `avg()`, `min()`, `max()`, `size()`.
