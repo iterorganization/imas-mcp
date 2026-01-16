@@ -594,7 +594,7 @@ Codex uses two LLM providers:
 CLI/batch jobs use OpenRouter with ZDR enforced:
 
 ```python
-# Enforced in imas_codex/agents/llm.py
+# Enforced in imas_codex/agentic/llm.py
 provider = {
     "zdr": True,                    # Zero Data Retention
     "data_collection": "deny",      # No training on prompts

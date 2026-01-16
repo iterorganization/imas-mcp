@@ -1,0 +1,100 @@
+{
+  // Custom tool sets for imas-codex agents
+  // Reference in .agent.md files or prompts with #toolset-name
+  // Built-in sets: #edit, #search, #runCommands, #runTasks, #runNotebooks
+
+  "readonly": {
+    "tools": [
+      "codebase",
+      "readFile",
+      "listDirectory",
+      "fileSearch",
+      "textSearch",
+      "fetch",
+      "problems",
+      "usages",
+      "changes",
+      "terminalLastCommand",
+      "terminalSelection",
+      "testFailure",
+      "searchResults",
+      "githubRepo"
+    ],
+    "description": "Read-only workspace access - no file edits, no terminal commands",
+    "icon": "eye"
+  },
+
+  "core": {
+    "tools": [
+      "codebase",
+      "readFile",
+      "listDirectory",
+      "fileSearch",
+      "textSearch",
+      "fetch",
+      "problems",
+      "usages",
+      "changes",
+      "runInTerminal",
+      "getTerminalOutput",
+      "terminalLastCommand"
+    ],
+    "description": "Core tools with terminal access but no file editing",
+    "icon": "terminal"
+  },
+
+  "standard": {
+    "tools": [
+      "codebase",
+      "readFile",
+      "listDirectory",
+      "fileSearch",
+      "textSearch",
+      "fetch",
+      "problems",
+      "usages",
+      "changes",
+      "editFiles",
+      "createFile",
+      "createDirectory",
+      "runInTerminal",
+      "getTerminalOutput",
+      "terminalLastCommand",
+      "runTests",
+      "testFailure"
+    ],
+    "description": "Standard development tools - edit files, run terminal, run tests",
+    "icon": "code"
+  },
+
+  "full": {
+    "tools": [
+      "codebase",
+      "readFile",
+      "listDirectory",
+      "fileSearch",
+      "textSearch",
+      "fetch",
+      "problems",
+      "usages",
+      "changes",
+      "editFiles",
+      "createFile",
+      "createDirectory",
+      "runInTerminal",
+      "getTerminalOutput",
+      "terminalLastCommand",
+      "runTests",
+      "testFailure",
+      "runTask",
+      "createAndRunTask",
+      "getTaskOutput",
+      "runVscodeCommand",
+      "githubRepo",
+      "extensions",
+      "installExtension"
+    ],
+    "description": "Full tool access excluding notebooks",
+    "icon": "tools"
+  }
+}

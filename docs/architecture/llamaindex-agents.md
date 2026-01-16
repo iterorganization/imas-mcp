@@ -1,6 +1,6 @@
 # LlamaIndex Agents Architecture
 
-> **Module**: `imas_codex.agents`
+> **Module**: `imas_codex.agentic`
 
 ## Overview
 
@@ -10,7 +10,7 @@ The agent system uses LlamaIndex ReActAgent for autonomous exploration, metadata
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     imas_codex.agents                           │
+│                     imas_codex.agentic                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
@@ -60,7 +60,7 @@ uv run imas-codex agent mark-stale "\\RESULTS::*"
 ## ReAct Workflow
 
 ```python
-from imas_codex.agents import create_enrichment_agent
+from imas_codex.agentic import create_enrichment_agent
 
 agent = create_enrichment_agent(model="gemini-2.0-flash")
 result = await agent.run("Enrich these TreeNodes: \\RESULTS::PSI, \\RESULTS::IP")

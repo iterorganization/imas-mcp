@@ -1,6 +1,6 @@
 # Agents Module
 
-The `imas_codex.agents` module provides two complementary agent systems:
+The `imas_codex.agentic` module provides two complementary agent systems:
 
 1. **MCP Server** (`AgentsServer`) - REPL-first exploration via Model Context Protocol
 2. **LlamaIndex ReActAgents** - Autonomous agents with tool-use capabilities
@@ -67,7 +67,7 @@ imas-codex agent enrich "\RESULTS::IBS" "\RESULTS::ASTRA"
 ### Python API
 
 ```python
-from imas_codex.agents import (
+from imas_codex.agentic import (
     get_enrichment_agent,
     get_mapping_agent,
     get_exploration_agent,
@@ -142,7 +142,7 @@ Available for `semantic_search()`:
 For ReActAgents (not MCP server), use `tools.py`:
 
 ```python
-from imas_codex.agents.tools import (
+from imas_codex.agentic.tools import (
     get_exploration_tools,  # Fast startup
     get_imas_tools,         # IMAS DD tools (~30s startup)
     get_wiki_tools,         # Wiki search
@@ -172,7 +172,7 @@ OPENAI_API_KEY=sk-or-v1-...
 Default: `google/gemini-3-flash-preview` (1M context, cost-effective)
 
 ```python
-from imas_codex.agents import get_llm, MODELS
+from imas_codex.agentic import get_llm, MODELS
 
 # Use preset
 llm = get_llm(model=MODELS["gemini-pro"])
@@ -184,7 +184,7 @@ llm = get_llm(model="anthropic/claude-sonnet-4")
 ## Architecture
 
 ```
-imas_codex/agents/
+imas_codex/agentic/
 ├── __init__.py      # Public API exports
 ├── llm.py           # OpenRouter LLM configuration
 ├── tools.py         # LlamaIndex FunctionTools

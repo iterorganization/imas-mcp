@@ -28,9 +28,9 @@ from dataclasses import dataclass, field  # noqa: E402
 from llama_index.core.agent import ReActAgent  # noqa: E402
 from llama_index.core.tools import FunctionTool  # noqa: E402
 
-from imas_codex.agents.llm import get_llm  # noqa: E402
-from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
-from imas_codex.agents.tools import get_exploration_tools  # noqa: E402
+from imas_codex.agentic.llm import get_llm  # noqa: E402
+from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.agentic.tools import get_exploration_tools  # noqa: E402
 from imas_codex.core.physics_domain import PhysicsDomain  # noqa: E402
 from imas_codex.graph import GraphClient  # noqa: E402
 
@@ -397,7 +397,7 @@ async def _call_llm_batch(
     Uses higher max_tokens (16384) to accommodate large batch responses.
     Each path generates ~100-150 output tokens in JSON format.
     """
-    from imas_codex.agents.llm import get_llm
+    from imas_codex.agentic.llm import get_llm
 
     prompt = _build_batch_prompt(tree_name, nodes)
 
@@ -1057,7 +1057,7 @@ def get_batch_enrichment_agent(
     Returns:
         Configured ReActAgent
     """
-    from imas_codex.agents.tools import get_enrichment_tools
+    from imas_codex.agentic.tools import get_enrichment_tools
 
     # Get system prompt and fill in physics domains
     system_prompt = _get_prompt("enrichment-react-batch")

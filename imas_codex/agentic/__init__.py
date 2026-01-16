@@ -13,14 +13,14 @@ The ReActAgents can autonomously:
 - Synthesize information across multiple sources
 """
 
-from imas_codex.agents.llm import (
+from imas_codex.agentic.llm import (
     DEFAULT_MODEL,
     MODELS,
     get_llm,
     get_model_for_task,
     get_model_id,
 )
-from imas_codex.agents.react import (
+from imas_codex.agentic.react import (
     AgentConfig,
     BatchProgress,
     EnrichmentResult,
@@ -38,8 +38,8 @@ from imas_codex.agents.react import (
     run_agent,
     run_agent_sync,
 )
-from imas_codex.agents.server import AgentsServer
-from imas_codex.agents.tools import (
+from imas_codex.agentic.server import AgentsServer
+from imas_codex.agentic.tools import (
     get_all_tools,
     get_exploration_tools,
     get_graph_tool,

@@ -30,7 +30,7 @@ from fastmcp import FastMCP
 from neo4j.exceptions import ServiceUnavailable
 from ruamel.yaml import YAML
 
-from imas_codex.agents.prompt_loader import (
+from imas_codex.agentic.prompt_loader import (
     PromptDefinition,
     load_prompts,
 )
@@ -829,6 +829,8 @@ def _init_repl() -> dict[str, Any]:
         "determine_cocos": determine_cocos,
         "cocos_sign_flip_paths": cocos_sign_flip_paths,
         "cocos_info": cocos_info,
+        # REPL management
+        "reload": _reload_repl,
         # Standard library
         "subprocess": subprocess,
         # Result storage
@@ -847,6 +849,37 @@ def _get_repl() -> dict[str, Any]:
     if _repl_globals is None:
         return _init_repl()
     return _repl_globals
+
+
+def _reload_repl() -> str:
+    """Reload the REPL environment after code changes.
+
+    Clears cached modules and reinitializes all utilities.
+    Use after editing imas_codex source files.
+
+    Returns:
+        Status message
+    """
+    global _repl_globals, _imas_tools_instance
+
+    # Clear REPL state
+    _repl_globals = None
+    _imas_tools_instance = None
+
+    # Invalidate imas_codex module cache
+    modules_to_reload = [name for name in sys.modules if name.startswith("imas_codex")]
+    for name in modules_to_reload:
+        try:
+            del sys.modules[name]
+        except KeyError:
+            pass
+
+    logger.info(f"Cleared {len(modules_to_reload)} cached imas_codex modules")
+
+    # Reinitialize
+    _init_repl()
+
+    return f"REPL reloaded. Cleared {len(modules_to_reload)} modules and reinitialized utilities."
 
 
 # =============================================================================

@@ -35,8 +35,8 @@ from rich.progress import (  # noqa: E402
     TextColumn,
 )
 
-from imas_codex.agents.llm import get_llm, get_model_for_task  # noqa: E402
-from imas_codex.agents.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
+from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
 from imas_codex.graph import GraphClient  # noqa: E402
 from imas_codex.wiki.progress import (  # noqa: E402
     CrawlProgressMonitor,

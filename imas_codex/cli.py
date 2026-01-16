@@ -263,7 +263,7 @@ def serve_agents(
         case _:
             logger.info(f"Using {transport} transport on {host}:{port}")
 
-    from imas_codex.agents.server import AgentsServer
+    from imas_codex.agentic.server import AgentsServer
 
     server = AgentsServer()
     server.run(
@@ -2720,7 +2720,7 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
     """
     import asyncio
 
-    from imas_codex.agents import quick_agent_task
+    from imas_codex.agentic import quick_agent_task
 
     click.echo(f"Running {agent_type} agent...")
     if verbose:
@@ -2839,7 +2839,7 @@ def agent_enrich(
     )
     from rich.table import Table
 
-    from imas_codex.agents import (
+    from imas_codex.agentic import (
         BatchProgress,
         compose_batches,
         discover_nodes_to_enrich,

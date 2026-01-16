@@ -29,8 +29,8 @@ from dataclasses import dataclass, field
 from llama_index.core.agent import ReActAgent
 from llama_index.core.tools import FunctionTool
 
-from imas_codex.agents.llm import get_llm
-from imas_codex.agents.prompt_loader import load_prompts
+from imas_codex.agentic.llm import get_llm
+from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.graph import GraphClient
 
 logger = logging.getLogger(__name__)
