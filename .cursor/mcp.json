@@ -1,7 +1,11 @@
 {
   "mcpServers": {
     "codex": {
-      "url": "http://127.0.0.1:9002/mcp",
+      "command": "uv",
+      "args": ["run", "imas-codex", "serve", "agents"]
+    },
+    "imas": {
+      "url": "https://imas-dd.iter.org/mcp",
       "type": "http"
     }
   }
