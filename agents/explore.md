@@ -143,7 +143,7 @@ Infrastructure (private) - security-sensitive:
 
 ```python
 # Wiki requires -k flag (SSL cert issue)
-python("print(ssh('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"'))")
+python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facility='epfl'))")
 ```
 
 ## Handoff to Ingestion

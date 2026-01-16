@@ -3,7 +3,7 @@ Reusable tools for LlamaIndex agents.
 
 Provides FunctionTools for:
 - Neo4j graph queries
-- MDSplus SSH queries
+- MDSplus queries (auto-detects local vs SSH)
 - Code example search
 - IMAS DD search (direct, no MCP overhead)
 
@@ -11,15 +11,18 @@ Architecture:
     Tools are exposed as simple sync functions that LlamaIndex can wrap.
     The IMAS search tools use a singleton DocumentStore to avoid repeated
     embedding model loading (~30s startup cost paid once).
+
+    Remote execution uses run() from imas_codex.remote.tools which
+    auto-detects whether to run locally or via SSH based on facility.
 """
 
 import asyncio
-import subprocess
 from typing import Any
 
 from llama_index.core.tools import FunctionTool
 
 from imas_codex.graph import GraphClient
+from imas_codex.remote.tools import run
 
 # =============================================================================
 # Singleton IMAS Tools (avoids repeated DocumentStore initialization)
@@ -100,23 +103,24 @@ def _query_neo4j(cypher: str, params: dict[str, Any] | None = None) -> str:
         return f"Query error: {e}"
 
 
-def _ssh_mdsplus_query(
+def _mdsplus_query(
     path: str,
     tree_name: str | None = None,
     shot: int = 80000,
     facility: str = "epfl",
 ) -> str:
     """
-    Query MDSplus database via SSH for node metadata.
+    Query MDSplus database for node metadata.
 
+    Auto-detects whether to run locally or via SSH based on facility.
     Use this as a LAST RESORT after searching code examples and the graph.
-    SSH queries are slow (~5s each). The graph already contains most metadata.
+    Remote queries are slow (~5s each). The graph already contains most metadata.
 
     Args:
         path: MDSplus path (e.g., '\\RESULTS::THOMSON:NE') - tree name is auto-detected
         tree_name: Optional override (auto-detected from path if not provided)
         shot: Shot number to query (default: 80000)
-        facility: SSH host alias (default: 'epfl')
+        facility: Facility ID (default: 'epfl') - auto-detects local vs SSH
 
     Returns:
         Node metadata: usage, description, units, dtype
@@ -152,29 +156,24 @@ except Exception as e:
     print('error:', str(e))
 "'''
     try:
-        result = subprocess.run(
-            ["ssh", facility, cmd],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout.strip() or result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return "SSH query timed out after 30s"
+        return run(cmd, facility=facility, timeout=30)
+    except TimeoutError:
+        return "Query timed out after 30s"
     except Exception as e:
-        return f"SSH error: {e}"
+        return f"Query error: {e}"
 
 
-def _ssh_command(command: str, facility: str = "epfl", timeout: int = 60) -> str:
+def _run_command(command: str, facility: str = "epfl", timeout: int = 60) -> str:
     """
-    Execute an arbitrary SSH command on a remote facility.
+    Execute a command on a facility (auto-detects local vs SSH).
 
     Use this for exploration tasks like listing directories, searching files,
-    or running analysis tools.
+    or running analysis tools. Automatically runs locally if you're on the
+    target facility, or via SSH if remote.
 
     Args:
         command: Shell command to execute
-        facility: SSH host alias (default: 'epfl')
+        facility: Facility ID (default: 'epfl') - auto-detects local vs SSH
         timeout: Command timeout in seconds (default: 60)
 
     Returns:
@@ -186,20 +185,11 @@ def _ssh_command(command: str, facility: str = "epfl", timeout: int = 60) -> str
         - python3 -c "import MDSplus; print(MDSplus.__version__)"
     """
     try:
-        result = subprocess.run(
-            ["ssh", facility, command],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]: {result.stderr}"
-        return output.strip() or "(no output)"
-    except subprocess.TimeoutExpired:
+        return run(command, facility=facility, timeout=timeout)
+    except TimeoutError:
         return f"Command timed out after {timeout}s"
     except Exception as e:
-        return f"SSH error: {e}"
+        return f"Command error: {e}"
 
 
 def _search_code_examples(query: str, limit: int = 5, min_score: float = 0.5) -> str:
@@ -477,18 +467,18 @@ def get_exploration_tools() -> list[FunctionTool]:
             ),
         ),
         FunctionTool.from_defaults(
-            fn=_ssh_mdsplus_query,
-            name="ssh_mdsplus_query",
+            fn=_mdsplus_query,
+            name="mdsplus_query",
             description=(
-                "LAST RESORT: Query MDSplus via SSH (~5s latency). "
-                "Tree name auto-detected from path. Use search_code_examples first!"
+                "LAST RESORT: Query MDSplus (~5s latency). "
+                "Auto-detects local vs SSH. Use search_code_examples first!"
             ),
         ),
         FunctionTool.from_defaults(
-            fn=_ssh_command,
-            name="ssh_command",
+            fn=_run_command,
+            name="run_command",
             description=(
-                "Execute an SSH command on a remote facility. "
+                "Execute a command on a facility (auto-detects local vs SSH). "
                 "Use for exploration: ls, rg, fd, python scripts."
             ),
         ),
@@ -612,11 +602,11 @@ def get_enrichment_tools() -> list[FunctionTool]:
             ),
         ),
         FunctionTool.from_defaults(
-            fn=_ssh_mdsplus_query,
-            name="ssh_mdsplus_query",
+            fn=_mdsplus_query,
+            name="mdsplus_query",
             description=(
-                "LAST RESORT: Query MDSplus via SSH (~5s latency). "
-                "Use only if graph and code search fail to provide context."
+                "LAST RESORT: Query MDSplus (~5s latency). "
+                "Auto-detects local vs SSH. Use only if graph and code search fail."
             ),
         ),
         FunctionTool.from_defaults(
@@ -652,12 +642,21 @@ def get_graph_tool() -> FunctionTool:
     return FunctionTool.from_defaults(fn=_query_neo4j, name="query_neo4j")
 
 
-def get_ssh_tools() -> list[FunctionTool]:
-    """Get SSH-related tools (MDSplus query and general command)."""
+def get_remote_tools() -> list[FunctionTool]:
+    """Get remote execution tools (MDSplus query and general command).
+
+    These tools auto-detect whether to run locally or via SSH based on facility.
+    """
     return [
-        FunctionTool.from_defaults(fn=_ssh_mdsplus_query, name="ssh_mdsplus_query"),
-        FunctionTool.from_defaults(fn=_ssh_command, name="ssh_command"),
+        FunctionTool.from_defaults(fn=_mdsplus_query, name="mdsplus_query"),
+        FunctionTool.from_defaults(fn=_run_command, name="run_command"),
     ]
+
+
+# Backwards compatibility alias
+def get_ssh_tools() -> list[FunctionTool]:
+    """Deprecated: Use get_remote_tools() instead."""
+    return get_remote_tools()
 
 
 def get_search_tools() -> list[FunctionTool]:
@@ -682,10 +681,11 @@ def get_all_tools() -> list[FunctionTool]:
     get_exploration_tools() instead.
 
     Combines:
-    - Exploration tools (graph, SSH, code search)
+    - Exploration tools (graph, remote execution, code search)
     - IMAS DD tools (semantic search, path validation, structure)
     - Wiki search tools
 
+    Remote tools auto-detect whether to run locally or via SSH based on facility.
     The IMAS tools use a singleton DocumentStore, so embedding models
     are loaded only once regardless of how many times this is called.
 

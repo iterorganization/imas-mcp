@@ -48,8 +48,9 @@ python("import inspect; print(inspect.signature(get_facility))")  # Get signatur
 # Graph queries
 python("result = query('MATCH (f:Facility) RETURN f.id'); print(result)")
 
-# Remote exploration
-python("print(ssh('ls /home/codes'))")
+# Remote exploration (auto-detects local vs SSH)
+python("print(run('ls /home/codes', facility='epfl'))")  # SSH to EPFL
+python("print(run('ls /work/imas', facility='iter'))")   # Local on SDCC
 
 # IMAS search
 python("print(search_imas('electron temperature'))")

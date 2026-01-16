@@ -156,10 +156,10 @@ VS Code agents cannot directly specify external CLI tools (rg, fd, scc) in front
 
 1. Document preferred tools in agent instructions
 2. Agent uses `runInTerminal` to invoke them
-3. For remote facilities, use `codex/python` with `ssh()`:
+3. For remote facilities, use `codex/python` with `run()` (auto-detects local vs SSH):
 
 ```python
-python("print(ssh('~/bin/rg -l \"pattern\" /path'))")
+python("print(run('~/bin/rg -l \"pattern\" /path', facility='epfl'))")
 ```
 
 ## Globally Excluded Tools

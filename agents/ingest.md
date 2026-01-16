@@ -8,7 +8,7 @@ Code ingestion pipeline for processing discovered source files into the knowledg
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  SCOUT (LLM)    │     │   GRAPH (Neo4j) │     │    CLI (User)   │
 │                 │     │                 │     │                 │
-│  ssh + rg/fd    │────▶│  SourceFile     │────▶│  imas-codex     │
+│  run() + rg/fd  │────▶│  SourceFile     │────▶│  imas-codex     │
 │  ingest_nodes() │     │  status=        │     │  ingest run     │
 │                 │     │  discovered     │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
@@ -53,7 +53,8 @@ ingest_nodes("SourceFile", [
 # Queue specific files
 uv run imas-codex ingest queue epfl /path/a.py /path/b.py
 
-# Pipe from SSH search
+# Pipe from remote search (use run() in MCP or ssh in terminal)
+uv run imas-codex tools check epfl  # Ensure rg is available
 ssh epfl 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | \
   uv run imas-codex ingest queue epfl --stdin
 

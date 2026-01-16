@@ -9,7 +9,7 @@ This server provides 4 core MCP tools:
 
 The python() REPL is the primary interface, providing:
 - Graph: query(), semantic_search(), embed()
-- Remote: ssh(), check_tools()
+- Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
@@ -132,32 +132,6 @@ def _init_repl() -> dict[str, Any]:
     # =========================================================================
     # Core utilities
     # =========================================================================
-
-    def ssh(cmd: str, facility: str = "epfl", timeout: int = 60) -> str:
-        """Run SSH command on remote facility.
-
-        Args:
-            cmd: Shell command to execute
-            facility: SSH host alias (default: 'epfl')
-            timeout: Command timeout in seconds
-
-        Returns:
-            Command output (stdout + stderr)
-
-        Examples:
-            ssh('ls /home/codes | head -5')
-            ssh('rg -l equilibrium /home/codes --max-depth 2')
-        """
-        result = subprocess.run(
-            ["ssh", facility, cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]: {result.stderr}"
-        return output.strip() or "(no output)"
 
     def query(cypher: str, **params: Any) -> list[dict[str, Any]]:
         """Execute Cypher query and return results.
@@ -786,7 +760,6 @@ def _init_repl() -> dict[str, Any]:
         "gc": gc,
         "embed_model": embed_model,
         "query": query,
-        "ssh": ssh,
         "embed": embed,
         "semantic_search": semantic_search,
         # Facility utilities
@@ -883,7 +856,7 @@ class AgentsServer:
 
     The python() REPL provides access to:
     - Graph: query(), semantic_search(), embed()
-    - Remote: ssh(), check_tools()
+    - Remote: run(), check_tools() (auto-detects local vs SSH)
     - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
     - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
     - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
@@ -932,7 +905,7 @@ class AgentsServer:
             - embed(text): Get 384-dim embedding vector
 
             REMOTE:
-            - ssh(cmd, facility="epfl", timeout=60): Run SSH command
+            - run(cmd, facility, timeout): Execute locally or via SSH (auto-detects)
             - check_tools(facility): Check tool availability and versions
 
             FACILITY:
@@ -969,8 +942,8 @@ class AgentsServer:
                 # Semantic search
                 python("hits = semantic_search('plasma current', 'code_chunk_embedding', 3)")
 
-                # SSH command
-                python("print(ssh('ls /home/codes | head -5'))")
+                # Run command (auto-detects local vs SSH)
+                python("print(run('ls /home/codes | head -5', facility='epfl'))")
 
                 # IMAS search
                 python("print(search_imas('electron temperature profile'))")
