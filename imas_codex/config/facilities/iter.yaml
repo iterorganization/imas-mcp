@@ -1,0 +1,19 @@
+# ITER Organization
+#
+# Public facility configuration for graph and mappings.
+# Infrastructure data is in iter_infrastructure.yaml (gitignored).
+
+facility: iter
+name: ITER Organization
+machine: ITER
+description: International Thermonuclear Experimental Reactor
+location: Cadarache, France
+
+# SSH connection (user configures ~/.ssh/config with this alias)
+# Note: ITER uses SDCC network - may require VPN or specific access
+ssh_host: iter
+
+# Data systems available at this facility
+data_systems:
+  - imas
+  # Add other systems as discovered (e.g., mdsplus, uda)
