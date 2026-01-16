@@ -88,9 +88,9 @@ with GraphClient() as client:
 ## CLI Commands
 
 ```bash
-# Neo4j management
-imas-codex neo4j start
-imas-codex neo4j stop
+# Neo4j management (runs as systemd service, auto-starts on login)
+imas-codex neo4j status
+imas-codex neo4j service status
 imas-codex neo4j shell
 
 # Graph artifacts

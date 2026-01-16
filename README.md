@@ -302,7 +302,7 @@ ReAct agents provide autonomous discovery and evaluation of remote resources usi
 **Prerequisites:**
 - SSH configured for the target facility (see above)
 - OpenRouter API key in `.env`: `OPENROUTER_API_KEY=sk-or-...`
-- Neo4j running: `imas-codex neo4j start`
+- Neo4j running (auto-starts as systemd service, or: `imas-codex neo4j start`)
 
 **Wiki Discovery Pipeline:**
 

@@ -102,9 +102,10 @@ SET c.embedding = $new_embedding
 | Sync dependencies | `uv sync --extra test` |
 | Add dependency | `uv add <package>` |
 | Add dev dependency | `uv add --dev <package>` |
-| Start Neo4j | `uv run imas-codex neo4j start` |
-| Stop Neo4j | `uv run imas-codex neo4j stop` |
 | Neo4j status | `uv run imas-codex neo4j status` |
+| Neo4j service status | `uv run imas-codex neo4j service status` |
+| Restart Neo4j | `systemctl --user restart imas-codex-neo4j` |
+| Neo4j logs | `journalctl --user -u imas-codex-neo4j -f` |
 | Cypher shell | `uv run imas-codex neo4j shell` |
 | Dump graph | `uv run imas-codex neo4j dump` |
 | Push graph to GHCR | `uv run imas-codex neo4j push v1.0.0` |
@@ -305,17 +306,16 @@ tests/              # Mirror source structure
 
 ### Neo4j Service (Apptainer)
 
-Local development uses Neo4j via Apptainer. The CLI handles all setup:
+Neo4j runs as a **systemd user service** that auto-starts on login. No manual start required.
 
 ```bash
-# Start Neo4j (first run pulls image automatically)
-uv run imas-codex neo4j start
-
-# Check status
+# Check if Neo4j is running
 uv run imas-codex neo4j status
 
-# Stop Neo4j
-uv run imas-codex neo4j stop
+# Service management (if needed)
+uv run imas-codex neo4j service status
+systemctl --user restart imas-codex-neo4j
+journalctl --user -u imas-codex-neo4j -f
 
 # Open interactive Cypher shell
 uv run imas-codex neo4j shell
@@ -329,13 +329,14 @@ open http://localhost:7474
 - `NEO4J_DATA`: Data directory (default: `~/.local/share/imas-codex/neo4j`)
 - `NEO4J_PASSWORD`: Password (default: `imas-codex`)
 
-**First-time setup:**
+**First-time setup (one-time):**
 ```bash
-# Pull the Neo4j image (one-time)
+# Pull the Neo4j image
 apptainer pull --dir ~/apptainer docker://neo4j:2025.11-community
 
-# Start - password will be set automatically
-uv run imas-codex neo4j start
+# Install and enable the systemd service
+uv run imas-codex neo4j service install
+systemctl --user start imas-codex-neo4j
 ```
 
 **Connection details for GraphClient:**
@@ -354,8 +355,8 @@ uv run imas-codex neo4j pull
 # Load into Neo4j
 uv run imas-codex neo4j load imas-codex-graph.dump
 
-# After making changes, dump the graph
-uv run imas-codex neo4j stop
+# After making changes, dump the graph (stop service first)
+systemctl --user stop imas-codex-neo4j
 uv run imas-codex neo4j dump
 
 # Push to GHCR (requires GHCR_TOKEN in .env)

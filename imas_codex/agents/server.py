@@ -51,7 +51,7 @@ _yaml.width = 120
 
 # Neo4j connection error message
 NEO4J_NOT_RUNNING_MSG = (
-    "Neo4j is not running. Start it with: uv run imas-codex neo4j start"
+    "Neo4j is not running. Check service with: systemctl --user status imas-codex-neo4j"
 )
 
 

@@ -8,7 +8,7 @@
 #
 # Usage: 
 #   cd /path/to/imas-codex
-#   uv run imas-codex neo4j start  # If not already running
+#   # Neo4j runs as systemd service (auto-starts on login)
 #   ./scripts/ingest_all_trees.sh 2>&1 | tee ingest_trees.log
 #
 # Expected runtime: Several hours (depends on tree complexity)
@@ -54,7 +54,7 @@ echo ""
 
 # Check Neo4j is running
 if ! uv run python -c "from imas_codex.graph import GraphClient; GraphClient().query('RETURN 1')" 2>/dev/null; then
-    echo "ERROR: Neo4j is not running. Start with: uv run imas-codex neo4j start"
+    echo "ERROR: Neo4j is not running. Check: systemctl --user status imas-codex-neo4j"
     exit 1
 fi
 echo "✓ Neo4j connection verified"

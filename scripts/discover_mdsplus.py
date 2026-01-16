@@ -136,7 +136,7 @@ def main(
         except Exception as e:
             click.echo(
                 f"✗ Neo4j is not available: {e}\n"
-                "Start Neo4j with: uv run imas-codex neo4j start\n"
+                "Check service: systemctl --user status imas-codex-neo4j\n"
                 "Or use --dry-run to skip ingestion.",
                 err=True,
             )
