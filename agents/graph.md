@@ -7,7 +7,7 @@ Knowledge graph management with Neo4j - queries, schema evolution, and releases.
 When the Codex MCP server is running, use `python()` REPL:
 
 ```python
-# Query the graph
+# Query the graph (always project properties, never RETURN n)
 python("result = query('MATCH (f:Facility) RETURN f.id, f.name'); print(result)")
 
 # Get schema for Cypher generation
@@ -46,7 +46,7 @@ open http://localhost:7474
 
 ## Graph Backup and Restore
 
-**ALWAYS dump before destructive operations:**
+Always dump before destructive operations:
 
 ```bash
 # Dump current graph
@@ -64,7 +64,7 @@ uv run imas-codex neo4j push v1.0.0
 
 ## Schema Evolution
 
-Neo4j is schema-optional. **Additive changes only:**
+Neo4j is schema-optional. Additive changes only:
 
 | Change | Safe? | Notes |
 |--------|-------|-------|
@@ -73,7 +73,7 @@ Neo4j is schema-optional. **Additive changes only:**
 | Rename property | ❌ | Requires migration |
 | Remove class | ⚠️ | Old data orphaned |
 
-**Policy:** Never rename/remove, just add.
+Policy: Never rename/remove, just add.
 
 ## LLM-First Cypher Queries
 
@@ -117,7 +117,8 @@ git pull upstream main
 uv run imas-codex release v4.0.0 -m 'Release message'
 ```
 
-**Options:**
+Options:
+
 ```bash
 # Preview changes
 uv run imas-codex release v4.0.0 -m 'Test' --dry-run
@@ -155,3 +156,22 @@ Available for semantic search:
 | `code_chunk_embedding` | Code examples (8.5k chunks) |
 | `wiki_chunk_embedding` | Wiki documentation (25k chunks) |
 | `cluster_centroid` | Semantic clusters |
+
+## Token Cost Optimization
+
+Never return full nodes with `RETURN n` - always project specific properties.
+
+Nodes like `IMASPath` and `CodeChunk` contain 384-dimension embedding vectors (~2k tokens each). Returning full nodes wastes tokens and increases API costs.
+
+```python
+# BAD - returns embeddings (~2k tokens per node)
+query("MATCH (n:IMASPath) WHERE n.name CONTAINS 'temperature' RETURN n LIMIT 10")
+
+# GOOD - project only needed properties (~50 tokens per node)
+query("MATCH (n:IMASPath) WHERE n.name CONTAINS 'temperature' RETURN n.id, n.name, n.documentation LIMIT 10")
+
+# GOOD - use labels() and properties selectively
+query("MATCH (n) WHERE n.path CONTAINS '/sauter/' RETURN labels(n) as type, n.id, n.path")
+```
+
+Cost impact: returning 10 nodes with embeddings costs ~$0.30 extra per query.

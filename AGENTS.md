@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-> **TL;DR**: Use MCP `python()` for exploration/queries, `uv run` for git/tests/CLI. Conventional commits with single quotes. See [agents/](agents/) for domain-specific workflows.
+Use MCP `python()` for exploration/queries, `uv run` for git/tests/CLI. Conventional commits with single quotes. See [agents/](agents/) for domain-specific workflows.
 
 ## Custom Agents
 
@@ -8,10 +8,10 @@ Select from the VS Code agent dropdown:
 
 | Agent | Purpose | Tools |
 |-------|---------|-------|
-| **Explore** | Remote facility discovery | Read-only + MCP |
-| **Develop** | Code development | Standard + MCP |
-| **Ingest** | Code ingestion pipeline | Core + MCP |
-| **Graph** | Knowledge graph operations | Core + MCP |
+| Explore | Remote facility discovery | Read-only + MCP |
+| Develop | Code development | Standard + MCP |
+| Ingest | Code ingestion pipeline | Core + MCP |
+| Graph | Knowledge graph operations | Core + MCP |
 
 ## Critical Rules
 
@@ -44,12 +44,13 @@ python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
 python("print(search_code('equilibrium reconstruction'))")
 ```
 
-**After editing `imas_codex/` source files**, reload the REPL to pick up changes:
+After editing `imas_codex/` source files, reload the REPL to pick up changes:
+
 ```python
 python("print(reload())")  # Clears module cache and reinitializes
 ```
 
-**Use `uv run` for:** git, ruff, pytest, package management
+Use `uv run` for git, ruff, pytest, and package management.
 
 ### Fast Tools (Prefer Over Standard Unix)
 
@@ -61,7 +62,8 @@ Use these fast Rust-based tools instead of traditional Unix commands:
 | `fd -e py` | `find . -name '*.py'` | 5x faster, intuitive syntax |
 | `fd -e py \| head` | `find . -name '*.py' \| head` | Same speed advantage |
 
-**Via SSH** (remote facilities):
+Via SSH (remote facilities):
+
 ```python
 python("print(ssh('rg -l \"IMAS\" /home/codes -g \"*.py\" | head -20'))")
 python("print(ssh('fd -e py /home/codes | wc -l'))")
@@ -76,11 +78,11 @@ uv run git commit -m 'type: description'
 
 ### Environment Variables
 
-The `.env` file contains secrets. **NEVER** expose or commit it.
+The `.env` file contains secrets. Never expose or commit it.
 
 ### Graph Backup
 
-**ALWAYS** dump before destructive operations:
+Always dump before destructive operations:
 ```bash
 uv run imas-codex neo4j dump
 ```
@@ -114,7 +116,7 @@ git push origin main
 
 | Task | Command |
 |------|---------|
-| Graph query | `python("print(query('MATCH (n) RETURN n LIMIT 5'))")` |
+| Graph query | `python("print(query('MATCH (n) RETURN n.id, n.name LIMIT 5'))")` |
 | SSH command | `python("print(ssh('ls /home/codes'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(search_code('equilibrium'))")` |
@@ -122,12 +124,20 @@ git push origin main
 | Ingest nodes | `python("ingest_nodes('SourceFile', [...])")` |
 | Private data | `python("print(private('epfl'))")` |
 
+Never `RETURN n` - always project properties (`n.id, n.name`). Embeddings add ~2k tokens/node. See [agents/graph.md](agents/graph.md#token-cost-optimization).
+
 ## Code Style
 
 - Python 3.12 syntax: `list[str]`, `X | Y`, not `List[str]`, `Union[X, Y]`
 - Exception chaining: `raise Error("msg") from e`
 - Single quotes for commit messages
 - Stage files individually, never `git add -A`
+
+## Markdown Style
+
+- Use headings for hierarchy, bullets for lists, code fences for code
+- Keep paragraphs short; one idea per section
+- Avoid excessive bold, emojis, and deep nesting
 
 ## Project Structure
 

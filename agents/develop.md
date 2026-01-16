@@ -4,8 +4,6 @@ Code development with testing, linting, and git workflow guardrails.
 
 ## Commit Workflow
 
-**Step-by-step procedure:**
-
 ```bash
 # 1. Check current state
 git status
@@ -32,14 +30,14 @@ git push origin main
 
 | Type | Purpose |
 |------|---------|
-| `feat` | New feature |
-| `fix` | Bug fix |
-| `refactor` | Code restructuring |
-| `docs` | Documentation |
-| `test` | Test changes |
-| `chore` | Maintenance |
+| feat | New feature |
+| fix | Bug fix |
+| refactor | Code restructuring |
+| docs | Documentation |
+| test | Test changes |
+| chore | Maintenance |
 
-**Breaking changes**: Add `BREAKING CHANGE:` footer in the body (not `type!:` suffix).
+Breaking changes: Add `BREAKING CHANGE:` footer in the body (not `type!:` suffix).
 
 ## Testing
 
@@ -62,9 +60,10 @@ uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
 
 ## Working in Worktrees
 
-Cursor remote agents often work in auto-created worktrees:
+Cursor remote agents often work in auto-created worktrees.
 
-**Step 1: Commit in the worktree**
+Commit in the worktree:
+
 ```bash
 cd /path/to/worktree
 uv run ruff check --fix . && uv run ruff format .
@@ -72,14 +71,16 @@ git add <file1> <file2> ...
 uv run git commit -m 'type: description'
 ```
 
-**Step 2: Cherry-pick to main workspace**
+Cherry-pick to main workspace:
+
 ```bash
 cd /home/ITER/mcintos/Code/imas-codex
 git cherry-pick <commit-hash-from-worktree>
 git push origin main
 ```
 
-**Step 3: Clean up worktree**
+Clean up worktree:
+
 ```bash
 cd /path/to/worktree
 git checkout -- .  # Discard remaining changes

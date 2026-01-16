@@ -37,7 +37,8 @@ Pre-installed Rust tools at `~/bin/` on remote facilities:
 | `tokei` | LOC by language | `tokei /path` |
 | `dust` | Disk usage | `dust -d 2 /path` |
 
-**Quick assessment via MCP:**
+Quick assessment via MCP:
+
 ```python
 # Count Python files
 python("print(ssh('~/bin/fd -e py /home/codes | wc -l'))")
@@ -64,7 +65,7 @@ discovered → explored | skipped | stale
 | `skipped` | Intentionally not exploring (low value) |
 | `stale` | Path may no longer exist |
 
-**Interest Score Guidelines:**
+Interest score guidelines:
 
 | Score | Use Case |
 |-------|----------|
@@ -76,7 +77,7 @@ discovered → explored | skipped | stale
 
 ## Persistence Checklist
 
-**After every exploration session, persist ALL discoveries:**
+After every exploration session, persist all discoveries:
 
 | Discovery Type | Tool |
 |----------------|------|
@@ -86,7 +87,8 @@ discovered → explored | skipped | stale
 | Source files | `ingest_nodes("SourceFile", [...])` |
 | Sensitive data (OS, tools) | `private(facility, {...})` |
 
-**Example persistence:**
+Example persistence:
+
 ```python
 python("""
 # Persist discovered source files
@@ -106,12 +108,12 @@ private("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 
 ## Data Classification
 
-**Graph (Public)** - Data access semantics:
+Graph (public) - data access semantics:
 - MDSplus tree names, diagnostic names
 - Analysis code names, versions, paths
 - TDI function names
 
-**Infrastructure (Private)** - Security-sensitive:
+Infrastructure (private) - security-sensitive:
 - Hostnames, IPs, NFS mounts
 - OS/kernel versions
 - Tool availability

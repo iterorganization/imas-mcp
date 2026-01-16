@@ -127,4 +127,4 @@ The pipeline automatically extracts:
 - IDS references (`core_profiles`, `equilibrium`, etc.)
 - Import statements and dependencies
 
-Do NOT fabricate `patterns_matched` metadata - let the pipeline do real extraction.
+Do not fabricate `patterns_matched` metadata - let the pipeline do real extraction.

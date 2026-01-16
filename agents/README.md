@@ -90,7 +90,7 @@ tools:
 
 ## Handoffs
 
-Handoffs create clickable buttons after a chat response completes. They do **not** automatically delegate - the user must click to transition.
+Handoffs create clickable buttons after a chat response completes. They do not automatically delegate - the user must click to transition.
 
 ```yaml
 handoffs:
