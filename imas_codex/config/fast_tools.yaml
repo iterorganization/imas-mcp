@@ -1,0 +1,200 @@
+# Fast CLI Tools Configuration
+#
+# Canonical list of fast Rust-based CLI tools for code exploration.
+# Used by both local development (AGENTS.md) and remote facilities (explore.md).
+#
+# Tools are installed to ~/bin/ and accessed via:
+# - Local: `rg 'pattern'` (when ~/bin is in PATH)
+# - Remote: `run('rg "pattern"', facility='epfl')` (auto-detects SSH vs local)
+#
+# The ReAct installer agent uses this file to install missing tools.
+# CLI: uv run imas-codex tools check/install <facility>
+
+# Installation settings
+install:
+  directory: "~/bin"
+  architectures:
+    x86_64: "x86_64-unknown-linux-musl"
+    aarch64: "aarch64-unknown-linux-musl"
+
+# Required tools - exploration will be degraded without these
+required:
+  rg:
+    name: ripgrep
+    purpose: Fast pattern search across files (10x faster than grep)
+    binary: rg
+    fallback: "grep -r"
+    releases:
+      repo: BurntSushi/ripgrep
+      version: "14.1.1"
+      asset_pattern: "ripgrep-{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "ripgrep-{version}-{arch}/rg"
+    examples:
+      local: "rg 'pattern' -t py"
+      remote: "ssh('rg \"pattern\" -t py /home/codes')"
+
+  fd:
+    name: fd
+    purpose: Fast file finder (5x faster than find)
+    binary: fd
+    fallback: "find . -name"
+    releases:
+      repo: sharkdp/fd
+      version: "10.2.0"
+      asset_pattern: "fd-v{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "fd-v{version}-{arch}/fd"
+    examples:
+      local: "fd -e py"
+      remote: "ssh('fd -e py /home/codes')"
+
+# Optional tools - enhance exploration but not required
+optional:
+  tokei:
+    name: tokei
+    purpose: Lines of code by language
+    binary: tokei
+    fallback: "wc -l"
+    releases:
+      repo: XAMPPRocky/tokei
+      version: "12.1.2"
+      asset_pattern: "tokei-{arch}.tar.gz"
+      strip_components: 0
+      binary_path: "tokei"
+    examples:
+      local: "tokei . -o json"
+      remote: "ssh('tokei /path -o json')"
+
+  scc:
+    name: scc
+    purpose: Code complexity and SLOC metrics
+    binary: scc
+    fallback: null
+    releases:
+      repo: boyter/scc
+      version: "3.4.0"
+      # scc uses different naming convention
+      asset_pattern: "scc_Linux_{arch_simple}.tar.gz"
+      strip_components: 0
+      binary_path: "scc"
+      arch_map:
+        x86_64: "x86_64"
+        aarch64: "arm64"
+    examples:
+      local: "scc . --format json"
+      remote: "ssh('scc /path --format json')"
+
+  dust:
+    name: dust
+    purpose: Visual disk usage analyzer
+    binary: dust
+    fallback: "du -h --max-depth=2"
+    releases:
+      repo: bootandy/dust
+      version: "1.1.1"
+      asset_pattern: "dust-v{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "dust-v{version}-{arch}/dust"
+    examples:
+      local: "dust -d 2 ."
+      remote: "ssh('dust -d 2 /path')"
+
+  eza:
+    name: eza
+    purpose: Modern ls with git status
+    binary: eza
+    fallback: "ls -la"
+    releases:
+      repo: eza-community/eza
+      version: "0.20.14"
+      asset_pattern: "eza_{arch}.tar.gz"
+      strip_components: 0
+      binary_path: "eza"
+    examples:
+      local: "eza -la --git"
+      remote: "ssh('eza -la --git /path')"
+
+  bat:
+    name: bat
+    purpose: Syntax-highlighted cat
+    binary: bat
+    fallback: "cat"
+    releases:
+      repo: sharkdp/bat
+      version: "0.24.0"
+      asset_pattern: "bat-v{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "bat-v{version}-{arch}/bat"
+    examples:
+      local: "bat file.py"
+      remote: "ssh('bat /path/file.py')"
+
+  delta:
+    name: delta
+    purpose: Better git diff viewer
+    binary: delta
+    fallback: "diff"
+    releases:
+      repo: dandavison/delta
+      version: "0.18.2"
+      asset_pattern: "delta-{version}-{arch}.tar.gz"
+      strip_components: 1
+      binary_path: "delta-{version}-{arch}/delta"
+    examples:
+      local: "git diff | delta"
+      remote: "ssh('git -C /path diff | delta')"
+
+  fzf:
+    name: fzf
+    purpose: Fuzzy finder for interactive selection
+    binary: fzf
+    fallback: null
+    releases:
+      repo: junegunn/fzf
+      version: "0.57.0"
+      # fzf uses different naming
+      asset_pattern: "fzf-{version}-linux_{arch_simple}.tar.gz"
+      strip_components: 0
+      binary_path: "fzf"
+      arch_map:
+        x86_64: "amd64"
+        aarch64: "arm64"
+    examples:
+      local: "fd | fzf"
+      remote: null  # Interactive, not useful over SSH
+
+  yq:
+    name: yq
+    purpose: YAML processor (jq for YAML)
+    binary: yq
+    fallback: null
+    releases:
+      repo: mikefarah/yq
+      version: "4.44.6"
+      # yq is a single binary, not tarball
+      asset_pattern: "yq_linux_{arch_simple}"
+      is_binary: true
+      arch_map:
+        x86_64: "amd64"
+        aarch64: "arm64"
+    examples:
+      local: "yq '.key' file.yaml"
+      remote: "ssh('yq \".key\" /path/file.yaml')"
+
+  jq:
+    name: jq
+    purpose: JSON processor
+    binary: jq
+    fallback: null
+    releases:
+      repo: jqlang/jq
+      version: "1.7.1"
+      asset_pattern: "jq-linux-{arch_simple}"
+      is_binary: true
+      arch_map:
+        x86_64: "amd64"
+        aarch64: "arm64"
+    examples:
+      local: "jq '.key' file.json"
+      remote: "ssh('jq \".key\" /path/file.json')"

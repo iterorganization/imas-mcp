@@ -2,13 +2,30 @@
 
 Remote facility exploration for discovering source files, MDSplus trees, and analysis codes.
 
+## Setup: Ensure Fast Tools Are Available
+
+Before exploring a new facility, ensure fast CLI tools are installed:
+
+```python
+# Check tool availability
+python("print(check_tools('epfl'))")
+
+# If tools are missing, install them (uses ReAct agent)
+python("result = setup_tools('epfl'); print(result.summary)")
+
+# Or quick install without agent
+python("print(quick_setup('epfl', required_only=True))")
+```
+
+Tool definitions are in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
+
 ## MCP Tools (Primary Interface)
 
 When the Codex MCP server is running, use `python()` REPL:
 
 ```python
-# SSH to remote facility
-python("print(ssh('ls /home/codes'))")
+# Run command on facility (auto-detects local vs SSH)
+python("print(run('ls /home/codes', facility='epfl'))")
 
 # Get facility info and actionable paths
 python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
@@ -27,27 +44,30 @@ ingest_nodes("FacilityPath", [
 
 ## Fast CLI Tools
 
-Pre-installed Rust tools at `~/bin/` on remote facilities:
+Tools are defined in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
 
-| Tool | Purpose | Example |
-|------|---------|---------|
-| `rg` | Fast grep | `rg -l 'IMAS\|equilibrium' /path -g '*.py'` |
-| `fd` | Fast find | `fd -e py /home/codes` |
-| `scc` | Code stats | `scc /path --format json` |
-| `tokei` | LOC by language | `tokei /path` |
-| `dust` | Disk usage | `dust -d 2 /path` |
+| Tool | Purpose | Fallback |
+|------|---------|----------|
+| `rg` | Fast pattern search | `grep -r` |
+| `fd` | Fast file finder | `find . -name` |
+| `tokei` | LOC by language | `wc -l` |
+| `scc` | Code complexity | - |
+| `dust` | Disk usage | `du -h` |
 
-Quick assessment via MCP:
+Use `run()` for unified local/remote execution:
 
 ```python
 # Count Python files
-python("print(ssh('~/bin/fd -e py /home/codes | wc -l'))")
+python("print(run('fd -e py /home/codes | wc -l', facility='epfl'))")
 
 # Find IMAS-related files
-python("print(ssh('~/bin/rg -l \"write_ids|read_ids\" /home/codes -g \"*.py\" | head -20'))")
+python("print(run('rg -l \"write_ids|read_ids\" /home/codes -g \"*.py\" | head -20', facility='epfl'))")
 
 # Get complexity metrics
-python("print(ssh('~/bin/scc /home/codes/liuqe --format json'))")
+python("print(run('scc /home/codes/liuqe --format json', facility='epfl'))")
+
+# Local facility (ITER) - no SSH needed
+python("print(run('rg pattern /work/imas', facility='iter'))")
 ```
 
 ## FacilityPath Workflow

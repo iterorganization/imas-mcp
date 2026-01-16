@@ -9,11 +9,51 @@ config/
 ├── README.md                    # This file
 ├── facilities/                  # Per-facility configuration
 │   ├── epfl.yaml               # Public (git tracked)
-│   └── epfl_infrastructure.yaml # Private (gitignored)
+│   ├── epfl_private.yaml       # Private (gitignored)
+│   └── iter.yaml               # ITER/SDCC (auto-detected as local)
 ├── patterns/                    # Discovery patterns
 │   └── discovery.yaml          # Multi-dimensional scoring patterns
-└── tool_requirements.yaml       # Required CLI tools
+└── fast_tools.yaml              # Fast CLI tools configuration
 ```
+
+## Fast CLI Tools
+
+Fast Rust-based tools for code exploration are defined in `fast_tools.yaml`.
+
+### CLI Commands
+
+```bash
+# Check tool availability
+imas-codex tools check              # Local
+imas-codex tools check iter         # ITER (auto-detects local)
+imas-codex tools check epfl         # EPFL (via SSH)
+
+# Install missing tools
+imas-codex tools install            # Install locally
+imas-codex tools install epfl       # Install on EPFL
+imas-codex tools install --dry-run  # Show what would be installed
+
+# List available tools
+imas-codex tools list
+```
+
+### Python API
+
+```python
+# Via MCP python() REPL
+python("print(check_tools('epfl'))")
+python("print(run('rg pattern', facility='epfl'))")
+python("result = setup_tools('epfl'); print(result.summary)")
+```
+
+### Auto-Detection
+
+The `run()` function auto-detects whether to use SSH:
+- Compares facility's `ssh_host` to current hostname
+- If running on the target machine, executes locally
+- Otherwise uses SSH
+
+Example: On SDCC, `run('rg pattern', facility='iter')` runs locally.
 
 ## YAML Organization Principles
 

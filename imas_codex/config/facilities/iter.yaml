@@ -1,19 +1,19 @@
-# ITER Organization
+# ITER Organization - SDCC (Scientific Data Computing Center)
 #
 # Public facility configuration for graph and mappings.
-# Infrastructure data is in iter_infrastructure.yaml (gitignored).
+# Infrastructure data is in iter_private.yaml (gitignored).
 
 facility: iter
 name: ITER Organization
 machine: ITER
-description: International Thermonuclear Experimental Reactor
+description: International Thermonuclear Experimental Reactor - SDCC
 location: Cadarache, France
 
-# SSH connection (user configures ~/.ssh/config with this alias)
-# Note: ITER uses SDCC network - may require VPN or specific access
+# SSH host alias - auto-detected as local when running on SDCC
+# (hostname contains 'iter' so run() executes locally without SSH)
 ssh_host: iter
 
 # Data systems available at this facility
 data_systems:
   - imas
-  # Add other systems as discovered (e.g., mdsplus, uda)
+  - mdsplus

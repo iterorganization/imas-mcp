@@ -13,6 +13,26 @@ Select from the VS Code agent dropdown:
 | Ingest | Code ingestion pipeline | Core + MCP |
 | Graph | Knowledge graph operations | Core + MCP |
 
+### Subagent Delegation
+
+When the main VS Code agent receives requests matching these patterns, delegate using `runSubagent`:
+
+| User Request Pattern | Delegate To | Example |
+|---------------------|-------------|---------|
+| Graph queries, Neo4j, "search graph for..." | Graph | "Find all CHEASE files in graph" |
+| Remote facility, SSH, explore paths | Explore | "Explore EPFL for equilibrium codes" |
+| Ingest files, queue code, run ingestion | Ingest | "Queue these Python files" |
+| Code changes, tests, commits, refactoring | Develop | "Add tests for this module" |
+
+## Token Optimization
+
+VS Code injects ~30k tokens of tool definitions per request. To reduce costs:
+
+1. **Use terminal for search** - `rg`, `fd`, `git` instead of VS Code search tools
+2. **Close unused editor tabs** - open files add to context
+3. **Use custom agents** - restricted toolsets = fewer tool definitions
+4. **Project properties in Cypher** - never `RETURN n`, always `RETURN n.id, n.name`
+
 ## Critical Rules
 
 ### MCP `python()` is Primary
@@ -54,20 +74,43 @@ Use `uv run` for git, ruff, pytest, and package management.
 
 ### Fast Tools (Prefer Over Standard Unix)
 
-Use these fast Rust-based tools instead of traditional Unix commands:
+Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](imas_codex/config/fast_tools.yaml).
 
-| Use This | Instead Of | Why |
-|----------|------------|-----|
-| `rg 'pattern'` | `grep -r 'pattern'` | 10x faster, respects .gitignore |
-| `fd -e py` | `find . -name '*.py'` | 5x faster, intuitive syntax |
-| `fd -e py \| head` | `find . -name '*.py' \| head` | Same speed advantage |
+| Tool | Purpose | Fallback |
+|------|---------|----------|
+| `rg` | Fast pattern search (10x grep) | `grep -r` |
+| `fd` | Fast file finder (5x find) | `find . -name` |
+| `tokei` | LOC by language | `wc -l` |
+| `scc` | Code complexity metrics | - |
+| `dust` | Visual disk usage | `du -h` |
+| `eza` | Modern ls with git status | `ls -la` |
+| `bat` | Syntax-highlighted cat | `cat` |
+| `delta` | Better git diff | `diff` |
+| `fzf` | Fuzzy finder | - |
+| `yq` | YAML processor | - |
+| `jq` | JSON processor | - |
 
-Via SSH (remote facilities):
+**CLI commands:**
+
+```bash
+uv run imas-codex tools check              # Check local tools
+uv run imas-codex tools check epfl         # Check on EPFL (via SSH)
+uv run imas-codex tools install epfl       # Install on EPFL
+uv run imas-codex tools install --dry-run  # Show install commands
+uv run imas-codex tools list               # List all tools
+```
+
+**Python API** (via `run()` which auto-detects local vs SSH):
 
 ```python
-python("print(ssh('rg -l \"IMAS\" /home/codes -g \"*.py\" | head -20'))")
-python("print(ssh('fd -e py /home/codes | wc -l'))")
-python("print(ssh('scc /path --format json'))")  # Code complexity
+# run() auto-detects: local on SDCC, SSH to EPFL
+python("print(run('rg -l \"IMAS\" /home/codes', facility='epfl'))")
+python("print(run('rg pattern', facility='iter'))")  # Local on SDCC
+
+# Check and install tools
+python("print(check_tools('epfl'))")
+python("result = setup_tools('epfl'); print(result.summary)")
+python("print(quick_setup('iter', required_only=True))")
 ```
 
 ### Pre-commit Hooks
@@ -117,10 +160,12 @@ git push origin main
 | Task | Command |
 |------|---------|
 | Graph query | `python("print(query('MATCH (n) RETURN n.id, n.name LIMIT 5'))")` |
-| SSH command | `python("print(ssh('ls /home/codes'))")` |
+| Run command | `python("print(run('rg pattern', facility='epfl'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(search_code('equilibrium'))")` |
 | Facility info | `python("print(get_facility('epfl'))")` |
+| Check tools | `python("print(check_tools('epfl'))")` |
+| Setup tools | `python("result = setup_tools('epfl'); print(result.summary)")` |
 | Ingest nodes | `python("ingest_nodes('SourceFile', [...])")` |
 | Private data | `python("print(private('epfl'))")` |
 

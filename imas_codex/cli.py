@@ -334,6 +334,158 @@ def facilities_show(name: str, fmt: str, public_only: bool) -> None:
 
 
 # ============================================================================
+# Tools Command Group
+# ============================================================================
+
+
+@main.group()
+def tools() -> None:
+    """Manage fast CLI tools on local and remote facilities.
+
+    \b
+      imas-codex tools check <facility>    Check tool availability
+      imas-codex tools install <facility>  Install missing tools
+      imas-codex tools list                List available tools
+
+    Tools are defined in imas_codex/config/fast_tools.yaml.
+    Auto-detects local vs remote execution based on hostname.
+    """
+    pass
+
+
+@tools.command("check")
+@click.argument("facility", required=False)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def tools_check(facility: str | None, as_json: bool) -> None:
+    """Check availability of fast CLI tools.
+
+    \b
+    Examples:
+      imas-codex tools check           # Check local tools
+      imas-codex tools check iter      # Check on ITER (auto-detects local)
+      imas-codex tools check epfl      # Check on EPFL (via SSH)
+    """
+    import json as json_mod
+
+    from imas_codex.remote.tools import check_all_tools, is_local_facility
+
+    is_local = is_local_facility(facility)
+    location = "locally" if is_local else f"via SSH to {facility}"
+    click.echo(f"Checking tools {location}...")
+
+    result = check_all_tools(facility=facility)
+
+    if as_json:
+        click.echo(json_mod.dumps(result, indent=2))
+        return
+
+    # Pretty print
+    click.echo(f"\nFacility: {result['facility']}")
+    click.echo(f"Required tools OK: {'✓' if result['required_ok'] else '✗'}")
+    click.echo("\nTools:")
+
+    for name, status in result["tools"].items():
+        available = status.get("available", False)
+        version = status.get("version", "")
+        required = "required" if status.get("required") else "optional"
+        icon = "✓" if available else "✗"
+        version_str = f" ({version})" if version else ""
+        click.echo(f"  {icon} {name}{version_str} [{required}]")
+
+    if result.get("missing_required"):
+        click.echo(f"\n⚠ Missing required: {', '.join(result['missing_required'])}")
+        click.echo("  Run: imas-codex tools install " + (facility or ""))
+
+
+@tools.command("install")
+@click.argument("facility", required=False)
+@click.option(
+    "--required-only", is_flag=True, help="Only install required tools (rg, fd)"
+)
+@click.option("--force", is_flag=True, help="Reinstall even if already present")
+@click.option("--dry-run", is_flag=True, help="Show what would be installed")
+def tools_install(
+    facility: str | None, required_only: bool, force: bool, dry_run: bool
+) -> None:
+    """Install fast CLI tools on a facility.
+
+    \b
+    Examples:
+      imas-codex tools install              # Install locally
+      imas-codex tools install iter         # Install on ITER (auto-detects local)
+      imas-codex tools install epfl         # Install on EPFL (via SSH)
+      imas-codex tools install --dry-run    # Show what would be installed
+    """
+    from imas_codex.remote.tools import (
+        check_all_tools,
+        detect_architecture,
+        install_all_tools,
+        is_local_facility,
+        load_fast_tools,
+    )
+
+    is_local = is_local_facility(facility)
+    location = "locally" if is_local else f"via SSH to {facility}"
+
+    if dry_run:
+        click.echo(f"Dry run - would install tools {location}:")
+        click.echo(f"Architecture: {detect_architecture(facility=facility)}")
+
+        # Check what's missing
+        status = check_all_tools(facility=facility)
+        config = load_fast_tools()
+
+        tools_to_check = config.required if required_only else config.all_tools
+        for key, tool in tools_to_check.items():
+            tool_status = status["tools"].get(key, {})
+            if force or not tool_status.get("available"):
+                cmd = tool.get_install_command(detect_architecture(facility=facility))
+                click.echo(f"\n{key}:")
+                click.echo(f"  {cmd}")
+        return
+
+    click.echo(f"Installing tools {location}...")
+    result = install_all_tools(
+        facility=facility, required_only=required_only, force=force
+    )
+
+    if result.get("installed"):
+        click.echo(f"✓ Installed: {', '.join(result['installed'])}")
+    if result.get("already_present"):
+        click.echo(f"• Already present: {', '.join(result['already_present'])}")
+    if result.get("failed"):
+        click.echo("✗ Failed:")
+        for fail in result["failed"]:
+            click.echo(f"  - {fail['tool']}: {fail['error']}")
+
+    if result.get("success"):
+        click.echo("\n✓ All tools ready")
+    else:
+        click.echo("\n⚠ Some tools failed to install")
+        raise SystemExit(1)
+
+
+@tools.command("list")
+def tools_list() -> None:
+    """List available fast CLI tools."""
+    from imas_codex.remote.tools import load_fast_tools
+
+    config = load_fast_tools()
+
+    click.echo("Required tools:")
+    for key, tool in config.required.items():
+        click.echo(f"  {key}: {tool.purpose}")
+        if tool.fallback:
+            click.echo(f"       fallback: {tool.fallback}")
+
+    click.echo("\nOptional tools:")
+    for key, tool in config.optional.items():
+        click.echo(f"  {key}: {tool.purpose}")
+        if tool.fallback:
+            click.echo(f"       fallback: {tool.fallback}")
+
+
+# ============================================================================
 # Neo4j Command Group
 # ============================================================================
 

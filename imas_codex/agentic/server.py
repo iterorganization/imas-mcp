@@ -708,96 +708,74 @@ def _init_repl() -> dict[str, Any]:
         }
 
     # =========================================================================
-    # Tool checking utilities
+    # Tool management utilities (from remote.tools)
     # =========================================================================
 
-    def check_tools(facility: str = "epfl") -> dict[str, Any]:
-        """Check availability and versions of required tools on remote facility.
+    # Import the new unified tool functions
+    from imas_codex.agentic.tool_installer import quick_setup, setup_tools
+    from imas_codex.remote.tools import (
+        check_all_tools as _check_all_tools,
+        install_all_tools as _install_all_tools,
+        run as _run,
+    )
+
+    def run(cmd: str, facility: str | None = None, timeout: int = 60) -> str:
+        """Execute command locally or via SSH depending on facility.
+
+        This is the unified execution interface. If facility is None or
+        the facility has local=True (e.g., 'iter'), runs locally.
+        Otherwise uses SSH.
 
         Args:
-            facility: SSH host alias (default: 'epfl')
+            cmd: Shell command to execute
+            facility: Facility ID (None = local, 'iter' = local, 'epfl' = SSH)
+            timeout: Command timeout in seconds
 
         Returns:
-            Dict with tool availability, versions, and overall status
+            Command output (stdout + stderr)
+
+        Examples:
+            run('rg pattern', facility='iter')  # Local (ITER is local)
+            run('rg pattern', facility='epfl')  # SSH to EPFL
+            run('rg pattern')                   # Local (no facility)
+        """
+        return _run(cmd, facility=facility, timeout=timeout)
+
+    def check_tools(facility: str | None = None) -> dict[str, Any]:
+        """Check availability of all fast CLI tools.
+
+        Args:
+            facility: Facility ID (None = local)
+
+        Returns:
+            Dict with tool statuses and summary
 
         Example:
             check_tools('epfl')
-            # Returns: {'fd': {'available': True, 'version': '10.2.0', ...}, ...}
+            check_tools('iter')  # Local check
+            check_tools()        # Local check
         """
-        from pathlib import Path
+        return _check_all_tools(facility=facility)
 
-        import yaml
+    def install_tools(
+        facility: str | None = None,
+        required_only: bool = False,
+    ) -> dict[str, Any]:
+        """Install all fast CLI tools on target system.
 
-        # Load tool requirements from config
-        config_path = Path(__file__).parent.parent / "config" / "tool_requirements.yaml"
-        try:
-            with open(config_path) as f:
-                config = yaml.safe_load(f)
-        except FileNotFoundError:
-            return {"error": f"Tool requirements not found: {config_path}"}
+        Args:
+            facility: Facility ID (None = local)
+            required_only: Only install required tools (rg, fd)
 
-        results: dict[str, Any] = {"facility": facility, "tools": {}}
+        Returns:
+            Dict with installation results
 
-        # Check required tools
-        all_ok = True
-        for tool in config.get("required_tools", []):
-            name = tool["name"]
-            min_version = tool.get("min_version", "0.0.0")
-            version_cmd = tool.get("version_command", f"{name} --version")
-
-            # Check ~/bin first, then PATH
-            try:
-                output = ssh(
-                    f"~/bin/{name} --version 2>/dev/null || {version_cmd}", facility
-                )
-                version = output.strip().split("\n")[0] if output else ""
-                # Extract version number (handle various formats)
-                import re
-
-                version_match = re.search(r"(\d+\.\d+\.?\d*)", version)
-                version_str = version_match.group(1) if version_match else version
-                available = bool(version_str)
-            except Exception:
-                available = False
-                version_str = ""
-
-            results["tools"][name] = {
-                "available": available,
-                "version": version_str,
-                "required": min_version,
-                "ok": available,  # TODO: version comparison
-                "purpose": tool.get("purpose", ""),
-            }
-            if not available:
-                all_ok = False
-
-        # Check optional tools
-        for tool in config.get("optional_tools", []):
-            name = tool["name"]
-            version_cmd = tool.get("version_command", f"{name} --version")
-            try:
-                output = ssh(
-                    f"~/bin/{name} --version 2>/dev/null || {version_cmd}", facility
-                )
-                version = output.strip().split("\n")[0] if output else ""
-                import re
-
-                version_match = re.search(r"(\d+\.\d+\.?\d*)", version)
-                version_str = version_match.group(1) if version_match else version
-                available = bool(version_str)
-            except Exception:
-                available = False
-                version_str = ""
-
-            results["tools"][name] = {
-                "available": available,
-                "version": version_str,
-                "optional": True,
-                "purpose": tool.get("purpose", ""),
-            }
-
-        results["all_required_ok"] = all_ok
-        return results
+        Example:
+            install_tools('epfl')           # Install all on EPFL
+            install_tools('iter')           # Install all locally
+            install_tools(required_only=True)  # Just rg and fd
+        """
+        return _install_all_tools(facility=facility, required_only=required_only)
 
     # =========================================================================
     # Build REPL globals
@@ -815,7 +793,12 @@ def _init_repl() -> dict[str, Any]:
         "get_facility": get_facility,
         "get_exploration_targets": get_exploration_targets,
         "get_tree_structure": get_tree_structure,
+        # Tool management (unified local/remote)
+        "run": run,
         "check_tools": check_tools,
+        "install_tools": install_tools,
+        "setup_tools": setup_tools,
+        "quick_setup": quick_setup,
         # Code search
         "search_code": search_code,
         # IMAS DD utilities
