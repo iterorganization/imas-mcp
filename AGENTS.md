@@ -45,6 +45,15 @@ Use MCP `python()` when you need:
 
 Use **terminal directly** for single operations (`rg`, `fd`, `git`, `uv run`).
 
+**Even for remote facilities**, prefer direct SSH over python wrappers:
+```bash
+# Preferred - direct SSH
+ssh epfl "rg -l 'IMAS' /home/codes"
+
+# Avoid - python wrapper for single command
+python("print(run('rg -l IMAS /home/codes', facility='epfl'))")
+```
+
 ```python
 # Discover available tools via introspection
 python("print([name for name in dir() if not name.startswith('_')])")
@@ -99,13 +108,17 @@ Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](i
 | `yq` | YAML processor | - |
 | `jq` | JSON processor | - |
 
-**Terminal usage** (preferred for direct operations):
+**Terminal usage** (preferred for all single operations):
 
 ```bash
 # Local searches and file operations
 rg -l "IMAS" /path/to/search
 fd -e py /path/to/search
 git log --oneline -10
+
+# Remote searches via direct SSH
+ssh epfl "rg -l 'IMAS' /home/codes"
+ssh epfl "fd -e py /home/codes | head -20"
 
 # Tool management
 uv run imas-codex tools check              # Check local tools
@@ -114,15 +127,19 @@ uv run imas-codex tools install epfl       # Install on EPFL
 uv run imas-codex tools list               # List all tools
 ```
 
-**Python API** (for remote facilities or chained processing):
+**Python API** (only for chained processing with intermediate steps):
 
 ```python
-# Remote exploration via run() which auto-detects SSH
-python("print(run('rg -l \"IMAS\" /home/codes', facility='epfl'))")
-python("print(run('fd -e py /home/codes', facility='epfl'))")
+# Chained processing - search, filter, analyze
+python("""
+result = run('rg -l "IMAS" /home/codes', facility='epfl')
+files = result.strip().split('\n')
+for f in files[:5]:
+    print(f'Analyzing: {f}')
+    # Further processing...
+""")
 
-# Check and install tools remotely
-python("print(check_tools('epfl'))")
+# Tool setup with result processing
 python("result = setup_tools('epfl'); print(result.summary)")
 ```
 
@@ -296,7 +313,8 @@ except IOError:
 ### DO
 
 - Use terminal directly for single operations (`rg`, `fd`, `git`)
-- Use MCP `python()` for chained processing, graph queries, and remote operations
+- Use direct SSH for remote single commands (`ssh epfl "rg pattern"`)
+- Use MCP `python()` only for chained processing and graph queries
 - Use `uv run` for git operations, ruff, pytest, and package management
 - Use `python("print(reload())")` after editing `imas_codex/` source files to pick up changes
 - Use modern Python 3.12 syntax: `list[str]`, `X | Y`
