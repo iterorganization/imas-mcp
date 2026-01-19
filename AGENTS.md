@@ -349,6 +349,7 @@ except IOError:
 - Don't manually activate venv - use `uv run` which handles venv automatically
 - Don't use `python()` for text formatting - LLM can do this natively
 - Don't make multiple `python()` calls when one batched call would work
+- Don't prefix terminal commands with `cd /path &&` - terminal session is persistent
 - Don't use `git add -A`
 - Don't use `type!:` suffix for breaking changes
 - Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
