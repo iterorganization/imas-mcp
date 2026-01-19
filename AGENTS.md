@@ -45,6 +45,22 @@ Use MCP `python()` when you need:
 
 Use **terminal directly** for single operations (`rg`, `fd`, `git`, `uv run`).
 
+**Batch operations in single calls** to reduce tool invocations:
+```python
+# Good - multiple operations in one call
+python("""
+facility = get_facility('epfl')
+paths = facility['actionable_paths'][:5]
+for p in paths:
+    print(f"Path: {p['path']}, Score: {p['interest_score']}")
+""")
+
+# Avoid - multiple separate calls
+python("facility = get_facility('epfl')")
+python("paths = facility['actionable_paths'][:5]")
+python("for p in paths: print(p)")
+```
+
 **Even for remote facilities**, prefer direct SSH over python wrappers:
 ```bash
 # Preferred - direct SSH
@@ -88,7 +104,11 @@ python("print(reload())")  # Clears module cache and reinitializes
 
 **Use `uv run` for:** git operations, ruff linting/formatting, pytest, and package management.
 
-**Never use `python()` for:** formatting text output, generating markdown, or text manipulation.
+**Never use `python()` for:**
+- Formatting text output (LLM can do this natively)
+- Generating markdown or documentation
+- Text manipulation that doesn't require execution
+- Simple string operations
 
 ### Fast Tools (Prefer Over Standard Unix)
 
@@ -319,6 +339,7 @@ except IOError:
 - Use terminal directly for single operations (`rg`, `fd`, `git`)
 - Use direct SSH for remote single commands (`ssh epfl "rg pattern"`)
 - Use MCP `python()` only for chained processing and graph queries
+- Batch multiple operations in single `python()` calls to reduce tool invocations
 - Use `uv run` for git operations, ruff, pytest, and package management
 - Use `python("print(reload())")` after editing `imas_codex/` source files to pick up changes
 - Use modern Python 3.12 syntax: `list[str]`, `X | Y`
@@ -327,6 +348,8 @@ except IOError:
 ### DON'T
 
 - Don't manually activate venv - use `uv run` which handles venv automatically
+- Don't use `python()` for text formatting - LLM can do this natively
+- Don't make multiple `python()` calls when one batched call would work
 - Don't use `git add -A`
 - Don't use `type!:` suffix for breaking changes
 - Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
