@@ -28,11 +28,7 @@ from llama_index.core.agent import ReActAgent  # noqa: E402
 from llama_index.core.tools import FunctionTool  # noqa: E402
 from rich.console import Console  # noqa: E402
 from rich.progress import (  # noqa: E402
-    BarColumn,
     Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
 )
 
 from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
@@ -1134,6 +1130,9 @@ class WikiDiscovery:
             monitor.stats.pages_scored = already_scored
             monitor.stats.high_score_count = self.stats.high_score_count
             monitor.stats.low_score_count = self.stats.low_score_count
+            # Force a render update to show initial state
+            if monitor._live:
+                monitor._live.update(monitor._render())
 
         if remaining == 0:
             logger.info("All pages already scored")
@@ -1454,14 +1453,12 @@ LOW SCORE (0.0-0.4):
 
         # Phase 2: Score
         console.print("\n[cyan]Phase 2: SCORE[/cyan]")
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            scored = await self.phase2_score(progress)
+        with ScoreProgressMonitor(
+            total=0,  # Will be set by phase2_score
+            cost_limit=self.stats.cost_limit_usd,
+            facility=self.config.facility_id,
+        ) as monitor:
+            scored = await self.phase2_score(monitor)
         console.print(
             f"  Scored {scored} pages: {self.stats.high_score_count} high, {self.stats.low_score_count} low"
         )
