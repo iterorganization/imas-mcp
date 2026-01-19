@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits with single quotes. See [agents/](agents/) for domain-specific workflows.
+Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. See [agents/](agents/) for domain-specific workflows.
 
 ## Custom Agents
 
@@ -172,7 +172,7 @@ python("result = setup_tools('epfl'); print(result.summary)")
 Pre-commit hooks use `.venv/bin/python3` and will fail if the venv is not accessible. Always use:
 
 ```bash
-uv run git commit -m 'type: description'
+uv run git commit -m "type: description"
 ```
 
 ### Environment Variables
@@ -208,7 +208,7 @@ uv run ruff format .
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format (uv run ensures pre-commit hooks work)
-uv run git commit -m 'type: brief description'
+uv run git commit -m "type: brief description"
 
 # 4. If pre-commit fails, fix issues and repeat steps 2-3
 
@@ -258,7 +258,7 @@ uv run ruff format .
 
 # Stage and commit
 git add <file1> <file2> ...
-uv run git commit -m 'type: description'
+uv run git commit -m "type: description"
 ```
 
 **Step 2: Cherry-pick to main workspace**
@@ -329,7 +329,6 @@ except IOError:
 
 ### General Rules
 
-- Use single quotes for commit messages
 - Stage files individually, never `git add -A`
 - Use `pydantic` for schemas, `dataclasses` for other data classes
 - Use `anyio` for async operations
