@@ -1469,8 +1469,39 @@ Provide reasoning for each score."""
         total_unscored = total_result[0]["total"] if total_result else 0
 
         if total_unscored == 0:
-            logger.info("No artifacts to score")
-            return 0
+            # No new artifacts to score - check if we've previously scored any
+            previously_scored_result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $facility_id})
+                WHERE wa.interest_score IS NOT NULL
+                WITH wa,
+                     CASE WHEN wa.interest_score >= 0.7 THEN 1 ELSE 0 END AS high,
+                     CASE WHEN wa.interest_score IS NOT NULL AND wa.interest_score < 0.3 THEN 1 ELSE 0 END AS low
+                RETURN count(*) AS total,
+                       sum(high) AS high_count,
+                       sum(low) AS low_count
+                """,
+                facility_id=self.config.facility_id,
+            )
+
+            if previously_scored_result and previously_scored_result[0]["total"] > 0:
+                prev = previously_scored_result[0]
+                # Update stats with previously-scored counts
+                self.stats.artifacts_scored = prev["total"]
+                self.stats.artifact_high_score_count = prev["high_count"] or 0
+                self.stats.artifact_low_score_count = prev["low_count"] or 0
+                # Also update combined counts
+                self.stats.high_score_count += self.stats.artifact_high_score_count
+                self.stats.low_score_count += self.stats.artifact_low_score_count
+                logger.info(
+                    "No new artifacts to score. Previously scored: %d (%d high, %d low)",
+                    prev["total"],
+                    prev["high_count"] or 0,
+                    prev["low_count"] or 0,
+                )
+            else:
+                logger.info("No artifacts to score")
+            return self.stats.artifacts_scored
 
         while True:
             # Check cost limit
