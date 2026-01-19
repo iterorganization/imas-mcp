@@ -17,3 +17,11 @@ ssh_host: iter
 data_systems:
   - imas
   - mdsplus
+# Wiki/documentation sites (stored in private YAML, never graphed)
+# Each site: {url, portal_page, site_type, auth_type, credential_service}
+wiki_sites:
+  - url: https://confluence.iter.org
+    portal_page: IMP
+    site_type: confluence
+    auth_type: session
+    credential_service: iter-confluence

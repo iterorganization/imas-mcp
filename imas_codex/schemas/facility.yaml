@@ -264,6 +264,28 @@ enums:
       other:
         description: Other file types
 
+  WikiSiteType:
+    description: Types of wiki/documentation sites
+    permissible_values:
+      mediawiki:
+        description: MediaWiki-based sites (Wikipedia, SPCwiki)
+      confluence:
+        description: Atlassian Confluence (REST API available)
+      generic:
+        description: Generic HTML site (scrape only)
+
+  WikiAuthType:
+    description: Authentication methods for wiki sites
+    permissible_values:
+      none:
+        description: No authentication required
+      ssh_proxy:
+        description: Access via SSH tunnel (internal network only)
+      basic:
+        description: HTTP Basic authentication (username/password)
+      session:
+        description: Session-based auth (login form, cookies)
+
   WikiPageStatus:
     description: Lifecycle status of a wiki page through the discovery pipeline
     permissible_values:
@@ -370,6 +392,13 @@ classes:
       exploration_notes:
         description: Free-form exploration notes
         multivalued: true
+        annotations:
+          is_private: true
+      wiki_sites:
+        description: >-
+          Wiki/documentation sites for this facility (JSON-encoded list).
+          Each site: {url, portal_page, site_type, auth_type, credential_service}.
+          credential_service is the keyring service name for credentials.
         annotations:
           is_private: true
 

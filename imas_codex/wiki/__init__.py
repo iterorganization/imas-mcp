@@ -19,6 +19,13 @@ Example:
     print(f"Crawled {stats['pages_crawled']} pages")
 """
 
+from .auth import CredentialManager, WikiSiteConfig, require_credentials
+from .confluence import (
+    ConfluenceClient,
+    ConfluencePage,
+    ConfluenceSpace,
+    detect_site_type,
+)
 from .discovery import (
     DiscoveryStats,
     WikiConfig,
@@ -46,6 +53,15 @@ from .scraper import (
 )
 
 __all__ = [
+    # Authentication
+    "CredentialManager",
+    "WikiSiteConfig",
+    "require_credentials",
+    # Confluence client
+    "ConfluenceClient",
+    "ConfluencePage",
+    "ConfluenceSpace",
+    "detect_site_type",
     # Discovery pipeline
     "DiscoveryStats",
     "WikiConfig",

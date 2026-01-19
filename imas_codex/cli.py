@@ -2181,8 +2181,174 @@ def wiki() -> None:
       imas-codex wiki score <facility>     Score pages and artifacts (uses LLM)
       imas-codex wiki ingest <facility>    Ingest pages and artifacts
       imas-codex wiki status <facility>    Show ingestion statistics
+      imas-codex wiki sites <facility>     List configured wiki sites
+      imas-codex wiki credentials ...      Manage site credentials
     """
     pass
+
+
+# -----------------------------------------------------------------------------
+# Wiki Credentials Subcommands
+# -----------------------------------------------------------------------------
+
+
+@wiki.group("credentials")
+def wiki_credentials() -> None:
+    """Manage wiki site credentials.
+
+    Credentials are stored securely in your system keyring
+    (GNOME Keyring on Linux, Keychain on macOS).
+
+    \b
+      imas-codex wiki credentials set <site>     Store credentials
+      imas-codex wiki credentials get <site>     Check if credentials exist
+      imas-codex wiki credentials delete <site>  Remove credentials
+    """
+    pass
+
+
+@wiki_credentials.command("set")
+@click.argument("site")
+def wiki_credentials_set(site: str) -> None:
+    """Store credentials for a wiki site.
+
+    Prompts for username and password, then stores them securely
+    in your system keyring.
+
+    Examples:
+        imas-codex wiki credentials set iter-confluence
+    """
+    import getpass
+
+    from imas_codex.wiki.auth import CredentialManager
+
+    creds = CredentialManager()
+
+    if not creds._keyring_available:
+        click.echo("❌ System keyring not available.", err=True)
+        click.echo("\nKeyring requires a running D-Bus session.", err=True)
+        click.echo("On headless systems, you may need to:", err=True)
+        click.echo("  1. Install: pip install keyrings.alt", err=True)
+        click.echo("  2. Or use environment variables instead:", err=True)
+        env_user = creds._env_var_name(site, "username")
+        env_pass = creds._env_var_name(site, "password")
+        click.echo(f"     export {env_user}=your_username", err=True)
+        click.echo(f"     export {env_pass}=your_password", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Setting credentials for: {site}")
+    click.echo("(Stored securely in system keyring)\n")
+
+    username = click.prompt("Username")
+    password = getpass.getpass("Password: ")
+
+    if creds.set_credentials(site, username, password):
+        click.echo(f"\n✓ Credentials stored for {site}")
+    else:
+        click.echo("\n❌ Failed to store credentials", err=True)
+        raise SystemExit(1)
+
+
+@wiki_credentials.command("get")
+@click.argument("site")
+def wiki_credentials_get(site: str) -> None:
+    """Check if credentials exist for a wiki site.
+
+    Does not display the actual credentials, only confirms existence.
+
+    Examples:
+        imas-codex wiki credentials get iter-confluence
+    """
+    from imas_codex.wiki.auth import CredentialManager
+
+    creds = CredentialManager()
+
+    if creds.has_credentials(site):
+        click.echo(f"✓ Credentials found for {site}")
+
+        # Check for valid session
+        session = creds.get_session(site)
+        if session:
+            click.echo("✓ Valid session cached")
+        else:
+            click.echo("○ No cached session")
+    else:
+        click.echo(f"○ No credentials found for {site}")
+        click.echo("\nTo set credentials:")
+        click.echo(f"  imas-codex wiki credentials set {site}")
+
+
+@wiki_credentials.command("delete")
+@click.argument("site")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def wiki_credentials_delete(site: str, yes: bool) -> None:
+    """Delete stored credentials for a wiki site.
+
+    Also removes any cached session cookies.
+
+    Examples:
+        imas-codex wiki credentials delete iter-confluence
+    """
+    from imas_codex.wiki.auth import CredentialManager
+
+    creds = CredentialManager()
+
+    if not yes:
+        click.confirm(f"Delete credentials for {site}?", abort=True)
+
+    deleted_creds = creds.delete_credentials(site)
+    deleted_session = creds.delete_session(site)
+
+    if deleted_creds:
+        click.echo(f"✓ Deleted credentials for {site}")
+    else:
+        click.echo(f"○ No credentials found for {site}")
+
+    if deleted_session:
+        click.echo("✓ Deleted cached session")
+
+
+@wiki.command("sites")
+@click.argument("facility")
+def wiki_sites(facility: str) -> None:
+    """List configured wiki sites for a facility.
+
+    Shows all wiki/documentation sites configured in the facility's
+    YAML configuration, including authentication requirements.
+
+    Examples:
+        imas-codex wiki sites iter
+        imas-codex wiki sites epfl
+    """
+    from imas_codex.wiki.auth import CredentialManager
+    from imas_codex.wiki.discovery import WikiConfig
+
+    sites = WikiConfig.list_sites(facility)
+    creds = CredentialManager()
+
+    if not sites:
+        click.echo(f"No wiki sites configured for facility: {facility}")
+        return
+
+    click.echo(f"Wiki sites for {facility}:\n")
+
+    for i, site in enumerate(sites):
+        click.echo(f"  [{i}] {site.base_url}")
+        click.echo(f"      Type: {site.site_type}")
+        click.echo(f"      Auth: {site.auth_type}")
+
+        if site.portal_page:
+            click.echo(f"      Portal: {site.portal_page}")
+
+        if site.requires_auth and site.credential_service:
+            has_creds = creds.has_credentials(site.credential_service)
+            status = "✓ configured" if has_creds else "○ not set"
+            click.echo(f"      Credentials ({site.credential_service}): {status}")
+
+        if site.requires_ssh:
+            click.echo(f"      SSH host: {site.ssh_host}")
+
+        click.echo()
 
 
 @wiki.command("discover")
