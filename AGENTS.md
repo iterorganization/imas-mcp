@@ -296,7 +296,6 @@ except IOError:
 - Don't manually activate venv - use `uv run` which handles venv automatically
 - Don't use `git add -A`
 - Don't use `type!:` suffix for breaking changes
-- Don't use double quotes with special characters in commits
 - Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
 - Don't use "new", "refactored", "enhanced" in names
 
