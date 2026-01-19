@@ -1,16 +1,25 @@
-"""Three-phase wiki discovery pipeline.
+"""Integrated wiki discovery pipeline.
 
-Phase 1: CRAWL - Fast link extraction, builds wiki graph structure
-Phase 2: SCORE - Agent evaluates graph metrics, assigns interest scores
-Phase 3: INGEST - Fetch content for high-score pages, create chunks
+Complete workflow:
+1. CRAWL - Fast link extraction, builds wiki graph structure
+2. PREFETCH - Fetch page content and generate summaries
+3. SCORE - Content-aware LLM evaluation, assigns interest scores
+4. INGEST - Fetch and chunk high-score pages for search
 
 This module is facility-agnostic - wiki configuration comes from facility YAML.
 
 Example:
     from imas_codex.wiki.discovery import WikiDiscovery
 
+    # Run complete pipeline
     discovery = WikiDiscovery("epfl", cost_limit_usd=10.0)
     await discovery.run()
+
+    # Or run individual steps
+    discovery.crawl()
+    await discovery.prefetch()
+    await discovery.score()
+    await discovery.ingest()
 """
 
 import logging
@@ -41,9 +50,6 @@ warnings.filterwarnings(
 from llama_index.core.agent import ReActAgent  # noqa: E402
 from llama_index.core.tools import FunctionTool  # noqa: E402
 from rich.console import Console  # noqa: E402
-from rich.progress import (  # noqa: E402
-    Progress,
-)
 
 from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
 from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
@@ -247,7 +253,11 @@ class WikiConfig:
 
 
 class WikiDiscovery:
-    """Three-phase wiki discovery pipeline."""
+    """Integrated wiki discovery pipeline.
+
+    Provides both unified workflow (run()) and individual steps
+    (crawl, prefetch, score, ingest) for flexible execution.
+    """
 
     # File extensions that indicate artifacts (not wiki pages)
     ARTIFACT_EXTENSIONS = {
@@ -1684,59 +1694,174 @@ LOW SCORE (0.0-0.4):
 - Stop when all pages scored or budget exhausted"""
 
     # =========================================================================
-    # Phase 3: INGEST - Not implemented yet (placeholder)
+    # PREFETCH - Fetch content and generate summaries
     # =========================================================================
 
-    async def phase3_ingest(self, progress: Progress | None = None) -> int:
-        """Phase 3: Fetch and ingest high-score pages.
+    async def prefetch(
+        self, batch_size: int = 50, include_scored: bool = False
+    ) -> dict:
+        """Prefetch page content and generate summaries for content-aware scoring.
 
-        Returns number of pages ingested.
+        Args:
+            batch_size: Pages per batch
+            include_scored: Also prefetch already-scored pages
+
+        Returns:
+            Stats dict with fetched/summarized/failed counts
         """
+        from imas_codex.wiki.prefetch import prefetch_pages
+
+        self.stats.phase = "PREFETCH"
+        return await prefetch_pages(
+            facility_id=self.config.facility_id,
+            batch_size=batch_size,
+            max_pages=self.max_pages,
+            include_scored=include_scored,
+        )
+
+    # =========================================================================
+    # INGEST - Fetch and chunk high-score pages
+    # =========================================================================
+
+    async def ingest(
+        self,
+        min_score: float = 0.5,
+        rate_limit: float = 0.5,
+        content_type: str = "all",
+    ) -> dict:
+        """Ingest high-score pages and artifacts.
+
+        Args:
+            min_score: Minimum interest score threshold
+            rate_limit: Seconds between requests
+            content_type: 'all', 'pages', or 'artifacts'
+
+        Returns:
+            Stats dict with ingestion counts
+        """
+        from imas_codex.wiki import (
+            WikiArtifactPipeline,
+            WikiIngestionPipeline,
+            get_pending_wiki_artifacts,
+            get_pending_wiki_pages,
+        )
+        from imas_codex.wiki.pipeline import create_wiki_vector_index
+
         self.stats.phase = "INGEST"
-        # TODO: Implement full content fetching and chunking
-        # For now, just return 0
-        return 0
+
+        # Create vector index
+        try:
+            create_wiki_vector_index()
+        except Exception:
+            pass
+
+        total_stats = {
+            "pages": 0,
+            "artifacts": 0,
+            "chunks": 0,
+        }
+
+        # Ingest pages
+        if content_type in ("all", "pages"):
+            pending_pages = get_pending_wiki_pages(
+                facility_id=self.config.facility_id,
+                limit=self.max_pages,
+                min_interest_score=min_score,
+            )
+
+            if pending_pages:
+                pipeline = WikiIngestionPipeline(
+                    facility_id=self.config.facility_id, use_rich=False
+                )
+                stats = await pipeline.ingest_from_graph(
+                    limit=self.max_pages,
+                    min_interest_score=min_score,
+                    rate_limit=rate_limit,
+                )
+                total_stats["pages"] = stats.get("pages", 0)
+                total_stats["chunks"] += stats.get("chunks", 0)
+                self.stats.pages_ingested = total_stats["pages"]
+                self.stats.chunks_created = total_stats["chunks"]
+
+        # Ingest artifacts
+        if content_type in ("all", "artifacts"):
+            pending_artifacts = get_pending_wiki_artifacts(
+                facility_id=self.config.facility_id,
+                limit=self.max_pages,
+                min_interest_score=min_score,
+            )
+
+            if pending_artifacts:
+                artifact_pipeline = WikiArtifactPipeline(
+                    facility_id=self.config.facility_id, use_rich=False
+                )
+                stats = await artifact_pipeline.ingest_from_graph(
+                    limit=self.max_pages,
+                    min_interest_score=min_score,
+                    rate_limit=rate_limit,
+                )
+                total_stats["artifacts"] = stats.get("artifacts", 0)
+                total_stats["chunks"] += stats.get("chunks", 0)
+                self.stats.chunks_created = total_stats["chunks"]
+
+        return total_stats
 
     # =========================================================================
     # Main Entry Point
     # =========================================================================
 
     async def run(self) -> DiscoveryStats:
-        """Run full three-phase discovery pipeline."""
+        """Run full discovery pipeline: crawl → prefetch → score → ingest."""
         console.print(f"[bold]Wiki Discovery: {self.config.facility_id}[/bold]")
         console.print(f"Portal: {self.config.portal_page}")
         console.print(f"Cost limit: ${self.stats.cost_limit_usd:.2f}")
         console.print()
 
-        # Phase 1: Crawl with integrated progress display
-        console.print("[cyan]Phase 1: CRAWL[/cyan]")
+        # Step 1: Crawl
+        console.print("[cyan]Step 1: CRAWL[/cyan]")
         with CrawlProgressMonitor() as monitor:
-            self.phase1_crawl(monitor)
+            self.crawl(monitor)
 
-        # Phase 2: Score
-        console.print("\n[cyan]Phase 2: SCORE[/cyan]")
+        # Step 2: Prefetch content for content-aware scoring
+        console.print("\n[cyan]Step 2: PREFETCH[/cyan]")
+        prefetch_stats = await self.prefetch(batch_size=50, include_scored=False)
+        console.print(
+            f"  Fetched: {prefetch_stats['fetched']}, "
+            f"Summarized: {prefetch_stats['summarized']}, "
+            f"Failed: {prefetch_stats['failed']}"
+        )
+
+        # Step 3: Score with content-aware evaluation
+        console.print("\n[cyan]Step 3: SCORE[/cyan]")
         with ScoreProgressMonitor(
-            total=0,  # Will be set by phase2_score
+            total=0,  # Will be set by score()
             cost_limit=self.stats.cost_limit_usd,
             facility=self.config.facility_id,
         ) as monitor:
-            await self.phase2_score(monitor)
+            await self.score(monitor)
         console.print(
             f"  Scored {self.stats.pages_scored} pages ({self.stats.page_high_score_count} high, {self.stats.page_low_score_count} low) + "
             f"{self.stats.artifacts_scored} artifacts ({self.stats.artifact_high_score_count} high, {self.stats.artifact_low_score_count} low)"
         )
 
-        # Phase 3: Ingest (placeholder)
-        # console.print("\n[cyan]Phase 3: INGEST[/cyan]")
-        # ingested = await self.phase3_ingest(progress)
-        # console.print(f"  Ingested {ingested} pages")
+        # Step 4: Ingest high-score content
+        console.print("\n[cyan]Step 4: INGEST[/cyan]")
+        ingest_stats = await self.ingest(
+            min_score=0.5, rate_limit=0.5, content_type="all"
+        )
+        console.print(
+            f"  Ingested {ingest_stats['pages']} pages, "
+            f"{ingest_stats['artifacts']} artifacts, "
+            f"{ingest_stats['chunks']} chunks"
+        )
 
         console.print(
             f"\n[green]Discovery complete in {self.stats.elapsed_formatted()}[/green]"
         )
         console.print(
             f"Crawled: {self.stats.pages_crawled} pages, {self.stats.artifacts_found} artifacts | "
-            f"Scored: {self.stats.pages_scored + self.stats.artifacts_scored} total ({self.stats.high_score_count} high, {self.stats.low_score_count} low)"
+            f"Scored: {self.stats.pages_scored + self.stats.artifacts_scored} total ({self.stats.high_score_count} high, {self.stats.low_score_count} low) | "
+            f"Ingested: {self.stats.pages_ingested} pages, {self.stats.chunks_created} chunks"
         )
         console.print(f"Cost: ${self.stats.cost_spent_usd:.4f}")
 

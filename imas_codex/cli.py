@@ -2392,11 +2392,13 @@ def wiki_discover(
     max_depth: int | None,
     verbose: bool,
 ) -> None:
-    """Discover wiki pages using three-phase pipeline.
+    """Discover wiki pages using integrated pipeline.
 
-    Phase 1 (CRAWL): Fast link extraction, builds wiki graph structure
-    Phase 2 (SCORE): Agent evaluates graph metrics, assigns interest scores
-    Phase 3 (INGEST): Fetch content for high-score pages (via wiki ingest)
+    Runs complete workflow automatically:
+    1. CRAWL: Fast link extraction, builds wiki graph structure
+    2. PREFETCH: Fetch page content and generate summaries
+    3. SCORE: Content-aware LLM evaluation, assigns interest scores
+    4. INGEST: Fetch and chunk high-score pages for search
 
     Graph-driven: restarts resume from existing state.
 
@@ -2487,7 +2489,7 @@ def wiki_crawl(
 
     try:
         with CrawlProgressMonitor(facility=facility) as monitor:
-            discovery.phase1_crawl(monitor)
+            discovery.crawl(monitor)
 
         console.print(f"  Links found: {discovery.stats.links_found}")
         console.print(f"  Max depth: {discovery.stats.max_depth_reached}")
@@ -2596,10 +2598,14 @@ def wiki_score(
     batch_size: int,
     verbose: bool,
 ) -> None:
-    """Score crawled wiki pages using ReAct agent.
+    """Score crawled wiki pages using content-aware LLM evaluation.
 
     Evaluates pages based on graph metrics (in_degree, out_degree,
-    link_depth) and assigns interest_score (0.0-1.0).
+    link_depth) AND content summaries (if prefetched) to assign
+    interest_score (0.0-1.0).
+
+    For best results, run 'wiki prefetch' first to enable content-aware
+    scoring. Otherwise falls back to metric-based scoring.
 
     Uses CLI-orchestrated batching with fresh agents per batch to avoid
     context overflow. Continues until all pages are scored, page limit
@@ -2633,7 +2639,7 @@ def wiki_score(
     try:
         with ScoreProgressMonitor(cost_limit=cost_limit, facility=facility) as monitor:
             scored = asyncio.run(
-                discovery.phase2_score(monitor=monitor, batch_size=batch_size)
+                discovery.score(monitor=monitor, batch_size=batch_size)
             )
 
         if scored == 0:
