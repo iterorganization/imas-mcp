@@ -36,6 +36,29 @@ VS Code injects ~30k tokens of tool definitions per request. To reduce costs:
 
 ## Critical Rules
 
+### Determine Local vs Remote Execution
+
+**Always check locality first** before choosing execution method:
+
+```bash
+# Quick check - are you on the target facility?
+hostname
+pwd
+```
+
+```python
+# Programmatic check
+python("import socket; print(f'Current host: {socket.gethostname()}')")
+python("info = get_facility('facility_name'); print(f'Is local: {info.get(\"is_local\", False)}')")
+```
+
+**Command Execution Decision Tree:**
+
+1. **Single command on local facility?** → Use terminal directly
+2. **Single command on remote facility?** → Use `ssh facility "command"`
+3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
+4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
+
 ### MCP `python()` for Chained Processing
 
 Use MCP `python()` when you need:
@@ -43,7 +66,8 @@ Use MCP `python()` when you need:
 - **Graph queries** and data manipulation
 - **REPL state** to avoid import overhead across multiple operations
 
-Use **terminal directly** for single operations (`rg`, `fd`, `git`, `uv run`).
+Use **terminal directly** for single operations on local facility (`rg`, `fd`, `git`, `uv run`).
+Use **direct SSH** for single operations on remote facility (`ssh facility "command"`).
 
 **Batch operations in single calls** to reduce tool invocations:
 ```python
@@ -61,12 +85,24 @@ python("paths = facility['actionable_paths'][:5]")
 python("for p in paths: print(p)")
 ```
 
-**Even for remote facilities**, prefer direct SSH over python wrappers:
+**Local facility** (you're running on the target system):
 ```bash
-# Preferred - direct SSH
-ssh epfl "rg -l 'IMAS' /home/codes"
+# Correct - direct terminal
+rg -l "IMAS" /work/imas
+fd -e py /home/codes
+dust -d 2 /work
 
-# Avoid - python wrapper for single command
+# Wrong - unnecessary python wrapper
+python("print(run('rg pattern /work/imas', facility='current'))")
+```
+
+**Remote facility** (accessing a different system):
+```bash
+# Correct - direct SSH
+ssh epfl "rg -l 'IMAS' /home/codes"
+ssh epfl "fd -e py /home/codes | head -20"
+
+# Wrong - python wrapper for single command
 python("print(run('rg -l IMAS /home/codes', facility='epfl'))")
 ```
 
@@ -76,12 +112,21 @@ python("print([name for name in dir() if not name.startswith('_')])")
 python("help(search_imas)")  # Get function docstring
 python("import inspect; print(inspect.signature(get_facility))")  # Get signature
 
+# Check locality
+python("import socket; print(f'Current host: {socket.gethostname()}')")
+python("info = get_facility('epfl'); print(f'Is local: {info.get(\"is_local\", False)}')")
+
 # Graph queries
 python("result = query('MATCH (f:Facility) RETURN f.id'); print(result)")
 
-# Remote exploration (auto-detects local vs SSH)
-python("print(run('ls /home/codes', facility='epfl'))")  # SSH to EPFL
-python("print(run('ls /work/imas', facility='iter'))")   # Local on SDCC
+# Chained processing (run() auto-detects local vs SSH)
+python("""
+files = run('fd -e py /home/codes', facility='epfl').strip().split('\\n')
+for f in files[:10]:
+    content = run(f'head -20 {f}', facility='epfl')
+    if 'write_ids' in content:
+        print(f'IDS writer: {f}')
+""")
 
 # IMAS search
 python("print(search_imas('electron temperature'))")
@@ -131,14 +176,20 @@ Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](i
 **Terminal usage** (preferred for all single operations):
 
 ```bash
-# Local searches and file operations
+# Check locality first
+hostname
+pwd
+
+# Local facility - direct commands
 rg -l "IMAS" /path/to/search
 fd -e py /path/to/search
 git log --oneline -10
+dust -d 2 /work
 
-# Remote searches via direct SSH
+# Remote facility - direct SSH
 ssh epfl "rg -l 'IMAS' /home/codes"
 ssh epfl "fd -e py /home/codes | head -20"
+ssh epfl "dust -d 2 /home/codes"
 
 # Tool management
 uv run imas-codex tools check              # Check local tools
@@ -147,13 +198,13 @@ uv run imas-codex tools install epfl       # Install on EPFL
 uv run imas-codex tools list               # List all tools
 ```
 
-**Python API** (for Python code and chained processing):
+**Python API** (for chained processing and graph operations only):
 
 ```python
 # Python code that requires execution
 python("from pathlib import Path; print([p.stem for p in Path('/path').glob('*.py')])")
 
-# Chained processing - search, filter, analyze
+# Chained processing - search, filter, analyze (run() auto-detects local/remote)
 python("""
 result = run('rg -l "IMAS" /home/codes', facility='epfl')
 files = result.strip().split('\\n')
@@ -165,6 +216,8 @@ for f in files[:5]:
 
 # Tool setup with result processing
 python("result = setup_tools('epfl'); print(result.summary)")
+
+# Note: run() automatically uses SSH for remote facilities, direct execution for local
 ```
 
 ### Pre-commit Hooks
@@ -286,6 +339,9 @@ git checkout -- .  # Discard any remaining changes
 
 | Task | Command |
 |------|---------|
+| Check locality | `hostname` or `python("import socket; print(socket.gethostname())")` |
+| Local single cmd | `rg pattern /path` (direct terminal) |
+| Remote single cmd | `ssh facility "rg pattern /path"` (direct SSH) |
 | Graph query | `python("print(query('MATCH (n) RETURN n.id, n.name LIMIT 5'))")` |
 | Run command | `python("print(run('rg pattern', facility='epfl'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
@@ -335,9 +391,11 @@ except IOError:
 
 ### DO
 
-- Use terminal directly for single operations (`rg`, `fd`, `git`)
-- Use direct SSH for remote single commands (`ssh epfl "rg pattern"`)
-- Use MCP `python()` only for chained processing and graph queries
+- **Check locality first** (`hostname` or check facility info) before choosing execution method
+- Use terminal directly for **single operations on local facility** (`rg`, `fd`, `git`)
+- Use direct SSH for **single operations on remote facility** (`ssh facility "command"`)
+- Use MCP `python()` only for **chained processing** and **graph queries**
+- Let `run()` auto-detect local/remote when doing chained processing
 - Batch multiple operations in single `python()` calls to reduce tool invocations
 - Use `uv run` for git operations, ruff, pytest, and package management
 - Use `python("print(reload())")` after editing `imas_codex/` source files to pick up changes
@@ -346,6 +404,8 @@ except IOError:
 
 ### DON'T
 
+- Don't assume you're always on a specific facility - **check locality first**
+- Don't use `python()` wrapper for **single commands** (local or remote)
 - Don't manually activate venv - use `uv run` which handles venv automatically
 - Don't use `python()` for text formatting - LLM can do this natively
 - Don't make multiple `python()` calls when one batched call would work
