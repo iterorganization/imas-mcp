@@ -2497,6 +2497,69 @@ def wiki_crawl(
         discovery.close()
 
 
+@wiki.command("prefetch")
+@click.argument("facility")
+@click.option(
+    "--batch-size",
+    "-b",
+    default=50,
+    type=int,
+    help="Pages per batch (default: 50)",
+)
+@click.option(
+    "--max-pages",
+    "-n",
+    default=None,
+    type=int,
+    help="Maximum pages to process (default: unlimited)",
+)
+@click.option(
+    "--include-scored",
+    is_flag=True,
+    help="Also prefetch already-scored pages",
+)
+def wiki_prefetch(
+    facility: str, batch_size: int, max_pages: int | None, include_scored: bool
+) -> None:
+    """Prefetch and summarize page previews before scoring.
+
+    Fetches page content and generates LLM summaries for content-aware
+    scoring. This is an optional step that improves scoring accuracy,
+    especially for ITER Confluence pages.
+
+    Examples:
+        # Prefetch 100 pages for pilot testing
+        imas-codex wiki prefetch iter --max-pages 100
+
+        # Prefetch all discovered pages
+        imas-codex wiki prefetch epfl
+
+        # Prefetch including already-scored pages
+        imas-codex wiki prefetch iter --include-scored
+    """
+    import asyncio
+
+    from rich.console import Console
+
+    from imas_codex.wiki.prefetch import prefetch_pages
+
+    console = Console()
+    console.print(f"[cyan]Starting prefetch for {facility}...[/cyan]")
+    stats = asyncio.run(
+        prefetch_pages(
+            facility_id=facility,
+            batch_size=batch_size,
+            max_pages=max_pages,
+            include_scored=include_scored,
+        )
+    )
+
+    console.print("\n[green]Prefetch complete:[/green]")
+    console.print(f"  Fetched: {stats['fetched']}")
+    console.print(f"  Summarized: {stats['summarized']}")
+    console.print(f"  Failed: {stats['failed']}")
+
+
 @wiki.command("score")
 @click.argument("facility")
 @click.option(

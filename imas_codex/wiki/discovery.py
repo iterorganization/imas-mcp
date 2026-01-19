@@ -999,7 +999,7 @@ class WikiDiscovery:
         facility_id = self.config.facility_id
 
         def get_pages_to_score(limit: int = 100) -> str:
-            """Get crawled pages that need scoring, with graph metrics."""
+            """Get crawled pages that need scoring, with graph metrics and content preview."""
             import json
 
             result = gc.query(
@@ -1009,7 +1009,9 @@ class WikiDiscovery:
                        wp.title AS title,
                        wp.link_depth AS depth,
                        wp.in_degree AS in_degree,
-                       wp.out_degree AS out_degree
+                       wp.out_degree AS out_degree,
+                       wp.preview_summary AS preview_summary,
+                       wp.preview_fetch_error AS preview_fetch_error
                 ORDER BY wp.in_degree DESC
                 LIMIT $limit
                 """,
@@ -1041,7 +1043,10 @@ class WikiDiscovery:
             return json.dumps({"out_links": [], "in_links": []})
 
         def update_page_scores(scores_json: str) -> str:
-            """Update interest_score for pages. Input: JSON array of {id, score, reasoning, skip_reason}."""
+            """Update interest_score and metadata for pages.
+
+            Input: JSON array of {id, score, reasoning, skip_reason, page_type, is_physics, value_rating}.
+            """
             import json
 
             try:
@@ -1055,6 +1060,9 @@ class WikiDiscovery:
                 score = s.get("score", 0.5)
                 reasoning = s.get("reasoning", "")
                 skip_reason = s.get("skip_reason")
+                page_type = s.get("page_type", "other")
+                is_physics = s.get("is_physics", False)
+                value_rating = s.get("value_rating", 0)
 
                 # All scored pages get status='scored', interest_score distinguishes value
                 gc.query(
@@ -1063,6 +1071,9 @@ class WikiDiscovery:
                     SET wp.interest_score = $score,
                         wp.score_reasoning = $reasoning,
                         wp.skip_reason = $skip_reason,
+                        wp.page_type = $page_type,
+                        wp.is_physics_content = $is_physics,
+                        wp.value_rating = $value_rating,
                         wp.status = 'scored',
                         wp.scored_at = datetime()
                     """,
@@ -1070,6 +1081,9 @@ class WikiDiscovery:
                     score=score,
                     reasoning=reasoning,
                     skip_reason=skip_reason,
+                    page_type=page_type,
+                    is_physics=is_physics,
+                    value_rating=value_rating,
                 )
                 updated += 1
 
@@ -1387,16 +1401,40 @@ class WikiDiscovery:
             batch_json = json.dumps(pages_result)
             task = f"""Score this batch of {len(pages_result)} wiki pages for {self.config.facility_id}.
 
-Here are the pages with their graph metrics:
+For each page:
 {batch_json}
 
-For each page, compute interest_score (0.0-1.0) based on:
-- in_degree: >5 high value, 0 low value
-- link_depth: ≤2 high value, >5 low value
-- title keywords: Thomson, LIUQE, signals = high; Meeting, Workshop = low
+Each page has: id, title, preview_summary, facility_id, in_degree, link_depth, preview_fetch_error
 
-Call update_page_scores with ALL pages in a single call.
-Provide reasoning for each score."""
+Assess each page and call update_page_scores with a JSON array:
+[
+  {{
+    "id": "page_id",
+    "score": 0.75,
+    "page_type": "data_source",
+    "is_physics": true,
+    "value_rating": 8,
+    "reasoning": "Brief explanation"
+  }},
+  ...
+]
+
+Scoring Guidelines:
+- Data sources/databases: 0.7-1.0 (valuable even with low in_degree)
+- Technical documentation: 0.6-0.8
+- Code documentation: 0.6-0.8
+- User guides/tutorials: 0.5-0.7
+- Process/administrative: 0.3-0.5
+- Meeting notes: 0.1-0.4
+
+Important:
+- Use preview_summary to understand page content
+- Low in_degree does NOT mean low value for specialized content
+- ITER Confluence pages may have lower in_degree by design
+- Focus on CONTENT VALUE, not network topology
+- If preview_summary is null or preview_fetch_error exists, score based on title only
+
+Call update_page_scores with ALL pages in a single call."""
 
             batch_high = self.stats.high_score_count
             batch_low = self.stats.low_score_count

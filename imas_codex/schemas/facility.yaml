@@ -300,6 +300,24 @@ enums:
       failed:
         description: Error occurred during processing
 
+  WikiPageType:
+    description: LLM-classified page type for content-aware scoring
+    permissible_values:
+      data_source:
+        description: Database, dataset, or data catalog
+      documentation:
+        description: Technical documentation, manuals, guides
+      code:
+        description: Code documentation, API reference, examples
+      process:
+        description: Administrative processes, workflows
+      meeting:
+        description: Meeting notes, presentations, announcements
+      portal:
+        description: Index page, navigation hub
+      other:
+        description: Uncategorized content
+
   WikiArtifactStatus:
     description: Lifecycle status of a wiki artifact
     permissible_values:
@@ -1275,6 +1293,34 @@ classes:
         description: >-
           Why the agent marked this page as skipped. Grounded in metrics.
           Examples: "in_degree=0, no pages reference this", "link_depth=5, too far from portal"
+      
+      # NEW: Prefetch fields (added for content-aware scoring)
+      preview_text:
+        description: >-
+          Raw page content preview (first 2000 chars). Fetched during prefetch stage.
+          Used for validation and debugging. May contain HTML artifacts.
+      preview_summary:
+        description: >-
+          LLM-generated summary of page content (max 300 chars). Clean, structured
+          description of what the page provides. Used for scoring prompt.
+      preview_fetched_at:
+        description: When the preview was fetched and summarized
+        range: datetime
+      preview_fetch_error:
+        description: Error message if preview fetch failed (auth, timeout, etc.)
+      
+      # NEW: Enhanced scoring fields (LLM-based content analysis)
+      page_type:
+        description: >-
+          LLM-classified page type. One of: data_source, documentation, code,
+          process, meeting, portal, other
+        range: WikiPageType
+      is_physics_content:
+        description: Whether page contains fusion/plasma physics content
+        range: boolean
+      value_rating:
+        description: LLM-assigned scientific value rating (0-10)
+        range: integer
       
       # Discovery metadata
       discovered_at:
