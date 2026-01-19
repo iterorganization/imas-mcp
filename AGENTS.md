@@ -261,6 +261,22 @@ uv run ruff format .
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format (uv run ensures pre-commit hooks work)
+# Use multi-line format for substantial changes:
+uv run git commit -m "type: concise summary (50 chars)
+
+Detailed explanation of what changed and why. Use bullet points
+for multiple changes:
+- First significant change with context
+- Second change explaining the rationale
+- Third change noting any important details
+
+Include relevant technical details, design decisions, or
+breaking changes. This body helps reviewers and future
+maintainers understand the commit.
+
+BREAKING CHANGE: description (if applicable)"
+
+# For simple changes, single line is fine:
 uv run git commit -m "type: brief description"
 
 # 4. If pre-commit fails, fix issues and repeat steps 2-3
@@ -277,6 +293,13 @@ git push origin main
 | `docs` | Documentation |
 | `test` | Test changes |
 | `chore` | Maintenance |
+
+**Commit message guidelines:**
+- **Summary line**: Concise, imperative mood, ~50 chars
+- **Body**: Detailed explanation for non-trivial changes (wrap at 72 chars)
+- **Bullet points**: Use `-` for listing multiple changes
+- **Breaking changes**: Use `BREAKING CHANGE:` footer, not `type!:` suffix
+- **Context**: Explain *why* not just *what* - include design decisions
 
 ## Testing
 
