@@ -93,20 +93,28 @@ def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> Commented
 
 @lru_cache(maxsize=8)
 def get_facility(facility_id: str) -> dict[str, Any]:
-    """Load complete facility configuration (public + private).
+    """Load complete facility configuration (public + private merged).
 
     Merges data from:
     - <facility>.yaml (public, git-tracked)
     - <facility>_private.yaml (private, gitignored)
 
+    Use this when you need full context for exploration.
+    For graph ingestion, use get_facility_metadata() instead.
+
     Args:
-        facility_id: Facility identifier (e.g., "epfl")
+        facility_id: Facility identifier (e.g., "epfl", "iter")
 
     Returns:
         Merged facility data as dict with all fields
 
     Raises:
         ValueError: If facility not found
+
+    Examples:
+        >>> config = get_facility('iter')
+        >>> print(config['paths'])  # Has both public and private paths
+        >>> print(config['tools'])  # Tool availability (private)
     """
     facilities_dir = get_facilities_dir()
     public_path = facilities_dir / f"{facility_id}.yaml"
@@ -132,16 +140,22 @@ def get_facility(facility_id: str) -> dict[str, Any]:
     return merged
 
 
-def get_facility_public(facility_id: str) -> dict[str, Any]:
-    """Load only public facility fields (safe for graph/OCI).
+def get_facility_metadata(facility_id: str) -> dict[str, Any]:
+    """Load only public facility metadata (safe for graph/OCI).
 
     Uses schema introspection to filter out private fields.
+    Use this before writing facility data to the graph.
 
     Args:
-        facility_id: Facility identifier
+        facility_id: Facility identifier (e.g., "epfl", "iter")
 
     Returns:
-        Dict with only public fields
+        Dict with only public fields (name, machine, data_systems, etc.)
+
+    Examples:
+        >>> metadata = get_facility_metadata('iter')
+        >>> print('ssh_host' in metadata)  # False - private field filtered
+        >>> print('machine' in metadata)   # True - public field
     """
     full = get_facility(facility_id)
     schema = get_schema()
@@ -150,29 +164,55 @@ def get_facility_public(facility_id: str) -> dict[str, Any]:
     return {k: v for k, v in full.items() if k not in private_slots}
 
 
-def get_facility_private(facility_id: str) -> dict[str, Any]:
-    """Load only private facility fields.
+def get_facility_infrastructure(facility_id: str) -> dict[str, Any]:
+    """Load only private facility infrastructure data.
+
+    Returns sensitive infrastructure data: hostnames, paths, tools, OS versions.
+    This data is never stored in the graph or OCI artifacts.
 
     Args:
-        facility_id: Facility identifier
+        facility_id: Facility identifier (e.g., "epfl", "iter")
 
     Returns:
-        Dict with only private fields
+        Dict with only private fields (hostnames, paths, tools, etc.)
+
+    Examples:
+        >>> infra = get_facility_infrastructure('iter')
+        >>> print(infra['tools'])  # Tool versions
+        >>> print(infra['paths'])  # File system paths
     """
     facilities_dir = get_facilities_dir()
     private_path = facilities_dir / f"{facility_id}_private.yaml"
     return _load_yaml(private_path)
 
 
-def save_private(facility_id: str, data: dict[str, Any]) -> None:
-    """Save or merge private data for a facility.
+def update_infrastructure(facility_id: str, data: dict[str, Any]) -> None:
+    """Update private facility infrastructure data.
 
     Deep-merges the provided data into the existing private file,
     preserving comments and key order using ruamel.yaml.
 
+    Use this for sensitive infrastructure data:
+    - Tool versions and availability
+    - File system paths
+    - Hostnames and network info
+    - OS and environment details
+    - Exploration notes
+
     Args:
-        facility_id: Facility identifier
+        facility_id: Facility identifier (e.g., "epfl", "iter")
         data: Data to merge into private file
+
+    Examples:
+        >>> # Update tool availability
+        >>> update_infrastructure('iter', {
+        ...     'tools': {'rg': '14.1.1', 'fd': '10.2.0'}
+        ... })
+
+        >>> # Add exploration notes
+        >>> update_infrastructure('iter', {
+        ...     'exploration_notes': ['Found IMAS modules at /work/imas']
+        ... })
     """
     facilities_dir = get_facilities_dir()
     private_path = facilities_dir / f"{facility_id}_private.yaml"
@@ -196,7 +236,55 @@ def save_private(facility_id: str, data: dict[str, Any]) -> None:
     # Clear cache since data changed
     get_facility.cache_clear()
 
-    logger.info(f"Updated private data for {facility_id}")
+    logger.info(f"Updated infrastructure data for {facility_id}")
+
+
+def update_metadata(facility_id: str, data: dict[str, Any]) -> None:
+    """Update public facility metadata.
+
+    Updates the public facility YAML file with metadata that is safe
+    to store in the graph and version control.
+
+    Use this for public metadata:
+    - Facility name and description
+    - Machine name
+    - Data system types
+    - Wiki site URLs (if public)
+
+    Args:
+        facility_id: Facility identifier (e.g., "epfl", "iter")
+        data: Data to merge into public file
+
+    Examples:
+        >>> # Update facility description
+        >>> update_metadata('iter', {
+        ...     'description': 'ITER SDCC - Updated description'
+        ... })
+    """
+    facilities_dir = get_facilities_dir()
+    public_path = facilities_dir / f"{facility_id}.yaml"
+
+    if not public_path.exists():
+        msg = f"Public config not found: {public_path}"
+        raise ValueError(msg)
+
+    # Load existing with ruamel for comment preservation
+    with public_path.open() as f:
+        existing = _yaml.load(f)
+    if existing is None:
+        existing = CommentedMap()
+
+    # Deep merge preserving comments
+    _deep_merge_ruamel(existing, data)
+
+    # Write back with preserved formatting
+    with public_path.open("w") as f:
+        _yaml.dump(existing, f)
+
+    # Clear cache since data changed
+    get_facility.cache_clear()
+
+    logger.info(f"Updated metadata for {facility_id}")
 
 
 def validate_no_private_fields(

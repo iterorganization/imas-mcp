@@ -57,7 +57,7 @@ python("info = get_facility('facility_name'); print(f'Is local: {info.get(\"is_l
 1. **Single command on local facility?** → Use terminal directly
 2. **Single command on remote facility?** → Use `ssh facility "command"`
 3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
-4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
+4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `add_to_graph()`, etc.
 
 ### MCP `python()` for Chained Processing
 
@@ -132,7 +132,7 @@ for f in files[:10]:
 python("print(search_imas('electron temperature'))")
 
 # Persist discoveries
-python("ingest_nodes('SourceFile', [{'id': 'epfl:/path', 'path': '/path', ...}])")
+python("add_to_graph('SourceFile', [{'id': 'epfl:/path', 'path': '/path', ...}])")
 
 # Facility info and exploration targets
 python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
@@ -372,8 +372,8 @@ git checkout -- .  # Discard any remaining changes
 | Facility info | `python("print(get_facility('epfl'))")` |
 | Check tools | `python("print(check_tools('epfl'))")` |
 | Setup tools | `python("result = setup_tools('epfl'); print(result.summary)")` |
-| Ingest nodes | `python("ingest_nodes('SourceFile', [...])")` |
-| Private data | `python("print(private('epfl'))")` |
+| Add to graph | `python("add_to_graph('SourceFile', [...])")` |
+| Update infrastructure | `python("update_infrastructure('epfl', {...})")` |
 
 Never `RETURN n` - always project properties (`n.id, n.name`). Embeddings add ~2k tokens/node. See [agents/graph.md](agents/graph.md#token-cost-optimization).
 

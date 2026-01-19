@@ -2,8 +2,7 @@
 name: Graph
 description: Knowledge graph operations - Neo4j queries, schema evolution, releases
 tools:
-  - core
-  - codex/*
+  ['execute', 'read', 'agent', 'edit', 'search', 'web', 'codex/*', 'todo']
 ---
 
 # Graph Agent

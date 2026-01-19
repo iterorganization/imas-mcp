@@ -69,7 +69,7 @@ ssh epfl "dust -d 2 /home/codes"
 Use `python()` only when you need:
 - Multiple operations with intermediate processing
 - Graph queries and data manipulation
-- MCP functions (`ingest_nodes`, `private`, `get_facility`)
+- MCP functions (`add_to_graph`, `update_infrastructure`, `get_facility`)
 
 ```python
 # Chained processing (run() auto-detects local/remote)
@@ -87,7 +87,7 @@ python("print(search_code('equilibrium reconstruction'))")
 
 # Persist discoveries
 python("""
-ingest_nodes("FacilityPath", [
+add_to_graph("FacilityPath", [
     {"id": "epfl:/home/codes/liuqe", "path": "/home/codes/liuqe",
      "facility_id": "epfl", "path_type": "code_directory", "status": "discovered"}
 ])
@@ -159,18 +159,18 @@ After every exploration session, persist all discoveries:
 
 | Discovery Type | Tool |
 |----------------|------|
-| Analysis codes | `ingest_nodes("AnalysisCode", [...])` |
-| MDSplus trees | `ingest_nodes("MDSplusTree", [...])` |
-| Directory paths | `ingest_nodes("FacilityPath", [...])` |
-| Source files | `ingest_nodes("SourceFile", [...])` |
-| Sensitive data (OS, tools) | `private(facility, {...})` |
+| Analysis codes | `add_to_graph("AnalysisCode", [...])` |
+| MDSplus trees | `add_to_graph("MDSplusTree", [...])` |
+| Directory paths | `add_to_graph("FacilityPath", [...])` |
+| Source files | `add_to_graph("SourceFile", [...])` |
+| Infrastructure (OS, tools, paths) | `update_infrastructure(facility, {...})` |
 
 Example persistence:
 
 ```python
 python("""
 # Persist discovered source files
-ingest_nodes("SourceFile", [
+add_to_graph("SourceFile", [
     {"id": "epfl:/home/codes/liuqe/liuqe.py", 
      "path": "/home/codes/liuqe/liuqe.py",
      "facility_id": "epfl", "status": "discovered", 
@@ -180,7 +180,7 @@ ingest_nodes("SourceFile", [
 
 python("""
 # Update private infrastructure data
-private("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
+update_infrastructure("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 """)
 ```
 
@@ -207,6 +207,6 @@ python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facilit
 ## Handoff to Ingestion
 
 After discovering files, hand off to the `ingest` agent:
-1. Queue files: `ingest_nodes("SourceFile", [...])`
+1. Queue files: `add_to_graph("SourceFile", [...])`
 2. Use handoff button → "Queue for Ingestion"
 3. Ingest agent runs: `uv run imas-codex ingest run epfl`

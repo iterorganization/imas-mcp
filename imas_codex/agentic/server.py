@@ -4,13 +4,14 @@ Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 This server provides 4 core MCP tools:
 - python: Persistent Python REPL with rich pre-loaded utilities
 - get_graph_schema: Schema introspection for query generation
-- ingest_nodes: Schema-validated node creation with privacy filtering
-- private: Read/update sensitive infrastructure files
+- add_to_graph: Schema-validated node creation with privacy filtering
+- update_facility_config: Read/update facility configuration (public or private)
 
 The python() REPL is the primary interface, providing:
-- Graph: query(), semantic_search(), embed()
+- Graph: query(), add_to_graph(), semantic_search(), embed()
 - Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
+- Config: update_infrastructure(), update_metadata()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
 - Code: search_code()
@@ -36,8 +37,9 @@ from imas_codex.agentic.prompt_loader import (
 )
 from imas_codex.discovery import (
     get_facility as _get_facility_config,
-    get_facility_private,
-    save_private,
+    get_facility_infrastructure,
+    update_infrastructure,
+    update_metadata,
 )
 from imas_codex.graph import GraphClient, get_schema
 from imas_codex.graph.schema import to_cypher_props
@@ -764,8 +766,12 @@ def _init_repl() -> dict[str, Any]:
         "semantic_search": semantic_search,
         # Facility utilities
         "get_facility": get_facility,
+        "get_facility_infrastructure": get_facility_infrastructure,
         "get_exploration_targets": get_exploration_targets,
         "get_tree_structure": get_tree_structure,
+        # Facility configuration
+        "update_infrastructure": update_infrastructure,
+        "update_metadata": update_metadata,
         # Tool management (unified local/remote)
         "run": run,
         "check_tools": check_tools,
@@ -785,6 +791,8 @@ def _init_repl() -> dict[str, Any]:
         "determine_cocos": determine_cocos,
         "cocos_sign_flip_paths": cocos_sign_flip_paths,
         "cocos_info": cocos_info,
+        # Schema utilities
+        "get_schema": get_schema,
         # REPL management
         "reload": _reload_repl,
         # Standard library
@@ -897,31 +905,43 @@ class AgentsServer:
             The REPL maintains state between calls - variables persist across invocations.
             All utilities are loaded at server startup for instant response.
 
-            Pre-loaded utilities:
+            === DISCOVERY ===
+            List all functions: dir()
+            Get help: help(function_name)
+            Get signature: import inspect; inspect.signature(function_name)
 
-            GRAPH:
-            - query(cypher, **params): Execute Cypher, return list of dicts
-            - semantic_search(text, index, k): Vector similarity search
-            - embed(text): Get 384-dim embedding vector
+            === GRAPH OPERATIONS ===
+            query(cypher, **params) - Execute Cypher query, return list of dicts
+            semantic_search(text, index, k) - Vector similarity search
+            embed(text) - Get 384-dim embedding vector
 
-            REMOTE:
-            - run(cmd, facility, timeout): Execute locally or via SSH (auto-detects)
-            - check_tools(facility): Check tool availability and versions
+            === FACILITY CONFIGURATION ===
+            get_facility(facility) - Load complete config (public + private merged)
+            get_facility_infrastructure(facility) - Load private infrastructure only
+            update_infrastructure(facility, data) - Update private config (tools, paths, notes)
+            update_metadata(facility, data) - Update public config (name, description)
+            get_exploration_targets(facility, limit) - Prioritized work items
+            get_tree_structure(tree, prefix, limit) - TreeNode hierarchy
 
-            FACILITY:
-            - get_facility(facility): Comprehensive facility info + graph state
-            - get_exploration_targets(facility, limit): Prioritized work items
-            - get_tree_structure(tree, prefix, limit): TreeNode hierarchy
+            === REMOTE EXECUTION ===
+            run(cmd, facility, timeout) - Execute command (auto-detects local/SSH)
+            check_tools(facility) - Check tool availability and versions
 
-            CODE SEARCH:
-            - search_code(query, top_k, facility, min_score): Semantic code search
+            === CODE SEARCH ===
+            search_code(query, top_k, facility, min_score) - Semantic code search
 
-            IMAS DATA DICTIONARY:
-            - search_imas(query, ids_filter, max_results): Semantic DD search
-            - fetch_imas(paths): Full documentation for paths
-            - list_imas(paths, leaf_only, max_paths): List IDS structure
-            - check_imas(paths): Validate path existence
-            - get_imas_overview(query): High-level DD summary
+            === IMAS DATA DICTIONARY ===
+            search_imas(query, ids_filter, max_results) - Semantic DD search
+            fetch_imas(paths) - Full documentation for paths
+            list_imas(paths, leaf_only, max_paths) - List IDS structure
+            check_imas(paths) - Validate path existence
+            get_imas_overview(query) - High-level DD summary
+
+            === COCOS ===
+            validate_cocos(cocos) - Validate COCOS value
+            determine_cocos(psi_axis, psi_edge, ip, b0) - Infer COCOS from data
+            cocos_sign_flip_paths(ids_name) - Get sign-flip paths for DD3/DD4
+            cocos_info(cocos_value) - Get COCOS parameters
 
             Vector indexes for semantic_search:
             - imas_path_embedding: IMAS Data Dictionary paths (61k)
@@ -936,20 +956,20 @@ class AgentsServer:
                 stdout output, or repr of last expression if no print
 
             Examples:
+                # Discover what's available
+                python("print([f for f in dir() if not f.startswith('_')])")
+
+                # Check locality
+                python("import socket; print(socket.gethostname())")
+
                 # Graph query
                 python("paths = query('MATCH (t:TreeNode) RETURN t.path LIMIT 5')")
 
-                # Semantic search
-                python("hits = semantic_search('plasma current', 'code_chunk_embedding', 3)")
-
-                # Run command (auto-detects local vs SSH)
-                python("print(run('ls /home/codes | head -5', facility='epfl'))")
-
-                # IMAS search
-                python("print(search_imas('electron temperature profile'))")
+                # Update infrastructure (private)
+                python("update_infrastructure('iter', {'tools': {'rg': '14.1.1'}})")
 
                 # Facility info
-                python("info = get_facility('epfl'); print(info['graph_summary'])")
+                python("info = get_facility('iter'); print(info['paths'])")
 
                 # Variables persist
                 python("x = 42")
@@ -1016,26 +1036,27 @@ class AgentsServer:
                 "relationship_types": schema.relationship_types,
                 "notes": {
                     "private_fields": "Fields with is_private:true are never stored in graph",
-                    "mutations": "Use ingest_nodes() tool for writes, or query() for reads in python REPL",
+                    "mutations": "Use add_to_graph() tool for writes, or query() for reads in python REPL",
                 },
             }
 
         # =====================================================================
-        # Tool 3: ingest_nodes - Schema-validated writes
+        # Tool 3: add_to_graph - Schema-validated writes
         # =====================================================================
 
         @self.mcp.tool()
-        def ingest_nodes(
+        def add_to_graph(
             node_type: str,
             data: dict[str, Any] | list[dict[str, Any]],
             create_facility_relationship: bool = True,
             batch_size: int = 50,
         ) -> dict[str, Any]:
             """
-            Ingest nodes with schema validation and privacy filtering.
+            Create nodes in the knowledge graph with schema validation.
 
             Validates data against Pydantic models, filters out private fields,
-            then writes to the graph. Use this instead of raw Cypher mutations.
+            then writes to the graph. Use this for semantic data (files, codes, nodes).
+            For infrastructure data (paths, tools, OS), use update_infrastructure() instead.
 
             Special handling:
             - SourceFile: Auto-deduplicates already discovered/ingested files
@@ -1052,17 +1073,17 @@ class AgentsServer:
                 Dict with counts: {"processed": N, "skipped": K, "errors": [...]}
 
             Examples:
-                # Add FacilityPaths
-                ingest_nodes("FacilityPath", [
+                # Queue source files for ingestion
+                add_to_graph("SourceFile", [
+                    {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
+                     "facility_id": "epfl", "status": "discovered"}
+                ])
+
+                # Track discovered directories
+                add_to_graph("FacilityPath", [
                     {"id": "epfl:/home/codes", "path": "/home/codes",
                      "facility_id": "epfl", "path_type": "code_directory",
                      "status": "discovered", "interest_score": 0.8}
-                ])
-
-                # Queue source files
-                ingest_nodes("SourceFile", [
-                    {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-                     "facility_id": "epfl", "status": "discovered"}
                 ])
             """
             schema = get_schema()
@@ -1173,46 +1194,74 @@ class AgentsServer:
                 ) from e
 
         # =====================================================================
-        # Tool 4: private - Sensitive infrastructure files
+        # Tool 4: update_facility_config - Facility configuration management
         # =====================================================================
 
         @self.mcp.tool()
-        def private(
+        def update_facility_config(
             facility: str,
             data: dict[str, Any] | None = None,
+            private: bool = True,
         ) -> dict[str, Any]:
             """
-            Read or update private facility data (sensitive infrastructure info).
+            Read or update facility configuration (public or private).
 
-            Private files contain data marked is_private in the schema:
-            OS versions, paths, tool availability, etc.
-            This data is NEVER stored in the graph or OCI artifacts.
+            Use this for infrastructure data (tools, paths, OS) that should NOT
+            go in the graph. For semantic data (files, codes), use add_to_graph().
+
+            Private data (private=True):
+            - Tool versions and availability
+            - File system paths
+            - Hostnames and network info
+            - OS and environment details
+            - Exploration notes
+
+            Public data (private=False):
+            - Facility name and description
+            - Machine name
+            - Data system types
 
             Args:
-                facility: Facility identifier (e.g., "epfl")
-                data: If provided, deep-merge into private file and return result.
-                      If None, just read and return current data.
+                facility: Facility identifier (e.g., "epfl", "iter")
+                data: If provided, update config. If None, just read.
+                private: If True, update private config. If False, update public.
 
             Returns:
-                Current private data dict (after merge if data provided)
+                Current config data (after update if data provided)
 
             Examples:
-                # Read private data
-                private("epfl")
+                # Read private infrastructure
+                update_facility_config("iter")
 
-                # Update tool availability
-                private("epfl", {"tools": {"rg": "14.1.1"}})
+                # Update tool availability (private)
+                update_facility_config("iter", {"tools": {"rg": "14.1.1"}})
 
-                # Add exploration notes
-                private("epfl", {"exploration_notes": ["Found new tree"]})
+                # Add exploration notes (private)
+                update_facility_config("iter", {
+                    "exploration_notes": ["Found IMAS modules"]
+                })
+
+                # Update public metadata
+                update_facility_config("iter", {
+                    "description": "ITER SDCC - Updated"
+                }, private=False)
             """
             try:
                 if data is not None:
-                    save_private(facility, data)
-                return get_facility_private(facility) or {}
+                    if private:
+                        update_infrastructure(facility, data)
+                    else:
+                        update_metadata(facility, data)
+
+                if private:
+                    return get_facility_infrastructure(facility) or {}
+                else:
+                    from imas_codex.discovery import get_facility_metadata
+
+                    return get_facility_metadata(facility) or {}
             except Exception as e:
-                logger.exception(f"Failed to access private data for {facility}")
-                raise RuntimeError(f"Failed to access private data: {e}") from e
+                logger.exception(f"Failed to access config for {facility}")
+                raise RuntimeError(f"Failed to access config: {e}") from e
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files."""
