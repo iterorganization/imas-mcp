@@ -71,8 +71,12 @@ class DiscoveryStats:
     # Phase 2: Score
     pages_scored: int = 0
     artifacts_scored: int = 0
-    high_score_count: int = 0  # interest_score >= 0.7
-    low_score_count: int = 0  # interest_score < 0.3
+    high_score_count: int = 0  # interest_score >= 0.7 (pages + artifacts)
+    low_score_count: int = 0  # interest_score < 0.3 (pages + artifacts)
+    page_high_score_count: int = 0  # Pages only
+    page_low_score_count: int = 0  # Pages only
+    artifact_high_score_count: int = 0  # Artifacts only
+    artifact_low_score_count: int = 0  # Artifacts only
 
     # Phase 3: Ingest
     pages_ingested: int = 0
@@ -1072,8 +1076,10 @@ class WikiDiscovery:
                 # Track stats
                 if score >= 0.7:
                     self.stats.high_score_count += 1
+                    self.stats.page_high_score_count += 1
                 elif score < 0.3:
                     self.stats.low_score_count += 1
+                    self.stats.page_low_score_count += 1
 
             self.stats.pages_scored += updated
             return json.dumps({"updated": updated})
@@ -1191,8 +1197,10 @@ class WikiDiscovery:
                 # Track stats
                 if score >= 0.7:
                     self.stats.high_score_count += 1
+                    self.stats.artifact_high_score_count += 1
                 elif score < 0.3:
                     self.stats.low_score_count += 1
+                    self.stats.artifact_low_score_count += 1
 
             self.stats.artifacts_scored += updated
             return json.dumps({"updated": updated})
@@ -1292,13 +1300,29 @@ class WikiDiscovery:
             self.stats.pages_scored = already_scored
             self.stats.high_score_count = state["high_score"]
             self.stats.low_score_count = state["low_score"]
+            self.stats.page_high_score_count = state["high_score"]
+            self.stats.page_low_score_count = state["low_score"]
         else:
             total_pages = 0
             already_scored = 0
             remaining = 0
 
+        # Get total artifacts to include in progress calculation
+        artifact_count_result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility_id})
+            WHERE wa.interest_score IS NULL OR wa.status IN ['scored', 'skipped']
+            RETURN count(*) AS total_artifacts
+            """,
+            facility_id=self.config.facility_id,
+        )
+        total_artifacts = (
+            artifact_count_result[0]["total_artifacts"] if artifact_count_result else 0
+        )
+
         if monitor:
-            monitor.stats.total_pages = total_pages
+            # Set total to include both pages and artifacts from the start
+            monitor.stats.total_pages = total_pages + total_artifacts
             monitor.stats.pages_scored = already_scored
             monitor.stats.high_score_count = self.stats.high_score_count
             monitor.stats.low_score_count = self.stats.low_score_count
@@ -1447,9 +1471,6 @@ Provide reasoning for each score."""
         if total_unscored == 0:
             logger.info("No artifacts to score")
             return 0
-
-        if monitor:
-            monitor.stats.total_pages += total_unscored
 
         while True:
             # Check cost limit
@@ -1630,9 +1651,10 @@ LOW SCORE (0.0-0.4):
             cost_limit=self.stats.cost_limit_usd,
             facility=self.config.facility_id,
         ) as monitor:
-            scored = await self.phase2_score(monitor)
+            await self.phase2_score(monitor)
         console.print(
-            f"  Scored {scored} pages: {self.stats.high_score_count} high, {self.stats.low_score_count} low"
+            f"  Scored {self.stats.pages_scored} pages ({self.stats.page_high_score_count} high, {self.stats.page_low_score_count} low) + "
+            f"{self.stats.artifacts_scored} artifacts ({self.stats.artifact_high_score_count} high, {self.stats.artifact_low_score_count} low)"
         )
 
         # Phase 3: Ingest (placeholder)
@@ -1644,7 +1666,8 @@ LOW SCORE (0.0-0.4):
             f"\n[green]Discovery complete in {self.stats.elapsed_formatted()}[/green]"
         )
         console.print(
-            f"Pages: {self.stats.pages_crawled}, Artifacts: {self.stats.artifacts_found}"
+            f"Crawled: {self.stats.pages_crawled} pages, {self.stats.artifacts_found} artifacts | "
+            f"Scored: {self.stats.pages_scored + self.stats.artifacts_scored} total ({self.stats.high_score_count} high, {self.stats.low_score_count} low)"
         )
         console.print(f"Cost: ${self.stats.cost_spent_usd:.4f}")
 
