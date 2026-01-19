@@ -1,6 +1,23 @@
 # Exploration Workflows
 
-Remote facility exploration for discovering source files, MDSplus trees, and analysis codes.
+Facility exploration for discovering source files, MDSplus trees, and analysis codes.
+
+## Critical: Check Locality First
+
+**Always determine if you're on the target facility before choosing execution method:**
+
+```bash
+# Quick check
+hostname
+pwd
+```
+
+**Command Execution Decision Tree:**
+
+1. **Single command on local facility?** → Use terminal directly (`rg`, `fd`, `dust`)
+2. **Single command on remote facility?** → Use direct SSH (`ssh facility "command"`)
+3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
+4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `ingest_nodes()`, etc.
 
 ## Setup: Ensure Fast Tools Are Available
 
@@ -19,18 +36,53 @@ python("print(quick_setup('epfl', required_only=True))")
 
 Tool definitions are in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
 
-## MCP Tools (Primary Interface)
+## Execution Patterns
 
-When the Codex MCP server is running, use `python()` REPL:
+### Local Facility (You're On The Target System)
+
+Use **terminal directly** for single commands:
+
+```bash
+# Check you're local
+hostname  # e.g., 98dci4-srv-1003.iter.org
+
+# Direct terminal commands
+rg -l "IMAS" /work/imas
+fd -e py /home/codes
+dust -d 2 /work
+tokei /home/codes/liuqe
+```
+
+### Remote Facility (Accessing Different System)
+
+Use **direct SSH** for single commands:
+
+```bash
+# Direct SSH
+ssh epfl "rg -l 'IMAS' /home/codes"
+ssh epfl "fd -e py /home/codes | head -20"
+ssh epfl "dust -d 2 /home/codes"
+```
+
+### Chained Processing & Graph Operations
+
+Use `python()` only when you need:
+- Multiple operations with intermediate processing
+- Graph queries and data manipulation
+- MCP functions (`ingest_nodes`, `private`, `get_facility`)
 
 ```python
-# Run command on facility (auto-detects local vs SSH)
-python("print(run('ls /home/codes', facility='epfl'))")
+# Chained processing (run() auto-detects local/remote)
+python("""
+files = run('fd -e py /home/codes', facility='epfl').strip().split('\\n')
+for f in files[:10]:
+    content = run(f'head -20 {f}', facility='epfl')
+    if 'write_ids' in content:
+        print(f'IDS writer: {f}')
+""")
 
-# Get facility info and actionable paths
+# Graph operations
 python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
-
-# Search code examples
 python("print(search_code('equilibrium reconstruction'))")
 
 # Persist discoveries
@@ -54,20 +106,26 @@ Tools are defined in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/
 | `scc` | Code complexity | - |
 | `dust` | Disk usage | `du -h` |
 
-Use `run()` for unified local/remote execution:
+**Examples:**
 
-```python
-# Count Python files
-python("print(run('fd -e py /home/codes | wc -l', facility='epfl'))")
+```bash
+# Local facility - direct terminal
+rg -l "write_ids|read_ids" /home/codes -g "*.py" | head -20
+fd -e py /home/codes | wc -l
+scc /home/codes/liuqe --format json
 
-# Find IMAS-related files
-python("print(run('rg -l \"write_ids|read_ids\" /home/codes -g \"*.py\" | head -20', facility='epfl'))")
+# Remote facility - direct SSH
+ssh epfl "rg -l 'write_ids|read_ids' /home/codes -g '*.py' | head -20"
+ssh epfl "fd -e py /home/codes | wc -l"
 
-# Get complexity metrics
-python("print(run('scc /home/codes/liuqe --format json', facility='epfl'))")
-
-# Local facility (ITER) - no SSH needed
-python("print(run('rg pattern /work/imas', facility='iter'))")
+# Chained processing - use python() with run()
+python("""
+files = run('fd -e py /home/codes', facility='epfl').strip().split('\\n')
+for f in files[:10]:
+    content = run(f'head -20 {f}', facility='epfl')
+    if 'write_ids' in content:
+        print(f'IDS writer: {f}')
+""")
 ```
 
 ## FacilityPath Workflow

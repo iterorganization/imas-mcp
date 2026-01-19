@@ -14,11 +14,11 @@ tools:
   - codex/*
 handoffs:
   - label: Queue for Ingestion
-    agent: ingest
+    agent: Ingest
     prompt: Queue the discovered source files for code ingestion.
     send: false
   - label: Persist to Graph
-    agent: graph
+    agent: Graph
     prompt: Persist the exploration findings to the knowledge graph.
     send: false
 ---
@@ -29,9 +29,11 @@ You are a **read-only exploration agent** for remote fusion facility discovery. 
 
 ## Your Role
 
-- Explore remote facilities via SSH using `codex/python` with `ssh()` function
+- **Check locality first** (`hostname`) before choosing execution method
+- **Local facility**: Use terminal directly for single commands (`rg`, `fd`, `dust`)
+- **Remote facility**: Use direct SSH for single commands (`ssh facility "command"`)
+- Use `python()` only for chained processing and graph operations
 - Discover source files, MDSplus trees, analysis codes
-- Use fast CLI tools: `rg` (ripgrep), `fd`, `scc`, `tokei`, `dust`
 - Track exploration progress with `FacilityPath` nodes
 - Persist discoveries using `ingest_nodes()` and `private()`
 
