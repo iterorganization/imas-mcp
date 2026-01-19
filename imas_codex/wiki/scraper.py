@@ -236,31 +236,126 @@ def extract_conventions(text: str) -> list[dict[str, str]]:
 
 
 # =============================================================================
-# SSH-Based Wiki Fetching
+# Wiki Fetching
 # =============================================================================
+
+
+def _fetch_confluence_page(
+    page_id: str,
+    facility: str,
+    timeout: int = 30,
+) -> WikiPage | None:
+    """Fetch a Confluence page via REST API.
+
+    Args:
+        page_id: Confluence page ID
+        facility: Facility identifier
+        timeout: Request timeout
+
+    Returns:
+        WikiPage with content, or None if fetch failed
+    """
+    from imas_codex.discovery.facility import get_facility
+    from imas_codex.wiki.confluence import ConfluenceClient
+
+    config = get_facility(facility)
+    wiki_sites = config.get("wiki_sites", [])
+
+    if not wiki_sites:
+        logger.error("No wiki sites configured for facility: %s", facility)
+        return None
+
+    # Use first wiki site (typically the main one)
+    site = wiki_sites[0]
+    base_url = site["url"]
+    credential_service = site.get("credential_service", "confluence")
+
+    try:
+        client = ConfluenceClient(base_url, credential_service, timeout=timeout)
+
+        if not client.authenticate():
+            logger.error("Failed to authenticate with Confluence")
+            return None
+
+        page = client.get_page_content(page_id)
+        if not page:
+            logger.error("Failed to fetch page %s", page_id)
+            return None
+
+        # Extract entities from content
+        wiki_page = WikiPage(
+            url=page.url,
+            title=page.title,
+            content_html=page.content_html,
+            content_text=page.content_text,
+        )
+
+        # Extract entities
+        wiki_page.mdsplus_paths = list(
+            set(MDSPLUS_PATH_PATTERN.findall(page.content_text))
+        )
+        wiki_page.imas_paths = list(set(IMAS_PATH_PATTERN.findall(page.content_text)))
+        wiki_page.units = list(set(UNIT_PATTERN.findall(page.content_text)))
+
+        # Extract conventions
+        cocos_matches = COCOS_PATTERN.findall(page.content_text)
+        for match in cocos_matches:
+            cocos_num = next((m for m in match if m), None)
+            if cocos_num:
+                wiki_page.conventions.append(
+                    {
+                        "type": "cocos",
+                        "value": f"COCOS {cocos_num}",
+                    }
+                )
+
+        sign_matches = SIGN_CONVENTION_PATTERN.findall(page.content_text)
+        for match in sign_matches:
+            convention_text = next((m for m in match if m), None)
+            if convention_text:
+                wiki_page.conventions.append(
+                    {
+                        "type": "sign",
+                        "value": convention_text,
+                    }
+                )
+
+        client.close()
+        return wiki_page
+
+    except Exception as e:
+        logger.error("Error fetching Confluence page %s: %s", page_id, e)
+        return None
 
 
 def fetch_wiki_page(
     page_name: str,
     facility: str = "epfl",
     timeout: int = 60,
+    site_type: str = "mediawiki",
 ) -> WikiPage:
-    """Fetch a wiki page via SSH.
+    """Fetch a wiki page.
 
-    The EPFL wiki is accessible from EPFL hosts without authentication.
-    Uses Python's urllib on the remote host to fetch HTML content.
+    For MediaWiki: Fetches via SSH using urllib on remote host.
+    For Confluence: Fetches via REST API.
 
     Args:
-        page_name: Wiki page name (e.g., "Thomson", "Ion Temperature Nodes")
-        facility: SSH host alias (default: "epfl")
-        timeout: SSH command timeout in seconds
+        page_name: Wiki page name (MediaWiki) or page ID (Confluence)
+        facility: Facility identifier (e.g., "epfl", "iter")
+        timeout: Request timeout in seconds
+        site_type: Site type ("mediawiki" or "confluence")
 
     Returns:
         WikiPage with HTML content and extracted entities
 
     Raises:
-        RuntimeError: If SSH command fails or times out
+        RuntimeError: If fetch fails
     """
+    # Handle Confluence sites
+    if site_type == "confluence":
+        return _fetch_confluence_page(page_name, facility, timeout)
+
+    # Handle MediaWiki sites via SSH
     # URL-encode page name to handle spaces and special characters
     # Use safe="/" to preserve subpage slashes (e.g., Thomson/DDJ)
     import urllib.parse

@@ -474,7 +474,7 @@ class CrawlProgressMonitor:
         # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
-            TextColumn(f"[bold cyan]Crawling {self.facility} wiki"),
+            TextColumn(f"[bold cyan]Crawling {self.facility}"),
             BarColumn(bar_width=40),
             TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,
@@ -708,7 +708,7 @@ class ScoreProgressMonitor:
         # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
-            TextColumn(f"[bold cyan]Scoring {self.facility} wiki"),
+            TextColumn(f"[bold cyan]Scoring {self.facility}"),
             BarColumn(bar_width=40),
             TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,

@@ -336,6 +336,98 @@ class ConfluenceClient:
 
         return pages
 
+    def get_page_basic_info(
+        self,
+        page_id: str,
+    ) -> tuple[str, str] | None:
+        """Get basic page info (title and space key) without fetching content.
+
+        This is much faster than get_page_content for just getting titles.
+
+        Args:
+            page_id: Page ID
+
+        Returns:
+            (title, space_key) tuple or None if not found
+        """
+        if not self.authenticate():
+            return None
+
+        try:
+            response = self._request(
+                "GET",
+                f"content/{page_id}",
+                params={"expand": "space"},
+            )
+            data = response.json()
+
+            title = data.get("title", "")
+            space_key = data.get("space", {}).get("key", "")
+
+            return (title, space_key)
+
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                logger.warning("Page not found: %s", page_id)
+            else:
+                logger.error("Failed to get page info: %s", e)
+            return None
+
+    def get_page_children(
+        self,
+        page_id: str,
+        limit: int = 100,
+    ) -> list[str]:
+        """Get ALL child page IDs with pagination.
+
+        The children.page expansion in get_page_content only returns
+        the first page of results (default 25). This method paginates
+        through all children.
+
+        Args:
+            page_id: Parent page ID
+            limit: Results per page (max 100)
+
+        Returns:
+            List of all child page IDs
+        """
+        if not self.authenticate():
+            return []
+
+        all_children = []
+        start = 0
+
+        while True:
+            try:
+                response = self._request(
+                    "GET",
+                    f"content/{page_id}/child/page",
+                    params={
+                        "limit": min(limit, 100),
+                        "start": start,
+                    },
+                )
+                data = response.json()
+
+                results = data.get("results", [])
+                if not results:
+                    break
+
+                for child in results:
+                    all_children.append(child["id"])
+
+                # Check if there are more results
+                if len(results) < limit or data.get("size", 0) < limit:
+                    break
+
+                start += limit
+
+            except requests.HTTPError as e:
+                logger.error("Failed to get children for page %s: %s", page_id, e)
+                break
+
+        return all_children
+
     def get_page_content(
         self,
         page_id: str,

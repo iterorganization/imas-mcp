@@ -25,3 +25,4 @@ wiki_sites:
     site_type: confluence
     auth_type: session
     credential_service: iter-confluence
+    requires_ssh: false  # Confluence uses REST API directly

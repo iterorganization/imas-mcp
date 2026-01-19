@@ -8,7 +8,7 @@ Code ingestion pipeline for processing discovered source files into the knowledg
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  SCOUT (LLM)    │     │   GRAPH (Neo4j) │     │    CLI (User)   │
 │                 │     │                 │     │                 │
-│  run() + rg/fd  │────▶│  SourceFile     │────▶│  imas-codex     │
+│  run() + rg/fd  │── ─▶│  SourceFile     │────▶│  imas-codex     │
 │  ingest_nodes() │     │  status=        │     │  ingest run     │
 │                 │     │  discovered     │     │                 │
 └─────────────────┘     └─────────────────┘     └─────────────────┘

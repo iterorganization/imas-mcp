@@ -23,6 +23,20 @@ from dataclasses import dataclass, field
 
 # Suppress pydantic deprecation warnings from llama-index internals
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+warnings.filterwarnings(
+    "ignore", message=".*model_fields.*", category=DeprecationWarning
+)
+warnings.filterwarnings(
+    "ignore", message=".*model_computed_fields.*", category=DeprecationWarning
+)
+warnings.filterwarnings("ignore", message=".*__fields__.*", category=DeprecationWarning)
+warnings.filterwarnings(
+    "ignore", message=".*__fields_set__.*", category=DeprecationWarning
+)
+warnings.filterwarnings("ignore", message=".*__fields__.*", category=DeprecationWarning)
+warnings.filterwarnings(
+    "ignore", message=".*__fields_set__.*", category=DeprecationWarning
+)
 
 from llama_index.core.agent import ReActAgent  # noqa: E402
 from llama_index.core.tools import FunctionTool  # noqa: E402
@@ -220,7 +234,11 @@ class WikiConfig:
 
     @property
     def requires_ssh(self) -> bool:
-        """Check if this site requires SSH proxy."""
+        """Check if this site requires SSH proxy to access.
+
+        Confluence sites use REST API directly (no SSH needed).
+        MediaWiki sites may require SSH proxy if behind firewall.
+        """
         return self.auth_type == "ssh_proxy" and self.ssh_host is not None
 
 
@@ -273,7 +291,7 @@ class WikiDiscovery:
         facility: str,
         cost_limit_usd: float = 10.0,
         max_pages: int | None = None,
-        max_depth: int = 10,
+        max_depth: int | None = None,
         verbose: bool = False,
     ):
         self.config = WikiConfig.from_facility(facility)
@@ -285,10 +303,88 @@ class WikiDiscovery:
         # Graph client for persistence
         self._gc: GraphClient | None = None
 
+        # Cache for Confluence portal page ID resolution
+        self._portal_page_id: str | None = None
+
+        # Cache for Confluence page titles (page_id -> title)
+        self._confluence_page_titles: dict[str, str] = {}
+
     def _get_gc(self) -> GraphClient:
         if self._gc is None:
             self._gc = GraphClient()
         return self._gc
+
+    def _resolve_confluence_portal_page(self) -> str:
+        """Resolve Confluence portal page name to page ID.
+
+        For Confluence sites, the portal_page is typically a space key (e.g., 'IMP').
+        We need to get the space homepage ID.
+
+        Returns:
+            Page ID of the portal/homepage
+        """
+        if self._portal_page_id is not None:
+            return self._portal_page_id
+
+        from imas_codex.wiki.confluence import ConfluenceClient
+
+        try:
+            client = ConfluenceClient(
+                self.config.base_url,
+                self.config.credential_service or "confluence",
+            )
+
+            if not client.authenticate():
+                logger.error("Failed to authenticate with Confluence")
+                # Fallback to using portal_page as-is
+                self._portal_page_id = self.config.portal_page
+                return self._portal_page_id
+
+            # Get space homepage
+            homepage = client.get_space_homepage(self.config.portal_page)
+            if homepage:
+                self._portal_page_id = homepage.id
+                # Cache the title immediately
+                self._confluence_page_titles[homepage.id] = homepage.title
+                logger.info(
+                    "Resolved portal page '%s' to ID: %s (%s)",
+                    self.config.portal_page,
+                    homepage.id,
+                    homepage.title,
+                )
+            else:
+                logger.warning(
+                    "Could not resolve portal page '%s', using as-is",
+                    self.config.portal_page,
+                )
+                self._portal_page_id = self.config.portal_page
+
+            client.close()
+
+        except Exception as e:
+            logger.error("Error resolving portal page: %s", e)
+            self._portal_page_id = self.config.portal_page
+
+        return self._portal_page_id
+
+    def _get_confluence_page_title(self, page_id: str) -> str:
+        """Get the title for a Confluence page ID.
+
+        Uses cached titles from previous API calls to avoid extra requests.
+        Falls back to page ID if title not available.
+
+        Args:
+            page_id: Confluence page ID
+
+        Returns:
+            Page title or page ID if not found
+        """
+        if page_id in self._confluence_page_titles:
+            return self._confluence_page_titles[page_id]
+
+        # Title not in cache, return page ID as fallback
+        # The title will be populated when the page is crawled
+        return page_id
 
     def _classify_link(self, link: str) -> tuple[str, str | None]:
         """Classify a link as 'page' or 'artifact'.
@@ -340,7 +436,10 @@ class WikiDiscovery:
             page_id: Confluence page ID (not title)
 
         Returns:
-            (page_links, artifact_links)
+            (pCache the page title for later use
+            self._confluence_page_titles[page_id] = page.title
+
+            # age_links, artifact_links)
         """
         from imas_codex.wiki.confluence import ConfluenceClient
 
@@ -353,34 +452,79 @@ class WikiDiscovery:
                 self.config.credential_service or "confluence",
             )
 
-            # Get page content
+            # Get page content with children and attachments expanded
             page = client.get_page_content(page_id)
             if not page:
+                client.close()
                 return [], []
 
-            # Extract child pages
-            for child_id in page.children:
+            # Cache the page title for later use
+            self._confluence_page_titles[page_id] = page.title
+
+            # Extract child pages - use dedicated API to get ALL children (paginated)
+            # The children.page expansion only returns first page of results (default 25)
+            all_children = client.get_page_children(page_id)
+            for child_id in all_children:
                 page_links.append(child_id)
+                # Fetch child title if not already cached (use lightweight API call)
+                if child_id not in self._confluence_page_titles:
+                    try:
+                        basic_info = client.get_page_basic_info(child_id)
+                        if basic_info:
+                            self._confluence_page_titles[child_id] = basic_info[
+                                0
+                            ]  # title
+                    except Exception as e:
+                        logger.debug(
+                            "Could not fetch title for child %s: %s", child_id, e
+                        )
 
-            # Extract attachments
+            # Extract attachments and classify by media type
             for att in page.attachments:
-                artifact_links.append((att["downloadUrl"], att["mediaType"]))
+                media_type = att.get("mediaType", "")
+                # Map media type to artifact type
+                if "pdf" in media_type:
+                    artifact_type = "pdf"
+                elif "image" in media_type:
+                    artifact_type = "image"
+                elif "presentation" in media_type or "powerpoint" in media_type:
+                    artifact_type = "presentation"
+                elif "spreadsheet" in media_type or "excel" in media_type:
+                    artifact_type = "spreadsheet"
+                elif "document" in media_type or "word" in media_type:
+                    artifact_type = "document"
+                else:
+                    # Fallback: use filename extension
+                    filename = att.get("title", "").lower()
+                    artifact_type = "document"  # default
+                    for ext, atype in self.ARTIFACT_EXTENSIONS.items():
+                        if filename.endswith(ext):
+                            artifact_type = atype
+                            break
 
-            # Extract links from HTML content
+                artifact_links.append((att["downloadUrl"], artifact_type))
+
+            # Extract links from HTML content to find cross-references
             import re
 
             for match in re.finditer(r'href="([^"]+)"', page.content_html):
                 url = match.group(1)
                 if "/pages/viewpage.action?pageId=" in url:
-                    # Extract page ID
+                    # Extract page ID from viewpage URL
                     page_id_match = re.search(r"pageId=(\d+)", url)
                     if page_id_match:
-                        page_links.append(page_id_match.group(1))
+                        linked_id = page_id_match.group(1)
+                        if linked_id not in page_links:
+                            page_links.append(linked_id)
+                elif "/display/" in url:
+                    # Extract page ID from display URL format: /display/SPACE/Page+Title
+                    # We'll need to resolve this later, skip for now
+                    pass
 
             client.close()
 
         except Exception as e:
-            logger.warning("Error extracting Confluence links: %s", e)
+            logger.warning("Error extracting Confluence links from %s: %s", page_id, e)
 
         return page_links, artifact_links
 
@@ -516,7 +660,11 @@ class WikiDiscovery:
 
         # If no frontier and no visited, start from portal
         if not frontier and not visited:
-            portal = self.config.portal_page
+            # For Confluence, resolve portal page name to ID
+            if self.config.site_type == "confluence":
+                portal = self._resolve_confluence_portal_page()
+            else:
+                portal = self.config.portal_page
             frontier = {portal}
             depth_map = {portal: 0}
 
@@ -562,6 +710,20 @@ class WikiDiscovery:
                 from imas_codex.wiki.scraper import canonical_page_id
 
                 page_id = canonical_page_id(page, self.config.facility_id)
+
+                # For Confluence, fetch the actual page title
+                # For MediaWiki, the page name is the title
+                if self.config.site_type == "confluence":
+                    page_title = self._get_confluence_page_title(page)
+                    page_url = (
+                        f"{self.config.base_url}/pages/viewpage.action?pageId={page}"
+                    )
+                else:
+                    page_title = page
+                    page_url = (
+                        f"{self.config.base_url}/{urllib.parse.quote(page, safe='/')}"
+                    )
+
                 gc.query(
                     """
                     MERGE (wp:WikiPage {id: $id})
@@ -577,8 +739,8 @@ class WikiDiscovery:
                     MERGE (wp)-[:FACILITY_ID]->(f)
                     """,
                     id=page_id,
-                    title=page,
-                    url=f"{self.config.base_url}/{urllib.parse.quote(page, safe='/')}",
+                    title=page_title,
+                    url=page_url,
                     facility_id=self.config.facility_id,
                     depth=current_depth,
                     out_degree=total_out_degree,
@@ -590,7 +752,11 @@ class WikiDiscovery:
                 # Add new page links to frontier
                 for link in page_links:
                     if link not in visited and link not in frontier:
-                        if current_depth + 1 <= self.max_depth:
+                        # Check max_depth only if it's set
+                        if (
+                            self.max_depth is None
+                            or current_depth + 1 <= self.max_depth
+                        ):
                             frontier.add(link)
                             depth_map[link] = current_depth + 1
                             self._persist_pending_page(gc, link, current_depth + 1)
@@ -613,7 +779,7 @@ class WikiDiscovery:
 
                 if monitor:
                     monitor.update(
-                        page=page,
+                        page=page_title,  # Use title instead of ID for display
                         links_found=len(page_links),
                         artifacts_found=len(artifact_links),
                         frontier_size=len(frontier),
@@ -678,7 +844,13 @@ class WikiDiscovery:
         """
         filename = self._extract_filename(artifact_path)
         artifact_id = f"{self.config.facility_id}:{filename}"
-        url = f"{self.config.base_url}/{urllib.parse.quote(artifact_path, safe='')}"
+
+        # For Confluence, artifact_path is already a full URL from the API
+        # For MediaWiki, it's a relative path that needs the base URL
+        if artifact_path.startswith("http"):
+            url = artifact_path  # Already a full URL
+        else:
+            url = f"{self.config.base_url}/{urllib.parse.quote(artifact_path, safe='')}"
 
         is_new = artifact_id not in known_artifacts
 
@@ -1489,7 +1661,7 @@ async def run_wiki_discovery(
     facility: str = "epfl",
     cost_limit_usd: float = 10.0,
     max_pages: int | None = None,
-    max_depth: int = 10,
+    max_depth: int | None = None,
     verbose: bool = False,
 ) -> dict:
     """Run wiki discovery and return stats as dict.

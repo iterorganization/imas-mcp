@@ -905,8 +905,16 @@ class WikiIngestionPipeline:
                 page_id = self._generate_page_id(page_name)
 
                 try:
+                    # Determine site type from facility config
+                    from imas_codex.wiki.discovery import WikiConfig
+
+                    wiki_config = WikiConfig.from_facility(self.facility_id)
+                    site_type = wiki_config.site_type
+
                     # Fetch the page
-                    page = fetch_wiki_page(page_name, facility=self.facility_id)
+                    page = fetch_wiki_page(
+                        page_name, facility=self.facility_id, site_type=site_type
+                    )
 
                     # Ingest it
                     page_stats = await self.ingest_page(page)
@@ -991,8 +999,21 @@ class WikiIngestionPipeline:
                 "units": 0,
             }
 
-        # Extract page names from the graph results
-        page_names = [p["title"] for p in pending]
+        # Extract page identifiers from the graph results
+        # For Confluence: use page ID (numeric)
+        # For MediaWiki: use page title
+        from imas_codex.wiki.discovery import WikiConfig
+
+        wiki_config = WikiConfig.from_facility(self.facility_id)
+
+        if wiki_config.site_type == "confluence":
+            # Extract page ID from the full ID (format: "facility:page_id")
+            page_names = [
+                p["id"].split(":", 1)[1] if ":" in p["id"] else p["id"] for p in pending
+            ]
+        else:
+            # Use title for MediaWiki
+            page_names = [p["title"] for p in pending]
 
         logger.info(
             "Processing %d wiki pages from graph queue for %s",

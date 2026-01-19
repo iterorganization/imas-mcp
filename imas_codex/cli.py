@@ -2374,9 +2374,9 @@ def wiki_sites(facility: str) -> None:
 )
 @click.option(
     "--max-depth",
-    default=10,
+    default=None,
     type=int,
-    help="Maximum link depth from portal (default: 10)",
+    help="Maximum link depth from portal (default: unlimited)",
 )
 @click.option(
     "--verbose",
@@ -2389,7 +2389,7 @@ def wiki_discover(
     start_page: str,
     cost_limit: float,
     max_pages: int | None,
-    max_depth: int,
+    max_depth: int | None,
     verbose: bool,
 ) -> None:
     """Discover wiki pages using three-phase pipeline.

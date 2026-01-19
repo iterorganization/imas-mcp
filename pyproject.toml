@@ -87,6 +87,8 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "html2text>=2024.2.26",
     "llama-index-readers-file>=0.5.6",
+    "keyring>=25.7.0",
+    "secretstorage>=3.5.0",
 ]
 
 [project.optional-dependencies]
