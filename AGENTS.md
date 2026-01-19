@@ -130,16 +130,17 @@ uv run imas-codex tools list               # List all tools
 **Python API** (for Python code and chained processing):
 
 ```python
-# Python code execution
-python("import json; data = {'key': 'value'}; print(json.dumps(data))")
+# Python code that requires execution
+python("from pathlib import Path; print([p.stem for p in Path('/path').glob('*.py')])")
 
 # Chained processing - search, filter, analyze
 python("""
 result = run('rg -l "IMAS" /home/codes', facility='epfl')
-files = result.strip().split('\n')
+files = result.strip().split('\\n')
 for f in files[:5]:
-    print(f'Analyzing: {f}')
-    # Further processing...
+    content = run(f'cat {f}', facility='epfl')
+    if 'write_ids' in content:
+        print(f'Found IDS writer: {f}')
 """)
 
 # Tool setup with result processing
