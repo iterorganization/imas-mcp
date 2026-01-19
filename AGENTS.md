@@ -127,9 +127,12 @@ uv run imas-codex tools install epfl       # Install on EPFL
 uv run imas-codex tools list               # List all tools
 ```
 
-**Python API** (only for chained processing with intermediate steps):
+**Python API** (for Python code and chained processing):
 
 ```python
+# Python code execution
+python("import json; data = {'key': 'value'}; print(json.dumps(data))")
+
 # Chained processing - search, filter, analyze
 python("""
 result = run('rg -l "IMAS" /home/codes', facility='epfl')
