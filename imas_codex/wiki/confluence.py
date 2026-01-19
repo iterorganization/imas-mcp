@@ -132,6 +132,8 @@ class ConfluenceClient:
             # Try to restore session cookies from keyring
             cookies = self._creds.get_session(self.credential_service)
             if cookies:
+                # Clear existing cookies to avoid duplicates
+                self._session.cookies.clear()
                 self._session.cookies.update(cookies)
                 logger.debug("Restored session cookies from keyring")
 
@@ -235,10 +237,15 @@ class ConfluenceClient:
                     user.get("displayName", user.get("username")),
                 )
 
-                # Save session cookies
+                # Save session cookies (clear duplicates first)
+                # Convert to dict to deduplicate cookies by name
+                cookie_dict = {}
+                for cookie in session.cookies:
+                    cookie_dict[cookie.name] = cookie.value
+
                 self._creds.set_session(
                     self.credential_service,
-                    dict(session.cookies),
+                    cookie_dict,
                 )
                 self._authenticated = True
                 return True

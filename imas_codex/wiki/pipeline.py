@@ -916,6 +916,10 @@ class WikiIngestionPipeline:
                         page_name, facility=self.facility_id, site_type=site_type
                     )
 
+                    # Check if fetch succeeded
+                    if page is None:
+                        raise ValueError(f"Failed to fetch page {page_name}")
+
                     # Ingest it
                     page_stats = await self.ingest_page(page)
 
