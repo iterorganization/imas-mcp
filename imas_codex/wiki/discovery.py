@@ -650,8 +650,8 @@ class WikiDiscovery:
 
         return results
 
-    def phase1_crawl(self, monitor: CrawlProgressMonitor | None = None) -> int:
-        """Phase 1: Crawl wiki and build link structure.
+    def crawl(self, monitor: CrawlProgressMonitor | None = None) -> int:
+        """Crawl wiki and build link structure.
 
         Graph-driven: resumes from existing state. Already-crawled pages
         are loaded from the graph, and pending pages form the frontier.
@@ -1269,12 +1269,12 @@ class WikiDiscovery:
             ),
         ]
 
-    async def phase2_score(
+    async def score(
         self,
         monitor: ScoreProgressMonitor | None = None,
         batch_size: int = 100,
     ) -> int:
-        """Phase 2: Score pages using agent with graph metrics.
+        """Score pages using agent with graph metrics.
 
         Uses CLI-orchestrated batching with fresh agents to avoid context
         overflow. Each agent processes one batch, then a new agent is spawned.
