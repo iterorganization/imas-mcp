@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-Use MCP `python()` for exploration/queries, `uv run` for git/tests/CLI. Conventional commits with single quotes. See [agents/](agents/) for domain-specific workflows.
+Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits with single quotes. See [agents/](agents/) for domain-specific workflows.
 
 ## Custom Agents
 
@@ -28,16 +28,22 @@ When the main VS Code agent receives requests matching these patterns, delegate 
 
 VS Code injects ~30k tokens of tool definitions per request. To reduce costs:
 
-1. **Use terminal for search** - `rg`, `fd`, `git` instead of VS Code search tools
-2. **Close unused editor tabs** - open files add to context
-3. **Use custom agents** - restricted toolsets = fewer tool definitions
-4. **Project properties in Cypher** - never `RETURN n`, always `RETURN n.id, n.name`
+1. **Use terminal for direct operations** - `rg`, `fd`, `git` instead of VS Code search tools or MCP wrappers
+2. **Use MCP `python()` only for chained processing** - avoid for single commands
+3. **Close unused editor tabs** - open files add to context
+4. **Use custom agents** - restricted toolsets = fewer tool definitions
+5. **Project properties in Cypher** - never `RETURN n`, always `RETURN n.id, n.name`
 
 ## Critical Rules
 
-### MCP `python()` is Primary
+### MCP `python()` for Chained Processing
 
-When the Codex MCP server is running, prefer `python()` over terminal for exploration and queries:
+Use MCP `python()` when you need:
+- **Chained operations** with intermediate processing
+- **Graph queries** and data manipulation
+- **REPL state** to avoid import overhead across multiple operations
+
+Use **terminal directly** for single operations (`rg`, `fd`, `git`, `uv run`).
 
 ```python
 # Discover available tools via introspection
@@ -93,27 +99,31 @@ Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](i
 | `yq` | YAML processor | - |
 | `jq` | JSON processor | - |
 
-**Python API** (via `run()` which auto-detects local vs SSH):
-
-```python
-# run() auto-detects: local on SDCC, SSH to EPFL
-python("print(run('rg -l \"IMAS\" /home/codes', facility='epfl'))")
-python("print(run('rg pattern', facility='iter'))")  # Local on SDCC
-
-# Check and install tools
-python("print(check_tools('epfl'))")
-python("result = setup_tools('epfl'); print(result.summary)")
-python("print(quick_setup('iter', required_only=True))")
-```
-
-**CLI commands** (fallback when MCP server not running):
+**Terminal usage** (preferred for direct operations):
 
 ```bash
+# Local searches and file operations
+rg -l "IMAS" /path/to/search
+fd -e py /path/to/search
+git log --oneline -10
+
+# Tool management
 uv run imas-codex tools check              # Check local tools
 uv run imas-codex tools check epfl         # Check on EPFL (via SSH)
 uv run imas-codex tools install epfl       # Install on EPFL
-uv run imas-codex tools install --dry-run  # Show install commands
 uv run imas-codex tools list               # List all tools
+```
+
+**Python API** (for remote facilities or chained processing):
+
+```python
+# Remote exploration via run() which auto-detects SSH
+python("print(run('rg -l \"IMAS\" /home/codes', facility='epfl'))")
+python("print(run('fd -e py /home/codes', facility='epfl'))")
+
+# Check and install tools remotely
+python("print(check_tools('epfl'))")
+python("result = setup_tools('epfl'); print(result.summary)")
 ```
 
 ### Pre-commit Hooks
@@ -285,7 +295,8 @@ except IOError:
 
 ### DO
 
-- Use MCP `python()` for exploration, queries, and graph operations
+- Use terminal directly for single operations (`rg`, `fd`, `git`)
+- Use MCP `python()` for chained processing, graph queries, and remote operations
 - Use `uv run` for git operations, ruff, pytest, and package management
 - Use `python("print(reload())")` after editing `imas_codex/` source files to pick up changes
 - Use modern Python 3.12 syntax: `list[str]`, `X | Y`
