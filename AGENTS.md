@@ -37,7 +37,7 @@ VS Code injects ~30k tokens of tool definitions per request. To reduce costs:
 
 ### MCP `python()` is Primary
 
-When the Codex MCP server is running, prefer `python()` over terminal:
+When the Codex MCP server is running, prefer `python()` over terminal for exploration and queries:
 
 ```python
 # Discover available tools via introspection
@@ -71,7 +71,9 @@ After editing `imas_codex/` source files, reload the REPL to pick up changes:
 python("print(reload())")  # Clears module cache and reinitializes
 ```
 
-Use `uv run` for git, ruff, pytest, and package management.
+**Use `uv run` for:** git operations, ruff linting/formatting, pytest, and package management.
+
+**Never use `python()` for:** formatting text output, generating markdown, or text manipulation.
 
 ### Fast Tools (Prefer Over Standard Unix)
 
@@ -91,16 +93,6 @@ Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](i
 | `yq` | YAML processor | - |
 | `jq` | JSON processor | - |
 
-**CLI commands:**
-
-```bash
-uv run imas-codex tools check              # Check local tools
-uv run imas-codex tools check epfl         # Check on EPFL (via SSH)
-uv run imas-codex tools install epfl       # Install on EPFL
-uv run imas-codex tools install --dry-run  # Show install commands
-uv run imas-codex tools list               # List all tools
-```
-
 **Python API** (via `run()` which auto-detects local vs SSH):
 
 ```python
@@ -114,7 +106,19 @@ python("result = setup_tools('epfl'); print(result.summary)")
 python("print(quick_setup('iter', required_only=True))")
 ```
 
+**CLI commands** (fallback when MCP server not running):
+
+```bash
+uv run imas-codex tools check              # Check local tools
+uv run imas-codex tools check epfl         # Check on EPFL (via SSH)
+uv run imas-codex tools install epfl       # Install on EPFL
+uv run imas-codex tools install --dry-run  # Show install commands
+uv run imas-codex tools list               # List all tools
+```
+
 ### Pre-commit Hooks
+
+Pre-commit hooks use `.venv/bin/python3` and will fail if the venv is not accessible. Always use:
 
 ```bash
 uv run git commit -m 'type: description'
@@ -126,24 +130,38 @@ The `.env` file contains secrets. Never expose or commit it.
 
 ### Graph Backup
 
-Always dump before destructive operations:
-```bash
-uv run imas-codex neo4j dump
+Before ANY operation that modifies or deletes graph nodes:
+
+1. **ALWAYS dump the graph first**: `uv run imas-codex neo4j dump`
+2. **NEVER use `DETACH DELETE` on production data** without explicit user confirmation
+3. **For re-embedding**: Update nodes in place, don't delete and recreate
+4. **Ask before destructive operations**: "This will delete X nodes. Should I back up first?"
+
+**Re-embedding workflow** (preserves nodes):
+```cypher
+-- Update embeddings on existing nodes, don't delete them
+MATCH (c:CodeChunk {source_file: $file})
+SET c.embedding = $new_embedding
 ```
 
 ## Commit Workflow
 
+Follow this exact sequence:
+
 ```bash
-# 1. Lint
-uv run ruff check --fix . && uv run ruff format .
+# 1. Lint and format FIRST (before staging)
+uv run ruff check --fix .
+uv run ruff format .
 
 # 2. Stage specific files (NEVER git add -A)
 git add <file1> <file2> ...
 
-# 3. Commit with conventional format
+# 3. Commit with conventional format (uv run ensures pre-commit hooks work)
 uv run git commit -m 'type: brief description'
 
-# 4. Push
+# 4. If pre-commit fails, fix issues and repeat steps 2-3
+
+# 5. Push
 git push origin main
 ```
 
@@ -155,6 +173,63 @@ git push origin main
 | `docs` | Documentation |
 | `test` | Test changes |
 | `chore` | Maintenance |
+
+## Testing
+
+```bash
+# Sync dependencies first (required in worktrees)
+uv sync --extra test
+
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=imas_codex
+
+# Run specific test
+uv run pytest tests/path/to/test.py::test_function
+
+# Fast iteration: use restricted IDS filters for build scripts
+uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
+```
+
+## Working in Worktrees
+
+Cursor remote agents often work in auto-created worktrees. Follow this workflow for clean commits:
+
+**Step 1: Commit in the worktree**
+```bash
+cd /path/to/worktree
+
+# Lint and format
+uv run ruff check --fix .
+uv run ruff format .
+
+# Stage and commit
+git add <file1> <file2> ...
+uv run git commit -m 'type: description'
+```
+
+**Step 2: Cherry-pick to main workspace**
+
+The `main` branch is typically checked out in the primary workspace, so cherry-pick:
+```bash
+cd /home/ITER/mcintos/Code/imas-codex
+git cherry-pick <commit-hash-from-worktree>
+git push origin main
+```
+
+**Step 3: Clean up worktree**
+```bash
+cd /path/to/worktree
+git checkout -- .  # Discard any remaining changes
+```
+
+**Why this workflow?**
+- Worktrees share the same `.git` directory, so commits are visible across all worktrees
+- `main` cannot be checked out in multiple places simultaneously
+- Cherry-picking preserves commit metadata and allows focused commits
+- Clean worktrees prevent stale files from appearing in Cursor's review panel
 
 ## Quick Reference
 
@@ -172,12 +247,58 @@ git push origin main
 
 Never `RETURN n` - always project properties (`n.id, n.name`). Embeddings add ~2k tokens/node. See [agents/graph.md](agents/graph.md#token-cost-optimization).
 
+
 ## Code Style
 
-- Python 3.12 syntax: `list[str]`, `X | Y`, not `List[str]`, `Union[X, Y]`
-- Exception chaining: `raise Error("msg") from e`
-- Single quotes for commit messages
+### Type Annotations
+
+```python
+# Correct
+def process(items: list[str]) -> dict[str, int]: ...
+if isinstance(e, ValueError | TypeError): ...
+
+# Wrong
+def process(items: List[str]) -> Dict[str, int]: ...
+if isinstance(e, (ValueError, TypeError)): ...
+```
+
+### Error Handling
+
+```python
+# Correct - chain exceptions
+try:
+    operation()
+except IOError as e:
+    raise ProcessingError("failed to process") from e
+
+# Wrong - loses context
+except IOError:
+    raise ProcessingError("failed to process")
+```
+
+### General Rules
+
+- Use single quotes for commit messages
 - Stage files individually, never `git add -A`
+- Use `pydantic` for schemas, `dataclasses` for other data classes
+- Use `anyio` for async operations
+
+### DO
+
+- Use MCP `python()` for exploration, queries, and graph operations
+- Use `uv run` for git operations, ruff, pytest, and package management
+- Use `python("print(reload())")` after editing `imas_codex/` source files to pick up changes
+- Use modern Python 3.12 syntax: `list[str]`, `X | Y`
+- Use exception chaining with `from`
+
+### DON'T
+
+- Don't manually activate venv - use `uv run` which handles venv automatically
+- Don't use `git add -A`
+- Don't use `type!:` suffix for breaking changes
+- Don't use double quotes with special characters in commits
+- Don't use `List[str]`, `Union[X, Y]`, or `isinstance(e, (X, Y))`
+- Don't use "new", "refactored", "enhanced" in names
 
 ## Markdown Style
 
