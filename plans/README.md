@@ -36,6 +36,9 @@ TreeNode path normalization and TDI function integration for deduplication and m
 ### [features/enrichment.md](features/enrichment.md)
 TreeNode LLM enrichment for metadata generation and graph relationship discovery.
 
+### [features/wiki-scoring-redesign.md](features/wiki-scoring-redesign.md)
+Wiki scoring redesign with LLM-centric content prefetch. Replaces metric-based scoring with content-aware LLM scoring to eliminate ITER/EPFL bias and improve accuracy.
+
 ## Related Projects
 
 - **[imas-ambix](https://github.com/iterorganization/imas-ambix)** - Universal Fusion Data Client (runtime Recipe execution)
