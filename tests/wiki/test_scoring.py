@@ -12,12 +12,13 @@ class TestContentAwareScoring:
             "preview_summary": "Database of JOREK MHD simulation cases for disruption scenarios.",
             "in_degree": 1,
             "link_depth": 3,
+            "page_type": "data_source",
         }
         # Validate page structure for scoring
         assert page["id"]
         assert page["title"]
         assert page["preview_summary"]
-        assert page["page_type"] not in page or page.get("page_type") == "data_source"
+        assert page.get("page_type") == "data_source"
 
     def test_scoring_guidelines_meeting(self):
         """Meeting pages should score 0.1-0.4."""
