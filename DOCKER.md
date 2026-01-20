@@ -1,6 +1,69 @@
-# Docker Container Setup
+# Container Setup
 
-This document describes how to build, run, and deploy the IMAS Codex Server container.
+This document describes how to build, run, and deploy the IMAS Codex containers.
+
+## Neo4j Knowledge Graph
+
+The project uses Neo4j for the knowledge graph. Choose one of these deployment options:
+
+### Option 1: Docker Compose (if Docker available)
+
+```bash
+# Start Neo4j with the graph profile
+docker-compose --profile graph up -d neo4j
+
+# Verify it's running
+curl -s http://localhost:7474
+```
+
+### Option 2: Apptainer (for WSL, HPC, or systems without Docker)
+
+Apptainer (formerly Singularity) is ideal for environments where Docker isn't available.
+
+```bash
+# Install Apptainer (requires sudo)
+./scripts/install_apptainer.sh
+
+# Set up Neo4j container and systemd service
+./scripts/setup_neo4j_apptainer.sh --system
+
+# Start the service
+sudo systemctl start imas-codex-neo4j.service
+
+# Verify it's running
+curl -s http://localhost:7474
+```
+
+**Configuration options** (environment variables for `setup_neo4j_apptainer.sh`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEO4J_VERSION` | `2025.11-community` | Neo4j Docker image tag |
+| `NEO4J_PASSWORD` | `imas-codex` | Neo4j password |
+| `NEO4J_DATA_DIR` | `~/.local/share/imas-codex/neo4j` | Data directory |
+| `NEO4J_SIF_DIR` | `~/apptainer` | Container image location |
+
+**Service management:**
+
+```bash
+# Check status
+sudo systemctl status imas-codex-neo4j.service
+
+# Stop/Start/Restart
+sudo systemctl stop imas-codex-neo4j.service
+sudo systemctl start imas-codex-neo4j.service
+sudo systemctl restart imas-codex-neo4j.service
+
+# View logs
+cat ~/.local/share/imas-codex/neo4j/logs/neo4j.log | tail -50
+
+# Browser UI: http://localhost:7474
+# Credentials: neo4j / imas-codex
+```
+
+---
+
+## IMAS Codex Server
 
 ## Quick Start
 
