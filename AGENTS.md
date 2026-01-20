@@ -521,8 +521,17 @@ imas_codex/
 ├── agentic/             # LlamaIndex agents, MCP server
 ├── graph/               # Neo4j knowledge graph
 ├── code_examples/       # Code ingestion pipeline
+├── schemas/             # LinkML schemas (authoritative graph structure)
+│   ├── imas_dd.yaml     # DD graph: IMASPath, DDVersion, Unit, CoordinateSpec
+│   ├── facility.yaml    # Facility graph: SourceFile, TreeNode, CodeChunk
+│   └── common.yaml      # Shared: Unit, PhysicsDomain enums
 └── ...
 ```
+
+**LinkML Schemas**: All graph node types, relationships, and properties are defined in
+`imas_codex/schemas/`. Before adding properties to graph nodes, check the schema first.
+Key classes: `IMASPath` (DD paths), `Unit` (physical units), `CoordinateSpec` (index specs),
+`SourceFile`/`TreeNode`/`CodeChunk` (code ingestion).
 
 ## Domain Workflows
 

@@ -1178,6 +1178,7 @@ def _batch_create_path_nodes(
                 "ids_name": ids_name,
                 "parent_path": path_info.get("parent_path"),
                 "units": path_info.get("units", ""),
+                "coordinates": path_info.get("coordinates", []),
             }
         )
 
@@ -1243,7 +1244,67 @@ def _batch_create_path_nodes(
                 paths=unit_paths,
             )
 
-        # Step 5: Create INTRODUCED_IN relationships
+        # Step 5: Create HAS_COORDINATE relationships
+        # Each coordinate links to either a CoordinateSpec (e.g., "1...N") or IMASPath
+        coord_rels = []
+        for p in batch:
+            if not p["coordinates"]:
+                continue
+            ids_name = p["ids_name"]
+            for dim, coord_str in enumerate(p["coordinates"], start=1):
+                if not coord_str:
+                    continue
+                # Index-based coordinates link to CoordinateSpec nodes
+                if coord_str.startswith("1..."):
+                    coord_rels.append(
+                        {
+                            "source_id": p["id"],
+                            "target_id": coord_str,
+                            "dimension": dim,
+                            "is_spec": True,
+                        }
+                    )
+                else:
+                    # Path references are relative to IDS root
+                    target_path = f"{ids_name}/{coord_str}"
+                    coord_rels.append(
+                        {
+                            "source_id": p["id"],
+                            "target_id": target_path,
+                            "dimension": dim,
+                            "is_spec": False,
+                        }
+                    )
+
+        # Create relationships to CoordinateSpec nodes
+        spec_rels = [r for r in coord_rels if r["is_spec"]]
+        if spec_rels:
+            client.query(
+                """
+                UNWIND $rels AS r
+                MATCH (path:IMASPath {id: r.source_id})
+                MATCH (spec:CoordinateSpec {id: r.target_id})
+                MERGE (path)-[rel:HAS_COORDINATE]->(spec)
+                SET rel.dimension = r.dimension
+            """,
+                rels=spec_rels,
+            )
+
+        # Create relationships to IMASPath coordinate nodes
+        path_rels = [r for r in coord_rels if not r["is_spec"]]
+        if path_rels:
+            client.query(
+                """
+                UNWIND $rels AS r
+                MATCH (path:IMASPath {id: r.source_id})
+                MATCH (coord:IMASPath {id: r.target_id})
+                MERGE (path)-[rel:HAS_COORDINATE]->(coord)
+                SET rel.dimension = r.dimension
+            """,
+                rels=path_rels,
+            )
+
+        # Step 6: Create INTRODUCED_IN relationships
         client.query(
             """
             UNWIND $paths AS p
