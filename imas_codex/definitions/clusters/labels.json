@@ -1784,8 +1784,8 @@
     "A intra-IDS cluster containing paths from edge_profiles."
   ],
   "110b507e7d34404d": [
-    "Group Name 3",
-    "A intra-IDS cluster containing paths from calorimetry."
+    "Group Name",
+    "A intra-IDS global-level cluster of related paths from calorimetry."
   ],
   "111870ee53c92132": [
     "Equilibrium 2D Field Components",
@@ -2448,8 +2448,8 @@
     "Organizes grid objects according to their dimensionality within the General Grid Description space."
   ],
   "16a7a2836d21b99e": [
-    "Module Name 3",
-    "A intra-IDS cluster containing paths from breeding_blanket."
+    "Module Name",
+    "A intra-IDS global-level cluster of related paths from breeding_blanket."
   ],
   "16aae1b064510b91": [
     "Gas Species Fractions",
@@ -2568,8 +2568,8 @@
     "A intra-IDS cluster containing paths from edge_profiles."
   ],
   "17d31faf6a9a9895": [
-    "Name Description 9",
-    "A intra-IDS cluster containing paths from controllers."
+    "Name Description",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "17dd61b64d360dfb": [
     "Nitrogen Value 38",
@@ -2868,8 +2868,8 @@
     "Container structures for time-dependent data at the module, layer, or global blanket level."
   ],
   "1a27d85f7ab0575d": [
-    "Exit Position R 3",
-    "A intra-IDS cluster containing paths from gas_injection."
+    "Exit Position R",
+    "A intra-IDS global-level cluster of related paths from gas_injection."
   ],
   "1a287a633fc31187": [
     "Phi Phi 78",
@@ -2957,7 +2957,7 @@
   ],
   "1ad26a3ad4372707": [
     "Configuration Control Surface Names",
-    "A intra-IDS cluster containing paths from b_field_non_axisymmetric."
+    "A intra-IDS global-level cluster of related paths from b_field_non_axisymmetric."
   ],
   "1ad4b904024523ca": [
     "Vertical Momentum Diffusion Coefficients",
@@ -3552,8 +3552,8 @@
     "A intra-IDS cluster containing paths from bolometer."
   ],
   "1fbf92ce6459dd16": [
-    "Process Source 2",
-    "A intra-IDS cluster containing paths from amns_data."
+    "Process Source",
+    "A intra-IDS global-level cluster of related paths from amns_data."
   ],
   "1fc5257e02fc85fa": [
     "2D Electron Density Profiles",
@@ -3916,8 +3916,8 @@
     "A intra-IDS cluster containing paths from camera_visible."
   ],
   "22fcebebd94ccb0d": [
-    "Flux Loop Name 3",
-    "A intra-IDS cluster containing paths from magnetics."
+    "Flux Loop Name",
+    "A intra-IDS global-level cluster of related paths from magnetics."
   ],
   "230f258ff08e8415": [
     "Edge Source Nuclear Charge",
@@ -4116,8 +4116,8 @@
     "A intra-IDS cluster containing paths from summary."
   ],
   "246f63d81e46b57a": [
-    "Workflow Cycle Component 3",
-    "A intra-IDS cluster containing paths from workflow."
+    "Workflow Cycle Component",
+    "A intra-IDS global-level cluster of related paths from workflow."
   ],
   "2487ddeb7e464cc9": [
     "Resistance Additional Reference Name 3",
@@ -5601,7 +5601,7 @@
   ],
   "3229b2b1d8f75253": [
     "Injector Name",
-    "A intra-IDS cluster containing paths from spi."
+    "A intra-IDS global-level cluster of related paths from spi."
   ],
   "3242e1add19cc92b": [
     "Detector Position Parameter Data 3",
@@ -5704,8 +5704,8 @@
     "Width dimensions of the reflector and crystal along their local axes."
   ],
   "3321964e31eb6bf6": [
-    "Midplane Name 33",
-    "A intra-IDS cluster containing paths from langmuir_probes."
+    "Midplane Name",
+    "A intra-IDS global-level cluster of related paths from langmuir_probes."
   ],
   "3329fc7b4e469f2a": [
     "Deuterium Value 33",
@@ -7520,8 +7520,8 @@
     "Indices linking ion particle and energy boundary conditions to specific grids and subsets within the general grid description."
   ],
   "4414a24306aea888": [
-    "Cooling Loop Name 3",
-    "A intra-IDS cluster containing paths from calorimetry."
+    "Cooling Loop Name",
+    "A intra-IDS global-level cluster of related paths from calorimetry."
   ],
   "4419d1aad823753e": [
     "Field Of View Direction To Detector 3",
@@ -7624,8 +7624,8 @@
     "A intra-IDS cluster containing paths from summary."
   ],
   "44bf1525d86b1b0d": [
-    "Statespace State Names 3",
-    "A intra-IDS cluster containing paths from controllers."
+    "Statespace State Names",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "44c041d943232796": [
     "2D Profile Grid Volume Elements",
@@ -8512,8 +8512,8 @@
     "A intra-IDS cluster containing paths from pulse_schedule."
   ],
   "4cdcd837cdf97ffb": [
-    "Heat Flux Steady Limit Max Temperature Limit Max 3",
-    "A intra-IDS cluster containing paths from divertors."
+    "Heat Flux Steady Limit Max Temperature Limit Max",
+    "A intra-IDS global-level cluster of related paths from divertors."
   ],
   "4d0287009de02804": [
     "Argon Value 33",
@@ -8868,8 +8868,8 @@
     "Generic containers for 2D and 4D floating-point data arrays used for temporary storage or intermediate calculations."
   ],
   "505816a74d88d261": [
-    "Charge State Name 2",
-    "A intra-IDS cluster containing paths from amns_data."
+    "Charge State Name",
+    "A intra-IDS global-level cluster of related paths from amns_data."
   ],
   "506293d452164eef": [
     "GGD Transport Quantities",
@@ -9228,8 +9228,8 @@
     "A intra-IDS cluster containing paths from spectrometer_uv."
   ],
   "534b062f917f1b33": [
-    "Topic Name 2",
-    "A intra-IDS cluster containing paths from real_time_data."
+    "Topic Name",
+    "A intra-IDS global-level cluster of related paths from real_time_data."
   ],
   "5351651e7ab71102": [
     "Edge GGD Grid Hierarchy",
@@ -9292,8 +9292,8 @@
     "Spatial coordinates defining the centers of bolometer detectors and apertures."
   ],
   "5415d822ac0d3b06": [
-    "Stationary Phase Flag Value 3",
-    "A intra-IDS cluster containing paths from summary."
+    "Stationary Phase Flag Value",
+    "A intra-IDS global-level cluster of related paths from summary."
   ],
   "5418594c1e4bece4": [
     "Outline X1 67",
@@ -9433,7 +9433,7 @@
   ],
   "55c25baae5a6f222": [
     "Time Trigger Time",
-    "A intra-IDS cluster containing paths from spi."
+    "A intra-IDS global-level cluster of related paths from spi."
   ],
   "55c6602cc8921266": [
     "Helium Injection Data Sources",
@@ -9717,7 +9717,7 @@
   ],
   "58a9f23f5c99f15c": [
     "Output Names Output Names",
-    "A intra-IDS cluster containing paths from controllers."
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "58b84295d3216fa6": [
     "Heat Viscosity Flux Components",
@@ -10372,8 +10372,8 @@
     "Metadata defining the classification, name, and index of neutral species states within 1D plasma source profiles."
   ],
   "5e8934fab5bb0720": [
-    "Description 2D Cryostat 2",
-    "A intra-IDS cluster containing paths from cryostat."
+    "Description 2D Cryostat",
+    "A intra-IDS global-level cluster of related paths from cryostat."
   ],
   "5e9f0dae56da9e8b": [
     "Multi-Species Momentum Convection Poloidal",
@@ -11056,8 +11056,8 @@
     "A intra-IDS cluster containing paths from gyrokinetics_local."
   ],
   "64accefe52faf406": [
-    "Gauge Name 2",
-    "A intra-IDS cluster containing paths from barometry."
+    "Gauge Name",
+    "A intra-IDS global-level cluster of related paths from barometry."
   ],
   "64ad4aba31de55d5": [
     "Temporary Dynamic Float Values",
@@ -11852,8 +11852,8 @@
     "A intra-IDS cluster containing paths from plasma_transport."
   ],
   "6c3f50888b57738a": [
-    "Identifier Replaces 2",
-    "A intra-IDS cluster containing paths from dataset_fair."
+    "Identifier Replaces",
+    "A intra-IDS global-level cluster of related paths from dataset_fair."
   ],
   "6c405ac35b239bc1": [
     "Electromagnetic Field Coefficients",
@@ -11908,8 +11908,8 @@
     "Time-dependent data for frequencies, phases, and amplitudes measured by reflectometer fluctuation channels."
   ],
   "6cb5c3e26c847755": [
-    "Time Slice Pellet 2",
-    "A intra-IDS cluster containing paths from pellets."
+    "Time Slice Pellet",
+    "A intra-IDS global-level cluster of related paths from pellets."
   ],
   "6cbbd8630c4d11d5": [
     "Neutral State Energy Grid Indices",
@@ -12688,8 +12688,8 @@
     "Time-dependent output voltage measurements from the filter spectrometer."
   ],
   "726fc106aa23c9f6": [
-    "Elms Frequency 3",
-    "A intra-IDS cluster containing paths from summary."
+    "Elms Frequency",
+    "A intra-IDS global-level cluster of related paths from summary."
   ],
   "7271cbe29645222f": [
     "Toroidal Flux Grid Geometry",
@@ -13044,8 +13044,8 @@
     "A intra-IDS cluster containing paths from bolometer."
   ],
   "756843030b2b6167": [
-    "Constant Float0D Value 2",
-    "A intra-IDS cluster containing paths from temporary."
+    "Constant Float0D Value",
+    "A intra-IDS global-level cluster of related paths from temporary."
   ],
   "75785d2ccd338571": [
     "Ggd Fast Electrons 4",
@@ -13852,8 +13852,8 @@
     "A intra-IDS cluster containing paths from distributions."
   ],
   "7cebceb306a549b3": [
-    "Electron Rate Data 3",
-    "A intra-IDS cluster containing paths from gas_injection."
+    "Electron Rate Data",
+    "A intra-IDS global-level cluster of related paths from gas_injection."
   ],
   "7cefa1f1087a53d1": [
     "Passive Element Annulus Geometry",
@@ -14704,8 +14704,8 @@
     "A intra-IDS cluster containing paths from plasma_transport."
   ],
   "854f42d83274f7b1": [
-    "Release Description 2",
-    "A intra-IDS cluster containing paths from amns_data."
+    "Release Description",
+    "A intra-IDS global-level cluster of related paths from amns_data."
   ],
   "855050843b8a4c24": [
     "Restart Files Names 3",
@@ -15364,8 +15364,8 @@
     "Electrical resistivity and resistance values for annular and general elements within the thermal shield."
   ],
   "8b8c578a1117abd3": [
-    "Rmps Occurrence 3",
-    "A intra-IDS cluster containing paths from summary."
+    "Rmps Occurrence",
+    "A intra-IDS global-level cluster of related paths from summary."
   ],
   "8b9353ab8296afe9": [
     "Centre R 65",
@@ -15708,8 +15708,8 @@
     "Specifies the starting coordinates and resulting lengths of magnetic field lines traced to analyze breakdown conditions."
   ],
   "8e95076fa2d1f35f": [
-    "Element A 82",
-    "A intra-IDS cluster containing paths from amns_data."
+    "Element A",
+    "A intra-IDS global-level cluster of related paths from amns_data."
   ],
   "8e967761802c7d63": [
     "Cooling Loop Temperature Structures",
@@ -16009,7 +16009,7 @@
   ],
   "912caa78f3ee118a": [
     "Nonlinear Controller Name",
-    "A intra-IDS cluster containing paths from controllers."
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "9130ed5b015bd35d": [
     "Individual Fibre Positions",
@@ -16664,8 +16664,8 @@
     "A intra-IDS cluster containing paths from plasma_profiles."
   ],
   "964b72ad97e4f026": [
-    "Inputs Data 5",
-    "A intra-IDS cluster containing paths from controllers."
+    "Inputs Data",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "96518d9c9f6a64b7": [
     "Equilibrium 2D Grid Metadata",
@@ -17380,8 +17380,8 @@
     "A intra-IDS cluster containing paths from iron_core."
   ],
   "9c8bc575691c8ce5": [
-    "Normalizing Quantities T E 2",
-    "A intra-IDS cluster containing paths from gyrokinetics_local."
+    "Normalizing Quantities T E",
+    "A intra-IDS global-level cluster of related paths from gyrokinetics_local."
   ],
   "9c8fa4695612faa3": [
     "Grating Summit Coordinates",
@@ -19605,7 +19605,7 @@
   ],
   "b1c0e40dae83048e": [
     "Name Description",
-    "A intra-IDS cluster containing paths from focs."
+    "A intra-IDS global-level cluster of related paths from focs."
   ],
   "b1d9fabc223b29c5": [
     "Grid Jacobian Elements",
@@ -21048,8 +21048,8 @@
     "Values of plasma velocity components (radial, toroidal, vertical, parallel) defined on a general grid."
   ],
   "be005b4bce302c8d": [
-    "Pid P 3",
-    "A intra-IDS cluster containing paths from controllers."
+    "Pid P",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "be1b49853f8521e5": [
     "Edge Sources Grid Object Indexing",
@@ -21112,8 +21112,8 @@
     "Components of the anomalous current density vector, including radial, diamagnetic, and parallel projections."
   ],
   "bebd0055344fa8cd": [
-    "Inputs Data 6",
-    "A intra-IDS cluster containing paths from controllers."
+    "Inputs Data",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "bec634ab075c42c3": [
     "Neutral Radial Transport Indices",
@@ -24776,8 +24776,8 @@
     "Container for the normal unit vector (x3) defining the facing direction of bolometer components."
   ],
   "e0bd061b43417dc6": [
-    "Time Loop Component 3",
-    "A intra-IDS cluster containing paths from workflow."
+    "Time Loop Component",
+    "A intra-IDS global-level cluster of related paths from workflow."
   ],
   "e0c94ded7a0d76e6": [
     "Radius X1 Width 6",
@@ -25040,8 +25040,8 @@
     "Time-dependent data arrays for the current and power fractions of the NBI energy components."
   ],
   "e2d9c6fcb8389e8f": [
-    "Greenwald Fraction Value 3",
-    "A intra-IDS cluster containing paths from summary."
+    "Greenwald Fraction Value",
+    "A intra-IDS global-level cluster of related paths from summary."
   ],
   "e2ea3eb547ec1db6": [
     "Radiation Time Vectors",
@@ -26248,8 +26248,8 @@
     "Atomic mass and molecular atom count for specific ion species within the 1D source profiles."
   ],
   "ede55993c3b222e0": [
-    "Tau Data 3",
-    "A intra-IDS cluster containing paths from controllers."
+    "Tau Data",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "edf4fe3cd7173be0": [
     "Grid Index Grid Subset Index 44",
@@ -27292,8 +27292,8 @@
     "A intra-IDS cluster containing paths from edge_profiles."
   ],
   "f75ce2f84c3e42b8": [
-    "Gain Plant Power Electricity Net 2",
-    "A intra-IDS cluster containing paths from balance_of_plant."
+    "Gain Plant Power Electricity Net",
+    "A intra-IDS global-level cluster of related paths from balance_of_plant."
   ],
   "f7678c96ef80713b": [
     "Visible Bremsstrahlung LOS Toroidal",
@@ -27676,8 +27676,8 @@
     "Coefficients for the vertical (Z) component of the convective velocity associated with momentum transport in the edge plasma."
   ],
   "fb532ed8ddf18c67": [
-    "Deltat Data 3",
-    "A intra-IDS cluster containing paths from controllers."
+    "Deltat Data",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "fb60b8ee368b8bb8": [
     "Neon Gas Injection Sources",
@@ -28152,8 +28152,8 @@
     "A intra-IDS cluster containing paths from spectrometer_x_ray_crystal."
   ],
   "ff69df39377f3eb3": [
-    "Time Time 12",
-    "A intra-IDS cluster containing paths from controllers."
+    "Time Time",
+    "A intra-IDS global-level cluster of related paths from controllers."
   ],
   "ff6e68df2410ca68": [
     "Core Change Species Temperatures",
