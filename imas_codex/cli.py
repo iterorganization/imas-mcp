@@ -2379,6 +2379,12 @@ def wiki_sites(facility: str) -> None:
     help="Maximum link depth from portal (default: unlimited)",
 )
 @click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model to use (default: from config for 'discovery' task)",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
@@ -2390,6 +2396,7 @@ def wiki_discover(
     cost_limit: float,
     max_pages: int | None,
     max_depth: int | None,
+    model: str | None,
     verbose: bool,
 ) -> None:
     """Discover wiki pages using integrated pipeline.
@@ -2424,6 +2431,7 @@ def wiki_discover(
             max_pages=max_pages,
             max_depth=max_depth,
             verbose=verbose,
+            model=model,
         )
     )
 
@@ -2586,6 +2594,12 @@ def wiki_prefetch(
     help="Pages per agent batch (default: 100)",
 )
 @click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model to use (default: from config for 'discovery' task)",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
@@ -2596,6 +2610,7 @@ def wiki_score(
     limit: int | None,
     cost_limit: float,
     batch_size: int,
+    model: str | None,
     verbose: bool,
 ) -> None:
     """Score crawled wiki pages using content-aware LLM evaluation.
@@ -2634,6 +2649,7 @@ def wiki_score(
         cost_limit_usd=cost_limit,
         max_pages=limit,
         verbose=verbose,
+        model=model,
     )
 
     try:
@@ -3147,8 +3163,15 @@ def agent_run(task: str, agent_type: str, verbose: bool) -> None:
 @click.option(
     "--model",
     "-m",
-    default="google/gemini-3-flash-preview",
-    help="LLM model to use (default: google/gemini-3-flash-preview)",
+    default=None,
+    help="LLM model to use (default: from config for 'enrichment' task)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=None,
+    type=float,
+    help="Maximum cost budget in USD (default: no limit)",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
@@ -3160,7 +3183,8 @@ def agent_enrich(
     force: bool,
     linked: bool,
     batch_size: int | None,
-    model: str,
+    model: str | None,
+    cost_limit: float | None,
     dry_run: bool,
     verbose: bool,
 ) -> None:
@@ -3231,6 +3255,7 @@ def agent_enrich(
         compose_batches,
         discover_nodes_to_enrich,
         estimate_enrichment_cost,
+        get_model_for_task,
         get_parent_path,
         react_batch_enrich_paths,
     )
@@ -3239,6 +3264,9 @@ def agent_enrich(
 
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    # Resolve model from config if not specified
+    effective_model = model or get_model_for_task("enrichment")
 
     # Determine target status
     # --force means "include all statuses" (both pending and already enriched)
@@ -3281,7 +3309,7 @@ def agent_enrich(
     # - Pro: batch 200 = 0.4 paths/sec, 100% success, 100% high confidence
     effective_batch_size = batch_size
     if effective_batch_size is None:
-        if "pro" in model.lower():
+        if "pro" in effective_model.lower():
             effective_batch_size = 200
         else:
             effective_batch_size = 100
@@ -3293,12 +3321,17 @@ def agent_enrich(
 
     # Show cost estimate
     cost_est = estimate_enrichment_cost(len(path_list), effective_batch_size)
-    console.print()
-    console.print(
+    cost_info = (
         f"[dim]Batches: {len(batches)} | "
         f"Est. time: {cost_est['estimated_hours'] * 60:.0f}min | "
-        f"Est. cost: ${cost_est['estimated_cost']:.2f}[/dim]"
+        f"Est. cost: ${cost_est['estimated_cost']:.2f}"
     )
+    if cost_limit is not None:
+        cost_info += f" | Limit: ${cost_limit:.2f}"
+    cost_info += "[/dim]"
+    console.print()
+    console.print(cost_info)
+    console.print(f"[dim]Model: {effective_model}[/dim]")
 
     if dry_run:
         console.print("\n[yellow][DRY RUN] Will not persist to graph[/yellow]")
@@ -3417,7 +3450,7 @@ def agent_enrich(
                 batch_size=effective_batch_size,
                 verbose=verbose,
                 dry_run=False,  # We handle dry_run above
-                model=model,
+                model=effective_model,
                 progress_callback=on_progress,
             )
 
@@ -3537,7 +3570,14 @@ def agent_mark_stale(
     "--model",
     "-m",
     default=None,
-    help="LLM model to use (default: from config)",
+    help="LLM model to use (default: from config for 'exploration' task)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=None,
+    type=float,
+    help="Maximum cost budget in USD (default: no limit)",
 )
 @click.option(
     "--verbose",
@@ -3554,6 +3594,7 @@ def explore(
     facility: str,
     prompt: str | None,
     model: str | None,
+    cost_limit: float | None,
     verbose: bool,
     dry_run: bool,
 ) -> None:
@@ -3612,12 +3653,16 @@ def explore(
     # Resolve model
     effective_model = model or get_model_for_task("exploration")
 
+    # Build cost limit display
+    cost_limit_str = f"${cost_limit:.2f}" if cost_limit else "(no limit)"
+
     if dry_run:
         console.print(
             Panel.fit(
                 f"[cyan]Facility:[/cyan] {facility}\n"
                 f"[cyan]SSH Host:[/cyan] {config.get('ssh_host', facility)}\n"
                 f"[cyan]Model:[/cyan] {effective_model}\n"
+                f"[cyan]Cost Limit:[/cyan] {cost_limit_str}\n"
                 f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
                 f"[cyan]Verbose:[/cyan] {verbose}",
                 title="Exploration Configuration (--dry-run)",
@@ -3635,6 +3680,8 @@ def explore(
     )
     if prompt:
         console.print(f"[dim]Guidance: {prompt}[/dim]")
+    if cost_limit:
+        console.print(f"[dim]Cost limit: ${cost_limit:.2f}[/dim]")
     console.print()
 
     # Run exploration

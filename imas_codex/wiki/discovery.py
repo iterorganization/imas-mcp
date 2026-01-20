@@ -307,12 +307,15 @@ class WikiDiscovery:
         max_pages: int | None = None,
         max_depth: int | None = None,
         verbose: bool = False,
+        model: str | None = None,
     ):
         self.config = WikiConfig.from_facility(facility)
         self.stats = DiscoveryStats(cost_limit_usd=cost_limit_usd)
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.verbose = verbose
+        # Model override - if None, get_model_for_task("discovery") is used
+        self._model = model
 
         # Graph client for persistence
         self._gc: GraphClient | None = None
@@ -322,6 +325,13 @@ class WikiDiscovery:
 
         # Cache for Confluence page titles (page_id -> title)
         self._confluence_page_titles: dict[str, str] = {}
+
+    @property
+    def resolved_model(self) -> str:
+        """Get the model to use for LLM operations."""
+        if self._model:
+            return self._model
+        return get_model_for_task("discovery")
 
     def _get_gc(self) -> GraphClient:
         if self._gc is None:
@@ -1393,7 +1403,7 @@ class WikiDiscovery:
                 break
 
             # Create fresh agent for this batch
-            model = get_model_for_task("discovery")
+            model = self.resolved_model
             llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
 
             tools = self._get_scoring_tools()
@@ -1579,7 +1589,7 @@ Call update_page_scores with ALL pages in a single call."""
                 break
 
             # Create fresh agent for this batch
-            model = get_model_for_task("discovery")
+            model = self.resolved_model
             llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
 
             tools = self._get_artifact_scoring_tools()
@@ -1880,6 +1890,7 @@ async def run_wiki_discovery(
     max_pages: int | None = None,
     max_depth: int | None = None,
     verbose: bool = False,
+    model: str | None = None,
 ) -> dict:
     """Run wiki discovery and return stats as dict.
 
@@ -1889,6 +1900,7 @@ async def run_wiki_discovery(
         max_pages: Maximum pages to crawl (None = unlimited)
         max_depth: Maximum link depth from portal
         verbose: Enable verbose output
+        model: LLM model override (None = use config)
 
     Returns:
         Dictionary with discovery statistics
@@ -1899,6 +1911,7 @@ async def run_wiki_discovery(
         max_pages=max_pages,
         max_depth=max_depth,
         verbose=verbose,
+        model=model,
     )
 
     try:

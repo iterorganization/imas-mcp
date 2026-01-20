@@ -46,6 +46,13 @@ from imas_codex.agentic.react import (
     run_agent_sync,
 )
 from imas_codex.agentic.server import AgentsServer
+from imas_codex.agentic.session import (
+    BudgetExhaustedError,
+    CostTracker,
+    LLMSession,
+    create_session,
+    estimate_cost,
+)
 from imas_codex.agentic.tools import (
     get_all_tools,
     get_exploration_tools,
@@ -64,6 +71,12 @@ __all__ = [
     "get_model_for_task",
     "DEFAULT_MODEL",
     "MODELS",
+    # Session management
+    "LLMSession",
+    "CostTracker",
+    "BudgetExhaustedError",
+    "create_session",
+    "estimate_cost",
     # Agent factories
     "get_enrichment_agent",
     "get_mapping_agent",
