@@ -35,13 +35,14 @@ logger = logging.getLogger(__name__)
 def main(ctx: click.Context, version: bool) -> None:
     """IMAS Codex - AI-enhanced MCP servers for fusion data.
 
-    Use subcommands to start servers or manage facilities:
+    Use subcommands to start servers or manage data:
 
     \b
       imas-codex serve imas       Start the IMAS Data Dictionary MCP server
       imas-codex serve agents     Start the Agents MCP server
+      imas-codex imas build       Build/update IMAS DD graph
+      imas-codex imas status      Show DD graph statistics
       imas-codex facilities list  List configured facilities
-      imas-codex facilities show  Show facility configuration
     """
     if version:
         click.echo(__version__)
@@ -3080,6 +3081,438 @@ def wiki_status(facility: str) -> None:
         console.print("\n[bold]Sign Conventions Found:[/bold]")
         for row in conventions:
             console.print(f"  [{row['type']}] {row['name']}")
+
+
+# ============================================================================
+# IMAS DD Commands
+# ============================================================================
+
+
+@main.group()
+def imas() -> None:
+    """Manage IMAS Data Dictionary graph.
+
+    \b
+      imas-codex imas build    Build/update DD graph from imas-python
+      imas-codex imas status   Show DD graph statistics
+      imas-codex imas search   Semantic search for paths
+      imas-codex imas versions List available DD versions
+    """
+    pass
+
+
+@imas.command("build")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
+@click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
+@click.option(
+    "-a",
+    "--all-versions",
+    is_flag=True,
+    help="Process all DD versions (default: current only)",
+)
+@click.option(
+    "--from-version",
+    type=str,
+    help="Start from a specific version (for incremental updates)",
+)
+@click.option(
+    "-f", "--force", is_flag=True, help="Force regenerate all embeddings (ignore cache)"
+)
+@click.option(
+    "--skip-clusters", is_flag=True, help="Skip importing semantic clusters into graph"
+)
+@click.option(
+    "--skip-embeddings",
+    is_flag=True,
+    help="Skip embedding generation for current version paths",
+)
+@click.option(
+    "--embedding-model",
+    type=str,
+    default="sentence-transformers/all-MiniLM-L6-v2",
+    help="Sentence transformer model for embeddings",
+)
+@click.option(
+    "--ids-filter",
+    type=str,
+    help="Filter to specific IDS (space-separated, for testing)",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Preview changes without writing to graph"
+)
+def imas_build(
+    verbose: bool,
+    quiet: bool,
+    all_versions: bool,
+    from_version: str | None,
+    force: bool,
+    skip_clusters: bool,
+    skip_embeddings: bool,
+    embedding_model: str,
+    ids_filter: str | None,
+    dry_run: bool,
+) -> None:
+    """Build the IMAS Data Dictionary Knowledge Graph.
+
+    Populates Neo4j with complete IMAS DD structure including:
+
+    \b
+    - DDVersion nodes with version tracking (PREDECESSOR relationships)
+    - IDS nodes for top-level structures (core_profiles, equilibrium, etc.)
+    - IMASPath nodes with hierarchical relationships (PARENT, IDS)
+    - Unit nodes with HAS_UNIT relationships
+    - CoordinateSpec nodes with HAS_COORDINATE relationships
+    - PathChange nodes for metadata evolution between versions
+    - RENAMED_TO relationships for path migrations
+    - HAS_ERROR relationships linking data paths to error fields
+    - Vector embeddings for semantic search (current version only)
+    - SemanticCluster nodes with centroids for cluster-based search
+
+    Embeddings are generated only for current version paths to avoid noise
+    from deprecated/renamed paths. Version history is queryable via graph
+    relationships, not vector search.
+
+    \b
+    Examples:
+        imas-codex imas build                  # Build current version
+        imas-codex imas build --all-versions   # Build all DD versions
+        imas-codex imas build --from-version 4.0.0  # Incremental from 4.0.0
+        imas-codex imas build --force          # Regenerate all embeddings
+        imas-codex imas build --dry-run -v     # Preview without writing
+        imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
+    """
+    # Import and call the standalone build script's logic
+    from imas_codex import dd_version as current_dd_version
+    from scripts.build_dd_graph import build_dd_graph, get_all_dd_versions
+
+    # Set up logging
+    if quiet:
+        log_level = logging.ERROR
+    elif verbose:
+        log_level = logging.DEBUG
+    else:
+        log_level = logging.INFO
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    # Suppress imas library's verbose logging
+    logging.getLogger("imas").setLevel(logging.WARNING)
+
+    try:
+        # Determine versions to process
+        available_versions = get_all_dd_versions()
+
+        if all_versions:
+            versions = available_versions
+        elif from_version:
+            try:
+                start_idx = available_versions.index(from_version)
+                versions = available_versions[start_idx:]
+            except ValueError as e:
+                click.echo(f"Error: Unknown version {from_version}", err=True)
+                click.echo(
+                    f"Available: {', '.join(available_versions[:5])}...", err=True
+                )
+                raise SystemExit(1) from e
+        else:
+            versions = [current_dd_version]
+
+        logger.info(f"Processing {len(versions)} DD versions")
+        if len(versions) > 1:
+            logger.info(f"Versions: {versions[0]} → {versions[-1]}")
+
+        # Parse IDS filter
+        ids_set: set[str] | None = None
+        if ids_filter:
+            ids_set = set(ids_filter.split())
+            logger.info(f"Filtering to IDS: {sorted(ids_set)}")
+
+        if dry_run:
+            click.echo("DRY RUN - no changes will be written to graph")
+
+        # Build graph
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as client:
+            stats = build_dd_graph(
+                client=client,
+                versions=versions,
+                ids_filter=ids_set,
+                include_clusters=not skip_clusters,
+                include_embeddings=not skip_embeddings,
+                dry_run=dry_run,
+                embedding_model=embedding_model,
+                force_embeddings=force,
+            )
+
+        # Report results
+        click.echo("\n=== Build Complete ===")
+        click.echo(f"Versions processed: {stats['versions_processed']}")
+        click.echo(f"IDS nodes: {stats['ids_created']}")
+        click.echo(f"IMASPath nodes created: {stats['paths_created']}")
+        click.echo(f"Unit nodes: {stats['units_created']}")
+        click.echo(f"PathChange nodes: {stats['path_changes_created']}")
+        if not skip_embeddings:
+            click.echo(
+                f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
+            )
+            click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
+            click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
+            click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
+            if stats.get("embeddings_cleaned", 0) > 0:
+                click.echo(f"Stale embeddings cleaned: {stats['embeddings_cleaned']}")
+        if not skip_clusters:
+            click.echo(f"Cluster nodes: {stats['clusters_created']}")
+
+    except SystemExit:
+        raise
+    except Exception as e:
+        logger.error(f"Error building DD graph: {e}")
+        if verbose:
+            logger.exception("Full traceback:")
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@imas.command("status")
+@click.option(
+    "--version", "-v", "version_filter", help="Show details for specific version"
+)
+def imas_status(version_filter: str | None) -> None:
+    """Show IMAS DD graph statistics.
+
+    Displays summary of DD graph content including version coverage,
+    path counts, relationship statistics, and embedding status.
+
+    \b
+    Examples:
+        imas-codex imas status             # Overall summary
+        imas-codex imas status -v 4.1.0    # Details for specific version
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    with GraphClient() as gc:
+        # Get version summary
+        versions = gc.query("""
+            MATCH (v:DDVersion)
+            OPTIONAL MATCH (v)-[:PREDECESSOR]->(prev:DDVersion)
+            RETURN v.id AS version, v.is_current AS is_current, prev.id AS predecessor
+            ORDER BY v.id
+        """)
+
+        if not versions:
+            console.print("[yellow]No DD versions in graph.[/yellow]")
+            console.print("Build with: imas-codex imas build")
+            return
+
+        # Version table
+        version_table = Table(title="DD Versions in Graph")
+        version_table.add_column("Version", style="cyan")
+        version_table.add_column("Current", justify="center")
+        version_table.add_column("Predecessor")
+
+        for v in versions:
+            current = "✓" if v["is_current"] else ""
+            version_table.add_row(v["version"], current, v["predecessor"] or "—")
+
+        console.print(version_table)
+
+        # Get detailed stats for specific version or overall
+        if version_filter:
+            stats = gc.query(
+                """
+                MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v:DDVersion {id: $version})
+                WITH count(p) AS paths
+                OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(:DDVersion {id: $version})
+                WHERE p2.embedding IS NOT NULL
+                RETURN paths, count(p2) AS with_embeddings
+            """,
+                version=version_filter,
+            )
+
+            if stats:
+                console.print(f"\n[bold]Version {version_filter}:[/bold]")
+                console.print(f"  Paths introduced: {stats[0]['paths']}")
+                console.print(f"  With embeddings: {stats[0]['with_embeddings']}")
+        else:
+            # Overall stats
+            overall = gc.query("""
+                MATCH (p:IMASPath) WITH count(p) AS total_paths
+                MATCH (i:IDS) WITH total_paths, count(i) AS ids_count
+                MATCH (u:Unit) WITH total_paths, ids_count, count(u) AS unit_count
+                MATCH (c:CoordinateSpec) WITH total_paths, ids_count, unit_count, count(c) AS coord_count
+                MATCH (p2:IMASPath) WHERE p2.embedding IS NOT NULL
+                WITH total_paths, ids_count, unit_count, coord_count, count(p2) AS with_embeddings
+                OPTIONAL MATCH (:IMASPath)-[r:HAS_UNIT]->(:Unit)
+                WITH total_paths, ids_count, unit_count, coord_count, with_embeddings, count(r) AS unit_rels
+                OPTIONAL MATCH (:IMASPath)-[r2:HAS_COORDINATE]->()
+                RETURN total_paths, ids_count, unit_count, coord_count, with_embeddings, unit_rels, count(r2) AS coord_rels
+            """)
+
+            if overall:
+                s = overall[0]
+                stats_table = Table(title="Graph Statistics")
+                stats_table.add_column("Metric", style="cyan")
+                stats_table.add_column("Count", justify="right")
+
+                stats_table.add_row("IMASPath nodes", str(s["total_paths"]))
+                stats_table.add_row("IDS nodes", str(s["ids_count"]))
+                stats_table.add_row("Unit nodes", str(s["unit_count"]))
+                stats_table.add_row("CoordinateSpec nodes", str(s["coord_count"]))
+                stats_table.add_row("Paths with embeddings", str(s["with_embeddings"]))
+                stats_table.add_row("HAS_UNIT relationships", str(s["unit_rels"]))
+                stats_table.add_row(
+                    "HAS_COORDINATE relationships", str(s["coord_rels"])
+                )
+
+                console.print()
+                console.print(stats_table)
+
+            # Cluster stats
+            clusters = gc.query("MATCH (c:SemanticCluster) RETURN count(c) AS count")
+            if clusters and clusters[0]["count"] > 0:
+                console.print(f"\nSemanticCluster nodes: {clusters[0]['count']}")
+
+
+@imas.command("search")
+@click.argument("query")
+@click.option("-n", "--limit", default=10, help="Max results (default: 10)")
+@click.option("--ids", help="Filter to specific IDS")
+@click.option("--version", "-v", "version_filter", help="Filter to DD version")
+def imas_search(
+    query: str, limit: int, ids: str | None, version_filter: str | None
+) -> None:
+    """Semantic search for IMAS paths.
+
+    Uses vector embeddings to find paths matching natural language queries.
+
+    \b
+    Examples:
+        imas-codex imas search "electron temperature"
+        imas-codex imas search "magnetic field boundary" --ids equilibrium
+        imas-codex imas search "plasma current" -n 20
+    """
+    from rich.console import Console
+    from rich.table import Table
+    from sentence_transformers import SentenceTransformer
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    # Generate query embedding
+    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    embedding = model.encode(query).tolist()
+
+    # Build filter clause
+    where_clauses = []
+    if ids:
+        where_clauses.append(f"node.id STARTS WITH '{ids}/'")
+    if version_filter:
+        where_clauses.append(f"node.dd_version = '{version_filter}'")
+
+    where_clause = ""
+    if where_clauses:
+        where_clause = "WHERE " + " AND ".join(where_clauses)
+
+    with GraphClient() as gc:
+        results = gc.query(
+            f"""
+            CALL db.index.vector.queryNodes("imas_path_embedding", $limit * 2, $embedding)
+            YIELD node, score
+            {where_clause}
+            RETURN node.id AS path, score, node.units AS units, node.documentation AS doc
+            LIMIT $limit
+        """,
+            embedding=embedding,
+            limit=limit,
+        )
+
+    if not results:
+        console.print(f"[yellow]No results for '{query}'[/yellow]")
+        return
+
+    table = Table(title=f"Search: '{query}'")
+    table.add_column("Score", style="dim", width=6)
+    table.add_column("Path", style="cyan")
+    table.add_column("Units", width=8)
+
+    for r in results:
+        units = r["units"] or ""
+        table.add_row(f"{r['score']:.3f}", r["path"], units)
+
+    console.print(table)
+
+
+@imas.command("versions")
+@click.option(
+    "--available",
+    "-a",
+    is_flag=True,
+    help="Show all available versions from imas-python",
+)
+def imas_versions(available: bool) -> None:
+    """List DD versions.
+
+    By default shows versions in the graph. Use --available to show
+    all versions available from imas-python.
+
+    \b
+    Examples:
+        imas-codex imas versions            # Versions in graph
+        imas-codex imas versions --available  # All available
+    """
+    from rich.console import Console
+
+    console = Console()
+
+    if available:
+        from scripts.build_dd_graph import get_all_dd_versions
+
+        versions = get_all_dd_versions()
+        console.print(f"[bold]Available DD versions ({len(versions)}):[/bold]")
+        # Group by major version
+        major_groups: dict[str, list[str]] = {}
+        for v in versions:
+            major = v.split(".")[0]
+            major_groups.setdefault(major, []).append(v)
+
+        for major, vers in sorted(major_groups.items()):
+            console.print(f"  {major}.x: {', '.join(vers)}")
+    else:
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as gc:
+            # Count paths INTRODUCED_IN each version (not deprecated paths)
+            versions = gc.query("""
+                MATCH (v:DDVersion)
+                OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
+                WITH v, count(p) AS introduced
+                OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
+                RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
+                ORDER BY v.id
+            """)
+
+        if not versions:
+            console.print("[yellow]No versions in graph.[/yellow]")
+            console.print("Build with: imas-codex imas build")
+            return
+
+        console.print("[bold]DD versions in graph:[/bold]")
+        for v in versions:
+            current = " [green](current)[/green]" if v["is_current"] else ""
+            embedded = f", {v['embedded']} embedded" if v["embedded"] else ""
+            console.print(
+                f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
+            )
 
 
 # ============================================================================
