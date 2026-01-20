@@ -142,10 +142,9 @@ def is_local_facility(facility: str | None) -> bool:
     if ssh_host.lower() in local_hostnames:
         return True
 
-    # Check partial match (e.g., "iter" in "98dci4-srv-1003.iter.org")
-    current_fqdn = socket.getfqdn().lower()
-    if ssh_host.lower() in current_fqdn:
-        return True
+    # Note: We removed the partial match check (ssh_host in fqdn) because it caused
+    # false positives. E.g., local machine "fr-iwl-mcintos1.iter.org" matched "iter".
+    # SSH should be used unless there's an explicit hostname match.
 
     return False
 

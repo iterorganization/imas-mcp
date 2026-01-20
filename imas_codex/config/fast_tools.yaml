@@ -45,9 +45,13 @@ required:
       asset_pattern: "fd-v{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "fd-v{version}-{arch}/fd"
+    # CRITICAL: fd requires path as trailing argument, not option
+    # Usage: fd [pattern] [path]... - path is REQUIRED for remote/large filesystems
+    # Without path, fd searches cwd which may hang or return unexpected results
     examples:
-      local: "fd -e py"
-      remote: "ssh('fd -e py /home/codes')"
+      local: "fd -e py /path/to/search"
+      remote: "ssh facility 'fd -e py /path/to/search'"
+      pattern: "fd 'pattern' /path"  # pattern first, then path
 
 # Optional tools - enhance exploration but not required
 optional:

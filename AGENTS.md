@@ -191,19 +191,24 @@ python("print(reload())")  # Clears module cache and reinitializes
 
 Fast Rust-based CLI tools are defined in [`imas_codex/config/fast_tools.yaml`](imas_codex/config/fast_tools.yaml).
 
-| Tool | Purpose | Fallback |
-|------|---------|----------|
-| `rg` | Fast pattern search (10x grep) | `grep -r` |
-| `fd` | Fast file finder (5x find) | `find . -name` |
-| `tokei` | LOC by language | `wc -l` |
-| `scc` | Code complexity metrics | - |
-| `dust` | Visual disk usage | `du -h` |
-| `eza` | Modern ls with git status | `ls -la` |
-| `bat` | Syntax-highlighted cat | `cat` |
-| `delta` | Better git diff | `diff` |
-| `fzf` | Fuzzy finder | - |
-| `yq` | YAML processor | - |
-| `jq` | JSON processor | - |
+**ALWAYS use fast tools instead of standard Unix equivalents:**
+
+| Fast Tool | Instead Of | Speed | Example |
+|-----------|------------|-------|---------|
+| `rg` | `grep -r` | 10x faster | `rg 'IMAS' /work/projects -g '*.py'` |
+| `fd` | `find` | 5x faster | `fd -e py /work/projects` |
+| `tokei` | `wc -l` | Better | `tokei /path` |
+| `dust` | `du -h` | Visual | `dust -d 2 /work` |
+
+**Critical: fd requires path as trailing argument:**
+```bash
+# CORRECT - path is required, especially on remote/large filesystems
+fd -e py /work/projects        # Find .py files in /work/projects
+fd 'pattern' /path             # Find pattern in /path
+
+# WRONG - will hang or search cwd unexpectedly
+fd -e py                       # Missing path!
+```
 
 **Terminal usage** (preferred for all single operations):
 
