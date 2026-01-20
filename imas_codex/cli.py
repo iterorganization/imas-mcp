@@ -315,11 +315,11 @@ def facilities_show(name: str, fmt: str, public_only: bool) -> None:
 
     import yaml
 
-    from imas_codex.discovery import get_facility, get_facility_public
+    from imas_codex.discovery import get_facility, get_facility_metadata
 
     try:
         if public_only:
-            data = get_facility_public(name)
+            data = get_facility_metadata(name)
         else:
             data = get_facility(name)
 
@@ -3598,10 +3598,11 @@ def explore(
     verbose: bool,
     dry_run: bool,
 ) -> None:
-    """Explore a remote facility using ReAct agent.
+    """Explore a remote facility using autonomous CodeAgent.
 
-    Systematically discovers code files, IMAS integration patterns, and physics
-    codes at a facility. Discovered files are queued for ingestion.
+    Uses smolagents CodeAgent that generates Python code to invoke tools,
+    enabling adaptive problem-solving and self-debugging. Discovered files
+    are queued for ingestion.
 
     The agent uses fast CLI tools (rg, fd, dust) for exploration and
     persists findings to the knowledge graph.
@@ -3626,6 +3627,9 @@ def explore(
         # Use specific model
         imas-codex explore iter -m anthropic/claude-sonnet-4.5
 
+        # Set cost limit
+        imas-codex explore iter -c 2.0
+
         # Verbose output
         imas-codex explore iter -v
 
@@ -3637,8 +3641,8 @@ def explore(
     from rich.console import Console
     from rich.panel import Panel
 
-    from imas_codex.agentic.explore import ExplorationResult, run_exploration
-    from imas_codex.agentic.llm import get_model_for_task
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.smol_explore import SmolExplorationAgent
     from imas_codex.discovery import get_facility as get_facility_config
 
     console = Console()
@@ -3650,11 +3654,12 @@ def explore(
         console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1) from e
 
-    # Resolve model
+    # Resolve model and cost limit
     effective_model = model or get_model_for_task("exploration")
+    effective_cost_limit = cost_limit if cost_limit is not None else 5.0
 
     # Build cost limit display
-    cost_limit_str = f"${cost_limit:.2f}" if cost_limit else "(no limit)"
+    cost_limit_str = f"${effective_cost_limit:.2f}"
 
     if dry_run:
         console.print(
@@ -3664,7 +3669,8 @@ def explore(
                 f"[cyan]Model:[/cyan] {effective_model}\n"
                 f"[cyan]Cost Limit:[/cyan] {cost_limit_str}\n"
                 f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
-                f"[cyan]Verbose:[/cyan] {verbose}",
+                f"[cyan]Verbose:[/cyan] {verbose}\n"
+                f"[cyan]Agent:[/cyan] smolagents CodeAgent",
                 title="Exploration Configuration (--dry-run)",
             )
         )
@@ -3674,39 +3680,46 @@ def explore(
     # Show startup info
     console.print(
         Panel.fit(
-            f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]",
+            f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]\n"
+            f"[dim]Using smolagents CodeAgent (cost limit: {cost_limit_str})[/dim]",
             title="IMAS Codex Explorer",
         )
     )
     if prompt:
         console.print(f"[dim]Guidance: {prompt}[/dim]")
-    if cost_limit:
-        console.print(f"[dim]Cost limit: ${cost_limit:.2f}[/dim]")
     console.print()
 
-    # Run exploration
-    try:
-        result: ExplorationResult = asyncio.run(
-            run_exploration(
-                facility=facility,
-                prompt=prompt,
-                verbose=verbose,
-                model=effective_model,
+    # Run exploration using new smolagents agent
+    async def run_exploration() -> None:
+        async with SmolExplorationAgent(
+            facility=facility,
+            model=effective_model,
+            verbose=verbose,
+            cost_limit_usd=effective_cost_limit,
+        ) as agent:
+            result = await agent.explore(prompt=prompt)
+
+            if result.error:
+                console.print(f"[red]Exploration failed: {result.error}[/red]")
+                raise SystemExit(1)
+
+            # Print summary
+            console.print()
+            console.print(Panel(result.summary, title="Exploration Summary"))
+            console.print()
+            console.print(f"[green]✓[/green] Files queued: {result.files_queued}")
+            console.print(f"[green]✓[/green] Notes added: {result.notes_added}")
+            console.print(f"[dim]Cost: ${result.cost_usd:.4f}[/dim]")
+            console.print(
+                f"[dim]Steps: {result.progress.steps} | "
+                f"Elapsed: {result.progress.elapsed_seconds:.1f}s[/dim]"
             )
-        )
 
-        if result.error:
-            console.print(f"[red]Exploration failed: {result.error}[/red]")
-            raise SystemExit(1)
+            if result.files_queued > 0:
+                console.print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
 
-        # Print summary
-        console.print()
-        console.print(Panel(result.summary, title="Exploration Summary"))
-        console.print()
-        console.print(f"[green]✓[/green] Files queued: {result.files_queued}")
-
-        if result.files_queued > 0:
-            console.print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
+    try:
+        asyncio.run(run_exploration())
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Exploration interrupted by user[/yellow]")

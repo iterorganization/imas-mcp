@@ -89,6 +89,8 @@ dependencies = [
     "llama-index-readers-file>=0.5.6",
     "keyring>=25.7.0",
     "secretstorage>=3.5.0",
+    "smolagents>=1.24.0",
+    "litellm>=1.81.0",
 ]
 
 [project.optional-dependencies]
