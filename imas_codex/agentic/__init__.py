@@ -5,6 +5,7 @@ This module provides:
 1. MCP server for tool-based exploration (AgentsServer)
 2. LlamaIndex ReActAgents for autonomous exploration
 3. Reusable tools for graph queries, SSH, and search
+4. Facility exploration CLI agent
 
 The ReActAgents can autonomously:
 - Query the Neo4j knowledge graph
@@ -13,6 +14,12 @@ The ReActAgents can autonomously:
 - Synthesize information across multiple sources
 """
 
+from imas_codex.agentic.explore import (
+    ExplorationResult,
+    create_exploration_agent,
+    run_exploration,
+    run_exploration_sync,
+)
 from imas_codex.agentic.llm import (
     DEFAULT_MODEL,
     MODELS,
@@ -62,10 +69,13 @@ __all__ = [
     "get_mapping_agent",
     "get_exploration_agent",
     "create_agent",
+    "create_exploration_agent",
     "AgentConfig",
     # Agent execution
     "run_agent",
     "run_agent_sync",
+    "run_exploration",
+    "run_exploration_sync",
     "quick_agent_task",
     "batch_enrich_paths",
     "react_batch_enrich_paths",
@@ -74,6 +84,7 @@ __all__ = [
     "compose_batches",
     "get_parent_path",
     "EnrichmentResult",
+    "ExplorationResult",
     "BatchProgress",
     # Tools
     "get_exploration_tools",

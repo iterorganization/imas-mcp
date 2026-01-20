@@ -323,3 +323,39 @@ def filter_private_fields(
     schema = get_schema()
     private_slots = set(schema.get_private_slots(node_type))
     return {k: v for k, v in data.items() if k not in private_slots}
+
+
+def add_exploration_note(facility_id: str, note: str) -> list[str]:
+    """Add a timestamped exploration note to facility's private data.
+
+    Automatically adds ISO timestamp prefix to the note. Notes are stored
+    in the exploration_notes list in the private config.
+
+    Args:
+        facility_id: Facility identifier (e.g., "epfl", "iter")
+        note: Exploration note to add
+
+    Returns:
+        Updated exploration_notes list
+
+    Examples:
+        >>> add_exploration_note("iter", "Found IMAS modules at /work/imas")
+        >>> add_exploration_note("iter", "Discovered 50 Python files in /work/codes")
+    """
+    from datetime import UTC, datetime
+
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamped_note = f"[{timestamp}] {note}"
+
+    # Load current notes
+    infra = get_facility_infrastructure(facility_id)
+    notes = infra.get("exploration_notes", [])
+
+    # Add new note
+    notes.append(timestamped_note)
+
+    # Persist
+    update_infrastructure(facility_id, {"exploration_notes": notes})
+
+    logger.info(f"Added exploration note for {facility_id}: {note[:50]}...")
+    return notes

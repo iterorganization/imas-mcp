@@ -3521,6 +3521,156 @@ def agent_mark_stale(
 
 
 # ============================================================================
+# Explore Command
+# ============================================================================
+
+
+@main.command("explore")
+@click.argument("facility")
+@click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Exploration guidance (e.g., 'Find IMAS integration code')",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model to use (default: from config)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose agent output",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show configuration without running",
+)
+def explore(
+    facility: str,
+    prompt: str | None,
+    model: str | None,
+    verbose: bool,
+    dry_run: bool,
+) -> None:
+    """Explore a remote facility using ReAct agent.
+
+    Systematically discovers code files, IMAS integration patterns, and physics
+    codes at a facility. Discovered files are queued for ingestion.
+
+    The agent uses fast CLI tools (rg, fd, dust) for exploration and
+    persists findings to the knowledge graph.
+
+    \b
+    COMPLETION CRITERIA (when is enough enough?):
+    - Minimum: 5+ directories identified, 20+ files queued
+    - Full: 100+ high-value files, major physics domains covered
+    - Diminishing returns: searches return mostly config/build files
+
+    \b
+    EXAMPLES:
+        # Basic exploration
+        imas-codex explore iter
+
+        # Guided exploration
+        imas-codex explore iter --prompt "Find IMAS integration code"
+
+        # Find equilibrium codes specifically
+        imas-codex explore epfl -p "Find CHEASE and LIUQE code"
+
+        # Use specific model
+        imas-codex explore iter -m anthropic/claude-sonnet-4.5
+
+        # Verbose output
+        imas-codex explore iter -v
+
+        # Check configuration
+        imas-codex explore iter --dry-run
+    """
+    import asyncio
+
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from imas_codex.agentic.explore import ExplorationResult, run_exploration
+    from imas_codex.agentic.llm import get_model_for_task
+    from imas_codex.discovery import get_facility as get_facility_config
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        config = get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Resolve model
+    effective_model = model or get_model_for_task("exploration")
+
+    if dry_run:
+        console.print(
+            Panel.fit(
+                f"[cyan]Facility:[/cyan] {facility}\n"
+                f"[cyan]SSH Host:[/cyan] {config.get('ssh_host', facility)}\n"
+                f"[cyan]Model:[/cyan] {effective_model}\n"
+                f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
+                f"[cyan]Verbose:[/cyan] {verbose}",
+                title="Exploration Configuration (--dry-run)",
+            )
+        )
+        console.print("\n[dim]Remove --dry-run to start exploration[/dim]")
+        return
+
+    # Show startup info
+    console.print(
+        Panel.fit(
+            f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]",
+            title="IMAS Codex Explorer",
+        )
+    )
+    if prompt:
+        console.print(f"[dim]Guidance: {prompt}[/dim]")
+    console.print()
+
+    # Run exploration
+    try:
+        result: ExplorationResult = asyncio.run(
+            run_exploration(
+                facility=facility,
+                prompt=prompt,
+                verbose=verbose,
+                model=effective_model,
+            )
+        )
+
+        if result.error:
+            console.print(f"[red]Exploration failed: {result.error}[/red]")
+            raise SystemExit(1)
+
+        # Print summary
+        console.print()
+        console.print(Panel(result.summary, title="Exploration Summary"))
+        console.print()
+        console.print(f"[green]✓[/green] Files queued: {result.files_queued}")
+
+        if result.files_queued > 0:
+            console.print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Exploration interrupted by user[/yellow]")
+        raise SystemExit(130) from None
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        logger.exception("Exploration failed")
+        raise SystemExit(1) from e
+
+
+# ============================================================================
 # Dynamic Facility Commands
 # ============================================================================
 

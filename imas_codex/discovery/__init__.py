@@ -10,9 +10,11 @@ Public API for facility configuration:
 - get_facility_infrastructure(): Load private infrastructure only
 - update_infrastructure(): Update private config (tools, paths, notes)
 - update_metadata(): Update public config (name, description)
+- add_exploration_note(): Add timestamped exploration note
 """
 
 from imas_codex.discovery.facility import (
+    add_exploration_note,
     filter_private_fields,
     get_facilities_dir,
     get_facility,
@@ -31,6 +33,7 @@ __all__ = [
     "get_facility_infrastructure",
     "update_infrastructure",
     "update_metadata",
+    "add_exploration_note",
     # Utilities
     "list_facilities",
     "get_facilities_dir",

@@ -33,6 +33,7 @@ def _load_model_config() -> dict[str, str]:
                 "discovery": models.get("discovery", DEFAULT_MODEL),
                 "evaluation": models.get("evaluation", DEFAULT_MODEL),
                 "enrichment": models.get("enrichment", DEFAULT_MODEL),
+                "exploration": models.get("exploration", DEFAULT_MODEL),
                 "presets": models.get("presets", {}),
             }
     except Exception:
@@ -42,6 +43,7 @@ def _load_model_config() -> dict[str, str]:
         "discovery": DEFAULT_MODEL,
         "evaluation": DEFAULT_MODEL,
         "enrichment": DEFAULT_MODEL,
+        "exploration": DEFAULT_MODEL,
         "presets": {},
     }
 

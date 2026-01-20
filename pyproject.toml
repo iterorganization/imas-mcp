@@ -189,6 +189,8 @@ discovery = "anthropic/claude-sonnet-4.5"
 evaluation = "anthropic/claude-sonnet-4.5"
 # Best model for physics understanding and enrichment
 enrichment = "google/gemini-3-pro-preview"
+# Model for facility exploration (good at planning, tool use)
+exploration = "anthropic/claude-sonnet-4.5"
 # Available model presets
 [tool.imas-codex.models.presets]
 gemini-flash = "google/gemini-3-flash-preview"
