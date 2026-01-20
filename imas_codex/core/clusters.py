@@ -137,18 +137,20 @@ class Clusters:
 
     def _get_clusters_document_count(self) -> int | None:
         """
-        Get the document count from clusters.json metadata (fast file read).
+        Get the source document count from clusters.json metadata (fast file read).
 
         This avoids loading the entire DocumentStore just to count documents.
+        Uses source_document_count which matches the embedding cache count.
 
         Returns:
-            The total_paths count from clusters metadata, or None if unavailable.
+            The source_document_count from clusters metadata, or None if unavailable.
         """
         try:
             with self.file_path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
             stats = data.get("statistics", {})
-            return stats.get("total_paths")
+            # Use source_document_count (matches embedding cache) not total_paths (clustered only)
+            return stats.get("source_document_count")
         except Exception as e:
             logger.debug(f"Could not read clusters document count: {e}")
             return None

@@ -106,7 +106,7 @@ class RelationshipExtractor:
 
         # Generate embeddings
         self.logger.info("Generating embeddings for %d paths...", len(filtered_paths))
-        embeddings, path_list = self._generate_embeddings(filtered_paths)
+        embeddings, path_list, source_doc_count = self._generate_embeddings(filtered_paths)
 
         # Cluster embeddings using hierarchical approach
         self.logger.info("Running hierarchical clustering (global/domain/IDS)...")
@@ -145,6 +145,7 @@ class RelationshipExtractor:
         metadata = RelationshipMetadata(
             generation_timestamp=generation_timestamp,
             total_paths_processed=len(filtered_paths),
+            source_document_count=source_doc_count,
             clustering_parameters={
                 "cross_ids": ClusteringParameters(
                     eps=self.config.cross_ids_eps,
@@ -472,6 +473,7 @@ class RelationshipExtractor:
                 "cross_ids_count": len(cross_ids_list),
                 "intra_ids_count": len(intra_ids_list),
                 "total_paths": len(path_to_cluster),
+                "source_document_count": relationships.metadata.source_document_count,
                 "centroid_embeddings_count": len(centroid_cluster_ids),
                 "label_embeddings_count": len(label_cluster_ids),
             },
@@ -812,11 +814,14 @@ class RelationshipExtractor:
 
     def _generate_embeddings(
         self, filtered_paths: dict[str, dict[str, Any]]
-    ) -> tuple[np.ndarray, list[str]]:
+    ) -> tuple[np.ndarray, list[str], int]:
         """Generate embeddings for filtered paths using shared encoder cache.
 
         Reuses the same cache filename logic as the build_embeddings script so we
         don't regenerate embeddings unnecessarily.
+
+        Returns:
+            Tuple of (embeddings array, path identifiers, source document count)
         """
 
         # Create DocumentStore with same configuration as build_embeddings.py
@@ -906,7 +911,10 @@ class RelationshipExtractor:
                 document_count=len(filtered_paths),
             )
 
-            return embeddings, filtered_identifiers
+            # Store source document count for cluster rebuild detection
+            self._source_document_count = len(all_documents)
+
+            return embeddings, filtered_identifiers, len(all_documents)
 
         except Exception as e:
             self.logger.error(f"Failed to get embeddings using shared approach: {e}")
