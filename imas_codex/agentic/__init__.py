@@ -68,6 +68,17 @@ from imas_codex.agentic.react import (
 )
 from imas_codex.agentic.server import AgentsServer
 from imas_codex.agentic.session import CostTracker, LLMSession, create_session
+from imas_codex.agentic.smol_enrich import (
+    BatchProgress as SmolBatchProgress,
+    EnrichmentResult as SmolEnrichmentResult,
+    compose_batches as smol_compose_batches,
+    discover_nodes_to_enrich as smol_discover_nodes,
+    estimate_enrichment_cost as smol_estimate_cost,
+    get_parent_path as smol_get_parent_path,
+    smol_batch_enrich_paths,
+    smol_quick_task,
+    smol_quick_task_sync,
+)
 from imas_codex.agentic.smol_explore import (
     ExplorationProgress,
     SmolExplorationAgent,
@@ -107,6 +118,16 @@ __all__ = [
     "get_enrichment_tools",
     "get_exploration_tools",
     "get_all_tools",
+    # Enrichment (smolagents)
+    "smol_quick_task",
+    "smol_quick_task_sync",
+    "smol_batch_enrich_paths",
+    "smol_compose_batches",
+    "smol_discover_nodes",
+    "smol_estimate_cost",
+    "smol_get_parent_path",
+    "SmolBatchProgress",
+    "SmolEnrichmentResult",
     # Exploration (smolagents)
     "SmolExplorationAgent",
     "SmolExplorationResult",

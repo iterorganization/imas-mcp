@@ -3522,7 +3522,12 @@ def imas_versions(available: bool) -> None:
 
 @main.group()
 def agent() -> None:
-    """Run LlamaIndex agents for exploration and enrichment.
+    """Run smolagents CodeAgents for autonomous tasks.
+
+    CodeAgents generate Python code to invoke tools, enabling:
+    - Loops and conditionals for complex workflows
+    - Self-debugging through code inspection
+    - Adaptive problem-solving
 
     \b
       imas-codex agent run       Run an agent with a task
@@ -3540,30 +3545,42 @@ def agent() -> None:
     type=click.Choice(["enrichment", "mapping", "exploration"]),
     help="Agent type to use",
 )
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=None,
+    type=float,
+    help="Maximum cost budget in USD",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
-def agent_run(task: str, agent_type: str, verbose: bool) -> None:
-    """Run an agent with a task.
+def agent_run(
+    task: str, agent_type: str, cost_limit: float | None, verbose: bool
+) -> None:
+    """Run an agent with a task using smolagents CodeAgent.
 
-    The agent can autonomously use tools to:
+    The agent generates Python code to autonomously:
     - Query the Neo4j knowledge graph
-    - Execute SSH commands on remote facilities
     - Search code examples and IMAS paths
+    - Adapt and self-debug to solve problems
 
     Examples:
         imas-codex agent run "Describe what \\RESULTS::ASTRA is used for"
 
         imas-codex agent run "Find IMAS paths for electron temperature" --type mapping
+
+        imas-codex agent run "Explore EPFL for equilibrium codes" --type exploration -c 1.0
     """
-    import asyncio
+    from imas_codex.agentic import smol_quick_task_sync
 
-    from imas_codex.agentic import quick_agent_task
-
-    click.echo(f"Running {agent_type} agent...")
+    click.echo(f"Running {agent_type} agent (smolagents CodeAgent)...")
     if verbose:
-        click.echo(f"Task: {task}\n")
+        click.echo(f"Task: {task}")
+    if cost_limit:
+        click.echo(f"Cost limit: ${cost_limit:.2f}")
+    click.echo()
 
     try:
-        result = asyncio.run(quick_agent_task(task, agent_type, verbose))
+        result = smol_quick_task_sync(task, agent_type, verbose, cost_limit)
         click.echo("\n=== Agent Response ===")
         click.echo(result)
     except Exception as e:
@@ -3621,10 +3638,11 @@ def agent_enrich(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using ReAct agent with tool access.
+    """Enrich TreeNode metadata using smolagents CodeAgent.
 
-    The agent gathers context from the knowledge graph, code examples,
-    and IMAS DD before generating physics-accurate descriptions.
+    The agent generates Python code to gather context from the
+    knowledge graph and code examples, then produces physics-accurate
+    descriptions. Uses adaptive problem-solving and self-debugging.
 
     Paths are grouped by parent node for efficient batch processing.
     A Rich progress display shows current batch, tree, and statistics.
@@ -3684,13 +3702,13 @@ def agent_enrich(
     from rich.table import Table
 
     from imas_codex.agentic import (
-        BatchProgress,
-        compose_batches,
-        discover_nodes_to_enrich,
-        estimate_enrichment_cost,
+        SmolBatchProgress,
         get_model_for_task,
-        get_parent_path,
-        react_batch_enrich_paths,
+        smol_batch_enrich_paths,
+        smol_compose_batches,
+        smol_discover_nodes,
+        smol_estimate_cost,
+        smol_get_parent_path,
     )
 
     console = Console()
@@ -3719,7 +3737,7 @@ def agent_enrich(
         if linked:
             filter_desc += ", with code context"
         console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
-        nodes = discover_nodes_to_enrich(
+        nodes = smol_discover_nodes(
             tree_name=tree,
             status=target_status,
             with_context_only=linked,
@@ -3748,12 +3766,12 @@ def agent_enrich(
             effective_batch_size = 100
 
     # Compose smart batches grouped by parent (for preview)
-    batches = compose_batches(
+    batches = smol_compose_batches(
         path_list, batch_size=effective_batch_size, group_by_parent=True
     )
 
     # Show cost estimate
-    cost_est = estimate_enrichment_cost(len(path_list), effective_batch_size)
+    cost_est = smol_estimate_cost(len(path_list), effective_batch_size)
     cost_info = (
         f"[dim]Batches: {len(batches)} | "
         f"Est. time: {cost_est['estimated_hours'] * 60:.0f}min | "
@@ -3764,13 +3782,13 @@ def agent_enrich(
     cost_info += "[/dim]"
     console.print()
     console.print(cost_info)
-    console.print(f"[dim]Model: {effective_model}[/dim]")
+    console.print(f"[dim]Model: {effective_model} (smolagents CodeAgent)[/dim]")
 
     if dry_run:
         console.print("\n[yellow][DRY RUN] Will not persist to graph[/yellow]")
         console.print("\n[cyan]Batch preview:[/cyan]")
         for i, batch in enumerate(batches[:5], 1):
-            parent = get_parent_path(batch[0]) if batch else "?"
+            parent = smol_get_parent_path(batch[0]) if batch else "?"
             console.print(f"  Batch {i}: {len(batch)} paths from [bold]{parent}[/bold]")
             for p in batch[:3]:
                 console.print(f"    {p}")
@@ -3859,7 +3877,7 @@ def agent_enrich(
     # Progress callback that updates state
     live_display: Live | None = None
 
-    def on_progress(p: BatchProgress) -> None:
+    def on_progress(p: SmolBatchProgress) -> None:
         state.batch_num = p.batch_num
         state.total_batches = p.total_batches
         state.parent_path = p.parent_path
@@ -3877,7 +3895,7 @@ def agent_enrich(
             create_progress_display(), console=console, refresh_per_second=4
         ) as live:
             live_display = live
-            return await react_batch_enrich_paths(
+            return await smol_batch_enrich_paths(
                 paths=path_list,
                 tree_name=tree_name,
                 batch_size=effective_batch_size,
