@@ -1,20 +1,41 @@
 """
 Agents MCP Server - Streamlined tools for LLM-driven facility exploration.
 
-This server provides 4 core MCP tools:
-- python: Persistent Python REPL with rich pre-loaded utilities
+This server provides 9 MCP tools organized by purpose:
+
+Graph Operations:
 - get_graph_schema: Schema introspection for query generation
 - add_to_graph: Schema-validated node creation with privacy filtering
-- update_facility_config: Read/update facility configuration (public or private)
 
-The python() REPL is the primary interface, providing:
-- Graph: query(), add_to_graph(), semantic_search(), embed()
+Facility Infrastructure (Private Data):
+- update_facility_infrastructure: Deep-merge update to private YAML
+- get_facility_infrastructure: Read private infrastructure data
+- add_exploration_note: Append timestamped exploration note
+- update_facility_paths: Update path mappings
+- update_facility_tools: Update tool availability
+
+Legacy/General:
+- update_facility_config: Read/update facility config (public or private)
+- python: Persistent Python REPL with rich pre-loaded utilities
+
+The python() REPL provides advanced operations:
+- Graph: query(), semantic_search(), embed()
 - Remote: run(), check_tools() (auto-detects local vs SSH)
 - Facility: get_facility(), get_exploration_targets(), get_tree_structure()
-- Config: update_infrastructure(), update_metadata()
 - IMAS DD: search_imas(), fetch_imas(), list_imas(), check_imas()
 - COCOS: validate_cocos(), determine_cocos(), cocos_sign_flip_paths(), cocos_info()
 - Code: search_code()
+
+Use python() for:
+- Complex multi-step operations requiring state
+- Graph queries with Cypher
+- Chained processing with intermediate logic
+- IMAS/COCOS domain-specific operations
+
+Use dedicated MCP tools for:
+- Single-purpose infrastructure updates
+- Clear, type-safe operations
+- Better discoverability and documentation
 
 REPL state is loaded eagerly on server startup for instant tool response.
 """
@@ -1262,6 +1283,240 @@ class AgentsServer:
             except Exception as e:
                 logger.exception(f"Failed to access config for {facility}")
                 raise RuntimeError(f"Failed to access config: {e}") from e
+
+        # =====================================================================
+        # Tool 5: update_facility_infrastructure - Update private facility data
+        # =====================================================================
+
+        @self.mcp.tool()
+        def update_facility_infrastructure(
+            facility: str,
+            data: dict[str, Any],
+        ) -> dict[str, Any]:
+            """
+            Update private facility infrastructure data with deep merge.
+
+            Use this for sensitive infrastructure data that should NOT go in the graph:
+            - Tool versions and availability
+            - File system paths and mounts
+            - Hostnames and network info
+            - OS and environment details
+            - Exploration notes
+
+            The data is deep-merged into the existing private YAML file,
+            preserving comments and formatting.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl", "iter")
+                data: Data to merge into private file
+
+            Returns:
+                Updated private infrastructure data
+
+            Examples:
+                # Update tool availability
+                update_facility_infrastructure("iter", {
+                    "tools": {"rg": {"version": "14.1.1", "path": "~/bin/rg"}}
+                })
+
+                # Update file system paths
+                update_facility_infrastructure("iter", {
+                    "paths": {
+                        "imas": {"/work/imas": "IMAS installation root"}
+                    }
+                })
+
+                # Add multiple fields at once
+                update_facility_infrastructure("iter", {
+                    "file_systems": [{
+                        "mount_point": "/mnt/HPC_T2",
+                        "type": "GPFS",
+                        "size": "1.5 PB"
+                    }],
+                    "exploration_notes": ["Discovered HPC storage"]
+                })
+            """
+            try:
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                    update_infrastructure as _update_infra,
+                )
+
+                _update_infra(facility, data)
+                return _get_infra(facility) or {}
+            except Exception as e:
+                logger.exception(f"Failed to update infrastructure for {facility}")
+                raise RuntimeError(f"Failed to update infrastructure: {e}") from e
+
+        # =====================================================================
+        # Tool 6: get_facility_infrastructure - Read private facility data
+        # =====================================================================
+
+        @self.mcp.tool()
+        def get_facility_infrastructure(facility: str) -> dict[str, Any]:
+            """
+            Read private facility infrastructure data.
+
+            Returns only the private infrastructure data (not public config).
+            Use this to check what's already stored before updating.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl", "iter")
+
+            Returns:
+                Private infrastructure data dict
+
+            Example:
+                # Check current infrastructure
+                infra = get_facility_infrastructure("iter")
+                print(infra.get("tools", {}))
+                print(infra.get("exploration_notes", []))
+            """
+            try:
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                )
+
+                return _get_infra(facility) or {}
+            except Exception as e:
+                logger.exception(f"Failed to get infrastructure for {facility}")
+                raise RuntimeError(f"Failed to get infrastructure: {e}") from e
+
+        # =====================================================================
+        # Tool 7: add_exploration_note - Append timestamped exploration note
+        # =====================================================================
+
+        @self.mcp.tool()
+        def add_exploration_note(facility: str, note: str) -> list[str]:
+            """
+            Append a timestamped exploration note to facility's private data.
+
+            Automatically adds ISO timestamp prefix to the note.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl", "iter")
+                note: Exploration note to add
+
+            Returns:
+                Updated exploration_notes list
+
+            Examples:
+                add_exploration_note("iter", "Found IMAS modules at /work/imas")
+                add_exploration_note("iter", "Discovered 50 Python files in /work/codes")
+            """
+            try:
+                from datetime import datetime
+
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                )
+
+                infra = _get_infra(facility) or {}
+                notes = infra.get("exploration_notes", [])
+
+                # Add timestamped note
+                timestamp = datetime.now().strftime("%Y-%m-%d")
+                timestamped_note = f"{timestamp}: {note}"
+                notes.append(timestamped_note)
+
+                update_infrastructure(facility, {"exploration_notes": notes})
+                return notes
+            except Exception as e:
+                logger.exception(f"Failed to add exploration note for {facility}")
+                raise RuntimeError(f"Failed to add exploration note: {e}") from e
+
+        # =====================================================================
+        # Tool 8: update_facility_paths - Update facility path mappings
+        # =====================================================================
+
+        @self.mcp.tool()
+        def update_facility_paths(
+            facility: str,
+            paths: dict[str, dict[str, str]],
+        ) -> dict[str, dict[str, str]]:
+            """
+            Update facility path mappings in private data.
+
+            Use this to record important directory paths discovered during exploration.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl", "iter")
+                paths: Nested dict of path categories and paths
+
+            Returns:
+                Updated paths section
+
+            Example:
+                update_facility_paths("iter", {
+                    "imas": {
+                        "root": "/work/imas",
+                        "core": "/work/imas/core",
+                        "shared": "/work/imas/shared"
+                    },
+                    "codes": {
+                        "chease": "/work/codes/chease",
+                        "helena": "/work/codes/helena"
+                    }
+                })
+            """
+            try:
+                update_infrastructure(facility, {"paths": paths})
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                )
+
+                infra = _get_infra(facility) or {}
+                return infra.get("paths", {})
+            except Exception as e:
+                logger.exception(f"Failed to update paths for {facility}")
+                raise RuntimeError(f"Failed to update paths: {e}") from e
+
+        # =====================================================================
+        # Tool 9: update_facility_tools - Update tool availability
+        # =====================================================================
+
+        @self.mcp.tool()
+        def update_facility_tools(
+            facility: str,
+            tools: dict[str, dict[str, str]],
+        ) -> dict[str, dict[str, str]]:
+            """
+            Update tool availability and versions in private data.
+
+            Use this after running check_tools() to persist tool information.
+
+            Args:
+                facility: Facility identifier (e.g., "epfl", "iter")
+                tools: Dict of tool_name -> {version, path, purpose}
+
+            Returns:
+                Updated tools section
+
+            Example:
+                update_facility_tools("iter", {
+                    "rg": {
+                        "version": "14.1.1",
+                        "path": "/home/user/bin/rg",
+                        "purpose": "Fast pattern search"
+                    },
+                    "fd": {
+                        "version": "10.2.0",
+                        "path": "/home/user/bin/fd",
+                        "purpose": "Fast file finder"
+                    }
+                })
+            """
+            try:
+                update_infrastructure(facility, {"tools": tools})
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                )
+
+                infra = _get_infra(facility) or {}
+                return infra.get("tools", {})
+            except Exception as e:
+                logger.exception(f"Failed to update tools for {facility}")
+                raise RuntimeError(f"Failed to update tools: {e}") from e
 
     def _register_prompts(self):
         """Register MCP prompts from markdown files."""

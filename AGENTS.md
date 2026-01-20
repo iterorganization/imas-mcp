@@ -59,15 +59,32 @@ python("info = get_facility('facility_name'); print(f'Is local: {info.get(\"is_l
 3. **Chained processing with logic?** → Use `python()` with `run()` (auto-detects local/remote)
 4. **Graph queries or MCP functions?** → Use `python()` with `query()`, `add_to_graph()`, etc.
 
-### MCP `python()` for Chained Processing
+### MCP Tool Selection: When to Use What
 
-Use MCP `python()` when you need:
-- **Chained operations** with intermediate processing
-- **Graph queries** and data manipulation
+**Use dedicated MCP tools** (preferred for single operations):
+- `update_facility_infrastructure()` - Update private facility data
+- `get_facility_infrastructure()` - Read private facility data
+- `add_exploration_note()` - Add timestamped exploration note
+- `update_facility_paths()` - Update path mappings
+- `update_facility_tools()` - Update tool availability
+- `add_to_graph()` - Create graph nodes
+- `get_graph_schema()` - Get schema for queries
+
+**Use MCP `python()` only when you need**:
+- **Chained operations** with intermediate processing and logic
+- **Graph queries** with Cypher (use `query()` function)
 - **REPL state** to avoid import overhead across multiple operations
+- **IMAS/COCOS domain operations** (search_imas, validate_cocos, etc.)
+- **Complex data transformations** that require Python execution
 
-Use **terminal directly** for single operations on local facility (`rg`, `fd`, `git`, `uv run`).
-Use **direct SSH** for single operations on remote facility (`ssh facility "command"`).
+**Use terminal directly** for single operations:
+- Local facility: `rg`, `fd`, `git`, `dust`, `uv run`
+- Remote facility: `ssh facility "command"`
+
+**Never use `python()` for**:
+- Text formatting or markdown generation (LLM can do this natively)
+- Single infrastructure updates (use dedicated MCP tools)
+- Simple string operations that don't require execution
 
 **Batch operations in single calls** to reduce tool invocations:
 ```python
@@ -106,6 +123,28 @@ ssh epfl "fd -e py /home/codes | head -20"
 python("print(run('rg -l IMAS /home/codes', facility='epfl'))")
 ```
 
+### Discovering the Python REPL API
+
+The `python()` tool provides a persistent REPL with pre-loaded utilities. **Always discover the API first** before using it:
+
+```python
+# Discover available tools via introspection
+python("print([name for name in dir() if not name.startswith('_')])")
+
+# Get function help and signatures
+python("help(search_imas)")  # Full docstring
+python("import inspect; print(inspect.signature(get_facility))")  # Signature only
+python("print(search_imas.__doc__)")  # Just the docstring
+```
+
+**Why discover instead of relying on pre-loaded knowledge?**
+1. Functions may be added/removed between versions
+2. Signatures may change
+3. New utilities may be available
+4. Ensures you're using the current API, not outdated assumptions
+
+**Common REPL Functions** (verify with `dir()` first):
+
 ```python
 # Discover available tools via introspection
 python("print([name for name in dir() if not name.startswith('_')])")
@@ -131,17 +170,11 @@ for f in files[:10]:
 # IMAS search
 python("print(search_imas('electron temperature'))")
 
-# Persist discoveries
-python("add_to_graph('SourceFile', [{'id': 'epfl:/path', 'path': '/path', ...}])")
-
-# Facility info and exploration targets
-python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
-
 # Code search
 python("print(search_code('equilibrium reconstruction'))")
 ```
 
-After editing `imas_codex/` source files, reload the REPL to pick up changes:
+**After editing `imas_codex/` source files**, reload the REPL to pick up changes:
 
 ```python
 python("print(reload())")  # Clears module cache and reinitializes
@@ -150,10 +183,9 @@ python("print(reload())")  # Clears module cache and reinitializes
 **Use `uv run` for:** git operations, ruff linting/formatting, pytest, and package management.
 
 **Never use `python()` for:**
-- Formatting text output (LLM can do this natively)
-- Generating markdown or documentation
-- Text manipulation that doesn't require execution
-- Simple string operations
+- Text formatting or markdown generation (LLM can do this natively)
+- Single infrastructure updates (use dedicated MCP tools)
+- Simple string operations that don't require execution
 
 ### Fast Tools (Prefer Over Standard Unix)
 
@@ -372,8 +404,16 @@ git checkout -- .  # Discard any remaining changes
 | Facility info | `python("print(get_facility('epfl'))")` |
 | Check tools | `python("print(check_tools('epfl'))")` |
 | Setup tools | `python("result = setup_tools('epfl'); print(result.summary)")` |
-| Add to graph | `python("add_to_graph('SourceFile', [...])")` |
-| Update infrastructure | `python("update_infrastructure('epfl', {...})")` |
+| Add to graph | `add_to_graph('SourceFile', [...])` (MCP tool) |
+| Update infrastructure | `update_facility_infrastructure('epfl', {...})` (MCP tool) |
+| Get infrastructure | `get_facility_infrastructure('epfl')` (MCP tool) |
+| Add exploration note | `add_exploration_note('epfl', 'Found IMAS at /work')` (MCP tool) |
+| Update paths | `update_facility_paths('epfl', {'imas': {...}})` (MCP tool) |
+| Update tools | `update_facility_tools('epfl', {'rg': {...}})` (MCP tool) |
+
+**MCP Tools vs python():**
+- Use MCP tools for single-purpose operations (better discoverability, type safety)
+- Use `python()` for chained processing, graph queries, IMAS/COCOS operations
 
 Never `RETURN n` - always project properties (`n.id, n.name`). Embeddings add ~2k tokens/node. See [agents/graph.md](agents/graph.md#token-cost-optimization).
 

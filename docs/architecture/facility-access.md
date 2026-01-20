@@ -9,17 +9,21 @@
 
 ## Executive Summary
 
+The creation of transforms that map fusion data from facility specific data formats into the IMAS Data Dictionary format is labour intensive. We propose an automation to this process to increase the speed of production as well as the quality and coverage of these data maps. The generation of IMAS mapping transforms requires a detailed understanding of both the source facility data and the target Data Dictionary. We infer the meaning of facility data by examining documentation, code, and example datasets and persist our findings. By extracting the semantics of the IMAS Data Dictionary in a similar way we can identify source-target data pairs with similar meaning and extract the required maps. 
+
+We separate the extraction of source-target knowledge from the persistence of deterministic maps by creating two separate projects, IMAS Codex and IMAS Ambix. Here, the Codex project manages our private knowledge state whilst Ambix serves our public distilled IMAS mappings for each facility.
+
 IMAS Codex is a knowledge graph builder that maps facility-specific data structures to the IMAS (Integrated Modelling & Analysis Suite) standard. This document explains the data flow architecture and SSH access patterns used for facility discovery.
 
-IMAS Ambix is a partner project that consumes distilled mappings from the Codex knowledge graph. It is a deterministic runtime product with no LLM usage; end users employ Ambix to transform facility data to IMAS format or to generate UDA mapping files, all derived from validated mapping links exported from the Codex graph.
+IMAS Ambix is a partner project that consumes distilled mappings from the Codex knowledge graph. Ambix is a deterministic runtime product with no LLM usage; end users employ Ambix to transform facility data to IMAS format or to generate UDA mapping files, all derived from validated mapping links exported from the Codex graph.
 
 **Key Points**:
-- All LLM queries originate from **ITER (SDCC)**, never from fusion facilities
-- SSH access is used for **facility discovery** — exploring code, data structures, and documentation
-- Code analysis uses **Zero Data Retention (ZDR)** LLM endpoints
+- All LLM queries originate from ITER (SDCC), never from fusion facilities
+- SSH access is used for facility discovery: exploring code, data structures, and documentation
+- Code analysis uses Zero Data Retention (ZDR) LLM endpoints
 - Mappings are **frozen** in imas-ambix for deterministic runtime use (no LLM at runtime)
 
-**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped 171,000+ TreeNodes, ingested 8,500+ code chunks, and indexed 2,900+ wiki pages.
+**Track Record**: This approach has been deployed at EPFL (TCV), where we have mapped MDSPlus TreeNodes, ingested relevant code chunks, and indexed wiki pages.
 
 ---
 
@@ -33,7 +37,7 @@ flowchart TB
             F["EPFL / WEST / JET"]
         end
         subgraph LLM["LLM Providers"]
-            L["OpenRouter (ZDR)"]
+            L["Microsoft / OpenRouter (ZDR)"]
         end
     end
 
@@ -51,7 +55,7 @@ flowchart TB
 (public)"]
 
     F -- "documents,
-    code,
+    code snippets,
     metadata" --> INGEST
     INGEST -- "SSH" --> F
     L -- "responses" --> AGENTS
@@ -130,7 +134,7 @@ flowchart LR
 
 ### Code Ingestion Pipeline
 
-At EPFL, we've ingested **8,500+ code chunks** from analysis scripts and library code.
+We ingest code chunks from analysis scripts and library code using the following discovery pattern.
 
 ```mermaid
 flowchart TB
@@ -186,7 +190,7 @@ flowchart TB
 
 ### MDSplus Tree Walking Pipeline
 
-At EPFL, we've mapped **171,000+ TreeNodes** from 29 MDSplus trees.
+At EPFL, we've developed a mapping procedure for MDSPlus TreeNodes with the schemas of 29 trees ingested.
 
 ```mermaid
 flowchart TB
@@ -241,7 +245,7 @@ flowchart TB
 
 ### Wiki Ingestion Pipeline
 
-At EPFL, we've ingested **2,972 wiki pages** from `spcwiki.epfl.ch` into **26,445 WikiChunk** nodes.
+At EPFL, we've ingested relevant wiki pages from `spcwiki.epfl.ch`.
 
 ```mermaid
 flowchart TB
@@ -402,7 +406,7 @@ for child in node.getChildren()[:10]:
 
 ### Wiki Content Queries (Real EPFL Examples)
 
-TCV wiki at `spcwiki.epfl.ch` - 2,972 pages indexed.
+TCV wiki at `spcwiki.epfl.ch`.
 
 ```bash
 # Fetch wiki page (requires -k for SSL cert issues)
