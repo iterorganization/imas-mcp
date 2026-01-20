@@ -1547,7 +1547,7 @@ def _import_clusters(
             ids_names = cluster.get("ids_names", [])
             scope = cluster.get("scope", "global")
 
-            # Build cluster properties dict
+            # Build cluster properties dict - always include all params to avoid Neo4j errors
             cluster_props = {
                 "cluster_id": str(cluster_id),
                 "label": label,
@@ -1556,17 +1556,12 @@ def _import_clusters(
                 "cross_ids": cross_ids,
                 "similarity_score": similarity_score,
                 "scope": scope,
+                "centroid": centroid if centroid and isinstance(centroid, list) else None,
+                "ids_names": ids_names if ids_names else [],
             }
 
-            # Add centroid if available (list of floats for Neo4j vector index)
-            if centroid and isinstance(centroid, list):
-                cluster_props["centroid"] = centroid
-
-            # Add IDS names as array
-            if ids_names:
-                cluster_props["ids_names"] = ids_names
-
             # Create SemanticCluster node with all properties
+            # Use CASE expressions to handle null centroid
             client.query(
                 """
                 MERGE (c:SemanticCluster {id: $cluster_id})
@@ -1576,8 +1571,10 @@ def _import_clusters(
                     c.cross_ids = $cross_ids,
                     c.similarity_score = $similarity_score,
                     c.scope = $scope,
-                    c.centroid = $centroid,
                     c.ids_names = $ids_names
+                WITH c, $centroid AS centroid
+                WHERE centroid IS NOT NULL
+                SET c.centroid = centroid
                 """,
                 **cluster_props,
             )
