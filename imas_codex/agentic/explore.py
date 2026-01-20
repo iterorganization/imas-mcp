@@ -31,22 +31,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
+# Suppress Pydantic deprecation warnings from LlamaIndex internals
+# These are caused by LlamaIndex using deprecated Pydantic v1 patterns
+# and will be fixed in a future LlamaIndex release
+warnings.filterwarnings("ignore", message=".*__fields__.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*__fields_set__.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*model_fields.*instance.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*model_computed_fields.*instance.*deprecated.*")
 
-from imas_codex.agentic.llm import get_llm, get_model_for_task
-from imas_codex.agentic.prompt_loader import load_prompts
-from imas_codex.code_examples import queue_source_files
-from imas_codex.discovery import (
+from llama_index.core.agent import ReActAgent  # noqa: E402
+from llama_index.core.tools import FunctionTool  # noqa: E402
+
+from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
+from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
+from imas_codex.code_examples import queue_source_files  # noqa: E402
+from imas_codex.discovery import (  # noqa: E402
     add_exploration_note,
     get_facility,
     update_infrastructure,
 )
-from imas_codex.graph import GraphClient
-from imas_codex.remote.tools import run
+from imas_codex.graph import GraphClient  # noqa: E402
+from imas_codex.remote.tools import run  # noqa: E402
 
 if TYPE_CHECKING:
     from types import TracebackType
