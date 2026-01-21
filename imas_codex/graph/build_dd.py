@@ -246,8 +246,9 @@ def filter_embeddable_paths(
     """
     Filter paths to only those that should have embeddings generated.
 
-    Error fields, GGD paths, and metadata paths are excluded from embedding
-    generation but still exist as nodes in the graph.
+    Error fields and metadata paths are excluded from embedding generation
+    but still exist as nodes in the graph. GGD paths are included by default
+    (configurable via `include-ggd` setting in pyproject.toml).
 
     Args:
         paths_data: Dict mapping path_id to path metadata
@@ -863,7 +864,8 @@ def build_dd_graph(
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
 
     # Generate and store embeddings for current version paths
-    # Filter out error fields, GGD, and metadata paths to reduce embedding count
+    # Filter out error fields and metadata paths to reduce embedding count
+    # GGD paths are included by default (configurable via include-ggd setting)
     if include_embeddings and not dry_run:
         current_version_data = version_data.get(current_dd_version)
         if current_version_data:
