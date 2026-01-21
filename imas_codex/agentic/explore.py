@@ -245,7 +245,7 @@ class ExplorationAgent:
         )
 
         # Build system prompt
-        system_prompt = _get_prompt("explore-facility")
+        system_prompt = _get_prompt("scout-facility")
         if not system_prompt:
             system_prompt = "You are an expert at exploring fusion facility codebases."
 

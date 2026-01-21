@@ -1,7 +1,7 @@
 """
-ReAct agent for installing fast CLI tools on local and remote facilities.
+Smolagents agent for installing fast CLI tools on local and remote facilities.
 
-This agent reactively checks tool availability and installs missing tools.
+This agent checks tool availability and installs missing tools.
 It handles architecture detection, PATH configuration, and verification.
 
 Usage from python() REPL:
@@ -18,10 +18,9 @@ Usage from python() REPL:
 import logging
 from dataclasses import dataclass
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
+from smolagents import CodeAgent, Tool
 
-from imas_codex.agentic.llm import get_llm
+from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
 from imas_codex.remote.tools import (
     check_all_tools,
     check_tool,
@@ -71,113 +70,155 @@ Provide a summary like:
 """
 
 
-def _create_tool_installer_tools(facility: str | None = None) -> list[FunctionTool]:
-    """Create LlamaIndex tools for the installer agent.
+def _create_tool_installer_tools(facility: str | None = None) -> list[Tool]:
+    """Create smolagents tools for the installer agent.
 
     Args:
         facility: Target facility (None = local)
 
     Returns:
-        List of FunctionTool instances
+        List of Tool instances
     """
 
-    def check_tools() -> dict:
-        """Check availability of all fast CLI tools.
+    class CheckToolsTool(Tool):
+        """Check availability of all fast CLI tools."""
 
-        Returns dict with:
-        - tools: {tool_name: {available, version, required, purpose}}
-        - required_ok: bool
-        - missing_required: list
-        - missing_optional: list
-        """
-        return check_all_tools(facility=facility)
+        name = "check_tools"
+        description = "Check availability of all fast CLI tools. Returns dict with tools status, required_ok, missing_required, missing_optional."
+        inputs = {}
+        output_type = "object"
 
-    def check_single_tool(tool_key: str) -> dict:
-        """Check if a specific tool is available.
+        def forward(self) -> dict:
+            return check_all_tools(facility=facility)
 
-        Args:
-            tool_key: Tool key (e.g., 'rg', 'fd', 'tokei')
+    class CheckSingleToolTool(Tool):
+        """Check if a specific tool is available."""
 
-        Returns dict with available, version, path, required, purpose
-        """
-        return check_tool(tool_key, facility=facility)
+        name = "check_single_tool"
+        description = "Check if a specific tool is available. Returns dict with available, version, path, required, purpose."
+        inputs = {
+            "tool_key": {
+                "type": "string",
+                "description": "Tool key (e.g., 'rg', 'fd', 'tokei')",
+            }
+        }
+        output_type = "object"
 
-    def get_architecture() -> str:
-        """Detect CPU architecture of target system.
+        def forward(self, tool_key: str) -> dict:
+            return check_tool(tool_key, facility=facility)
 
-        Returns 'x86_64' or 'aarch64'
-        """
-        return detect_architecture(facility=facility)
+    class GetArchitectureTool(Tool):
+        """Detect CPU architecture of target system."""
 
-    def configure_path() -> str:
-        """Ensure ~/bin is in PATH, adding to .bashrc if needed.
-
-        Returns status message.
-        """
-        return ensure_path(facility=facility)
-
-    def install_single_tool(tool_key: str, force: bool = False) -> dict:
-        """Install a specific tool.
-
-        Args:
-            tool_key: Tool key (e.g., 'rg', 'fd')
-            force: Reinstall even if already present
-
-        Returns dict with success, action, version, error
-        """
-        return install_tool(tool_key, facility=facility, force=force)
-
-    def install_all(required_only: bool = False, force: bool = False) -> dict:
-        """Install all fast tools.
-
-        Args:
-            required_only: Only install required tools (rg, fd)
-            force: Reinstall even if already present
-
-        Returns dict with installed, already_present, failed lists
-        """
-        return install_all_tools(
-            facility=facility, required_only=required_only, force=force
+        name = "get_architecture"
+        description = (
+            "Detect CPU architecture of target system. Returns 'x86_64' or 'aarch64'."
         )
+        inputs = {}
+        output_type = "string"
 
-    def run_command(cmd: str) -> str:
-        """Run a shell command on the target system.
+        def forward(self) -> str:
+            return detect_architecture(facility=facility)
 
-        Args:
-            cmd: Shell command to execute
+    class ConfigurePathTool(Tool):
+        """Ensure ~/bin is in PATH."""
 
-        Returns command output
-        """
-        return run(cmd, facility=facility)
+        name = "configure_path"
+        description = "Ensure ~/bin is in PATH, adding to .bashrc if needed. Returns status message."
+        inputs = {}
+        output_type = "string"
 
-    def list_available_tools() -> dict:
-        """List all tools defined in fast_tools.yaml.
+        def forward(self) -> str:
+            return ensure_path(facility=facility)
 
-        Returns dict with required and optional tool definitions.
-        """
-        config = load_fast_tools()
-        return {
-            "required": {
-                k: {"name": v.name, "purpose": v.purpose, "binary": v.binary}
-                for k, v in config.required.items()
+    class InstallSingleToolTool(Tool):
+        """Install a specific tool."""
+
+        name = "install_single_tool"
+        description = "Install a specific tool. Returns dict with success, action, version, error."
+        inputs = {
+            "tool_key": {
+                "type": "string",
+                "description": "Tool key (e.g., 'rg', 'fd')",
             },
-            "optional": {
-                k: {"name": v.name, "purpose": v.purpose, "binary": v.binary}
-                for k, v in config.optional.items()
+            "force": {
+                "type": "boolean",
+                "description": "Reinstall even if already present",
+                "nullable": True,
             },
         }
+        output_type = "object"
+
+        def forward(self, tool_key: str, force: bool = False) -> dict:
+            return install_tool(tool_key, facility=facility, force=force)
+
+    class InstallAllTool(Tool):
+        """Install all fast tools."""
+
+        name = "install_all"
+        description = "Install all fast tools. Returns dict with installed, already_present, failed lists."
+        inputs = {
+            "required_only": {
+                "type": "boolean",
+                "description": "Only install required tools (rg, fd)",
+                "nullable": True,
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Reinstall even if already present",
+                "nullable": True,
+            },
+        }
+        output_type = "object"
+
+        def forward(self, required_only: bool = False, force: bool = False) -> dict:
+            return install_all_tools(
+                facility=facility, required_only=required_only, force=force
+            )
+
+    class RunCommandTool(Tool):
+        """Run a shell command on the target system."""
+
+        name = "run_command"
+        description = (
+            "Run a shell command on the target system. Returns command output."
+        )
+        inputs = {"cmd": {"type": "string", "description": "Shell command to execute"}}
+        output_type = "string"
+
+        def forward(self, cmd: str) -> str:
+            return run(cmd, facility=facility)
+
+    class ListAvailableToolsTool(Tool):
+        """List all tools defined in fast_tools.yaml."""
+
+        name = "list_available_tools"
+        description = "List all tools defined in fast_tools.yaml. Returns dict with required and optional tool definitions."
+        inputs = {}
+        output_type = "object"
+
+        def forward(self) -> dict:
+            config = load_fast_tools()
+            return {
+                "required": {
+                    k: {"name": v.name, "purpose": v.purpose, "binary": v.binary}
+                    for k, v in config.required.items()
+                },
+                "optional": {
+                    k: {"name": v.name, "purpose": v.purpose, "binary": v.binary}
+                    for k, v in config.optional.items()
+                },
+            }
 
     return [
-        FunctionTool.from_defaults(fn=check_tools, name="check_tools"),
-        FunctionTool.from_defaults(fn=check_single_tool, name="check_single_tool"),
-        FunctionTool.from_defaults(fn=get_architecture, name="get_architecture"),
-        FunctionTool.from_defaults(fn=configure_path, name="configure_path"),
-        FunctionTool.from_defaults(fn=install_single_tool, name="install_single_tool"),
-        FunctionTool.from_defaults(fn=install_all, name="install_all"),
-        FunctionTool.from_defaults(fn=run_command, name="run_command"),
-        FunctionTool.from_defaults(
-            fn=list_available_tools, name="list_available_tools"
-        ),
+        CheckToolsTool(),
+        CheckSingleToolTool(),
+        GetArchitectureTool(),
+        ConfigurePathTool(),
+        InstallSingleToolTool(),
+        InstallAllTool(),
+        RunCommandTool(),
+        ListAvailableToolsTool(),
     ]
 
 
@@ -197,28 +238,32 @@ class ToolInstallerResult:
 
 def get_tool_installer_agent(
     facility: str | None = None,
-    model: str = "google/gemini-2.0-flash",
+    model: str | None = None,
     verbose: bool = False,
-) -> ReActAgent:
-    """Create a ReAct agent for tool installation.
+) -> CodeAgent:
+    """Create a CodeAgent for tool installation.
 
     Args:
         facility: Target facility (None = local)
-        model: LLM model to use
+        model: LLM model to use (default: from config)
         verbose: Enable verbose logging
 
     Returns:
-        Configured ReActAgent
+        Configured CodeAgent
     """
-    llm = get_llm(model=model, temperature=0.1)
+    llm = create_litellm_model(
+        model=model or get_model_for_task("default"),
+        temperature=0.1,
+        max_tokens=4096,
+    )
     tools = _create_tool_installer_tools(facility=facility)
 
-    agent = ReActAgent(
+    agent = CodeAgent(
         tools=tools,
-        llm=llm,
-        verbose=verbose,
-        system_prompt=TOOL_INSTALLER_SYSTEM_PROMPT,
-        max_iterations=15,
+        model=llm,
+        instructions=TOOL_INSTALLER_SYSTEM_PROMPT,
+        max_steps=15,
+        name="tool_installer",
     )
 
     logger.info(f"Created tool installer agent for facility={facility or 'local'}")
@@ -230,10 +275,10 @@ def setup_tools(
     required_only: bool = False,
     verbose: bool = False,
 ) -> ToolInstallerResult:
-    """High-level function to setup tools using the ReAct agent.
+    """High-level function to setup tools using the CodeAgent.
 
     This is the main entry point for tool installation. It creates
-    a ReAct agent that reactively checks and installs tools.
+    an agent that checks and installs tools.
 
     Args:
         facility: Target facility (None = local)
@@ -270,9 +315,9 @@ Steps:
 
 Report the final status of each tool."""
 
-    # Run the agent
+    # Run the agent (CodeAgent uses .run() instead of .chat())
     try:
-        response = agent.chat(task)
+        response = agent.run(task)
         summary = str(response)
     except Exception as e:
         logger.exception("Tool installer agent failed")

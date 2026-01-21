@@ -1,9 +1,9 @@
 # Agents Module
 
-The `imas_codex.agentic` module provides two complementary agent systems:
+The `imas_codex.agentic` module provides agent systems for facility exploration and enrichment:
 
 1. **MCP Server** (`AgentsServer`) - REPL-first exploration via Model Context Protocol
-2. **LlamaIndex ReActAgents** - Autonomous agents with tool-use capabilities
+2. **Smolagents CodeAgents** - Autonomous agents with tool-use capabilities
 
 ## Quick Start
 
@@ -137,9 +137,9 @@ Available for `semantic_search()`:
 | **Mapping** | IMAS ↔ MDSplus discovery | Semantic equivalence, unit compatibility |
 | **Exploration** | Facility exploration | Systematic discovery, graph persistence |
 
-## LlamaIndex Tools
+## Smolagents Tools
 
-For ReActAgents (not MCP server), use `tools.py`:
+For CodeAgents (not MCP server), use `tools.py`:
 
 ```python
 from imas_codex.agentic.tools import (
@@ -164,21 +164,21 @@ Agents use OpenRouter for LLM access:
 
 ```bash
 # Required: OpenRouter API key (in .env)
-OPENAI_API_KEY=sk-or-v1-...
+OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
 ### Model Selection
 
-Default: `google/gemini-3-flash-preview` (1M context, cost-effective)
+Default: `anthropic/claude-haiku-4.5` (cost-effective)
 
 ```python
-from imas_codex.agentic import get_llm, MODELS
+from imas_codex.agentic import create_litellm_model, MODELS
 
 # Use preset
-llm = get_llm(model=MODELS["gemini-pro"])
+model = create_litellm_model(model=MODELS["gemini-pro"])
 
 # Or specific model ID
-llm = get_llm(model="anthropic/claude-sonnet-4")
+model = create_litellm_model(model="anthropic/claude-sonnet-4.5")
 ```
 
 ## Architecture
@@ -186,21 +186,22 @@ llm = get_llm(model="anthropic/claude-sonnet-4")
 ```
 imas_codex/agentic/
 ├── __init__.py      # Public API exports
-├── llm.py           # OpenRouter LLM configuration
-├── tools.py         # LlamaIndex FunctionTools
-├── react.py         # ReActAgent configurations
+├── agents.py        # Smolagents CodeAgent factory
+├── llm.py           # OpenRouter LLM configuration (legacy)
+├── tools.py         # Smolagents Tool classes
 ├── server.py        # MCP server with 4 core tools
-├── prompt_loader.py # Prompt template loading
+├── prompt_loader.py # Prompt template loading with includes
 └── prompts/         # System prompts (markdown)
+    └── shared/      # Reusable prompt fragments
 ```
 
-### MCP Server vs ReActAgents
+### MCP Server vs CodeAgents
 
-| Feature | MCP Server | ReActAgents |
+| Feature | MCP Server | CodeAgents |
 |---------|------------|-------------|
 | Interface | `python()` REPL | Multi-step reasoning |
-| Orchestration | External (Claude, Copilot) | Self (LlamaIndex) |
-| Tool calls | Code generation | Function calls |
+| Orchestration | External (Claude, Copilot) | Self (smolagents) |
+| Tool calls | Code generation | Code generation |
 | State | Persistent REPL | Conversation context |
 | Use case | Interactive exploration | Batch processing |
 
