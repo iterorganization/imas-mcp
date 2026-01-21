@@ -157,7 +157,9 @@ class RelationshipMetadata(BaseModel):
 
     generation_timestamp: str
     total_paths_processed: int
-    source_document_count: int = 0  # Total documents in embedding cache for rebuild detection
+    source_document_count: int = (
+        0  # Total documents in embedding cache for rebuild detection
+    )
     clustering_parameters: dict[str, ClusteringParameters]
     statistics: ClusteringStatistics
 

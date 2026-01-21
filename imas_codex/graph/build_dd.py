@@ -1049,16 +1049,16 @@ def build_dd_graph(
             if v not in all_versions:
                 raise ValueError(f"Unknown DD version: {v}")
 
-    logger.info(f"Building DD graph for {len(versions)} versions")
+    logger.debug(f"Building DD graph for {len(versions)} versions")
     if ids_filter:
-        logger.info(f"Filtering to IDS: {sorted(ids_filter)}")
+        logger.debug(f"Filtering to IDS: {sorted(ids_filter)}")
 
-    # Create progress monitor
+    # Create a single progress monitor to reuse across phases
     progress = create_progress_monitor(
         use_rich=use_rich,
         logger=logger,
         item_names=versions,
-        description_template="DD {item}",
+        description_template="Extracting {item}",
     )
 
     stats = {
@@ -1070,7 +1070,7 @@ def build_dd_graph(
         "clusters_created": 0,
         "embeddings_updated": 0,
         "embeddings_cached": 0,
-        "embeddings_cleaned": 0,
+        "definitions_changed": 0,
         "error_relationships": 0,
         "paths_filtered": 0,
     }
@@ -1085,12 +1085,13 @@ def build_dd_graph(
         _create_version_nodes(client, versions)
     stats["versions_processed"] = len(versions)
 
-    # Create Unit nodes (collect all unique units first)
+    # Collect all unique units and extract version data
     logger.debug("Collecting units across all versions...")
     all_units: set[str] = set()
     version_data: dict[str, dict] = {}
 
-    progress.start_processing(versions, "Extracting paths")
+    # Phase 1: Extract paths from all versions
+    progress.start_processing(versions, "Extracting DD paths")
     for version in versions:
         progress.set_current_item(version)
         try:
@@ -1116,16 +1117,24 @@ def build_dd_graph(
     if not dry_run:
         _create_coordinate_spec_nodes(client, coord_specs)
 
-    # Create IDS and IMASPath nodes, tracking version changes
+    # Phase 2: Create IDS and IMASPath nodes, tracking version changes
     logger.debug("Creating IDS and IMASPath nodes with version tracking...")
     prev_paths: dict[str, dict] = {}
 
-    progress.start_processing(versions, "Building DD graph nodes")
+    # Create a new progress monitor for the build phase with updated template
+    build_progress = create_progress_monitor(
+        use_rich=use_rich,
+        logger=logger,
+        item_names=versions,
+        description_template="Building {item}",
+    )
+
+    build_progress.start_processing(versions, "Building graph nodes")
     for i, version in enumerate(versions):
-        progress.set_current_item(version)
+        build_progress.set_current_item(version)
 
         if version not in version_data:
-            progress.update_progress(version, error="No data")
+            build_progress.update_progress(version, error="No data")
             continue
 
         data = version_data[version]
@@ -1153,9 +1162,9 @@ def build_dd_graph(
             stats["path_changes_created"] += change_count
 
         prev_paths = data["paths"]
-        progress.update_progress(version)
+        build_progress.update_progress(version)
 
-    progress.finish_processing()
+    build_progress.finish_processing()
 
     # Batch create RENAMED_TO relationships from path mappings
     logger.debug("Creating RENAMED_TO relationships...")
@@ -1203,7 +1212,6 @@ def build_dd_graph(
             )
             stats["embeddings_updated"] = embedding_stats["updated"]
             stats["embeddings_cached"] = embedding_stats["cached"]
-            stats["embedding_changes"] = embedding_stats.get("changes", 0)
 
             # Update DDVersion with embedding metadata
             client.query(
@@ -1218,8 +1226,8 @@ def build_dd_graph(
                 count=embedding_stats["total"],
             )
 
-            # Clean up stale embeddings from deprecated paths
-            stats["embeddings_cleaned"] = _cleanup_stale_embeddings(client)
+            # Clean up stale embeddings from deprecated paths and track as definition changes
+            stats["definitions_changed"] = _cleanup_stale_embeddings(client)
         else:
             logger.warning(f"No data for current version {current_dd_version}")
 

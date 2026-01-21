@@ -106,7 +106,9 @@ class RelationshipExtractor:
 
         # Generate embeddings
         self.logger.info("Generating embeddings for %d paths...", len(filtered_paths))
-        embeddings, path_list, source_doc_count = self._generate_embeddings(filtered_paths)
+        embeddings, path_list, source_doc_count = self._generate_embeddings(
+            filtered_paths
+        )
 
         # Cluster embeddings using hierarchical approach
         self.logger.info("Running hierarchical clustering (global/domain/IDS)...")

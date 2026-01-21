@@ -57,9 +57,9 @@ class Encoder:
                 and not force_rebuild
                 and self._try_load_cache(texts, identifiers, source_data_dir)
             ):
-                self.logger.info("Loaded embeddings from cache")
+                self.logger.debug("Loaded embeddings from cache")
                 return self._cache.embeddings, self._cache.path_ids, True  # type: ignore[union-attr]
-            self.logger.info(f"Generating embeddings for {len(texts)} texts...")
+            self.logger.debug(f"Generating embeddings for {len(texts)} texts...")
             embeddings = self._generate_embeddings(texts)
             if enable_caching:
                 self._create_cache(embeddings, identifiers, source_data_dir)
@@ -128,7 +128,7 @@ class Encoder:
             for cache_info in files[keep_count:]:
                 if cache_info["path"] != current:
                     Path(cache_info["path"]).unlink()
-                    self.logger.info(f"Removed old cache: {cache_info['filename']}")
+                    self.logger.debug(f"Removed old cache: {cache_info['filename']}")
                     removed += 1
             return removed
         except Exception as e:  # pragma: no cover
@@ -143,18 +143,18 @@ class Encoder:
         try:
             cache_folder = str(self._get_cache_directory() / "models")
             try:
-                self.logger.info("Loading cached sentence transformer model...")
+                self.logger.debug("Loading cached sentence transformer model...")
                 self._model = SentenceTransformer(
                     self.config.model_name,
                     device=self.config.device,
                     cache_folder=cache_folder,
                     local_files_only=True,
                 )
-                self.logger.info(
+                self.logger.debug(
                     f"Model {self.config.model_name} loaded from cache on device: {self._model.device}"
                 )
             except Exception:
-                self.logger.info(
+                self.logger.debug(
                     f"Model not in cache, downloading {self.config.model_name}..."
                 )
                 self._model = SentenceTransformer(
@@ -163,13 +163,13 @@ class Encoder:
                     cache_folder=cache_folder,
                     local_files_only=False,
                 )
-                self.logger.info(
+                self.logger.debug(
                     f"Downloaded and loaded model {self.config.model_name} on device: {self._model.device}"
                 )
         except Exception as e:  # pragma: no cover
             self.logger.error(f"Failed to load model {self.config.model_name}: {e}")
             fallback = "all-MiniLM-L6-v2"
-            self.logger.info(f"Trying fallback model: {fallback}")
+            self.logger.debug(f"Trying fallback model: {fallback}")
             self._model = SentenceTransformer(fallback, device=self.config.device)
             self.config.model_name = fallback
 
@@ -227,7 +227,7 @@ class Encoder:
             progress.finish_processing()
         if self.config.use_half_precision:
             embeddings = embeddings.astype(np.float16)
-        self.logger.info(
+        self.logger.debug(
             f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
         )
         return embeddings
@@ -241,15 +241,15 @@ class Encoder:
             cache_filename = self._generate_cache_filename(cache_key)
             self._cache_path = self._get_cache_directory() / cache_filename
             if cache_key:
-                self.logger.info(f"Using cache key: '{cache_key}'")
+                self.logger.debug(f"Using cache key: '{cache_key}'")
             else:
-                self.logger.info("Using full dataset cache (no cache key)")
-            self.logger.info(f"Cache filename: {cache_filename}")
+                self.logger.debug("Using full dataset cache (no cache key)")
+            self.logger.debug(f"Cache filename: {cache_filename}")
             if self._cache_path.exists():
                 size_mb = self._cache_path.stat().st_size / (1024 * 1024)
-                self.logger.info(f"Cache file found: {size_mb:.1f} MB")
+                self.logger.debug(f"Cache file found: {size_mb:.1f} MB")
             else:
-                self.logger.info("Cache file not found - rebuild is required")
+                self.logger.debug("Cache file not found - rebuild is required")
 
     def _generate_cache_filename(self, cache_key: str | None = None) -> str:
         model_name = self.config.model_name.split("/")[-1].replace("-", "_")
@@ -275,17 +275,17 @@ class Encoder:
         source_data_dir: Path | None = None,
     ) -> bool:
         if not self.config.enable_cache:
-            self.logger.info("Cache disabled in configuration")
+            self.logger.debug("Cache disabled in configuration")
             return False
         if not self._cache_path:
             self.logger.warning("No cache path set")
             return False
         if not self._cache_path.exists():
-            self.logger.info(f"Cache file does not exist: {self._cache_path.name}")
-            self.logger.info("Rebuild required: Cache file not found")
+            self.logger.debug(f"Cache file does not exist: {self._cache_path.name}")
+            self.logger.debug("Rebuild required: Cache file not found")
             return False
         try:
-            self.logger.info(f"Attempting to load cache: {self._cache_path.name}")
+            self.logger.debug(f"Attempting to load cache: {self._cache_path.name}")
             with open(self._cache_path, "rb") as f:
                 cache = pickle.load(f)
             if not isinstance(cache, EmbeddingCache):
@@ -295,13 +295,13 @@ class Encoder:
                 len(texts), self.config.model_name, self.config.ids_set, source_data_dir
             )
             if not is_valid:
-                self.logger.info(f"Rebuild required: {reason}")
+                self.logger.debug(f"Rebuild required: {reason}")
                 return False
             if set(cache.path_ids) != set(identifiers):
-                self.logger.info("Rebuild required: Path identifiers have changed")
+                self.logger.debug("Rebuild required: Path identifiers have changed")
                 return False
             self._cache = cache
-            self.logger.info("Cache validation successful - using existing embeddings")
+            self.logger.debug("Cache validation successful - using existing embeddings")
             return True
         except Exception as e:  # pragma: no cover
             self.logger.error(f"Rebuild required: Failed to load cache - {e}")
