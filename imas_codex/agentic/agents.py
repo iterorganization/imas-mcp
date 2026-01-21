@@ -53,20 +53,64 @@ def _get_prompt(name: str) -> str:
     return prompt.content
 
 
-# Model configuration from pyproject.toml via environment
-# These map task names to OpenRouter model identifiers
-TASK_MODELS = {
-    "default": "anthropic/claude-haiku-4.5",
-    "discovery": "anthropic/claude-sonnet-4.5",
-    "evaluation": "anthropic/claude-sonnet-4.5",
-    "enrichment": "google/gemini-3-pro-preview",
-    "exploration": "anthropic/claude-sonnet-4.5",
-}
+# Default model fallback if config loading fails
+DEFAULT_MODEL = "anthropic/claude-haiku-4.5"
+
+
+def _load_model_config() -> dict[str, str]:
+    """Load model configuration from pyproject.toml."""
+    try:
+        import tomllib
+        from pathlib import Path
+
+        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        if pyproject_path.exists():
+            with open(pyproject_path, "rb") as f:
+                config = tomllib.load(f)
+            models = config.get("tool", {}).get("imas-codex", {}).get("models", {})
+            return {
+                "default": models.get("default", DEFAULT_MODEL),
+                "discovery": models.get("discovery", DEFAULT_MODEL),
+                "evaluation": models.get("evaluation", DEFAULT_MODEL),
+                "enrichment": models.get("enrichment", DEFAULT_MODEL),
+                "exploration": models.get("exploration", DEFAULT_MODEL),
+                "presets": models.get("presets", {}),
+            }
+    except Exception:
+        pass
+    return {
+        "default": DEFAULT_MODEL,
+        "discovery": DEFAULT_MODEL,
+        "evaluation": DEFAULT_MODEL,
+        "enrichment": DEFAULT_MODEL,
+        "exploration": DEFAULT_MODEL,
+        "presets": {},
+    }
+
+
+# Load config at module import
+_MODEL_CONFIG = _load_model_config()
+
+# Model presets for convenience (used by get_model_id)
+MODELS = _MODEL_CONFIG.get("presets", {})
+if not MODELS:
+    MODELS = {
+        "gemini-flash": "google/gemini-3-flash-preview",
+        "gemini-pro": "google/gemini-3-pro-preview",
+        "claude-haiku": "anthropic/claude-haiku-4.5",
+        "claude-sonnet": "anthropic/claude-sonnet-4.5",
+        "claude-opus": "anthropic/claude-opus-4.5",
+    }
+
+
+def get_model_id(preset: str) -> str:
+    """Get full model ID from a preset name or return as-is."""
+    return MODELS.get(preset, preset)
 
 
 def get_model_for_task(task: str) -> str:
     """Get the configured model for a task type."""
-    return TASK_MODELS.get(task, TASK_MODELS["default"])
+    return _MODEL_CONFIG.get(task, _MODEL_CONFIG["default"])
 
 
 def create_litellm_model(
@@ -253,7 +297,7 @@ def get_enrichment_agent(
     Returns:
         CodeAgent configured for enrichment tasks
     """
-    from imas_codex.agentic.smolagents_tools import get_enrichment_tools
+    from imas_codex.agentic.tools import get_enrichment_tools
 
     config = AgentConfig(
         name="enrichment",
@@ -291,7 +335,7 @@ def get_exploration_agent(
     Returns:
         CodeAgent configured for exploration tasks
     """
-    from imas_codex.agentic.smolagents_tools import get_exploration_tools
+    from imas_codex.agentic.tools import get_exploration_tools
 
     tools = get_exploration_tools(facility)
 

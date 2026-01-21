@@ -1,29 +1,16 @@
 """
-Facility exploration agent with ReAct architecture.
+Facility exploration agent.
 
-Provides a stateful agent for exploring remote facilities, discovering
-source files, and populating the knowledge graph.
-
-The agent uses:
-- Fast CLI tools (rg, fd, dust) for efficient file discovery
-- SSH for remote facility access (auto-detected)
-- Neo4j for knowledge graph queries and persistence
-- MCP tools for infrastructure and file tracking
+Provides autonomous exploration using CodeAgent that generates Python code
+to invoke tools, enabling adaptive problem-solving.
 
 Usage:
-    # CLI
-    imas-codex explore iter --prompt "Find IMAS integration code"
-
-    # Python - class-based (recommended)
-    from imas_codex.agentic.explore import ExplorationAgent
-
+    # Async context manager (recommended)
     async with ExplorationAgent("iter") as agent:
-        result = await agent.explore(prompt="Find equilibrium codes")
-        print(agent.progress)
+        result = await agent.explore("Find IMAS integration code")
 
-    # Python - convenience function
-    from imas_codex.agentic.explore import run_exploration
-    result = await run_exploration("iter", prompt="Find equilibrium codes")
+    # Simple function
+    result = await explore_facility("iter", "Find equilibrium codes")
 """
 
 from __future__ import annotations
@@ -31,31 +18,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-# Suppress Pydantic deprecation warnings from LlamaIndex internals
-# These are caused by LlamaIndex using deprecated Pydantic v1 patterns
-# and will be fixed in a future LlamaIndex release
-warnings.filterwarnings("ignore", message=".*__fields__.*deprecated.*")
-warnings.filterwarnings("ignore", message=".*__fields_set__.*deprecated.*")
-warnings.filterwarnings("ignore", message=".*model_fields.*instance.*deprecated.*")
-warnings.filterwarnings("ignore", message=".*model_computed_fields.*instance.*deprecated.*")
+from smolagents import CodeAgent
 
-from llama_index.core.agent import ReActAgent  # noqa: E402
-from llama_index.core.tools import FunctionTool  # noqa: E402
-
-from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
-from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
-from imas_codex.code_examples import queue_source_files  # noqa: E402
-from imas_codex.discovery import (  # noqa: E402
-    add_exploration_note,
-    get_facility,
-    update_infrastructure,
+from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
+from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
+from imas_codex.agentic.prompt_loader import load_prompts
+from imas_codex.agentic.tools import (
+    AddNoteTool,
+    GetFacilityInfoTool,
+    QueueFilesTool,
+    RunCommandTool,
+    query_neo4j,
 )
-from imas_codex.graph import GraphClient  # noqa: E402
-from imas_codex.remote.tools import run  # noqa: E402
+from imas_codex.discovery import get_facility
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -84,6 +62,8 @@ class ExplorationProgress:
     searches_run: int = 0
     notes_added: int = 0
     elapsed_seconds: float = 0.0
+    cost_usd: float = 0.0
+    steps: int = 0
 
     @property
     def rate(self) -> float:
@@ -104,36 +84,25 @@ class ExplorationResult:
     summary: str
     error: str | None = None
     progress: ExplorationProgress = field(default_factory=ExplorationProgress)
-
-
-# =============================================================================
-# ExplorationAgent Class
-# =============================================================================
+    cost_usd: float = 0.0
 
 
 class ExplorationAgent:
-    """Stateful agent for facility exploration with lifecycle management.
+    """Smolagents-based agent for autonomous facility exploration.
 
-    Encapsulates exploration state, tools, and the underlying ReActAgent.
-    Use as a context manager for proper lifecycle management.
+    Uses CodeAgent to generate Python code for tool invocation,
+    enabling adaptive problem-solving and self-debugging.
 
     Attributes:
         facility: Facility ID being explored
-        config: Merged facility configuration
         model: LLM model identifier
         verbose: Whether verbose output is enabled
         progress: Current exploration metrics
 
     Example:
         async with ExplorationAgent("iter") as agent:
-            # Full exploration
-            result = await agent.explore(prompt="Find IMAS code")
-
-            # Targeted search
-            files = await agent.find_pattern("imas.DBEntry", "/work/codes")
-
-            # Check progress
-            print(f"Queued: {agent.progress.files_queued}")
+            result = await agent.explore("Find IMAS integration code")
+            print(f"Queued: {agent.progress.files_queued} files")
     """
 
     def __init__(
@@ -141,35 +110,36 @@ class ExplorationAgent:
         facility: str,
         model: str | None = None,
         verbose: bool = False,
-        max_iterations: int = 30,
+        max_steps: int = 30,
+        cost_limit_usd: float = 5.0,
     ) -> None:
         """Initialize the exploration agent.
 
         Args:
             facility: Facility ID to explore (e.g., "iter", "epfl")
-            model: LLM model to use (default: from config)
-            verbose: Enable verbose agent output
-            max_iterations: Maximum agent iterations (default: 30)
+            model: LLM model to use (default: exploration model from config)
+            verbose: Enable verbose output
+            max_steps: Maximum agent iterations
+            cost_limit_usd: Budget limit in USD
         """
         self.facility = facility
         self.model = model or get_model_for_task("exploration")
         self.verbose = verbose
-        self.max_iterations = max_iterations
+        self.max_steps = max_steps
+        self.cost_limit_usd = cost_limit_usd
 
-        # Load facility config (validates facility exists)
+        # Validate facility exists
         self.config = get_facility(facility)
 
         # State tracking
-        self._files_queued: list[str] = []
-        self._files_skipped: int = 0
-        self._notes: list[str] = []
-        self._searches_run: int = 0
         self._start_time: float | None = None
+        self._agent: CodeAgent | None = None
+        self._monitor: AgentMonitor | None = None
 
-        # Lazy-initialized components
-        self._agent: ReActAgent | None = None
-        self._tools: list[FunctionTool] | None = None
-        self._graph_client: GraphClient | None = None
+        # Stateful tools (track their own state)
+        self._run_tool: RunCommandTool | None = None
+        self._queue_tool: QueueFilesTool | None = None
+        self._note_tool: AddNoteTool | None = None
 
     # -------------------------------------------------------------------------
     # Context Manager Protocol
@@ -186,8 +156,9 @@ class ExplorationAgent:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        """Async context manager exit - cleanup resources."""
-        await self._cleanup()
+        """Async context manager exit."""
+        self._agent = None
+        self._monitor = None
 
     def __enter__(self) -> ExplorationAgent:
         """Sync context manager entry."""
@@ -201,20 +172,8 @@ class ExplorationAgent:
         exc_tb: TracebackType | None,
     ) -> None:
         """Sync context manager exit."""
-        # Run cleanup synchronously
-        if self._graph_client is not None:
-            self._graph_client.close()
-            self._graph_client = None
         self._agent = None
-        self._tools = None
-
-    async def _cleanup(self) -> None:
-        """Clean up resources."""
-        if self._graph_client is not None:
-            self._graph_client.close()
-            self._graph_client = None
-        self._agent = None
-        self._tools = None
+        self._monitor = None
 
     # -------------------------------------------------------------------------
     # Properties
@@ -222,283 +181,70 @@ class ExplorationAgent:
 
     @property
     def progress(self) -> ExplorationProgress:
-        """Get current exploration progress metrics."""
+        """Get current exploration progress."""
         elapsed = 0.0
         if self._start_time is not None:
             elapsed = time.monotonic() - self._start_time
 
+        files_queued = 0
+        notes_added = 0
+        if self._queue_tool:
+            files_queued = len(self._queue_tool.files_queued)
+        if self._note_tool:
+            notes_added = len(self._note_tool.notes)
+
+        cost = 0.0
+        steps = 0
+        if self._monitor:
+            cost = self._monitor.total_cost_usd
+            steps = self._monitor.step_count
+
         return ExplorationProgress(
-            files_queued=len(self._files_queued),
-            files_skipped=self._files_skipped,
-            searches_run=self._searches_run,
-            notes_added=len(self._notes),
+            files_queued=files_queued,
+            files_skipped=0,  # Not tracked in new architecture
+            searches_run=steps,
+            notes_added=notes_added,
             elapsed_seconds=elapsed,
+            cost_usd=cost,
+            steps=steps,
         )
-
-    @property
-    def agent(self) -> ReActAgent:
-        """Get or create the underlying ReActAgent (lazy initialization)."""
-        if self._agent is None:
-            self._agent = self._create_agent()
-        return self._agent
-
-    @property
-    def tools(self) -> list[FunctionTool]:
-        """Get or create exploration tools (lazy initialization)."""
-        if self._tools is None:
-            self._tools = self._create_tools()
-        return self._tools
-
-    # -------------------------------------------------------------------------
-    # Tool Creation
-    # -------------------------------------------------------------------------
-
-    def _create_tools(self) -> list[FunctionTool]:
-        """Create tools bound to this facility for exploration."""
-        facility = self.facility
-        agent_self = self  # Capture self for state tracking in closures
-
-        def run_command(command: str, timeout: int = 60) -> str:
-            """Execute a shell command on the facility.
-
-            Use this for exploration tasks like listing directories, searching files,
-            or running analysis tools. The command runs on the target facility
-            (locally if you're there, via SSH if remote).
-
-            Args:
-                command: Shell command to execute (use rg, fd, dust, etc.)
-                timeout: Command timeout in seconds (default: 60)
-
-            Returns:
-                Command output (stdout + stderr)
-
-            Examples:
-                - rg -l 'IMAS' /work/codes -g '*.py'
-                - fd -e py /work/projects | head -50
-                - dust -d 2 /work
-            """
-            agent_self._searches_run += 1
-            try:
-                return run(command, facility=facility, timeout=timeout)
-            except TimeoutError:
-                return f"Command timed out after {timeout}s"
-            except Exception as e:
-                return f"Command error: {e}"
-
-        def query_graph(cypher: str) -> str:
-            """Execute a read-only Cypher query against the knowledge graph.
-
-            Use this to check what's already known about the facility, find
-            existing source files, or explore discovered paths.
-
-            Args:
-                cypher: READ-ONLY Cypher query
-
-            Returns:
-                Query results (max 20 rows)
-
-            Examples:
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: 'iter'})
-                RETURN sf.path, sf.status LIMIT 10
-            """
-            upper = cypher.upper()
-            if any(
-                kw in upper for kw in ["CREATE", "DELETE", "SET", "MERGE", "REMOVE"]
-            ):
-                return "Error: Only read-only queries allowed"
-
-            try:
-                with GraphClient() as gc:
-                    result = gc.query(cypher)
-                    if not result:
-                        return "No results"
-                    output = [str(dict(r)) for r in result[:20]]
-                    if len(result) > 20:
-                        output.append(f"... and {len(result) - 20} more")
-                    return "\n".join(output)
-            except Exception as e:
-                return f"Query error: {e}"
-
-        def queue_files(file_paths: list[str], interest_score: float = 0.7) -> str:
-            """Queue source files for ingestion into the knowledge graph.
-
-            Call this to persist discovered files. The ingestion pipeline will
-            later process them, extract code chunks, and generate embeddings.
-
-            Args:
-                file_paths: List of absolute file paths on the facility
-                interest_score: Priority score 0.0-1.0 (higher = more important)
-                    - 0.9+: IMAS integration, IDS writers
-                    - 0.7+: Physics codes (equilibrium, transport)
-                    - 0.5+: General analysis
-                    - <0.5: Utilities, config
-
-            Returns:
-                Summary of queued files
-
-            Example:
-                queue_files(["/work/codes/liuqe.py", "/work/codes/chease.py"], 0.85)
-            """
-            if not file_paths:
-                return "No files provided"
-
-            try:
-                result = queue_source_files(
-                    facility=facility,
-                    file_paths=file_paths,
-                    interest_score=interest_score,
-                    discovered_by="explore_agent",
-                )
-                agent_self._files_queued.extend(file_paths[: result["discovered"]])
-                agent_self._files_skipped += result["skipped"]
-
-                return (
-                    f"Queued: {result['discovered']}, "
-                    f"Skipped: {result['skipped']} (already discovered), "
-                    f"Errors: {len(result['errors'])}"
-                )
-            except Exception as e:
-                return f"Queue error: {e}"
-
-        def add_note(note: str) -> str:
-            """Add a timestamped exploration note for this facility.
-
-            Use this to record significant findings, patterns, or observations
-            that should be preserved for future reference.
-
-            Args:
-                note: The observation to record
-
-            Returns:
-                Confirmation message
-            """
-            try:
-                add_exploration_note(facility, note)
-                agent_self._notes.append(note)
-                return f"Note added for {facility}"
-            except Exception as e:
-                return f"Failed to add note: {e}"
-
-        def update_infra(data: dict[str, Any]) -> str:
-            """Update facility infrastructure data (tools, paths, OS info).
-
-            Use this to persist discovered infrastructure details like:
-            - Tool versions: {"tools": {"rg": "14.1.1", "fd": "10.2.0"}}
-            - Important paths: {"paths": {"imas": {"/work/imas": "IMAS root"}}}
-            - System info: {"os": {"version": "RHEL 9.2"}}
-
-            Args:
-                data: Dictionary to merge into infrastructure config
-
-            Returns:
-                Confirmation message
-            """
-            try:
-                update_infrastructure(facility, data)
-                return f"Infrastructure updated for {facility}"
-            except Exception as e:
-                return f"Failed to update infrastructure: {e}"
-
-        def get_facility_info() -> str:
-            """Get current facility configuration and exploration status.
-
-            Returns the merged public + private configuration, including
-            any previously discovered paths, tools, and exploration notes.
-
-            Returns:
-                Facility configuration as formatted string
-            """
-            try:
-                info = get_facility(facility)
-
-                output = [f"Facility: {facility}"]
-                output.append(f"SSH host: {info.get('ssh_host', facility)}")
-
-                if tools := info.get("tools", {}):
-                    tool_strs = []
-                    for k, v in tools.items():
-                        version = v.get("version", "?") if isinstance(v, dict) else v
-                        tool_strs.append(f"{k}={version}")
-                    output.append(f"Tools: {', '.join(tool_strs)}")
-
-                if paths := info.get("paths", {}):
-                    output.append("Known paths:")
-                    for category, path_dict in paths.items():
-                        if isinstance(path_dict, dict):
-                            for p, desc in list(path_dict.items())[:3]:
-                                output.append(f"  [{category}] {p}: {desc}")
-
-                if notes := info.get("exploration_notes", []):
-                    output.append(f"Notes: {len(notes)} exploration notes")
-
-                return "\n".join(output)
-            except Exception as e:
-                return f"Failed to get facility info: {e}"
-
-        return [
-            FunctionTool.from_defaults(
-                fn=run_command,
-                name="run_command",
-                description=(
-                    "Execute shell command on facility. Use rg, fd, dust for "
-                    "exploration. Auto-detects local vs SSH execution."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=query_graph,
-                name="query_graph",
-                description=(
-                    "Query Neo4j knowledge graph. Check existing discoveries, "
-                    "find source files by status, explore relationships."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=queue_files,
-                name="queue_files",
-                description=(
-                    "Queue source files for ingestion. MUST call this to persist "
-                    "file discoveries. Set interest_score based on physics value."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=add_note,
-                name="add_note",
-                description=(
-                    "Add timestamped exploration note. Use for significant findings "
-                    "like IMAS patterns, code locations, conventions."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=update_infra,
-                name="update_infrastructure",
-                description=(
-                    "Update facility infrastructure data (tools, paths, OS). "
-                    "Persists to private config."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=get_facility_info,
-                name="get_facility_info",
-                description=(
-                    "Get current facility config and exploration status. "
-                    "Check before exploring to see what's already known."
-                ),
-            ),
-        ]
 
     # -------------------------------------------------------------------------
     # Agent Creation
     # -------------------------------------------------------------------------
 
-    def _create_agent(self, prompt: str | None = None) -> ReActAgent:
-        """Create the underlying ReActAgent with system prompt.
+    def _create_agent(self, prompt: str | None = None) -> CodeAgent:
+        """Create the CodeAgent with tools and monitoring."""
+        # Create stateful tools bound to facility
+        self._run_tool = RunCommandTool(self.facility)
+        self._queue_tool = QueueFilesTool(self.facility)
+        self._note_tool = AddNoteTool(self.facility)
+        info_tool = GetFacilityInfoTool(self.facility)
 
-        Args:
-            prompt: Optional exploration guidance to include in system prompt
+        tools = [
+            self._run_tool,
+            query_neo4j,
+            self._queue_tool,
+            self._note_tool,
+            info_tool,
+        ]
 
-        Returns:
-            Configured ReActAgent
-        """
+        # Create monitor for cost tracking
+        self._monitor = AgentMonitor(
+            agent_name=f"exploration-{self.facility}",
+            cost_limit_usd=self.cost_limit_usd,
+        )
+        self._monitor._model = self.model
+
+        # Create LLM
+        llm = create_litellm_model(
+            model=self.model,
+            task="exploration",
+            temperature=0.3,
+            max_tokens=16384,
+        )
+
+        # Build system prompt
         system_prompt = _get_prompt("explore-facility")
         if not system_prompt:
             system_prompt = "You are an expert at exploring fusion facility codebases."
@@ -508,14 +254,17 @@ class ExplorationAgent:
             facility_context += f"Exploration guidance: {prompt}\n"
         system_prompt += facility_context
 
-        llm = get_llm(model=self.model, temperature=0.3, max_tokens=16384)
+        # Create callbacks
+        callbacks = [create_step_callback(self._monitor)]
 
-        return ReActAgent(
-            tools=self.tools,
-            llm=llm,
-            verbose=self.verbose,
-            system_prompt=system_prompt,
-            max_iterations=self.max_iterations,
+        return CodeAgent(
+            tools=tools,
+            model=llm,
+            instructions=system_prompt,
+            max_steps=self.max_steps,
+            planning_interval=5,  # Re-plan every 5 steps
+            step_callbacks=callbacks,
+            name=f"explorer-{self.facility}",
         )
 
     # -------------------------------------------------------------------------
@@ -531,76 +280,57 @@ class ExplorationAgent:
         Returns:
             ExplorationResult with summary and statistics
         """
-        if prompt:
-            self._agent = self._create_agent(prompt)
+        # Create agent with prompt context
+        self._agent = self._create_agent(prompt)
 
+        # Build task
         task = (
             f"Explore the {self.facility} facility and discover code files "
-            "for ingestion."
+            "for ingestion into the knowledge graph.\n\n"
+            "## Instructions\n"
+            "1. Start by checking what's already known (get_facility_info)\n"
+            "2. Query the graph for existing discoveries\n"
+            "3. Use run_command with rg, fd, dust to explore the filesystem\n"
+            "4. Queue discovered files with appropriate interest scores:\n"
+            "   - 0.9+: IMAS integration, IDS writers\n"
+            "   - 0.7+: Physics codes (equilibrium, transport)\n"
+            "   - 0.5+: General analysis\n"
+            "5. Add notes for significant findings\n"
+            "6. End with a summary of what you found\n"
         )
         if prompt:
-            task += f" Focus on: {prompt}"
-        task += (
-            "\n\nStart by checking what's already known (get_facility_info, "
-            "query_graph), then explore systematically. Queue discovered files "
-            "and add notes for significant findings. End with a summary."
-        )
+            task += f"\n## Focus\n{prompt}\n"
 
         try:
-            # agent.run() returns a WorkflowHandler which is awaitable
-            handler = self.agent.run(task)
-            response = await handler
+            # CodeAgent.run is synchronous, run in executor for async
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, self._agent.run, task)
             summary = str(response)
 
+            progress = self.progress
             return ExplorationResult(
                 facility=self.facility,
-                files_queued=len(self._files_queued),
-                paths_discovered=self._searches_run,
-                notes_added=len(self._notes),
+                files_queued=progress.files_queued,
+                paths_discovered=progress.searches_run,
+                notes_added=progress.notes_added,
                 summary=summary,
-                progress=self.progress,
+                progress=progress,
+                cost_usd=progress.cost_usd,
             )
 
         except Exception as e:
             logger.error(f"Exploration failed: {e}")
+            progress = self.progress
             return ExplorationResult(
                 facility=self.facility,
-                files_queued=len(self._files_queued),
-                paths_discovered=self._searches_run,
-                notes_added=len(self._notes),
+                files_queued=progress.files_queued,
+                paths_discovered=progress.searches_run,
+                notes_added=progress.notes_added,
                 summary="",
                 error=str(e),
-                progress=self.progress,
+                progress=progress,
+                cost_usd=progress.cost_usd,
             )
-
-    async def find_pattern(
-        self,
-        pattern: str,
-        path: str,
-        file_types: str = "py",
-    ) -> list[str]:
-        """Targeted search for files matching a pattern.
-
-        A simpler alternative to full exploration - just find files matching
-        a specific pattern and optionally queue them.
-
-        Args:
-            pattern: Search pattern (regex for rg)
-            path: Directory path to search
-            file_types: File extensions to search (default: "py")
-
-        Returns:
-            List of matching file paths
-        """
-        cmd = f"rg -l '{pattern}' {path} -g '*.{file_types}'"
-        self._searches_run += 1
-
-        try:
-            result = run(cmd, facility=self.facility, timeout=60)
-            return [f.strip() for f in result.strip().split("\n") if f.strip()]
-        except Exception as e:
-            logger.error(f"Pattern search failed: {e}")
-            return []
 
     def explore_sync(self, prompt: str | None = None) -> ExplorationResult:
         """Synchronous wrapper for explore()."""
@@ -608,64 +338,48 @@ class ExplorationAgent:
 
 
 # =============================================================================
-# Convenience Functions (backward compatibility)
+# Convenience Functions
 # =============================================================================
 
 
-def create_exploration_agent(
+async def explore_facility(
     facility: str,
     prompt: str | None = None,
     verbose: bool = False,
     model: str | None = None,
-) -> ReActAgent:
-    """Create a ReAct agent configured for facility exploration.
-
-    Note: Consider using ExplorationAgent class directly for better state
-    management and lifecycle control.
-
-    Args:
-        facility: Facility ID to explore
-        prompt: Optional guidance for the exploration
-        verbose: Enable verbose agent output
-        model: LLM model to use (default: from config)
-
-    Returns:
-        Configured ReActAgent
-    """
-    agent = ExplorationAgent(facility=facility, model=model, verbose=verbose)
-    return agent._create_agent(prompt)
-
-
-async def run_exploration(
-    facility: str,
-    prompt: str | None = None,
-    verbose: bool = False,
-    model: str | None = None,
+    cost_limit_usd: float = 5.0,
 ) -> ExplorationResult:
     """Run an exploration session for a facility.
 
-    Convenience function that wraps ExplorationAgent for simple use cases.
+    Convenience function that wraps ExplorationAgent.
 
     Args:
         facility: Facility ID to explore
         prompt: Optional guidance (e.g., "Find IMAS integration code")
         verbose: Enable verbose output
         model: LLM model to use
+        cost_limit_usd: Budget limit in USD
 
     Returns:
         ExplorationResult with summary and statistics
     """
     async with ExplorationAgent(
-        facility=facility, model=model, verbose=verbose
+        facility=facility,
+        model=model,
+        verbose=verbose,
+        cost_limit_usd=cost_limit_usd,
     ) as agent:
         return await agent.explore(prompt=prompt)
 
 
-def run_exploration_sync(
+def explore_facility_sync(
     facility: str,
     prompt: str | None = None,
     verbose: bool = False,
     model: str | None = None,
+    cost_limit_usd: float = 5.0,
 ) -> ExplorationResult:
-    """Synchronous wrapper for run_exploration."""
-    return asyncio.run(run_exploration(facility, prompt, verbose, model))
+    """Synchronous wrapper for explore_facility."""
+    return asyncio.run(
+        explore_facility(facility, prompt, verbose, model, cost_limit_usd)
+    )

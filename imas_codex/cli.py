@@ -3573,9 +3573,9 @@ def agent_run(
 
         imas-codex agent run "Explore EPFL for equilibrium codes" --type exploration -c 1.0
     """
-    from imas_codex.agentic import smol_quick_task_sync
+    from imas_codex.agentic import quick_task_sync
 
-    click.echo(f"Running {agent_type} agent (smolagents CodeAgent)...")
+    click.echo(f"Running {agent_type} agent (CodeAgent)...")
     if verbose:
         click.echo(f"Task: {task}")
     if cost_limit:
@@ -3583,7 +3583,7 @@ def agent_run(
     click.echo()
 
     try:
-        result = smol_quick_task_sync(task, agent_type, verbose, cost_limit)
+        result = quick_task_sync(task, agent_type, verbose, cost_limit)
         click.echo("\n=== Agent Response ===")
         click.echo(result)
     except Exception as e:
@@ -3705,13 +3705,13 @@ def agent_enrich(
     from rich.table import Table
 
     from imas_codex.agentic import (
-        SmolBatchProgress,
+        BatchProgress,
+        batch_enrich_paths,
+        compose_batches,
+        discover_nodes_to_enrich,
+        estimate_enrichment_cost,
         get_model_for_task,
-        smol_batch_enrich_paths,
-        smol_compose_batches,
-        smol_discover_nodes,
-        smol_estimate_cost,
-        smol_get_parent_path,
+        get_parent_path,
     )
 
     console = Console()
@@ -3740,7 +3740,7 @@ def agent_enrich(
         if linked:
             filter_desc += ", with code context"
         console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
-        nodes = smol_discover_nodes(
+        nodes = discover_nodes_to_enrich(
             tree_name=tree,
             status=target_status,
             with_context_only=linked,
@@ -3769,12 +3769,12 @@ def agent_enrich(
             effective_batch_size = 100
 
     # Compose smart batches grouped by parent (for preview)
-    batches = smol_compose_batches(
+    batches = compose_batches(
         path_list, batch_size=effective_batch_size, group_by_parent=True
     )
 
     # Show cost estimate
-    cost_est = smol_estimate_cost(len(path_list), effective_batch_size)
+    cost_est = estimate_enrichment_cost(len(path_list), effective_batch_size)
     cost_info = (
         f"[dim]Batches: {len(batches)} | "
         f"Est. time: {cost_est['estimated_hours'] * 60:.0f}min | "
@@ -3791,7 +3791,7 @@ def agent_enrich(
         console.print("\n[yellow][DRY RUN] Will not persist to graph[/yellow]")
         console.print("\n[cyan]Batch preview:[/cyan]")
         for i, batch in enumerate(batches[:5], 1):
-            parent = smol_get_parent_path(batch[0]) if batch else "?"
+            parent = get_parent_path(batch[0]) if batch else "?"
             console.print(f"  Batch {i}: {len(batch)} paths from [bold]{parent}[/bold]")
             for p in batch[:3]:
                 console.print(f"    {p}")
@@ -3880,7 +3880,7 @@ def agent_enrich(
     # Progress callback that updates state
     live_display: Live | None = None
 
-    def on_progress(p: SmolBatchProgress) -> None:
+    def on_progress(p: BatchProgress) -> None:
         state.batch_num = p.batch_num
         state.total_batches = p.total_batches
         state.parent_path = p.parent_path
@@ -3898,7 +3898,7 @@ def agent_enrich(
             create_progress_display(), console=console, refresh_per_second=4
         ) as live:
             live_display = live
-            return await smol_batch_enrich_paths(
+            return await batch_enrich_paths(
                 paths=path_list,
                 tree_name=tree_name,
                 batch_size=effective_batch_size,
@@ -4096,7 +4096,7 @@ def explore(
     from rich.panel import Panel
 
     from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.agentic.smol_explore import SmolExplorationAgent
+    from imas_codex.agentic.explore import ExplorationAgent
     from imas_codex.discovery import get_facility as get_facility_config
 
     console = Console()
@@ -4124,7 +4124,7 @@ def explore(
                 f"[cyan]Cost Limit:[/cyan] {cost_limit_str}\n"
                 f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
                 f"[cyan]Verbose:[/cyan] {verbose}\n"
-                f"[cyan]Agent:[/cyan] smolagents CodeAgent",
+                f"[cyan]Agent:[/cyan] CodeAgent",
                 title="Exploration Configuration (--dry-run)",
             )
         )
@@ -4135,7 +4135,7 @@ def explore(
     console.print(
         Panel.fit(
             f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]\n"
-            f"[dim]Using smolagents CodeAgent (cost limit: {cost_limit_str})[/dim]",
+            f"[dim]CodeAgent (cost limit: {cost_limit_str})[/dim]",
             title="IMAS Codex Explorer",
         )
     )
@@ -4143,9 +4143,9 @@ def explore(
         console.print(f"[dim]Guidance: {prompt}[/dim]")
     console.print()
 
-    # Run exploration using new smolagents agent
+    # Run exploration
     async def run_exploration() -> None:
-        async with SmolExplorationAgent(
+        async with ExplorationAgent(
             facility=facility,
             model=effective_model,
             verbose=verbose,

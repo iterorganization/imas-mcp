@@ -1,5 +1,5 @@
 """
-Tests for smolagents-based CodeAgent infrastructure.
+Tests for CodeAgent infrastructure.
 
 Tests:
 - Agent creation and configuration
@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from imas_codex.agentic.agents import (
-    TASK_MODELS,
     AgentConfig,
     create_agent,
     create_litellm_model,
@@ -26,7 +25,7 @@ from imas_codex.agentic.monitor import (
     estimate_cost,
     estimate_task_cost,
 )
-from imas_codex.agentic.smolagents_tools import (
+from imas_codex.agentic.tools import (
     AddNoteTool,
     QueueFilesTool,
     RunCommandTool,
@@ -39,20 +38,22 @@ class TestModelConfiguration:
     """Test model selection and configuration."""
 
     def test_task_models_defined(self):
-        """Verify task models are defined."""
-        assert "default" in TASK_MODELS
-        assert "enrichment" in TASK_MODELS
-        assert "exploration" in TASK_MODELS
+        """Verify task models are defined via get_model_for_task."""
+        assert get_model_for_task("default") is not None
+        assert get_model_for_task("enrichment") is not None
+        assert get_model_for_task("exploration") is not None
 
     def test_get_model_for_task_known(self):
         """Get model for known task."""
         model = get_model_for_task("enrichment")
-        assert model == TASK_MODELS["enrichment"]
+        assert isinstance(model, str)
+        assert "/" in model  # Model should have provider/name format
 
     def test_get_model_for_task_unknown(self):
         """Unknown task falls back to default."""
         model = get_model_for_task("unknown_task")
-        assert model == TASK_MODELS["default"]
+        default_model = get_model_for_task("default")
+        assert model == default_model
 
     @patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"})
     def test_create_litellm_model_adds_prefix(self):

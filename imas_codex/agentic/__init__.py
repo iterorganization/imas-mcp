@@ -2,11 +2,10 @@
 Agents module for autonomous facility exploration and enrichment.
 
 This module provides:
-1. smolagents CodeAgents for autonomous code-generating agents
+1. CodeAgent-based agents for exploration and enrichment
 2. MCP server for tool-based exploration (AgentsServer)
-3. Legacy LlamaIndex ReActAgents (deprecated, use smolagents)
-4. Reusable tools for graph queries, SSH, and search
-5. Cost monitoring with budget enforcement
+3. Reusable tools for graph queries, SSH, and search
+4. Cost monitoring with budget enforcement
 
 The CodeAgents write Python code to invoke tools, enabling:
 - Loops and conditionals for complex workflows
@@ -15,8 +14,10 @@ The CodeAgents write Python code to invoke tools, enabling:
 - Multi-agent orchestration
 """
 
-# smolagents (preferred)
+# Agent creation and configuration
 from imas_codex.agentic.agents import (
+    DEFAULT_MODEL,
+    MODELS,
     AgentConfig,
     create_agent,
     create_litellm_model,
@@ -25,144 +26,107 @@ from imas_codex.agentic.agents import (
     get_enrichment_agent,
     get_exploration_agent,
     get_model_for_task,
-)
-
-# Legacy (LlamaIndex-based, deprecated)
-from imas_codex.agentic.explore import (
-    ExplorationResult,
-    create_exploration_agent as create_exploration_agent_legacy,
-    run_exploration,
-    run_exploration_sync,
-)
-from imas_codex.agentic.llm import (
-    DEFAULT_MODEL,
-    MODELS,
-    get_llm,
-    get_model_for_task as get_model_for_task_legacy,
     get_model_id,
 )
+
+# Enrichment
+from imas_codex.agentic.enrich import (
+    BatchProgress,
+    EnrichmentResult,
+    batch_enrich_paths,
+    batch_enrich_paths_sync,
+    compose_batches,
+    discover_nodes_to_enrich,
+    estimate_enrichment_cost,
+    get_parent_path,
+    quick_task,
+    quick_task_sync,
+)
+
+# Exploration
+from imas_codex.agentic.explore import (
+    ExplorationAgent,
+    ExplorationProgress,
+    ExplorationResult,
+    explore_facility,
+    explore_facility_sync,
+)
+
+# LLM configuration (for legacy wiki code that needs LlamaIndex)
+from imas_codex.agentic.llm import get_llm
+
+# Cost monitoring and progress display
 from imas_codex.agentic.monitor import (
     AgentMonitor,
+    AgentProgressDisplay,
     BudgetExhaustedError,
+    create_progress_callback,
     create_step_callback,
     estimate_cost,
     estimate_task_cost,
 )
-from imas_codex.agentic.react import (
-    AgentConfig as AgentConfigLegacy,
-    BatchProgress,
-    EnrichmentResult,
-    batch_enrich_paths,
-    compose_batches,
-    create_agent as create_agent_legacy,
-    discover_nodes_to_enrich,
-    estimate_enrichment_cost,
-    get_enrichment_agent as get_enrichment_agent_legacy,
-    get_exploration_agent as get_exploration_agent_legacy,
-    get_mapping_agent as get_mapping_agent_legacy,
-    get_parent_path,
-    quick_agent_task,
-    react_batch_enrich_paths,
-    run_agent,
-    run_agent_sync,
-)
+
+# MCP Server
 from imas_codex.agentic.server import AgentsServer
+
+# Session management
 from imas_codex.agentic.session import CostTracker, LLMSession, create_session
-from imas_codex.agentic.smol_enrich import (
-    BatchProgress as SmolBatchProgress,
-    EnrichmentResult as SmolEnrichmentResult,
-    compose_batches as smol_compose_batches,
-    discover_nodes_to_enrich as smol_discover_nodes,
-    estimate_enrichment_cost as smol_estimate_cost,
-    get_parent_path as smol_get_parent_path,
-    smol_batch_enrich_paths,
-    smol_quick_task,
-    smol_quick_task_sync,
-)
-from imas_codex.agentic.smol_explore import (
-    ExplorationProgress,
-    SmolExplorationAgent,
-    SmolExplorationResult,
-    explore_facility,
-    explore_facility_sync,
-)
-from imas_codex.agentic.smolagents_tools import (
+
+# Tools
+from imas_codex.agentic.tools import (
     get_all_tools,
     get_enrichment_tools,
     get_exploration_tools,
 )
-from imas_codex.agentic.tools import (
-    get_all_tools as get_all_tools_legacy,
-    get_exploration_tools as get_exploration_tools_legacy,
-    get_graph_tool,
-    get_imas_tools,
-    get_search_tools,
-    get_ssh_tools,
-)
 
 __all__ = [
-    # smolagents (preferred)
+    # Agent configuration
     "AgentConfig",
-    "AgentMonitor",
-    "BudgetExhaustedError",
     "create_agent",
     "create_litellm_model",
     "create_orchestrator",
-    "create_step_callback",
-    "estimate_cost",
-    "estimate_task_cost",
     "get_agent_monitor",
     "get_enrichment_agent",
     "get_exploration_agent",
     "get_model_for_task",
-    "get_enrichment_tools",
-    "get_exploration_tools",
-    "get_all_tools",
-    # Enrichment (smolagents)
-    "smol_quick_task",
-    "smol_quick_task_sync",
-    "smol_batch_enrich_paths",
-    "smol_compose_batches",
-    "smol_discover_nodes",
-    "smol_estimate_cost",
-    "smol_get_parent_path",
-    "SmolBatchProgress",
-    "SmolEnrichmentResult",
-    # Exploration (smolagents)
-    "SmolExplorationAgent",
-    "SmolExplorationResult",
-    "ExplorationProgress",
-    "explore_facility",
-    "explore_facility_sync",
-    # MCP Server
-    "AgentsServer",
-    # LLM configuration (legacy)
-    "get_llm",
     "get_model_id",
     "DEFAULT_MODEL",
     "MODELS",
-    # Session management (legacy)
+    # Enrichment
+    "EnrichmentResult",
+    "BatchProgress",
+    "batch_enrich_paths",
+    "batch_enrich_paths_sync",
+    "compose_batches",
+    "discover_nodes_to_enrich",
+    "estimate_enrichment_cost",
+    "get_parent_path",
+    "quick_task",
+    "quick_task_sync",
+    # Exploration
+    "ExplorationAgent",
+    "ExplorationProgress",
+    "ExplorationResult",
+    "explore_facility",
+    "explore_facility_sync",
+    # Cost monitoring and progress
+    "AgentMonitor",
+    "AgentProgressDisplay",
+    "BudgetExhaustedError",
+    "create_progress_callback",
+    "create_step_callback",
+    "estimate_cost",
+    "estimate_task_cost",
+    # MCP Server
+    "AgentsServer",
+    # LLM (for legacy wiki code)
+    "get_llm",
+    # Session management
     "LLMSession",
     "CostTracker",
     "create_session",
-    # Legacy agent execution (deprecated - use smolagents)
-    "run_agent",
-    "run_agent_sync",
-    "run_exploration",
-    "run_exploration_sync",
-    "quick_agent_task",
-    "batch_enrich_paths",
-    "react_batch_enrich_paths",
-    "discover_nodes_to_enrich",
-    "estimate_enrichment_cost",
-    "compose_batches",
-    "get_parent_path",
-    "EnrichmentResult",
-    "ExplorationResult",
-    "BatchProgress",
-    # Legacy tools (deprecated)
-    "get_imas_tools",
-    "get_graph_tool",
-    "get_ssh_tools",
-    "get_search_tools",
+    # Tools
+    "get_all_tools",
+    "get_enrichment_tools",
+    "get_exploration_tools",
 ]

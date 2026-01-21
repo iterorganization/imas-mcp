@@ -1,10 +1,10 @@
 """
-smolagents-based enrichment for TreeNode metadata.
+TreeNode metadata enrichment agent.
 
 Provides:
-- SmolEnrichmentAgent: CodeAgent that generates Python to gather context and enrich nodes
-- smol_batch_enrich_paths: Main enrichment function for CLI
-- smol_quick_task: Simple task runner for ad-hoc agent tasks
+- EnrichmentResult: Result of enriching a single TreeNode
+- batch_enrich_paths: Main enrichment function for CLI
+- quick_task: Simple task runner for ad-hoc agent tasks
 """
 
 import asyncio
@@ -21,7 +21,7 @@ from imas_codex.agentic.agents import (
 )
 from imas_codex.agentic.monitor import AgentMonitor, create_step_callback
 from imas_codex.agentic.prompt_loader import load_prompts
-from imas_codex.agentic.smolagents_tools import (
+from imas_codex.agentic.tools import (
     get_enrichment_tools,
     get_exploration_tools,
 )
@@ -317,7 +317,7 @@ def estimate_enrichment_cost(
     }
 
 
-async def smol_quick_task(
+async def quick_task(
     task: str,
     agent_type: str = "enrichment",
     verbose: bool = False,
@@ -368,17 +368,17 @@ async def smol_quick_task(
     return str(result)
 
 
-def smol_quick_task_sync(
+def quick_task_sync(
     task: str,
     agent_type: str = "enrichment",
     verbose: bool = False,
     cost_limit_usd: float | None = None,
 ) -> str:
-    """Synchronous wrapper for smol_quick_task."""
-    return asyncio.run(smol_quick_task(task, agent_type, verbose, cost_limit_usd))
+    """Synchronous wrapper for quick_task."""
+    return asyncio.run(quick_task(task, agent_type, verbose, cost_limit_usd))
 
 
-async def _run_smol_batch_enrichment(
+async def _run_batch_enrichment(
     paths: list[str],
     tree_name: str,
     model: str,
@@ -483,7 +483,7 @@ Output ONLY the JSON array."""
         ]
 
 
-async def smol_batch_enrich_paths(
+async def batch_enrich_paths(
     paths: list[str],
     tree_name: str = "results",
     batch_size: int | None = None,
@@ -536,7 +536,7 @@ async def smol_batch_enrich_paths(
         results = []
         for attempt in range(max_retries):
             try:
-                results = await _run_smol_batch_enrichment(
+                results = await _run_batch_enrichment(
                     batch, tree_name, effective_model, verbose
                 )
                 valid_results = sum(1 for r in results if not r.error)
@@ -600,7 +600,7 @@ async def smol_batch_enrich_paths(
     return all_results
 
 
-def smol_batch_enrich_paths_sync(
+def batch_enrich_paths_sync(
     paths: list[str],
     tree_name: str = "results",
     batch_size: int | None = None,
@@ -609,9 +609,9 @@ def smol_batch_enrich_paths_sync(
     model: str | None = None,
     progress_callback: ProgressCallback = None,
 ) -> list[EnrichmentResult]:
-    """Synchronous wrapper for smol_batch_enrich_paths."""
+    """Synchronous wrapper for batch_enrich_paths."""
     return asyncio.run(
-        smol_batch_enrich_paths(
+        batch_enrich_paths(
             paths, tree_name, batch_size, verbose, dry_run, model, progress_callback
         )
     )

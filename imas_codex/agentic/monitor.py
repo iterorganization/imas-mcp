@@ -261,6 +261,226 @@ def create_step_callback(monitor: AgentMonitor) -> Callable[[MemoryStep], None]:
 
 
 # =============================================================================
+# Rich Progress Display
+# =============================================================================
+
+
+@dataclass
+class AgentProgressDisplay:
+    """Rich progress display for agent execution.
+
+    Provides a composable live display with:
+    - Progress bar with estimated work
+    - Command ticker showing current operation (e.g., `ssh rg ...`)
+    - Clipped output summary in a styled box
+    - Cost and step metrics
+
+    Usage:
+        with AgentProgressDisplay(monitor, total_steps=10) as display:
+            for step in steps:
+                display.update_command(f"ssh epfl rg -l 'IMAS' /path")
+                display.update_output("Found 5 files matching pattern")
+                display.advance()  # Move progress bar
+    """
+
+    monitor: AgentMonitor
+    total_steps: int | None = None
+    show_output_box: bool = True
+    title: str = "Agent Progress"
+    _live: Any = field(default=None, repr=False)
+    _progress: Any = field(default=None, repr=False)
+    _task_id: Any = field(default=None, repr=False)
+    _current_command: str = ""
+    _current_output: str = ""
+    _console: Any = field(default=None, repr=False)
+
+    def __post_init__(self):
+        from rich.console import Console
+
+        self._console = Console()
+
+    def _build_display(self):
+        """Build the Rich display layout."""
+        from rich.layout import Layout
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        # Build metrics table
+        metrics = Table.grid(padding=(0, 2))
+        metrics.add_row(
+            f"[cyan]Steps:[/cyan] {self.monitor.step_count}",
+            f"[cyan]Tool calls:[/cyan] {self.monitor.tool_calls}",
+            f"[cyan]Cost:[/cyan] ${self.monitor.total_cost_usd:.4f}",
+            f"[cyan]Time:[/cyan] {self.monitor.elapsed_seconds():.1f}s",
+        )
+        if self.monitor.cost_limit_usd:
+            remaining = self.monitor.remaining_usd() or 0
+            metrics.add_row(
+                "",
+                "",
+                f"[dim](${remaining:.2f} remaining)[/dim]",
+                "",
+            )
+
+        # Build command display
+        command_text = Text()
+        if self._current_command:
+            command_text.append("$ ", style="green bold")
+            # Clip command to fit
+            cmd = self._current_command
+            if len(cmd) > 80:
+                cmd = cmd[:77] + "..."
+            command_text.append(cmd, style="white")
+        else:
+            command_text.append("(waiting...)", style="dim")
+
+        # Build output box
+        output_content = self._current_output or "(no output yet)"
+        if len(output_content) > 200:
+            output_content = output_content[:197] + "..."
+
+        # Combine into layout
+        layout = Layout()
+        layout.split_column(
+            Layout(metrics, name="metrics", size=3),
+            Layout(
+                Panel(command_text, title="Current Command", border_style="blue"),
+                name="command",
+                size=3,
+            ),
+        )
+        if self.show_output_box and self._current_output:
+            layout.add_split(
+                Layout(
+                    Panel(output_content, title="Output", border_style="dim"),
+                    name="output",
+                    size=5,
+                )
+            )
+
+        return Panel(layout, title=self.title, border_style="green")
+
+    def __enter__(self) -> AgentProgressDisplay:
+        """Start the live display."""
+        from rich.live import Live
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TaskProgressColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+
+        # Create progress bar
+        self._progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(bar_width=40),
+            TaskProgressColumn(),
+            TimeElapsedColumn(),
+            console=self._console,
+        )
+
+        total = self.total_steps if self.total_steps else None
+        self._task_id = self._progress.add_task(
+            self.monitor.agent_name,
+            total=total,
+        )
+
+        # Start live display
+        self._live = Live(
+            self._build_display(),
+            console=self._console,
+            refresh_per_second=4,
+        )
+        self._live.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop the live display."""
+        if self._live:
+            self._live.__exit__(exc_type, exc_val, exc_tb)
+        return False
+
+    def update_command(self, command: str) -> None:
+        """Update the current command display."""
+        self._current_command = command
+        if self._live:
+            self._live.update(self._build_display())
+
+    def update_output(self, output: str) -> None:
+        """Update the output box with clipped content."""
+        self._current_output = output
+        if self._live:
+            self._live.update(self._build_display())
+
+    def advance(self, steps: int = 1) -> None:
+        """Advance the progress bar."""
+        if self._progress and self._task_id is not None:
+            self._progress.advance(self._task_id, steps)
+        if self._live:
+            self._live.update(self._build_display())
+
+    def set_total(self, total: int) -> None:
+        """Update the total steps for the progress bar."""
+        self.total_steps = total
+        if self._progress and self._task_id is not None:
+            self._progress.update(self._task_id, total=total)
+
+    def log(self, message: str, style: str = "") -> None:
+        """Log a message below the progress display."""
+        if self._console:
+            self._console.log(message, style=style)
+
+
+def create_progress_callback(
+    monitor: AgentMonitor,
+    display: AgentProgressDisplay | None = None,
+) -> Callable[[MemoryStep], None]:
+    """Create a step callback that updates both monitor and display.
+
+    This is a convenience wrapper that combines cost monitoring with
+    live progress display.
+
+    Args:
+        monitor: AgentMonitor for cost tracking
+        display: Optional AgentProgressDisplay for live updates
+
+    Returns:
+        Callback function for smolagents step_callbacks
+    """
+    base_callback = create_step_callback(monitor)
+
+    def progress_callback(step: MemoryStep) -> None:
+        # Run base monitoring
+        base_callback(step)
+
+        # Update display if available
+        if display:
+            # Extract command from tool calls
+            if hasattr(step, "tool_calls") and step.tool_calls:
+                for tool_call in step.tool_calls:
+                    name = getattr(tool_call, "name", "")
+                    if name == "run_command":
+                        # Extract the command argument
+                        args = getattr(tool_call, "arguments", {})
+                        cmd = args.get("command", "")
+                        if cmd:
+                            display.update_command(cmd)
+
+            # Extract output from observations
+            if hasattr(step, "observations") and step.observations:
+                output = str(step.observations)
+                display.update_output(output)
+
+            display.advance()
+
+    return progress_callback
+
+
+# =============================================================================
 # Convenience Functions
 # =============================================================================
 
