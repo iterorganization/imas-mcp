@@ -136,3 +136,18 @@ End your exploration with a summary:
 - **SSH commands**: Use fast tools (rg, fd, dust) with paths
 - **Code search**: Check if similar files already ingested
 - **Persist immediately**: Don't wait until the end to save discoveries
+
+## ⚠️ Read-Only Policy
+
+**CRITICAL**: Remote facilities are READ-ONLY. You must NOT:
+
+- **Modify files**: No `mv`, `rm`, `cp`, `touch`, `chmod`, `chown`
+- **Edit content**: No `sed -i`, `vim`, `nano`, `echo >`, `cat >`
+- **Create files**: No `mkdir`, `touch` except in `~/` home directory
+- **Change state**: No `git commit`, `git push`, database writes
+
+**Exceptions** (home directory only):
+- Install utilities to `~/.local/bin/` or `~/bin/` using cargo, pip --user
+- Create temporary working files in `~/tmp/` or `~/.cache/`
+
+If you need to modify facility data, report findings and request human intervention.
