@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.graph import GraphClient
 
 if TYPE_CHECKING:
-    from smolagents import ToolCallingAgent
+    from smolagents import CodeAgent
 
 logger = logging.getLogger(__name__)
 
@@ -794,27 +794,35 @@ class StatelessScout:
 
     def __init__(self, config: ScoutConfig) -> None:
         self.config = config
-        self._agent: ToolCallingAgent | None = None
+        self._agent: CodeAgent | None = None
         self.steps_taken = 0
+        self._last_code_action: str | None = None  # Track generated code for display
         # Set module-level dry-run mode
         set_dry_run(config.dry_run)
 
-    def _get_agent(self) -> ToolCallingAgent:
-        """Get or create the ToolCallingAgent.
+    def _step_callback(self, step: Any) -> None:
+        """Callback to capture generated code from each agent step."""
+        # ActionStep has code_action attribute with the generated Python code
+        if hasattr(step, "code_action") and step.code_action:
+            self._last_code_action = step.code_action
 
-        Uses ToolCallingAgent (native function calling) instead of CodeAgent
-        for better tool usage with Claude Sonnet 4.5.
+    def _get_agent(self) -> CodeAgent:
+        """Get or create the CodeAgent.
+
+        Uses CodeAgent for Python code generation with shell access.
+        This is the preferred approach - the LLM writes Python code that
+        calls tools and subprocess commands directly.
         """
         if self._agent is not None:
             return self._agent
 
-        from smolagents import ToolCallingAgent
+        from smolagents import CodeAgent
         from smolagents.monitoring import LogLevel
 
         from ..agents import create_litellm_model
         from .tools import get_scout_tools
 
-        # Use sonnet 4.5 for scout - best tool usage for exploration
+        # Use sonnet 4.5 for scout - best code generation
         model = create_litellm_model(
             model="anthropic/claude-sonnet-4.5",
             max_tokens=8192,
@@ -822,21 +830,15 @@ class StatelessScout:
 
         tools = get_scout_tools(self.config.facility)
 
-        # Create agent first to get default templates, then recreate with custom system prompt
-        # This is the cleanest way to override just system_prompt while keeping defaults
-        temp_agent = ToolCallingAgent(tools=tools, model=model)
-        custom_templates = dict(temp_agent.prompt_templates)
-        custom_templates["system_prompt"] = SCOUT_SYSTEM_PROMPT
-        del temp_agent
-
-        # Use ToolCallingAgent for native function calling (ideal for Claude)
-        # Suppress smolagents' scrolling output - we use our own Rich Live display
-        self._agent = ToolCallingAgent(
+        # CodeAgent generates Python code that calls tools + subprocess
+        self._agent = CodeAgent(
             model=model,
             tools=tools,
-            prompt_templates=custom_templates,
-            max_steps=6,  # Allow explore + tool calls in one step
+            instructions=SCOUT_SYSTEM_PROMPT,
+            max_steps=6,
+            additional_authorized_imports=["os", "subprocess", "pathlib", "re"],
             verbosity_level=LogLevel.OFF,  # Suppress built-in output
+            step_callbacks=[self._step_callback],  # Capture generated code
         )
 
         return self._agent
@@ -907,6 +909,9 @@ class StatelessScout:
         # Get first frontier path for display
         current_path = frontier[0]["path"] if frontier else ""
 
+        # Reset code action tracker
+        self._last_code_action = None
+
         # 3. Invoke agent
         agent = self._get_agent()
 
@@ -914,26 +919,17 @@ class StatelessScout:
             result = agent.run(prompt)
             self.steps_taken += 1
 
-            # Try to extract action from result for display
-            action = ""
-            if isinstance(result, str):
-                # Look for tool call patterns in agent output
-                if "skip_path" in result:
-                    action = "skipped"
-                elif "advance_status" in result:
-                    action = "listed"
-                elif "discover_path" in result:
-                    action = "discovered children"
-                elif "queue_file" in result:
-                    action = "queued file"
-                else:
-                    action = "explored"
+            # Extract commands from generated code for display
+            commands = self._extract_commands(self._last_code_action)
+            action = self._summarize_action(result, commands)
 
             return {
                 "status": "step_complete",
                 "step": self.steps_taken,
                 "path": current_path,
                 "action": action,
+                "commands": commands,  # Shell commands that were run
+                "code": self._last_code_action,  # Full generated code
                 "agent_result": result,
                 "frontier_size": len(frontier),
                 "summary": get_exploration_summary(self.config.facility),
@@ -946,7 +942,65 @@ class StatelessScout:
                 "error": str(e),
                 "step": self.steps_taken,
                 "path": current_path,
+                "commands": self._extract_commands(self._last_code_action),
             }
+
+    def _extract_commands(self, code: str | None) -> list[str]:
+        """Extract shell commands from generated Python code.
+
+        Looks for subprocess.run, os.system, or shell() calls.
+        """
+        if not code:
+            return []
+
+        commands = []
+
+        # Match subprocess.run(["cmd", "args"]) or subprocess.run("cmd")
+        for match in re.finditer(r'subprocess\.run\(\s*["\']([^"\']+)["\']', code):
+            commands.append(match.group(1))
+        for match in re.finditer(r"subprocess\.run\(\s*\[([^\]]+)\]", code):
+            # Parse list of strings
+            parts = re.findall(r'["\']([^"\']+)["\']', match.group(1))
+            if parts:
+                commands.append(" ".join(parts))
+
+        # Match shell("cmd") tool calls
+        for match in re.finditer(r'shell\(\s*["\']([^"\']+)["\']', code):
+            commands.append(match.group(1))
+
+        # Match os.popen("cmd")
+        for match in re.finditer(r'os\.popen\(\s*["\']([^"\']+)["\']', code):
+            commands.append(match.group(1))
+
+        return commands
+
+    def _summarize_action(self, result: Any, commands: list[str]) -> str:
+        """Create a human-readable summary of what happened."""
+        parts = []
+
+        # Add command summary
+        if commands:
+            # Truncate long commands
+            cmd_summaries = []
+            for cmd in commands[:3]:  # Max 3 commands
+                if len(cmd) > 50:
+                    cmd_summaries.append(cmd[:47] + "...")
+                else:
+                    cmd_summaries.append(cmd)
+            parts.append(" | ".join(cmd_summaries))
+
+        # Add action type from result
+        if isinstance(result, str):
+            if "skip_path" in result or "⊘" in result:
+                parts.append("→ skipped")
+            elif "advance_status" in result or "✓" in result:
+                parts.append("→ listed")
+            elif "discover_path" in result:
+                parts.append("→ discovered")
+            elif "queue_file" in result:
+                parts.append("→ queued")
+
+        return " ".join(parts) if parts else "explored"
 
     def run(self, steps: int | None = None) -> dict[str, Any]:
         """Run multiple exploration steps.

@@ -3420,12 +3420,28 @@ def scout_files(
             status = result.get("status", "unknown")
             path = result.get("path", "")
             action = result.get("action", "")
+            commands = result.get("commands", [])
+
+            # Build action display with commands
+            action_display = action
+            if commands:
+                # Show first command as summary
+                cmd_summary = commands[0]
+                if len(cmd_summary) > 60:
+                    cmd_summary = cmd_summary[:57] + "..."
+                action_display = f"{cmd_summary}"
+                if len(commands) > 1:
+                    action_display += f" (+{len(commands) - 1} more)"
 
             # Update display
-            display.update_step(i + 1, path=path, action=action)
+            display.update_step(i + 1, path=path, action=action_display)
 
-            if path and action:
-                display.add_history(f"{path} → {action}")
+            # Add to history with path and action summary
+            if path:
+                history_entry = path
+                if action:
+                    history_entry += f" → {action}"
+                display.add_history(history_entry)
 
             # Refresh stats after each step
             updated = get_exploration_summary(facility)
@@ -3460,6 +3476,12 @@ def scout_files(
     )
     console.print(f"  Remaining: {final_summary.get('remaining', 0)}")
     console.print(f"  Files queued: {final_summary.get('files_queued', 0)}")
+
+    # Show what was discovered
+    if final_summary.get("status_counts"):
+        console.print("\n[bold]Discovery Summary[/bold]")
+        for status, count in sorted(final_summary["status_counts"].items()):
+            console.print(f"  {status}: {count}")
 
 
 @scout.command("status")
