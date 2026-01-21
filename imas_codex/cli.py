@@ -3205,151 +3205,241 @@ def wiki_status(facility: str) -> None:
 # ============================================================================
 
 
+def _run_exploration_agent(
+    facility: str,
+    resource: str,
+    prompt: str | None,
+    model: str | None,
+    cost_limit: float,
+    max_steps: int,
+    dry_run: bool,
+    verbose: bool,
+    base_prompt: str,
+) -> None:
+    """Common exploration agent runner for non-wiki resources."""
+    import asyncio
+
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.explore import ExplorationAgent
+    from imas_codex.discovery import get_facility as get_facility_config
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Get model
+    model_id = model or get_model_for_task("exploration")
+
+    # Build full prompt
+    full_prompt = base_prompt
+    if prompt:
+        full_prompt = f"{base_prompt}. Focus: {prompt}"
+
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Resource:[/bold] {resource}\n"
+            f"[bold]Model:[/bold] {model_id}\n"
+            f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
+            f"[bold]Guidance:[/bold] {prompt or '(none)'}\n"
+            f"[bold]Max Steps:[/bold] {max_steps}",
+            title="Scout Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - agent will not execute[/dim]")
+        return
+
+    agent = ExplorationAgent(
+        facility=facility,
+        model=model_id,
+        cost_limit_usd=cost_limit,
+        verbose=verbose,
+        max_steps=max_steps,
+    )
+
+    try:
+        console.print("\n[bold]Starting exploration agent...[/bold]")
+        result = asyncio.run(agent.explore(prompt=full_prompt))
+
+        # Show results
+        console.print("\n[bold green]Discovery Complete[/bold green]")
+        console.print(f"  Files queued: {result.files_queued}")
+        console.print(f"  Paths discovered: {result.paths_discovered}")
+        console.print(f"  Notes added: {result.notes_added}")
+        console.print(f"  Cost: ${result.cost_usd:.4f}")
+        console.print(f"  Duration: {result.progress.elapsed_seconds:.1f}s")
+
+        if result.summary:
+            console.print("\n[bold]Summary:[/bold]")
+            console.print(result.summary[:500])
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        if verbose:
+            import traceback
+
+            traceback.print_exc()
+        raise SystemExit(1) from e
+
+
 @main.group()
 def scout() -> None:
-    """Scout facility resources with windowed context management.
+    """Scout facility resources with graph-first exploration.
 
-    Scout commands explore facilities incrementally, tracking a "moving frontier"
-    of explored vs unexplored paths. Dead-ends (git repos, site-packages) are
-    automatically detected and skipped.
+    Scout commands explore facilities using a stateless, graph-first approach.
+    Each step queries the graph for frontier paths, the LLM decides one action,
+    and results are persisted to the graph. No context carried between steps.
 
     \b
-      imas-codex scout files <facility>   Discover files with frontier tracking
-      imas-codex scout status <facility>  Show exploration progress
-      imas-codex scout resume <facility>  Resume from last session
+    Resources:
+      scout files <facility>    Discover source files (primary)
+      scout wiki <facility>     Discover wiki documentation
+      scout codes <facility>    Find physics simulation codes
+      scout data <facility>     Find data sources (MDSplus, HDF5, IMAS)
+      scout paths <facility>    Map directory structure
+
+    \b
+    Management:
+      scout status <facility>   Show exploration progress
+      scout resume <facility>   Continue exploration from graph state
+      scout list <facility>     List frontier paths or queued files
     """
     pass
 
 
 @scout.command("files")
 @click.argument("facility")
-@click.option("--window-size", "-w", default=10, help="Steps per window (default: 10)")
 @click.option(
-    "--max-steps", "-n", default=100, help="Maximum total steps (default: 100)"
+    "--steps", "-n", default=20, help="Number of exploration steps (default: 20)"
 )
 @click.option("--root-path", "-p", multiple=True, help="Root paths to explore")
 @click.option(
-    "--model", "-m", default=None, help="Model for discovery (default: from config)"
+    "--focus", "-f", default="general", help="Focus: general, imas, physics, data"
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def scout_files(
     facility: str,
-    window_size: int,
-    max_steps: int,
+    steps: int,
     root_path: tuple[str, ...],
-    model: str | None,
+    focus: str,
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Discover files at a facility with frontier tracking.
+    """Discover files using graph-first stateless exploration.
 
-    Uses windowed execution to manage context:
-    - Each window runs for WINDOW_SIZE steps
-    - At window boundaries, discoveries are summarized
-    - Dead-ends (git, site-packages, etc.) are automatically skipped
-    - All discoveries are persisted to the graph immediately
+    Each step:
+    1. Queries graph for frontier (discovered paths)
+    2. LLM decides ONE action based on frontier
+    3. Executes and persists to graph
+    4. Repeats fresh from graph state
+
+    The graph IS the state - no context carried between steps.
 
     \b
     EXAMPLES:
-        # Default exploration (10 steps per window, 100 total)
+        # Default exploration (20 steps)
         imas-codex scout files epfl
 
-        # Deeper exploration with custom roots
-        imas-codex scout files epfl -n 200 -p /home/codes -p /work/imas
+        # More steps with specific focus
+        imas-codex scout files epfl -n 50 --focus imas
 
-        # Quick check with smaller windows
-        imas-codex scout files epfl -w 5 -n 20 -v
+        # Start from specific paths
+        imas-codex scout files epfl -p /home/codes -p /work/imas
     """
     from rich.console import Console
 
-    from imas_codex.agentic.scout import FrontierManager, ScoutConfig, ScoutSession
+    from imas_codex.agentic.scout import (
+        ScoutConfig,
+        StatelessScout,
+        get_exploration_summary,
+    )
 
     console = Console()
 
     # Create configuration
     config = ScoutConfig(
         facility=facility,
-        window_size=window_size,
-        max_steps=max_steps,
+        max_steps=steps,
+        exploration_focus=focus,
         root_paths=list(root_path) if root_path else [],
-        auto_persist=not dry_run,
         verbose=verbose,
     )
 
-    def step_callback(step: int, remaining: int, action: str) -> None:
-        if verbose:
-            console.print(
-                f"[dim]Step {step} ({remaining} remaining): {action[:80]}[/dim]"
-            )
-
-    session = ScoutSession(config, step_callback=step_callback)
-
     console.print(f"\n[bold blue]Scout Files: {facility}[/bold blue]")
-    console.print(f"Window size: {window_size} steps")
-    console.print(f"Max steps: {max_steps}")
+    console.print(f"Focus: {focus}")
+    console.print(f"Max steps: {steps}")
     if root_path:
         console.print(f"Root paths: {', '.join(root_path)}")
     if dry_run:
-        console.print("[yellow]DRY RUN - no changes will be persisted[/yellow]")
+        console.print("[yellow]DRY RUN - showing configuration only[/yellow]")
+        return
 
-    # Initialize session
-    session._init_session()
-    console.print(f"\nSession: {session.state.session_id}")
+    scout = StatelessScout(config)
 
-    # Run windowed exploration
-    window_count = 0
+    # Seed frontier if empty
+    seed_result = scout.seed_frontier()
+    if seed_result.get("status") == "seeded":
+        console.print(f"[dim]Seeded {seed_result['paths_added']} root paths[/dim]")
+
+    # Show initial frontier
+    summary = get_exploration_summary(facility)
+    console.print("\n[bold]Initial State[/bold]")
+    console.print(f"  Total paths: {summary.get('total_paths', 0)}")
+    console.print(f"  Remaining: {summary.get('remaining', 0)}")
+    console.print(f"  Files queued: {summary.get('files_queued', 0)}")
+
+    # Run exploration
+    console.print(f"\n[bold]Running {steps} steps...[/bold]")
     try:
-        while session.state.total_steps < max_steps:
-            window = session.start_window()
-            console.print(f"\n[bold]Window {window.window_num}[/bold]")
+        for i in range(steps):
+            result = scout.step()
+            status = result.get("status", "unknown")
 
-            # For now, we'll do a simplified exploration
-            # In a real implementation, this would call the ReAct agent
-            # with scout tools and the frontier prompt
+            if verbose:
+                console.print(f"[dim]Step {i + 1}: {status}[/dim]")
 
-            # Simulate window completion
-            window_count += 1
-            session.end_window(f"Completed window {window.window_num}")
-
-            # Check if we should continue
-            if session.state.total_steps >= max_steps:
+            if status in ("complete", "max_steps_reached"):
+                console.print(f"[green]{status}[/green]")
                 break
 
-            # For demo, just do one window
-            console.print(
-                "[yellow]Note: Full agent integration pending - showing frontier status[/yellow]"
-            )
-            break
+            if status == "error":
+                console.print(f"[red]Error: {result.get('error')}[/red]")
+                break
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted - saving checkpoint...[/yellow]")
+        console.print("\n[yellow]Interrupted[/yellow]")
 
     # Show final status
-    result = session.finalize()
-    console.print("\n[bold green]Session Complete[/bold green]")
-    console.print(f"Total steps: {result['total_steps']}")
-    console.print(f"Discoveries: {result['total_discoveries']}")
-    console.print(f"Skipped: {result['total_skipped']}")
-    console.print(f"Files queued: {result['total_queued']}")
-
-    # Show frontier status
-    frontier = FrontierManager(facility)
-    stats = frontier.get_stats()
-    console.print("\n[bold]Frontier Status[/bold]")
-    console.print(f"Coverage: {stats.coverage:.1%}")
-    console.print(f"Remaining: {stats.remaining} paths")
+    final_summary = get_exploration_summary(facility)
+    console.print("\n[bold green]Exploration Complete[/bold green]")
+    console.print(f"  Steps taken: {scout.steps_taken}")
+    console.print(f"  Total paths: {final_summary.get('total_paths', 0)}")
+    console.print(
+        f"  Explored: {final_summary.get('explored', 0)} ({final_summary.get('coverage', 0):.1%})"
+    )
+    console.print(f"  Remaining: {final_summary.get('remaining', 0)}")
+    console.print(f"  Files queued: {final_summary.get('files_queued', 0)}")
 
 
 @scout.command("status")
 @click.argument("facility")
-@click.option("--sessions", "-s", is_flag=True, help="Show recent sessions")
 @click.option("--paths", "-p", is_flag=True, help="Show unexplored paths")
 @click.option("--skipped", is_flag=True, help="Show skipped (dead-end) paths")
 @click.option("--limit", "-n", default=20, help="Number of items to show")
 def scout_status(
     facility: str,
-    sessions: bool,
     paths: bool,
     skipped: bool,
     limit: int,
@@ -3364,9 +3454,6 @@ def scout_status(
         # Show frontier summary
         imas-codex scout status epfl
 
-        # Show recent sessions
-        imas-codex scout status epfl --sessions
-
         # Show unexplored high-priority paths
         imas-codex scout status epfl --paths
 
@@ -3376,79 +3463,58 @@ def scout_status(
     from rich.console import Console
     from rich.table import Table
 
-    from imas_codex.agentic.scout import FrontierManager
-    from imas_codex.agentic.scout.session import get_scout_sessions
+    from imas_codex.agentic.scout import get_exploration_summary, get_frontier
 
     console = Console()
 
-    # Get frontier stats
-    frontier = FrontierManager(facility)
-    stats = frontier.get_stats()
+    # Get exploration summary
+    summary = get_exploration_summary(facility)
 
     console.print(f"\n[bold blue]Scout Status: {facility}[/bold blue]\n")
 
+    if "error" in summary:
+        console.print(f"[red]Error: {summary['error']}[/red]")
+        return
+
     # Summary table
-    summary_table = Table(title="Frontier Summary", show_header=False)
+    summary_table = Table(title="Exploration Summary", show_header=False)
     summary_table.add_column("Metric", style="bold")
     summary_table.add_column("Value")
 
-    summary_table.add_row("Total paths", str(stats.total_paths))
-    summary_table.add_row("Coverage", f"{stats.coverage:.1%}")
-    summary_table.add_row("Explored", str(stats.explored))
-    summary_table.add_row("Remaining", str(stats.remaining))
-    summary_table.add_row("Skipped (dead-ends)", str(stats.skipped))
-    summary_table.add_row("Files queued", str(stats.queued_files))
-    summary_table.add_row("Files ingested", str(stats.ingested_files))
+    summary_table.add_row("Total paths", str(summary.get("total_paths", 0)))
+    summary_table.add_row("Coverage", f"{summary.get('coverage', 0):.1%}")
+    summary_table.add_row("Explored", str(summary.get("explored", 0)))
+    summary_table.add_row("Remaining", str(summary.get("remaining", 0)))
+    summary_table.add_row("Files queued", str(summary.get("files_queued", 0)))
+    summary_table.add_row("Files ingested", str(summary.get("files_ingested", 0)))
     console.print(summary_table)
 
     # Status breakdown
-    status_table = Table(title="\nStatus Breakdown")
-    status_table.add_column("Status")
-    status_table.add_column("Count", justify="right")
+    status_counts = summary.get("status_counts", {})
+    if status_counts:
+        status_table = Table(title="\nStatus Breakdown")
+        status_table.add_column("Status")
+        status_table.add_column("Count", justify="right")
 
-    status_table.add_row("discovered", str(stats.discovered))
-    status_table.add_row("listed", str(stats.listed))
-    status_table.add_row("scanned", str(stats.scanned))
-    status_table.add_row("analyzed", str(stats.analyzed))
-    console.print(status_table)
-
-    # Recent sessions
-    if sessions:
-        console.print("\n")
-        sess_list = get_scout_sessions(facility, limit=limit)
-        if sess_list:
-            sess_table = Table(title="Recent Scout Sessions")
-            sess_table.add_column("Session ID")
-            sess_table.add_column("Status")
-            sess_table.add_column("Steps")
-            sess_table.add_column("Discoveries")
-            sess_table.add_column("Started")
-
-            for s in sess_list:
-                sess_table.add_row(
-                    s.get("session_id", "?"),
-                    s.get("status", "?"),
-                    str(s.get("total_steps", 0)),
-                    str(s.get("discoveries", 0)),
-                    s.get("started_at", "?")[:19] if s.get("started_at") else "?",
-                )
-            console.print(sess_table)
-        else:
-            console.print("[dim]No scout sessions found[/dim]")
+        for status, count in sorted(status_counts.items()):
+            status_table.add_row(status, str(count))
+        console.print(status_table)
 
     # Unexplored paths
     if paths:
         console.print("\n")
-        unexplored = frontier.get_unexplored_paths(limit=limit)
-        if unexplored:
+        frontier = get_frontier(facility, limit=limit)
+        if frontier:
             paths_table = Table(title="High-Priority Unexplored Paths")
             paths_table.add_column("Path")
             paths_table.add_column("Score", justify="right")
+            paths_table.add_column("Reason")
 
-            for p in unexplored:
+            for p in frontier:
                 paths_table.add_row(
                     p.get("path", "?"),
                     f"{p.get('interest_score', 0.5):.2f}",
+                    (p.get("interest_reason") or "")[:40],
                 )
             console.print(paths_table)
         else:
@@ -3457,79 +3523,539 @@ def scout_status(
     # Skipped paths
     if skipped:
         console.print("\n")
-        skipped_list = frontier.get_skipped_paths(limit=limit)
-        if skipped_list:
-            skip_table = Table(title="Skipped Paths (Dead-Ends)")
-            skip_table.add_column("Path")
-            skip_table.add_column("Reason")
+        from imas_codex.graph import GraphClient
 
-            for p in skipped_list:
-                skip_table.add_row(
-                    p.get("path", "?"),
-                    p.get("reason", "?"),
+        try:
+            with GraphClient() as client:
+                result = client.query(
+                    """
+                    MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                    WHERE p.status = 'skipped'
+                    RETURN p.path AS path, p.skip_reason AS reason
+                    ORDER BY p.skipped_at DESC
+                    LIMIT $limit
+                    """,
+                    facility=facility,
+                    limit=limit,
                 )
-            console.print(skip_table)
-        else:
-            console.print("[dim]No skipped paths found[/dim]")
+                if result:
+                    skip_table = Table(title="Skipped Paths (Dead-Ends)")
+                    skip_table.add_column("Path")
+                    skip_table.add_column("Reason")
+
+                    for p in result:
+                        skip_table.add_row(
+                            p.get("path", "?"),
+                            p.get("reason", "?"),
+                        )
+                    console.print(skip_table)
+                else:
+                    console.print("[dim]No skipped paths found[/dim]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
 
 
 @scout.command("resume")
-@click.argument("session_id")
-@click.option(
-    "--max-steps", "-n", default=None, type=int, help="Additional steps to run"
-)
+@click.argument("facility")
+@click.option("--steps", "-n", default=20, help="Number of additional steps to run")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def scout_resume(
-    session_id: str,
-    max_steps: int | None,
+    facility: str,
+    steps: int,
     verbose: bool,
 ) -> None:
-    """Resume a scout session from its last checkpoint.
+    """Resume exploration for a facility from graph state.
 
-    Sessions are automatically checkpointed after each window, so
-    interrupted exploration can be resumed without losing progress.
+    With the graph-first stateless approach, resumption is automatic.
+    The scout queries the graph for the current frontier and continues.
 
     \b
     EXAMPLES:
-        # Resume a session
-        imas-codex scout resume scout-epfl-20250120-143022
+        # Resume exploration with 20 more steps
+        imas-codex scout resume epfl
 
-        # Resume with additional steps
-        imas-codex scout resume scout-epfl-20250120-143022 -n 50
+        # Resume with more steps
+        imas-codex scout resume epfl -n 50
     """
     from rich.console import Console
 
-    from imas_codex.agentic.scout.session import resume_scout_session
+    from imas_codex.agentic.scout import (
+        ScoutConfig,
+        StatelessScout,
+        get_exploration_summary,
+    )
 
     console = Console()
 
-    session = resume_scout_session(session_id)
-    if session is None:
-        console.print(f"[red]Session not found: {session_id}[/red]")
-        raise SystemExit(1)
+    # Check current state
+    summary = get_exploration_summary(facility)
 
-    console.print(f"[bold blue]Resuming: {session_id}[/bold blue]")
-    console.print(f"Facility: {session.state.facility}")
-    console.print(f"Previous steps: {session.state.total_steps}")
-    console.print(f"Previous discoveries: {session.state.total_discoveries}")
+    if summary.get("total_paths", 0) == 0:
+        console.print(
+            f"[yellow]No exploration data for {facility}. Use 'scout files' to start.[/yellow]"
+        )
+        return
 
-    if max_steps:
-        session.config.max_steps = session.state.total_steps + max_steps
-        console.print(f"New max steps: {session.config.max_steps}")
-
-    # Continue exploration
+    console.print(f"[bold blue]Resuming Scout: {facility}[/bold blue]")
+    console.print("\n[bold]Current State[/bold]")
+    console.print(f"  Total paths: {summary.get('total_paths', 0)}")
     console.print(
-        "\n[yellow]Resume functionality pending full agent integration[/yellow]"
+        f"  Explored: {summary.get('explored', 0)} ({summary.get('coverage', 0):.1%})"
+    )
+    console.print(f"  Remaining: {summary.get('remaining', 0)}")
+    console.print(f"  Files queued: {summary.get('files_queued', 0)}")
+
+    if summary.get("remaining", 0) == 0:
+        console.print(
+            "\n[green]Exploration already complete - no remaining paths[/green]"
+        )
+        return
+
+    # Create scout and run additional steps
+    config = ScoutConfig(
+        facility=facility,
+        max_steps=steps,
+        verbose=verbose,
     )
 
-    # Show accumulated context
-    if session.state.accumulated_summary:
-        console.print("\n[bold]Accumulated Context:[/bold]")
-        console.print(session.state.accumulated_summary[:500])
-        if len(session.state.accumulated_summary) > 500:
-            console.print(
-                f"[dim]... and {len(session.state.accumulated_summary) - 500} more characters[/dim]"
+    scout = StatelessScout(config)
+
+    console.print(f"\n[bold]Running {steps} additional steps...[/bold]")
+    try:
+        for i in range(steps):
+            result = scout.step()
+            status = result.get("status", "unknown")
+
+            if verbose:
+                console.print(f"[dim]Step {i + 1}: {status}[/dim]")
+
+            if status in ("complete", "max_steps_reached"):
+                console.print(f"[green]{status}[/green]")
+                break
+
+            if status == "error":
+                console.print(f"[red]Error: {result.get('error')}[/red]")
+                break
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted[/yellow]")
+
+    # Show final status
+    final_summary = get_exploration_summary(facility)
+    console.print("\n[bold green]Resume Complete[/bold green]")
+    console.print(f"  Steps taken: {scout.steps_taken}")
+    console.print(f"  Total paths: {final_summary.get('total_paths', 0)}")
+    console.print(f"  Coverage: {final_summary.get('coverage', 0):.1%}")
+    console.print(f"  Remaining: {final_summary.get('remaining', 0)}")
+
+
+@scout.command("list")
+@click.argument("facility")
+@click.option("--limit", "-n", default=20, help="Number of paths to show")
+@click.option("--queued", "-q", is_flag=True, help="Show queued source files")
+def scout_list(
+    facility: str,
+    limit: int,
+    queued: bool,
+) -> None:
+    """List exploration frontier or queued files.
+
+    Shows paths waiting to be explored (frontier) or files queued for ingestion.
+
+    \\b
+    EXAMPLES:
+        # List frontier paths
+        imas-codex scout list epfl
+
+        # List queued files
+        imas-codex scout list epfl --queued
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.agentic.scout import get_frontier
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    if queued:
+        # Show queued source files
+        try:
+            with GraphClient() as client:
+                result = client.query(
+                    """
+                    MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                    WHERE sf.status IN ['discovered', 'queued']
+                    RETURN sf.path AS path, sf.interest_score AS score,
+                           sf.discovered_by AS discovered_by, sf.discovered_at AS discovered_at
+                    ORDER BY sf.interest_score DESC
+                    LIMIT $limit
+                    """,
+                    facility=facility,
+                    limit=limit,
+                )
+
+                if not result:
+                    console.print(f"[dim]No queued files for {facility}[/dim]")
+                    return
+
+                table = Table(title=f"Queued Files: {facility}")
+                table.add_column("Path")
+                table.add_column("Score", justify="right")
+                table.add_column("Discovered By")
+
+                for row in result:
+                    table.add_row(
+                        row.get("path", "?"),
+                        f"{row.get('score', 0.5):.2f}",
+                        row.get("discovered_by", "?"),
+                    )
+                console.print(table)
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+    else:
+        # Show frontier paths
+        frontier = get_frontier(facility, limit=limit)
+
+        if not frontier:
+            console.print(f"[dim]No frontier paths for {facility}[/dim]")
+            return
+
+        table = Table(title=f"Exploration Frontier: {facility}")
+        table.add_column("Path")
+        table.add_column("Score", justify="right")
+        table.add_column("Reason")
+
+        for p in frontier:
+            table.add_row(
+                p.get("path", "?"),
+                f"{p.get('interest_score', 0.5):.2f}",
+                (p.get("interest_reason") or "")[:50],
             )
+
+        console.print(table)
+
+
+@scout.command("wiki")
+@click.argument("facility")
+@click.option(
+    "--portal",
+    "-p",
+    default=None,
+    help="Portal page to start from (default: from facility config)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model (default: anthropic/claude-sonnet-4-20250514)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=10.0,
+    type=float,
+    help="Maximum cost budget in USD (default: 10.0)",
+)
+@click.option(
+    "--max-pages",
+    "-n",
+    default=None,
+    type=int,
+    help="Maximum pages to crawl (default: unlimited)",
+)
+@click.option(
+    "--max-depth",
+    default=None,
+    type=int,
+    help="Maximum link depth from portal (default: unlimited)",
+)
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def scout_wiki(
+    facility: str,
+    portal: str | None,
+    model: str | None,
+    cost_limit: float,
+    max_pages: int | None,
+    max_depth: int | None,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Discover wiki pages and documentation.
+
+    Crawls wiki starting from a portal page, evaluates page value using LLM,
+    and queues high-value pages for ingestion.
+
+    Credentials are prompted interactively if not already stored.
+    Use 'imas-codex wiki credentials set <site>' to pre-configure.
+
+    \\b
+    EXAMPLES:
+        # Discover ITER wiki pages
+        imas-codex scout wiki iter
+
+        # Start from specific portal
+        imas-codex scout wiki epfl --portal Portal:TCV
+
+        # Limit scope
+        imas-codex scout wiki iter --max-pages 500 --max-depth 3
+
+        # Preview configuration
+        imas-codex scout wiki iter --dry-run
+    """
+    import asyncio
+
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from imas_codex.discovery import get_facility as get_facility_config
+    from imas_codex.wiki.discovery import run_wiki_discovery
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        facility_config = get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Get portal from config if not specified
+    wiki_sites = facility_config.get("wiki_sites", [])
+    default_portal = None
+    if wiki_sites and not portal:
+        default_portal = wiki_sites[0].get("portal_page")
+
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Portal:[/bold] {portal or default_portal or '(auto-detect)'}\n"
+            f"[bold]Model:[/bold] {model or 'anthropic/claude-sonnet-4-20250514'}\n"
+            f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
+            f"[bold]Max Pages:[/bold] {max_pages or 'unlimited'}\n"
+            f"[bold]Max Depth:[/bold] {max_depth or 'unlimited'}",
+            title="Scout Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - agent will not execute[/dim]")
+        return
+
+    console.print("\n[bold]Starting wiki discovery...[/bold]")
+    asyncio.run(
+        run_wiki_discovery(
+            facility=facility,
+            cost_limit_usd=cost_limit,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            verbose=verbose,
+        )
+    )
+
+
+@scout.command("codes")
+@click.argument("facility")
+@click.option(
+    "--focus",
+    "-f",
+    default=None,
+    help="Specific codes to find (e.g., 'CHEASE LIUQE ASTRA')",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model (default: from config)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=10.0,
+    type=float,
+    help="Maximum cost in USD (default: 10.0)",
+)
+@click.option(
+    "--max-steps",
+    "-n",
+    default=30,
+    type=int,
+    help="Maximum agent iterations (default: 30)",
+)
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def scout_codes(
+    facility: str,
+    focus: str | None,
+    model: str | None,
+    cost_limit: float,
+    max_steps: int,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Discover physics simulation codes.
+
+    Finds physics codes (equilibrium solvers, transport codes, etc.)
+    and their documentation, input files, and integration points.
+
+    \\b
+    EXAMPLES:
+        # Discover all codes at EPFL
+        imas-codex scout codes epfl
+
+        # Find specific codes
+        imas-codex scout codes epfl --focus "CHEASE LIUQE"
+
+        # Search ITER for transport codes
+        imas-codex scout codes iter --focus "transport JINTRAC"
+    """
+    _run_exploration_agent(
+        facility=facility,
+        resource="codes",
+        prompt=focus,
+        model=model,
+        cost_limit=cost_limit,
+        max_steps=max_steps,
+        dry_run=dry_run,
+        verbose=verbose,
+        base_prompt="Find physics simulation codes and their documentation",
+    )
+
+
+@scout.command("data")
+@click.argument("facility")
+@click.option(
+    "--focus",
+    "-f",
+    default=None,
+    help="Data type focus (e.g., 'MDSplus', 'HDF5', 'IMAS')",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model (default: from config)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=10.0,
+    type=float,
+    help="Maximum cost in USD (default: 10.0)",
+)
+@click.option(
+    "--max-steps",
+    "-n",
+    default=30,
+    type=int,
+    help="Maximum agent iterations (default: 30)",
+)
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def scout_data(
+    facility: str,
+    focus: str | None,
+    model: str | None,
+    cost_limit: float,
+    max_steps: int,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Discover data formats and locations.
+
+    Finds MDSplus trees, HDF5 files, IMAS databases, UDA endpoints,
+    and other data storage systems.
+
+    \\b
+    EXAMPLES:
+        # Discover all data sources at ITER
+        imas-codex scout data iter
+
+        # Focus on MDSplus trees
+        imas-codex scout data epfl --focus "MDSplus tree structure"
+
+        # Find IMAS databases
+        imas-codex scout data iter --focus "IMAS IDS locations"
+    """
+    _run_exploration_agent(
+        facility=facility,
+        resource="data",
+        prompt=focus,
+        model=model,
+        cost_limit=cost_limit,
+        max_steps=max_steps,
+        dry_run=dry_run,
+        verbose=verbose,
+        base_prompt="Discover data formats and locations (MDSplus trees, HDF5 files, IMAS databases, UDA endpoints)",
+    )
+
+
+@scout.command("paths")
+@click.argument("facility")
+@click.option(
+    "--focus",
+    "-f",
+    default=None,
+    help="Path focus (e.g., 'home directories', 'shared codes')",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model (default: from config)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=10.0,
+    type=float,
+    help="Maximum cost in USD (default: 10.0)",
+)
+@click.option(
+    "--max-steps",
+    "-n",
+    default=30,
+    type=int,
+    help="Maximum agent iterations (default: 30)",
+)
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def scout_paths(
+    facility: str,
+    focus: str | None,
+    model: str | None,
+    cost_limit: float,
+    max_steps: int,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Discover directory structure and key locations.
+
+    Maps the filesystem to identify important directories:
+    home areas, shared code locations, data archives, etc.
+
+    \\b
+    EXAMPLES:
+        # Map EPFL directory structure
+        imas-codex scout paths epfl
+
+        # Find shared code locations
+        imas-codex scout paths iter --focus "shared modules"
+    """
+    _run_exploration_agent(
+        facility=facility,
+        resource="paths",
+        prompt=focus,
+        model=model,
+        cost_limit=cost_limit,
+        max_steps=max_steps,
+        dry_run=dry_run,
+        verbose=verbose,
+        base_prompt="Map directory structure and identify key locations",
+    )
 
 
 # ============================================================================
