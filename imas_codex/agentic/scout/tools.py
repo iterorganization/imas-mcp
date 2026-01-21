@@ -1,22 +1,18 @@
 """Smolagents tools for stateless scout.
 
-These tools are minimal and focused on schema-compliant graph operations.
-The LLM already knows how to use rg, fd, shell commands via CodeAgent.
+Tools for:
+1. Running commands on the target facility (local or SSH)
+2. Persisting discoveries to the graph
+3. Querying exploration state
 
-Tools here are for:
-1. Querying the graph for frontier state
-2. Persisting discoveries with proper schema
-3. Recording interest reasons and skip decisions
-
-DO NOT add tools for:
-- grep/find (LLM uses shell directly)
-- file reading (LLM uses head/cat directly)
-- basic shell operations (LLM knows these)
+The `run` tool is the primary interface for executing commands -
+it automatically handles local vs SSH execution based on facility config.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from smolagents import Tool
 
@@ -31,6 +27,64 @@ from .stateless import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Global callback for streaming command output to display
+_command_callback: Callable[[str, str], None] | None = None
+
+
+def set_command_callback(callback: Callable[[str, str], None] | None) -> None:
+    """Set callback for streaming commands to display.
+
+    Args:
+        callback: Function(command, output) called after each command
+    """
+    global _command_callback
+    _command_callback = callback
+
+
+class RunTool(Tool):
+    """Execute commands on the target facility."""
+
+    name = "run"
+    description = (
+        "Execute a shell command on the target facility. "
+        "Automatically handles local vs SSH execution. "
+        "Use for: ls, rg (fast grep), fd (fast find), head, cat, wc. "
+        "Examples: run('ls -la /home'), run('rg -l IMAS /work'), run('fd -e py /path')"
+    )
+    inputs = {
+        "command": {
+            "type": "string",
+            "description": "Shell command to execute on the facility",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, facility: str):
+        super().__init__()
+        self.facility = facility
+
+    def forward(self, command: str) -> str:
+        """Execute the command on the facility."""
+        from imas_codex.agentic.server import run as facility_run
+
+        try:
+            output = facility_run(command, facility=self.facility, timeout=30)
+
+            # Notify callback for display streaming
+            if _command_callback:
+                _command_callback(command, output)
+
+            # Truncate if too long
+            if len(output) > 8000:
+                output = output[:8000] + "\n... (truncated)"
+
+            return output if output.strip() else "(no output)"
+
+        except TimeoutError:
+            return "Error: Command timed out after 30 seconds"
+        except Exception as e:
+            return f"Error: {e}"
 
 
 class DiscoverPathTool(Tool):
@@ -374,17 +428,18 @@ class GetSummaryTool(Tool):
 def get_scout_tools(facility: str) -> list[Tool]:
     """Get the tool set for stateless scout.
 
-    CodeAgent can run subprocess commands directly via Python code,
-    so we only need tools for graph operations.
+    Includes:
+    - run: Execute commands on the facility (local or SSH)
+    - Graph tools for persisting discoveries
 
     Args:
         facility: Facility ID
 
     Returns:
-        List of scout tools for graph persistence
+        List of scout tools
     """
     return [
-        # Graph persistence tools - CodeAgent calls these from generated code
+        RunTool(facility),  # Primary interface for command execution
         DiscoverPathTool(facility),
         QueueFileTool(facility),
         SkipPathTool(facility),

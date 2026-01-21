@@ -3371,6 +3371,7 @@ def scout_files(
         get_exploration_summary,
     )
     from imas_codex.agentic.scout.display import ScoutDisplay
+    from imas_codex.agentic.scout.tools import set_command_callback
 
     console = Console()
 
@@ -3400,6 +3401,14 @@ def scout_files(
     # Use Rich Live display
     display = ScoutDisplay(facility=facility, max_steps=steps, console=console)
     display.start(dry_run=dry_run)
+
+    # Hook command callback to update display when commands run
+    def on_command(cmd: str, output: str) -> None:
+        """Update display when a command executes."""
+        cmd_short = cmd if len(cmd) <= 60 else cmd[:57] + "..."
+        display.update_step(display._current_step, action=cmd_short)
+
+    set_command_callback(on_command)
 
     try:
         # Show initial state
@@ -3464,6 +3473,7 @@ def scout_files(
         display.show_result("warning", "Interrupted")
 
     finally:
+        set_command_callback(None)  # Clear callback
         display.stop()
 
     # Show final summary

@@ -680,30 +680,44 @@ class ScoutConfig:
 
 SCOUT_SYSTEM_PROMPT = """You are an exploration agent discovering physics code at a fusion research facility.
 
-## CRITICAL: You MUST call tools to persist discoveries
+## CRITICAL: Use `run()` for ALL shell commands
 
-After exploring with shell commands, you MUST call tools to record what you found:
+The `run()` tool handles local vs SSH execution automatically. Never use subprocess directly.
+
+```python
+# Correct - uses SSH when needed
+output = run("ls -la /home")
+output = run("rg 'IMAS' /work/codes")
+
+# WRONG - only works locally
+import subprocess
+subprocess.run(["ls", "/home"])  # DON'T DO THIS
+```
+
+## CRITICAL: Call tools to persist discoveries
+
+After exploring with `run()`, you MUST call tools to record what you found:
 - `skip_path(path, reason)` - For paths that don't exist or are dead-ends
 - `advance_status(path, new_status)` - After listing a directory (status="listed")
 - `discover_path(path, ...)` - For interesting child directories found
 - `queue_file(path, ...)` - For source files worth analyzing
 
-**If you don't call these tools, your discoveries are LOST and you'll repeat the same work!**
+**If you don't call these tools, your discoveries are LOST!**
 
 ## What to Find
 1. **IMAS integration code** - Files that read/write IMAS IDS data
 2. **Physics simulation codes** - Equilibrium solvers, transport codes
 3. **Data access patterns** - MDSplus, HDF5, IMAS databases
 
-## Shell Commands (use these to explore)
-- `ls -la /path` - List directory contents
-- `rg 'pattern' /path` - Fast grep search
-- `fd -e py /path` - Fast file finder
-- `head -50 /path/file.py` - Examine file content
+## Shell Commands (use via run())
+- `run("ls -la /path")` - List directory contents
+- `run("rg 'pattern' /path")` - Fast grep search
+- `run("fd -e py /path")` - Fast file finder
+- `run("head -50 /path/file.py")` - Examine file content
 
 ## Workflow for Each Step
 1. Pick ONE path from the frontier
-2. Explore it with shell commands
+2. Explore it with `run("command")`
 3. CALL TOOLS to persist what you found:
    - If path doesn't exist → `skip_path(path, "does not exist")`
    - If path is explored → `advance_status(path, "listed")` + `discover_path()` for children
@@ -948,14 +962,18 @@ class StatelessScout:
     def _extract_commands(self, code: str | None) -> list[str]:
         """Extract shell commands from generated Python code.
 
-        Looks for subprocess.run, os.system, or shell() calls.
+        Looks for run() tool calls, subprocess.run, or shell() calls.
         """
         if not code:
             return []
 
         commands = []
 
-        # Match subprocess.run(["cmd", "args"]) or subprocess.run("cmd")
+        # Match run("cmd") or run('cmd') - primary interface
+        for match in re.finditer(r'run\(\s*["\']([^"\']+)["\']', code):
+            commands.append(match.group(1))
+
+        # Match subprocess.run(["cmd", "args"]) or subprocess.run("cmd") - fallback
         for match in re.finditer(r'subprocess\.run\(\s*["\']([^"\']+)["\']', code):
             commands.append(match.group(1))
         for match in re.finditer(r"subprocess\.run\(\s*\[([^\]]+)\]", code):
