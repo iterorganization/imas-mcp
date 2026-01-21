@@ -43,6 +43,7 @@ coverage.xml
 
 # IDE files
 .idea/
+.continue/
 *.swp
 *.swo
 
