@@ -2,6 +2,22 @@
 
 Facility exploration for discovering source files, MDSplus trees, and analysis codes.
 
+## Critical: Check Constraints First
+
+**Before ANY disk-intensive operation, check facility excludes:**
+
+```python
+python("""
+info = get_facility('epfl')
+excludes = info.get('excludes', {})
+print(f"Large dirs: {excludes.get('large_dirs', [])}")
+print(f"Depth limits: {excludes.get('depth_limits', {})}")
+print(f"Recent notes: {info.get('exploration_notes', [])[-3:]}")
+""")
+```
+
+This prevents repeating known timeouts. **Always use depth limits on large directories.**
+
 ## Critical: Check Locality First
 
 **Always determine if you're on the target facility before choosing execution method:**
@@ -183,6 +199,41 @@ python("""
 update_infrastructure("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 """)
 ```
+
+## Timeout Handling
+
+When a command times out or hangs, **persist the constraint immediately**:
+
+```python
+python("""
+# Get current excludes and merge
+info = get_facility('epfl')
+excludes = info.get('excludes', {})
+large_dirs = excludes.get('large_dirs', [])
+if '/work' not in large_dirs:
+    large_dirs.append('/work')
+
+depth_limits = excludes.get('depth_limits', {})
+depth_limits['/work'] = 2  # Set safe depth limit
+
+update_infrastructure('epfl', {
+    'excludes': {
+        'large_dirs': large_dirs,
+        'depth_limits': depth_limits
+    }
+})
+
+# Add human-readable context
+add_exploration_note('epfl', '/work causes timeouts - use --max-depth 2 or target /work/imas')
+""")
+```
+
+**Rules for timeout persistence:**
+- `excludes.large_dirs`: Paths to avoid entirely with unbounded scans
+- `excludes.depth_limits`: Max `--max-depth` value for each path
+- `exploration_notes`: Human context explaining *why* (for future sessions)
+
+**Never repeat a timeout** - always persist the learning before continuing.
 
 ## Data Classification
 
