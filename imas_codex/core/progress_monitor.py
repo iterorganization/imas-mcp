@@ -5,6 +5,7 @@ from typing import Any
 
 try:
     from rich.console import Console
+    from rich.logging import RichHandler
     from rich.progress import (
         BarColumn,
         Progress,
@@ -20,7 +21,62 @@ except ImportError:
     # Define dummy types for type hints when rich is not available
     BarColumn = Progress = SpinnerColumn = TaskID = TextColumn = TimeRemainingColumn = (
         Console
-    ) = Any
+    ) = RichHandler = Any
+
+
+# Module-level state for suppressing logging during Rich progress
+_active_consoles: list[Console] = []
+_original_handlers: dict[str, list[logging.Handler]] = {}
+
+
+def _install_rich_logging_handler(console: Console) -> None:
+    """Install RichHandler on root logger to route logs through Rich console.
+
+    This prevents log output from interfering with Rich progress bars.
+    """
+    root_logger = logging.getLogger()
+
+    # Store original handlers
+    _original_handlers[id(console)] = list(root_logger.handlers)
+
+    # Remove existing handlers temporarily
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+
+    # Add RichHandler that uses the same console as progress
+    rich_handler = RichHandler(
+        console=console,
+        show_time=True,
+        show_path=False,
+        rich_tracebacks=True,
+        markup=True,
+    )
+    rich_handler.setFormatter(logging.Formatter("%(message)s"))
+    root_logger.addHandler(rich_handler)
+    _active_consoles.append(console)
+
+
+def _restore_logging_handlers(console: Console) -> None:
+    """Restore original logging handlers after Rich progress is done."""
+    console_id = id(console)
+    if console_id not in _original_handlers:
+        return
+
+    root_logger = logging.getLogger()
+
+    # Remove the RichHandler
+    for handler in list(root_logger.handlers):
+        if isinstance(handler, RichHandler):
+            root_logger.removeHandler(handler)
+
+    # Restore original handlers
+    for handler in _original_handlers[console_id]:
+        if handler not in root_logger.handlers:
+            root_logger.addHandler(handler)
+
+    del _original_handlers[console_id]
+    if console in _active_consoles:
+        _active_consoles.remove(console)
 
 
 class ProgressMonitor:
@@ -109,6 +165,8 @@ class ProgressMonitor:
         if self._use_rich and RICH_AVAILABLE:
             # Force console to treat output as interactive for Windows terminals
             self._console = Console(force_terminal=True, force_interactive=True)  # type: ignore
+            # Route logging through Rich to prevent interference with progress bar
+            _install_rich_logging_handler(self._console)
             self._progress = Progress(  # type: ignore
                 SpinnerColumn(),  # type: ignore
                 TextColumn("[progress.description]{task.description}"),  # type: ignore
@@ -177,6 +235,9 @@ class ProgressMonitor:
             self._progress.stop()
             self._progress = None
             self._task_id = None
+            # Restore original logging handlers
+            if self._console:
+                _restore_logging_handlers(self._console)
         else:
             # Use INFO level for normal completion information
             self.logger.info(

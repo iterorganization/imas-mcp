@@ -3105,10 +3105,10 @@ def imas() -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
 @click.option(
-    "-a",
-    "--all-versions",
+    "-c",
+    "--current-only",
     is_flag=True,
-    help="Process all DD versions (default: current only)",
+    help="Process only current DD version (default: all versions)",
 )
 @click.option(
     "--from-version",
@@ -3143,7 +3143,7 @@ def imas() -> None:
 def imas_build(
     verbose: bool,
     quiet: bool,
-    all_versions: bool,
+    current_only: bool,
     from_version: str | None,
     force: bool,
     skip_clusters: bool,
@@ -3174,8 +3174,8 @@ def imas_build(
 
     \b
     Examples:
-        imas-codex imas build                  # Build current version
-        imas-codex imas build --all-versions   # Build all DD versions
+        imas-codex imas build                  # Build all DD versions (default)
+        imas-codex imas build --current-only   # Build current version only
         imas-codex imas build --from-version 4.0.0  # Incremental from 4.0.0
         imas-codex imas build --force          # Regenerate all embeddings
         imas-codex imas build --dry-run -v     # Preview without writing
@@ -3183,7 +3183,7 @@ def imas_build(
     """
     # Import and call the standalone build script's logic
     from imas_codex import dd_version as current_dd_version
-    from scripts.build_dd_graph import build_dd_graph, get_all_dd_versions
+    from imas_codex.graph.build_dd import build_dd_graph, get_all_dd_versions
 
     # Set up logging
     if quiet:
@@ -3205,8 +3205,8 @@ def imas_build(
         # Determine versions to process
         available_versions = get_all_dd_versions()
 
-        if all_versions:
-            versions = available_versions
+        if current_only:
+            versions = [current_dd_version]
         elif from_version:
             try:
                 start_idx = available_versions.index(from_version)
@@ -3218,7 +3218,8 @@ def imas_build(
                 )
                 raise SystemExit(1) from e
         else:
-            versions = [current_dd_version]
+            # Default: all versions
+            versions = available_versions
 
         logger.info(f"Processing {len(versions)} DD versions")
         if len(versions) > 1:
@@ -3475,7 +3476,7 @@ def imas_versions(available: bool) -> None:
     console = Console()
 
     if available:
-        from scripts.build_dd_graph import get_all_dd_versions
+        from imas_codex.graph.build_dd import get_all_dd_versions
 
         versions = get_all_dd_versions()
         console.print(f"[bold]Available DD versions ({len(versions)}):[/bold]")

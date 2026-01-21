@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """
 Build the IMAS Data Dictionary Knowledge Graph.
 
-This script populates Neo4j with IMAS DD structure including:
+This module provides functions to populate Neo4j with IMAS DD structure:
 - DDVersion nodes for all available DD versions
 - IDS nodes for top-level structures
 - IMASPath nodes with hierarchical relationships
@@ -26,9 +25,7 @@ import hashlib
 import json
 import logging
 import re
-import sys
 
-import click
 import imas
 import numpy as np
 
@@ -36,7 +33,7 @@ from imas_codex import dd_version as current_dd_version
 from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import create_progress_monitor
-from imas_codex.graph import GraphClient
+from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
 
@@ -1556,7 +1553,9 @@ def _import_clusters(
                 "cross_ids": cross_ids,
                 "similarity_score": similarity_score,
                 "scope": scope,
-                "centroid": centroid if centroid and isinstance(centroid, list) else None,
+                "centroid": centroid
+                if centroid and isinstance(centroid, list)
+                else None,
                 "ids_names": ids_names if ids_names else [],
             }
 
@@ -1623,181 +1622,11 @@ def _import_clusters(
         return 0
 
 
-@click.command()
-@click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
-@click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
-@click.option(
-    "-a",
-    "--all-versions",
-    is_flag=True,
-    help="Process all DD versions (default: current only)",
-)
-@click.option(
-    "--from-version",
-    type=str,
-    help="Start from a specific version (for incremental updates)",
-)
-@click.option(
-    "-f",
-    "--force",
-    is_flag=True,
-    help="Force regenerate all embeddings (ignore cache)",
-)
-@click.option(
-    "--skip-clusters",
-    is_flag=True,
-    help="Skip importing semantic clusters into graph",
-)
-@click.option(
-    "--skip-embeddings",
-    is_flag=True,
-    help="Skip embedding generation for current version paths",
-)
-@click.option(
-    "--embedding-model",
-    type=str,
-    default="all-MiniLM-L6-v2",
-    help="Sentence transformer model for embeddings",
-)
-@click.option(
-    "--ids-filter",
-    type=str,
-    help="Filter to specific IDS (space-separated, for testing)",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Preview changes without writing to graph",
-)
-def build_dd_graph_cli(
-    verbose: bool,
-    quiet: bool,
-    all_versions: bool,
-    from_version: str | None,
-    force: bool,
-    skip_clusters: bool,
-    skip_embeddings: bool,
-    embedding_model: str,
-    ids_filter: str | None,
-    dry_run: bool,
-) -> int:
-    """Build the IMAS Data Dictionary Knowledge Graph.
-
-    Populates Neo4j with complete IMAS DD structure including:
-
-    \b
-    - All 34 DD versions with version tracking (INTRODUCED_IN, DEPRECATED_IN)
-    - IMASPath nodes with hierarchical relationships (PARENT, IDS)
-    - PathChange nodes for metadata evolution between versions
-    - RENAMED_TO relationships for path migrations
-    - HAS_ERROR relationships linking data paths to error fields
-    - Vector embeddings for semantic search (current version only)
-    - SemanticCluster nodes with centroids for cluster-based search
-
-    Embeddings are generated only for current version paths to avoid noise
-    from deprecated/renamed paths. Version history is queryable via graph
-    relationships, not vector search. Stale embeddings on deprecated paths
-    are automatically cleaned up.
-
-    \b
-    Examples:
-        build-dd-graph                  # Build current version with all features
-        build-dd-graph --all-versions   # Build all 34 DD versions
-        build-dd-graph --from-version 4.0.0  # Incremental from specific version
-        build-dd-graph --force          # Regenerate all embeddings
-        build-dd-graph --dry-run -v     # Preview without writing
-    """
-    # Set up logging
-    if quiet:
-        log_level = logging.ERROR
-    elif verbose:
-        log_level = logging.DEBUG
-    else:
-        log_level = logging.INFO
-
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    # Suppress imas library's verbose logging
-    logging.getLogger("imas").setLevel(logging.WARNING)
-
-    try:
-        # Determine versions to process
-        available_versions = get_all_dd_versions()
-
-        if all_versions:
-            versions = available_versions
-        elif from_version:
-            # Get all versions from the specified one onwards
-            try:
-                start_idx = available_versions.index(from_version)
-                versions = available_versions[start_idx:]
-            except ValueError:
-                click.echo(f"Error: Unknown version {from_version}", err=True)
-                click.echo(
-                    f"Available: {', '.join(available_versions[:5])}...", err=True
-                )
-                return 1
-        else:
-            # Default: current version only
-            versions = [current_dd_version]
-
-        logger.info(f"Processing {len(versions)} DD versions")
-        if len(versions) > 1:
-            logger.info(f"Versions: {versions[0]} → {versions[-1]}")
-
-        # Parse IDS filter if provided
-        ids_set: set[str] | None = None
-        if ids_filter:
-            ids_set = set(ids_filter.split())
-            logger.info(f"Filtering to IDS: {sorted(ids_set)}")
-
-        if dry_run:
-            click.echo("DRY RUN - no changes will be written to graph")
-
-        # Build graph with all features enabled by default
-        with GraphClient() as client:
-            stats = build_dd_graph(
-                client=client,
-                versions=versions,
-                ids_filter=ids_set,
-                include_clusters=not skip_clusters,
-                include_embeddings=not skip_embeddings,
-                dry_run=dry_run,
-                embedding_model=embedding_model,
-                force_embeddings=force,
-            )
-
-        # Report results
-        click.echo("\n=== Build Complete ===")
-        click.echo(f"Versions processed: {stats['versions_processed']}")
-        click.echo(f"IDS nodes: {stats['ids_created']}")
-        click.echo(f"IMASPath nodes created: {stats['paths_created']}")
-        click.echo(f"Unit nodes: {stats['units_created']}")
-        click.echo(f"PathChange nodes: {stats['path_changes_created']}")
-        if not skip_embeddings:
-            click.echo(
-                f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
-            )
-            click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
-            click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
-            click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
-            if stats.get("embeddings_cleaned", 0) > 0:
-                click.echo(f"Stale embeddings cleaned: {stats['embeddings_cleaned']}")
-        if not skip_clusters:
-            click.echo(f"Cluster nodes: {stats['clusters_created']}")
-
-        return 0
-
-    except Exception as e:
-        logger.error(f"Error building DD graph: {e}")
-        if verbose:
-            logger.exception("Full traceback:")
-        click.echo(f"Error: {e}", err=True)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(build_dd_graph_cli())
+# Public API exports
+__all__ = [
+    "build_dd_graph",
+    "get_all_dd_versions",
+    "extract_paths_for_version",
+    "compute_version_changes",
+    "load_path_mappings",
+]
