@@ -1367,30 +1367,24 @@ WantedBy=default.target
 
 
 # ============================================================================
-# Ingest Command Group
+# Ingest Command - Bulk Processing
 # ============================================================================
 
-
-@main.group()
-def ingest() -> None:
-    """Ingest code examples from remote facilities.
-
-    \b
-      imas-codex ingest run <facility>   Process discovered SourceFile nodes
-      imas-codex ingest status <facility> Show queue statistics
-      imas-codex ingest list <facility>   List discovered files
-    """
-    pass
+# Valid resources for each phase (defined early for use by all phase commands)
+SCOUT_RESOURCES = {"files", "wiki", "data", "paths", "codes"}
+ENRICH_RESOURCES = {"nodes", "wiki", "codes"}
+INGEST_RESOURCES = {"files", "wiki"}
 
 
-@ingest.command("run")
+@main.command("ingest")
 @click.argument("facility")
+@click.argument("resource", type=click.Choice(sorted(INGEST_RESOURCES)))
 @click.option(
     "--limit",
     "-n",
     default=None,
     type=int,
-    help="Maximum files to process (default: all discovered files)",
+    help="Maximum items to process",
 )
 @click.option(
     "--min-score",
@@ -1398,367 +1392,143 @@ def ingest() -> None:
     type=float,
     help="Minimum interest score threshold (default: 0.0)",
 )
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Re-ingest files even if already present",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Show what would be processed without ingesting",
-)
-def ingest_run(
+@click.option("--force", is_flag=True, help="Re-ingest even if already present")
+@click.option("--dry-run", is_flag=True, help="Preview without processing")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
+def ingest(
+    facility: str,
+    resource: str,
+    limit: int | None,
+    min_score: float,
+    force: bool,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Bulk process facility data into the knowledge graph.
+
+    Processes scouted and enriched data into the graph, creating
+    embeddings and cross-references.
+
+    \b
+    RESOURCES:
+      files   Source code files (creates CodeChunk nodes)
+      wiki    Wiki pages and artifacts
+
+    \b
+    EXAMPLES:
+        # Ingest discovered files at EPFL
+        imas-codex ingest epfl files
+
+        # Ingest only high-scoring files
+        imas-codex ingest epfl files --min-score 0.7
+
+        # Ingest wiki pages
+        imas-codex ingest epfl wiki
+
+        # Limit to first 100 items
+        imas-codex ingest iter files -n 100
+
+        # Preview what would be ingested
+        imas-codex ingest epfl files --dry-run
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from imas_codex.discovery import get_facility as get_facility_config
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Resource:[/bold] {resource}\n"
+            f"[bold]Min Score:[/bold] {min_score}\n"
+            f"[bold]Limit:[/bold] {limit or 'unlimited'}\n"
+            f"[bold]Force:[/bold] {force}",
+            title="Ingest Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - no files will be ingested[/dim]")
+
+    # Dispatch based on resource
+    if resource == "files":
+        _ingest_files_impl(
+            facility=facility,
+            limit=limit,
+            min_score=min_score,
+            force=force,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    elif resource == "wiki":
+        import asyncio
+
+        from imas_codex.wiki.discovery import WikiDiscovery
+
+        discovery = WikiDiscovery(
+            facility=facility,
+            cost_limit_usd=100.0,  # Ingestion has no LLM cost
+            max_pages=limit,
+            verbose=verbose,
+        )
+
+        try:
+            console.print("\n[bold]Starting wiki ingestion...[/bold]")
+            stats = asyncio.run(discovery.ingest())
+            console.print(f"[green]✓ Ingested {stats} wiki pages[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise SystemExit(1) from e
+
+
+def _ingest_files_impl(
     facility: str,
     limit: int | None,
     min_score: float,
     force: bool,
     dry_run: bool,
+    verbose: bool,
 ) -> None:
-    """Process discovered SourceFile nodes for a facility.
-
-    Scouts discover files for ingestion using the queue_source_files MCP tool.
-    This command fetches those files, generates embeddings, and creates
-    CodeExample nodes with searchable chunks.
-
-    Examples:
-        # Process all discovered files
-        imas-codex ingest run epfl
-
-        # Process only high-priority files
-        imas-codex ingest run epfl --min-score 0.7
-
-        # Limit to 100 files
-        imas-codex ingest run epfl -n 100
-
-        # Preview what would be processed
-        imas-codex ingest run epfl --dry-run
-    """
-    import asyncio
-
+    """Implementation of file ingestion."""
     from rich.console import Console
-    from rich.progress import (
-        BarColumn,
-        MofNCompleteColumn,
-        Progress,
-        SpinnerColumn,
-        TextColumn,
-        TimeElapsedColumn,
-    )
 
-    from imas_codex.code_examples import get_pending_files, ingest_code_files
+    from imas_codex.code_examples import ingest_files
 
     console = Console()
+    console.print("\n[bold]Starting file ingestion...[/bold]")
 
-    # Get pending files (discovered, not yet ingested)
-    console.print(f"[cyan]Fetching discovered files for {facility}...[/cyan]")
-    query_limit = limit if limit is not None else 10000  # Large number for "all"
-    pending = get_pending_files(
-        facility, limit=query_limit, min_interest_score=min_score
-    )
-
-    if not pending:
-        console.print("[yellow]No discovered files awaiting ingestion.[/yellow]")
-        console.print(
-            "Scouts can discover files using the queue_source_files MCP tool."
+    try:
+        stats = ingest_files(
+            facility=facility,
+            limit=limit,
+            min_score=min_score,
+            force=force,
+            dry_run=dry_run,
+            verbose=verbose,
         )
-        return
 
-    console.print(f"[green]Found {len(pending)} discovered files[/green]")
+        console.print()
+        console.print("[green]✓ Ingestion complete[/green]")
+        console.print(f"  Files processed: {stats['files']}")
+        console.print(f"  Chunks created:  {stats['chunks']}")
+        console.print(f"  IDS references:  {stats['ids_found']}")
+        console.print(f"  MDSplus paths:   {stats['mdsplus_paths']}")
+        console.print(f"  TreeNodes linked: {stats['tree_nodes_linked']}")
+        console.print(f"  Skipped:         {stats['skipped']}")
 
-    if dry_run:
-        console.print("\n[cyan]Files that would be processed:[/cyan]")
-        for i, f in enumerate(pending[:20], 1):
-            score = f.get("interest_score", 0.5)
-            console.print(f"  {i}. [{score:.2f}] {f['path']}")
-        if len(pending) > 20:
-            console.print(f"  ... and {len(pending) - 20} more")
-        return
-
-    # Run ingestion with progress bar
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Ingesting...", total=len(pending))
-
-        def progress_callback(current: int, total: int, message: str) -> None:
-            # Update total if pipeline reports a different count (e.g., after skip)
-            progress.update(
-                task, completed=current, total=total, description=message[:50]
-            )
-
-        try:
-            stats = asyncio.run(
-                ingest_code_files(
-                    facility=facility,
-                    remote_paths=None,  # Use graph queue
-                    progress_callback=progress_callback,
-                    force=force,
-                    limit=limit,
-                )
-            )
-
-            # Final update to ensure 100%
-            progress.update(task, completed=stats["files"] + stats["skipped"])
-
-        except Exception as e:
-            console.print(f"[red]Error during ingestion: {e}[/red]")
-            raise SystemExit(1) from e
-
-    # Print summary
-    console.print("\n[green]Ingestion complete![/green]")
-    console.print(f"  Files processed: {stats['files']}")
-    console.print(f"  Chunks created:  {stats['chunks']}")
-    console.print(f"  IDS references:  {stats['ids_found']}")
-    console.print(f"  MDSplus paths:   {stats['mdsplus_paths']}")
-    console.print(f"  TreeNodes linked: {stats['tree_nodes_linked']}")
-    console.print(f"  Skipped:         {stats['skipped']}")
-
-
-@ingest.command("status")
-@click.argument("facility")
-def ingest_status(facility: str) -> None:
-    """Show queue statistics for a facility.
-
-    Examples:
-        imas-codex ingest status epfl
-    """
-    from rich.console import Console
-    from rich.table import Table
-
-    from imas_codex.code_examples import get_queue_stats
-
-    console = Console()
-    stats = get_queue_stats(facility)
-
-    if not stats:
-        console.print(f"[yellow]No SourceFile nodes for {facility}[/yellow]")
-        return
-
-    table = Table(title=f"SourceFile Queue: {facility}")
-    table.add_column("Status", style="cyan")
-    table.add_column("Count", justify="right", style="green")
-
-    total = 0
-    for status, count in sorted(stats.items()):
-        table.add_row(status, str(count))
-        total += count
-
-    table.add_row("─" * 10, "─" * 5)
-    table.add_row("Total", str(total), style="bold")
-
-    console.print(table)
-
-
-@ingest.command("queue")
-@click.argument("facility")
-@click.argument("paths", nargs=-1)
-@click.option(
-    "--from-file",
-    "-f",
-    "from_file",
-    type=click.Path(exists=True),
-    help="Read file paths from a text file (one per line)",
-)
-@click.option(
-    "--stdin",
-    is_flag=True,
-    help="Read file paths from stdin",
-)
-@click.option(
-    "--interest-score",
-    "-s",
-    default=0.5,
-    type=float,
-    help="Interest score for all files (0.0-1.0, default: 0.5)",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Show what would be queued without making changes",
-)
-def ingest_queue(
-    facility: str,
-    paths: tuple[str, ...],
-    from_file: str | None,
-    stdin: bool,
-    interest_score: float,
-    dry_run: bool,
-) -> None:
-    """Discover source files for ingestion.
-
-    Accepts paths as arguments, from a file, or from stdin. Creates
-    SourceFile nodes with status='discovered'. Already-discovered or ingested
-    files are skipped automatically.
-
-    Examples:
-        # Discover paths directly (LLM-friendly)
-        imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
-
-        # Discover from file (for large batches)
-        imas-codex ingest queue epfl -f files.txt
-
-        # Discover from stdin (pipe from rg)
-        ssh epfl 'rg -l "IMAS" /home' | imas-codex ingest queue epfl --stdin
-
-        # Set priority score
-        imas-codex ingest queue epfl /path/a.py -s 0.9
-
-        # Preview
-        imas-codex ingest queue epfl /path/a.py --dry-run
-    """
-    import sys
-    from pathlib import Path
-
-    from rich.console import Console
-
-    from imas_codex.code_examples import queue_source_files
-
-    console = Console()
-
-    # Read file paths from arguments, file, or stdin
-    path_list: list[str] = []
-    if paths:
-        path_list = list(paths)
-    elif from_file:
-        path_list = Path(from_file).read_text().strip().splitlines()
-    elif stdin:
-        path_list = sys.stdin.read().strip().splitlines()
-    else:
-        console.print(
-            "[red]Error: Provide paths as arguments, --from-file, or --stdin[/red]"
-        )
-        raise SystemExit(1)
-
-    # Filter empty lines and comments
-    path_list = [
-        p.strip() for p in path_list if p.strip() and not p.strip().startswith("#")
-    ]
-
-    if not path_list:
-        console.print("[yellow]No file paths provided[/yellow]")
-        return
-
-    console.print(f"[cyan]Discovering {len(path_list)} files for {facility}...[/cyan]")
-
-    if dry_run:
-        console.print("\n[cyan]Files that would be discovered:[/cyan]")
-        for i, path in enumerate(path_list[:20], 1):
-            console.print(f"  {i}. {path}")
-        if len(path_list) > 20:
-            console.print(f"  ... and {len(path_list) - 20} more")
-        console.print(f"\n[dim]Interest score: {interest_score}[/dim]")
-        return
-
-    result = queue_source_files(
-        facility=facility,
-        file_paths=path_list,
-        interest_score=interest_score,
-        discovered_by="cli",
-    )
-
-    console.print(f"[green]✓ Discovered: {result['discovered']}[/green]")
-    console.print(
-        f"[yellow]↷ Skipped: {result['skipped']} (already discovered/ingested)[/yellow]"
-    )
-    if result["errors"]:
-        for err in result["errors"]:
-            console.print(f"[red]✗ Error: {err}[/red]")
-
-    console.print(
-        f"\n[dim]Run ingestion: imas-codex ingest run {facility} -n {min(result['discovered'], 500)}[/dim]"
-    )
-
-
-@ingest.command("list")
-@click.argument("facility")
-@click.option(
-    "--status",
-    "-s",
-    default="discovered",
-    type=click.Choice(["discovered", "ingested", "failed", "stale", "all"]),
-    help="Filter by status (default: discovered)",
-)
-@click.option(
-    "--limit",
-    "-n",
-    default=50,
-    type=int,
-    help="Maximum files to show (default: 50)",
-)
-def ingest_list(facility: str, status: str, limit: int) -> None:
-    """List SourceFile nodes for a facility.
-
-    Examples:
-        # List discovered files
-        imas-codex ingest list epfl
-
-        # List failed files
-        imas-codex ingest list epfl -s failed
-
-        # List all files
-        imas-codex ingest list epfl -s all
-    """
-    from rich.console import Console
-    from rich.table import Table
-
-    from imas_codex.graph import GraphClient
-
-    console = Console()
-
-    with GraphClient() as client:
-        if status == "all":
-            result = client.query(
-                """
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
-                RETURN sf.path AS path, sf.status AS status,
-                       sf.interest_score AS score, sf.error AS error
-                ORDER BY sf.interest_score DESC
-                LIMIT $limit
-                """,
-                facility=facility,
-                limit=limit,
-            )
-        else:
-            result = client.query(
-                """
-                MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
-                WHERE sf.status = $status
-                RETURN sf.path AS path, sf.status AS status,
-                       sf.interest_score AS score, sf.error AS error
-                ORDER BY sf.interest_score DESC
-                LIMIT $limit
-                """,
-                facility=facility,
-                status=status,
-                limit=limit,
-            )
-
-    if not result:
-        console.print(f"[yellow]No SourceFile nodes with status '{status}'[/yellow]")
-        return
-
-    table = Table(title=f"SourceFiles ({status}): {facility}")
-    table.add_column("Path", style="cyan", max_width=60)
-    table.add_column("Status", style="green")
-    table.add_column("Score", justify="right")
-    if status == "failed":
-        table.add_column("Error", style="red", max_width=30)
-
-    for row in result:
-        score = f"{row['score']:.2f}" if row["score"] is not None else "-"
-        if status == "failed":
-            table.add_row(row["path"], row["status"], score, row["error"] or "")
-        else:
-            table.add_row(row["path"], row["status"], score)
-
-    console.print(table)
-    console.print(f"\n[dim]Showing {len(result)} of possibly more files[/dim]")
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
 
 
 # ============================================================================
@@ -3127,10 +2897,10 @@ def imas() -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress all logging except errors")
 @click.option(
-    "-c",
-    "--current-only",
+    "-a",
+    "--all-versions",
     is_flag=True,
-    help="Process only current DD version (default: all versions)",
+    help="Process all DD versions (default: current only)",
 )
 @click.option(
     "--from-version",
@@ -3165,7 +2935,7 @@ def imas() -> None:
 def imas_build(
     verbose: bool,
     quiet: bool,
-    current_only: bool,
+    all_versions: bool,
     from_version: str | None,
     force: bool,
     skip_clusters: bool,
@@ -3196,16 +2966,17 @@ def imas_build(
 
     \b
     Examples:
-        imas-codex imas build                  # Build all DD versions (default)
-        imas-codex imas build --current-only   # Build current version only
+        imas-codex imas build                  # Build current version
+        imas-codex imas build --all-versions   # Build all DD versions
         imas-codex imas build --from-version 4.0.0  # Incremental from 4.0.0
         imas-codex imas build --force          # Regenerate all embeddings
         imas-codex imas build --dry-run -v     # Preview without writing
         imas-codex imas build --ids-filter "core_profiles equilibrium"  # Test subset
     """
     # Import and call the standalone build script's logic
+    from scripts.build_dd_graph import build_dd_graph, get_all_dd_versions
+
     from imas_codex import dd_version as current_dd_version
-    from imas_codex.graph.build_dd import build_dd_graph, get_all_dd_versions
 
     # Set up logging
     if quiet:
@@ -3227,8 +2998,8 @@ def imas_build(
         # Determine versions to process
         available_versions = get_all_dd_versions()
 
-        if current_only:
-            versions = [current_dd_version]
+        if all_versions:
+            versions = available_versions
         elif from_version:
             try:
                 start_idx = available_versions.index(from_version)
@@ -3240,8 +3011,7 @@ def imas_build(
                 )
                 raise SystemExit(1) from e
         else:
-            # Default: all versions
-            versions = available_versions
+            versions = [current_dd_version]
 
         logger.info(f"Processing {len(versions)} DD versions")
         if len(versions) > 1:
@@ -3279,16 +3049,14 @@ def imas_build(
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
         if not skip_embeddings:
-            click.echo(f"Paths filtered (error/metadata): {stats['paths_filtered']}")
+            click.echo(
+                f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
+            )
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
             if stats.get("embeddings_cleaned", 0) > 0:
                 click.echo(f"Stale embeddings cleaned: {stats['embeddings_cleaned']}")
-            if stats.get("embedding_changes", 0) > 0:
-                click.echo(
-                    f"Embedding content changes tracked: {stats['embedding_changes']}"
-                )
         if not skip_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
@@ -3478,660 +3246,394 @@ def imas_search(
 
 
 @imas.command("versions")
-@click.argument("version", required=False)
 @click.option(
     "--available",
     "-a",
     is_flag=True,
     help="Show all available versions from imas-python",
 )
-def imas_versions(version: str | None, available: bool) -> None:
-    """List DD versions or show details for a specific version.
+def imas_versions(available: bool) -> None:
+    """List DD versions.
 
     By default shows versions in the graph. Use --available to show
-    all versions available from imas-python. Pass a specific version
-    for detailed statistics.
+    all versions available from imas-python.
 
     \b
     Examples:
-        imas-codex imas versions              # Versions in graph
+        imas-codex imas versions            # Versions in graph
         imas-codex imas versions --available  # All available
-        imas-codex imas versions 4.0.0        # Detailed version info
     """
     from rich.console import Console
 
     console = Console()
 
     if available:
-        from imas_codex.graph.build_dd import get_all_dd_versions
+        from scripts.build_dd_graph import get_all_dd_versions
 
-        versions_list = get_all_dd_versions()
-        console.print(f"[bold]Available DD versions ({len(versions_list)}):[/bold]")
+        versions = get_all_dd_versions()
+        console.print(f"[bold]Available DD versions ({len(versions)}):[/bold]")
         # Group by major version
         major_groups: dict[str, list[str]] = {}
-        for v in versions_list:
+        for v in versions:
             major = v.split(".")[0]
             major_groups.setdefault(major, []).append(v)
 
         for major, vers in sorted(major_groups.items()):
             console.print(f"  {major}.x: {', '.join(vers)}")
-        return
-
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        if version:
-            # Detailed view for a specific version
-            _show_version_details(gc, console, version)
-        else:
-            # Summary view of all versions
-            _show_versions_summary(gc, console)
-
-
-def _show_version_details(gc, console, version: str) -> None:
-    """Show detailed statistics for a specific DD version."""
-    from rich.table import Table
-
-    # Check version exists
-    check = gc.query(
-        "MATCH (v:DDVersion {id: $version}) RETURN v",
-        version=version,
-    )
-    if not check:
-        console.print(f"[red]Version {version} not found in graph.[/red]")
-        return
-
-    # Get version metadata
-    meta = gc.query(
-        """
-        MATCH (v:DDVersion {id: $version})
-        RETURN v.is_current AS is_current,
-               v.embeddings_built_at AS embeddings_built_at,
-               v.embeddings_model AS embeddings_model,
-               v.embeddings_count AS embeddings_count
-        """,
-        version=version,
-    )[0]
-
-    # Get path statistics
-    stats = gc.query(
-        """
-        MATCH (v:DDVersion {id: $version})
-        OPTIONAL MATCH (introduced:IMASPath)-[:INTRODUCED_IN]->(v)
-        OPTIONAL MATCH (deprecated:IMASPath)-[:DEPRECATED_IN]->(v)
-        OPTIONAL MATCH (renamed:IMASPath)-[:RENAMED_TO]->(target:IMASPath),
-                       (renamed)-[:DEPRECATED_IN]->(v)
-        WITH v,
-             count(DISTINCT introduced) AS paths_introduced,
-             count(DISTINCT deprecated) AS paths_deprecated,
-             count(DISTINCT renamed) AS paths_renamed
-        OPTIONAL MATCH (embedded:IMASPath)-[:INTRODUCED_IN]->(v)
-        WHERE embedded.embedding IS NOT NULL
-        RETURN paths_introduced, paths_deprecated, paths_renamed,
-               count(embedded) AS paths_embedded
-        """,
-        version=version,
-    )[0]
-
-    # Get change tracking stats
-    changes = gc.query(
-        """
-        MATCH (c:EmbeddingChange)-[:HAS_EMBEDDING_CHANGE]->(p:IMASPath)
-        WHERE c.dd_version = $version
-        RETURN c.change_type AS change_type, count(*) AS count
-        ORDER BY count DESC
-        """,
-        version=version,
-    )
-
-    # Get unit changes
-    unit_changes = gc.query(
-        """
-        MATCH (pc:PathChange)-[:CHANGES]->(p:IMASPath)
-        WHERE pc.from_version = $version OR pc.to_version = $version
-        RETURN pc.change_type AS change_type, count(*) AS count
-        ORDER BY count DESC
-        LIMIT 10
-        """,
-        version=version,
-    )
-
-    # Display version header
-    current_marker = " [green](current)[/green]" if meta["is_current"] else ""
-    console.print(f"\n[bold]DD Version {version}{current_marker}[/bold]\n")
-
-    # Path statistics table
-    table = Table(title="Path Statistics", show_header=True)
-    table.add_column("Metric", style="cyan")
-    table.add_column("Count", justify="right")
-
-    table.add_row("Paths introduced", str(stats["paths_introduced"]))
-    table.add_row("Paths deprecated", str(stats["paths_deprecated"]))
-    table.add_row("Paths renamed", str(stats["paths_renamed"]))
-    table.add_row("Paths embedded", str(stats["paths_embedded"]))
-
-    console.print(table)
-
-    # Embedding changes if any
-    if changes:
-        changes_table = Table(title="Embedding Content Changes", show_header=True)
-        changes_table.add_column("Change Type", style="yellow")
-        changes_table.add_column("Count", justify="right")
-
-        for c in changes:
-            changes_table.add_row(c["change_type"], str(c["count"]))
-
-        console.print(changes_table)
-
-    # PathChange statistics if any
-    if unit_changes:
-        pc_table = Table(title="Path Metadata Changes", show_header=True)
-        pc_table.add_column("Change Type", style="magenta")
-        pc_table.add_column("Count", justify="right")
-
-        for pc in unit_changes:
-            pc_table.add_row(pc["change_type"], str(pc["count"]))
-
-        console.print(pc_table)
-
-    # Embeddings metadata
-    if meta["embeddings_built_at"]:
-        console.print(
-            f"\n[dim]Embeddings: {meta['embeddings_count']} paths, "
-            f"model: {meta['embeddings_model']}, "
-            f"built: {meta['embeddings_built_at']}[/dim]"
-        )
-
-
-def _show_versions_summary(gc, console) -> None:
-    """Show summary of all DD versions in graph."""
-    # Count paths INTRODUCED_IN each version (not deprecated paths)
-    versions = gc.query("""
-        MATCH (v:DDVersion)
-        OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
-        WITH v, count(p) AS introduced
-        OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
-        RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
-        ORDER BY v.id
-    """)
-
-    if not versions:
-        console.print("[yellow]No versions in graph.[/yellow]")
-        console.print("Build with: imas-codex imas build")
-        return
-
-    console.print("[bold]DD versions in graph:[/bold]")
-    for v in versions:
-        current = " [green](current)[/green]" if v["is_current"] else ""
-        embedded = f", {v['embedded']} embedded" if v["embedded"] else ""
-        console.print(
-            f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
-        )
-
-
-# ============================================================================
-# Scout Commands - Fast Discovery (No LLM)
-# ============================================================================
-
-
-@main.group()
-def scout() -> None:
-    """Fast discovery of facility resources (no LLM required).
-
-    Scout commands perform quick, deterministic discovery using
-    fast CLI tools (rg, fd, dust). Results are queued for later
-    enrichment and ingestion.
-
-    \b
-      imas-codex scout files      Discover code files via SSH
-      imas-codex scout data       Discover data formats and locations
-      imas-codex scout status     Show discovery status
-    """
-    pass
-
-
-@scout.command("files")
-@click.argument("facility")
-@click.option(
-    "--prompt",
-    "-p",
-    default=None,
-    help="Focus pattern (e.g., 'equilibrium', 'IMAS', 'CHEASE')",
-)
-@click.option(
-    "--path",
-    default=None,
-    help="Base path to search (default: from facility config)",
-)
-@click.option(
-    "--limit",
-    "-n",
-    default=1000,
-    type=int,
-    help="Maximum files to discover (default: 1000)",
-)
-@click.option(
-    "--extensions",
-    "-e",
-    default="py,f90,f,c,cpp,m",
-    help="File extensions to find (comma-separated, default: py,f90,f,c,cpp,m)",
-)
-@click.option("--dry-run", is_flag=True, help="Preview without queuing files")
-@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def scout_files(
-    facility: str,
-    prompt: str | None,
-    path: str | None,
-    limit: int,
-    extensions: str,
-    dry_run: bool,
-    verbose: bool,
-) -> None:
-    """Discover code files at a facility via SSH.
-
-    Uses fast tools (fd, rg) to find files matching patterns.
-    Discovered files are queued for ingestion.
-
-    \b
-    EXAMPLES:
-        # Basic file discovery at EPFL
-        imas-codex scout files epfl
-
-        # Focus on equilibrium-related code
-        imas-codex scout files epfl -p "equilibrium"
-
-        # Search specific path
-        imas-codex scout files epfl --path /home/crpplocal/codes
-
-        # Find only Python files
-        imas-codex scout files epfl -e py
-
-        # Preview without queuing
-        imas-codex scout files epfl --dry-run -v
-    """
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-
-    from imas_codex.discovery import get_facility
-    from imas_codex.remote.tools import run
-
-    console = Console()
-
-    # Validate facility
-    try:
-        config = get_facility(facility)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise SystemExit(1) from e
-
-    # Build search path
-    search_path = path or config.get("code_paths", ["/home"])[0]
-
-    # Build extension filter
-    ext_list = [e.strip() for e in extensions.split(",")]
-    ext_args = " ".join(f"-e {e}" for e in ext_list)
-
-    console.print(
-        Panel.fit(
-            f"[cyan]Facility:[/cyan] {facility}\n"
-            f"[cyan]Path:[/cyan] {search_path}\n"
-            f"[cyan]Extensions:[/cyan] {', '.join(ext_list)}\n"
-            f"[cyan]Focus:[/cyan] {prompt or '(all files)'}\n"
-            f"[cyan]Limit:[/cyan] {limit}",
-            title="Scout Files Configuration",
-        )
-    )
-
-    if dry_run:
-        console.print("\n[dim]Dry run - no files will be queued[/dim]")
-
-    # Use fd to find files
-    cmd = f"fd {ext_args} . {search_path} 2>/dev/null | head -n {limit}"
-    if verbose:
-        console.print(f'[dim]$ ssh {facility} "{cmd}"[/dim]')
-
-    try:
-        result = run(cmd, facility=facility)
-        files = [f.strip() for f in result.strip().split("\n") if f.strip()]
-    except Exception as e:
-        console.print(f"[red]Error running fd: {e}[/red]")
-        raise SystemExit(1) from e
-
-    # Filter by prompt if provided
-    if prompt and files:
-        filtered = []
-        for f in files:
-            if prompt.lower() in f.lower():
-                filtered.append(f)
-        if verbose:
-            console.print(
-                f"Filtered {len(files)} → {len(filtered)} files by '{prompt}'"
-            )
-        files = filtered
-
-    if not files:
-        console.print("[yellow]No files found matching criteria[/yellow]")
-        return
-
-    # Show results
-    table = Table(title=f"Discovered {len(files)} Files")
-    table.add_column("Path", style="cyan")
-
-    for f in files[:20]:
-        table.add_row(f)
-    if len(files) > 20:
-        table.add_row(f"... and {len(files) - 20} more")
-
-    console.print(table)
-
-    if dry_run:
-        console.print("\n[dim]Use without --dry-run to queue files for ingestion[/dim]")
-        return
-
-    # Queue files for ingestion
-    from imas_codex.code_examples.ingest import add_to_queue
-
-    queued = 0
-    for f in files:
-        try:
-            add_to_queue(facility, f, priority=1)
-            queued += 1
-        except Exception as e:
-            if verbose:
-                console.print(f"[yellow]Skip {f}: {e}[/yellow]")
-
-    console.print(f"\n[green]✓ Queued {queued} files for ingestion[/green]")
-
-
-@scout.command("data")
-@click.argument("facility")
-@click.option(
-    "--prompt",
-    "-p",
-    default=None,
-    help="Focus pattern (e.g., 'equilibrium', 'IMAS')",
-)
-@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def scout_data(
-    facility: str,
-    prompt: str | None,
-    verbose: bool,
-) -> None:
-    """Discover data formats and locations at a facility.
-
-    Identifies available data sources:
-    - MDSplus trees (TCV, JET, etc.)
-    - HDF5/NetCDF files
-    - IMAS databases
-    - UDA endpoints
-
-    \b
-    EXAMPLES:
-        # Discover data at EPFL
-        imas-codex scout data epfl
-
-        # Focus on equilibrium data
-        imas-codex scout data epfl -p "equilibrium"
-    """
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-
-    from imas_codex.discovery import get_facility
-    from imas_codex.remote.tools import run
-
-    console = Console()
-
-    # Validate facility
-    try:
-        get_facility(facility)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise SystemExit(1) from e
-
-    console.print(
-        Panel.fit(
-            f"[cyan]Facility:[/cyan] {facility}\n"
-            f"[cyan]Focus:[/cyan] {prompt or '(all data sources)'}",
-            title="Scout Data Configuration",
-        )
-    )
-
-    results: dict[str, list[str]] = {
-        "MDSplus Trees": [],
-        "HDF5/NetCDF": [],
-        "IMAS": [],
-        "Other": [],
-    }
-
-    # Check for MDSplus trees
-    if verbose:
-        console.print("[dim]Checking for MDSplus...[/dim]")
-
-    try:
-        mdsplus_check = run(
-            "which mdsplus 2>/dev/null || echo 'not found'", facility=facility
-        )
-        if "not found" not in mdsplus_check:
-            # Try to list trees
-            trees_cmd = "ls /usr/local/mdsplus/tdi 2>/dev/null || ls $MDSPLUS_DIR/tdi 2>/dev/null || echo ''"
-            tree_output = run(trees_cmd, facility=facility)
-            if tree_output.strip():
-                results["MDSplus Trees"] = tree_output.strip().split("\n")[:10]
-    except Exception as e:
-        if verbose:
-            console.print(f"[yellow]MDSplus check failed: {e}[/yellow]")
-
-    # Check for HDF5 files
-    if verbose:
-        console.print("[dim]Checking for HDF5/NetCDF...[/dim]")
-
-    try:
-        h5_cmd = "fd -e h5 -e hdf5 -e nc . /work 2>/dev/null | head -5"
-        h5_output = run(h5_cmd, facility=facility)
-        if h5_output.strip():
-            results["HDF5/NetCDF"] = [
-                f.strip() for f in h5_output.strip().split("\n") if f.strip()
-            ]
-    except Exception:
-        pass
-
-    # Check for IMAS
-    if verbose:
-        console.print("[dim]Checking for IMAS...[/dim]")
-
-    try:
-        imas_check = run(
-            "which imasdb 2>/dev/null || echo 'not found'", facility=facility
-        )
-        if "not found" not in imas_check:
-            results["IMAS"].append("imasdb available")
-    except Exception:
-        pass
-
-    # Display results
-    table = Table(title="Data Sources Discovered")
-    table.add_column("Type", style="cyan")
-    table.add_column("Details", style="white")
-
-    for data_type, items in results.items():
-        if items:
-            table.add_row(data_type, "\n".join(items[:5]))
-
-    if any(results.values()):
-        console.print(table)
     else:
-        console.print("[yellow]No data sources discovered[/yellow]")
+        from imas_codex.graph import GraphClient
 
+        with GraphClient() as gc:
+            # Count paths INTRODUCED_IN each version (not deprecated paths)
+            versions = gc.query("""
+                MATCH (v:DDVersion)
+                OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
+                WITH v, count(p) AS introduced
+                OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
+                RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
+                ORDER BY v.id
+            """)
 
-@scout.command("status")
-@click.argument("facility", required=False)
-def scout_status(facility: str | None) -> None:
-    """Show discovery status for facilities.
-
-    Displays what has been discovered and what's queued for processing.
-
-    \b
-    EXAMPLES:
-        # Show status for all facilities
-        imas-codex scout status
-
-        # Show status for specific facility
-        imas-codex scout status epfl
-    """
-    from rich.console import Console
-    from rich.table import Table
-
-    from imas_codex.graph import GraphClient
-
-    console = Console()
-
-    with GraphClient() as gc:
-        # Query discovery statistics
-        if facility:
-            query = """
-                MATCH (s:SourceFile {facility: $facility})
-                RETURN
-                    count(s) AS files,
-                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
-                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
-            """
-            result = gc.query(query, {"facility": facility})
-        else:
-            query = """
-                MATCH (s:SourceFile)
-                RETURN
-                    s.facility AS facility,
-                    count(s) AS files,
-                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
-                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
-                ORDER BY s.facility
-            """
-            result = gc.query(query)
-
-        if not result:
-            console.print("[yellow]No files discovered yet[/yellow]")
+        if not versions:
+            console.print("[yellow]No versions in graph.[/yellow]")
+            console.print("Build with: imas-codex imas build")
             return
 
-        table = Table(title="Discovery Status")
-        table.add_column("Facility", style="cyan")
-        table.add_column("Total Files", justify="right")
-        table.add_column("Pending", justify="right", style="yellow")
-        table.add_column("Processed", justify="right", style="green")
-
-        for row in result:
-            fac = row.get("facility", facility or "unknown")
-            table.add_row(
-                fac,
-                str(row["files"]),
-                str(row["pending"]),
-                str(row["processed"]),
+        console.print("[bold]DD versions in graph:[/bold]")
+        for v in versions:
+            current = " [green](current)[/green]" if v["is_current"] else ""
+            embedded = f", {v['embedded']} embedded" if v["embedded"] else ""
+            console.print(
+                f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
             )
 
-        console.print(table)
-
 
 # ============================================================================
-# Enrich Commands - AI-Assisted Metadata Generation
+# Scout Command - LLM-Driven Discovery
 # ============================================================================
 
 
-@main.group()
-def enrich() -> None:
-    """Enrich graph nodes with AI-generated metadata.
-
-    Uses CodeAgent to analyze and describe data from multiple sources:
-    - TreeNodes from MDSplus/HDF5 trees
-    - Wiki pages from facility documentation
-    - Code files from ingested source
-
-    \b
-      imas-codex enrich nodes     Enrich TreeNode metadata
-      imas-codex enrich run       Run a custom enrichment task
-    """
-    pass
-
-
-@enrich.command("run")
-@click.argument("task")
+@main.command("scout")
+@click.argument("facility")
+@click.argument("resource", type=click.Choice(sorted(SCOUT_RESOURCES)))
 @click.option(
-    "--type",
-    "agent_type",
-    default="enrichment",
-    type=click.Choice(["enrichment", "mapping", "exploration"]),
-    help="Agent type to use",
+    "--prompt",
+    "-p",
+    default=None,
+    help="Discovery guidance (e.g., 'equilibrium codes', 'IMAS integration')",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model to use (default: from config for 'exploration' task)",
 )
 @click.option(
     "--cost-limit",
     "-c",
-    default=None,
+    default=5.0,
     type=float,
-    help="Maximum cost budget in USD",
+    help="Maximum cost budget in USD (default: 5.0)",
 )
+@click.option(
+    "--limit",
+    "-n",
+    default=None,
+    type=int,
+    help="Maximum items to discover",
+)
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
 @click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
-def agent_run(
-    task: str, agent_type: str, cost_limit: float | None, verbose: bool
+def scout(
+    facility: str,
+    resource: str,
+    prompt: str | None,
+    model: str | None,
+    cost_limit: float,
+    limit: int | None,
+    dry_run: bool,
+    verbose: bool,
 ) -> None:
-    """Run an agent with a task using smolagents CodeAgent.
+    """Discover facility resources using LLM-driven agent.
 
-    The agent generates Python code to autonomously:
-    - Query the Neo4j knowledge graph
-    - Search code examples and IMAS paths
-    - Adapt and self-debug to solve problems
+    The agent autonomously decides which ssh/rg/fd commands to run based on
+    previous findings. Uses a breadth-first approach but adapts based on
+    what it discovers.
 
-    Examples:
-        imas-codex agent run "Describe what \\RESULTS::ASTRA is used for"
+    \b
+    RESOURCES:
+      files   Source code files (Python, Fortran, C, etc.)
+      wiki    Wiki pages and documentation
+      data    Data formats and locations (MDSplus, HDF5, IMAS, UDA)
+      paths   Directory structure and key locations
+      codes   Physics codes and their documentation
 
-        imas-codex agent run "Find IMAS paths for electron temperature" --type mapping
+    \b
+    EXAMPLES:
+        # Discover code files at EPFL
+        imas-codex scout epfl files
 
-        imas-codex agent run "Explore EPFL for equilibrium codes" --type exploration -c 1.0
+        # Focus on equilibrium-related code
+        imas-codex scout epfl files -p "equilibrium reconstruction"
+
+        # Discover wiki pages
+        imas-codex scout epfl wiki -p "diagnostics"
+
+        # Find data sources (MDSplus trees, HDF5 files, etc.)
+        imas-codex scout iter data
+
+        # Discover physics codes
+        imas-codex scout epfl codes -p "CHEASE LIUQE"
     """
-    from imas_codex.agentic import quick_task_sync
+    import asyncio
 
-    click.echo(f"Running {agent_type} agent (CodeAgent)...")
-    if verbose:
-        click.echo(f"Task: {task}")
-    if cost_limit:
-        click.echo(f"Cost limit: ${cost_limit:.2f}")
-    click.echo()
+    from rich.console import Console
+    from rich.panel import Panel
 
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.explore import ExplorationAgent
+    from imas_codex.discovery import get_facility as get_facility_config
+
+    console = Console()
+
+    # Validate facility exists
     try:
-        result = quick_task_sync(task, agent_type, verbose, cost_limit)
-        click.echo("\n=== Agent Response ===")
-        click.echo(result)
-    except Exception as e:
-        click.echo(f"Agent error: {e}", err=True)
-        raise SystemExit(1) from None
+        get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Get model
+    model_id = model or get_model_for_task("exploration")
+
+    # Build resource-specific prompt
+    base_prompts = {
+        "files": "Discover source code files (Python, Fortran, C, MATLAB)",
+        "wiki": "Discover wiki pages and documentation",
+        "data": "Discover data formats and locations (MDSplus trees, HDF5 files, IMAS databases, UDA endpoints)",
+        "paths": "Map directory structure and identify key locations",
+        "codes": "Find physics simulation codes and their documentation",
+    }
+    full_prompt = base_prompts.get(resource, "")
+    if prompt:
+        full_prompt = f"{full_prompt}. Focus: {prompt}"
+
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Resource:[/bold] {resource}\n"
+            f"[bold]Model:[/bold] {model_id}\n"
+            f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
+            f"[bold]Guidance:[/bold] {prompt or '(none)'}\n"
+            f"[bold]Limit:[/bold] {limit or 'unlimited'}",
+            title="Scout Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - agent will not execute[/dim]")
+        return
+
+    # Dispatch to appropriate handler based on resource
+    if resource == "wiki":
+        # Use wiki discovery pipeline
+        from imas_codex.wiki.discovery import run_wiki_discovery
+
+        console.print("\n[bold]Starting wiki discovery...[/bold]")
+        asyncio.run(
+            run_wiki_discovery(
+                facility=facility,
+                cost_limit_usd=cost_limit,
+                max_pages=limit,
+                verbose=verbose,
+                model=model,
+                focus=prompt,
+            )
+        )
+    else:
+        # Use exploration agent for files, data, paths, codes
+        agent = ExplorationAgent(
+            facility=facility,
+            model=model_id,
+            cost_limit=cost_limit,
+            verbose=verbose,
+        )
+
+        try:
+            console.print("\n[bold]Starting exploration agent...[/bold]")
+            result = asyncio.run(agent.explore(guidance=full_prompt))
+
+            # Show results
+            console.print("\n[bold green]Discovery Complete[/bold green]")
+            console.print(f"  Files discovered: {result.files_discovered}")
+            console.print(f"  Directories found: {result.directories_found}")
+            console.print(f"  Cost: ${result.total_cost:.4f}")
+            console.print(f"  Duration: {result.duration_seconds:.1f}s")
+
+            if result.notes:
+                console.print("\n[bold]Notes:[/bold]")
+                for note in result.notes[:5]:
+                    console.print(f"  • {note}")
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            if verbose:
+                import traceback
+
+                traceback.print_exc()
+            raise SystemExit(1) from e
 
 
-@enrich.command("nodes")
-@click.argument("paths", nargs=-1)
+# ============================================================================
+# Status Command - Cross-Cutting View
+# ============================================================================
+
+STATUS_RESOURCES = {"files", "wiki", "nodes", "all"}
+
+
+@main.command("status")
+@click.argument("facility")
+@click.argument("resource", required=False, default="all")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed statistics")
+def status(
+    facility: str,
+    resource: str,
+    verbose: bool,
+) -> None:
+    """Show discovery and processing status for a facility.
+
+    Displays what has been discovered, enriched, and ingested across
+    all resources or a specific resource type.
+
+    \b
+    RESOURCES:
+      all     All resources (default)
+      files   Source code files
+      wiki    Wiki pages
+      nodes   TreeNode data
+
+    \b
+    EXAMPLES:
+        # Show all status for EPFL
+        imas-codex status epfl
+
+        # Show only file status
+        imas-codex status epfl files
+
+        # Show wiki status with details
+        imas-codex status epfl wiki -v
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.discovery import get_facility as get_facility_config
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    with GraphClient() as gc:
+        # Files status
+        if resource in ("all", "files"):
+            table = Table(title=f"SourceFiles: {facility}")
+            table.add_column("Status", style="cyan")
+            table.add_column("Count", justify="right", style="green")
+
+            result = gc.query(
+                """
+                MATCH (s:SourceFile {facility: $facility})
+                RETURN s.status AS status, count(s) AS count
+                ORDER BY status
+                """,
+                {"facility": facility},
+            )
+
+            if result:
+                for row in result:
+                    table.add_row(row["status"] or "unknown", str(row["count"]))
+                console.print(table)
+            else:
+                console.print(f"[dim]No SourceFiles for {facility}[/dim]")
+            console.print()
+
+        # Wiki status
+        if resource in ("all", "wiki"):
+            table = Table(title=f"WikiPages: {facility}")
+            table.add_column("Status", style="cyan")
+            table.add_column("Count", justify="right", style="green")
+
+            result = gc.query(
+                """
+                MATCH (w:WikiPage {facility: $facility})
+                RETURN w.status AS status, count(w) AS count
+                ORDER BY status
+                """,
+                {"facility": facility},
+            )
+
+            if result:
+                for row in result:
+                    table.add_row(row["status"] or "pending", str(row["count"]))
+                console.print(table)
+            else:
+                console.print(f"[dim]No WikiPages for {facility}[/dim]")
+            console.print()
+
+        # Nodes status
+        if resource in ("all", "nodes"):
+            table = Table(title=f"TreeNodes: {facility}")
+            table.add_column("Status", style="cyan")
+            table.add_column("Count", justify="right", style="green")
+
+            result = gc.query(
+                """
+                MATCH (t:TreeNode {facility: $facility})
+                RETURN t.enrichment_status AS status, count(t) AS count
+                ORDER BY status
+                """,
+                {"facility": facility},
+            )
+
+            if result:
+                for row in result:
+                    table.add_row(row["status"] or "pending", str(row["count"]))
+                console.print(table)
+            else:
+                console.print(f"[dim]No TreeNodes for {facility}[/dim]")
+
+
+# ============================================================================
+# Enrich Command - AI-Assisted Metadata Generation
+# ============================================================================
+
+
+@main.command("enrich")
+@click.argument("facility")
+@click.argument("resource", type=click.Choice(sorted(ENRICH_RESOURCES)))
 @click.option(
     "--prompt",
     "-p",
     default=None,
-    help="Guidance for enrichment (e.g., 'Focus on equilibrium signals')",
+    help="Enrichment guidance (e.g., 'Focus on equilibrium signals')",
 )
 @click.option(
-    "--limit", "-n", default=None, type=int, help="Max nodes to enrich (default: all)"
-)
-@click.option("--tree", default=None, help="Filter to specific tree name")
-@click.option(
-    "--status", default="pending", help="Target status (pending, enriched, stale)"
-)
-@click.option("--force", is_flag=True, help="Include all nodes regardless of status")
-@click.option(
-    "--linked",
-    is_flag=True,
-    help="Only nodes with code context (more reliable enrichment)",
+    "--tree",
+    default=None,
+    help="Filter to specific tree name (for nodes resource)",
 )
 @click.option(
-    "--batch-size",
-    "-b",
+    "--limit",
+    "-n",
     default=None,
     type=int,
-    help="Paths per batch (auto-selected if not set: 100 for Flash, 200 for Pro)",
+    help="Maximum items to enrich",
 )
 @click.option(
     "--model",
@@ -4142,78 +3644,160 @@ def agent_run(
 @click.option(
     "--cost-limit",
     "-c",
-    default=None,
+    default=10.0,
     type=float,
-    help="Maximum cost budget in USD (default: no limit)",
+    help="Maximum cost budget in USD (default: 10.0)",
+)
+@click.option(
+    "--batch-size",
+    "-b",
+    default=None,
+    type=int,
+    help="Items per batch (auto-selected if not set)",
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
-@click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
-def enrich_nodes(
-    paths: tuple[str, ...],
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def enrich(
+    facility: str,
+    resource: str,
     prompt: str | None,
-    limit: int | None,
     tree: str | None,
-    status: str,
-    force: bool,
-    linked: bool,
-    batch_size: int | None,
+    limit: int | None,
     model: str | None,
-    cost_limit: float | None,
+    cost_limit: float,
+    batch_size: int | None,
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using CodeAgent.
+    """Enrich facility data with AI-generated metadata.
 
-    The agent generates Python code to gather context from the
-    knowledge graph and code examples, then produces physics-accurate
-    descriptions. Uses adaptive problem-solving and self-debugging.
+    Uses CodeAgent to analyze and describe data, producing physics-accurate
+    descriptions with IMAS path mappings.
 
-    Paths are grouped by parent node for efficient batch processing.
-    A Rich progress display shows current batch, tree, and statistics.
-
-    By default, discovers and processes ALL nodes with status='pending'.
-    Use --tree to filter to a specific tree.
-    Use --limit to cap the number of nodes processed.
+    \b
+    RESOURCES:
+      nodes   TreeNode metadata from data trees
+      wiki    Wiki pages with physics context
+      codes   Code files with documentation
 
     \b
     EXAMPLES:
-        # Enrich all pending nodes in the results tree
-        imas-codex enrich nodes --tree results
+        # Enrich pending nodes at EPFL
+        imas-codex enrich epfl nodes
 
-        # Focus on specific physics with guidance
-        imas-codex enrich nodes --tree results -p "Focus on equilibrium signals"
+        # Focus on equilibrium signals in results tree
+        imas-codex enrich epfl nodes --tree results -p "Focus on equilibrium"
 
-        # Enrich all pending nodes across all trees
-        imas-codex enrich nodes
+        # Enrich wiki pages
+        imas-codex enrich epfl wiki -n 100
 
-        # Limit to first 100 nodes
-        imas-codex enrich nodes --tree tcv_shot --limit 100
-
-        # Process stale nodes (marked for re-enrichment)
-        imas-codex enrich nodes --status stale
-
-        # Only enrich nodes with code context (more reliable)
-        imas-codex enrich nodes --linked
-
-        # Include ALL nodes (pending + enriched) for (re-)enrichment
-        imas-codex enrich nodes --force
-
-        # Re-enrich only already processed nodes
-        imas-codex enrich nodes --status enriched
-
-        # Enrich specific paths
-        imas-codex enrich nodes "\\RESULTS::IBS" "\\RESULTS::LIUQE"
-
-        # Use Pro model for higher quality
-        imas-codex enrich nodes --model google/gemini-3-pro-preview -b 200
+        # Limit cost
+        imas-codex enrich iter nodes -c 5.0
 
         # Preview without saving
-        imas-codex enrich nodes --dry-run
+        imas-codex enrich epfl nodes --dry-run
     """
     import asyncio
-    import logging
 
-    from rich.console import Console, Group
+    from rich.console import Console
+    from rich.panel import Panel
+
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.discovery import get_facility as get_facility_config
+
+    console = Console()
+
+    # Validate facility exists
+    try:
+        get_facility_config(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Get model
+    model_id = model or get_model_for_task("enrichment")
+
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Resource:[/bold] {resource}\n"
+            f"[bold]Model:[/bold] {model_id}\n"
+            f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
+            f"[bold]Guidance:[/bold] {prompt or '(none)'}\n"
+            f"[bold]Tree:[/bold] {tree or '(all)'}\n"
+            f"[bold]Limit:[/bold] {limit or 'unlimited'}",
+            title="Enrich Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - changes will not be persisted[/dim]")
+        return
+
+    # Dispatch based on resource
+    if resource == "nodes":
+        _enrich_nodes_impl(
+            facility=facility,
+            prompt=prompt,
+            tree=tree,
+            limit=limit,
+            model=model_id,
+            cost_limit=cost_limit,
+            batch_size=batch_size,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    elif resource == "wiki":
+        # Use wiki scoring pipeline
+        from imas_codex.wiki.discovery import WikiDiscovery
+        from imas_codex.wiki.progress import ScoreProgressMonitor
+
+        discovery = WikiDiscovery(
+            facility=facility,
+            cost_limit_usd=cost_limit,
+            max_pages=limit,
+            verbose=verbose,
+            model=model,
+            focus=prompt,
+        )
+
+        try:
+            with ScoreProgressMonitor(
+                cost_limit=cost_limit, facility=facility
+            ) as monitor:
+                scored = asyncio.run(
+                    discovery.score(monitor=monitor, batch_size=batch_size or 100)
+                )
+
+            if scored == 0:
+                console.print("[yellow]No pages to enrich[/yellow]")
+            else:
+                console.print(f"[green]✓ Enriched {scored} wiki pages[/green]")
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise SystemExit(1) from e
+    elif resource == "codes":
+        console.print("[yellow]Code enrichment not yet implemented[/yellow]")
+        console.print("[dim]Use 'imas-codex ingest <facility> files' first[/dim]")
+
+
+def _enrich_nodes_impl(
+    facility: str,
+    prompt: str | None,
+    tree: str | None,
+    limit: int | None,
+    model: str,
+    cost_limit: float,
+    batch_size: int | None,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Implementation of nodes enrichment (extracted from original enrich nodes)."""
+    import asyncio
+    import logging as log_module
+
+    from rich.console import Console
     from rich.live import Live
     from rich.panel import Panel
     from rich.progress import (
@@ -4231,481 +3815,113 @@ def enrich_nodes(
     from imas_codex.agentic import (
         BatchProgress,
         batch_enrich_paths,
-        compose_batches,
-        discover_nodes_to_enrich,
-        estimate_enrichment_cost,
-        get_model_for_task,
-        get_parent_path,
     )
+    from imas_codex.graph import GraphClient
 
     console = Console()
 
-    if verbose:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # Suppress verbose logging unless verbose mode
+    if not verbose:
+        log_module.getLogger("imas_codex.agentic").setLevel(log_module.WARNING)
+        log_module.getLogger("LiteLLM").setLevel(log_module.WARNING)
+        log_module.getLogger("httpx").setLevel(log_module.WARNING)
 
-    # Resolve model from config if not specified
-    effective_model = model or get_model_for_task("enrichment")
+    # Query pending nodes from graph
+    with GraphClient() as gc:
+        where_clauses = ["t.enrichment_status = 'pending'"]
+        if tree:
+            where_clauses.append(f't.tree_name = "{tree}"')
 
-    # Determine target status
-    # --force means "include all statuses" (both pending and already enriched)
-    # --status specifies a specific status to target
-    target_status = "all" if force else status
+        # Add facility filter if tree nodes have facility
+        where_clauses.append(f't.facility = "{facility}"')
 
-    # Get paths - either from args or discover from graph
-    if paths:
-        path_list = list(paths)
-        console.print(f"[cyan]Enriching {len(path_list)} specified paths...[/cyan]")
-        tree_name = tree or "unknown"
-    else:
-        if force:
-            filter_desc = "all statuses (--force)"
-        else:
-            filter_desc = f"status='{target_status}'"
-        if linked:
-            filter_desc += ", with code context"
-        console.print(f"[cyan]Discovering nodes with {filter_desc}...[/cyan]")
-        nodes = discover_nodes_to_enrich(
-            tree_name=tree,
-            status=target_status,
-            with_context_only=linked,
-            limit=limit,
-        )
-        if not nodes:
-            console.print(f"[yellow]No nodes found with {filter_desc}.[/yellow]")
-            return
-        path_list = [n["path"] for n in nodes]
-        with_ctx = sum(1 for n in nodes if n["has_context"])
-        console.print(
-            f"[green]Found {len(path_list)} nodes[/green] "
-            f"([dim]{with_ctx} with code context[/dim])"
-        )
-        tree_name = tree or nodes[0].get("tree", "unknown") if nodes else "unknown"
+        query = f"""
+            MATCH (t:TreeNode)
+            WHERE {" AND ".join(where_clauses)}
+            RETURN t.path AS path
+            ORDER BY t.path
+        """
+        if limit:
+            query += f" LIMIT {limit}"
 
-    # Auto-select batch size based on model
-    # Benchmarked optimal values:
-    # - Flash: batch 100 = 2.5 paths/sec, 100% success, 71% high confidence
-    # - Pro: batch 200 = 0.4 paths/sec, 100% success, 100% high confidence
-    effective_batch_size = batch_size
-    if effective_batch_size is None:
-        if "pro" in effective_model.lower():
-            effective_batch_size = 200
-        else:
-            effective_batch_size = 100
+        result = gc.query(query)
+        paths = [r["path"] for r in result] if result else []
 
-    # Compose smart batches grouped by parent (for preview)
-    batches = compose_batches(
-        path_list, batch_size=effective_batch_size, group_by_parent=True
-    )
-
-    # Show cost estimate
-    cost_est = estimate_enrichment_cost(len(path_list), effective_batch_size)
-    cost_info = (
-        f"[dim]Batches: {len(batches)} | "
-        f"Est. time: {cost_est['estimated_hours'] * 60:.0f}min | "
-        f"Est. cost: ${cost_est['estimated_cost']:.2f}"
-    )
-    if cost_limit is not None:
-        cost_info += f" | Limit: ${cost_limit:.2f}"
-    cost_info += "[/dim]"
-    console.print()
-    console.print(cost_info)
-    console.print(f"[dim]Model: {effective_model} (smolagents CodeAgent)[/dim]")
-
-    if dry_run:
-        console.print("\n[yellow][DRY RUN] Will not persist to graph[/yellow]")
-        console.print("\n[cyan]Batch preview:[/cyan]")
-        for i, batch in enumerate(batches[:5], 1):
-            parent = get_parent_path(batch[0]) if batch else "?"
-            console.print(f"  Batch {i}: {len(batch)} paths from [bold]{parent}[/bold]")
-            for p in batch[:3]:
-                console.print(f"    {p}")
-            if len(batch) > 3:
-                console.print(f"    [dim]... and {len(batch) - 3} more[/dim]")
-        if len(batches) > 5:
-            console.print(f"\n  [dim]... and {len(batches) - 5} more batches[/dim]")
+    if not paths:
+        console.print("[yellow]No pending nodes found[/yellow]")
         return
 
-    # State for progress display (updated by callback)
-    class ProgressState:
-        def __init__(self) -> None:
-            self.batch_num = 0
-            self.total_batches = len(batches)
-            self.parent_path = ""
-            self.paths_processed = 0
-            self.paths_total = len(path_list)
-            self.enriched = 0
-            self.errors = 0
-            self.high_conf = 0
-            self.elapsed = 0.0
+    console.print(f"[bold]Found {len(paths)} pending nodes[/bold]")
 
-        def rate(self) -> float:
-            return self.paths_processed / self.elapsed if self.elapsed > 0 else 0
+    # Create progress display
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TaskProgressColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
 
-    state = ProgressState()
+    # State tracking
+    class EnrichState:
+        total = len(paths)
+        completed = 0
+        cost = 0.0
+        elapsed = 0.0
 
-    def create_progress_display() -> Group:
-        """Create the rich progress display."""
-        # Overall progress bar
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]Enriching"),
-            BarColumn(bar_width=40),
-            TaskProgressColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TextColumn("→"),
-            TimeRemainingColumn(),
-        )
-        task = progress.add_task("", total=state.paths_total)
-        progress.update(task, completed=state.paths_processed)
+    state = EnrichState()
+    results: list[dict] = []
 
-        # Current batch info
-        batch_info = Table.grid(padding=(0, 2))
-        batch_info.add_column(style="dim")
-        batch_info.add_column(style="bold")
-        batch_info.add_row(
-            "Batch:",
-            f"{state.batch_num}/{state.total_batches}",
-        )
-        batch_info.add_row("Tree:", tree_name)
-        batch_info.add_row("Group:", state.parent_path or "—")
+    # Run enrichment
+    async def run_enrichment() -> None:
+        nonlocal results
 
-        # Statistics
-        stats = Table.grid(padding=(0, 2))
-        stats.add_column(style="dim")
-        stats.add_column(justify="right")
-        stats.add_row("Enriched:", f"[green]{state.enriched}[/green]")
-        stats.add_row("Errors:", f"[red]{state.errors}[/red]")
-        stats.add_row("High conf:", f"[cyan]{state.high_conf}[/cyan]")
-        stats.add_row("Rate:", f"{state.rate():.1f} paths/sec")
+        task_id = progress.add_task("[cyan]Enriching nodes...", total=state.total)
 
-        # Combine into panels
-        info_panel = Panel(
-            batch_info,
-            title="[bold]Current Batch[/bold]",
-            border_style="blue",
-            padding=(0, 1),
-        )
-        stats_panel = Panel(
-            stats,
-            title="[bold]Statistics[/bold]",
-            border_style="green",
-            padding=(0, 1),
-        )
+        def on_progress(batch_progress: BatchProgress) -> None:
+            state.completed = batch_progress.completed
+            state.cost = batch_progress.cost_usd
+            state.elapsed = batch_progress.elapsed_seconds
+            progress.update(task_id, completed=batch_progress.completed)
+            if batch_progress.current_path:
+                progress.update(
+                    task_id,
+                    description=f"[cyan]{batch_progress.current_path[:40]}...",
+                )
 
-        # Layout with side-by-side panels
-        layout = Table.grid(expand=True)
-        layout.add_column(ratio=1)
-        layout.add_column(ratio=1)
-        layout.add_row(info_panel, stats_panel)
-
-        return Group(progress, layout)
-
-    # Progress callback that updates state
-    live_display: Live | None = None
-
-    def on_progress(p: BatchProgress) -> None:
-        state.batch_num = p.batch_num
-        state.total_batches = p.total_batches
-        state.parent_path = p.parent_path
-        state.paths_processed = p.paths_processed
-        state.enriched = p.enriched
-        state.errors = p.errors
-        state.high_conf = p.high_confidence
-        state.elapsed = p.elapsed_seconds
-        if live_display:
-            live_display.update(create_progress_display())
-
-    async def run_with_progress() -> list:
-        nonlocal live_display
-        with Live(
-            create_progress_display(), console=console, refresh_per_second=4
-        ) as live:
-            live_display = live
-            return await batch_enrich_paths(
-                paths=path_list,
-                tree_name=tree_name,
-                batch_size=effective_batch_size,
+        with Live(progress, console=console, refresh_per_second=4):
+            results = await batch_enrich_paths(
+                paths=paths,
+                model=model,
+                batch_size=batch_size or 100,
+                cost_limit_usd=cost_limit,
                 verbose=verbose,
-                dry_run=False,  # We handle dry_run above
-                model=effective_model,
-                progress_callback=on_progress,
+                dry_run=dry_run,
+                on_progress=on_progress,
+                prompt=prompt,
             )
 
-    console.print()
-    results = asyncio.run(run_with_progress())
-    console.print()
+    try:
+        asyncio.run(run_enrichment())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Enrichment interrupted[/yellow]")
+        raise SystemExit(130) from None
 
-    # Final summary
-    enriched_count = sum(1 for r in results if r.description)
-    error_count = sum(1 for r in results if r.error)
-    high_conf_count = sum(1 for r in results if r.confidence == "high")
-
-    summary = Table(title="Enrichment Summary", show_header=False, box=None)
-    summary.add_column(style="dim")
-    summary.add_column(justify="right")
-    summary.add_row("Total paths:", str(len(results)))
-    summary.add_row("Enriched:", f"[green]{enriched_count}[/green]")
-    summary.add_row("Errors:", f"[red]{error_count}[/red]")
-    summary.add_row("High confidence:", f"[cyan]{high_conf_count}[/cyan]")
-    summary.add_row("Time:", f"{state.elapsed:.1f}s")
+    # Show summary
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column()
+    summary.add_column()
+    summary.add_row("Paths enriched:", f"[green]{len(results)}[/green]")
+    summary.add_row("Cost:", f"${state.cost:.4f}")
+    summary.add_row("Duration:", f"{state.elapsed:.1f}s")
     if state.elapsed > 0:
         summary.add_row("Rate:", f"{len(results) / state.elapsed:.1f} paths/sec")
     summary.add_row("", "[green]✓ Persisted to graph[/green]")
 
     console.print(Panel(summary, border_style="green"))
-
-
-@enrich.command("mark-stale")
-@click.argument("pattern")
-@click.option("--tree", default=None, help="Filter to specific tree name")
-@click.option("--dry-run", is_flag=True, help="Preview without updating")
-def enrich_mark_stale(
-    pattern: str,
-    tree: str | None,
-    dry_run: bool,
-) -> None:
-    """Mark TreeNodes as stale for re-enrichment.
-
-    Matches nodes by path pattern and sets enrichment_status='stale'.
-    Use this when new context is available and you want to re-process nodes.
-
-    \b
-    EXAMPLES:
-        # Mark all LIUQE nodes as stale
-        imas-codex enrich mark-stale "LIUQE"
-
-        # Mark nodes in results tree matching pattern
-        imas-codex enrich mark-stale "THOMSON" --tree results
-
-        # Preview what would be marked
-        imas-codex enrich mark-stale "BOLO" --dry-run
-    """
-    from imas_codex.graph import GraphClient
-
-    with GraphClient() as gc:
-        where_clauses = [
-            "t.enrichment_status = 'enriched'",
-            f"t.path CONTAINS '{pattern}'",
-        ]
-        if tree:
-            where_clauses.append(f't.tree_name = "{tree}"')
-
-        # Count matching nodes
-        count_query = f"""
-            MATCH (t:TreeNode)
-            WHERE {" AND ".join(where_clauses)}
-            RETURN count(t) AS count
-        """
-        result = gc.query(count_query)
-        count = result[0]["count"] if result else 0
-
-        if count == 0:
-            click.echo(f"No enriched nodes matching '{pattern}' found.")
-            return
-
-        if dry_run:
-            click.echo(f"[DRY RUN] Would mark {count} nodes as stale")
-            # Show sample
-            sample_query = f"""
-                MATCH (t:TreeNode)
-                WHERE {" AND ".join(where_clauses)}
-                RETURN t.path AS path LIMIT 10
-            """
-            samples = gc.query(sample_query)
-            for s in samples:
-                click.echo(f"  {s['path']}")
-            if count > 10:
-                click.echo(f"  ... and {count - 10} more")
-            return
-
-        # Mark as stale
-        update_query = f"""
-            MATCH (t:TreeNode)
-            WHERE {" AND ".join(where_clauses)}
-            SET t.enrichment_status = 'stale'
-            RETURN count(t) AS updated
-        """
-        result = gc.query(update_query)
-        updated = result[0]["updated"] if result else 0
-        click.echo(f"✓ Marked {updated} nodes as stale")
-
-
-# ============================================================================
-# Explore Command
-# ============================================================================
-
-
-@main.command("explore")
-@click.argument("facility")
-@click.option(
-    "--prompt",
-    "-p",
-    default=None,
-    help="Exploration guidance (e.g., 'Find IMAS integration code')",
-)
-@click.option(
-    "--model",
-    "-m",
-    default=None,
-    help="LLM model to use (default: from config for 'exploration' task)",
-)
-@click.option(
-    "--cost-limit",
-    "-c",
-    default=None,
-    type=float,
-    help="Maximum cost budget in USD (default: no limit)",
-)
-@click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Enable verbose agent output",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Show configuration without running",
-)
-def explore(
-    facility: str,
-    prompt: str | None,
-    model: str | None,
-    cost_limit: float | None,
-    verbose: bool,
-    dry_run: bool,
-) -> None:
-    """Explore a remote facility using autonomous CodeAgent.
-
-    Uses smolagents CodeAgent that generates Python code to invoke tools,
-    enabling adaptive problem-solving and self-debugging. Discovered files
-    are queued for ingestion.
-
-    The agent uses fast CLI tools (rg, fd, dust) for exploration and
-    persists findings to the knowledge graph.
-
-    \b
-    COMPLETION CRITERIA (when is enough enough?):
-    - Minimum: 5+ directories identified, 20+ files queued
-    - Full: 100+ high-value files, major physics domains covered
-    - Diminishing returns: searches return mostly config/build files
-
-    \b
-    EXAMPLES:
-        # Basic exploration
-        imas-codex explore iter
-
-        # Guided exploration
-        imas-codex explore iter --prompt "Find IMAS integration code"
-
-        # Find equilibrium codes specifically
-        imas-codex explore epfl -p "Find CHEASE and LIUQE code"
-
-        # Use specific model
-        imas-codex explore iter -m anthropic/claude-sonnet-4.5
-
-        # Set cost limit
-        imas-codex explore iter -c 2.0
-
-        # Verbose output
-        imas-codex explore iter -v
-
-        # Check configuration
-        imas-codex explore iter --dry-run
-    """
-    import asyncio
-
-    from rich.console import Console
-    from rich.panel import Panel
-
-    from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.agentic.explore import ExplorationAgent
-    from imas_codex.discovery import get_facility as get_facility_config
-
-    console = Console()
-
-    # Validate facility exists
-    try:
-        config = get_facility_config(facility)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise SystemExit(1) from e
-
-    # Resolve model and cost limit
-    effective_model = model or get_model_for_task("exploration")
-    effective_cost_limit = cost_limit if cost_limit is not None else 5.0
-
-    # Build cost limit display
-    cost_limit_str = f"${effective_cost_limit:.2f}"
-
-    if dry_run:
-        console.print(
-            Panel.fit(
-                f"[cyan]Facility:[/cyan] {facility}\n"
-                f"[cyan]SSH Host:[/cyan] {config.get('ssh_host', facility)}\n"
-                f"[cyan]Model:[/cyan] {effective_model}\n"
-                f"[cyan]Cost Limit:[/cyan] {cost_limit_str}\n"
-                f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
-                f"[cyan]Verbose:[/cyan] {verbose}\n"
-                f"[cyan]Agent:[/cyan] CodeAgent",
-                title="Exploration Configuration (--dry-run)",
-            )
-        )
-        console.print("\n[dim]Remove --dry-run to start exploration[/dim]")
-        return
-
-    # Show startup info
-    console.print(
-        Panel.fit(
-            f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]\n"
-            f"[dim]CodeAgent (cost limit: {cost_limit_str})[/dim]",
-            title="IMAS Codex Explorer",
-        )
-    )
-    if prompt:
-        console.print(f"[dim]Guidance: {prompt}[/dim]")
-    console.print()
-
-    # Run exploration
-    async def run_exploration() -> None:
-        async with ExplorationAgent(
-            facility=facility,
-            model=effective_model,
-            verbose=verbose,
-            cost_limit_usd=effective_cost_limit,
-        ) as agent:
-            result = await agent.explore(prompt=prompt)
-
-            if result.error:
-                console.print(f"[red]Exploration failed: {result.error}[/red]")
-                raise SystemExit(1)
-
-            # Print summary
-            console.print()
-            console.print(Panel(result.summary, title="Exploration Summary"))
-            console.print()
-            console.print(f"[green]✓[/green] Files queued: {result.files_queued}")
-            console.print(f"[green]✓[/green] Notes added: {result.notes_added}")
-            console.print(f"[dim]Cost: ${result.cost_usd:.4f}[/dim]")
-            console.print(
-                f"[dim]Steps: {result.progress.steps} | "
-                f"Elapsed: {result.progress.elapsed_seconds:.1f}s[/dim]"
-            )
-
-            if result.files_queued > 0:
-                console.print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
-
-    try:
-        asyncio.run(run_exploration())
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Exploration interrupted by user[/yellow]")
-        raise SystemExit(130) from None
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        logger.exception("Exploration failed")
-        raise SystemExit(1) from e
 
 
 # ============================================================================
