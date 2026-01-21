@@ -766,7 +766,7 @@ class StatelessScout:
         self._agent = CodeAgent(
             model=model,
             tools=tools,
-            system_prompt=SCOUT_SYSTEM_PROMPT,
+            instructions=SCOUT_SYSTEM_PROMPT,
             max_steps=3,  # Per invocation - we control outer loop
         )
 

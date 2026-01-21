@@ -3302,7 +3302,7 @@ def scout() -> None:
     and results are persisted to the graph. No context carried between steps.
 
     \b
-    Resources:
+    Discovery Commands:
       scout files <facility>    Discover source files (primary)
       scout wiki <facility>     Discover wiki documentation
       scout codes <facility>    Find physics simulation codes
@@ -3310,10 +3310,8 @@ def scout() -> None:
       scout paths <facility>    Map directory structure
 
     \b
-    Management:
-      scout status <facility>   Show exploration progress
-      scout resume <facility>   Continue exploration from graph state
-      scout list <facility>     List frontier paths or queued files
+    Status:
+      scout status <facility>   Show exploration progress and frontier
     """
     pass
 
@@ -3553,188 +3551,6 @@ def scout_status(
                     console.print("[dim]No skipped paths found[/dim]")
         except Exception as e:
             console.print(f"[red]Error: {e}[/red]")
-
-
-@scout.command("resume")
-@click.argument("facility")
-@click.option("--steps", "-n", default=20, help="Number of additional steps to run")
-@click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
-def scout_resume(
-    facility: str,
-    steps: int,
-    verbose: bool,
-) -> None:
-    """Resume exploration for a facility from graph state.
-
-    With the graph-first stateless approach, resumption is automatic.
-    The scout queries the graph for the current frontier and continues.
-
-    \b
-    EXAMPLES:
-        # Resume exploration with 20 more steps
-        imas-codex scout resume epfl
-
-        # Resume with more steps
-        imas-codex scout resume epfl -n 50
-    """
-    from rich.console import Console
-
-    from imas_codex.agentic.scout import (
-        ScoutConfig,
-        StatelessScout,
-        get_exploration_summary,
-    )
-
-    console = Console()
-
-    # Check current state
-    summary = get_exploration_summary(facility)
-
-    if summary.get("total_paths", 0) == 0:
-        console.print(
-            f"[yellow]No exploration data for {facility}. Use 'scout files' to start.[/yellow]"
-        )
-        return
-
-    console.print(f"[bold blue]Resuming Scout: {facility}[/bold blue]")
-    console.print("\n[bold]Current State[/bold]")
-    console.print(f"  Total paths: {summary.get('total_paths', 0)}")
-    console.print(
-        f"  Explored: {summary.get('explored', 0)} ({summary.get('coverage', 0):.1%})"
-    )
-    console.print(f"  Remaining: {summary.get('remaining', 0)}")
-    console.print(f"  Files queued: {summary.get('files_queued', 0)}")
-
-    if summary.get("remaining", 0) == 0:
-        console.print(
-            "\n[green]Exploration already complete - no remaining paths[/green]"
-        )
-        return
-
-    # Create scout and run additional steps
-    config = ScoutConfig(
-        facility=facility,
-        max_steps=steps,
-        verbose=verbose,
-    )
-
-    scout = StatelessScout(config)
-
-    console.print(f"\n[bold]Running {steps} additional steps...[/bold]")
-    try:
-        for i in range(steps):
-            result = scout.step()
-            status = result.get("status", "unknown")
-
-            if verbose:
-                console.print(f"[dim]Step {i + 1}: {status}[/dim]")
-
-            if status in ("complete", "max_steps_reached"):
-                console.print(f"[green]{status}[/green]")
-                break
-
-            if status == "error":
-                console.print(f"[red]Error: {result.get('error')}[/red]")
-                break
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted[/yellow]")
-
-    # Show final status
-    final_summary = get_exploration_summary(facility)
-    console.print("\n[bold green]Resume Complete[/bold green]")
-    console.print(f"  Steps taken: {scout.steps_taken}")
-    console.print(f"  Total paths: {final_summary.get('total_paths', 0)}")
-    console.print(f"  Coverage: {final_summary.get('coverage', 0):.1%}")
-    console.print(f"  Remaining: {final_summary.get('remaining', 0)}")
-
-
-@scout.command("list")
-@click.argument("facility")
-@click.option("--limit", "-n", default=20, help="Number of paths to show")
-@click.option("--queued", "-q", is_flag=True, help="Show queued source files")
-def scout_list(
-    facility: str,
-    limit: int,
-    queued: bool,
-) -> None:
-    """List exploration frontier or queued files.
-
-    Shows paths waiting to be explored (frontier) or files queued for ingestion.
-
-    \\b
-    EXAMPLES:
-        # List frontier paths
-        imas-codex scout list epfl
-
-        # List queued files
-        imas-codex scout list epfl --queued
-    """
-    from rich.console import Console
-    from rich.table import Table
-
-    from imas_codex.agentic.scout import get_frontier
-    from imas_codex.graph import GraphClient
-
-    console = Console()
-
-    if queued:
-        # Show queued source files
-        try:
-            with GraphClient() as client:
-                result = client.query(
-                    """
-                    MATCH (sf:SourceFile)-[:FACILITY_ID]->(f:Facility {id: $facility})
-                    WHERE sf.status IN ['discovered', 'queued']
-                    RETURN sf.path AS path, sf.interest_score AS score,
-                           sf.discovered_by AS discovered_by, sf.discovered_at AS discovered_at
-                    ORDER BY sf.interest_score DESC
-                    LIMIT $limit
-                    """,
-                    facility=facility,
-                    limit=limit,
-                )
-
-                if not result:
-                    console.print(f"[dim]No queued files for {facility}[/dim]")
-                    return
-
-                table = Table(title=f"Queued Files: {facility}")
-                table.add_column("Path")
-                table.add_column("Score", justify="right")
-                table.add_column("Discovered By")
-
-                for row in result:
-                    table.add_row(
-                        row.get("path", "?"),
-                        f"{row.get('score', 0.5):.2f}",
-                        row.get("discovered_by", "?"),
-                    )
-                console.print(table)
-
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-    else:
-        # Show frontier paths
-        frontier = get_frontier(facility, limit=limit)
-
-        if not frontier:
-            console.print(f"[dim]No frontier paths for {facility}[/dim]")
-            return
-
-        table = Table(title=f"Exploration Frontier: {facility}")
-        table.add_column("Path")
-        table.add_column("Score", justify="right")
-        table.add_column("Reason")
-
-        for p in frontier:
-            table.add_row(
-                p.get("path", "?"),
-                f"{p.get('interest_score', 0.5):.2f}",
-                (p.get("interest_reason") or "")[:50],
-            )
-
-        console.print(table)
 
 
 @scout.command("wiki")
