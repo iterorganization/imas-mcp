@@ -177,7 +177,7 @@ class ClustersTool(BaseTool):
                 error="Cluster search not available",
                 suggestions=[
                     "Ensure clusters.json exists",
-                    "Try rebuilding with: build-clusters",
+                    "Try rebuilding with: imas-codex clusters build",
                 ],
                 context={"tool": "search_imas_clusters"},
             )

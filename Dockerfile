@@ -160,10 +160,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     echo "Building clusters..." && \
     if [ -n "${IDS_FILTER}" ]; then \
     echo "Building clusters for IDS: ${IDS_FILTER}" && \
-    uv run --no-dev build-clusters --ids-filter "${IDS_FILTER}" --quiet; \
+    uv run --no-dev imas-codex clusters build --ids-filter "${IDS_FILTER}" --quiet; \
     else \
     echo "Building clusters for all IDS" && \
-    uv run --no-dev build-clusters --quiet; \
+    uv run --no-dev imas-codex clusters build --quiet; \
     fi && \
     echo "✓ Clusters ready"
 

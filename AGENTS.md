@@ -354,7 +354,7 @@ uv run pytest --cov=imas_codex
 uv run pytest tests/path/to/test.py::test_function
 
 # Fast iteration: use restricted IDS filters for build scripts
-uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
+uv run imas-codex clusters build --ids-filter "core_profiles equilibrium" -v -f
 ```
 
 ## Working in Worktrees
