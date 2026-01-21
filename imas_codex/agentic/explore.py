@@ -231,7 +231,7 @@ class ExplorationAgent:
 
         # Create monitor for cost tracking
         self._monitor = AgentMonitor(
-            agent_name=f"exploration-{self.facility}",
+            agent_name=f"exploration_{self.facility}",
             cost_limit_usd=self.cost_limit_usd,
         )
         self._monitor._model = self.model
@@ -264,7 +264,7 @@ class ExplorationAgent:
             max_steps=self.max_steps,
             planning_interval=5,  # Re-plan every 5 steps
             step_callbacks=callbacks,
-            name=f"explorer-{self.facility}",
+            name=f"explorer_{self.facility}",
         )
 
     # -------------------------------------------------------------------------

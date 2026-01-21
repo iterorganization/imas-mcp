@@ -3734,11 +3734,11 @@ def _show_versions_summary(gc, console) -> None:
     help="Maximum cost budget in USD (default: 10.0)",
 )
 @click.option(
-    "--limit",
+    "--max-steps",
     "-n",
-    default=None,
+    default=30,
     type=int,
-    help="Maximum items to discover",
+    help="Maximum agent iterations (default: 30)",
 )
 @click.option("--dry-run", is_flag=True, help="Show configuration without running")
 @click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
@@ -3748,7 +3748,7 @@ def scout(
     prompt: str | None,
     model: str | None,
     cost_limit: float,
-    limit: int | None,
+    max_steps: int,
     dry_run: bool,
     verbose: bool,
 ) -> None:
@@ -3824,7 +3824,7 @@ def scout(
             f"[bold]Model:[/bold] {model_id}\n"
             f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
             f"[bold]Guidance:[/bold] {prompt or '(none)'}\n"
-            f"[bold]Limit:[/bold] {limit or 'unlimited'}",
+            f"[bold]Max Steps:[/bold] {max_steps}",
             title="Scout Configuration",
         )
     )
@@ -3843,7 +3843,7 @@ def scout(
             run_wiki_discovery(
                 facility=facility,
                 cost_limit_usd=cost_limit,
-                max_pages=limit,
+                max_pages=max_steps,  # Use max_steps as page limit for wiki
                 verbose=verbose,
                 model=model,
                 focus=prompt,
@@ -3856,6 +3856,7 @@ def scout(
             model=model_id,
             cost_limit_usd=cost_limit,
             verbose=verbose,
+            max_steps=max_steps,
         )
 
         try:
