@@ -129,7 +129,33 @@ class CredentialManager:
             logger.info("Stored credentials for %s", site)
             return True
         except Exception as e:
-            logger.error("Failed to store credentials: %s", e)
+            # Provide detailed error with setup instructions
+            error_msg = str(e)
+            logger.error("Failed to store credentials: %s", error_msg)
+
+            # Check for common keyring backend issues
+            if "No recommended backend" in error_msg or "keyrings.alt" in error_msg:
+                env_user = self._env_var_name(site, "username")
+                env_pass = self._env_var_name(site, "password")
+                logger.error(
+                    "\n"
+                    "Keyring backend not configured. Setup options:\n"
+                    "\n"
+                    "Option 1: Install a keyring backend (recommended for desktop)\n"
+                    "  Linux:   sudo apt install gnome-keyring  # or libsecret\n"
+                    "  macOS:   Built-in Keychain should work automatically\n"
+                    "  Windows: Built-in Credential Locker should work automatically\n"
+                    "\n"
+                    "Option 2: Use file-based backend (for servers/containers)\n"
+                    "  pip install keyrings.alt\n"
+                    "  Then create ~/.config/python_keyring/keyringrc.cfg:\n"
+                    "    [backend]\n"
+                    "    default-keyring=keyrings.alt.file.PlaintextKeyring\n"
+                    "\n"
+                    "Option 3: Use environment variables (for CI/automation)\n"
+                    f"  export {env_user}=your_username\n"
+                    f"  export {env_pass}=your_password\n"
+                )
             return False
 
     def get_credentials(

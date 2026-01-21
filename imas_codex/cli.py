@@ -2201,9 +2201,10 @@ def wiki_credentials() -> None:
     (GNOME Keyring on Linux, Keychain on macOS).
 
     \b
-      imas-codex wiki credentials set <site>     Store credentials
-      imas-codex wiki credentials get <site>     Check if credentials exist
-      imas-codex wiki credentials delete <site>  Remove credentials
+      imas-codex wiki credentials list [<facility>]  List sites and status
+      imas-codex wiki credentials set <site>         Store credentials
+      imas-codex wiki credentials get <site>         Check if credentials exist
+      imas-codex wiki credentials delete <site>      Remove credentials
     """
     pass
 
@@ -2247,6 +2248,32 @@ def wiki_credentials_set(site: str) -> None:
         click.echo(f"\n✓ Credentials stored for {site}")
     else:
         click.echo("\n❌ Failed to store credentials", err=True)
+        click.echo("\nKeyring backend not configured. Setup options:", err=True)
+        click.echo("", err=True)
+        click.echo(
+            "Option 1: Install a keyring backend (recommended for desktop)", err=True
+        )
+        click.echo(
+            "  Linux:   sudo apt install gnome-keyring  # or libsecret", err=True
+        )
+        click.echo("  macOS:   Built-in Keychain should work automatically", err=True)
+        click.echo(
+            "  Windows: Built-in Credential Locker should work automatically", err=True
+        )
+        click.echo("", err=True)
+        click.echo(
+            "Option 2: Use file-based backend (for servers/containers)", err=True
+        )
+        click.echo("  pip install keyrings.alt", err=True)
+        click.echo("  Then create ~/.config/python_keyring/keyringrc.cfg:", err=True)
+        click.echo("    [backend]", err=True)
+        click.echo("    default-keyring=keyrings.alt.file.PlaintextKeyring", err=True)
+        click.echo("", err=True)
+        click.echo("Option 3: Use environment variables (for CI/automation)", err=True)
+        env_user = creds._env_var_name(site, "username")
+        env_pass = creds._env_var_name(site, "password")
+        click.echo(f"  export {env_user}=your_username", err=True)
+        click.echo(f"  export {env_pass}=your_password", err=True)
         raise SystemExit(1)
 
 
@@ -2307,6 +2334,74 @@ def wiki_credentials_delete(site: str, yes: bool) -> None:
 
     if deleted_session:
         click.echo("✓ Deleted cached session")
+
+
+@wiki_credentials.command("list")
+@click.argument("facility", required=False)
+def wiki_credentials_list(facility: str | None) -> None:
+    """List wiki sites and their credential status.
+
+    Shows all wiki sites configured for a facility (or all facilities if
+    not specified), including which require authentication and whether
+    credentials are configured.
+
+    \b
+    Examples:
+        imas-codex wiki credentials list            List all facilities
+        imas-codex wiki credentials list iter       List ITER sites only
+    """
+    from imas_codex.discovery.facility import list_facilities
+    from imas_codex.wiki.auth import CredentialManager
+    from imas_codex.wiki.discovery import WikiConfig
+
+    creds = CredentialManager()
+
+    # Determine which facilities to show
+    if facility:
+        facilities = [facility]
+    else:
+        facilities = list_facilities()
+
+    if not facilities:
+        click.echo("No facilities configured.")
+        return
+
+    for fac in facilities:
+        try:
+            sites = WikiConfig.list_sites(fac)
+        except Exception as e:
+            click.echo(f"\n{fac}: Error loading config - {e}", err=True)
+            continue
+
+        if not sites:
+            click.echo(f"\n{fac}: No wiki sites configured")
+            continue
+
+        click.echo(f"\n{fac}:")
+        for site in sites:
+            # Determine credential service name
+            cred_service = site.credential_service
+            auth_info = f"Auth: {site.auth_type}"
+
+            if site.requires_auth and cred_service:
+                has_creds = creds.has_credentials(cred_service)
+                status = "✓" if has_creds else "○"
+                cred_info = f"  [{status}] {cred_service}"
+            else:
+                cred_info = ""
+
+            # Build display line
+            click.echo(f"  • {site.base_url}")
+            click.echo(f"      Type: {site.site_type}, {auth_info}")
+            if cred_info:
+                click.echo(f"      Credentials: {cred_info}")
+            if site.requires_ssh:
+                click.echo(f"      SSH: {site.ssh_host}")
+
+    # Show summary
+    click.echo("\n---")
+    click.echo("Legend: ✓ = credentials configured, ○ = not set")
+    click.echo("To set credentials: imas-codex wiki credentials set <site>")
 
 
 @wiki.command("sites")
