@@ -19,6 +19,7 @@ This module provides:
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from dataclasses import dataclass, field
@@ -31,6 +32,22 @@ if TYPE_CHECKING:
     from smolagents import CodeAgent
 
 logger = logging.getLogger(__name__)
+
+# Context variable for dry-run mode - when True, validate schema but don't persist
+_dry_run: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "dry_run", default=False
+)
+
+
+def set_dry_run(value: bool) -> None:
+    """Set dry-run mode for graph operations in current context."""
+    _dry_run.set(value)
+
+
+def is_dry_run() -> bool:
+    """Check if dry-run mode is active."""
+    return _dry_run.get()
+
 
 # =============================================================================
 # Dead-End Patterns - Skip these entirely
@@ -263,6 +280,7 @@ def discover_path(
     """Add a discovered path to the graph.
 
     Creates a FacilityPath node with status='discovered'.
+    In dry-run mode, validates schema but doesn't persist.
 
     Args:
         facility: Facility ID
@@ -294,6 +312,16 @@ def discover_path(
     if interest_reason:
         props["interest_reason"] = interest_reason
 
+    # Dry-run mode - validate and return without persisting
+    if is_dry_run():
+        logger.info("[DRY-RUN] Would discover: %s (score: %.2f)", path, score.overall())
+        return {
+            "status": "discovered",
+            "path": path,
+            "score": score.overall(),
+            "dry_run": True,
+        }
+
     try:
         with GraphClient() as client:
             # Check if already exists
@@ -310,10 +338,9 @@ def discover_path(
 
             client.query(
                 """
+                MERGE (f:Facility {id: $facility})
                 MERGE (p:FacilityPath {id: $id})
                 SET p += $props
-                WITH p
-                MATCH (f:Facility {id: $facility})
                 MERGE (p)-[:FACILITY_ID]->(f)
                 """,
                 id=path_id,
@@ -332,8 +359,14 @@ def skip_path(facility: str, path: str, reason: str) -> dict[str, Any]:
     """Mark a path as skipped (dead-end).
 
     Creates or updates FacilityPath with status='skipped'.
+    In dry-run mode, validates schema but doesn't persist.
     """
     path_id = f"{facility}:{path}"
+
+    # Dry-run mode - validate and return without persisting
+    if is_dry_run():
+        logger.info("[DRY-RUN] Would skip: %s (%s)", path, reason)
+        return {"status": "skipped", "path": path, "reason": reason, "dry_run": True}
 
     try:
         with GraphClient() as client:
@@ -396,6 +429,16 @@ def advance_path_status(
     if notes:
         props["exploration_notes"] = notes
 
+    # Dry-run mode - validate and return without persisting
+    if is_dry_run():
+        logger.info("[DRY-RUN] Would advance %s -> %s", path, new_status)
+        return {
+            "status": "updated",
+            "path": path,
+            "new_status": new_status,
+            "dry_run": True,
+        }
+
     try:
         with GraphClient() as client:
             client.query(
@@ -436,6 +479,16 @@ def queue_source_file(
         "discovered_by": discovered_by,
         "interest_score": score.overall(),
     }
+
+    # Dry-run mode - validate and return without persisting
+    if is_dry_run():
+        logger.info("[DRY-RUN] Would queue: %s (score: %.2f)", path, score.overall())
+        return {
+            "status": "queued",
+            "path": path,
+            "score": score.overall(),
+            "dry_run": True,
+        }
 
     try:
         with GraphClient() as client:
@@ -585,6 +638,7 @@ class ScoutConfig:
     max_steps: int = 50
     exploration_focus: str = "general"  # 'imas', 'physics', 'data', 'general'
     root_paths: list[str] = field(default_factory=list)
+    dry_run: bool = False  # Validate schema but don't persist to graph
     verbose: bool = False
 
     def __post_init__(self) -> None:
@@ -747,19 +801,24 @@ class StatelessScout:
         self.config = config
         self._agent: CodeAgent | None = None
         self.steps_taken = 0
+        # Set module-level dry-run mode
+        set_dry_run(config.dry_run)
 
     def _get_agent(self) -> CodeAgent:
         """Get or create the CodeAgent."""
         if self._agent is not None:
             return self._agent
 
-        from smolagents import CodeAgent, LiteLLMModel
+        from smolagents import CodeAgent
 
-        from ..llm import get_model_for_task
+        from ..agents import create_litellm_model
         from .tools import get_scout_tools
 
-        model_id = get_model_for_task("scout")
-        model = LiteLLMModel(model_id=model_id)
+        # Use haiku for scout - cheaper and faster for simple exploration tasks
+        model = create_litellm_model(
+            model="anthropic/claude-haiku-4.5",
+            max_tokens=4096,  # Lower for scout tasks
+        )
 
         tools = get_scout_tools(self.config.facility)
 
@@ -768,6 +827,7 @@ class StatelessScout:
             tools=tools,
             instructions=SCOUT_SYSTEM_PROMPT,
             max_steps=3,  # Per invocation - we control outer loop
+            additional_authorized_imports=["os", "subprocess", "pathlib"],
         )
 
         return self._agent

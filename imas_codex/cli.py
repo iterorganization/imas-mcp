@@ -3325,7 +3325,11 @@ def scout() -> None:
 @click.option(
     "--focus", "-f", default="general", help="Focus: general, imas, physics, data"
 )
-@click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Run LLM exploration but don't persist to graph (validation mode)",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
 def scout_files(
     facility: str,
@@ -3355,6 +3359,9 @@ def scout_files(
 
         # Start from specific paths
         imas-codex scout files epfl -p /home/codes -p /work/imas
+
+        # Dry-run to test LLM behavior without graph persistence
+        imas-codex scout files epfl --dry-run -n 5
     """
     from rich.console import Console
 
@@ -3366,12 +3373,13 @@ def scout_files(
 
     console = Console()
 
-    # Create configuration
+    # Create configuration - dry_run validates schema but doesn't persist
     config = ScoutConfig(
         facility=facility,
         max_steps=steps,
         exploration_focus=focus,
         root_paths=list(root_path) if root_path else [],
+        dry_run=dry_run,
         verbose=verbose,
     )
 
@@ -3381,8 +3389,9 @@ def scout_files(
     if root_path:
         console.print(f"Root paths: {', '.join(root_path)}")
     if dry_run:
-        console.print("[yellow]DRY RUN - showing configuration only[/yellow]")
-        return
+        console.print(
+            "[yellow]DRY RUN - LLM runs but graph writes are simulated[/yellow]"
+        )
 
     scout = StatelessScout(config)
 

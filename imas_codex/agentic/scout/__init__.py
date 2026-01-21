@@ -32,7 +32,9 @@ from .stateless import (
     get_exploration_summary,
     get_frontier,
     is_dead_end,
+    is_dry_run,
     queue_source_file,
+    set_dry_run,
     skip_path,
 )
 from .tools import get_scout_tools
@@ -53,6 +55,8 @@ __all__ = [
     # Utilities
     "compute_interest_score",
     "is_dead_end",
+    "is_dry_run",
+    "set_dry_run",
     # Legacy
     "FrontierManager",
     "FrontierStats",
