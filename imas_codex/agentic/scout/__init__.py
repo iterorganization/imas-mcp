@@ -13,12 +13,15 @@ Uses existing node types:
 Primary interface:
 - StatelessScout: Main exploration class
 - ScoutConfig: Configuration for exploration runs
+- ScoutDisplay: Rich Live progress display
 
 Legacy (deprecated):
 - ScoutSession: Windowed session (use StatelessScout instead)
 """
 
 # Primary interface - graph-first stateless exploration
+from .display import ScoutDisplay
+
 # Legacy - kept for backward compatibility
 from .frontier import FrontierManager, FrontierStats
 from .session import ScoutConfig as LegacyScoutConfig, ScoutSession
@@ -43,6 +46,7 @@ __all__ = [
     # Primary
     "StatelessScout",
     "ScoutConfig",
+    "ScoutDisplay",
     "InterestScore",
     "get_scout_tools",
     # Graph operations

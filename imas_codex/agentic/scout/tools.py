@@ -371,11 +371,84 @@ class GetSummaryTool(Tool):
         return "\n".join(lines)
 
 
+class ShellTool(Tool):
+    """Execute shell commands for file exploration."""
+
+    name = "shell"
+    description = (
+        "Execute a shell command to explore the filesystem. "
+        "Use this for: ls, rg (fast grep), fd (fast find), head, cat, wc -l. "
+        "Commands run on the target facility. "
+        "Examples: 'ls -la /home', 'rg -l IMAS /path', 'fd -e py /path', 'head -50 /file.py'"
+    )
+    inputs = {
+        "command": {
+            "type": "string",
+            "description": "Shell command to execute (e.g., 'ls -la /path' or 'rg pattern /path')",
+        },
+    }
+    output_type = "string"
+
+    def __init__(self, facility: str):
+        super().__init__()
+        self.facility = facility
+
+    def forward(self, command: str) -> str:
+        """Execute the command."""
+        import subprocess
+
+        # Security: Only allow read-only exploration commands
+        allowed_prefixes = (
+            "ls",
+            "rg",
+            "fd",
+            "head",
+            "tail",
+            "cat",
+            "wc",
+            "file",
+            "stat",
+            "find",
+            "grep",
+            "tree",
+            "du",
+        )
+        cmd_start = command.strip().split()[0] if command.strip() else ""
+        if not any(cmd_start.startswith(p) for p in allowed_prefixes):
+            return f"Error: Command '{cmd_start}' not allowed. Use: ls, rg, fd, head, tail, cat, wc, file, stat, find, grep, tree, du"
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            output = result.stdout
+            if result.stderr:
+                output += f"\n[stderr]: {result.stderr}"
+            if result.returncode != 0:
+                output += f"\n[exit code: {result.returncode}]"
+
+            # Truncate if too long
+            if len(output) > 10000:
+                output = output[:10000] + "\n... (truncated)"
+
+            return output if output.strip() else "(no output)"
+
+        except subprocess.TimeoutExpired:
+            return "Error: Command timed out after 30 seconds"
+        except Exception as e:
+            return f"Error: {e}"
+
+
 def get_scout_tools(facility: str) -> list[Tool]:
     """Get the minimal tool set for stateless scout.
 
-    These tools are ONLY for graph operations.
-    The LLM uses shell commands directly for file discovery.
+    Includes:
+    - Shell tool for filesystem exploration
+    - Graph tools for persisting discoveries
 
     Args:
         facility: Facility ID
@@ -384,6 +457,7 @@ def get_scout_tools(facility: str) -> list[Tool]:
         List of scout tools
     """
     return [
+        ShellTool(facility),  # For filesystem exploration
         DiscoverPathTool(facility),
         QueueFileTool(facility),
         SkipPathTool(facility),

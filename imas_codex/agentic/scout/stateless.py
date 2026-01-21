@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from imas_codex.graph import GraphClient
 
 if TYPE_CHECKING:
-    from smolagents import CodeAgent
+    from smolagents import ToolCallingAgent
 
 logger = logging.getLogger(__name__)
 
@@ -680,43 +680,38 @@ class ScoutConfig:
 
 SCOUT_SYSTEM_PROMPT = """You are an exploration agent discovering physics code at a fusion research facility.
 
-## Your Task
-Explore the file system to find:
-1. **IMAS integration code** - Files that read/write IMAS IDS data structures
-2. **Physics simulation codes** - Equilibrium solvers (CHEASE, LIUQE), transport codes (ASTRA, JETTO)
-3. **Data access patterns** - MDSplus tree access, HDF5 files, IMAS databases
+## CRITICAL: You MUST call tools to persist discoveries
 
-## Available Actions
-You have shell access via the `run(command, facility)` function which auto-detects local vs SSH.
-Use these fast tools:
-- `rg pattern /path` - Fast grep (10x faster than grep -r)
-- `fd -e py /path` - Fast find (5x faster than find)
-- `dust -d 2 /path` - Disk usage visualization
+After exploring with shell commands, you MUST call tools to record what you found:
+- `skip_path(path, reason)` - For paths that don't exist or are dead-ends
+- `advance_status(path, new_status)` - After listing a directory (status="listed")
+- `discover_path(path, ...)` - For interesting child directories found
+- `queue_file(path, ...)` - For source files worth analyzing
 
-## How to Explore
-1. **Start with listing** - Use `fd` or `ls` to see directory contents
-2. **Search for patterns** - Use `rg` to find IMAS/physics patterns
-3. **Examine interesting files** - Use `head` or `cat` to see content
-4. **Queue valuable files** - Call `queue_source_file()` for ingestion
+**If you don't call these tools, your discoveries are LOST and you'll repeat the same work!**
 
-## Interest Scoring
-When you discover paths, explain WHY they're interesting:
-- High IMAS relevance: "Contains put_slice/get_slice calls for IDS writing"
-- High physics value: "CHEASE equilibrium solver with IMAS output"
-- High data value: "MDSplus tree access routines for TCV shots"
+## What to Find
+1. **IMAS integration code** - Files that read/write IMAS IDS data
+2. **Physics simulation codes** - Equilibrium solvers, transport codes
+3. **Data access patterns** - MDSplus, HDF5, IMAS databases
 
-Be specific about what makes each path valuable or not.
+## Shell Commands (use these to explore)
+- `ls -la /path` - List directory contents
+- `rg 'pattern' /path` - Fast grep search
+- `fd -e py /path` - Fast file finder
+- `head -50 /path/file.py` - Examine file content
 
-## Dead-End Detection
-Skip these patterns immediately (they're auto-filtered):
-- .git, __pycache__, site-packages, node_modules
-- build/, dist/, .cache/, .venv/
+## Workflow for Each Step
+1. Pick ONE path from the frontier
+2. Explore it with shell commands
+3. CALL TOOLS to persist what you found:
+   - If path doesn't exist → `skip_path(path, "does not exist")`
+   - If path is explored → `advance_status(path, "listed")` + `discover_path()` for children
+   - If file is interesting → `queue_file(path, ...)`
+4. Done - next step will see updated frontier
 
-When you hit a dead-end, explain why and move on.
-
-## Your Goal
-Find and queue the most valuable source files for IMAS code analysis.
-Focus on files that bridge local data formats to IMAS standards.
+## Dead-End Patterns (skip immediately)
+.git, __pycache__, site-packages, node_modules, build/, dist/, .cache/, .venv/
 """
 
 
@@ -799,35 +794,49 @@ class StatelessScout:
 
     def __init__(self, config: ScoutConfig) -> None:
         self.config = config
-        self._agent: CodeAgent | None = None
+        self._agent: ToolCallingAgent | None = None
         self.steps_taken = 0
         # Set module-level dry-run mode
         set_dry_run(config.dry_run)
 
-    def _get_agent(self) -> CodeAgent:
-        """Get or create the CodeAgent."""
+    def _get_agent(self) -> ToolCallingAgent:
+        """Get or create the ToolCallingAgent.
+
+        Uses ToolCallingAgent (native function calling) instead of CodeAgent
+        for better tool usage with Claude Sonnet 4.5.
+        """
         if self._agent is not None:
             return self._agent
 
-        from smolagents import CodeAgent
+        from smolagents import ToolCallingAgent
+        from smolagents.monitoring import LogLevel
 
         from ..agents import create_litellm_model
         from .tools import get_scout_tools
 
-        # Use haiku for scout - cheaper and faster for simple exploration tasks
+        # Use sonnet 4.5 for scout - best tool usage for exploration
         model = create_litellm_model(
-            model="anthropic/claude-haiku-4.5",
-            max_tokens=4096,  # Lower for scout tasks
+            model="anthropic/claude-sonnet-4.5",
+            max_tokens=8192,
         )
 
         tools = get_scout_tools(self.config.facility)
 
-        self._agent = CodeAgent(
+        # Create agent first to get default templates, then recreate with custom system prompt
+        # This is the cleanest way to override just system_prompt while keeping defaults
+        temp_agent = ToolCallingAgent(tools=tools, model=model)
+        custom_templates = dict(temp_agent.prompt_templates)
+        custom_templates["system_prompt"] = SCOUT_SYSTEM_PROMPT
+        del temp_agent
+
+        # Use ToolCallingAgent for native function calling (ideal for Claude)
+        # Suppress smolagents' scrolling output - we use our own Rich Live display
+        self._agent = ToolCallingAgent(
             model=model,
             tools=tools,
-            instructions=SCOUT_SYSTEM_PROMPT,
-            max_steps=3,  # Per invocation - we control outer loop
-            additional_authorized_imports=["os", "subprocess", "pathlib"],
+            prompt_templates=custom_templates,
+            max_steps=6,  # Allow explore + tool calls in one step
+            verbosity_level=LogLevel.OFF,  # Suppress built-in output
         )
 
         return self._agent
@@ -895,6 +904,9 @@ class StatelessScout:
             self.config.root_paths,
         )
 
+        # Get first frontier path for display
+        current_path = frontier[0]["path"] if frontier else ""
+
         # 3. Invoke agent
         agent = self._get_agent()
 
@@ -902,9 +914,26 @@ class StatelessScout:
             result = agent.run(prompt)
             self.steps_taken += 1
 
+            # Try to extract action from result for display
+            action = ""
+            if isinstance(result, str):
+                # Look for tool call patterns in agent output
+                if "skip_path" in result:
+                    action = "skipped"
+                elif "advance_status" in result:
+                    action = "listed"
+                elif "discover_path" in result:
+                    action = "discovered children"
+                elif "queue_file" in result:
+                    action = "queued file"
+                else:
+                    action = "explored"
+
             return {
                 "status": "step_complete",
                 "step": self.steps_taken,
+                "path": current_path,
+                "action": action,
                 "agent_result": result,
                 "frontier_size": len(frontier),
                 "summary": get_exploration_summary(self.config.facility),
@@ -916,6 +945,7 @@ class StatelessScout:
                 "status": "error",
                 "error": str(e),
                 "step": self.steps_taken,
+                "path": current_path,
             }
 
     def run(self, steps: int | None = None) -> dict[str, Any]:

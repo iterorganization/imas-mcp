@@ -3370,6 +3370,7 @@ def scout_files(
         StatelessScout,
         get_exploration_summary,
     )
+    from imas_codex.agentic.scout.display import ScoutDisplay
 
     console = Console()
 
@@ -3383,52 +3384,73 @@ def scout_files(
         verbose=verbose,
     )
 
-    console.print(f"\n[bold blue]Scout Files: {facility}[/bold blue]")
-    console.print(f"Focus: {focus}")
-    console.print(f"Max steps: {steps}")
-    if root_path:
-        console.print(f"Root paths: {', '.join(root_path)}")
-    if dry_run:
-        console.print(
-            "[yellow]DRY RUN - LLM runs but graph writes are simulated[/yellow]"
-        )
-
     scout = StatelessScout(config)
 
     # Seed frontier if empty
     seed_result = scout.seed_frontier()
-    if seed_result.get("status") == "seeded":
-        console.print(f"[dim]Seeded {seed_result['paths_added']} root paths[/dim]")
+    seeded = (
+        seed_result.get("paths_added", 0)
+        if seed_result.get("status") == "seeded"
+        else 0
+    )
 
-    # Show initial frontier
+    # Get initial summary
     summary = get_exploration_summary(facility)
-    console.print("\n[bold]Initial State[/bold]")
-    console.print(f"  Total paths: {summary.get('total_paths', 0)}")
-    console.print(f"  Remaining: {summary.get('remaining', 0)}")
-    console.print(f"  Files queued: {summary.get('files_queued', 0)}")
 
-    # Run exploration
-    console.print(f"\n[bold]Running {steps} steps...[/bold]")
+    # Use Rich Live display
+    display = ScoutDisplay(facility=facility, max_steps=steps, console=console)
+    display.start(dry_run=dry_run)
+
     try:
+        # Show initial state
+        display.update_stats(
+            total_paths=summary.get("total_paths", 0),
+            remaining=summary.get("remaining", 0),
+            explored=summary.get("explored", 0),
+            files_queued=summary.get("files_queued", 0),
+        )
+        if seeded:
+            display.add_history(f"Seeded {seeded} root paths")
+
+        # Run exploration
         for i in range(steps):
+            display.update_step(i + 1, action="Running agent...")
+
             result = scout.step()
             status = result.get("status", "unknown")
+            path = result.get("path", "")
+            action = result.get("action", "")
 
-            if verbose:
-                console.print(f"[dim]Step {i + 1}: {status}[/dim]")
+            # Update display
+            display.update_step(i + 1, path=path, action=action)
+
+            if path and action:
+                display.add_history(f"{path} → {action}")
+
+            # Refresh stats after each step
+            updated = get_exploration_summary(facility)
+            display.update_stats(
+                total_paths=updated.get("total_paths", 0),
+                remaining=updated.get("remaining", 0),
+                explored=updated.get("explored", 0),
+                files_queued=updated.get("files_queued", 0),
+            )
 
             if status in ("complete", "max_steps_reached"):
-                console.print(f"[green]{status}[/green]")
+                display.show_result("success", status)
                 break
 
             if status == "error":
-                console.print(f"[red]Error: {result.get('error')}[/red]")
+                display.show_result("error", result.get("error", "Unknown error"))
                 break
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted[/yellow]")
+        display.show_result("warning", "Interrupted")
 
-    # Show final status
+    finally:
+        display.stop()
+
+    # Show final summary
     final_summary = get_exploration_summary(facility)
     console.print("\n[bold green]Exploration Complete[/bold green]")
     console.print(f"  Steps taken: {scout.steps_taken}")
