@@ -496,6 +496,14 @@ classes:
         multivalued: true
       notes:
         description: Free-form notes about this path (append, don't overwrite)
+      # Scout session tracking
+      skip_reason:
+        description: Why this path was skipped (dead-end pattern, low priority, etc.)
+      skipped_at:
+        description: When this path was marked as skipped
+        range: datetime
+      session_id:
+        description: Scout session that discovered/processed this path
 
 # =============================================================================
 # Data Infrastructure Classes (Public - no IPs or paths)
@@ -1217,6 +1225,14 @@ classes:
       tokens_used:
         description: Total tokens consumed
         range: integer
+      # Scout-specific fields
+      run_type:
+        description: Type of run (scout, enrich, ingest, etc.)
+      window_count:
+        description: Number of windows completed (for scout sessions)
+        range: integer
+      accumulated_summary:
+        description: Compressed context summary from previous windows
 
 # =============================================================================
 # Wiki Documentation Classes

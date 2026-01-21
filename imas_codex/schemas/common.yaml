@@ -62,13 +62,21 @@ enums:
     description: >-
       Lifecycle status for facility path exploration.
       Progress is graph-derived: check file_count, child SourceFile nodes.
+      Scout workflow: discovered -> listed -> scanned -> analyzed -> explored
+      Dead-ends: discovered -> skipped (check skip_reason property)
     permissible_values:
       discovered:
         description: Path found, awaiting exploration
+      listed:
+        description: Directory contents enumerated (file_count, dir_count set)
+      scanned:
+        description: Pattern search completed (patterns_found populated)
+      analyzed:
+        description: Files examined, ready for ingestion decision
       explored:
         description: Fully examined, all files queued for ingestion
       skipped:
-        description: Intentionally not exploring (low value or blocklisted)
+        description: Dead-end detected or low value (check skip_reason)
       stale:
         description: Path may no longer exist or has changed
 

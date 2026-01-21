@@ -192,6 +192,10 @@ evaluation = "anthropic/claude-sonnet-4.5"
 enrichment = "google/gemini-3-pro-preview"
 # Model for facility exploration (good at planning, tool use)
 exploration = "anthropic/claude-sonnet-4.5"
+# Cheap model for summarization (context window compression)
+summarization = "anthropic/claude-haiku-4.5"
+# Capable model for driving scout exploration (when context is controlled)
+scout = "anthropic/claude-sonnet-4.5"
 # Available model presets
 [tool.imas-codex.models.presets]
 gemini-flash = "google/gemini-3-flash-preview"
