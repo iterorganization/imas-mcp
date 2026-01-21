@@ -300,8 +300,8 @@ def get_enrichment_agent(
     from imas_codex.agentic.tools import get_enrichment_tools
 
     config = AgentConfig(
-        name="enrichment",
-        instructions=_get_prompt("enrichment-system"),
+        name="enrich",
+        instructions=_get_prompt("enrich-system"),
         tools=get_enrichment_tools(),
         model=model,
         task="enrichment",
@@ -312,13 +312,13 @@ def get_enrichment_agent(
     return create_agent(config)
 
 
-def get_exploration_agent(
+def get_scout_agent(
     facility: str,
     verbose: bool = False,
     model: str | None = None,
     cost_limit_usd: float = 5.0,
 ) -> CodeAgent:
-    """Create an agent configured for facility exploration.
+    """Create an agent configured for facility scouting (exploration).
 
     This agent excels at:
     - Discovering source files via SSH
@@ -333,20 +333,20 @@ def get_exploration_agent(
         cost_limit_usd: Budget limit in USD
 
     Returns:
-        CodeAgent configured for exploration tasks
+        CodeAgent configured for scouting tasks
     """
     from imas_codex.agentic.tools import get_exploration_tools
 
     tools = get_exploration_tools(facility)
 
     # Add facility context to instructions
-    instructions = _get_prompt("explore-facility")
+    instructions = _get_prompt("scout-facility")
     if not instructions:
         instructions = "You are an expert at exploring fusion facility codebases."
     instructions += f"\n\n## Current Session\nFacility: {facility}\n"
 
     config = AgentConfig(
-        name="exploration",
+        name="scout",
         instructions=instructions,
         tools=tools,
         model=model,
@@ -357,6 +357,10 @@ def get_exploration_agent(
         verbose=verbose,
     )
     return create_agent(config)
+
+
+# Backward compatibility alias (deprecated)
+get_exploration_agent = get_scout_agent
 
 
 # =============================================================================
@@ -388,11 +392,11 @@ def create_orchestrator(
 
     Example:
         enricher = get_enrichment_agent()
-        explorer = get_exploration_agent("iter")
+        scout = get_scout_agent("iter")
 
         orchestrator = create_orchestrator(
             task="enrichment",
-            managed_agents=[enricher, explorer],
+            managed_agents=[enricher, scout],
             instructions="Explore facility then enrich discovered paths",
         )
         result = orchestrator.run("Process ITER facility")

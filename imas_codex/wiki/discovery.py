@@ -47,11 +47,13 @@ warnings.filterwarnings(
     "ignore", message=".*__fields_set__.*", category=DeprecationWarning
 )
 
-from llama_index.core.agent import ReActAgent  # noqa: E402
-from llama_index.core.tools import FunctionTool  # noqa: E402
 from rich.console import Console  # noqa: E402
+from smolagents import CodeAgent, Tool  # noqa: E402
 
-from imas_codex.agentic.llm import get_llm, get_model_for_task  # noqa: E402
+from imas_codex.agentic.agents import (  # noqa: E402
+    create_litellm_model,
+    get_model_for_task,
+)
 from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
 from imas_codex.graph import GraphClient  # noqa: E402
 from imas_codex.wiki.progress import (  # noqa: E402
@@ -1015,270 +1017,323 @@ class WikiDiscovery:
     # Phase 2: SCORE - Agent evaluates graph metrics
     # =========================================================================
 
-    def _get_scoring_tools(self) -> list[FunctionTool]:
+    def _get_scoring_tools(self) -> list[Tool]:
         """Get tools for the scoring agent."""
         gc = self._get_gc()
         facility_id = self.config.facility_id
+        stats = self.stats
 
-        def get_pages_to_score(limit: int = 100) -> str:
-            """Get crawled pages that need scoring, with graph metrics and content preview."""
-            import json
+        class GetPagesToScoreTool(Tool):
+            """Get crawled pages that need scoring."""
 
-            result = gc.query(
-                """
-                MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
-                RETURN wp.id AS id,
-                       wp.title AS title,
-                       wp.link_depth AS depth,
-                       wp.in_degree AS in_degree,
-                       wp.out_degree AS out_degree,
-                       wp.preview_summary AS preview_summary,
-                       wp.preview_fetch_error AS preview_fetch_error
-                ORDER BY wp.in_degree DESC
-                LIMIT $limit
-                """,
-                facility_id=facility_id,
-                limit=limit,
-            )
+            name = "get_pages_to_score"
+            description = "Get crawled pages needing scores. Returns id, title, depth, in_degree, out_degree."
+            inputs = {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum pages to return (default 100)",
+                    "nullable": True,
+                },
+            }
+            output_type = "string"
 
-            return json.dumps({"pages": result, "count": len(result)})
+            def forward(self, limit: int = 100) -> str:
+                import json
 
-        def get_neighbor_info(page_id: str) -> str:
-            """Get info about pages that link to/from this page."""
-            import json
-
-            result = gc.query(
-                """
-                MATCH (wp:WikiPage {id: $page_id})
-                OPTIONAL MATCH (wp)-[:LINKS_TO]->(outgoing)
-                OPTIONAL MATCH (incoming)-[:LINKS_TO]->(wp)
-                WITH wp,
-                     collect(DISTINCT {id: outgoing.id, title: outgoing.title, score: outgoing.interest_score}) AS out_links,
-                     collect(DISTINCT {id: incoming.id, title: incoming.title, score: incoming.interest_score}) AS in_links
-                RETURN out_links, in_links
-                """,
-                page_id=page_id,
-            )
-
-            if result:
-                return json.dumps(result[0])
-            return json.dumps({"out_links": [], "in_links": []})
-
-        def update_page_scores(scores_json: str) -> str:
-            """Update interest_score and metadata for pages.
-
-            Input: JSON array of {id, score, reasoning, skip_reason, page_type, is_physics, value_rating}.
-            """
-            import json
-
-            try:
-                scores = json.loads(scores_json)
-            except json.JSONDecodeError as e:
-                return json.dumps({"error": f"Invalid JSON: {e}"})
-
-            updated = 0
-            for s in scores:
-                page_id = s.get("id")
-                score = s.get("score", 0.5)
-                reasoning = s.get("reasoning", "")
-                skip_reason = s.get("skip_reason")
-                page_type = s.get("page_type", "other")
-                is_physics = s.get("is_physics", False)
-                value_rating = s.get("value_rating", 0)
-
-                # All scored pages get status='scored', interest_score distinguishes value
-                gc.query(
+                result = gc.query(
                     """
-                    MATCH (wp:WikiPage {id: $id})
-                    SET wp.interest_score = $score,
-                        wp.score_reasoning = $reasoning,
-                        wp.skip_reason = $skip_reason,
-                        wp.page_type = $page_type,
-                        wp.is_physics_content = $is_physics,
-                        wp.value_rating = $value_rating,
-                        wp.status = 'scored',
-                        wp.scored_at = datetime()
+                    MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
+                    RETURN wp.id AS id,
+                           wp.title AS title,
+                           wp.link_depth AS depth,
+                           wp.in_degree AS in_degree,
+                           wp.out_degree AS out_degree,
+                           wp.preview_summary AS preview_summary,
+                           wp.preview_fetch_error AS preview_fetch_error
+                    ORDER BY wp.in_degree DESC
+                    LIMIT $limit
                     """,
-                    id=page_id,
-                    score=score,
-                    reasoning=reasoning,
-                    skip_reason=skip_reason,
-                    page_type=page_type,
-                    is_physics=is_physics,
-                    value_rating=value_rating,
+                    facility_id=facility_id,
+                    limit=limit,
                 )
-                updated += 1
 
-                # Track stats
-                if score >= 0.7:
-                    self.stats.high_score_count += 1
-                    self.stats.page_high_score_count += 1
-                elif score < 0.3:
-                    self.stats.low_score_count += 1
-                    self.stats.page_low_score_count += 1
+                return json.dumps({"pages": result, "count": len(result)})
 
-            self.stats.pages_scored += updated
-            return json.dumps({"updated": updated})
+        class GetNeighborInfoTool(Tool):
+            """Get info about pages that link to/from this page."""
 
-        def get_scoring_progress() -> str:
+            name = "get_neighbor_info"
+            description = "Get pages that link to/from a specific page. Use to assess value from context."
+            inputs = {
+                "page_id": {
+                    "type": "string",
+                    "description": "Page ID to get neighbors for",
+                },
+            }
+            output_type = "string"
+
+            def forward(self, page_id: str) -> str:
+                import json
+
+                result = gc.query(
+                    """
+                    MATCH (wp:WikiPage {id: $page_id})
+                    OPTIONAL MATCH (wp)-[:LINKS_TO]->(outgoing)
+                    OPTIONAL MATCH (incoming)-[:LINKS_TO]->(wp)
+                    WITH wp,
+                         collect(DISTINCT {id: outgoing.id, title: outgoing.title, score: outgoing.interest_score}) AS out_links,
+                         collect(DISTINCT {id: incoming.id, title: incoming.title, score: incoming.interest_score}) AS in_links
+                    RETURN out_links, in_links
+                    """,
+                    page_id=page_id,
+                )
+
+                if result:
+                    return json.dumps(result[0])
+                return json.dumps({"out_links": [], "in_links": []})
+
+        class UpdatePageScoresTool(Tool):
+            """Update interest_score and metadata for pages."""
+
+            name = "update_page_scores"
+            description = "Update scores for pages. Pass JSON array: [{id, score, reasoning, skip_reason}]"
+            inputs = {
+                "scores_json": {
+                    "type": "string",
+                    "description": "JSON array of score objects",
+                },
+            }
+            output_type = "string"
+
+            def forward(self, scores_json: str) -> str:
+                import json
+
+                try:
+                    scores = json.loads(scores_json)
+                except json.JSONDecodeError as e:
+                    return json.dumps({"error": f"Invalid JSON: {e}"})
+
+                updated = 0
+                for s in scores:
+                    page_id = s.get("id")
+                    score = s.get("score", 0.5)
+                    reasoning = s.get("reasoning", "")
+                    skip_reason = s.get("skip_reason")
+                    page_type = s.get("page_type", "other")
+                    is_physics = s.get("is_physics", False)
+                    value_rating = s.get("value_rating", 0)
+
+                    gc.query(
+                        """
+                        MATCH (wp:WikiPage {id: $id})
+                        SET wp.interest_score = $score,
+                            wp.score_reasoning = $reasoning,
+                            wp.skip_reason = $skip_reason,
+                            wp.page_type = $page_type,
+                            wp.is_physics_content = $is_physics,
+                            wp.value_rating = $value_rating,
+                            wp.status = 'scored',
+                            wp.scored_at = datetime()
+                        """,
+                        id=page_id,
+                        score=score,
+                        reasoning=reasoning,
+                        skip_reason=skip_reason,
+                        page_type=page_type,
+                        is_physics=is_physics,
+                        value_rating=value_rating,
+                    )
+                    updated += 1
+
+                    # Track stats
+                    if score >= 0.7:
+                        stats.high_score_count += 1
+                        stats.page_high_score_count += 1
+                    elif score < 0.3:
+                        stats.low_score_count += 1
+                        stats.page_low_score_count += 1
+
+                stats.pages_scored += updated
+                return json.dumps({"updated": updated})
+
+        class GetScoringProgressTool(Tool):
             """Get current scoring progress."""
-            import json
 
-            result = gc.query(
-                """
-                MATCH (wp:WikiPage {facility_id: $facility_id})
-                RETURN wp.status AS status, count(*) AS count
-                """,
-                facility_id=facility_id,
-            )
+            name = "get_scoring_progress"
+            description = "Get current scoring progress and remaining budget."
+            inputs = {}
+            output_type = "string"
 
-            return json.dumps(
-                {
-                    "status_counts": {r["status"]: r["count"] for r in result},
-                    "pages_scored": self.stats.pages_scored,
-                    "cost_spent": self.stats.cost_spent_usd,
-                    "cost_remaining": self.stats.cost_remaining(),
-                }
-            )
+            def forward(self) -> str:
+                import json
+
+                result = gc.query(
+                    """
+                    MATCH (wp:WikiPage {facility_id: $facility_id})
+                    RETURN wp.status AS status, count(*) AS count
+                    """,
+                    facility_id=facility_id,
+                )
+
+                return json.dumps(
+                    {
+                        "status_counts": {r["status"]: r["count"] for r in result},
+                        "pages_scored": stats.pages_scored,
+                        "cost_spent": stats.cost_spent_usd,
+                        "cost_remaining": stats.cost_remaining(),
+                    }
+                )
 
         return [
-            FunctionTool.from_defaults(
-                fn=get_pages_to_score,
-                name="get_pages_to_score",
-                description="Get crawled pages needing scores. Returns id, title, depth, in_degree, out_degree.",
-            ),
-            FunctionTool.from_defaults(
-                fn=get_neighbor_info,
-                name="get_neighbor_info",
-                description="Get pages that link to/from a specific page. Use to assess value from context.",
-            ),
-            FunctionTool.from_defaults(
-                fn=update_page_scores,
-                name="update_page_scores",
-                description="Update scores for pages. Pass JSON array: [{id, score, reasoning, skip_reason}]",
-            ),
-            FunctionTool.from_defaults(
-                fn=get_scoring_progress,
-                name="get_scoring_progress",
-                description="Get current scoring progress and remaining budget.",
-            ),
+            GetPagesToScoreTool(),
+            GetNeighborInfoTool(),
+            UpdatePageScoresTool(),
+            GetScoringProgressTool(),
         ]
 
-    def _get_artifact_scoring_tools(self) -> list[FunctionTool]:
+    def _get_artifact_scoring_tools(self) -> list[Tool]:
         """Get tools for scoring artifacts."""
         gc = self._get_gc()
         facility_id = self.config.facility_id
+        stats = self.stats
 
-        def get_artifacts_to_score(limit: int = 100) -> str:
-            """Get discovered artifacts that need scoring, with graph metrics."""
-            import json
+        class GetArtifactsToScoreTool(Tool):
+            """Get discovered artifacts that need scoring."""
 
-            result = gc.query(
-                """
-                MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'discovered'})
-                WHERE wa.interest_score IS NULL
-                RETURN wa.id AS id,
-                       wa.filename AS filename,
-                       wa.artifact_type AS artifact_type,
-                       wa.in_degree AS in_degree,
-                       wa.link_depth AS link_depth
-                ORDER BY wa.in_degree DESC
-                LIMIT $limit
-                """,
-                facility_id=facility_id,
-                limit=limit,
-            )
+            name = "get_artifacts_to_score"
+            description = "Get artifacts needing scores. Returns id, filename, artifact_type, in_degree, link_depth."
+            inputs = {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum artifacts to return (default 100)",
+                    "nullable": True,
+                },
+            }
+            output_type = "string"
 
-            return json.dumps({"artifacts": result, "count": len(result)})
+            def forward(self, limit: int = 100) -> str:
+                import json
 
-        def update_artifact_scores(scores_json: str) -> str:
-            """Update interest_score for artifacts. Input: JSON array of {id, score, reasoning, skip_reason}."""
-            import json
-
-            try:
-                scores = json.loads(scores_json)
-            except json.JSONDecodeError as e:
-                return json.dumps({"error": f"Invalid JSON: {e}"})
-
-            updated = 0
-            for s in scores:
-                artifact_id = s.get("id")
-                score = s.get("score", 0.5)
-                reasoning = s.get("reasoning", "")
-                skip_reason = s.get("skip_reason")
-
-                # Determine status based on score
-                if score >= 0.5:
-                    status = "scored"
-                else:
-                    status = "skipped"
-
-                gc.query(
+                result = gc.query(
                     """
-                    MATCH (wa:WikiArtifact {id: $id})
-                    SET wa.interest_score = $score,
-                        wa.score_reasoning = $reasoning,
-                        wa.skip_reason = $skip_reason,
-                        wa.status = $status,
-                        wa.scored_at = datetime()
+                    MATCH (wa:WikiArtifact {facility_id: $facility_id, status: 'discovered'})
+                    WHERE wa.interest_score IS NULL
+                    RETURN wa.id AS id,
+                           wa.filename AS filename,
+                           wa.artifact_type AS artifact_type,
+                           wa.in_degree AS in_degree,
+                           wa.link_depth AS link_depth
+                    ORDER BY wa.in_degree DESC
+                    LIMIT $limit
                     """,
-                    id=artifact_id,
-                    score=score,
-                    reasoning=reasoning,
-                    skip_reason=skip_reason,
-                    status=status,
+                    facility_id=facility_id,
+                    limit=limit,
                 )
-                updated += 1
 
-                # Track stats
-                if score >= 0.7:
-                    self.stats.high_score_count += 1
-                    self.stats.artifact_high_score_count += 1
-                elif score < 0.3:
-                    self.stats.low_score_count += 1
-                    self.stats.artifact_low_score_count += 1
+                return json.dumps({"artifacts": result, "count": len(result)})
 
-            self.stats.artifacts_scored += updated
-            return json.dumps({"updated": updated})
+        class UpdateArtifactScoresTool(Tool):
+            """Update interest_score for artifacts."""
 
-        def get_artifact_context(artifact_id: str) -> str:
+            name = "update_artifact_scores"
+            description = "Update scores for artifacts. Pass JSON array: [{id, score, reasoning, skip_reason}]"
+            inputs = {
+                "scores_json": {
+                    "type": "string",
+                    "description": "JSON array of score objects",
+                },
+            }
+            output_type = "string"
+
+            def forward(self, scores_json: str) -> str:
+                import json
+
+                try:
+                    scores = json.loads(scores_json)
+                except json.JSONDecodeError as e:
+                    return json.dumps({"error": f"Invalid JSON: {e}"})
+
+                updated = 0
+                for s in scores:
+                    artifact_id = s.get("id")
+                    score = s.get("score", 0.5)
+                    reasoning = s.get("reasoning", "")
+                    skip_reason = s.get("skip_reason")
+
+                    # Determine status based on score
+                    if score >= 0.5:
+                        status = "scored"
+                    else:
+                        status = "skipped"
+
+                    gc.query(
+                        """
+                        MATCH (wa:WikiArtifact {id: $id})
+                        SET wa.interest_score = $score,
+                            wa.score_reasoning = $reasoning,
+                            wa.skip_reason = $skip_reason,
+                            wa.status = $status,
+                            wa.scored_at = datetime()
+                        """,
+                        id=artifact_id,
+                        score=score,
+                        reasoning=reasoning,
+                        skip_reason=skip_reason,
+                        status=status,
+                    )
+                    updated += 1
+
+                    # Track stats
+                    if score >= 0.7:
+                        stats.high_score_count += 1
+                        stats.artifact_high_score_count += 1
+                    elif score < 0.3:
+                        stats.low_score_count += 1
+                        stats.artifact_low_score_count += 1
+
+                stats.artifacts_scored += updated
+                return json.dumps({"updated": updated})
+
+        class GetArtifactContextTool(Tool):
             """Get pages that link to this artifact for context."""
-            import json
 
-            result = gc.query(
-                """
-                MATCH (wa:WikiArtifact {id: $artifact_id})
-                OPTIONAL MATCH (page:WikiPage)-[:LINKS_TO_ARTIFACT]->(wa)
-                WITH wa, collect(DISTINCT {
-                    title: page.title,
-                    score: page.interest_score,
-                    in_degree: page.in_degree
-                }) AS linking_pages
-                RETURN linking_pages
-                """,
-                artifact_id=artifact_id,
+            name = "get_artifact_context"
+            description = (
+                "Get pages that link to an artifact. Use to assess value from context."
             )
+            inputs = {
+                "artifact_id": {
+                    "type": "string",
+                    "description": "Artifact ID to get context for",
+                },
+            }
+            output_type = "string"
 
-            if result:
-                return json.dumps(result[0])
-            return json.dumps({"linking_pages": []})
+            def forward(self, artifact_id: str) -> str:
+                import json
+
+                result = gc.query(
+                    """
+                    MATCH (wa:WikiArtifact {id: $artifact_id})
+                    OPTIONAL MATCH (page:WikiPage)-[:LINKS_TO_ARTIFACT]->(wa)
+                    WITH wa, collect(DISTINCT {
+                        title: page.title,
+                        score: page.interest_score,
+                        in_degree: page.in_degree
+                    }) AS linking_pages
+                    RETURN linking_pages
+                    """,
+                    artifact_id=artifact_id,
+                )
+
+                if result:
+                    return json.dumps(result[0])
+                return json.dumps({"linking_pages": []})
 
         return [
-            FunctionTool.from_defaults(
-                fn=get_artifacts_to_score,
-                name="get_artifacts_to_score",
-                description="Get artifacts needing scores. Returns id, filename, artifact_type, in_degree, link_depth.",
-            ),
-            FunctionTool.from_defaults(
-                fn=update_artifact_scores,
-                name="update_artifact_scores",
-                description="Update scores for artifacts. Pass JSON array: [{id, score, reasoning, skip_reason}]",
-            ),
-            FunctionTool.from_defaults(
-                fn=get_artifact_context,
-                name="get_artifact_context",
-                description="Get pages that link to an artifact. Use to assess value from context.",
-            ),
+            GetArtifactsToScoreTool(),
+            UpdateArtifactScoresTool(),
+            GetArtifactContextTool(),
         ]
 
     async def score(
@@ -1406,15 +1461,19 @@ class WikiDiscovery:
 
             # Create fresh agent for this batch
             model = self.resolved_model
-            llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
+            llm = create_litellm_model(
+                model=model,
+                temperature=0.3,
+                max_tokens=8192,
+            )
 
             tools = self._get_scoring_tools()
-            agent = ReActAgent(
+            agent = CodeAgent(
                 tools=tools,
-                llm=llm,
-                verbose=self.verbose,
-                system_prompt=system_prompt_text,
-                max_iterations=20,
+                model=llm,
+                instructions=system_prompt_text,
+                max_steps=20,
+                name="wiki_scorer",
             )
 
             # Prepare batch info for agent
@@ -1592,15 +1651,19 @@ Call update_page_scores with ALL pages in a single call."""
 
             # Create fresh agent for this batch
             model = self.resolved_model
-            llm = get_llm(model=model, temperature=0.3, max_tokens=8192)
+            llm = create_litellm_model(
+                model=model,
+                temperature=0.3,
+                max_tokens=8192,
+            )
 
             tools = self._get_artifact_scoring_tools()
-            agent = ReActAgent(
+            agent = CodeAgent(
                 tools=tools,
-                llm=llm,
-                verbose=self.verbose,
-                system_prompt=artifact_prompt,
-                max_iterations=20,
+                model=llm,
+                instructions=artifact_prompt,
+                max_steps=20,
+                name="artifact_scorer",
             )
 
             import json

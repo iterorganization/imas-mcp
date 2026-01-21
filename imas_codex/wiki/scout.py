@@ -1,6 +1,6 @@
 """Wiki scout agent for discovering and evaluating wiki pages.
 
-Uses a ReAct agent to intelligently crawl wiki pages, evaluate their value,
+Uses a CodeAgent to intelligently crawl wiki pages, evaluate their value,
 and queue high-value pages for ingestion while skipping low-value content.
 
 The agent has tools to:
@@ -26,10 +26,9 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 
-from llama_index.core.agent import ReActAgent
-from llama_index.core.tools import FunctionTool
+from smolagents import CodeAgent, Tool
 
-from imas_codex.agentic.llm import get_llm
+from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
 from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.graph import GraphClient
 
@@ -672,60 +671,121 @@ def _get_wiki_schema() -> str:
     return json.dumps(evaluation_schema, indent=2)
 
 
-def get_wiki_scout_tools(facility: str = "epfl") -> list[FunctionTool]:
+def get_wiki_scout_tools(facility: str = "epfl") -> list[Tool]:
     """Get tools for the wiki scout agent."""
 
-    def crawl_links(start_page: str, depth: int = 1, max_pages: int = 100) -> str:
-        return _crawl_wiki_links(start_page, depth, facility, max_pages)
+    class GetWikiSchemaTool(Tool):
+        """Get WikiPage schema for valid JSON generation."""
 
-    def fetch_previews(page_names: list[str]) -> str:
-        return _fetch_wiki_previews(page_names, facility)
+        name = "get_wiki_schema"
+        description = "Get WikiPage schema from LinkML. Call FIRST to get valid field names, enum values, and JSON structure for queue_wiki_pages."
+        inputs = {}
+        output_type = "string"
 
-    def search_patterns(page_names: list[str], patterns: list[str]) -> str:
-        return _search_wiki_patterns(page_names, patterns, facility)
+        def forward(self) -> str:
+            return _get_wiki_schema()
 
-    def queue_pages(evaluations_json: str) -> str:
-        return _queue_wiki_pages(evaluations_json, facility)
+    class CrawlWikiLinksTool(Tool):
+        """Discover wiki page names by crawling links."""
+
+        name = "crawl_wiki_links"
+        description = "Discover wiki page names by crawling links from a starting page. Returns list of page names found."
+        inputs = {
+            "start_page": {"type": "string", "description": "Page name to start from"},
+            "depth": {
+                "type": "integer",
+                "description": "Crawl depth (default 1)",
+                "nullable": True,
+            },
+            "max_pages": {
+                "type": "integer",
+                "description": "Maximum pages to return (default 100)",
+                "nullable": True,
+            },
+        }
+        output_type = "string"
+
+        def forward(self, start_page: str, depth: int = 1, max_pages: int = 100) -> str:
+            return _crawl_wiki_links(start_page, depth, facility, max_pages)
+
+    class SearchWikiPatternsTool(Tool):
+        """Search pages for patterns (regex)."""
+
+        name = "search_wiki_patterns"
+        description = "FAST: Search pages for patterns (regex). Returns match counts per page. Use patterns like: tcv_shot::|results::|magnetics:: for MDSplus paths, or diagnostic names. Much faster than fetch_previews."
+        inputs = {
+            "page_names": {
+                "type": "array",
+                "description": "List of page names to search",
+            },
+            "patterns": {
+                "type": "array",
+                "description": "List of regex patterns to search for",
+            },
+        }
+        output_type = "string"
+
+        def forward(self, page_names: list[str], patterns: list[str]) -> str:
+            return _search_wiki_patterns(page_names, patterns, facility)
+
+    class FetchWikiPreviewsTool(Tool):
+        """Fetch full previews for pages."""
+
+        name = "fetch_wiki_previews"
+        description = "SLOW: Fetch full previews for pages. Use only for detailed analysis of promising pages identified by search_patterns."
+        inputs = {
+            "page_names": {
+                "type": "array",
+                "description": "List of page names to fetch previews for",
+            },
+        }
+        output_type = "string"
+
+        def forward(self, page_names: list[str]) -> str:
+            return _fetch_wiki_previews(page_names, facility)
+
+    class QueueWikiPagesTool(Tool):
+        """Queue evaluated pages in the graph."""
+
+        name = "queue_wiki_pages"
+        description = "Queue evaluated pages in the graph. Pass JSON string with array of evaluations. Call get_wiki_schema first for valid structure."
+        inputs = {
+            "evaluations_json": {
+                "type": "string",
+                "description": "JSON string with array of page evaluations",
+            },
+        }
+        output_type = "string"
+
+        def forward(self, evaluations_json: str) -> str:
+            return _queue_wiki_pages(evaluations_json, facility)
+
+    class GetDiscoveryBudgetTool(Tool):
+        """Get current discovery budget status."""
+
+        name = "get_discovery_budget"
+        description = "Get current discovery budget status including cost spent, pages processed, and remaining budget."
+        inputs = {}
+        output_type = "string"
+
+        def forward(self) -> str:
+            return _get_discovery_budget()
 
     return [
-        FunctionTool.from_defaults(
-            fn=_get_wiki_schema,
-            name="get_wiki_schema",
-            description="Get WikiPage schema from LinkML. Call FIRST to get valid field names, enum values, and JSON structure for queue_wiki_pages.",
-        ),
-        FunctionTool.from_defaults(
-            fn=crawl_links,
-            name="crawl_wiki_links",
-            description="Discover wiki page names by crawling links from a starting page. Args: start_page (str), depth (int, default 1), max_pages (int, default 100). Returns list of page names found.",
-        ),
-        FunctionTool.from_defaults(
-            fn=search_patterns,
-            name="search_wiki_patterns",
-            description="FAST: Search pages for patterns (regex). Returns match counts per page. Use patterns like: tcv_shot::|results::|magnetics:: for MDSplus paths, or diagnostic names. Much faster than fetch_previews.",
-        ),
-        FunctionTool.from_defaults(
-            fn=fetch_previews,
-            name="fetch_wiki_previews",
-            description="SLOW: Fetch full previews for pages. Use only for detailed analysis of promising pages identified by search_patterns.",
-        ),
-        FunctionTool.from_defaults(
-            fn=queue_pages,
-            name="queue_wiki_pages",
-            description="Queue evaluated pages in the graph. Pass JSON string with array of evaluations. Call get_wiki_schema first for valid structure.",
-        ),
-        FunctionTool.from_defaults(
-            fn=_get_discovery_budget,
-            name="get_discovery_budget",
-            description="Get current discovery budget status including cost spent, pages processed, and remaining budget.",
-        ),
+        GetWikiSchemaTool(),
+        CrawlWikiLinksTool(),
+        SearchWikiPatternsTool(),
+        FetchWikiPreviewsTool(),
+        QueueWikiPagesTool(),
+        GetDiscoveryBudgetTool(),
     ]
 
 
 def get_wiki_scout_agent(
     facility: str = "epfl",
     verbose: bool = False,
-    model: str = "google/gemini-3-flash-preview",
-) -> ReActAgent:
+    model: str | None = None,
+) -> CodeAgent:
     """
     Create a wiki scout agent for discovering and evaluating pages.
 
@@ -735,7 +795,7 @@ def get_wiki_scout_agent(
         model: LLM model to use
 
     Returns:
-        Configured ReActAgent
+        Configured CodeAgent
     """
     prompts = load_prompts()
     system_prompt = prompts.get("wiki-scout")
@@ -743,15 +803,19 @@ def get_wiki_scout_agent(
     if system_prompt is None:
         raise ValueError("wiki-scout prompt not found")
 
-    llm = get_llm(model=model, temperature=0.3, max_tokens=16384)
+    llm = create_litellm_model(
+        model=model or get_model_for_task("discovery"),
+        temperature=0.3,
+        max_tokens=16384,
+    )
     tools = get_wiki_scout_tools(facility)
 
-    return ReActAgent(
+    return CodeAgent(
         tools=tools,
-        llm=llm,
-        verbose=verbose,
-        system_prompt=system_prompt.content,
-        max_iterations=20,
+        model=llm,
+        instructions=system_prompt.content,
+        max_steps=20,
+        name="wiki_scout",
     )
 
 
@@ -765,7 +829,7 @@ async def run_wiki_discovery(
     start_page: str = "Portal:TCV",
     cost_limit_usd: float = 1.00,
     verbose: bool = False,
-    model: str = "google/gemini-3-flash-preview",
+    model: str | None = None,
 ) -> dict:
     """
     Run wiki discovery using the scout agent.

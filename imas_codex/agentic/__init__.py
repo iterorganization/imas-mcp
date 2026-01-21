@@ -24,9 +24,10 @@ from imas_codex.agentic.agents import (
     create_orchestrator,
     get_agent_monitor,
     get_enrichment_agent,
-    get_exploration_agent,
+    get_exploration_agent,  # Deprecated, use get_scout_agent
     get_model_for_task,
     get_model_id,
+    get_scout_agent,
 )
 
 # Enrichment
@@ -87,7 +88,8 @@ __all__ = [
     "create_orchestrator",
     "get_agent_monitor",
     "get_enrichment_agent",
-    "get_exploration_agent",
+    "get_exploration_agent",  # Deprecated, use get_scout_agent
+    "get_scout_agent",
     "get_model_for_task",
     "get_model_id",
     "DEFAULT_MODEL",
