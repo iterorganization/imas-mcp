@@ -23,6 +23,9 @@ load_dotenv(override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Valid resources for scout command (LLM-driven discovery)
+SCOUT_RESOURCES = {"files", "wiki", "data", "paths", "codes"}
+
 
 # Create the main CLI group
 @click.group(invoke_without_command=True)
@@ -3704,366 +3707,180 @@ def _show_versions_summary(gc, console) -> None:
 
 
 # ============================================================================
-# Scout Commands - Fast Discovery (No LLM)
+# Scout Command - LLM-Driven Discovery
 # ============================================================================
 
 
-@main.group()
-def scout() -> None:
-    """Fast discovery of facility resources (no LLM required).
-
-    Scout commands perform quick, deterministic discovery using
-    fast CLI tools (rg, fd, dust). Results are queued for later
-    enrichment and ingestion.
-
-    \b
-      imas-codex scout files      Discover code files via SSH
-      imas-codex scout data       Discover data formats and locations
-      imas-codex scout status     Show discovery status
-    """
-    pass
-
-
-@scout.command("files")
+@main.command("scout")
 @click.argument("facility")
+@click.argument("resource", type=click.Choice(sorted(SCOUT_RESOURCES)))
 @click.option(
     "--prompt",
     "-p",
     default=None,
-    help="Focus pattern (e.g., 'equilibrium', 'IMAS', 'CHEASE')",
+    help="Discovery guidance (e.g., 'equilibrium codes', 'IMAS integration')",
 )
 @click.option(
-    "--path",
+    "--model",
+    "-m",
     default=None,
-    help="Base path to search (default: from facility config)",
+    help="LLM model to use (default: from config for 'exploration' task)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    default=10.0,
+    type=float,
+    help="Maximum cost budget in USD (default: 10.0)",
 )
 @click.option(
     "--limit",
     "-n",
-    default=1000,
+    default=None,
     type=int,
-    help="Maximum files to discover (default: 1000)",
+    help="Maximum items to discover",
 )
-@click.option(
-    "--extensions",
-    "-e",
-    default="py,f90,f,c,cpp,m",
-    help="File extensions to find (comma-separated, default: py,f90,f,c,cpp,m)",
-)
-@click.option("--dry-run", is_flag=True, help="Preview without queuing files")
-@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def scout_files(
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+@click.option("--verbose", "-v", is_flag=True, help="Show agent reasoning")
+def scout(
     facility: str,
+    resource: str,
     prompt: str | None,
-    path: str | None,
-    limit: int,
-    extensions: str,
+    model: str | None,
+    cost_limit: float,
+    limit: int | None,
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Discover code files at a facility via SSH.
+    """Discover facility resources using LLM-driven agent.
 
-    Uses fast tools (fd, rg) to find files matching patterns.
-    Discovered files are queued for ingestion.
+    The agent autonomously decides which ssh/rg/fd commands to run based on
+    previous findings. Uses a breadth-first approach but adapts based on
+    what it discovers.
+
+    \b
+    RESOURCES:
+      files   Source code files (Python, Fortran, C, etc.)
+      wiki    Wiki pages and documentation
+      data    Data formats and locations (MDSplus, HDF5, IMAS, UDA)
+      paths   Directory structure and key locations
+      codes   Physics codes and their documentation
 
     \b
     EXAMPLES:
-        # Basic file discovery at EPFL
-        imas-codex scout files epfl
+        # Discover code files at EPFL
+        imas-codex scout epfl files
 
         # Focus on equilibrium-related code
-        imas-codex scout files epfl -p "equilibrium"
+        imas-codex scout epfl files -p "equilibrium reconstruction"
 
-        # Search specific path
-        imas-codex scout files epfl --path /home/crpplocal/codes
+        # Discover wiki pages
+        imas-codex scout epfl wiki -p "diagnostics"
 
-        # Find only Python files
-        imas-codex scout files epfl -e py
+        # Find data sources (MDSplus trees, HDF5 files, etc.)
+        imas-codex scout iter data
 
-        # Preview without queuing
-        imas-codex scout files epfl --dry-run -v
+        # Discover physics codes
+        imas-codex scout epfl codes -p "CHEASE LIUQE"
     """
+    import asyncio
+
     from rich.console import Console
     from rich.panel import Panel
-    from rich.table import Table
 
-    from imas_codex.discovery import get_facility
-    from imas_codex.remote.tools import run
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.explore import ExplorationAgent
+    from imas_codex.discovery import get_facility as get_facility_config
 
     console = Console()
 
-    # Validate facility
+    # Validate facility exists
     try:
-        config = get_facility(facility)
+        get_facility_config(facility)
     except ValueError as e:
         console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1) from e
 
-    # Build search path
-    search_path = path or config.get("code_paths", ["/home"])[0]
+    # Get model
+    model_id = model or get_model_for_task("exploration")
 
-    # Build extension filter
-    ext_list = [e.strip() for e in extensions.split(",")]
-    ext_args = " ".join(f"-e {e}" for e in ext_list)
-
-    console.print(
-        Panel.fit(
-            f"[cyan]Facility:[/cyan] {facility}\n"
-            f"[cyan]Path:[/cyan] {search_path}\n"
-            f"[cyan]Extensions:[/cyan] {', '.join(ext_list)}\n"
-            f"[cyan]Focus:[/cyan] {prompt or '(all files)'}\n"
-            f"[cyan]Limit:[/cyan] {limit}",
-            title="Scout Files Configuration",
-        )
-    )
-
-    if dry_run:
-        console.print("\n[dim]Dry run - no files will be queued[/dim]")
-
-    # Use fd to find files
-    cmd = f"fd {ext_args} . {search_path} 2>/dev/null | head -n {limit}"
-    if verbose:
-        console.print(f'[dim]$ ssh {facility} "{cmd}"[/dim]')
-
-    try:
-        result = run(cmd, facility=facility)
-        files = [f.strip() for f in result.strip().split("\n") if f.strip()]
-    except Exception as e:
-        console.print(f"[red]Error running fd: {e}[/red]")
-        raise SystemExit(1) from e
-
-    # Filter by prompt if provided
-    if prompt and files:
-        filtered = []
-        for f in files:
-            if prompt.lower() in f.lower():
-                filtered.append(f)
-        if verbose:
-            console.print(
-                f"Filtered {len(files)} → {len(filtered)} files by '{prompt}'"
-            )
-        files = filtered
-
-    if not files:
-        console.print("[yellow]No files found matching criteria[/yellow]")
-        return
-
-    # Show results
-    table = Table(title=f"Discovered {len(files)} Files")
-    table.add_column("Path", style="cyan")
-
-    for f in files[:20]:
-        table.add_row(f)
-    if len(files) > 20:
-        table.add_row(f"... and {len(files) - 20} more")
-
-    console.print(table)
-
-    if dry_run:
-        console.print("\n[dim]Use without --dry-run to queue files for ingestion[/dim]")
-        return
-
-    # Queue files for ingestion
-    from imas_codex.code_examples.ingest import add_to_queue
-
-    queued = 0
-    for f in files:
-        try:
-            add_to_queue(facility, f, priority=1)
-            queued += 1
-        except Exception as e:
-            if verbose:
-                console.print(f"[yellow]Skip {f}: {e}[/yellow]")
-
-    console.print(f"\n[green]✓ Queued {queued} files for ingestion[/green]")
-
-
-@scout.command("data")
-@click.argument("facility")
-@click.option(
-    "--prompt",
-    "-p",
-    default=None,
-    help="Focus pattern (e.g., 'equilibrium', 'IMAS')",
-)
-@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def scout_data(
-    facility: str,
-    prompt: str | None,
-    verbose: bool,
-) -> None:
-    """Discover data formats and locations at a facility.
-
-    Identifies available data sources:
-    - MDSplus trees (TCV, JET, etc.)
-    - HDF5/NetCDF files
-    - IMAS databases
-    - UDA endpoints
-
-    \b
-    EXAMPLES:
-        # Discover data at EPFL
-        imas-codex scout data epfl
-
-        # Focus on equilibrium data
-        imas-codex scout data epfl -p "equilibrium"
-    """
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-
-    from imas_codex.discovery import get_facility
-    from imas_codex.remote.tools import run
-
-    console = Console()
-
-    # Validate facility
-    try:
-        get_facility(facility)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise SystemExit(1) from e
-
-    console.print(
-        Panel.fit(
-            f"[cyan]Facility:[/cyan] {facility}\n"
-            f"[cyan]Focus:[/cyan] {prompt or '(all data sources)'}",
-            title="Scout Data Configuration",
-        )
-    )
-
-    results: dict[str, list[str]] = {
-        "MDSplus Trees": [],
-        "HDF5/NetCDF": [],
-        "IMAS": [],
-        "Other": [],
+    # Build resource-specific prompt
+    base_prompts = {
+        "files": "Discover source code files (Python, Fortran, C, MATLAB)",
+        "wiki": "Discover wiki pages and documentation",
+        "data": "Discover data formats and locations (MDSplus trees, HDF5 files, IMAS databases, UDA endpoints)",
+        "paths": "Map directory structure and identify key locations",
+        "codes": "Find physics simulation codes and their documentation",
     }
+    full_prompt = base_prompts.get(resource, "")
+    if prompt:
+        full_prompt = f"{full_prompt}. Focus: {prompt}"
 
-    # Check for MDSplus trees
-    if verbose:
-        console.print("[dim]Checking for MDSplus...[/dim]")
-
-    try:
-        mdsplus_check = run(
-            "which mdsplus 2>/dev/null || echo 'not found'", facility=facility
+    # Show configuration
+    console.print(
+        Panel(
+            f"[bold]Facility:[/bold] {facility}\n"
+            f"[bold]Resource:[/bold] {resource}\n"
+            f"[bold]Model:[/bold] {model_id}\n"
+            f"[bold]Cost Limit:[/bold] ${cost_limit:.2f}\n"
+            f"[bold]Guidance:[/bold] {prompt or '(none)'}\n"
+            f"[bold]Limit:[/bold] {limit or 'unlimited'}",
+            title="Scout Configuration",
         )
-        if "not found" not in mdsplus_check:
-            # Try to list trees
-            trees_cmd = "ls /usr/local/mdsplus/tdi 2>/dev/null || ls $MDSPLUS_DIR/tdi 2>/dev/null || echo ''"
-            tree_output = run(trees_cmd, facility=facility)
-            if tree_output.strip():
-                results["MDSplus Trees"] = tree_output.strip().split("\n")[:10]
-    except Exception as e:
-        if verbose:
-            console.print(f"[yellow]MDSplus check failed: {e}[/yellow]")
+    )
 
-    # Check for HDF5 files
-    if verbose:
-        console.print("[dim]Checking for HDF5/NetCDF...[/dim]")
+    if dry_run:
+        console.print("\n[dim]Dry run - agent will not execute[/dim]")
+        return
 
-    try:
-        h5_cmd = "fd -e h5 -e hdf5 -e nc . /work 2>/dev/null | head -5"
-        h5_output = run(h5_cmd, facility=facility)
-        if h5_output.strip():
-            results["HDF5/NetCDF"] = [
-                f.strip() for f in h5_output.strip().split("\n") if f.strip()
-            ]
-    except Exception:
-        pass
+    # Dispatch to appropriate handler based on resource
+    if resource == "wiki":
+        # Use wiki discovery pipeline
+        from imas_codex.wiki.discovery import run_wiki_discovery
 
-    # Check for IMAS
-    if verbose:
-        console.print("[dim]Checking for IMAS...[/dim]")
-
-    try:
-        imas_check = run(
-            "which imasdb 2>/dev/null || echo 'not found'", facility=facility
-        )
-        if "not found" not in imas_check:
-            results["IMAS"].append("imasdb available")
-    except Exception:
-        pass
-
-    # Display results
-    table = Table(title="Data Sources Discovered")
-    table.add_column("Type", style="cyan")
-    table.add_column("Details", style="white")
-
-    for data_type, items in results.items():
-        if items:
-            table.add_row(data_type, "\n".join(items[:5]))
-
-    if any(results.values()):
-        console.print(table)
-    else:
-        console.print("[yellow]No data sources discovered[/yellow]")
-
-
-@scout.command("status")
-@click.argument("facility", required=False)
-def scout_status(facility: str | None) -> None:
-    """Show discovery status for facilities.
-
-    Displays what has been discovered and what's queued for processing.
-
-    \b
-    EXAMPLES:
-        # Show status for all facilities
-        imas-codex scout status
-
-        # Show status for specific facility
-        imas-codex scout status epfl
-    """
-    from rich.console import Console
-    from rich.table import Table
-
-    from imas_codex.graph import GraphClient
-
-    console = Console()
-
-    with GraphClient() as gc:
-        # Query discovery statistics
-        if facility:
-            query = """
-                MATCH (s:SourceFile {facility: $facility})
-                RETURN
-                    count(s) AS files,
-                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
-                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
-            """
-            result = gc.query(query, {"facility": facility})
-        else:
-            query = """
-                MATCH (s:SourceFile)
-                RETURN
-                    s.facility AS facility,
-                    count(s) AS files,
-                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
-                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
-                ORDER BY s.facility
-            """
-            result = gc.query(query)
-
-        if not result:
-            console.print("[yellow]No files discovered yet[/yellow]")
-            return
-
-        table = Table(title="Discovery Status")
-        table.add_column("Facility", style="cyan")
-        table.add_column("Total Files", justify="right")
-        table.add_column("Pending", justify="right", style="yellow")
-        table.add_column("Processed", justify="right", style="green")
-
-        for row in result:
-            fac = row.get("facility", facility or "unknown")
-            table.add_row(
-                fac,
-                str(row["files"]),
-                str(row["pending"]),
-                str(row["processed"]),
+        console.print("\n[bold]Starting wiki discovery...[/bold]")
+        asyncio.run(
+            run_wiki_discovery(
+                facility=facility,
+                cost_limit_usd=cost_limit,
+                max_pages=limit,
+                verbose=verbose,
+                model=model,
+                focus=prompt,
             )
+        )
+    else:
+        # Use exploration agent for files, data, paths, codes
+        agent = ExplorationAgent(
+            facility=facility,
+            model=model_id,
+            cost_limit_usd=cost_limit,
+            verbose=verbose,
+        )
 
-        console.print(table)
+        try:
+            console.print("\n[bold]Starting exploration agent...[/bold]")
+            result = asyncio.run(agent.explore(prompt=full_prompt))
+
+            # Show results
+            console.print("\n[bold green]Discovery Complete[/bold green]")
+            console.print(f"  Files queued: {result.files_queued}")
+            console.print(f"  Paths discovered: {result.paths_discovered}")
+            console.print(f"  Notes added: {result.notes_added}")
+            console.print(f"  Cost: ${result.cost_usd:.4f}")
+            console.print(f"  Duration: {result.progress.elapsed_seconds:.1f}s")
+
+            if result.summary:
+                console.print("\n[bold]Summary:[/bold]")
+                console.print(result.summary[:500])
+
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            if verbose:
+                import traceback
+
+                traceback.print_exc()
+            raise SystemExit(1) from e
 
 
 # ============================================================================
@@ -4563,183 +4380,6 @@ def enrich_mark_stale(
         result = gc.query(update_query)
         updated = result[0]["updated"] if result else 0
         click.echo(f"✓ Marked {updated} nodes as stale")
-
-
-# ============================================================================
-# Explore Command
-# ============================================================================
-
-
-@main.command("explore")
-@click.argument("facility")
-@click.option(
-    "--prompt",
-    "-p",
-    default=None,
-    help="Exploration guidance (e.g., 'Find IMAS integration code')",
-)
-@click.option(
-    "--model",
-    "-m",
-    default=None,
-    help="LLM model to use (default: from config for 'exploration' task)",
-)
-@click.option(
-    "--cost-limit",
-    "-c",
-    default=None,
-    type=float,
-    help="Maximum cost budget in USD (default: no limit)",
-)
-@click.option(
-    "--verbose",
-    "-v",
-    is_flag=True,
-    help="Enable verbose agent output",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    help="Show configuration without running",
-)
-def explore(
-    facility: str,
-    prompt: str | None,
-    model: str | None,
-    cost_limit: float | None,
-    verbose: bool,
-    dry_run: bool,
-) -> None:
-    """Explore a remote facility using autonomous CodeAgent.
-
-    Uses smolagents CodeAgent that generates Python code to invoke tools,
-    enabling adaptive problem-solving and self-debugging. Discovered files
-    are queued for ingestion.
-
-    The agent uses fast CLI tools (rg, fd, dust) for exploration and
-    persists findings to the knowledge graph.
-
-    \b
-    COMPLETION CRITERIA (when is enough enough?):
-    - Minimum: 5+ directories identified, 20+ files queued
-    - Full: 100+ high-value files, major physics domains covered
-    - Diminishing returns: searches return mostly config/build files
-
-    \b
-    EXAMPLES:
-        # Basic exploration
-        imas-codex explore iter
-
-        # Guided exploration
-        imas-codex explore iter --prompt "Find IMAS integration code"
-
-        # Find equilibrium codes specifically
-        imas-codex explore epfl -p "Find CHEASE and LIUQE code"
-
-        # Use specific model
-        imas-codex explore iter -m anthropic/claude-sonnet-4.5
-
-        # Set cost limit
-        imas-codex explore iter -c 2.0
-
-        # Verbose output
-        imas-codex explore iter -v
-
-        # Check configuration
-        imas-codex explore iter --dry-run
-    """
-    import asyncio
-
-    from rich.console import Console
-    from rich.panel import Panel
-
-    from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.agentic.explore import ExplorationAgent
-    from imas_codex.discovery import get_facility as get_facility_config
-
-    console = Console()
-
-    # Validate facility exists
-    try:
-        config = get_facility_config(facility)
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise SystemExit(1) from e
-
-    # Resolve model and cost limit
-    effective_model = model or get_model_for_task("exploration")
-    effective_cost_limit = cost_limit if cost_limit is not None else 5.0
-
-    # Build cost limit display
-    cost_limit_str = f"${effective_cost_limit:.2f}"
-
-    if dry_run:
-        console.print(
-            Panel.fit(
-                f"[cyan]Facility:[/cyan] {facility}\n"
-                f"[cyan]SSH Host:[/cyan] {config.get('ssh_host', facility)}\n"
-                f"[cyan]Model:[/cyan] {effective_model}\n"
-                f"[cyan]Cost Limit:[/cyan] {cost_limit_str}\n"
-                f"[cyan]Prompt:[/cyan] {prompt or '(none - general exploration)'}\n"
-                f"[cyan]Verbose:[/cyan] {verbose}\n"
-                f"[cyan]Agent:[/cyan] CodeAgent",
-                title="Exploration Configuration (--dry-run)",
-            )
-        )
-        console.print("\n[dim]Remove --dry-run to start exploration[/dim]")
-        return
-
-    # Show startup info
-    console.print(
-        Panel.fit(
-            f"Exploring [cyan]{facility}[/cyan] with [green]{effective_model}[/green]\n"
-            f"[dim]CodeAgent (cost limit: {cost_limit_str})[/dim]",
-            title="IMAS Codex Explorer",
-        )
-    )
-    if prompt:
-        console.print(f"[dim]Guidance: {prompt}[/dim]")
-    console.print()
-
-    # Run exploration
-    async def run_exploration() -> None:
-        async with ExplorationAgent(
-            facility=facility,
-            model=effective_model,
-            verbose=verbose,
-            cost_limit_usd=effective_cost_limit,
-        ) as agent:
-            result = await agent.explore(prompt=prompt)
-
-            if result.error:
-                console.print(f"[red]Exploration failed: {result.error}[/red]")
-                raise SystemExit(1)
-
-            # Print summary
-            console.print()
-            console.print(Panel(result.summary, title="Exploration Summary"))
-            console.print()
-            console.print(f"[green]✓[/green] Files queued: {result.files_queued}")
-            console.print(f"[green]✓[/green] Notes added: {result.notes_added}")
-            console.print(f"[dim]Cost: ${result.cost_usd:.4f}[/dim]")
-            console.print(
-                f"[dim]Steps: {result.progress.steps} | "
-                f"Elapsed: {result.progress.elapsed_seconds:.1f}s[/dim]"
-            )
-
-            if result.files_queued > 0:
-                console.print(f"\n[dim]Next: imas-codex ingest run {facility}[/dim]")
-
-    try:
-        asyncio.run(run_exploration())
-
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Exploration interrupted by user[/yellow]")
-        raise SystemExit(130) from None
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        logger.exception("Exploration failed")
-        raise SystemExit(1) from e
 
 
 # ============================================================================
