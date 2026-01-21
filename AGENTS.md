@@ -359,9 +359,9 @@ uv run build-clusters --ids-filter "core_profiles equilibrium" -v -f
 
 ## Working in Worktrees
 
-Cursor remote agents often work in auto-created worktrees. **CRITICAL: Commits in worktrees are NOT on `main` until cherry-picked.**
+Cursor remote agents often work in auto-created worktrees. **CRITICAL: Commits in worktrees are NOT on `main` until merged.**
 
-### Commit and Cherry-pick Workflow
+### Commit and Merge Workflow
 
 **ALWAYS complete both steps together** - never end a session after step 1:
 
@@ -371,17 +371,22 @@ uv run ruff check --fix . && uv run ruff format .
 git add <file1> <file2> ...
 uv run git commit -m "type: description"
 
-# Step 2: IMMEDIATELY cherry-pick to main (do not skip!)
-COMMIT_HASH=$(git rev-parse HEAD)
+# Step 2: IMMEDIATELY merge to main (do not skip!)
+WORKTREE_HEAD=$(git rev-parse HEAD)
 cd /home/mcintos/Code/imas-codex
-git cherry-pick $COMMIT_HASH
+git merge --no-ff $WORKTREE_HEAD -m "merge: worktree changes for <description>"
 git push origin main
 ```
+
+**Why merge instead of cherry-pick?**
+- Merge tracks that changes have been applied (cherry-pick doesn't)
+- Merge handles conflicts better with clear ancestry
+- Cherry-pick duplicates commits without tracking, leading to future conflicts
 
 ### Session-End Checklist
 
 Before ending any worktree session, verify:
-- [ ] All commits have been cherry-picked to main
+- [ ] All commits have been merged to main
 - [ ] Changes are pushed to origin (`git log origin/main..main` should be empty)
 
 To check for un-merged worktree commits:
@@ -390,33 +395,19 @@ cd /home/mcintos/Code/imas-codex
 git log --oneline --all --not main | head -20  # Shows commits not on main
 ```
 
-### Worktree Cleanup (Optional)
+### Worktree Lifecycle
 
-Worktrees can be left in place - they're cheap and Git handles them well. Cleanup only when:
-- Disk space is constrained
-- Stale files appear in Cursor's review panel
-- You want to tidy up
+Worktrees share the same `.git` directory, so commits exist but are on detached/feature branches. Git manages worktrees automatically - no manual cleanup required.
 
 ```bash
 # List all worktrees
 git worktree list
 
-# Prune stale worktree metadata (safe, cleans up removed directories)
+# Prune stale worktree metadata (safe, run periodically)
 git worktree prune
-
-# Remove a specific worktree
-git worktree remove /path/to/worktree
-
-# Discard uncommitted changes in a worktree (keeps worktree)
-cd /path/to/worktree && git checkout -- .
 ```
 
-### Why This Workflow?
-
-- Worktrees share the same `.git` directory, so commits exist but are on detached/feature branches
-- `main` cannot be checked out in multiple places simultaneously
-- Cherry-picking preserves commit metadata and allows focused commits
-- **Commits left in worktrees without cherry-picking are easy to lose**
+**NEVER run `git checkout -- .` in worktrees** - this discards all unstaged changes permanently with no recovery possible.
 
 ## Quick Reference
 
