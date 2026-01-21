@@ -1614,11 +1614,14 @@ def _batch_create_path_nodes(
                 rels=path_rels,
             )
 
-        # Step 6: Create INTRODUCED_IN relationships
+        # Step 6: Create INTRODUCED_IN relationships (only if path doesn't already have one)
+        # A path should only have one INTRODUCED_IN relationship - to the first version
+        # where it appeared. If it was deprecated and re-added, we don't re-introduce it.
         client.query(
             """
             UNWIND $paths AS p
             MATCH (path:IMASPath {id: p.id})
+            WHERE NOT EXISTS { (path)-[:INTRODUCED_IN]->(:DDVersion) }
             MATCH (v:DDVersion {id: $version})
             MERGE (path)-[:INTRODUCED_IN]->(v)
         """,
