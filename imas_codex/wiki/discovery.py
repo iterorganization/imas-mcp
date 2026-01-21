@@ -308,12 +308,14 @@ class WikiDiscovery:
         max_depth: int | None = None,
         verbose: bool = False,
         model: str | None = None,
+        focus: str | None = None,
     ):
         self.config = WikiConfig.from_facility(facility)
         self.stats = DiscoveryStats(cost_limit_usd=cost_limit_usd)
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.verbose = verbose
+        self.focus = focus
         # Model override - if None, get_model_for_task("discovery") is used
         self._model = model
 
@@ -1891,6 +1893,7 @@ async def run_wiki_discovery(
     max_depth: int | None = None,
     verbose: bool = False,
     model: str | None = None,
+    focus: str | None = None,
 ) -> dict:
     """Run wiki discovery and return stats as dict.
 
@@ -1901,6 +1904,7 @@ async def run_wiki_discovery(
         max_depth: Maximum link depth from portal
         verbose: Enable verbose output
         model: LLM model override (None = use config)
+        focus: Optional focus for discovery (e.g., "equilibrium")
 
     Returns:
         Dictionary with discovery statistics
@@ -1912,6 +1916,7 @@ async def run_wiki_discovery(
         max_depth=max_depth,
         verbose=verbose,
         model=model,
+        focus=focus,
     )
 
     try:

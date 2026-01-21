@@ -2355,6 +2355,12 @@ def wiki_sites(facility: str) -> None:
 @wiki.command("discover")
 @click.argument("facility")
 @click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Focus discovery (e.g., 'equilibrium reconstruction', 'diagnostics')",
+)
+@click.option(
     "--start-page",
     default="Portal:TCV",
     help="Page to start discovery from (default: Portal:TCV)",
@@ -2393,6 +2399,7 @@ def wiki_sites(facility: str) -> None:
 )
 def wiki_discover(
     facility: str,
+    prompt: str | None,
     start_page: str,
     cost_limit: float,
     max_pages: int | None,
@@ -2414,6 +2421,9 @@ def wiki_discover(
         # Full discovery with default settings
         imas-codex wiki discover epfl
 
+        # Focus on equilibrium topics
+        imas-codex wiki discover epfl -p "equilibrium reconstruction"
+
         # Limit crawl scope
         imas-codex wiki discover epfl -n 500 --max-depth 3
 
@@ -2433,6 +2443,7 @@ def wiki_discover(
             max_depth=max_depth,
             verbose=verbose,
             model=model,
+            focus=prompt,
         )
     )
 
@@ -2574,6 +2585,12 @@ def wiki_prefetch(
 @wiki.command("score")
 @click.argument("facility")
 @click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Focus scoring (e.g., 'equilibrium reconstruction', 'diagnostics')",
+)
+@click.option(
     "--limit",
     "-n",
     default=None,
@@ -2608,6 +2625,7 @@ def wiki_prefetch(
 )
 def wiki_score(
     facility: str,
+    prompt: str | None,
     limit: int | None,
     cost_limit: float,
     batch_size: int,
@@ -2631,6 +2649,9 @@ def wiki_score(
         # Score all crawled pages (up to $20 cost)
         imas-codex wiki score epfl
 
+        # Focus on equilibrium topics
+        imas-codex wiki score epfl -p "equilibrium reconstruction"
+
         # Score with verbose agent output
         imas-codex wiki score epfl -v
 
@@ -2651,6 +2672,7 @@ def wiki_score(
         max_pages=limit,
         verbose=verbose,
         model=model,
+        focus=prompt,
     )
 
     try:
@@ -3648,27 +3670,390 @@ def _show_versions_summary(gc, console) -> None:
 
 
 # ============================================================================
-# Agent Commands
+# Scout Commands - Fast Discovery (No LLM)
 # ============================================================================
 
 
 @main.group()
-def agent() -> None:
-    """Run smolagents CodeAgents for autonomous tasks.
+def scout() -> None:
+    """Fast discovery of facility resources (no LLM required).
 
-    CodeAgents generate Python code to invoke tools, enabling:
-    - Loops and conditionals for complex workflows
-    - Self-debugging through code inspection
-    - Adaptive problem-solving
+    Scout commands perform quick, deterministic discovery using
+    fast CLI tools (rg, fd, dust). Results are queued for later
+    enrichment and ingestion.
 
     \b
-      imas-codex agent run       Run an agent with a task
-      imas-codex agent enrich    Enrich TreeNode metadata
+      imas-codex scout files      Discover code files via SSH
+      imas-codex scout data       Discover data formats and locations
+      imas-codex scout status     Show discovery status
     """
     pass
 
 
-@agent.command("run")
+@scout.command("files")
+@click.argument("facility")
+@click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Focus pattern (e.g., 'equilibrium', 'IMAS', 'CHEASE')",
+)
+@click.option(
+    "--path",
+    default=None,
+    help="Base path to search (default: from facility config)",
+)
+@click.option(
+    "--limit",
+    "-n",
+    default=1000,
+    type=int,
+    help="Maximum files to discover (default: 1000)",
+)
+@click.option(
+    "--extensions",
+    "-e",
+    default="py,f90,f,c,cpp,m",
+    help="File extensions to find (comma-separated, default: py,f90,f,c,cpp,m)",
+)
+@click.option("--dry-run", is_flag=True, help="Preview without queuing files")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
+def scout_files(
+    facility: str,
+    prompt: str | None,
+    path: str | None,
+    limit: int,
+    extensions: str,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Discover code files at a facility via SSH.
+
+    Uses fast tools (fd, rg) to find files matching patterns.
+    Discovered files are queued for ingestion.
+
+    \b
+    EXAMPLES:
+        # Basic file discovery at EPFL
+        imas-codex scout files epfl
+
+        # Focus on equilibrium-related code
+        imas-codex scout files epfl -p "equilibrium"
+
+        # Search specific path
+        imas-codex scout files epfl --path /home/crpplocal/codes
+
+        # Find only Python files
+        imas-codex scout files epfl -e py
+
+        # Preview without queuing
+        imas-codex scout files epfl --dry-run -v
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from imas_codex.discovery import get_facility
+    from imas_codex.remote.tools import run
+
+    console = Console()
+
+    # Validate facility
+    try:
+        config = get_facility(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Build search path
+    search_path = path or config.get("code_paths", ["/home"])[0]
+
+    # Build extension filter
+    ext_list = [e.strip() for e in extensions.split(",")]
+    ext_args = " ".join(f"-e {e}" for e in ext_list)
+
+    console.print(
+        Panel.fit(
+            f"[cyan]Facility:[/cyan] {facility}\n"
+            f"[cyan]Path:[/cyan] {search_path}\n"
+            f"[cyan]Extensions:[/cyan] {', '.join(ext_list)}\n"
+            f"[cyan]Focus:[/cyan] {prompt or '(all files)'}\n"
+            f"[cyan]Limit:[/cyan] {limit}",
+            title="Scout Files Configuration",
+        )
+    )
+
+    if dry_run:
+        console.print("\n[dim]Dry run - no files will be queued[/dim]")
+
+    # Use fd to find files
+    cmd = f"fd {ext_args} . {search_path} 2>/dev/null | head -n {limit}"
+    if verbose:
+        console.print(f'[dim]$ ssh {facility} "{cmd}"[/dim]')
+
+    try:
+        result = run(cmd, facility=facility)
+        files = [f.strip() for f in result.strip().split("\n") if f.strip()]
+    except Exception as e:
+        console.print(f"[red]Error running fd: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Filter by prompt if provided
+    if prompt and files:
+        filtered = []
+        for f in files:
+            if prompt.lower() in f.lower():
+                filtered.append(f)
+        if verbose:
+            console.print(
+                f"Filtered {len(files)} → {len(filtered)} files by '{prompt}'"
+            )
+        files = filtered
+
+    if not files:
+        console.print("[yellow]No files found matching criteria[/yellow]")
+        return
+
+    # Show results
+    table = Table(title=f"Discovered {len(files)} Files")
+    table.add_column("Path", style="cyan")
+
+    for f in files[:20]:
+        table.add_row(f)
+    if len(files) > 20:
+        table.add_row(f"... and {len(files) - 20} more")
+
+    console.print(table)
+
+    if dry_run:
+        console.print("\n[dim]Use without --dry-run to queue files for ingestion[/dim]")
+        return
+
+    # Queue files for ingestion
+    from imas_codex.code_examples.ingest import add_to_queue
+
+    queued = 0
+    for f in files:
+        try:
+            add_to_queue(facility, f, priority=1)
+            queued += 1
+        except Exception as e:
+            if verbose:
+                console.print(f"[yellow]Skip {f}: {e}[/yellow]")
+
+    console.print(f"\n[green]✓ Queued {queued} files for ingestion[/green]")
+
+
+@scout.command("data")
+@click.argument("facility")
+@click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Focus pattern (e.g., 'equilibrium', 'IMAS')",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
+def scout_data(
+    facility: str,
+    prompt: str | None,
+    verbose: bool,
+) -> None:
+    """Discover data formats and locations at a facility.
+
+    Identifies available data sources:
+    - MDSplus trees (TCV, JET, etc.)
+    - HDF5/NetCDF files
+    - IMAS databases
+    - UDA endpoints
+
+    \b
+    EXAMPLES:
+        # Discover data at EPFL
+        imas-codex scout data epfl
+
+        # Focus on equilibrium data
+        imas-codex scout data epfl -p "equilibrium"
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from imas_codex.discovery import get_facility
+    from imas_codex.remote.tools import run
+
+    console = Console()
+
+    # Validate facility
+    try:
+        get_facility(facility)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1) from e
+
+    console.print(
+        Panel.fit(
+            f"[cyan]Facility:[/cyan] {facility}\n"
+            f"[cyan]Focus:[/cyan] {prompt or '(all data sources)'}",
+            title="Scout Data Configuration",
+        )
+    )
+
+    results: dict[str, list[str]] = {
+        "MDSplus Trees": [],
+        "HDF5/NetCDF": [],
+        "IMAS": [],
+        "Other": [],
+    }
+
+    # Check for MDSplus trees
+    if verbose:
+        console.print("[dim]Checking for MDSplus...[/dim]")
+
+    try:
+        mdsplus_check = run(
+            "which mdsplus 2>/dev/null || echo 'not found'", facility=facility
+        )
+        if "not found" not in mdsplus_check:
+            # Try to list trees
+            trees_cmd = "ls /usr/local/mdsplus/tdi 2>/dev/null || ls $MDSPLUS_DIR/tdi 2>/dev/null || echo ''"
+            tree_output = run(trees_cmd, facility=facility)
+            if tree_output.strip():
+                results["MDSplus Trees"] = tree_output.strip().split("\n")[:10]
+    except Exception as e:
+        if verbose:
+            console.print(f"[yellow]MDSplus check failed: {e}[/yellow]")
+
+    # Check for HDF5 files
+    if verbose:
+        console.print("[dim]Checking for HDF5/NetCDF...[/dim]")
+
+    try:
+        h5_cmd = "fd -e h5 -e hdf5 -e nc . /work 2>/dev/null | head -5"
+        h5_output = run(h5_cmd, facility=facility)
+        if h5_output.strip():
+            results["HDF5/NetCDF"] = [
+                f.strip() for f in h5_output.strip().split("\n") if f.strip()
+            ]
+    except Exception:
+        pass
+
+    # Check for IMAS
+    if verbose:
+        console.print("[dim]Checking for IMAS...[/dim]")
+
+    try:
+        imas_check = run(
+            "which imasdb 2>/dev/null || echo 'not found'", facility=facility
+        )
+        if "not found" not in imas_check:
+            results["IMAS"].append("imasdb available")
+    except Exception:
+        pass
+
+    # Display results
+    table = Table(title="Data Sources Discovered")
+    table.add_column("Type", style="cyan")
+    table.add_column("Details", style="white")
+
+    for data_type, items in results.items():
+        if items:
+            table.add_row(data_type, "\n".join(items[:5]))
+
+    if any(results.values()):
+        console.print(table)
+    else:
+        console.print("[yellow]No data sources discovered[/yellow]")
+
+
+@scout.command("status")
+@click.argument("facility", required=False)
+def scout_status(facility: str | None) -> None:
+    """Show discovery status for facilities.
+
+    Displays what has been discovered and what's queued for processing.
+
+    \b
+    EXAMPLES:
+        # Show status for all facilities
+        imas-codex scout status
+
+        # Show status for specific facility
+        imas-codex scout status epfl
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    with GraphClient() as gc:
+        # Query discovery statistics
+        if facility:
+            query = """
+                MATCH (s:SourceFile {facility: $facility})
+                RETURN
+                    count(s) AS files,
+                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
+                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
+            """
+            result = gc.query(query, {"facility": facility})
+        else:
+            query = """
+                MATCH (s:SourceFile)
+                RETURN
+                    s.facility AS facility,
+                    count(s) AS files,
+                    count(CASE WHEN s.status = 'pending' THEN 1 END) AS pending,
+                    count(CASE WHEN s.status = 'processed' THEN 1 END) AS processed
+                ORDER BY s.facility
+            """
+            result = gc.query(query)
+
+        if not result:
+            console.print("[yellow]No files discovered yet[/yellow]")
+            return
+
+        table = Table(title="Discovery Status")
+        table.add_column("Facility", style="cyan")
+        table.add_column("Total Files", justify="right")
+        table.add_column("Pending", justify="right", style="yellow")
+        table.add_column("Processed", justify="right", style="green")
+
+        for row in result:
+            fac = row.get("facility", facility or "unknown")
+            table.add_row(
+                fac,
+                str(row["files"]),
+                str(row["pending"]),
+                str(row["processed"]),
+            )
+
+        console.print(table)
+
+
+# ============================================================================
+# Enrich Commands - AI-Assisted Metadata Generation
+# ============================================================================
+
+
+@main.group()
+def enrich() -> None:
+    """Enrich graph nodes with AI-generated metadata.
+
+    Uses CodeAgent to analyze and describe data from multiple sources:
+    - TreeNodes from MDSplus/HDF5 trees
+    - Wiki pages from facility documentation
+    - Code files from ingested source
+
+    \b
+      imas-codex enrich nodes     Enrich TreeNode metadata
+      imas-codex enrich run       Run a custom enrichment task
+    """
+    pass
+
+
+@enrich.command("run")
 @click.argument("task")
 @click.option(
     "--type",
@@ -3720,8 +4105,14 @@ def agent_run(
         raise SystemExit(1) from None
 
 
-@agent.command("enrich")
+@enrich.command("nodes")
 @click.argument("paths", nargs=-1)
+@click.option(
+    "--prompt",
+    "-p",
+    default=None,
+    help="Guidance for enrichment (e.g., 'Focus on equilibrium signals')",
+)
 @click.option(
     "--limit", "-n", default=None, type=int, help="Max nodes to enrich (default: all)"
 )
@@ -3757,8 +4148,9 @@ def agent_run(
 )
 @click.option("--dry-run", is_flag=True, help="Preview without persisting to graph")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
-def agent_enrich(
+def enrich_nodes(
     paths: tuple[str, ...],
+    prompt: str | None,
     limit: int | None,
     tree: str | None,
     status: str,
@@ -3770,7 +4162,7 @@ def agent_enrich(
     dry_run: bool,
     verbose: bool,
 ) -> None:
-    """Enrich TreeNode metadata using smolagents CodeAgent.
+    """Enrich TreeNode metadata using CodeAgent.
 
     The agent generates Python code to gather context from the
     knowledge graph and code examples, then produces physics-accurate
@@ -3786,34 +4178,37 @@ def agent_enrich(
     \b
     EXAMPLES:
         # Enrich all pending nodes in the results tree
-        imas-codex agent enrich --tree results
+        imas-codex enrich nodes --tree results
+
+        # Focus on specific physics with guidance
+        imas-codex enrich nodes --tree results -p "Focus on equilibrium signals"
 
         # Enrich all pending nodes across all trees
-        imas-codex agent enrich
+        imas-codex enrich nodes
 
         # Limit to first 100 nodes
-        imas-codex agent enrich --tree tcv_shot --limit 100
+        imas-codex enrich nodes --tree tcv_shot --limit 100
 
         # Process stale nodes (marked for re-enrichment)
-        imas-codex agent enrich --status stale
+        imas-codex enrich nodes --status stale
 
         # Only enrich nodes with code context (more reliable)
-        imas-codex agent enrich --linked
+        imas-codex enrich nodes --linked
 
         # Include ALL nodes (pending + enriched) for (re-)enrichment
-        imas-codex agent enrich --force
+        imas-codex enrich nodes --force
 
         # Re-enrich only already processed nodes
-        imas-codex agent enrich --status enriched
+        imas-codex enrich nodes --status enriched
 
         # Enrich specific paths
-        imas-codex agent enrich "\\RESULTS::IBS" "\\RESULTS::LIUQE"
+        imas-codex enrich nodes "\\RESULTS::IBS" "\\RESULTS::LIUQE"
 
         # Use Pro model for higher quality
-        imas-codex agent enrich --model google/gemini-3-pro-preview -b 200
+        imas-codex enrich nodes --model google/gemini-3-pro-preview -b 200
 
         # Preview without saving
-        imas-codex agent enrich --dry-run
+        imas-codex enrich nodes --dry-run
     """
     import asyncio
     import logging
@@ -4061,11 +4456,11 @@ def agent_enrich(
     console.print(Panel(summary, border_style="green"))
 
 
-@agent.command("mark-stale")
+@enrich.command("mark-stale")
 @click.argument("pattern")
 @click.option("--tree", default=None, help="Filter to specific tree name")
 @click.option("--dry-run", is_flag=True, help="Preview without updating")
-def agent_mark_stale(
+def enrich_mark_stale(
     pattern: str,
     tree: str | None,
     dry_run: bool,
@@ -4078,13 +4473,13 @@ def agent_mark_stale(
     \b
     EXAMPLES:
         # Mark all LIUQE nodes as stale
-        imas-codex agent mark-stale "LIUQE"
+        imas-codex enrich mark-stale "LIUQE"
 
         # Mark nodes in results tree matching pattern
-        imas-codex agent mark-stale "THOMSON" --tree results
+        imas-codex enrich mark-stale "THOMSON" --tree results
 
         # Preview what would be marked
-        imas-codex agent mark-stale "BOLO" --dry-run
+        imas-codex enrich mark-stale "BOLO" --dry-run
     """
     from imas_codex.graph import GraphClient
 

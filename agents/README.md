@@ -168,3 +168,50 @@ These tools are excluded from all custom agents:
 - `newJupyterNotebook` - Use standard workflows
 - `editNotebook` - Notebooks not used in this project
 - `runCell` - Notebooks not used in this project
+
+## Schema Validation with LinkML
+
+All graph writes are validated using Pydantic classes generated from LinkML schemas.
+
+### Schema Files
+
+| Schema | Purpose | Classes |
+|--------|---------|---------|
+| `imas_codex/schemas/imas_dd.yaml` | DD graph structure | IMASPath, DDVersion, Unit, CoordinateSpec |
+| `imas_codex/schemas/facility.yaml` | Facility graph | SourceFile, TreeNode, CodeChunk |
+| `imas_codex/schemas/common.yaml` | Shared definitions | Unit, PhysicsDomain enums |
+
+### Build Pipeline
+
+Models are auto-generated during `uv sync`:
+
+```bash
+# Triggered by hatch build hook in hatch_build_hooks.py
+uv sync  # Runs build_models.py → generates imas_codex/pydantic_models.py
+```
+
+### Usage in Agents
+
+All agents validate data before graph writes:
+
+```python
+from imas_codex.schemas import TreeNode, SourceFile
+
+# Validation happens at construction
+node = TreeNode(
+    path="\\RESULTS::LIUQE:IP",
+    tree_name="results",
+    facility="epfl",
+    data_type="signal",
+    enrichment_status="pending"
+)
+
+# Only valid nodes are written
+add_to_graph("TreeNode", [node.model_dump()])
+```
+
+### Extending Schemas
+
+1. Edit LinkML YAML in `imas_codex/schemas/`
+2. Run `uv run python scripts/build_models.py`
+3. Import new classes from `imas_codex.schemas`
