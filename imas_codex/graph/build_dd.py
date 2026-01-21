@@ -25,6 +25,7 @@ import hashlib
 import json
 import logging
 import re
+from contextlib import contextmanager
 
 import imas
 import numpy as np
@@ -36,6 +37,34 @@ from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.graph.client import GraphClient
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def suppress_third_party_logging(level: int = logging.WARNING):
+    """Temporarily suppress noisy third-party logging during operations.
+
+    Raises log level for sentence_transformers and other verbose libraries
+    to prevent interference with progress bars.
+    """
+    noisy_loggers = [
+        "sentence_transformers",
+        "sentence_transformers.SentenceTransformer",
+        "transformers",
+        "huggingface_hub",
+        "linkml_runtime",
+    ]
+    original_levels = {}
+    for name in noisy_loggers:
+        log = logging.getLogger(name)
+        original_levels[name] = log.level
+        log.setLevel(level)
+
+    try:
+        yield
+    finally:
+        for name, orig_level in original_levels.items():
+            logging.getLogger(name).setLevel(orig_level)
+
 
 # Keywords for semantic classification of documentation changes
 SIGN_CONVENTION_KEYWORDS = [
@@ -424,52 +453,53 @@ def generate_embeddings_batch(
     Returns:
         Numpy array of embeddings (N x 384 for MiniLM)
     """
-    from sentence_transformers import SentenceTransformer
+    with suppress_third_party_logging():
+        from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(model_name)
+        model = SentenceTransformer(model_name)
 
-    total_batches = (len(texts) + batch_size - 1) // batch_size
-    if total_batches <= 1:
-        return model.encode(
-            texts,
-            batch_size=batch_size,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
-
-    batch_names = [
-        f"{min((i + 1) * batch_size, len(texts))}/{len(texts)}"
-        for i in range(total_batches)
-    ]
-
-    progress = create_progress_monitor(
-        use_rich=use_rich,
-        logger=logger,
-        item_names=batch_names,
-        description_template="Embedding: {item}",
-    )
-
-    embeddings_list = []
-    progress.start_processing(batch_names, "Generating embeddings")
-    try:
-        for i in range(0, len(texts), batch_size):
-            texts_processed = min((i // batch_size + 1) * batch_size, len(texts))
-            batch_name = f"{texts_processed}/{len(texts)}"
-            progress.set_current_item(batch_name)
-
-            batch_texts = texts[i : i + batch_size]
-            batch_embeddings = model.encode(
-                batch_texts,
-                convert_to_numpy=True,
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        if total_batches <= 1:
+            return model.encode(
+                texts,
+                batch_size=batch_size,
                 normalize_embeddings=True,
                 show_progress_bar=False,
             )
-            embeddings_list.append(batch_embeddings)
-            progress.update_progress(batch_name)
-    finally:
-        progress.finish_processing()
 
-    return np.vstack(embeddings_list)
+        batch_names = [
+            f"{min((i + 1) * batch_size, len(texts))}/{len(texts)}"
+            for i in range(total_batches)
+        ]
+
+        progress = create_progress_monitor(
+            use_rich=use_rich,
+            logger=logger,
+            item_names=batch_names,
+            description_template="Embedding: {item}",
+        )
+
+        embeddings_list = []
+        progress.start_processing(batch_names, "Generating embeddings")
+        try:
+            for i in range(0, len(texts), batch_size):
+                texts_processed = min((i // batch_size + 1) * batch_size, len(texts))
+                batch_name = f"{texts_processed}/{len(texts)}"
+                progress.set_current_item(batch_name)
+
+                batch_texts = texts[i : i + batch_size]
+                batch_embeddings = model.encode(
+                    batch_texts,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
+                embeddings_list.append(batch_embeddings)
+                progress.update_progress(batch_name)
+        finally:
+            progress.finish_processing()
+
+        return np.vstack(embeddings_list)
 
 
 def get_existing_embedding_data(
@@ -677,7 +707,7 @@ def update_path_embeddings(
         cached_count = 0
 
     if not paths_to_update:
-        logger.info(f"All {len(path_ids)} embeddings up to date (cached)")
+        logger.debug(f"All {len(path_ids)} embeddings up to date (cached)")
         return {
             "updated": 0,
             "cached": len(path_ids),
@@ -685,7 +715,7 @@ def update_path_embeddings(
             "changes": 0,
         }
 
-    logger.info(
+    logger.debug(
         f"Generating embeddings for {len(paths_to_update)} paths "
         f"({cached_count} cached)"
     )
@@ -788,7 +818,7 @@ def update_path_embeddings(
         version = dd_version or current_dd_version
         changes_count = record_embedding_changes(client, changes_detected, version)
         if changes_count > 0:
-            logger.info(f"Recorded {changes_count} embedding content changes")
+            logger.debug(f"Recorded {changes_count} embedding content changes")
 
     return {
         "updated": len(paths_to_update),
@@ -1028,7 +1058,7 @@ def build_dd_graph(
         use_rich=use_rich,
         logger=logger,
         item_names=versions,
-        description_template="Processing: {item}",
+        description_template="DD {item}",
     )
 
     stats = {
@@ -1050,13 +1080,13 @@ def build_dd_graph(
         _ensure_indexes(client)
 
     # First pass: create DDVersion nodes with predecessor chain
-    logger.info("Creating DDVersion nodes...")
+    logger.debug("Creating DDVersion nodes...")
     if not dry_run:
         _create_version_nodes(client, versions)
     stats["versions_processed"] = len(versions)
 
     # Create Unit nodes (collect all unique units first)
-    logger.info("Collecting units across all versions...")
+    logger.debug("Collecting units across all versions...")
     all_units: set[str] = set()
     version_data: dict[str, dict] = {}
 
@@ -1075,22 +1105,22 @@ def build_dd_graph(
     progress.finish_processing()
 
     # Create Unit nodes
-    logger.info(f"Creating {len(all_units)} Unit nodes...")
+    logger.debug(f"Creating {len(all_units)} Unit nodes...")
     if not dry_run:
         _create_unit_nodes(client, all_units)
     stats["units_created"] = len(all_units)
 
     # Create CoordinateSpec nodes for index-based coordinates
-    logger.info("Creating CoordinateSpec nodes...")
+    logger.debug("Creating CoordinateSpec nodes...")
     coord_specs = {"1...N", "1...1", "1...2", "1...3", "1...4", "1...6"}
     if not dry_run:
         _create_coordinate_spec_nodes(client, coord_specs)
 
     # Create IDS and IMASPath nodes, tracking version changes
-    logger.info("Creating IDS and IMASPath nodes with version tracking...")
+    logger.debug("Creating IDS and IMASPath nodes with version tracking...")
     prev_paths: dict[str, dict] = {}
 
-    progress.start_processing(versions, "Building graph")
+    progress.start_processing(versions, "Building DD graph nodes")
     for i, version in enumerate(versions):
         progress.set_current_item(version)
 
@@ -1128,7 +1158,7 @@ def build_dd_graph(
     progress.finish_processing()
 
     # Batch create RENAMED_TO relationships from path mappings
-    logger.info("Creating RENAMED_TO relationships...")
+    logger.debug("Creating RENAMED_TO relationships...")
     if not dry_run:
         mappings = load_path_mappings(current_dd_version)
         _batch_create_renamed_to(client, mappings.get("old_to_new", {}))
@@ -1142,17 +1172,17 @@ def build_dd_graph(
             all_paths = current_version_data["paths"]
 
             # Filter paths and extract error relationships
-            logger.info(f"Filtering {len(all_paths)} paths for embedding...")
+            logger.debug(f"Filtering {len(all_paths)} paths for embedding...")
             embeddable_paths, error_relationships = filter_embeddable_paths(all_paths)
             stats["paths_filtered"] = len(all_paths) - len(embeddable_paths)
-            logger.info(
+            logger.debug(
                 f"Embedding {len(embeddable_paths)} paths "
                 f"(filtered {stats['paths_filtered']} excluded paths)"
             )
 
             # Create HAS_ERROR relationships for error fields
             if error_relationships:
-                logger.info(
+                logger.debug(
                     f"Creating {len(error_relationships)} HAS_ERROR relationships..."
                 )
                 stats["error_relationships"] = _batch_create_error_relationships(
@@ -1160,7 +1190,7 @@ def build_dd_graph(
                 )
 
             # Generate embeddings only for non-excluded paths
-            logger.info(f"Generating embeddings for {current_dd_version}...")
+            logger.debug(f"Generating embeddings for {current_dd_version}...")
             embedding_stats = update_path_embeddings(
                 client=client,
                 paths_data=embeddable_paths,
@@ -1195,7 +1225,7 @@ def build_dd_graph(
 
     # Import semantic clusters if requested
     if include_clusters:
-        logger.info("Importing semantic clusters...")
+        logger.debug("Importing semantic clusters...")
         cluster_count = _import_clusters(client, dry_run)
         stats["clusters_created"] = cluster_count
 
@@ -1745,7 +1775,7 @@ def _batch_create_error_relationships(
         if result:
             created += result[0].get("created", 0)
 
-    logger.info(f"Created {created} HAS_ERROR relationships")
+    logger.debug(f"Created {created} HAS_ERROR relationships")
     return created
 
 
@@ -1768,7 +1798,7 @@ def _cleanup_stale_embeddings(client: GraphClient) -> int:
     """)
     cleaned = result[0]["cleaned"] if result else 0
     if cleaned > 0:
-        logger.info(f"Cleaned up {cleaned} stale embeddings from deprecated paths")
+        logger.debug(f"Cleaned up {cleaned} stale embeddings from deprecated paths")
     return cleaned
 
 
@@ -1789,112 +1819,113 @@ def _import_clusters(
     Returns:
         Number of clusters imported
     """
-    try:
-        from imas_codex.core.clusters import Clusters
-        from imas_codex.embeddings.config import EncoderConfig
+    with suppress_third_party_logging():
+        try:
+            from imas_codex.core.clusters import Clusters
+            from imas_codex.embeddings.config import EncoderConfig
 
-        # Create encoder config for loading clusters
-        encoder_config = EncoderConfig()
-        clusters_manager = Clusters(encoder_config=encoder_config)
-        if not clusters_manager.is_available():
-            logger.warning("Cluster data not available")
-            return 0
+            # Create encoder config for loading clusters
+            encoder_config = EncoderConfig()
+            clusters_manager = Clusters(encoder_config=encoder_config)
+            if not clusters_manager.is_available():
+                logger.warning("Cluster data not available")
+                return 0
 
-        cluster_data = clusters_manager.get_clusters()
-        cluster_count = 0
+            cluster_data = clusters_manager.get_clusters()
+            cluster_count = 0
 
-        for cluster in cluster_data:
-            cluster_id = cluster.get("id", cluster_count)
-            if dry_run:
-                cluster_count += 1
-                continue
+            for cluster in cluster_data:
+                cluster_id = cluster.get("id", cluster_count)
+                if dry_run:
+                    cluster_count += 1
+                    continue
 
-            # Extract cluster properties
-            label = cluster.get("label", f"cluster_{cluster_id}")
-            physics_domain = cluster.get("physics_domain", "general")
-            paths = cluster.get("paths", [])
-            cross_ids = cluster.get("cross_ids", False)
-            centroid = cluster.get("centroid")
-            similarity_score = cluster.get("similarity_score", 0.0)
-            ids_names = cluster.get("ids_names", [])
-            scope = cluster.get("scope", "global")
+                # Extract cluster properties
+                label = cluster.get("label", f"cluster_{cluster_id}")
+                physics_domain = cluster.get("physics_domain", "general")
+                paths = cluster.get("paths", [])
+                cross_ids = cluster.get("cross_ids", False)
+                centroid = cluster.get("centroid")
+                similarity_score = cluster.get("similarity_score", 0.0)
+                ids_names = cluster.get("ids_names", [])
+                scope = cluster.get("scope", "global")
 
-            # Build cluster properties dict - always include all params to avoid Neo4j errors
-            cluster_props = {
-                "cluster_id": str(cluster_id),
-                "label": label,
-                "physics_domain": physics_domain,
-                "path_count": len(paths),
-                "cross_ids": cross_ids,
-                "similarity_score": similarity_score,
-                "scope": scope,
-                "centroid": centroid
-                if centroid and isinstance(centroid, list)
-                else None,
-                "ids_names": ids_names if ids_names else [],
-            }
+                # Build cluster properties dict - always include all params to avoid Neo4j errors
+                cluster_props = {
+                    "cluster_id": str(cluster_id),
+                    "label": label,
+                    "physics_domain": physics_domain,
+                    "path_count": len(paths),
+                    "cross_ids": cross_ids,
+                    "similarity_score": similarity_score,
+                    "scope": scope,
+                    "centroid": centroid
+                    if centroid and isinstance(centroid, list)
+                    else None,
+                    "ids_names": ids_names if ids_names else [],
+                }
 
-            # Create SemanticCluster node with all properties
-            # Use CASE expressions to handle null centroid
-            client.query(
-                """
-                MERGE (c:SemanticCluster {id: $cluster_id})
-                SET c.label = $label,
-                    c.physics_domain = $physics_domain,
-                    c.path_count = $path_count,
-                    c.cross_ids = $cross_ids,
-                    c.similarity_score = $similarity_score,
-                    c.scope = $scope,
-                    c.ids_names = $ids_names
-                WITH c, $centroid AS centroid
-                WHERE centroid IS NOT NULL
-                SET c.centroid = centroid
-                """,
-                **cluster_props,
-            )
-
-            # Batch create IN_CLUSTER relationships for efficiency
-            path_memberships = []
-            for path_info in paths:
-                if isinstance(path_info, dict):
-                    path = path_info.get("path", "")
-                    distance = path_info.get("distance", 0.0)
-                else:
-                    path = str(path_info)
-                    distance = 0.0
-                if path:
-                    path_memberships.append({"path": path, "distance": distance})
-
-            if path_memberships:
+                # Create SemanticCluster node with all properties
+                # Use CASE expressions to handle null centroid
                 client.query(
                     """
-                    UNWIND $memberships AS m
-                    MATCH (p:IMASPath {id: m.path})
-                    MATCH (c:SemanticCluster {id: $cluster_id})
-                    MERGE (p)-[r:IN_CLUSTER]->(c)
-                    SET r.distance = m.distance
+                    MERGE (c:SemanticCluster {id: $cluster_id})
+                    SET c.label = $label,
+                        c.physics_domain = $physics_domain,
+                        c.path_count = $path_count,
+                        c.cross_ids = $cross_ids,
+                        c.similarity_score = $similarity_score,
+                        c.scope = $scope,
+                        c.ids_names = $ids_names
+                    WITH c, $centroid AS centroid
+                    WHERE centroid IS NOT NULL
+                    SET c.centroid = centroid
                     """,
-                    memberships=path_memberships,
-                    cluster_id=str(cluster_id),
+                    **cluster_props,
                 )
 
-            cluster_count += 1
+                # Batch create IN_CLUSTER relationships for efficiency
+                path_memberships = []
+                for path_info in paths:
+                    if isinstance(path_info, dict):
+                        path = path_info.get("path", "")
+                        distance = path_info.get("distance", 0.0)
+                    else:
+                        path = str(path_info)
+                        distance = 0.0
+                    if path:
+                        path_memberships.append({"path": path, "distance": distance})
 
-        # Update DDVersion with cluster metadata
-        client.query(
-            """
-            MATCH (v:DDVersion {is_current: true})
-            SET v.clusters_built_at = datetime(),
-                v.clusters_count = $count
-            """,
-            count=cluster_count,
-        )
+                if path_memberships:
+                    client.query(
+                        """
+                        UNWIND $memberships AS m
+                        MATCH (p:IMASPath {id: m.path})
+                        MATCH (c:SemanticCluster {id: $cluster_id})
+                        MERGE (p)-[r:IN_CLUSTER]->(c)
+                        SET r.distance = m.distance
+                        """,
+                        memberships=path_memberships,
+                        cluster_id=str(cluster_id),
+                    )
 
-        return cluster_count
+                cluster_count += 1
 
-    except Exception as e:
-        logger.error(f"Error importing clusters: {e}")
-        return 0
+            # Update DDVersion with cluster metadata
+            client.query(
+                """
+                MATCH (v:DDVersion {is_current: true})
+                SET v.clusters_built_at = datetime(),
+                    v.clusters_count = $count
+                """,
+                count=cluster_count,
+            )
+
+            return cluster_count
+
+        except Exception as e:
+            logger.error(f"Error importing clusters: {e}")
+            return 0
 
 
 # Public API exports

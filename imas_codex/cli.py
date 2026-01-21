@@ -3456,22 +3456,25 @@ def imas_search(
 
 
 @imas.command("versions")
+@click.argument("version", required=False)
 @click.option(
     "--available",
     "-a",
     is_flag=True,
     help="Show all available versions from imas-python",
 )
-def imas_versions(available: bool) -> None:
-    """List DD versions.
+def imas_versions(version: str | None, available: bool) -> None:
+    """List DD versions or show details for a specific version.
 
     By default shows versions in the graph. Use --available to show
-    all versions available from imas-python.
+    all versions available from imas-python. Pass a specific version
+    for detailed statistics.
 
     \b
     Examples:
-        imas-codex imas versions            # Versions in graph
+        imas-codex imas versions              # Versions in graph
         imas-codex imas versions --available  # All available
+        imas-codex imas versions 4.0.0        # Detailed version info
     """
     from rich.console import Console
 
@@ -3480,42 +3483,168 @@ def imas_versions(available: bool) -> None:
     if available:
         from imas_codex.graph.build_dd import get_all_dd_versions
 
-        versions = get_all_dd_versions()
-        console.print(f"[bold]Available DD versions ({len(versions)}):[/bold]")
+        versions_list = get_all_dd_versions()
+        console.print(f"[bold]Available DD versions ({len(versions_list)}):[/bold]")
         # Group by major version
         major_groups: dict[str, list[str]] = {}
-        for v in versions:
+        for v in versions_list:
             major = v.split(".")[0]
             major_groups.setdefault(major, []).append(v)
 
         for major, vers in sorted(major_groups.items()):
             console.print(f"  {major}.x: {', '.join(vers)}")
-    else:
-        from imas_codex.graph import GraphClient
+        return
 
-        with GraphClient() as gc:
-            # Count paths INTRODUCED_IN each version (not deprecated paths)
-            versions = gc.query("""
-                MATCH (v:DDVersion)
-                OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
-                WITH v, count(p) AS introduced
-                OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
-                RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
-                ORDER BY v.id
-            """)
+    from imas_codex.graph import GraphClient
 
-        if not versions:
-            console.print("[yellow]No versions in graph.[/yellow]")
-            console.print("Build with: imas-codex imas build")
-            return
+    with GraphClient() as gc:
+        if version:
+            # Detailed view for a specific version
+            _show_version_details(gc, console, version)
+        else:
+            # Summary view of all versions
+            _show_versions_summary(gc, console)
 
-        console.print("[bold]DD versions in graph:[/bold]")
-        for v in versions:
-            current = " [green](current)[/green]" if v["is_current"] else ""
-            embedded = f", {v['embedded']} embedded" if v["embedded"] else ""
-            console.print(
-                f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
-            )
+
+def _show_version_details(gc, console, version: str) -> None:
+    """Show detailed statistics for a specific DD version."""
+    from rich.table import Table
+
+    # Check version exists
+    check = gc.query(
+        "MATCH (v:DDVersion {id: $version}) RETURN v",
+        version=version,
+    )
+    if not check:
+        console.print(f"[red]Version {version} not found in graph.[/red]")
+        return
+
+    # Get version metadata
+    meta = gc.query(
+        """
+        MATCH (v:DDVersion {id: $version})
+        RETURN v.is_current AS is_current,
+               v.embeddings_built_at AS embeddings_built_at,
+               v.embeddings_model AS embeddings_model,
+               v.embeddings_count AS embeddings_count
+        """,
+        version=version,
+    )[0]
+
+    # Get path statistics
+    stats = gc.query(
+        """
+        MATCH (v:DDVersion {id: $version})
+        OPTIONAL MATCH (introduced:IMASPath)-[:INTRODUCED_IN]->(v)
+        OPTIONAL MATCH (deprecated:IMASPath)-[:DEPRECATED_IN]->(v)
+        OPTIONAL MATCH (renamed:IMASPath)-[:RENAMED_TO]->(target:IMASPath),
+                       (renamed)-[:DEPRECATED_IN]->(v)
+        WITH v,
+             count(DISTINCT introduced) AS paths_introduced,
+             count(DISTINCT deprecated) AS paths_deprecated,
+             count(DISTINCT renamed) AS paths_renamed
+        OPTIONAL MATCH (embedded:IMASPath)-[:INTRODUCED_IN]->(v)
+        WHERE embedded.embedding IS NOT NULL
+        RETURN paths_introduced, paths_deprecated, paths_renamed,
+               count(embedded) AS paths_embedded
+        """,
+        version=version,
+    )[0]
+
+    # Get change tracking stats
+    changes = gc.query(
+        """
+        MATCH (c:EmbeddingChange)-[:HAS_EMBEDDING_CHANGE]->(p:IMASPath)
+        WHERE c.dd_version = $version
+        RETURN c.change_type AS change_type, count(*) AS count
+        ORDER BY count DESC
+        """,
+        version=version,
+    )
+
+    # Get unit changes
+    unit_changes = gc.query(
+        """
+        MATCH (pc:PathChange)-[:CHANGES]->(p:IMASPath)
+        WHERE pc.from_version = $version OR pc.to_version = $version
+        RETURN pc.change_type AS change_type, count(*) AS count
+        ORDER BY count DESC
+        LIMIT 10
+        """,
+        version=version,
+    )
+
+    # Display version header
+    current_marker = " [green](current)[/green]" if meta["is_current"] else ""
+    console.print(f"\n[bold]DD Version {version}{current_marker}[/bold]\n")
+
+    # Path statistics table
+    table = Table(title="Path Statistics", show_header=True)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Count", justify="right")
+
+    table.add_row("Paths introduced", str(stats["paths_introduced"]))
+    table.add_row("Paths deprecated", str(stats["paths_deprecated"]))
+    table.add_row("Paths renamed", str(stats["paths_renamed"]))
+    table.add_row("Paths embedded", str(stats["paths_embedded"]))
+
+    console.print(table)
+
+    # Embedding changes if any
+    if changes:
+        changes_table = Table(title="Embedding Content Changes", show_header=True)
+        changes_table.add_column("Change Type", style="yellow")
+        changes_table.add_column("Count", justify="right")
+
+        for c in changes:
+            changes_table.add_row(c["change_type"], str(c["count"]))
+
+        console.print(changes_table)
+
+    # PathChange statistics if any
+    if unit_changes:
+        pc_table = Table(title="Path Metadata Changes", show_header=True)
+        pc_table.add_column("Change Type", style="magenta")
+        pc_table.add_column("Count", justify="right")
+
+        for pc in unit_changes:
+            pc_table.add_row(pc["change_type"], str(pc["count"]))
+
+        console.print(pc_table)
+
+    # Embeddings metadata
+    if meta["embeddings_built_at"]:
+        console.print(
+            f"\n[dim]Embeddings: {meta['embeddings_count']} paths, "
+            f"model: {meta['embeddings_model']}, "
+            f"built: {meta['embeddings_built_at']}[/dim]"
+        )
+
+
+def _show_versions_summary(gc, console) -> None:
+    """Show summary of all DD versions in graph."""
+    # Count paths INTRODUCED_IN each version (not deprecated paths)
+    versions = gc.query("""
+        MATCH (v:DDVersion)
+        OPTIONAL MATCH (p:IMASPath)-[:INTRODUCED_IN]->(v)
+        WITH v, count(p) AS introduced
+        OPTIONAL MATCH (p2:IMASPath)-[:INTRODUCED_IN]->(v) WHERE p2.embedding IS NOT NULL
+        RETURN v.id AS version, v.is_current AS is_current, introduced, count(p2) AS embedded
+        ORDER BY v.id
+    """)
+
+    if not versions:
+        console.print("[yellow]No versions in graph.[/yellow]")
+        console.print("Build with: imas-codex imas build")
+        return
+
+    console.print("[bold]DD versions in graph:[/bold]")
+    for v in versions:
+        current = " [green](current)[/green]" if v["is_current"] else ""
+        embedded = f", {v['embedded']} embedded" if v["embedded"] else ""
+        console.print(
+            f"  {v['version']}: {v['introduced']} paths introduced{embedded}{current}"
+        )
 
 
 # ============================================================================
