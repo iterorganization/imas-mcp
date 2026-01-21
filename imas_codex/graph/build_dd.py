@@ -235,6 +235,126 @@ def compute_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+# Embedding change types for tracking what changed between versions
+class EmbeddingChangeType:
+    """Types of embedding content changes detected."""
+
+    UNITS_CHANGED = "UNITS_CHANGED"
+    DOCUMENTATION_CHANGED = "DOCUMENTATION_CHANGED"
+    COORDINATES_CHANGED = "COORDINATES_CHANGED"
+    DATA_TYPE_CHANGED = "DATA_TYPE_CHANGED"
+    PHYSICS_DOMAIN_CHANGED = "PHYSICS_DOMAIN_CHANGED"
+    IDS_CONTEXT_CHANGED = "IDS_CONTEXT_CHANGED"
+
+
+def detect_embedding_changes(
+    old_text: str | None, new_text: str, path_info: dict
+) -> list[str]:
+    """
+    Detect what changed between old and new embedding text.
+
+    Compares semantic sections of embedding text to identify specific
+    changes in units, documentation, coordinates, etc.
+
+    Args:
+        old_text: Previous embedding text (None if new path)
+        new_text: Current embedding text
+        path_info: Path metadata for additional context
+
+    Returns:
+        List of EmbeddingChangeType values for detected changes
+    """
+    if old_text is None:
+        return []  # New path, not a change
+
+    if old_text == new_text:
+        return []  # No change
+
+    changes = []
+
+    # Detect units change
+    old_units = _extract_units_section(old_text)
+    new_units = _extract_units_section(new_text)
+    if old_units != new_units:
+        changes.append(EmbeddingChangeType.UNITS_CHANGED)
+
+    # Detect documentation change (longest sentence typically)
+    old_doc = _extract_documentation_section(old_text)
+    new_doc = _extract_documentation_section(new_text)
+    if old_doc != new_doc:
+        changes.append(EmbeddingChangeType.DOCUMENTATION_CHANGED)
+
+    # Detect coordinates change
+    if "coordinate" in old_text.lower() or "coordinate" in new_text.lower():
+        old_coords = _extract_coordinate_section(old_text)
+        new_coords = _extract_coordinate_section(new_text)
+        if old_coords != new_coords:
+            changes.append(EmbeddingChangeType.COORDINATES_CHANGED)
+
+    # Detect data type change
+    old_dtype = _extract_data_type_section(old_text)
+    new_dtype = _extract_data_type_section(new_text)
+    if old_dtype != new_dtype:
+        changes.append(EmbeddingChangeType.DATA_TYPE_CHANGED)
+
+    # Detect physics domain change
+    if "physics" in old_text.lower() or "physics" in new_text.lower():
+        old_domain = _extract_physics_domain_section(old_text)
+        new_domain = _extract_physics_domain_section(new_text)
+        if old_domain != new_domain:
+            changes.append(EmbeddingChangeType.PHYSICS_DOMAIN_CHANGED)
+
+    # Detect IDS context change
+    old_ids = _extract_ids_context_section(old_text)
+    new_ids = _extract_ids_context_section(new_text)
+    if old_ids != new_ids:
+        changes.append(EmbeddingChangeType.IDS_CONTEXT_CHANGED)
+
+    return changes
+
+
+def _extract_units_section(text: str) -> str | None:
+    """Extract units portion of embedding text."""
+    match = re.search(r"[Mm]easured in ([^.]+)\.", text)
+    return match.group(1) if match else None
+
+
+def _extract_documentation_section(text: str) -> str | None:
+    """Extract documentation portion (usually 3rd sentence)."""
+    sentences = text.split(". ")
+    # Documentation is usually after IDS context, before units
+    for i, sent in enumerate(sentences):
+        if i >= 2 and not sent.startswith(
+            ("Measured", "Related to", "This is a", "Indexed")
+        ):
+            return sent
+    return None
+
+
+def _extract_coordinate_section(text: str) -> str | None:
+    """Extract coordinate information."""
+    match = re.search(r"[Ii]ndexed along ([^.]+)\.", text)
+    return match.group(1) if match else None
+
+
+def _extract_data_type_section(text: str) -> str | None:
+    """Extract data type description."""
+    match = re.search(r"This is a ([^.]+)\.", text)
+    return match.group(1) if match else None
+
+
+def _extract_physics_domain_section(text: str) -> str | None:
+    """Extract physics domain."""
+    match = re.search(r"Related to ([^.]+) physics\.", text)
+    return match.group(1) if match else None
+
+
+def _extract_ids_context_section(text: str) -> str | None:
+    """Extract IDS context description."""
+    match = re.search(r"The [^.]+ IDS contains ([^.]+)", text)
+    return match.group(1) if match else None
+
+
 # Error field pattern for identifying error paths and extracting base path and type
 ERROR_FIELD_PATTERN = re.compile(r"^(.+?)_error_(upper|lower|index)$")
 
@@ -352,6 +472,44 @@ def generate_embeddings_batch(
     return np.vstack(embeddings_list)
 
 
+def get_existing_embedding_data(
+    client: GraphClient,
+    paths: list[str],
+    batch_size: int = 1000,
+) -> dict[str, dict]:
+    """
+    Query existing embedding data from the graph for change detection.
+
+    Args:
+        client: GraphClient instance
+        paths: List of path IDs to check
+        batch_size: Query batch size
+
+    Returns:
+        Dict mapping path_id to {hash, text} (only for paths with existing data)
+    """
+    result = {}
+
+    for i in range(0, len(paths), batch_size):
+        batch = paths[i : i + batch_size]
+        records = client.query(
+            """
+            UNWIND $paths AS path_id
+            MATCH (p:IMASPath {id: path_id})
+            WHERE p.embedding_hash IS NOT NULL
+            RETURN p.id AS path_id, p.embedding_hash AS hash, p.embedding_text AS text
+            """,
+            paths=batch,
+        )
+        for record in records:
+            result[record["path_id"]] = {
+                "hash": record["hash"],
+                "text": record["text"],
+            }
+
+    return result
+
+
 def get_existing_embedding_hashes(
     client: GraphClient,
     paths: list[str],
@@ -387,6 +545,71 @@ def get_existing_embedding_hashes(
     return result
 
 
+def record_embedding_changes(
+    client: GraphClient,
+    changes: list[dict],
+    dd_version: str,
+) -> int:
+    """
+    Record embedding content changes as relationships in the graph.
+
+    Creates HAS_EMBEDDING_CHANGE relationships linking IMASPath nodes to
+    EmbeddingChange nodes that track what changed and when.
+
+    Args:
+        client: GraphClient instance
+        changes: List of dicts with path_id, change_types, old_text, new_text
+        dd_version: DD version when change was detected
+
+    Returns:
+        Number of change records created
+    """
+    if not changes:
+        return 0
+
+    # Batch create EmbeddingChange nodes and relationships
+    change_data = []
+    for change in changes:
+        for change_type in change["change_types"]:
+            change_data.append(
+                {
+                    "path_id": change["path_id"],
+                    "change_type": change_type,
+                    "old_text_hash": compute_content_hash(change["old_text"])
+                    if change.get("old_text")
+                    else None,
+                    "new_text_hash": compute_content_hash(change["new_text"]),
+                    "dd_version": dd_version,
+                }
+            )
+
+    if not change_data:
+        return 0
+
+    # Use MERGE to avoid duplicates for same path/change_type/version
+    client.query(
+        """
+        UNWIND $changes AS c
+        MATCH (p:IMASPath {id: c.path_id})
+        MERGE (p)-[r:HAS_EMBEDDING_CHANGE {
+            change_type: c.change_type,
+            dd_version: c.dd_version
+        }]->(ec:EmbeddingChange {
+            path_id: c.path_id,
+            change_type: c.change_type,
+            dd_version: c.dd_version
+        })
+        ON CREATE SET
+            ec.detected_at = datetime(),
+            ec.old_hash = c.old_text_hash,
+            ec.new_hash = c.new_text_hash
+        """,
+        changes=change_data,
+    )
+
+    return len(change_data)
+
+
 def update_path_embeddings(
     client: GraphClient,
     paths_data: dict[str, dict],
@@ -395,6 +618,8 @@ def update_path_embeddings(
     batch_size: int = 500,
     force_rebuild: bool = False,
     use_rich: bool | None = None,
+    dd_version: str | None = None,
+    track_changes: bool = True,
 ) -> dict[str, int]:
     """
     Generate and store embeddings for IMASPath nodes with content-based caching.
@@ -402,6 +627,9 @@ def update_path_embeddings(
     Only regenerates embeddings for paths where the content hash has changed,
     minimizing recompute on graph rebuilds. Model name is stored on DDVersion,
     not on individual paths.
+
+    When track_changes is True, detects what changed (units, documentation, etc.)
+    and records EmbeddingChange nodes linked to affected paths.
 
     Args:
         client: GraphClient instance
@@ -411,12 +639,14 @@ def update_path_embeddings(
         batch_size: Batch size for embedding generation
         force_rebuild: If True, regenerate all embeddings regardless of cache
         use_rich: Force rich progress (True), logging (False), or auto (None)
+        dd_version: DD version for change tracking (uses current if None)
+        track_changes: If True, detect and record what changed in embeddings
 
     Returns:
-        Dict with stats: {"updated": N, "cached": M, "total": N+M}
+        Dict with stats: {"updated": N, "cached": M, "total": N+M, "changes": C}
     """
     if not paths_data:
-        return {"updated": 0, "cached": 0, "total": 0}
+        return {"updated": 0, "cached": 0, "total": 0, "changes": 0}
 
     # Step 1: Generate embedding text and compute hashes for all paths
     path_ids = list(paths_data.keys())
@@ -430,11 +660,16 @@ def update_path_embeddings(
         embedding_texts[path_id] = text
         content_hashes[path_id] = compute_content_hash(text)
 
-    # Step 2: Get existing hashes from graph to determine what needs update
+    # Step 2: Get existing data from graph for cache validation AND change detection
+    existing_data = {}
+    if not force_rebuild or track_changes:
+        existing_data = get_existing_embedding_data(client, path_ids)
+
     if not force_rebuild:
-        existing_hashes = get_existing_embedding_hashes(client, path_ids)
         paths_to_update = [
-            pid for pid in path_ids if content_hashes[pid] != existing_hashes.get(pid)
+            pid
+            for pid in path_ids
+            if content_hashes[pid] != existing_data.get(pid, {}).get("hash")
         ]
         cached_count = len(path_ids) - len(paths_to_update)
     else:
@@ -443,14 +678,40 @@ def update_path_embeddings(
 
     if not paths_to_update:
         logger.info(f"All {len(path_ids)} embeddings up to date (cached)")
-        return {"updated": 0, "cached": len(path_ids), "total": len(path_ids)}
+        return {
+            "updated": 0,
+            "cached": len(path_ids),
+            "total": len(path_ids),
+            "changes": 0,
+        }
 
     logger.info(
         f"Generating embeddings for {len(paths_to_update)} paths "
         f"({cached_count} cached)"
     )
 
-    # Step 3: Generate embeddings for paths that need update
+    # Step 3: Detect changes for paths being updated (if tracking enabled)
+    changes_detected = []
+    if track_changes:
+        for path_id in paths_to_update:
+            old_data = existing_data.get(path_id)
+            if old_data and old_data.get("text"):
+                change_types = detect_embedding_changes(
+                    old_data["text"],
+                    embedding_texts[path_id],
+                    paths_data[path_id],
+                )
+                if change_types:
+                    changes_detected.append(
+                        {
+                            "path_id": path_id,
+                            "change_types": change_types,
+                            "old_text": old_data["text"],
+                            "new_text": embedding_texts[path_id],
+                        }
+                    )
+
+    # Step 4: Generate embeddings for paths that need update
     texts_to_embed = [embedding_texts[pid] for pid in paths_to_update]
     embeddings = generate_embeddings_batch(
         texts_to_embed, model_name, batch_size, use_rich=use_rich
@@ -521,10 +782,19 @@ def update_path_embeddings(
         if store_progress:
             store_progress.finish_processing()
 
+    # Step 6: Record embedding changes if tracking enabled
+    changes_count = 0
+    if track_changes and changes_detected:
+        version = dd_version or current_dd_version
+        changes_count = record_embedding_changes(client, changes_detected, version)
+        if changes_count > 0:
+            logger.info(f"Recorded {changes_count} embedding content changes")
+
     return {
         "updated": len(paths_to_update),
         "cached": cached_count,
         "total": len(path_ids),
+        "changes": changes_count,
     }
 
 
@@ -898,9 +1168,12 @@ def build_dd_graph(
                 model_name=embedding_model,
                 force_rebuild=force_embeddings,
                 use_rich=use_rich,
+                dd_version=current_dd_version,
+                track_changes=True,
             )
             stats["embeddings_updated"] = embedding_stats["updated"]
             stats["embeddings_cached"] = embedding_stats["cached"]
+            stats["embedding_changes"] = embedding_stats.get("changes", 0)
 
             # Update DDVersion with embedding metadata
             client.query(

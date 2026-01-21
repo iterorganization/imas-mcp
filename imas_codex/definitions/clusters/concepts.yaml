@@ -440,4 +440,177 @@ enums:
         description: Computational grid geometry
         meaning: imas:grid_geometry
 
+      # Plasma composition and species
+      plasma_composition:
+        description: Plasma species composition and mixture
+        meaning: imas:plasma_composition
+        annotations:
+          related: ion_density, impurity_density
+
+      charge_state:
+        description: Ion charge state
+        meaning: imas:charge_state
+        annotations:
+          symbol: Z
+
+      zeff:
+        description: Effective charge of plasma
+        meaning: imas:zeff
+        annotations:
+          symbol: Zeff
+          related: effective_charge
+
+      mass_density:
+        description: Mass density of plasma
+        meaning: imas:mass_density
+        annotations:
+          units: kg/m^3
+
+      # Neutral gas and injection
+      neutral_pressure:
+        description: Neutral gas pressure
+        meaning: imas:neutral_pressure
+        annotations:
+          units: Pa
+
+      gas_inventory:
+        description: Total gas inventory in vessel
+        meaning: imas:gas_inventory
+
+      gas_injection_rate:
+        description: Rate of gas injection
+        meaning: imas:gas_injection_rate
+        annotations:
+          units: Pa.m^3/s, particles/s
+
+      particle_inventory:
+        description: Total particle inventory
+        meaning: imas:particle_inventory
+
+      particle_source:
+        description: Particle source rate
+        meaning: imas:particle_source
+        annotations:
+          units: particles/s, m^-3.s^-1
+
+      neutral_velocity:
+        description: Neutral particle velocity
+        meaning: imas:neutral_velocity
+        annotations:
+          units: m/s
+
+      # Electric and magnetic potentials
+      electric_potential:
+        description: Electric potential
+        meaning: imas:electric_potential
+        annotations:
+          symbol: phi
+          units: V
+
+      vector_potential:
+        description: Magnetic vector potential
+        meaning: imas:vector_potential
+        annotations:
+          symbol: A
+          units: T.m
+
+      # Distribution functions and kinetics
+      distribution_function:
+        description: Particle velocity distribution function
+        meaning: imas:distribution_function
+        annotations:
+          related: electron_density, ion_density
+
+      # Velocities
+      diamagnetic_velocity:
+        description: Diamagnetic drift velocity
+        meaning: imas:diamagnetic_velocity
+        annotations:
+          related: poloidal_velocity, toroidal_velocity
+
+      vorticity:
+        description: Plasma vorticity
+        meaning: imas:vorticity
+
+      # Geometry and shaping
+      squareness:
+        description: Plasma squareness shape parameter
+        meaning: imas:squareness
+        annotations:
+          related: triangularity, elongation
+
+      plasma_volume:
+        description: Total plasma volume
+        meaning: imas:plasma_volume
+        annotations:
+          units: m^3
+
+      flux_expansion:
+        description: Magnetic flux expansion ratio
+        meaning: imas:flux_expansion
+
+      # Confinement and transport
+      confinement_time:
+        description: Generic confinement time
+        meaning: imas:confinement_time
+        annotations:
+          units: s
+          related: energy_confinement_time, particle_confinement_time
+
+      flux_limiter:
+        description: Heat or particle flux limiter
+        meaning: imas:flux_limiter
+
+      # Energy and power
+      energy_density:
+        description: Energy density
+        meaning: imas:energy_density
+        annotations:
+          units: J/m^3
+
+      spectral_radiance:
+        description: Spectral radiance from plasma
+        meaning: imas:spectral_radiance
+        annotations:
+          units: W/m^2/sr/nm
+
+      neutron_flux:
+        description: Neutron particle flux
+        meaning: imas:neutron_flux
+        annotations:
+          units: neutrons/m^2/s
+
+      # Inductance
+      internal_inductance:
+        description: Internal inductance
+        meaning: imas:internal_inductance
+        annotations:
+          symbol: li
+
+      # Diagnostic geometry
+      line_of_sight:
+        description: Diagnostic line of sight
+        meaning: imas:line_of_sight
+
+      # Tensor quantities
+      metric_tensor:
+        description: Metric tensor for coordinate systems
+        meaning: imas:metric_tensor
+
+      # Waves
+      wave_vector:
+        description: Wave propagation vector
+        meaning: imas:wave_vector
+        annotations:
+          symbol: k
+
+      # Disruptions
+      disruption_metrics:
+        description: Disruption characterization metrics
+        meaning: imas:disruption_metrics
+
+      # Control
+      feedback_control:
+        description: Feedback control parameters
+        meaning: imas:feedback_control
 

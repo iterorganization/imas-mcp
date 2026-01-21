@@ -3257,14 +3257,16 @@ def imas_build(
         click.echo(f"Unit nodes: {stats['units_created']}")
         click.echo(f"PathChange nodes: {stats['path_changes_created']}")
         if not skip_embeddings:
-            click.echo(
-                f"Paths filtered (error/GGD/metadata): {stats['paths_filtered']}"
-            )
+            click.echo(f"Paths filtered (error/metadata): {stats['paths_filtered']}")
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
             click.echo(f"Embeddings updated: {stats['embeddings_updated']}")
             click.echo(f"Embeddings cached: {stats['embeddings_cached']}")
             if stats.get("embeddings_cleaned", 0) > 0:
                 click.echo(f"Stale embeddings cleaned: {stats['embeddings_cleaned']}")
+            if stats.get("embedding_changes", 0) > 0:
+                click.echo(
+                    f"Embedding content changes tracked: {stats['embedding_changes']}"
+                )
         if not skip_clusters:
             click.echo(f"Cluster nodes: {stats['clusters_created']}")
 
