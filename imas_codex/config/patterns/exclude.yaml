@@ -1,0 +1,101 @@
+# Exclusion patterns for discovery scanning
+# These paths are filtered BEFORE SSH calls to avoid wasting resources
+#
+# Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
+# Applied by: imas_codex.discovery.scanner.scan_paths()
+
+version: "1.0"
+
+# Directory names to always exclude (matched against basename)
+# These create child FacilityPath nodes with status='excluded'
+directories:
+  # Version control
+  - ".git"
+  - ".svn"
+  - ".hg"
+  
+  # Python
+  - "__pycache__"
+  - ".venv"
+  - "venv"
+  - ".eggs"
+  - "*.egg-info"
+  - ".pytest_cache"
+  - ".mypy_cache"
+  - ".ruff_cache"
+  - ".tox"
+  
+  # JavaScript/Node
+  - "node_modules"
+  - ".npm"
+  - ".yarn"
+  
+  # Build artifacts
+  - "build"
+  - "dist"
+  - "_build"
+  - "target"  # Rust
+  - "cmake-build-*"
+  
+  # IDE/Editor
+  - ".idea"
+  - ".vscode"
+  - ".eclipse"
+  
+  # System/User caches
+  - ".cache"
+  - ".local"
+  - ".config"
+
+# Patterns for hidden directories (dotfiles)
+# These are matched with fnmatch against basename
+dotfile_patterns:
+  # Exclude most dotfiles
+  exclude: true
+  # But allow these specific ones
+  allow:
+    - ".github"  # GitHub workflows may have useful info
+    - ".gitlab"
+
+# Directory name patterns to exclude (using fnmatch)
+patterns:
+  - "anaconda*"
+  - "miniconda*"
+  - "*backup*"
+  - "*old*"
+  - "*deprecated*"
+
+# Absolute path prefixes to never scan
+# These prevent even creating FacilityPath nodes
+path_prefixes:
+  - "/proc"
+  - "/sys"
+  - "/dev"
+  - "/run"
+  - "/tmp"
+  - "/var/tmp"
+  - "/var/cache"
+  - "/var/log"
+
+# Archive file extensions - directories named with these are opaque containers
+# we can't scan directly, and often contain duplicated/built artifacts
+archive_extensions:
+  - ".tar"
+  - ".tar.gz"
+  - ".tgz"
+  - ".tar.bz2"
+  - ".tbz2"
+  - ".tar.xz"
+  - ".txz"
+  - ".zip"
+  - ".7z"
+  - ".rar"
+  - ".gz"
+  - ".bz2"
+  - ".xz"
+
+# Maximum depth to scan (prevents runaway recursion)
+max_depth: 15
+
+# Directories with more than this many entries trigger size_skipped
+large_dir_threshold: 10000

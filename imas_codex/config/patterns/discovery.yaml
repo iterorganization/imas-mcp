@@ -1,185 +1,28 @@
 # Discovery Pattern Configuration
-# Used by Map Agent for multi-dimensional file scoring
+# DEPRECATED: This file has been split into modular components.
 #
-# YAML Structure Guidelines (see plans/DISCOVERY_STRATEGY.md):
-# - config/patterns/: Discovery patterns (base + facility overrides)
-# - config/facilities/: Per-facility runtime config
-# - definitions/: Static domain knowledge (physics, clusters)
-# - schemas/: LinkML data models (source of truth)
+# New structure:
+#   config/patterns/
+#   ├── exclude.yaml                # Path exclusion patterns
+#   ├── file_types.yaml             # File extension categories
+#   └── scoring/
+#       ├── base.yaml               # Dimension weights and thresholds
+#       ├── data_systems.yaml       # IMAS, MDSplus, HDF5, UDA, etc.
+#       └── physics.yaml            # Physics domain patterns
+#
+# Loader: imas_codex.config.discovery_config.DiscoveryConfig.load()
+#
+# This file is kept for backward compatibility reference only.
+# The new modular configs are loaded by get_discovery_config().
 
-version: "1.0"
-description: "Multi-dimensional discovery patterns for fusion code exploration"
+version: "2.0"
+description: "Discovery configuration - see split files for actual patterns"
 
-# Tree-sitter language support (verified in tree-sitter-language-pack)
-# Languages not listed here use regex fallback chunking
-tree_sitter_languages:
-  - python
-  - fortran
-  - c
-  - cpp
-  - matlab
-  - julia
-  - bash
-
-# File extensions to include in discovery
-file_extensions:
-  code:
-    - py       # Python
-    - f90      # Modern Fortran
-    - f        # Legacy Fortran
-    - f77      # Fortran 77
-    - pro      # IDL (regex fallback)
-    - m        # MATLAB
-    - c        # C
-    - cpp      # C++
-    - h        # Headers
-    - jl       # Julia
-  config:
-    - yaml
-    - yml
-    - json
-    - xml
-    - cfg
-    - ini
-  data:
-    - nc       # NetCDF
-    - h5       # HDF5
-    - hdf5
-
-# Paths to always exclude
-exclude_paths:
-  - ".git"
-  - "__pycache__"
-  - "node_modules"
-  - ".venv"
-  - "venv"
-  - "build"
-  - "dist"
-  - ".cache"
-  - ".local"
-  - ".config"
-  - "anaconda*"
-  - "miniconda*"
-
-# Change detection settings
-change_detection:
-  # Use fingerprint (size:mtime) for all files - fast change detection
-  fingerprint_all: true
-  # Compute content hash (md5) only for high-value files
-  content_hash_threshold: 0.7  # score > 0.7 gets content hash
-  
-# Retry settings for failed files
-retry:
-  max_attempts: 3
-  backoff_seconds: [5, 30, 120]  # 5s, 30s, 2min then fail
-
-# Scoring dimensions - each file gets a score per dimension
-dimensions:
-  mdsplus:
-    description: "MDSplus data access patterns"
-    priority: 1
-    patterns:
-      - pattern: "MDSplus|mdsplus"
-        weight: 1.0
-        description: "Direct MDSplus import/usage"
-      - pattern: "Tree\\(|openTree|setDefault"
-        weight: 0.9
-        description: "Tree operations"
-      - pattern: "TdiCompile|TdiExecute|tdi\\("
-        weight: 0.85
-        description: "TDI expression usage"
-      - pattern: "Connection\\(|makeConnection"
-        weight: 0.8
-        description: "Remote MDSplus connection"
-      - pattern: "tcvtree|tcv_shot|getdata"
-        weight: 0.75
-        description: "TCV-specific MDSplus patterns"
-
-  imas:
-    description: "IMAS/IDS integration patterns"
-    priority: 2
-    patterns:
-      - pattern: "imas\\.imasdef|imas\\.DBEntry"
-        weight: 1.0
-        description: "Direct IMAS import"
-      - pattern: "ids_properties|homogeneous_time"
-        weight: 0.95
-        description: "IDS structure access"
-      - pattern: "put_slice|get_slice|write_ids|read_ids"
-        weight: 0.9
-        description: "IDS I/O operations"
-      - pattern: "equilibrium|core_profiles|core_sources"
-        weight: 0.8
-        description: "Common IDS names (may be physics terms)"
-      - pattern: "DDEntry|IMASpy|al_data"
-        weight: 0.85
-        description: "IMAS libraries"
-
-  physics:
-    description: "Physics analysis code patterns"
-    priority: 3
-    patterns:
-      - pattern: "equilibrium|psi_norm|q_profile|q95"
-        weight: 0.9
-        description: "Equilibrium quantities"
-      - pattern: "transport|diffusion|conductivity|flux"
-        weight: 0.85
-        description: "Transport analysis"
-      - pattern: "COCOS|cocos|coordinate_system"
-        weight: 0.8
-        description: "Coordinate conventions"
-      - pattern: "electron_temp|ion_temp|Te\\b|Ti\\b|ne\\b"
-        weight: 0.75
-        description: "Plasma parameters"
-      - pattern: "bootstrap|neoclassical|gyro"
-        weight: 0.7
-        description: "Advanced transport"
-
-  geometry:
-    description: "Geometry and topology patterns"
-    priority: 4
-    patterns:
-      - pattern: "boundary|separatrix|lcfs|x_point"
-        weight: 0.9
-        description: "Plasma boundary"
-      - pattern: "flux_surface|contour|rho_tor"
-        weight: 0.85
-        description: "Flux surface geometry"
-      - pattern: "wall|limiter|divertor"
-        weight: 0.8
-        description: "Wall structures"
-      - pattern: "r_boundary|z_boundary|outline"
-        weight: 0.75
-        description: "Boundary coordinates"
-
-  diagnostics:
-    description: "Diagnostic system patterns"
-    priority: 5
-    patterns:
-      - pattern: "thomson|ece|interferometer"
-        weight: 0.9
-        description: "Profile diagnostics"
-      - pattern: "magnetics|magnetic_probe|flux_loop"
-        weight: 0.85
-        description: "Magnetic diagnostics"
-      - pattern: "bolometer|soft_x|radiation"
-        weight: 0.8
-        description: "Radiation diagnostics"
-      - pattern: "reflectometer|doppler"
-        weight: 0.75
-        description: "Reflectometry"
-
-# Facility-specific pattern overrides (optional)
-facility_overrides:
-  epfl:
-    mdsplus:
-      extra_patterns:
-        - pattern: "\\\\tcv_shot|\\\\results|\\\\base"
-          weight: 0.9
-          description: "TCV-specific tree names"
-  iter:
-    imas:
-      extra_patterns:
-        - pattern: "ids_create|uri_provider"
-          weight: 0.95
-          description: "ITER IMAS infrastructure"
+# Redirect to new structure
+config_files:
+  exclude: "exclude.yaml"
+  file_types: "file_types.yaml"
+  scoring:
+    base: "scoring/base.yaml"
+    data_systems: "scoring/data_systems.yaml"
+    physics: "scoring/physics.yaml"

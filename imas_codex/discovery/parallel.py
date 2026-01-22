@@ -161,14 +161,20 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
 def mark_scan_complete(
     facility: str,
     scan_results: list[tuple[str, dict, list[str], str | None]],
+    excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Mark scanned paths complete and create children.
 
     Transition: scanning → scanned (or skipped on error)
+
+    Args:
+        facility: Facility ID
+        scan_results: List of (path, stats_dict, child_dirs, error) tuples
+        excluded: Optional list of (path, parent_path, reason) for excluded dirs
     """
     from imas_codex.discovery.frontier import persist_scan_results
 
-    return persist_scan_results(facility, scan_results)
+    return persist_scan_results(facility, scan_results, excluded=excluded)
 
 
 def mark_score_complete(
@@ -236,7 +242,18 @@ async def scan_worker(
         batch_data = [
             (r.path, r.stats.to_dict(), r.child_dirs, r.error) for r in results
         ]
-        stats = mark_scan_complete(state.facility, batch_data)
+
+        # Collect excluded directories with parent paths and reasons
+        excluded_data = []
+        for r in results:
+            for excluded_path, reason in r.excluded_dirs:
+                excluded_data.append((excluded_path, r.path, reason))
+
+        stats = mark_scan_complete(
+            state.facility,
+            batch_data,
+            excluded=excluded_data if excluded_data else None,
+        )
 
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]

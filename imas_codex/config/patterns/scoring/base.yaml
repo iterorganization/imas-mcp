@@ -1,0 +1,65 @@
+# Base scoring configuration for discovery
+# Defines dimension weights and scoring thresholds
+#
+# Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
+# Used by: imas_codex.discovery.scorer.grounded_score()
+
+version: "1.0"
+
+# Scoring dimensions and their weights
+# Combined score = weighted average of dimensions
+dimensions:
+  code:
+    weight: 1.0
+    description: "Value for code discovery and analysis"
+    
+  data:
+    weight: 0.8
+    description: "Scientific data storage value"
+    
+  imas:
+    weight: 1.2
+    description: "IMAS/IDS integration relevance"
+
+# Expansion thresholds
+thresholds:
+  # Minimum combined score to expand into children
+  expand: 0.4
+  
+  # Score below which paths are marked as low-value
+  low_value: 0.2
+  
+  # High-value threshold for prioritized processing
+  high_value: 0.7
+
+# Purpose-based score multipliers
+# Applied after dimension scoring
+purpose_multipliers:
+  physics_code: 1.0
+  data_files: 1.0
+  documentation: 0.8
+  configuration: 0.7
+  test_files: 0.6
+  build_artifacts: 0.3
+  user_home: 0.3
+  system: 0.2
+  unknown: 0.5
+
+# Suppressed purposes - these should not be expanded
+suppressed_purposes:
+  - system
+  - build_artifacts
+  - user_home
+
+# Evidence-based score boosts
+evidence_boosts:
+  # Quality indicators
+  has_readme: 0.05
+  has_makefile: 0.05
+  has_git: 0.05
+  
+  # IMAS indicators found
+  imas_indicators: 0.10
+  
+  # Code diversity (>3 different file types)
+  code_diversity: 0.05

@@ -1,0 +1,126 @@
+# File type categorization for discovery
+# Used for pattern matching and scoring dimensions
+#
+# Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
+
+version: "1.0"
+
+# Code file extensions (used for code dimension scoring)
+code:
+  # Python - most common for fusion analysis
+  python:
+    extensions: [py, pyw, pyi]
+    tree_sitter: true
+    weight: 1.0
+    
+  # Fortran - legacy physics codes
+  fortran:
+    extensions: [f, f77, f90, f95, f03, f08, for, fpp]
+    tree_sitter: true
+    weight: 1.0
+    
+  # C/C++ - performance-critical code
+  c_cpp:
+    extensions: [c, h, cpp, hpp, cc, hh, cxx, hxx]
+    tree_sitter: true
+    weight: 1.0
+    
+  # MATLAB - common in experimental analysis
+  matlab:
+    extensions: [m]
+    tree_sitter: true
+    weight: 0.9
+    
+  # Julia - growing adoption in fusion
+  julia:
+    extensions: [jl]
+    tree_sitter: true
+    weight: 0.9
+    
+  # IDL/GDL - legacy diagnostic analysis
+  idl:
+    extensions: [pro]
+    tree_sitter: false  # Uses regex fallback
+    weight: 0.8
+    
+  # TDI - MDSplus expressions
+  tdi:
+    extensions: [fun, tdi]
+    tree_sitter: false  # Uses regex fallback
+    weight: 0.9
+    
+  # Shell scripts
+  shell:
+    extensions: [sh, bash, zsh, csh, tcsh]
+    tree_sitter: true
+    weight: 0.5
+
+# Configuration file extensions
+config:
+  structured:
+    extensions: [yaml, yml, json, toml]
+    weight: 0.6
+  xml:
+    extensions: [xml, xsd, xsl]
+    weight: 0.5
+  ini:
+    extensions: [ini, cfg, conf, config]
+    weight: 0.4
+  makefiles:
+    # Matched by name, not extension
+    names: [Makefile, makefile, GNUmakefile, CMakeLists.txt]
+    weight: 0.7
+
+# Data file extensions (used for data dimension scoring)
+data:
+  scientific:
+    extensions: [nc, nc4, hdf, hdf4, hdf5, h5]
+    weight: 1.0
+    description: "Scientific data formats"
+  matlab_data:
+    extensions: [mat]
+    weight: 0.9
+    description: "MATLAB data files"
+  csv:
+    extensions: [csv, tsv, dat]
+    weight: 0.6
+    description: "Tabular data"
+  pickle:
+    extensions: [pkl, pickle]
+    weight: 0.3
+    description: "Serialized Python data (low value - not portable across Python versions)"
+  numpy:
+    extensions: [npy, npz]
+    weight: 0.5
+    description: "NumPy arrays (more portable than pickle)"
+
+# Documentation extensions
+docs:
+  markdown:
+    extensions: [md, markdown, rst, txt]
+    weight: 0.5
+  notebooks:
+    extensions: [ipynb]
+    weight: 0.8
+    description: "Jupyter notebooks (code + docs)"
+  latex:
+    extensions: [tex, bib]
+    weight: 0.4
+
+# Quality indicators - files that suggest project quality
+quality_indicators:
+  readme:
+    patterns: ["README*", "readme*"]
+    boost: 0.1
+  makefile:
+    patterns: ["Makefile", "CMakeLists.txt", "setup.py", "pyproject.toml"]
+    boost: 0.1
+  git:
+    patterns: [".git"]
+    boost: 0.1
+  tests:
+    patterns: ["test_*.py", "*_test.py", "tests/", "test/"]
+    boost: 0.05
+  docs:
+    patterns: ["docs/", "doc/", "documentation/"]
+    boost: 0.05

@@ -46,7 +46,6 @@ SCORE_WEIGHTS = {
 SUPPRESSED_PURPOSES = {
     PathPurpose.system,
     PathPurpose.build_artifacts,
-    PathPurpose.user_home,
 }
 
 
@@ -262,7 +261,11 @@ class DirectoryScorer:
         return prompt
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
-        """Build user prompt with directories to score."""
+        """Build user prompt with directories to score.
+
+        Includes child file/directory names for context - these are
+        critical for the LLM to infer purpose from naming conventions.
+        """
         import json as json_module
 
         lines = ["Score these directories:\n"]
@@ -293,6 +296,20 @@ class DirectoryScorer:
             patterns = d.get("patterns_detected", [])
             if patterns:
                 lines.append(f"Patterns: {', '.join(patterns)}")
+
+            # Add child names for context (critical for LLM to infer purpose)
+            child_names = d.get("child_names")
+            if child_names:
+                # Parse JSON if stored as string
+                if isinstance(child_names, str):
+                    try:
+                        child_names = json_module.loads(child_names)
+                    except json_module.JSONDecodeError:
+                        child_names = []
+                if child_names:
+                    # Limit to first 30 names to avoid excessive tokens
+                    names_to_show = child_names[:30]
+                    lines.append(f"Contents: {', '.join(names_to_show)}")
 
         lines.append(
             "\n\nReturn results for each directory in order. "

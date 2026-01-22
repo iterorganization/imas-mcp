@@ -39,6 +39,22 @@ def clip_path(path: str, max_len: int = 60) -> str:
     return f"{path[:keep_start]}...{path[-keep_end:]}"
 
 
+def format_duration(seconds: float) -> str:
+    """Format duration in human-readable form: 1h 23m, 5m 30s, 45s."""
+    if seconds < 0:
+        return "-"
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{mins}m {secs:02d}s" if secs else f"{mins}m"
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins:02d}m" if mins else f"{hours}h"
+
+
 def format_size(bytes_val: int | None) -> str:
     """Format bytes as human-readable size."""
     if bytes_val is None or bytes_val == 0:
@@ -169,13 +185,27 @@ class ParallelProgressState:
 
     @property
     def elapsed_str(self) -> str:
-        e = self.elapsed
-        if e < 60:
-            return f"{e:.0f}s"
-        elif e < 3600:
-            return f"{e / 60:.1f}m"
-        else:
-            return f"{e / 3600:.1f}h"
+        return format_duration(self.elapsed)
+
+    @property
+    def eta_seconds(self) -> float | None:
+        """Estimate time remaining based on score rate."""
+        if not self.score_rate or self.score_rate <= 0:
+            return None
+        remaining = self.pending + (self.scanned - self.scored)
+        if remaining <= 0:
+            return 0.0
+        return remaining / self.score_rate
+
+    @property
+    def eta_str(self) -> str:
+        """Format ETA as human-readable string."""
+        eta = self.eta_seconds
+        if eta is None:
+            return "calculating..."
+        if eta <= 0:
+            return "done"
+        return format_duration(eta)
 
 
 class ParallelProgressDisplay:
@@ -412,7 +442,7 @@ class ParallelProgressDisplay:
 
         Two lines:
         - Line 1: scored/total | progress bar | %
-        - Line 2: Budget | Time | Model | Flow
+        - Line 2: Cost | Elapsed | ETA | Flow
         """
         summary_width = self.PANEL_WIDTH * 2
 
@@ -427,7 +457,7 @@ class ParallelProgressDisplay:
         progress.append(f"/{self.state.total_paths:,}", style="dim")
         progress.append(" ", style="dim")
 
-        # Bar takes remaining width: summary_width - 4 (padding) - 14 (scored/total) - 5 (%)
+        # Bar takes remaining width
         bar_width = summary_width - 25
         bar = self._make_full_bar(
             self.state.scored, self.state.total_paths, "magenta", bar_width
@@ -435,23 +465,32 @@ class ParallelProgressDisplay:
         progress.append_text(bar)
         progress.append(f" {pct:3.0f}%", style="bold magenta")
 
-        # Line 2: Budget | Time | Model | Flow
+        # Line 2: Cost | Elapsed | ETA | Model | Flow
         this_run_cost = self.state.total_cost
         stats = Text()
+
+        # Cost
         stats.append(f"${this_run_cost:.2f}", style="yellow bold")
         stats.append(f"/${self.state.cost_limit:.2f}", style="dim")
-        stats.append(" │ ", style="dim")
+
+        # Elapsed time
+        stats.append("  ⏱ ", style="dim")
         stats.append(f"{self.state.elapsed_str}", style="cyan")
+
+        # ETA
+        stats.append("  → ", style="dim")
+        eta_str = self.state.eta_str
+        if "calculating" in eta_str or "done" in eta_str:
+            stats.append(eta_str, style="dim italic")
+        else:
+            stats.append(f"ETA {eta_str}", style="green")
+
+        # Model (compact)
         if self.state.model:
-            # Show model name clearly
-            model_short = self.state.model.replace("anthropic/", "")
-            stats.append(f" {model_short}", style="dim")
-        stats.append(" │ ", style="dim")
-        stats.append(f"{self.state.pending:,}", style="cyan")
-        stats.append("→", style="dim")
-        stats.append(f"{self.state.scanned:,}", style="blue")
-        stats.append("→", style="dim")
-        stats.append(f"{self.state.scored:,}", style="green")
+            model_short = self.state.model.replace("anthropic/", "").replace(
+                "claude-", ""
+            )
+            stats.append(f"  [{model_short}]", style="dim")
 
         content = Text()
         content.append_text(progress)

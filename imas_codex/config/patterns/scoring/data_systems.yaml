@@ -1,0 +1,132 @@
+# Data system patterns for discovery scoring
+# Patterns for detecting various fusion data systems
+#
+# Each data system is scored equally - no system is prioritized over others
+#
+# Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
+# Used by: Scanner for quick pattern detection and Scorer for evidence
+
+version: "1.0"
+
+# IMAS - Integrated Modelling & Analysis Suite
+imas:
+  description: "IMAS/IDS integration patterns"
+  priority: 1  # For ordering in reports, not weighting
+  
+  # Regex patterns for quick detection (used by rg)
+  patterns:
+    - pattern: "imas\\.imasdef|imas\\.DBEntry|from\\s+imas\\s+import"
+      weight: 1.0
+      description: "Direct IMAS import"
+    - pattern: "ids_properties|homogeneous_time|ids_type"
+      weight: 0.95
+      description: "IDS structure access"
+    - pattern: "put_slice|get_slice|write_ids|read_ids|put_|get_"
+      weight: 0.9
+      description: "IDS I/O operations"
+    - pattern: "DDEntry|IMASpy|al_data|imaspy"
+      weight: 0.85
+      description: "IMAS libraries"
+    - pattern: "create_env|uri_provider|imasdb"
+      weight: 0.8
+      description: "IMAS environment setup"
+      
+  # Path patterns that suggest IMAS content
+  path_patterns:
+    - "*imas*"
+    - "*ids*"
+    - "*imasdb*"
+
+# MDSplus - widely used tree-structured data system
+mdsplus:
+  description: "MDSplus data access patterns"
+  priority: 2
+  
+  patterns:
+    - pattern: "MDSplus|mdsplus|from\\s+MDSplus"
+      weight: 1.0
+      description: "Direct MDSplus import/usage"
+    - pattern: "Tree\\(|openTree|setDefault|TreeNode"
+      weight: 0.9
+      description: "Tree operations"
+    - pattern: "TdiCompile|TdiExecute|tdi\\(|MdsValue"
+      weight: 0.85
+      description: "TDI expression usage"
+    - pattern: "Connection\\(|makeConnection|MdsConnect"
+      weight: 0.8
+      description: "Remote MDSplus connection"
+      
+  path_patterns:
+    - "*mdsplus*"
+    - "*mds*"
+
+# HDF5 - Hierarchical Data Format
+hdf5:
+  description: "HDF5 data file patterns"
+  priority: 3
+  
+  patterns:
+    - pattern: "h5py|import\\s+h5py|from\\s+h5py"
+      weight: 1.0
+      description: "h5py library usage"
+    - pattern: "HDFStore|to_hdf|read_hdf"
+      weight: 0.9
+      description: "Pandas HDF5 interface"
+    - pattern: "\\.h5|\\.hdf5|\\.hdf"
+      weight: 0.7
+      description: "HDF5 file references"
+      
+  path_patterns:
+    - "*hdf5*"
+    - "*hdf*"
+
+# NetCDF - Network Common Data Form
+netcdf:
+  description: "NetCDF data patterns"
+  priority: 4
+  
+  patterns:
+    - pattern: "netCDF4|import\\s+netCDF4|from\\s+netCDF4"
+      weight: 1.0
+      description: "netCDF4 library usage"
+    - pattern: "Dataset\\(.*\\.nc|xarray.*open_dataset"
+      weight: 0.9
+      description: "NetCDF file access"
+    - pattern: "\\.nc|\\.nc4"
+      weight: 0.7
+      description: "NetCDF file references"
+      
+  path_patterns:
+    - "*netcdf*"
+
+# UDA - Universal Data Access (MAST, JET)
+uda:
+  description: "UDA data access patterns"
+  priority: 5
+  
+  patterns:
+    - pattern: "pyuda|import\\s+pyuda|uda\\.Client"
+      weight: 1.0
+      description: "UDA client library"
+    - pattern: "get_signal|UDAClient"
+      weight: 0.9
+      description: "UDA signal access"
+      
+  path_patterns:
+    - "*uda*"
+
+# PPF - Pulse File (JET legacy format)
+ppf:
+  description: "PPF pulse file patterns"
+  priority: 6
+  
+  patterns:
+    - pattern: "ppf\\.|ppfgo|ppfget|ppfuid"
+      weight: 1.0
+      description: "PPF access routines"
+    - pattern: "pulse_file|JETPPF"
+      weight: 0.9
+      description: "PPF references"
+      
+  path_patterns:
+    - "*ppf*"

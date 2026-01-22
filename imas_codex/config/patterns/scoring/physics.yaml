@@ -1,0 +1,178 @@
+# Physics domain patterns for discovery scoring
+# Patterns for detecting physics-related code and data
+#
+# Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
+# Used by: Scorer for physics domain classification
+
+version: "1.0"
+
+# Equilibrium reconstruction and MHD
+equilibrium:
+  description: "Equilibrium reconstruction and analysis"
+  
+  patterns:
+    - pattern: "equilibrium|psi_norm|q_profile|q95|q_edge"
+      weight: 0.9
+      description: "Equilibrium quantities"
+    - pattern: "psi_axis|psi_boundary|psi_sep|flux_surface"
+      weight: 0.85
+      description: "Poloidal flux"
+    - pattern: "EFIT|efit|CHEASE|chease|HELENA|helena|LIUQE|liuqe"
+      weight: 1.0
+      description: "Equilibrium codes"
+    - pattern: "Grad-Shafranov|GS|magnetic_axis|x_point"
+      weight: 0.8
+      description: "MHD equilibrium concepts"
+      
+  path_patterns:
+    - "*equilibrium*"
+    - "*efit*"
+    - "*chease*"
+    - "*helena*"
+    - "*liuqe*"
+
+# Transport analysis
+transport:
+  description: "Transport analysis and modeling"
+  
+  patterns:
+    - pattern: "transport|diffusion|conductivity|diffusivity"
+      weight: 0.85
+      description: "Transport coefficients"
+    - pattern: "flux|particle_flux|heat_flux|energy_flux"
+      weight: 0.8
+      description: "Transport fluxes"
+    - pattern: "ASTRA|astra|JETTO|jetto|TRANSP|transp|TGLF|tglf"
+      weight: 1.0
+      description: "Transport codes"
+    - pattern: "bootstrap|neoclassical|gyro|turbulent"
+      weight: 0.75
+      description: "Transport physics"
+      
+  path_patterns:
+    - "*transport*"
+    - "*astra*"
+    - "*jetto*"
+    - "*transp*"
+
+# Core profiles
+core_profiles:
+  description: "Core plasma profiles"
+  
+  patterns:
+    - pattern: "electron_temp|ion_temp|Te\\b|Ti\\b|ne\\b|ni\\b"
+      weight: 0.75
+      description: "Temperature and density"
+    - pattern: "core_profiles|profiles_1d|rho_tor"
+      weight: 0.85
+      description: "IMAS core profiles"
+    - pattern: "pressure|beta|collisionality|Zeff"
+      weight: 0.7
+      description: "Plasma parameters"
+      
+  path_patterns:
+    - "*profiles*"
+
+# MHD stability and instabilities
+mhd:
+  description: "MHD stability and instabilities"
+  
+  patterns:
+    - pattern: "stability|instability|mode|tearing"
+      weight: 0.8
+      description: "MHD concepts"
+    - pattern: "JOREK|jorek|MARS|mars|MISHKA|mishka"
+      weight: 1.0
+      description: "MHD codes"
+    - pattern: "sawtooth|ELM|elm|disruption|kink"
+      weight: 0.85
+      description: "MHD phenomena"
+      
+  path_patterns:
+    - "*mhd*"
+    - "*jorek*"
+    - "*stability*"
+
+# Heating and current drive
+heating:
+  description: "Heating and current drive systems"
+  
+  patterns:
+    - pattern: "NBI|nbi|neutral_beam|ECRH|ecrh|ICRH|icrh"
+      weight: 0.9
+      description: "Heating systems"
+    - pattern: "current_drive|ECCD|eccd|NBCD"
+      weight: 0.85
+      description: "Current drive"
+    - pattern: "power_deposition|absorption|heating_power"
+      weight: 0.8
+      description: "Power deposition"
+      
+  path_patterns:
+    - "*heating*"
+    - "*nbi*"
+    - "*ecrh*"
+
+# Diagnostics
+diagnostics:
+  description: "Plasma diagnostics"
+  
+  patterns:
+    - pattern: "thomson|ece|interferometer|reflectometer"
+      weight: 0.9
+      description: "Profile diagnostics"
+    - pattern: "magnetics|magnetic_probe|flux_loop|Rogowski"
+      weight: 0.85
+      description: "Magnetic diagnostics"
+    - pattern: "bolometer|soft_x|radiation|bremsstrahlung"
+      weight: 0.8
+      description: "Radiation diagnostics"
+    - pattern: "spectroscopy|CXRS|cxrs|charge_exchange"
+      weight: 0.85
+      description: "Spectroscopy"
+      
+  path_patterns:
+    - "*diagnostic*"
+    - "*thomson*"
+    - "*ece*"
+
+# Geometry and wall
+geometry:
+  description: "Plasma and wall geometry"
+  
+  patterns:
+    - pattern: "boundary|separatrix|lcfs|last_closed"
+      weight: 0.9
+      description: "Plasma boundary"
+    - pattern: "wall|limiter|divertor|first_wall"
+      weight: 0.85
+      description: "Wall structures"
+    - pattern: "r_boundary|z_boundary|outline|contour"
+      weight: 0.8
+      description: "Boundary coordinates"
+    - pattern: "x_point|o_point|strike_point"
+      weight: 0.85
+      description: "Magnetic topology"
+      
+  path_patterns:
+    - "*geometry*"
+    - "*wall*"
+    - "*divertor*"
+
+# Coordinate conventions
+cocos:
+  description: "Coordinate system conventions"
+  
+  patterns:
+    - pattern: "COCOS|cocos|coordinate_system|convention"
+      weight: 0.9
+      description: "COCOS convention"
+    - pattern: "sign_convention|flux_sign|current_sign"
+      weight: 0.8
+      description: "Sign conventions"
+    - pattern: "transform|cocos_transform"
+      weight: 0.85
+      description: "Coordinate transforms"
+      
+  path_patterns:
+    - "*cocos*"

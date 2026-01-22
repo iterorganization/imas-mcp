@@ -129,7 +129,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
     """Get paths that are ready for scoring (scanned but not scored).
 
     Returns:
-        List of dicts with path info and DirStats
+        List of dicts with path info, DirStats, and child_names for LLM context
     """
     from imas_codex.graph import GraphClient
 
@@ -143,7 +143,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
                    p.file_type_counts AS file_type_counts,
                    p.has_readme AS has_readme, p.has_makefile AS has_makefile,
                    p.has_git AS has_git, p.patterns_detected AS patterns_detected,
-                   p.description AS description
+                   p.description AS description, p.child_names AS child_names
             ORDER BY p.depth ASC, p.path ASC
             LIMIT $limit
             """,
@@ -499,6 +499,7 @@ def clear_facility_paths(facility: str) -> int:
 def persist_scan_results(
     facility: str,
     results: list[tuple[str, dict, list[str], str | None]],
+    excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Persist multiple scan results in a single transaction.
 
@@ -507,15 +508,17 @@ def persist_scan_results(
     Args:
         facility: Facility ID
         results: List of (path, stats_dict, child_dirs, error) tuples
+        excluded: Optional list of (path, parent_path, reason) for excluded dirs
 
     Returns:
-        Dict with scanned, children_created, errors counts
+        Dict with scanned, children_created, excluded, errors counts
     """
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
     scanned = 0
     children_created = 0
+    excluded_count = 0
     errors = 0
 
     # Separate successes and errors
@@ -537,18 +540,37 @@ def persist_scan_results(
             )
         else:
             scanned += 1
-            successes.append(
-                {
-                    "id": path_id,
-                    "status": "scanned",
-                    "scanned_at": now,
-                    "total_files": stats.get("total_files", 0),
-                    "total_dirs": stats.get("total_dirs", 0),
-                    "has_readme": stats.get("has_readme", False),
-                    "has_makefile": stats.get("has_makefile", False),
-                    "has_git": stats.get("has_git", False),
-                }
-            )
+            # Build update dict with child_names if available
+            update_dict = {
+                "id": path_id,
+                "status": "scanned",
+                "scanned_at": now,
+                "total_files": stats.get("total_files", 0),
+                "total_dirs": stats.get("total_dirs", 0),
+                "has_readme": stats.get("has_readme", False),
+                "has_makefile": stats.get("has_makefile", False),
+                "has_git": stats.get("has_git", False),
+            }
+            # Store file_type_counts if available
+            file_type_counts = stats.get("file_type_counts")
+            if file_type_counts:
+                import json
+
+                if isinstance(file_type_counts, dict):
+                    update_dict["file_type_counts"] = json.dumps(file_type_counts)
+                else:
+                    update_dict["file_type_counts"] = file_type_counts
+            # Store child names for LLM scoring context (as JSON string)
+            child_names = stats.get("child_names")
+            if child_names:
+                import json
+
+                update_dict["child_names"] = json.dumps(child_names)
+            # Store patterns detected
+            patterns = stats.get("patterns_detected")
+            if patterns:
+                update_dict["patterns_detected"] = patterns
+            successes.append(update_dict)
             # Prepare children
             for child_path in child_dirs:
                 all_children.append(
@@ -574,7 +596,8 @@ def persist_scan_results(
                     p.total_dirs = item.total_dirs,
                     p.has_readme = item.has_readme,
                     p.has_makefile = item.has_makefile,
-                    p.has_git = item.has_git
+                    p.has_git = item.has_git,
+                    p.child_names = item.child_names
                 """,
                 items=successes,
             )
@@ -640,4 +663,63 @@ def persist_scan_results(
 
             children_created = len(all_children)
 
-    return {"scanned": scanned, "children_created": children_created, "errors": errors}
+        # Handle excluded directories (create with status='excluded')
+        if excluded:
+            excluded_nodes = []
+            for path, parent_path, reason in excluded:
+                parent_id = f"{facility}:{parent_path}"
+                # Get parent depth
+                depth_result = gc.query(
+                    "MATCH (p:FacilityPath {id: $id}) RETURN p.depth AS depth",
+                    id=parent_id,
+                )
+                parent_depth = depth_result[0]["depth"] if depth_result else 0
+
+                excluded_nodes.append(
+                    {
+                        "id": f"{facility}:{path}",
+                        "facility_id": facility,
+                        "path": path,
+                        "parent_id": parent_id,
+                        "depth": (parent_depth or 0) + 1,
+                        "status": "excluded",
+                        "skip_reason": reason,
+                        "discovered_at": now,
+                    }
+                )
+
+            if excluded_nodes:
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MERGE (p:FacilityPath {id: node.id})
+                    ON CREATE SET p.facility_id = node.facility_id,
+                                  p.path = node.path,
+                                  p.status = node.status,
+                                  p.skip_reason = node.skip_reason,
+                                  p.depth = node.depth,
+                                  p.parent_path_id = node.parent_id,
+                                  p.discovered_at = node.discovered_at
+                    """,
+                    nodes=excluded_nodes,
+                )
+
+                # Create relationships
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MATCH (c:FacilityPath {id: node.id})
+                    MATCH (f:Facility {id: node.facility_id})
+                    MERGE (c)-[:FACILITY_ID]->(f)
+                    """,
+                    nodes=excluded_nodes,
+                )
+
+                excluded_count = len(excluded_nodes)
+
+    return {
+        "scanned": scanned,
+        "children_created": children_created,
+        "excluded": excluded_count,
+        "errors": errors,
+    }
