@@ -6,13 +6,27 @@ Facility knowledge is now stored in the graph database, not flat artifacts.
 
 Key functions:
 - run(cmd, facility): Execute command locally or via SSH
+- run_script(script, facility): Execute script via stdin (faster)
 - check_all_tools(facility): Check fast tool availability
 - install_tool(tool_key, facility): Install a specific tool
 - install_all_tools(facility): Install all fast tools
 
+Low-level execution (no facility lookup, for use by discovery modules):
+- run_command(cmd, ssh_host): Execute command directly
+- run_script_via_stdin(script, ssh_host): Execute script directly
+- is_local_host(ssh_host): Check if host is local
+
 See imas_codex/config/README.md for exploration guidance.
 """
 
+# Low-level executor (no facility imports - avoids circular imports)
+from imas_codex.remote.executor import (
+    is_local_host,
+    run_command,
+    run_script_via_stdin,
+)
+
+# High-level facility-aware tools
 from imas_codex.remote.tools import (
     FastTool,
     FastToolsConfig,
@@ -29,6 +43,11 @@ from imas_codex.remote.tools import (
 )
 
 __all__ = [
+    # Low-level executor
+    "is_local_host",
+    "run_command",
+    "run_script_via_stdin",
+    # High-level tools
     "FastTool",
     "FastToolsConfig",
     "check_all_tools",

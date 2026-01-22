@@ -16,12 +16,13 @@ Auto-detection logic:
 2. Parse ~/.ssh/config to get HostName for the facility's ssh_host
 3. Compare resolved hostname to current machine's hostname/FQDN
 4. If they match (or ssh_host is localhost), run locally
+
+Module Structure:
+- executor.py: Low-level run primitives (no facility imports, avoids cycles)
+- tools.py: Facility-aware wrappers + tool management (this file)
 """
 
 import logging
-import re
-import socket
-import subprocess
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -29,87 +30,40 @@ from typing import Any
 
 import yaml
 
-from imas_codex.discovery import get_facility
+# Import low-level executor (no circular import risk)
+from imas_codex.remote.executor import (
+    is_local_host,
+    run_command,
+    run_script_via_stdin,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def _get_local_hostnames() -> set[str]:
-    """Get all hostnames that refer to this machine."""
-    hostnames = {"localhost", "127.0.0.1", "::1"}
-
-    # Current hostname
-    hostname = socket.gethostname()
-    hostnames.add(hostname)
-    hostnames.add(hostname.lower())
-
-    # FQDN
-    try:
-        fqdn = socket.getfqdn()
-        hostnames.add(fqdn)
-        hostnames.add(fqdn.lower())
-        # Also add short name from FQDN
-        short = fqdn.split(".")[0]
-        hostnames.add(short)
-        hostnames.add(short.lower())
-    except Exception:
-        pass
-
-    return hostnames
-
-
-@lru_cache(maxsize=16)
-def _parse_ssh_config_host(ssh_host: str) -> str | None:
-    """Parse ~/.ssh/config to get HostName for an alias.
+def _resolve_ssh_host(facility: str | None) -> str | None:
+    """Resolve facility ID to SSH host.
 
     Args:
-        ssh_host: SSH host alias (e.g., 'epfl')
+        facility: Facility ID or None
 
     Returns:
-        Resolved HostName or None if not found
+        SSH host string or None for local execution
     """
-    ssh_config_path = Path.home() / ".ssh" / "config"
-    if not ssh_config_path.exists():
+    if facility is None:
         return None
+
+    # Import here to avoid circular import at module load time
+    from imas_codex.discovery.facility import get_facility
 
     try:
-        content = ssh_config_path.read_text()
-    except Exception:
-        return None
-
-    # Parse SSH config - look for Host block matching ssh_host
-    current_host = None
-    for line in content.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        # Match "Host <pattern>" line
-        host_match = re.match(r"^Host\s+(.+)$", line, re.IGNORECASE)
-        if host_match:
-            hosts = host_match.group(1).split()
-            current_host = ssh_host if ssh_host in hosts else None
-            continue
-
-        # If we're in the right Host block, look for HostName
-        if current_host:
-            hostname_match = re.match(r"^HostName\s+(.+)$", line, re.IGNORECASE)
-            if hostname_match:
-                return hostname_match.group(1).strip()
-
-    return None
+        config = get_facility(facility)
+        return config.get("ssh_host", facility)
+    except ValueError:
+        return facility
 
 
 def is_local_facility(facility: str | None) -> bool:
     """Determine if a facility should be accessed locally (no SSH).
-
-    Auto-detection logic:
-    1. If facility is None, return True (local)
-    2. Get ssh_host from facility config
-    3. Resolve ssh_host via ~/.ssh/config to get actual HostName
-    4. Compare to current machine's hostnames
-    5. If match, return True (local)
 
     Args:
         facility: Facility ID or None
@@ -117,36 +71,50 @@ def is_local_facility(facility: str | None) -> bool:
     Returns:
         True if commands should run locally, False if SSH needed
     """
-    if facility is None:
-        return True
+    ssh_host = _resolve_ssh_host(facility)
+    return is_local_host(ssh_host)
 
-    # Get facility config
-    try:
-        config = get_facility(facility)
-        ssh_host = config.get("ssh_host", facility)
-    except ValueError:
-        # Unknown facility, assume remote
-        ssh_host = facility
 
-    # Check if ssh_host is explicitly localhost
-    local_hostnames = _get_local_hostnames()
-    if ssh_host.lower() in local_hostnames:
-        return True
+def run(
+    cmd: str,
+    facility: str | None = None,
+    timeout: int = 60,
+    check: bool = False,
+) -> str:
+    """Execute command locally or via SSH depending on facility.
 
-    # Resolve ssh_host via SSH config
-    resolved = _parse_ssh_config_host(ssh_host)
-    if resolved and resolved.lower() in local_hostnames:
-        return True
+    Args:
+        cmd: Shell command to execute
+        facility: Facility ID (None = local)
+        timeout: Command timeout in seconds
+        check: Raise exception on non-zero exit
 
-    # Check if ssh_host matches any local hostname directly
-    if ssh_host.lower() in local_hostnames:
-        return True
+    Returns:
+        Command output (stdout + stderr)
+    """
+    ssh_host = _resolve_ssh_host(facility) if not is_local_host(facility) else None
+    return run_command(cmd, ssh_host=ssh_host, timeout=timeout, check=check)
 
-    # Note: We removed the partial match check (ssh_host in fqdn) because it caused
-    # false positives. E.g., local machine "fr-iwl-mcintos1.iter.org" matched "iter".
-    # SSH should be used unless there's an explicit hostname match.
 
-    return False
+def run_script(
+    script: str,
+    facility: str | None = None,
+    timeout: int = 60,
+    check: bool = False,
+) -> str:
+    """Execute a multi-line script via stdin to avoid bash -c overhead.
+
+    Args:
+        script: Multi-line bash script to execute
+        facility: Facility ID (None = local)
+        timeout: Command timeout in seconds
+        check: Raise exception on non-zero exit
+
+    Returns:
+        Command output (stdout + stderr)
+    """
+    ssh_host = _resolve_ssh_host(facility) if not is_local_host(facility) else None
+    return run_script_via_stdin(script, ssh_host=ssh_host, timeout=timeout, check=check)
 
 
 @dataclass
@@ -298,145 +266,6 @@ def load_fast_tools() -> FastToolsConfig:
         required=required,
         optional=optional,
     )
-
-
-def run(
-    cmd: str,
-    facility: str | None = None,
-    timeout: int = 60,
-    check: bool = False,
-) -> str:
-    """Execute command locally or via SSH depending on facility.
-
-    Auto-detects whether to use SSH by comparing the facility's ssh_host
-    to the current machine's hostname. If they match, runs locally.
-
-    Args:
-        cmd: Shell command to execute
-        facility: Facility ID (None = local)
-        timeout: Command timeout in seconds
-        check: Raise exception on non-zero exit
-
-    Returns:
-        Command output (stdout + stderr)
-
-    Examples:
-        run('rg pattern', facility='iter')  # Auto-detects: local on SDCC
-        run('rg pattern', facility='epfl')  # Auto-detects: SSH to EPFL
-        run('rg pattern')                   # Always local (no facility)
-    """
-    is_local = is_local_facility(facility)
-
-    # Get ssh_host for remote execution
-    ssh_host = facility
-    if facility and not is_local:
-        try:
-            config = get_facility(facility)
-            ssh_host = config.get("ssh_host", facility)
-        except ValueError:
-            ssh_host = facility
-
-    if is_local:
-        # Local execution
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    else:
-        # SSH execution
-        result = subprocess.run(
-            ["ssh", ssh_host, cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-    output = result.stdout
-    if result.stderr:
-        output += f"\n[stderr]: {result.stderr}"
-
-    if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode, cmd, result.stdout, result.stderr
-        )
-
-    return output.strip() or "(no output)"
-
-
-def run_script(
-    script: str,
-    facility: str | None = None,
-    timeout: int = 60,
-    check: bool = False,
-) -> str:
-    """Execute a multi-line script via stdin to avoid bash -c overhead.
-
-    Unlike run(), this passes the script via stdin which avoids the ~11s
-    overhead of bash loading .bashrc when invoked with 'bash -c'.
-
-    This is 2-3x faster for complex scripts on remote facilities with
-    slow bashrc initialization (e.g., ITER with module system).
-
-    Args:
-        script: Multi-line bash script to execute
-        facility: Facility ID (None = local)
-        timeout: Command timeout in seconds
-        check: Raise exception on non-zero exit
-
-    Returns:
-        Command output (stdout + stderr)
-
-    Examples:
-        run_script('''
-            for f in /path/*; do
-                echo "$f"
-            done
-        ''', facility='iter')
-    """
-    is_local = is_local_facility(facility)
-
-    # Get ssh_host for remote execution
-    ssh_host = facility
-    if facility and not is_local:
-        try:
-            config = get_facility(facility)
-            ssh_host = config.get("ssh_host", facility)
-        except ValueError:
-            ssh_host = facility
-
-    if is_local:
-        # Local execution via stdin
-        result = subprocess.run(
-            ["bash"],
-            input=script,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    else:
-        # SSH execution via stdin - avoids bash -c overhead
-        # Use 'bash -s' to read script from stdin (non-login shell, no bashrc)
-        result = subprocess.run(
-            ["ssh", "-T", ssh_host, "bash -s"],
-            input=script,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-    output = result.stdout
-    if result.stderr:
-        output += f"\n[stderr]: {result.stderr}"
-
-    if check and result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode, script[:100], result.stdout, result.stderr
-        )
-
-    return output.strip() or "(no output)"
 
 
 def detect_architecture(facility: str | None = None) -> str:
