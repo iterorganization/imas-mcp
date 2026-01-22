@@ -5417,13 +5417,6 @@ def discover() -> None:
     help="Maximum LLM spend in USD (default: $10)",
 )
 @click.option(
-    "--max-cycles",
-    "-c",
-    default=10,
-    type=int,
-    help="Maximum scan→score cycles",
-)
-@click.option(
     "--focus",
     "-f",
     type=str,
@@ -5436,28 +5429,21 @@ def discover() -> None:
     type=float,
     help="Minimum score to expand paths",
 )
-@click.option(
-    "--workers",
-    "-w",
-    default=2,
-    type=int,
-    help="Parallel branch workers (scan + score can overlap)",
-)
 def discover_run(
     facility: str,
     cost_limit: float,
-    max_cycles: int,
     focus: str | None,
     threshold: float,
-    workers: int,
 ) -> None:
     """Run iterative scan→score discovery loop.
 
-    Automatically seeds facility root paths if none exist, then
-    alternates between scanning (SSH) and scoring (LLM) until:
+    Runs parallel scan and score workers until:
     - Cost limit is exhausted
-    - Max cycles reached
-    - No more frontier to explore
+    - No more frontier to explore (both workers idle)
+
+    The scan and score workers run CONCURRENTLY. The graph acts as the
+    coordination mechanism - no locks needed. Each worker claims paths
+    atomically via graph status transitions.
 
     Examples:
         # Run with default $10 limit
@@ -5465,29 +5451,22 @@ def discover_run(
 
         # Focus on equilibrium codes with $5 limit
         imas-codex discover run iter --cost-limit 5.0 --focus "equilibrium"
-
-        # More workers for faster parallel execution
-        imas-codex discover run iter --cost-limit 20.0 --workers 4
     """
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
-        max_cycles=max_cycles,
         focus=focus,
         threshold=threshold,
-        workers=workers,
     )
 
 
 def _run_iterative_discovery(
     facility: str,
     budget: float,
-    max_cycles: int,
     focus: str | None,
     threshold: float,
-    workers: int,
 ) -> None:
-    """Run iterative scan→score discovery with parallel branches."""
+    """Run parallel scan/score discovery."""
     import asyncio
 
     from rich.console import Console
@@ -5509,10 +5488,8 @@ def _run_iterative_discovery(
     if model_name.startswith("anthropic/"):
         model_name = model_name[len("anthropic/") :]
 
-    console.print(f"[bold]Starting discovery for {facility}[/bold]")
-    console.print(
-        f"Cost limit: ${budget:.2f} | Max cycles: {max_cycles} | Workers: {workers}"
-    )
+    console.print(f"[bold]Starting parallel discovery for {facility}[/bold]")
+    console.print(f"Cost limit: ${budget:.2f}")
     console.print(f"Model: {model_name}")
     if focus:
         console.print(f"Focus: {focus}")
@@ -5523,10 +5500,8 @@ def _run_iterative_discovery(
             _async_discovery_loop(
                 facility=facility,
                 budget=budget,
-                max_cycles=max_cycles,
                 focus=focus,
                 threshold=threshold,
-                workers=workers,
                 console=console,
             )
         )
@@ -5559,14 +5534,14 @@ def _print_discovery_summary(console, facility: str, result: dict) -> None:
     table.add_column(justify="right", style="bold")
     table.add_column(justify="left")
 
-    # Row 1: Cycles and elapsed time
+    # Row 1: Elapsed time and cost
     elapsed = result.get("elapsed_seconds", 0)
     elapsed_str = f"{elapsed / 60:.1f}m" if elapsed >= 60 else f"{elapsed:.1f}s"
     table.add_row(
-        "Cycles:",
-        str(result["cycles"]),
         "Elapsed:",
         elapsed_str,
+        "Cost:",
+        f"${result['cost']:.3f}",
     )
 
     # Row 2: Scanned and scored
@@ -5577,15 +5552,7 @@ def _print_discovery_summary(console, facility: str, result: dict) -> None:
         f"{result['scored']:,}",
     )
 
-    # Row 3: Expanded and cost
-    table.add_row(
-        "Expanded:",
-        f"{result['expanded']:,}",
-        "Cost:",
-        f"${result['cost']:.3f}",
-    )
-
-    # Row 4: Rates
+    # Row 3: Rates
     scan_rate = result.get("scan_rate")
     score_rate = result.get("score_rate")
     scan_str = f"{scan_rate:.1f}/s" if scan_rate else "-"
@@ -5643,150 +5610,76 @@ def _print_discovery_summary(console, facility: str, result: dict) -> None:
 async def _async_discovery_loop(
     facility: str,
     budget: float,
-    max_cycles: int,
     focus: str | None,
     threshold: float,
-    workers: int,
     console,
 ) -> dict:
-    """Async discovery loop with parallel scan/score workers."""
-    import time
+    """Async discovery loop with TRUE parallel scan/score workers.
 
+    Uses the parallel discovery engine which runs scan and score
+    workers concurrently. The graph acts as the coordination mechanism:
+    - Scanner: pending → scanning → scanned
+    - Scorer: scanned → scoring → scored
+
+    No locks needed - atomic graph transitions prevent race conditions.
+    """
     from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.discovery import get_discovery_stats
-    from imas_codex.discovery.progress import DiscoveryProgressDisplay
+    from imas_codex.discovery.parallel import run_parallel_discovery
+    from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
 
-    total_scanned = 0
-    total_scored = 0
-    total_expanded = 0
-    total_cost = 0.0
-    current_cycle = 0
-    start_time = time.time()
+    model_name = get_model_for_task("score")
 
-    with DiscoveryProgressDisplay(console=console) as display:
-        display.stats.budget_limit = budget
-        display.stats.max_cycles = max_cycles
-        display.stats.facility = facility
-        display.stats.model = get_model_for_task("score")
-        display.stats.scan_start_time = start_time
-        display.stats.score_start_time = start_time
-        display.refresh_from_graph(facility)
+    with ParallelProgressDisplay(
+        facility=facility,
+        cost_limit=budget,
+        model=model_name,
+        console=console,
+    ) as display:
+        # Periodic graph state refresh
+        async def refresh_graph_state():
+            """Background task to refresh graph state periodically."""
+            import asyncio
 
-        while current_cycle < max_cycles:
-            current_cycle += 1
-            display.stats.current_cycle = current_cycle
+            while True:
+                display.refresh_from_graph(facility)
+                await asyncio.sleep(2.0)
 
-            # Check budget
-            if total_cost >= budget:
-                display.update(description=f"Cost limit reached: ${total_cost:.2f}")
-                break
+        # Start graph refresh task
+        import asyncio
 
-            # Check frontier
-            stats = get_discovery_stats(facility)
-            if stats["pending"] == 0 and stats["scanned"] == 0:
-                # No more work - check if we just need to wait for scoring
-                if stats["scanned"] == 0:
-                    display.update(description="No more frontier to explore")
-                    break
+        refresh_task = asyncio.create_task(refresh_graph_state())
 
-            # Run scan and score in parallel
-            display.stats.current_phase = "scan+score"
-            display.update(
-                description=f"Cycle {current_cycle}: scanning and scoring...",
-                total=100,
-            )
-
-            # Use parallel branch discovery
-            cycle_result = await _run_parallel_cycle(
+        try:
+            result = await run_parallel_discovery(
                 facility=facility,
+                cost_limit=budget,
                 focus=focus,
                 threshold=threshold,
-                budget_remaining=budget - total_cost,
-                workers=workers,
-                display=display,
+                on_scan_progress=display.update_scan,
+                on_score_progress=display.update_score,
             )
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
 
-            total_scanned += cycle_result["scanned"]
-            total_scored += cycle_result["scored"]
-            total_expanded += cycle_result["expanded"]
-            total_cost += cycle_result["cost"]
+        # Final refresh
+        display.refresh_from_graph(facility)
 
-            # Update rate tracking
-            display.stats.scan_count += cycle_result["scanned"]
-            display.stats.score_count += cycle_result["scored"]
-
-            display.stats.accumulated_cost = total_cost
-            display.refresh_from_graph(facility)
-
-            # If nothing happened this cycle, we're done
-            if cycle_result["scanned"] == 0 and cycle_result["scored"] == 0:
-                break
-
-    elapsed = time.time() - start_time
-    scan_rate = total_scanned / elapsed if elapsed > 0 and total_scanned > 0 else None
-    score_rate = total_scored / elapsed if elapsed > 0 and total_scored > 0 else None
+    # Print summary after display closes
+    display.print_summary()
 
     return {
-        "cycles": current_cycle,
-        "scanned": total_scanned,
-        "scored": total_scored,
-        "expanded": total_expanded,
-        "cost": total_cost,
-        "elapsed_seconds": elapsed,
-        "scan_rate": scan_rate,
-        "score_rate": score_rate,
-    }
-
-
-async def _run_parallel_cycle(
-    facility: str,
-    focus: str | None,
-    threshold: float,
-    budget_remaining: float,
-    workers: int,
-    display,
-) -> dict:
-    """Run one scan+score cycle with parallel workers."""
-    import asyncio
-
-    from imas_codex.discovery import scan_facility_sync
-    from imas_codex.discovery.scorer import score_facility_paths
-
-    # Run scan synchronously (it's already batched for SSH efficiency)
-    display.stats.current_phase = "scan"
-    display.update(description="Scanning frontier...")
-
-    loop = asyncio.get_event_loop()
-    scan_result = await loop.run_in_executor(
-        None,
-        lambda: scan_facility_sync(facility=facility, limit=200),
-    )
-
-    display.refresh_from_graph(facility)
-
-    # Run score (also synchronous, LLM calls)
-    display.stats.current_phase = "score"
-    display.update(description="Scoring scanned paths...")
-
-    score_result = await loop.run_in_executor(
-        None,
-        lambda: score_facility_paths(
-            facility=facility,
-            limit=100,
-            batch_size=25,
-            focus=focus,
-            threshold=threshold,
-            budget=budget_remaining,
-        ),
-    )
-
-    display.refresh_from_graph(facility)
-
-    return {
-        "scanned": scan_result.get("scanned", 0),
-        "scored": score_result.get("scored", 0),
-        "expanded": score_result.get("expanded", 0),
-        "cost": score_result.get("cost", 0.0),
+        "cycles": 1,  # Continuous operation, not cycle-based
+        "scanned": result["scanned"],
+        "scored": result["scored"],
+        "expanded": result.get("expanded", 0),
+        "cost": result["cost"],
+        "elapsed_seconds": result["elapsed_seconds"],
+        "scan_rate": result.get("scan_rate"),
+        "score_rate": result.get("score_rate"),
     }
 
 

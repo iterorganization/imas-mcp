@@ -4,6 +4,7 @@ Discovery Engine for remote facility exploration.
 This module provides:
 1. Configuration management for remote fusion facilities
 2. Graph-led discovery pipeline (scan → score → discover)
+3. Parallel discovery engine with concurrent scan/score workers
 
 Public API for facility configuration:
 - get_facility(): Load complete config (public + private merged)
@@ -20,6 +21,9 @@ Graph-led discovery API:
 - get_frontier(): Get paths awaiting scan
 - seed_facility_roots(): Create initial root paths
 - clear_facility_paths(): Delete all paths for fresh start
+
+Parallel discovery API:
+- run_parallel_discovery(): Run concurrent scan/score workers
 """
 
 from imas_codex.discovery.facility import (
@@ -42,6 +46,7 @@ from imas_codex.discovery.frontier import (
     get_scorable_paths,
     seed_facility_roots,
 )
+from imas_codex.discovery.parallel import run_parallel_discovery
 from imas_codex.discovery.scanner import scan_facility_sync
 from imas_codex.discovery.scorer import (
     DirectoryScorer,
@@ -73,4 +78,6 @@ __all__ = [
     "get_high_value_paths",
     "seed_facility_roots",
     "clear_facility_paths",
+    # Parallel discovery
+    "run_parallel_discovery",
 ]
