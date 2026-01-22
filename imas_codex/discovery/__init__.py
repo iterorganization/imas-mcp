@@ -15,8 +15,6 @@ Public API for facility configuration:
 - add_exploration_note(): Add timestamped exploration note
 
 Graph-led discovery API:
-- scan_facility_sync(): Scan paths in the frontier
-- score_facility_paths(): Score scanned paths with LLM
 - get_discovery_stats(): Get discovery statistics
 - get_frontier(): Get paths awaiting scan
 - seed_facility_roots(): Create initial root paths
@@ -47,11 +45,9 @@ from imas_codex.discovery.frontier import (
     seed_facility_roots,
 )
 from imas_codex.discovery.parallel import run_parallel_discovery
-from imas_codex.discovery.scanner import scan_facility_sync
 from imas_codex.discovery.scorer import (
     DirectoryScorer,
     grounded_score,
-    score_facility_paths,
 )
 
 __all__ = [
@@ -68,8 +64,6 @@ __all__ = [
     "filter_private_fields",
     "validate_no_private_fields",
     # Graph-led discovery
-    "scan_facility_sync",
-    "score_facility_paths",
     "DirectoryScorer",
     "grounded_score",
     "get_discovery_stats",

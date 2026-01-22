@@ -5385,29 +5385,7 @@ def enrich_mark_stale(
 # ============================================================================
 
 
-@main.group()
-def discover() -> None:
-    """Graph-led facility discovery pipeline.
-
-    \b
-    Iterative discovery (runs scan→score loop):
-      imas-codex discover run <facility>              # Default $10 limit
-      imas-codex discover run <facility> --cost-limit 20.0
-
-    \b
-    Manual control (explicit subcommands):
-      imas-codex discover scan <facility>    Scan directory frontier (SSH)
-      imas-codex discover score <facility>   Score scanned paths (LLM)
-      imas-codex discover status <facility>  Show discovery statistics
-      imas-codex discover clear <facility>   Clear all paths (reset)
-      imas-codex discover seed <facility>    Seed root paths without scanning
-
-    The graph is the single source of truth. Commands query the graph
-    for work rather than accepting path parameters.
-    """
-
-
-@discover.command("run")
+@main.command("discover")
 @click.argument("facility")
 @click.option(
     "--cost-limit",
@@ -5448,7 +5426,7 @@ def discover() -> None:
     type=int,
     help="Number of score workers (default: 2, reduces API rate limiting)",
 )
-def discover_run(
+def discover_cmd(
     facility: str,
     cost_limit: float,
     limit: int | None,
@@ -5457,19 +5435,24 @@ def discover_run(
     scan_workers: int,
     score_workers: int,
 ) -> None:
-    """Run parallel scan and score discovery.
+    """Graph-led facility discovery with parallel scan and score.
 
     \b
-    Continues until:
-      - Cost limit exhausted
-      - Path limit reached (if set)
-      - No more frontier to explore
+    Run discovery:
+      imas-codex discover <facility>              # Default $10 limit
+      imas-codex discover <facility> -c 20.0      # $20 limit
+      imas-codex discover iter --focus "equilibrium codes"
 
     \b
-    Examples:
-      imas-codex discover run iter
-      imas-codex discover run iter -c 5.0 --focus "equilibrium"
-      imas-codex discover run iter -l 100  # Debug with 100 paths
+    Related commands (see 'imas-codex discovery --help'):
+      imas-codex discovery status <facility>  Show discovery statistics
+      imas-codex discovery clear <facility>   Clear all paths (reset)
+      imas-codex discovery seed <facility>    Seed root paths
+      imas-codex discovery inspect <facility> Inspect scanned/scored paths
+
+    The graph is the single source of truth. Parallel scan workers
+    enumerate directories via SSH while score workers classify paths
+    using LLM. Both run concurrently with the graph as coordination.
     """
     _run_iterative_discovery(
         facility=facility,
@@ -5758,197 +5741,23 @@ async def _async_discovery_loop(
     )
 
 
-@discover.command("scan")
-@click.argument("facility")
-@click.option(
-    "--limit",
-    "-l",
-    default=100,
-    type=int,
-    help="Maximum paths to scan this run",
-)
-@click.option(
-    "--dry-run",
-    "-n",
-    is_flag=True,
-    help="Scan without persisting to graph",
-)
-def discover_scan(facility: str, limit: int, dry_run: bool) -> None:
-    """Scan directory frontier at a facility.
+@main.group()
+def discovery():
+    """Discovery utility commands for managing facility exploration.
 
-    Graph-led scanning:
-    1. Query graph for paths with status='pending'
-    2. If none, seed facility root paths
-    3. Run SSH commands (fd, du) to collect stats
-    4. Create child paths for discovered directories
-    5. Mark paths as 'scanned'
+    \b
+    Commands:
+      status   Show discovery statistics
+      clear    Clear all paths (reset)
+      seed     Seed root paths
+      inspect  Inspect scanned/scored paths
 
-    Examples:
-        # Scan up to 100 paths on ITER
-        imas-codex discover scan iter
-
-        # Dry run to test SSH connectivity
-        imas-codex discover scan iter --dry-run
-
-        # Scan more paths
-        imas-codex discover scan iter --limit 500
+    For running discovery, use 'imas-codex discover <facility>'.
     """
-    from imas_codex.discovery import scan_facility_sync
-    from imas_codex.discovery.progress import print_discovery_status
-
-    if dry_run:
-        click.echo("DRY RUN - no graph changes will be made")
-
-    def progress(current: int, total: int, path: str) -> None:
-        # Simple inline progress
-        click.echo(f"[{current}/{total}] {path}", nl=False)
-        click.echo("\r", nl=False)
-
-    try:
-        stats = scan_facility_sync(
-            facility=facility,
-            limit=limit,
-            dry_run=dry_run,
-            progress_callback=progress,
-        )
-
-        # Clear the progress line
-        click.echo(" " * 80, nl=False)
-        click.echo("\r", nl=False)
-
-        click.echo(f"✓ Scanned: {stats['scanned']}")
-        click.echo(f"  Children created: {stats['children_created']}")
-        click.echo(f"  Errors: {stats['errors']}")
-
-        if not dry_run:
-            click.echo()
-            print_discovery_status(facility)
-
-    except Exception as e:
-        click.echo(f"\nError: {e}", err=True)
-        raise SystemExit(1) from e
+    pass
 
 
-@discover.command("score")
-@click.argument("facility")
-@click.option(
-    "--limit",
-    "-l",
-    default=100,
-    type=int,
-    help="Maximum paths to score this run",
-)
-@click.option(
-    "--batch-size",
-    "-s",
-    default=25,
-    type=int,
-    help="Paths per LLM call",
-)
-@click.option(
-    "--cost-limit",
-    "-b",
-    type=float,
-    help="Maximum spend in USD",
-)
-@click.option(
-    "--focus",
-    "-f",
-    type=str,
-    help="Natural language focus (e.g., 'equilibrium codes')",
-)
-@click.option(
-    "--threshold",
-    "-t",
-    default=0.7,
-    type=float,
-    help="Minimum score to expand paths",
-)
-@click.option(
-    "--model",
-    "-m",
-    default=None,
-    help="LLM model to use (default: from config 'score' task)",
-)
-@click.option(
-    "--dry-run",
-    "-n",
-    is_flag=True,
-    help="Score without persisting to graph",
-)
-def discover_score(
-    facility: str,
-    limit: int,
-    batch_size: int,
-    cost_limit: float | None,
-    focus: str | None,
-    threshold: float,
-    model: str | None,
-    dry_run: bool,
-) -> None:
-    """Score scanned paths using LLM.
-
-    Graph-led scoring:
-    1. Query graph for paths with status='scanned' and no score
-    2. Build batched prompts with directory context
-    3. Call LLM to collect evidence and classify directories
-    4. Apply grounded scoring function
-    5. Mark high-value paths for expansion
-
-    Examples:
-        # Score up to 100 paths
-        imas-codex discover score iter
-
-        # Score with focus and cost limit
-        imas-codex discover score iter --focus "equilibrium" --cost-limit 5.0
-
-        # Dry run to test without graph changes
-        imas-codex discover score iter --dry-run
-    """
-    from rich.console import Console
-
-    from imas_codex.discovery.progress import print_discovery_status
-    from imas_codex.discovery.scorer import score_facility_paths
-
-    console = Console()
-
-    if dry_run:
-        console.print("[yellow]DRY RUN - no graph changes will be made[/yellow]")
-
-    try:
-        console.print(f"[cyan]Scoring paths for {facility}...[/cyan]")
-        if focus:
-            console.print(f"Focus: {focus}")
-        if cost_limit:
-            console.print(f"Cost limit: ${cost_limit:.2f}")
-
-        result = score_facility_paths(
-            facility=facility,
-            limit=limit,
-            batch_size=batch_size,
-            focus=focus,
-            threshold=threshold,
-            model=model,
-            budget=cost_limit,
-            dry_run=dry_run,
-        )
-
-        console.print(f"[green]✓ Scored: {result['scored']}[/green]")
-        console.print(f"  Expanded: {result['expanded']}")
-        console.print(f"  Cost: ${result['cost']:.4f}")
-        if result["errors"] > 0:
-            console.print(f"  [red]Errors: {result['errors']}[/red]")
-
-        if not dry_run:
-            console.print()
-            print_discovery_status(facility)
-
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]", highlight=False)
-        raise SystemExit(1) from e
-
-
-@discover.command("status")
+@discovery.command("status")
 @click.argument("facility")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 def discover_status(facility: str, as_json: bool) -> None:
@@ -5961,8 +5770,8 @@ def discover_status(facility: str, as_json: bool) -> None:
     - High-value paths (score > 0.7)
 
     Examples:
-        imas-codex discover status iter
-        imas-codex discover status iter --json
+        imas-codex discovery status iter
+        imas-codex discovery status iter --json
     """
     import json as json_module
 
@@ -5987,7 +5796,7 @@ def discover_status(facility: str, as_json: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discover.command("inspect")
+@discovery.command("inspect")
 @click.argument("facility")
 @click.option(
     "--scanned",
@@ -6145,7 +5954,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
         raise SystemExit(1) from e
 
 
-@discover.command("clear")
+@discovery.command("clear")
 @click.argument("facility")
 @click.option(
     "--force",
@@ -6187,7 +5996,7 @@ def discover_clear(facility: str, force: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discover.command("seed")
+@discovery.command("seed")
 @click.argument("facility")
 @click.option(
     "--path",

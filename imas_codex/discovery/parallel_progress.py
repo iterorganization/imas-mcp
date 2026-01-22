@@ -54,9 +54,9 @@ def format_time(seconds: float) -> str:
 
 
 def make_bar(
-    ratio: float, width: int, filled_char: str = "█", empty_char: str = "░"
+    ratio: float, width: int, filled_char: str = "━", empty_char: str = "─"
 ) -> str:
-    """Create a simple progress bar string."""
+    """Create a simple thin progress bar string."""
     ratio = max(0.0, min(1.0, ratio))
     filled = int(width * ratio)
     return filled_char * filled + empty_char * (width - filled)
@@ -101,10 +101,10 @@ def make_resource_gauge(
     filled = int(width * ratio)
 
     gauge = Text()
-    gauge.append("▐", style="dim")
-    gauge.append("█" * filled, style=color)
-    gauge.append("░" * (width - filled), style="dim")
-    gauge.append("▌", style="dim")
+    gauge.append("│", style="dim")
+    gauge.append("━" * filled, style=color)
+    gauge.append("─" * (width - filled), style="dim")
+    gauge.append("│", style="dim")
 
     return gauge
 
@@ -285,18 +285,28 @@ class ParallelProgressDisplay:
         section = Text()
 
         # Calculate totals and percentages
-        scan_total = self.state.scanned + self.state.pending
+        # Scan progress: scanned out of total known paths
+        scan_total = (
+            self.state.total
+            if self.state.total > 0
+            else (self.state.scanned + self.state.pending)
+        )
         scan_pct = (self.state.scanned / scan_total * 100) if scan_total > 0 else 0
 
-        score_total = self.state.scanned  # Score works through scanned items
+        # Score progress: scored out of scanned paths (can only score what's scanned)
+        # Use max(scanned, scored) as denominator to handle graph state inconsistencies
+        score_total = (
+            max(self.state.scanned, self.state.scored) if self.state.scanned > 0 else 1
+        )
         score_pct = (self.state.scored / score_total * 100) if score_total > 0 else 0
+        score_pct = min(score_pct, 100.0)  # Cap at 100%
 
         # Shorter bar to fit everything on one line
         bar_width = 40
 
-        # SCAN row: "  SCAN  ████░░░░  1,234  42%  12.3/s"
+        # SCAN row: "  SCAN  ━━━━────  1,234  42%  12.3/s"
         section.append("  SCAN  ", style="bold blue")
-        scan_ratio = self.state.scanned / scan_total if scan_total > 0 else 0
+        scan_ratio = min(self.state.scanned / scan_total, 1.0) if scan_total > 0 else 0
         section.append(make_bar(scan_ratio, bar_width), style="blue")
         section.append(f" {self.state.scanned:>6,}", style="bold")
         section.append(f" {scan_pct:>3.0f}%", style="cyan")
@@ -304,9 +314,11 @@ class ParallelProgressDisplay:
             section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # SCORE row: "  SCORE ████░░░░    892  28%   4.2/s"
+        # SCORE row: "  SCORE ━━━━────    892  28%   4.2/s"
         section.append("  SCORE ", style="bold green")
-        score_ratio = self.state.scored / score_total if score_total > 0 else 0
+        score_ratio = (
+            min(self.state.scored / score_total, 1.0) if score_total > 0 else 0
+        )
         section.append(make_bar(score_ratio, bar_width), style="green")
         section.append(f" {self.state.scored:>6,}", style="bold")
         section.append(f" {score_pct:>3.0f}%", style="cyan")
@@ -391,10 +403,10 @@ class ParallelProgressDisplay:
                 make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
             )
         else:
-            # Unknown total - show elapsed only
-            section.append("▐", style="dim")
-            section.append("█" * self.GAUGE_WIDTH, style="cyan")
-            section.append("▌", style="dim")
+            # Unknown total - show elapsed only with thin bar
+            section.append("│", style="dim")
+            section.append("━" * self.GAUGE_WIDTH, style="cyan")
+            section.append("│", style="dim")
 
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
 

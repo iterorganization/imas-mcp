@@ -19,21 +19,15 @@ from __future__ import annotations
 import json
 import logging
 import shlex
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.config.discovery_config import get_discovery_config
 from imas_codex.discovery.facility import get_facility
-from imas_codex.discovery.frontier import (
-    get_frontier,
-    persist_scan_results,
-    seed_facility_roots,
-)
 from imas_codex.remote.executor import run_script_via_stdin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +105,7 @@ class ScanResult:
 
 
 def _build_scan_script(
-    paths: list[str], enable_rg: bool = True, enable_size: bool = True
+    paths: list[str], enable_rg: bool = True, enable_size: bool = False
 ) -> str:
     """Build a bash script that uses fast tools for comprehensive scanning.
 
@@ -162,15 +156,12 @@ def _build_scan_script(
         rg_json = ",".join(rg_json_parts)
 
     # Size calculation block - skip in fast mode
+    # Always use du -sb for byte output since dust human-readable format breaks JSON
     if enable_size:
         size_block = """
-    # Get directory size using dust or du (can be slow on large dirs)
+    # Get directory size using du (dust output is human-readable, can't use for JSON)
     local size_bytes=0
-    if [ "$HAS_DUST" = "1" ]; then
-        size_bytes=$(dust -sb -d 0 "$p" 2>/dev/null | awk '{print $1}' | head -1)
-    else
-        size_bytes=$(du -sb "$p" 2>/dev/null | awk '{print $1}')
-    fi
+    size_bytes=$(du -sb "$p" 2>/dev/null | awk '{print $1}')
     [ -z "$size_bytes" ] && size_bytes=0"""
     else:
         size_block = """
@@ -186,15 +177,27 @@ HAS_FD=$(command -v fd >/dev/null 2>&1 && echo 1 || echo 0)
 HAS_RG=$(command -v rg >/dev/null 2>&1 && echo 1 || echo 0)
 HAS_DUST=$(command -v dust >/dev/null 2>&1 && echo 1 || echo 0)
 
+# JSON escape function - handles backslashes and quotes
+# Uses bash parameter expansion for reliability
+json_escape() {{
+    local s="$1"
+    # Escape backslashes first, then quotes
+    s="${{s//\\\\/\\\\\\\\}}"
+    s="${{s//\\"/\\\\\\"}}"
+    printf '%s' "$s"
+}}
+
 scan_dir() {{
     local p="$1"
+    local p_escaped=$(json_escape "$p")
+
     # Check accessibility
     if [ ! -d "$p" ]; then
-        printf '{{"path":"%s","error":"not a directory"}}\\n' "$p"
+        printf '{{"path":"%s","error":"not a directory"}}\\n' "$p_escaped"
         return
     fi
     if [ ! -r "$p" ]; then
-        printf '{{"path":"%s","error":"permission denied"}}\\n' "$p"
+        printf '{{"path":"%s","error":"permission denied"}}\\n' "$p_escaped"
         return
     fi
 
@@ -208,30 +211,34 @@ scan_dir() {{
         dirs=$(find "$p" -maxdepth 1 -type d 2>/dev/null | tail -n +2 | wc -l)
     fi
 
-    # Get child directories (full paths)
+    # Get child directories (full paths) - with JSON escaping
     local child_dirs=""
     if [ "$HAS_FD" = "1" ]; then
         while IFS= read -r d; do
             [ -z "$d" ] && continue
+            local d_escaped=$(json_escape "$d")
             [ -n "$child_dirs" ] && child_dirs="$child_dirs,"
-            child_dirs="$child_dirs\\"$d\\""
+            child_dirs="$child_dirs\\"$d_escaped\\""
         done < <(fd -t d -d 1 . "$p" 2>/dev/null)
     else
         while IFS= read -r d; do
             [ -z "$d" ] && continue
+            local d_escaped=$(json_escape "$d")
             [ -n "$child_dirs" ] && child_dirs="$child_dirs,"
-            child_dirs="$child_dirs\\"$d\\""
+            child_dirs="$child_dirs\\"$d_escaped\\""
         done < <(find "$p" -maxdepth 1 -type d 2>/dev/null | tail -n +2)
     fi
 
-    # Get first 30 entry names for context
+    # Get first 30 entry names for context - with JSON escaping
     local names=""
     local count=0
-    for e in $(ls -1A "$p" 2>/dev/null | head -30); do
+    while IFS= read -r e && [ $count -lt 30 ]; do
+        [ -z "$e" ] && continue
+        local e_escaped=$(json_escape "$e")
         [ -n "$names" ] && names="$names,"
-        names="$names\\"$e\\""
+        names="$names\\"$e_escaped\\""
         count=$((count + 1))
-    done
+    done < <(ls -1A "$p" 2>/dev/null)
 
     # Check for quality indicators
     local has_readme=false has_makefile=false has_git=false
@@ -239,7 +246,7 @@ scan_dir() {{
     [ -f "$p/Makefile" ] || [ -f "$p/CMakeLists.txt" ] && has_makefile=true
     [ -d "$p/.git" ] && has_git=true
 
-    # Count file extensions (for scoring)
+    # Count file extensions (for scoring) - extensions are simple, no escape needed
     local ext_counts=""
     local ext_data=$(ls -1 "$p" 2>/dev/null | grep -E '\\.[a-zA-Z0-9]+$' | sed 's/.*\\.//' | sort | uniq -c | head -10)
     while IFS= read -r line; do
@@ -258,9 +265,9 @@ scan_dir() {{
     fi
 {size_block}
 
-    # Output JSON
+    # Output JSON with escaped path
     printf '{{"path":"%s","stats":{{"total_files":%d,"total_dirs":%d,"has_readme":%s,"has_makefile":%s,"has_git":%s,"size_bytes":%s,"file_type_counts":{{%s}},"rg_matches":{{%s}}}},"child_dirs":[%s],"child_names":[%s]}}\\n' \\
-        "$p" "$files" "$dirs" "$has_readme" "$has_makefile" "$has_git" "$size_bytes" "$ext_counts" "$rg_matches" "$child_dirs" "$names"
+        "$p_escaped" "$files" "$dirs" "$has_readme" "$has_makefile" "$has_git" "$size_bytes" "$ext_counts" "$rg_matches" "$child_dirs" "$names"
 }}
 
 # Output as JSON array
@@ -281,7 +288,7 @@ def scan_paths(
     paths: list[str],
     timeout: int = 300,
     enable_rg: bool = True,
-    enable_size: bool = True,
+    enable_size: bool = False,
 ) -> list[ScanResult]:
     """Scan multiple paths using bash script with ls.
 
@@ -405,180 +412,3 @@ def scan_paths(
             )
 
     return results
-
-
-def scan_paths_parallel(
-    facility: str,
-    paths: list[str],
-    batch_size: int = 20,
-    max_workers: int = 8,
-    timeout: int = 60,
-    enable_rg: bool = False,
-    enable_size: bool = False,
-) -> list[ScanResult]:
-    """Scan paths using parallel SSH connections for higher throughput.
-
-    Key insight: Each SSH call to ITER has ~8s network overhead due to ProxyJump.
-    By running multiple SSH connections in parallel, we overlap this latency.
-
-    Performance (ITER via ProxyJump, batch_size=20):
-    - 4 workers: ~0.6s/path, 1.6 paths/sec
-    - 8 workers: ~0.4s/path, 2.6 paths/sec (optimal)
-    - 12 workers: ~0.4s/path, 2.6 paths/sec
-    - 16 workers: ~0.5s/path (contention)
-
-    Args:
-        facility: Facility identifier
-        paths: List of directory paths to scan
-        batch_size: Paths per SSH call (default 20)
-        max_workers: Number of parallel SSH connections (default 8)
-        timeout: Timeout per batch in seconds
-        enable_rg: Run ripgrep pattern detection (slower)
-        enable_size: Calculate directory sizes (very slow)
-
-    Returns:
-        Combined list of ScanResult from all batches
-    """
-    if not paths:
-        return []
-
-    # Split into batches
-    batches = [paths[i : i + batch_size] for i in range(0, len(paths), batch_size)]
-
-    logger.info(
-        f"Parallel scan: {len(paths)} paths in {len(batches)} batches "
-        f"({max_workers} workers)"
-    )
-
-    all_results: list[ScanResult] = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all batches
-        future_to_batch = {
-            executor.submit(
-                scan_paths, facility, batch, timeout, enable_rg, enable_size
-            ): (i, batch)
-            for i, batch in enumerate(batches)
-        }
-
-        # Collect results as they complete
-        for future in as_completed(future_to_batch):
-            batch_idx, batch = future_to_batch[future]
-            try:
-                results = future.result()
-                all_results.extend(results)
-                logger.debug(f"Batch {batch_idx + 1}/{len(batches)} completed")
-            except Exception as e:
-                logger.warning(f"Batch {batch_idx + 1} failed: {e}")
-                # Add error results for failed batch
-                all_results.extend(
-                    ScanResult(path=p, stats=DirStats(), child_dirs=[], error=str(e))
-                    for p in batch
-                )
-
-    return all_results
-
-
-def scan_facility_sync(
-    facility: str,
-    limit: int = 100,
-    dry_run: bool = False,
-    progress_callback: Callable[[int, int, str], None] | None = None,
-    batch_size: int = 20,
-    max_workers: int = 8,
-    enable_rg: bool = False,
-    enable_size: bool = False,
-) -> dict[str, int]:
-    """Scan frontier paths using parallel SSH connections for high throughput.
-
-    Key features:
-    - Uses bash + fd/ls for fast directory scanning
-    - Parallel SSH connections overlap network latency
-    - Applies exclusion patterns from DiscoveryConfig before creating children
-    - Tracks excluded directories in graph with status='excluded'
-
-    Performance (ITER via ProxyJump):
-    - 8 workers, batch_size=20: ~0.4s/path, 2.6 paths/sec
-    - 150 paths/minute sustained throughput
-
-    Args:
-        facility: Facility identifier
-        limit: Maximum number of paths to scan
-        dry_run: If True, don't persist results
-        progress_callback: Optional callback for progress updates
-        batch_size: Paths per SSH call (default 20)
-        max_workers: Number of parallel SSH connections (default 8)
-        enable_rg: If True, run rg pattern detection. Default False for speed.
-        enable_size: If True, calculate directory size. Default False (slow).
-    """
-    frontier = get_frontier(facility, limit=limit)
-
-    if not frontier:
-        logger.info(f"No frontier, seeding {facility}")
-        seed_facility_roots(facility)
-        frontier = get_frontier(facility, limit=limit)
-        if not frontier:
-            return {"scanned": 0, "children_created": 0, "excluded": 0, "errors": 0}
-
-    paths = [p["path"] for p in frontier]
-    total = len(paths)
-    n_batches = (total + batch_size - 1) // batch_size
-    logger.info(
-        f"Scanning {total} paths for {facility} "
-        f"({n_batches} batches, {max_workers} parallel workers)"
-    )
-
-    if progress_callback:
-        progress_callback(0, total, f"starting {n_batches} batches...")
-
-    # Use parallel scanning for throughput
-    results = scan_paths_parallel(
-        facility,
-        paths,
-        batch_size=batch_size,
-        max_workers=max_workers,
-        timeout=60,
-        enable_rg=enable_rg,
-        enable_size=enable_size,
-    )
-
-    if progress_callback:
-        progress_callback(total, total, "processing results...")
-
-    scanned = 0
-    children_created = 0
-    excluded_count = 0
-    errors = 0
-
-    if dry_run:
-        # Just count, don't persist
-        for r in results:
-            if r.error:
-                errors += 1
-            else:
-                scanned += 1
-                excluded_count += len(r.excluded_dirs)
-    else:
-        # Batch persist all results in one transaction
-        batch_data = [
-            (r.path, r.stats.to_dict(), r.child_dirs, r.error) for r in results
-        ]
-
-        # Collect excluded directories with parent paths and reasons
-        excluded_data = []
-        for r in results:
-            for excluded_path, reason in r.excluded_dirs:
-                excluded_data.append((excluded_path, r.path, reason))
-
-        stats = persist_scan_results(facility, batch_data, excluded=excluded_data)
-        scanned += stats["scanned"]
-        children_created += stats["children_created"]
-        excluded_count += stats.get("excluded", 0)
-        errors += stats["errors"]
-
-    return {
-        "scanned": scanned,
-        "children_created": children_created,
-        "excluded": excluded_count,
-        "errors": errors,
-    }
