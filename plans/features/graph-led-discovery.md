@@ -1,9 +1,28 @@
 # Graph-Led Discovery Pipeline
 
-**Status**: Planning  
+**Status**: In Progress  
 **Phase**: 5 (Discovery Automation)  
 **Replaces**: `scout/` agent-based exploration  
 **Priority**: High
+
+## Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Phase 1: Scan** | ✅ Done | SSH batching, frontier, CLI |
+| **Phase 2: Status/Seed/Clear** | ✅ Done | Graph queries, CLI |
+| **Phase 3: Score** | 🔴 Not Started | DirectoryScorer, LLM prompt |
+| **Phase 4: Discover (iterative)** | 🔴 Not Started | Combined scan→score cycles |
+| **Rich Progress Display** | 🟡 Partial | Class exists, not integrated into CLI |
+
+### Remaining Work
+
+1. **scorer.py** - DirectoryScorer with grounded LLM scoring
+2. **models.py** - PathPurpose, DirectoryEvidence, ScoredDirectory dataclasses  
+3. **discovery-scorer.md** - LLM prompt for directory evaluation
+4. **CLI score command** - `imas-codex discover score <facility>`
+5. **CLI discover command** - Iterative scan→score with budget control
+6. **Rich progress integration** - Use DiscoveryProgressDisplay in scan/score/discover
 
 ## Overview
 
@@ -27,6 +46,47 @@ MATCH (p:FacilityPath) DETACH DELETE p
 ```
 
 No migration - start fresh with the new schema.
+
+## Async Pipeline Architecture
+
+### Pipelined Scan/Score (Recommended)
+
+SSH and LLM operations have different bottlenecks and can be overlapped:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        PIPELINED DISCOVER                            │
+│                                                                      │
+│   Time ──────────────────────────────────────────────────────────▶  │
+│                                                                      │
+│   ┌────────────┐                                                    │
+│   │ Scan Bat 1 │─────┐                                              │
+│   └────────────┘     │   ┌────────────┐                             │
+│                      └──▶│Score Bat 1 │─────┐                       │
+│   ┌────────────┐         └────────────┘     │                       │
+│   │ Scan Bat 2 │─────┐                      │                       │
+│   └────────────┘     │   ┌────────────┐     │   ┌────────────┐     │
+│           (parallel) └──▶│Score Bat 2 │─────┴──▶│Graph Merge │     │
+│                          └────────────┘         └────────────┘     │
+│                                                                      │
+│   Key: SSH latency (~6s) overlaps with LLM latency (~2-5s)          │
+│        Graph is queried for next work after each batch              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Parallelization Options
+
+| Strategy | Description | When to Use |
+|----------|-------------|-------------|
+| **Sequential** | scan → score → scan → score | Simple, good for small facilities |
+| **Pipelined** | Score batch N while scanning batch N+1 | **Default** - best throughput |
+| **Branch-parallel** | Multiple workers on different subtrees | Large facilities, multiple SSH connections |
+
+**Implementation:** Use `asyncio` with two concurrent tasks:
+- `scan_worker`: Queries frontier, scans batch, persists results
+- `score_worker`: Queries scanned paths, scores batch, sets expand_to
+
+Both workers query the graph independently and write back results. The graph is the coordination mechanism.
 
 ## Architecture
 
@@ -780,3 +840,87 @@ Flag paths where `scanned_at < now() - DAYS` for re-scan. Low priority.
 | Coverage growth | 5x per cycle | Paths after / paths before |
 | Idempotency | 100% | Second scan with no score = 0 work |
 | Frontier accuracy | >80% | % of expanded paths yielding high-value children |
+
+## Implementation Notes
+
+### Current Implementation (Phase 1-2 Complete)
+
+**Files created:**
+- `imas_codex/discovery/scanner.py` - SSH batching (200 paths/call)
+- `imas_codex/discovery/frontier.py` - Graph queries for frontier/stats
+- `imas_codex/discovery/executor.py` - ParallelExecutor, BranchExecutor
+- `imas_codex/discovery/progress.py` - DiscoveryProgressDisplay class
+
+**CLI commands:**
+- `imas-codex discover scan <facility> [-l LIMIT] [--dry-run]`
+- `imas_codex discover status <facility> [--json]`
+- `imas-codex discover seed <facility> [-p PATH]`
+- `imas-codex discover clear <facility> [-f]`
+
+### Phase 3: Score (Next Implementation)
+
+**Create these files:**
+
+```
+imas_codex/discovery/models.py      # PathPurpose, DirectoryEvidence, ScoredDirectory
+imas_codex/discovery/scorer.py      # DirectoryScorer class
+imas_codex/agentic/prompts/discovery-scorer.md  # LLM prompt
+```
+
+**Add CLI command:** `imas-codex discover score <facility>`
+
+**Key integration point:** `frontier.py` already has `get_scorable_paths()` and `mark_paths_scored()`.
+
+### Phase 4: Combined Discover (After Phase 3)
+
+**Add CLI command:** `imas-codex discover run <facility>`
+
+**Pipelined implementation:**
+```python
+async def discover_run(facility: str, budget: float, max_cycles: int):
+    """Run pipelined scan → score discovery."""
+    scan_queue = asyncio.Queue()
+    score_queue = asyncio.Queue()
+    
+    async def scan_worker():
+        while True:
+            frontier = get_frontier(facility, limit=200)
+            if not frontier:
+                break
+            results = await scan_paths_async(facility, frontier)
+            persist_scan_results(facility, results)
+            await score_queue.put(len(results))
+    
+    async def score_worker():
+        while True:
+            count = await score_queue.get()
+            scorable = get_scorable_paths(facility, limit=count)
+            if not scorable:
+                continue
+            scored = await scorer.score_batch_async(scorable)
+            mark_paths_scored(facility, scored)
+    
+    # Run both workers concurrently
+    await asyncio.gather(
+        scan_worker(),
+        score_worker(),
+    )
+```
+
+### Rich Progress Integration
+
+Replace simple callback in `discover_scan`:
+```python
+# Current (simple):
+def progress(current: int, total: int, path: str) -> None:
+    click.echo(f"[{current}/{total}] {path}", nl=False)
+
+# Target (rich):
+with DiscoveryProgressDisplay() as display:
+    display.refresh_from_graph(facility)
+    display.update(description="Scanning...", total=frontier_size)
+    for batch in scan_batches:
+        results = scan_batch(batch)
+        display.update(advance=len(batch))
+        display.refresh_from_graph(facility)
+```
