@@ -24,11 +24,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.config.discovery_config import get_discovery_config
+from imas_codex.discovery.facility import get_facility
 from imas_codex.discovery.frontier import (
     get_frontier,
     persist_scan_results,
     seed_facility_roots,
 )
+from imas_codex.remote.executor import run_script_via_stdin
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -283,7 +285,7 @@ def scan_paths(
 ) -> list[ScanResult]:
     """Scan multiple paths using bash script with ls.
 
-    Uses run() for transparent local/SSH execution.
+    Uses run_script_via_stdin() for transparent local/SSH execution.
     Applies exclusion patterns from DiscoveryConfig.
 
     Args:
@@ -295,19 +297,23 @@ def scan_paths(
         enable_size: If True, calculate directory size (can be very slow).
                      If False, skip size calculation for speed.
     """
-    # Late import to avoid circular dependency
-    from imas_codex.remote.tools import run_script
-
     if not paths:
         return []
 
-    config = get_discovery_config()
+    # Resolve ssh_host from facility config
+    try:
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except ValueError:
+        ssh_host = facility
+
+    discovery_config = get_discovery_config()
 
     # Build and execute the scan script
     script = _build_scan_script(paths, enable_rg=enable_rg, enable_size=enable_size)
 
     try:
-        output = run_script(script, facility=facility, timeout=timeout)
+        output = run_script_via_stdin(script, ssh_host=ssh_host, timeout=timeout)
     except Exception as e:
         logger.warning(f"Scan failed for {facility}: {e}")
         return [
@@ -369,7 +375,9 @@ def scan_paths(
 
         # Filter child directories using exclusion config
         all_child_dirs = data.get("child_dirs", [])
-        included_dirs, excluded_dirs = config.exclusions.filter_paths(all_child_dirs)
+        included_dirs, excluded_dirs = discovery_config.exclusions.filter_paths(
+            all_child_dirs
+        )
 
         # Log exclusions at debug level
         if excluded_dirs:
