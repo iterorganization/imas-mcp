@@ -5674,6 +5674,7 @@ async def _async_discovery_loop(
         cost_limit=budget,
         model=model_name,
         console=console,
+        focus=focus or "",
     ) as display:
         # Periodic graph state refresh
         async def refresh_graph_state():
