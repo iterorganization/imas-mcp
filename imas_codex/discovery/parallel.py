@@ -56,6 +56,7 @@ class DiscoveryState:
 
     facility: str
     cost_limit: float
+    path_limit: int | None = None
     focus: str | None = None
     threshold: float = 0.7
 
@@ -73,14 +74,26 @@ class DiscoveryState:
         return self.score_stats.cost
 
     @property
+    def total_processed(self) -> int:
+        return self.scan_stats.processed + self.score_stats.processed
+
+    @property
     def budget_exhausted(self) -> bool:
         return self.total_cost >= self.cost_limit
+
+    @property
+    def path_limit_reached(self) -> bool:
+        if self.path_limit is None:
+            return False
+        return self.total_processed >= self.path_limit
 
     def should_stop(self) -> bool:
         """Check if discovery should terminate."""
         if self.stop_requested:
             return True
         if self.budget_exhausted:
+            return True
+        if self.path_limit_reached:
             return True
         # Stop if both workers idle for 3+ iterations
         if self.scan_idle_count >= 3 and self.score_idle_count >= 3:
@@ -333,6 +346,7 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
 async def run_parallel_discovery(
     facility: str,
     cost_limit: float = 10.0,
+    path_limit: int | None = None,
     focus: str | None = None,
     threshold: float = 0.7,
     on_scan_progress: Callable[[str, WorkerStats], None] | None = None,
@@ -340,11 +354,10 @@ async def run_parallel_discovery(
 ) -> dict[str, Any]:
     """Run parallel scan and score workers.
 
-    Both workers run concurrently, coordinated through the graph.
     Terminates when:
     - Cost limit reached
+    - Path limit reached (if set)
     - Both workers idle (no more work)
-    - Stop requested
 
     Returns:
         Summary dict with scanned, scored, cost, elapsed, rates
@@ -360,6 +373,7 @@ async def run_parallel_discovery(
     state = DiscoveryState(
         facility=facility,
         cost_limit=cost_limit,
+        path_limit=path_limit,
         focus=focus,
         threshold=threshold,
     )

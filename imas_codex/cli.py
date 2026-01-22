@@ -5411,10 +5411,17 @@ def discover() -> None:
 @click.argument("facility")
 @click.option(
     "--cost-limit",
-    "-b",
+    "-c",
     type=float,
     default=10.0,
     help="Maximum LLM spend in USD (default: $10)",
+)
+@click.option(
+    "--limit",
+    "-l",
+    type=int,
+    default=None,
+    help="Maximum paths to process (for debugging)",
 )
 @click.option(
     "--focus",
@@ -5432,29 +5439,28 @@ def discover() -> None:
 def discover_run(
     facility: str,
     cost_limit: float,
+    limit: int | None,
     focus: str | None,
     threshold: float,
 ) -> None:
-    """Run iterative scan→score discovery loop.
+    """Run parallel scan and score discovery.
 
-    Runs parallel scan and score workers until:
-    - Cost limit is exhausted
-    - No more frontier to explore (both workers idle)
+    \b
+    Continues until:
+      - Cost limit exhausted
+      - Path limit reached (if set)
+      - No more frontier to explore
 
-    The scan and score workers run CONCURRENTLY. The graph acts as the
-    coordination mechanism - no locks needed. Each worker claims paths
-    atomically via graph status transitions.
-
+    \b
     Examples:
-        # Run with default $10 limit
-        imas-codex discover run iter
-
-        # Focus on equilibrium codes with $5 limit
-        imas-codex discover run iter --cost-limit 5.0 --focus "equilibrium"
+      imas-codex discover run iter
+      imas-codex discover run iter -c 5.0 --focus "equilibrium"
+      imas-codex discover run iter -l 100  # Debug with 100 paths
     """
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
+        limit=limit,
         focus=focus,
         threshold=threshold,
     )
@@ -5463,6 +5469,7 @@ def discover_run(
 def _run_iterative_discovery(
     facility: str,
     budget: float,
+    limit: int | None,
     focus: str | None,
     threshold: float,
 ) -> None:
@@ -5490,6 +5497,8 @@ def _run_iterative_discovery(
 
     console.print(f"[bold]Starting parallel discovery for {facility}[/bold]")
     console.print(f"Cost limit: ${budget:.2f}")
+    if limit:
+        console.print(f"Path limit: {limit}")
     console.print(f"Model: {model_name}")
     if focus:
         console.print(f"Focus: {focus}")
@@ -5500,6 +5509,7 @@ def _run_iterative_discovery(
             _async_discovery_loop(
                 facility=facility,
                 budget=budget,
+                limit=limit,
                 focus=focus,
                 threshold=threshold,
                 console=console,
@@ -5610,19 +5620,12 @@ def _print_discovery_summary(console, facility: str, result: dict) -> None:
 async def _async_discovery_loop(
     facility: str,
     budget: float,
+    limit: int | None,
     focus: str | None,
     threshold: float,
     console,
 ) -> dict:
-    """Async discovery loop with TRUE parallel scan/score workers.
-
-    Uses the parallel discovery engine which runs scan and score
-    workers concurrently. The graph acts as the coordination mechanism:
-    - Scanner: pending → scanning → scanned
-    - Scorer: scanned → scoring → scored
-
-    No locks needed - atomic graph transitions prevent race conditions.
-    """
+    """Async discovery loop with parallel scan/score workers."""
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery.parallel import run_parallel_discovery
     from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
@@ -5653,6 +5656,7 @@ async def _async_discovery_loop(
             result = await run_parallel_discovery(
                 facility=facility,
                 cost_limit=budget,
+                path_limit=limit,
                 focus=focus,
                 threshold=threshold,
                 on_scan_progress=display.update_scan,
