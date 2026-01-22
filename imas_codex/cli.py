@@ -5652,6 +5652,13 @@ async def _async_discovery_loop(
 
         refresh_task = asyncio.create_task(refresh_graph_state())
 
+        # Wrap display callbacks to match new signature with paths/results
+        def on_scan(msg: str, stats, paths: list[str] | None = None):
+            display.update_scan(msg, stats, paths=paths)
+
+        def on_score(msg: str, stats, results: list[dict] | None = None):
+            display.update_score(msg, stats, results=results)
+
         try:
             result = await run_parallel_discovery(
                 facility=facility,
@@ -5659,8 +5666,8 @@ async def _async_discovery_loop(
                 path_limit=limit,
                 focus=focus,
                 threshold=threshold,
-                on_scan_progress=display.update_scan,
-                on_score_progress=display.update_score,
+                on_scan_progress=on_scan,
+                on_score_progress=on_score,
             )
         finally:
             refresh_task.cancel()
@@ -5672,9 +5679,7 @@ async def _async_discovery_loop(
         # Final refresh
         display.refresh_from_graph(facility)
 
-    # Print summary after display closes
-    display.print_summary()
-
+    # Return result for summary (box printed by caller, no duplicate text)
     return {
         "cycles": 1,  # Continuous operation, not cycle-based
         "scanned": result["scanned"],

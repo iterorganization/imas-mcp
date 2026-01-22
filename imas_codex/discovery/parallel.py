@@ -190,7 +190,7 @@ def mark_score_complete(
 
 async def scan_worker(
     state: DiscoveryState,
-    on_progress: Callable[[str, WorkerStats], None] | None = None,
+    on_progress: Callable[[str, WorkerStats, list[str] | None], None] | None = None,
 ) -> None:
     """Async scanner worker.
 
@@ -208,7 +208,7 @@ async def scan_worker(
         if not paths:
             state.scan_idle_count += 1
             if on_progress:
-                on_progress("idle", state.scan_stats)
+                on_progress("idle", state.scan_stats, None)
             # Wait before polling again
             await asyncio.sleep(1.0)
             continue
@@ -217,7 +217,7 @@ async def scan_worker(
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
-            on_progress(f"scanning {len(paths)} paths", state.scan_stats)
+            on_progress(f"scanning {len(paths)} paths", state.scan_stats, None)
 
         # Run scan in thread pool (blocking SSH call)
         # Capture variables for lambda to avoid late binding issue
@@ -239,8 +239,10 @@ async def scan_worker(
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]
 
+        # Pass scanned paths to progress callback for ticker
+        scanned_paths = [r.path for r in results if not r.error]
         if on_progress:
-            on_progress(f"scanned {stats['scanned']}", state.scan_stats)
+            on_progress(f"scanned {stats['scanned']}", state.scan_stats, scanned_paths)
 
         # Brief yield to allow score worker to run
         await asyncio.sleep(0.1)
@@ -248,7 +250,7 @@ async def scan_worker(
 
 async def score_worker(
     state: DiscoveryState,
-    on_progress: Callable[[str, WorkerStats], None] | None = None,
+    on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
 ) -> None:
     """Async scorer worker.
 
@@ -264,7 +266,7 @@ async def score_worker(
         # Check budget before claiming work
         if state.budget_exhausted:
             if on_progress:
-                on_progress("budget exhausted", state.score_stats)
+                on_progress("budget exhausted", state.score_stats, None)
             break
 
         # Claim work from graph
@@ -273,7 +275,7 @@ async def score_worker(
         if not paths:
             state.score_idle_count += 1
             if on_progress:
-                on_progress("waiting for scanned paths", state.score_stats)
+                on_progress("waiting for scanned paths", state.score_stats, None)
             # Wait before polling again
             await asyncio.sleep(2.0)
             continue
@@ -281,7 +283,7 @@ async def score_worker(
         state.score_idle_count = 0
 
         if on_progress:
-            on_progress(f"scoring {len(paths)} paths", state.score_stats)
+            on_progress(f"scoring {len(paths)} paths", state.score_stats, None)
 
         # Run scoring in thread pool (blocking LLM call)
         # Capture variables for lambda to avoid late binding issue
@@ -306,10 +308,20 @@ async def score_worker(
 
             state.score_stats.processed += len(result.scored_dirs)
 
+            # Pass score results to progress callback for ticker
+            ticker_results = [
+                {
+                    "path": d.path,
+                    "score": d.score,
+                    "label": d.path_purpose.value if d.path_purpose else "",
+                }
+                for d in result.scored_dirs
+            ]
             if on_progress:
                 on_progress(
                     f"scored {len(result.scored_dirs)} (${result.total_cost:.3f})",
                     state.score_stats,
+                    ticker_results,
                 )
 
         except Exception as e:
@@ -349,8 +361,10 @@ async def run_parallel_discovery(
     path_limit: int | None = None,
     focus: str | None = None,
     threshold: float = 0.7,
-    on_scan_progress: Callable[[str, WorkerStats], None] | None = None,
-    on_score_progress: Callable[[str, WorkerStats], None] | None = None,
+    on_scan_progress: Callable[[str, WorkerStats, list[str] | None], None]
+    | None = None,
+    on_score_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    | None = None,
 ) -> dict[str, Any]:
     """Run parallel scan and score workers.
 
