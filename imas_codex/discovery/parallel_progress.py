@@ -2,9 +2,9 @@
 Dual-panel progress display for parallel discovery.
 
 Shows scan and score workers side-by-side with:
-- Thin progress bars based on graph state
-- Streaming ticker showing recent paths processed
-- Overall progress and cost tracking
+- Thin progress bars spanning full width
+- Streaming ticker with progressive fade (new at top, fading to bottom)
+- Overall progress bar stretching full width
 
 The streaming ticker unwraps batched operations at a steady rate to give
 continuous visual feedback without flooding the display.
@@ -27,13 +27,12 @@ if TYPE_CHECKING:
     from imas_codex.discovery.parallel import WorkerStats
 
 
-def clip_path(path: str, max_len: int = 35) -> str:
+def clip_path(path: str, max_len: int = 45) -> str:
     """Clip middle of path if too long: /home/user/.../deep/dir"""
     if len(path) <= max_len:
         return path
-    # Keep first ~15 chars and last ~17 chars
     keep_start = max_len // 3
-    keep_end = max_len - keep_start - 3  # Account for "..."
+    keep_end = max_len - keep_start - 3
     return f"{path[:keep_start]}...{path[-keep_end:]}"
 
 
@@ -50,11 +49,10 @@ class StreamItem:
 class StreamingTicker:
     """Rate-limited streaming ticker for batch results.
 
-    Unwraps batched results at a steady rate to give continuous feedback.
-    Skips items if the rate exceeds max_rate to keep display stable.
+    New items appear at the top and scroll down with progressive fading.
     """
 
-    def __init__(self, max_lines: int = 3, max_rate: float = 4.0) -> None:
+    def __init__(self, max_lines: int = 5, max_rate: float = 4.0) -> None:
         """Initialize ticker.
 
         Args:
@@ -66,13 +64,10 @@ class StreamingTicker:
         self.min_interval = 1.0 / max_rate
         self._items: deque[StreamItem] = deque(maxlen=max_lines)
         self._last_emit: float = 0.0
-        self._pending: deque[StreamItem] = deque(maxlen=100)  # Buffer for batches
+        self._pending: deque[StreamItem] = deque(maxlen=100)
 
     def add_batch(self, items: list[StreamItem]) -> None:
-        """Add a batch of items to be streamed.
-
-        Items will be emitted at the configured rate.
-        """
+        """Add a batch of items to be streamed."""
         self._pending.extend(items)
 
     def add(self, item: StreamItem) -> None:
@@ -84,20 +79,36 @@ class StreamingTicker:
         now = time.time()
         while self._pending and (now - self._last_emit) >= self.min_interval:
             item = self._pending.popleft()
-            self._items.append(item)
+            self._items.appendleft(item)  # New items at front (top)
             self._last_emit = now
             now = time.time()
 
-    def get_lines(self) -> list[Text]:
-        """Get current ticker lines as Rich Text objects."""
-        self.tick()  # Process any pending items
+    def get_lines(self, max_path_len: int = 45) -> list[Text]:
+        """Get current ticker lines with progressive fading.
+
+        Newest items (index 0) are brightest, older items fade.
+        """
+        self.tick()
         lines = []
-        for item in self._items:
+
+        # Opacity levels: newest=bright, oldest=very dim
+        opacity_styles = ["", "dim", "dim", "dim italic", "dim italic"]
+
+        for i, item in enumerate(self._items):
             text = Text()
-            clipped = clip_path(item.path)
-            text.append(clipped, style="dim")
+            clipped = clip_path(item.path, max_path_len)
+
+            # Get opacity style based on position (0=newest, higher=older)
+            opacity = opacity_styles[min(i, len(opacity_styles) - 1)]
+
             if item.score is not None:
+                # Score result: path → score label
+                if opacity:
+                    text.append(clipped, style=opacity)
+                else:
+                    text.append(clipped)
                 text.append(" → ", style="dim")
+
                 # Color based on score
                 if item.score >= 0.7:
                     score_style = "green"
@@ -105,10 +116,27 @@ class StreamingTicker:
                     score_style = "yellow"
                 else:
                     score_style = "red"
-                text.append(f"{item.score:.2f}", style=score_style)
+
+                if opacity:
+                    text.append(f"{item.score:.2f}", style=f"{score_style} {opacity}")
+                else:
+                    text.append(f"{item.score:.2f}", style=score_style)
+
                 if item.label:
-                    text.append(f" {item.label}", style="dim italic")
+                    text.append(
+                        f" {item.label}",
+                        style=f"italic {opacity}" if opacity else "italic dim",
+                    )
+            else:
+                # Scan result: just path
+                text.append(clipped, style=opacity if opacity else "")
+
             lines.append(text)
+
+        # Pad with empty lines if needed
+        while len(lines) < self.max_lines:
+            lines.append(Text("", style="dim"))
+
         return lines
 
 
@@ -154,36 +182,18 @@ class ParallelProgressState:
         else:
             return f"{e / 3600:.1f}h"
 
-    @property
-    def scan_work_remaining(self) -> int:
-        """Paths awaiting scan (pending)."""
-        return self.pending
-
-    @property
-    def score_work_remaining(self) -> int:
-        """Paths awaiting score (scanned but not scored)."""
-        return max(0, self.scanned - self.scored)
-
 
 class ParallelProgressDisplay:
-    """Dual-panel progress display for parallel scan/score workers.
+    """Dual-panel progress display for parallel scan/score workers."""
 
-    Layout:
-    ┌─────────────────────────────────────────────────────────────┐
-    │         Discovering <facility> filesystem                    │
-    ├──────────────────────────┬──────────────────────────────────┤
-    │  ● Scanner               │  ● Scorer                        │
-    │  [━━━━━░░░░░] 45%        │  [━━━░░░░░░░] 32%                │
-    │  Done: 523  Rem: 638     │  Done: 412  Rem: 111             │
-    │  Rate: 15.3/s            │  Rate: 8.2/s                     │
-    │  ─────────────────       │  ─────────────────               │
-    │  /home/user/.../code     │  /work/imas → 0.85 code          │
-    │  /tmp/scratch            │  /tmp/scratch → 0.12 skip        │
-    ├──────────────────────────┴──────────────────────────────────┤
-    │  Overall: [━━━━░░░░░░] 38%  (412/1,100 scored)              │
-    │  Cost: $3.45 / $10.00 (34.5%)  Elapsed: 2m 15s              │
-    └─────────────────────────────────────────────────────────────┘
-    """
+    # Layout constants - sized for 80-col terminal
+    # Outer panel uses 4 chars (2 border + 2 padding)
+    # Each worker panel uses 4 chars (2 border + 2 padding)
+    # Available for content = 80 - 4 (outer) = 76 → 38 per panel
+    # Content inside each panel = 38 - 4 = 34
+    PANEL_WIDTH = 38  # Each worker panel width including borders
+    TICKER_LINES = 5
+    CONTENT_WIDTH = 34  # Usable content area inside each panel
 
     def __init__(
         self,
@@ -200,77 +210,14 @@ class ParallelProgressDisplay:
         )
         self._live: Live | None = None
 
-        # Streaming tickers for each worker
-        self._scan_ticker = StreamingTicker(max_lines=2, max_rate=4.0)
-        self._score_ticker = StreamingTicker(max_lines=2, max_rate=4.0)
+        # Streaming tickers for each worker (5 lines, scrolling at ~4/s)
+        self._scan_ticker = StreamingTicker(max_lines=self.TICKER_LINES, max_rate=4.0)
+        self._score_ticker = StreamingTicker(max_lines=self.TICKER_LINES, max_rate=4.0)
 
-    def _build_worker_panel(
-        self,
-        title: str,
-        status: str,
-        processed: int,
-        remaining: int,
-        rate: float | None,
-        ticker: StreamingTicker,
-        color: str = "blue",
-    ) -> Panel:
-        """Build a single worker status panel with progress bar and ticker."""
-        # Status indicator
-        if "idle" in status.lower() or "waiting" in status.lower():
-            indicator = "[yellow]○[/yellow]"
-            status_style = "yellow"
-        elif "error" in status.lower():
-            indicator = "[red]✗[/red]"
-            status_style = "red"
-        else:
-            indicator = "[green]●[/green]"
-            status_style = "green"
-
-        # Build content with table grid
-        table = Table.grid(padding=(0, 1))
-        table.add_column(justify="right", style="dim")
-        table.add_column(justify="left")
-
-        # Status row
-        table.add_row("Status:", f"[{status_style}]{status}[/{status_style}]")
-
-        # Thin progress bar
-        total = processed + remaining
-        bar = self._make_thin_bar(processed, total, color)
-        table.add_row("Progress:", bar)
-
-        # Compact stats row
-        rate_str = f"{rate:.1f}/s" if rate else "—"
-        stats_text = Text()
-        stats_text.append(f"{processed:,}", style="bold")
-        stats_text.append(" done  ", style="dim")
-        stats_text.append(f"{remaining:,}", style="bold")
-        stats_text.append(" left  ", style="dim")
-        stats_text.append(rate_str, style="cyan")
-        table.add_row("", stats_text)
-
-        # Ticker separator
-        table.add_row("", Text("─" * 32, style="dim"))
-
-        # Streaming ticker lines
-        ticker_lines = ticker.get_lines()
-        if ticker_lines:
-            for line in ticker_lines:
-                table.add_row("", line)
-        else:
-            table.add_row("", Text("waiting...", style="dim italic"))
-
-        return Panel(
-            table,
-            title=f"{indicator} {title}",
-            border_style=color,
-            width=40,
-            height=10,  # Fixed height for stable layout
-        )
-
-    def _make_thin_bar(self, completed: int, total: int, color: str) -> Text:
-        """Create a thin progress bar using Unicode characters."""
-        width = 20
+    def _make_full_bar(
+        self, completed: int, total: int, color: str, width: int
+    ) -> Text:
+        """Create a thin progress bar spanning specified width."""
         if total <= 0:
             return Text("─" * width, style="dim")
 
@@ -284,70 +231,152 @@ class ParallelProgressDisplay:
         if partial > 0.5:
             bar.append("╸", style=color)
         bar.append("─" * empty, style="dim")
-        bar.append(f" {pct * 100:.0f}%", style="dim")
         return bar
 
-    def _build_summary_row(self) -> Table:
-        """Build the bottom summary row with overall progress."""
-        table = Table.grid(padding=(0, 2))
-        table.add_column()
+    def _build_worker_panel(
+        self,
+        title: str,
+        status: str,
+        processed: int,
+        remaining: int,
+        rate: float | None,
+        ticker: StreamingTicker,
+        color: str = "blue",
+    ) -> Panel:
+        """Build a worker status panel with full-width bar and streaming ticker."""
+        # Status indicator
+        if "idle" in status.lower() or "waiting" in status.lower():
+            indicator = "[yellow]○[/yellow]"
+            status_style = "yellow"
+        elif "error" in status.lower():
+            indicator = "[red]✗[/red]"
+            status_style = "red"
+        else:
+            indicator = "[green]●[/green]"
+            status_style = "green"
 
-        # Overall progress bar
-        overall_bar = self._make_thin_bar(
-            self.state.scored, self.state.total_paths, "magenta"
+        lines = []
+
+        # Line 1: Status and rate
+        status_line = Text()
+        status_line.append(status, style=status_style)
+        if rate:
+            status_line.append(f"  {rate:.1f}/s", style="cyan")
+        lines.append(status_line)
+
+        # Line 2: Progress fraction (done/total) right-aligned
+        total = processed + remaining
+        pct = (processed / total * 100) if total > 0 else 0
+        progress_line = Text()
+        progress_line.append("Progress: ", style="dim")
+        progress_line.append(f"{processed:,}", style="bold")
+        progress_line.append("/", style="dim")
+        progress_line.append(f"{total:,}", style="dim")
+        progress_line.append(f"  {pct:.0f}%", style="bold")
+        lines.append(progress_line)
+
+        # Line 3: Full-width progress bar
+        bar = self._make_full_bar(processed, total, color, self.CONTENT_WIDTH)
+        lines.append(bar)
+
+        # Line 4: Separator
+        lines.append(Text("─" * self.CONTENT_WIDTH, style="dim"))
+
+        # Lines 5+: Streaming ticker (5 lines, newest at top, fading down)
+        ticker_lines = ticker.get_lines(max_path_len=self.CONTENT_WIDTH)
+        lines.extend(ticker_lines)
+
+        # Combine into content
+        content = Text()
+        for i, line in enumerate(lines):
+            if i > 0:
+                content.append("\n")
+            content.append_text(line)
+
+        return Panel(
+            content,
+            title=f"{indicator} {title}",
+            border_style=color,
+            width=self.PANEL_WIDTH,
+            padding=(0, 1),  # Vertical=0, horizontal=1
         )
-        progress_text = Text()
-        progress_text.append("Overall: ", style="bold")
-        progress_text.append_text(overall_bar)
-        progress_text.append(
-            f"  ({self.state.scored:,}/{self.state.total_paths:,} scored)", style="dim"
+
+    def _build_summary_row(self) -> Panel:
+        """Build the bottom summary row with full-width overall progress."""
+        # Summary panel must fit inside outer panel's content area
+        # Outer panel width = (PANEL_WIDTH * 2) + 4 = 80
+        # Outer content area = 80 - 4 (borders + padding) = 76
+        summary_width = self.PANEL_WIDTH * 2  # 76 = fits in outer content
+        # Content width inside summary = summary_width - 4 (borders + padding)
+        full_bar_width = summary_width - 4  # 72
+
+        lines = []
+
+        # Line 1: Overall progress bar (full width)
+        pct = (
+            (self.state.scored / self.state.total_paths * 100)
+            if self.state.total_paths > 0
+            else 0
         )
-        table.add_row(progress_text)
+        overall_line = Text()
+        overall_line.append("Overall: ", style="bold")
+        overall_line.append(f"{self.state.scored:,}", style="bold green")
+        overall_line.append("/", style="dim")
+        overall_line.append(f"{self.state.total_paths:,}", style="dim")
+        overall_line.append(f"  {pct:.1f}%", style="bold magenta")
+        lines.append(overall_line)
 
-        # Graph flow
-        graph_text = Text()
-        graph_text.append("Flow: ", style="bold")
-        graph_text.append(f"{self.state.pending:,}", style="cyan")
-        graph_text.append(" pending → ", style="dim")
-        graph_text.append(f"{self.state.scanned:,}", style="blue")
-        graph_text.append(" scanned → ", style="dim")
-        graph_text.append(f"{self.state.scored:,}", style="green")
-        graph_text.append(" scored", style="dim")
-        table.add_row(graph_text)
+        # Full-width bar
+        bar = self._make_full_bar(
+            self.state.scored, self.state.total_paths, "magenta", full_bar_width
+        )
+        lines.append(bar)
 
-        # Cost and time
+        # Line 2: Graph flow
+        flow_line = Text()
+        flow_line.append("Flow: ", style="bold")
+        flow_line.append(f"{self.state.pending:,}", style="cyan")
+        flow_line.append(" pending → ", style="dim")
+        flow_line.append(f"{self.state.scanned:,}", style="blue")
+        flow_line.append(" scanned → ", style="dim")
+        flow_line.append(f"{self.state.scored:,}", style="green")
+        flow_line.append(" scored", style="dim")
+        lines.append(flow_line)
+
+        # Line 3: Cost, time, model
         cost_pct = (
             (self.state.total_cost / self.state.cost_limit * 100)
             if self.state.cost_limit > 0
             else 0
         )
-        cost_text = Text()
-        cost_text.append("Cost: ", style="bold")
-        cost_text.append(f"${self.state.total_cost:.2f}", style="yellow")
-        cost_text.append(f" / ${self.state.cost_limit:.2f}")
-        cost_text.append(f" ({cost_pct:.1f}%)", style="dim")
-        cost_text.append("  Elapsed: ", style="dim")
-        cost_text.append(self.state.elapsed_str, style="cyan")
+        cost_line = Text()
+        cost_line.append("Cost: ", style="bold")
+        cost_line.append(f"${self.state.total_cost:.2f}", style="yellow")
+        cost_line.append(f"/${self.state.cost_limit:.2f}", style="dim")
+        cost_line.append(f" ({cost_pct:.0f}%)", style="dim")
+        cost_line.append("  Elapsed: ", style="dim")
+        cost_line.append(self.state.elapsed_str, style="cyan")
         if self.state.model:
             model_display = (
                 self.state.model.split("/")[-1]
                 if "/" in self.state.model
                 else self.state.model
             )
-            cost_text.append("  Model: ", style="dim")
-            cost_text.append(model_display, style="dim")
-        table.add_row(cost_text)
+            cost_line.append(f"  {model_display}", style="dim")
+        lines.append(cost_line)
 
-        return table
+        # Combine
+        content = Text()
+        for i, line in enumerate(lines):
+            if i > 0:
+                content.append("\n")
+            content.append_text(line)
+
+        return Panel(content, border_style="dim", width=summary_width)
 
     def _build_display(self) -> Panel:
         """Build the complete dual-panel display."""
-        # Worker panels side by side
-        workers = Table.grid(padding=(0, 2))
-        workers.add_column()
-        workers.add_column()
-
-        # Scanner: remaining = pending paths
+        # Worker panels side by side using Columns for proper width handling
         scan_panel = self._build_worker_panel(
             title="Scanner",
             status=self.state.scan_status,
@@ -358,7 +387,6 @@ class ParallelProgressDisplay:
             color="blue",
         )
 
-        # Scorer: remaining = scanned but not scored
         scanned_unscored = max(0, self.state.scanned - self.state.scored)
         score_panel = self._build_worker_panel(
             title="Scorer",
@@ -370,16 +398,23 @@ class ParallelProgressDisplay:
             color="green",
         )
 
+        # Use Table.grid for side-by-side layout
+        workers = Table.grid(expand=False)
+        workers.add_column(width=self.PANEL_WIDTH)
+        workers.add_column(width=self.PANEL_WIDTH)
         workers.add_row(scan_panel, score_panel)
 
-        # Combine with summary
-        full_display = Group(
-            workers,
-            Panel(self._build_summary_row(), border_style="dim", width=86),
-        )
+        full_display = Group(workers, self._build_summary_row())
 
         title = f"Discovering {self.state.facility} filesystem"
-        return Panel(full_display, title=title, border_style="cyan", width=90)
+        # Outer panel must fit both worker panels (2 x PANEL_WIDTH) + outer borders/padding
+        outer_width = (self.PANEL_WIDTH * 2) + 4
+        return Panel(
+            full_display,
+            title=title,
+            border_style="cyan",
+            width=outer_width,
+        )
 
     def __enter__(self) -> ParallelProgressDisplay:
         """Start live display."""
@@ -402,18 +437,11 @@ class ParallelProgressDisplay:
         stats: WorkerStats,
         paths: list[str] | None = None,
     ) -> None:
-        """Update scanner status.
-
-        Args:
-            message: Status message (e.g., "scanning 50 paths", "idle")
-            stats: Worker statistics
-            paths: Optional list of paths just scanned (for ticker)
-        """
+        """Update scanner status."""
         self.state.scan_status = message.split()[0] if message else "idle"
         self.state.total_scanned = stats.processed
         self.state.scan_rate = stats.rate
 
-        # Add paths to ticker
         if paths:
             items = [StreamItem(path=p) for p in paths]
             self._scan_ticker.add_batch(items)
@@ -426,19 +454,12 @@ class ParallelProgressDisplay:
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update scorer status.
-
-        Args:
-            message: Status message (e.g., "scored 25 ($0.021)", "waiting")
-            stats: Worker statistics
-            results: Optional list of score results (for ticker)
-        """
+        """Update scorer status."""
         self.state.score_status = message.split()[0] if message else "waiting"
         self.state.total_scored = stats.processed
         self.state.score_rate = stats.rate
         self.state.total_cost = stats.cost
 
-        # Add results to ticker
         if results:
             items = [
                 StreamItem(
@@ -453,11 +474,7 @@ class ParallelProgressDisplay:
         self._refresh()
 
     def refresh_from_graph(self, facility: str) -> None:
-        """Refresh graph state from database.
-
-        Args:
-            facility: Facility ID to query
-        """
+        """Refresh graph state from database."""
         from imas_codex.discovery.frontier import get_discovery_stats
 
         stats = get_discovery_stats(facility)
