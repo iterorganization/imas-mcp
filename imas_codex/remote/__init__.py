@@ -25,6 +25,7 @@ from imas_codex.remote.tools import (
     is_local_facility,
     load_fast_tools,
     run,
+    run_script,
 )
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "is_local_facility",
     "load_fast_tools",
     "run",
+    "run_script",
 ]

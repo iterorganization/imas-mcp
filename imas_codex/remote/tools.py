@@ -366,6 +366,79 @@ def run(
     return output.strip() or "(no output)"
 
 
+def run_script(
+    script: str,
+    facility: str | None = None,
+    timeout: int = 60,
+    check: bool = False,
+) -> str:
+    """Execute a multi-line script via stdin to avoid bash -c overhead.
+
+    Unlike run(), this passes the script via stdin which avoids the ~11s
+    overhead of bash loading .bashrc when invoked with 'bash -c'.
+
+    This is 2-3x faster for complex scripts on remote facilities with
+    slow bashrc initialization (e.g., ITER with module system).
+
+    Args:
+        script: Multi-line bash script to execute
+        facility: Facility ID (None = local)
+        timeout: Command timeout in seconds
+        check: Raise exception on non-zero exit
+
+    Returns:
+        Command output (stdout + stderr)
+
+    Examples:
+        run_script('''
+            for f in /path/*; do
+                echo "$f"
+            done
+        ''', facility='iter')
+    """
+    is_local = is_local_facility(facility)
+
+    # Get ssh_host for remote execution
+    ssh_host = facility
+    if facility and not is_local:
+        try:
+            config = get_facility(facility)
+            ssh_host = config.get("ssh_host", facility)
+        except ValueError:
+            ssh_host = facility
+
+    if is_local:
+        # Local execution via stdin
+        result = subprocess.run(
+            ["bash"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    else:
+        # SSH execution via stdin - avoids bash -c overhead
+        # Use 'bash -s' to read script from stdin (non-login shell, no bashrc)
+        result = subprocess.run(
+            ["ssh", "-T", ssh_host, "bash -s"],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    output = result.stdout
+    if result.stderr:
+        output += f"\n[stderr]: {result.stderr}"
+
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, script[:100], result.stdout, result.stderr
+        )
+
+    return output.strip() or "(no output)"
+
+
 def detect_architecture(facility: str | None = None) -> str:
     """Detect CPU architecture of target system.
 

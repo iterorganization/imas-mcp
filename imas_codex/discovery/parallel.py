@@ -232,9 +232,13 @@ async def scan_worker(
         loop = asyncio.get_event_loop()
         start = time.time()
         facility, paths_to_scan = state.facility, path_strs
+        # Use enable_rg=False and enable_size=False for speed
+        # Pattern detection is expensive and not needed for basic discovery
         results = await loop.run_in_executor(
             None,
-            lambda fac=facility, pts=paths_to_scan: scan_paths(fac, pts),
+            lambda fac=facility, pts=paths_to_scan: scan_paths(
+                fac, pts, enable_rg=False, enable_size=False
+            ),
         )
         state.scan_stats.last_batch_time = time.time() - start
 

@@ -271,7 +271,7 @@ for p in {escaped_paths}; do
 done
 echo "]"
 """
-    return f"bash -c {shlex.quote(script)}"
+    return script
 
 
 def scan_paths(
@@ -296,7 +296,7 @@ def scan_paths(
                      If False, skip size calculation for speed.
     """
     # Late import to avoid circular dependency
-    from imas_codex.remote.tools import run
+    from imas_codex.remote.tools import run_script
 
     if not paths:
         return []
@@ -307,7 +307,7 @@ def scan_paths(
     script = _build_scan_script(paths, enable_rg=enable_rg, enable_size=enable_size)
 
     try:
-        output = run(script, facility=facility, timeout=timeout)
+        output = run_script(script, facility=facility, timeout=timeout)
     except Exception as e:
         logger.warning(f"Scan failed for {facility}: {e}")
         return [
