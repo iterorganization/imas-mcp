@@ -8,12 +8,18 @@ the generated graph/models.py module.
 Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
 structures for the scorer, NOT graph node types. They are converted to
 graph updates via frontier.mark_paths_scored().
+
+The Pydantic models (EvidenceSchema, DirectoryScoringResult, DirectoryScoringBatch)
+are used for LLM structured output - LiteLLM parses responses directly into these.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
 from imas_codex.graph.models import DiscoveryStatus, PathPurpose
@@ -24,7 +30,125 @@ __all__ = [
     "DirectoryEvidence",
     "ScoredDirectory",
     "ScoredBatch",
+    "EvidenceSchema",
+    "DirectoryScoringResult",
+    "DirectoryScoringBatch",
+    "PathPurposeEnum",
 ]
+
+
+# Pydantic enum for LLM output (must be a regular Enum for Pydantic/LiteLLM)
+class PathPurposeEnum(str, Enum):
+    """Path purpose classification for LLM output."""
+
+    physics_code = "physics_code"
+    data_files = "data_files"
+    documentation = "documentation"
+    configuration = "configuration"
+    build_artifacts = "build_artifacts"
+    test_files = "test_files"
+    user_home = "user_home"
+    system = "system"
+    unknown = "unknown"
+
+
+# ============================================================================
+# Pydantic Models for LLM Structured Output
+# ============================================================================
+
+
+class EvidenceSchema(BaseModel):
+    """Evidence collected about a directory's contents.
+
+    Used by LLM for structured output - maps directly to DirectoryEvidence.
+    """
+
+    code_indicators: list[str] = Field(
+        default_factory=list,
+        description="Programming file extensions found (e.g., ['py', 'f90', 'cpp'])",
+    )
+    data_indicators: list[str] = Field(
+        default_factory=list,
+        description="Data file extensions found (e.g., ['nc', 'h5', 'csv'])",
+    )
+    imas_indicators: list[str] = Field(
+        default_factory=list,
+        description="IMAS-related patterns (e.g., ['put_slice', 'ids_properties'])",
+    )
+    physics_indicators: list[str] = Field(
+        default_factory=list,
+        description="Physics domain patterns (e.g., ['equilibrium', 'transport'])",
+    )
+    quality_indicators: list[str] = Field(
+        default_factory=list,
+        description="Project quality signals (e.g., ['has_readme', 'has_git'])",
+    )
+
+
+class DirectoryScoringResult(BaseModel):
+    """LLM scoring result for a single directory.
+
+    This Pydantic model is passed to LiteLLM's response_format parameter
+    to ensure structured, parseable output from the LLM.
+
+    Note: ge/le constraints removed from float fields because Anthropic
+    via OpenRouter doesn't support minimum/maximum JSON schema properties.
+    Score clamping is done in the parser instead.
+    """
+
+    path: str = Field(description="The directory path (echo from input)")
+
+    path_purpose: PathPurposeEnum = Field(
+        description="Classification: physics_code, data_files, documentation, "
+        "configuration, build_artifacts, test_files, user_home, system, unknown"
+    )
+
+    description: str = Field(
+        description="Concise description of directory contents (1-2 sentences)"
+    )
+
+    evidence: EvidenceSchema = Field(
+        default_factory=EvidenceSchema,
+        description="Structured evidence for scoring",
+    )
+
+    score_code: float = Field(description="Code discovery value (0.0-1.0)")
+
+    score_data: float = Field(description="Data discovery value (0.0-1.0)")
+
+    score_imas: float = Field(description="IMAS relevance (0.0-1.0)")
+
+    should_expand: bool = Field(description="Whether to explore child directories")
+
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Searchable keywords (max 5)",
+    )
+
+    physics_domain: str | None = Field(
+        default=None,
+        description="Primary physics domain (equilibrium, transport, etc.)",
+    )
+
+    expansion_reason: str | None = Field(
+        default=None, description="Why to expand (if should_expand=true)"
+    )
+
+    skip_reason: str | None = Field(
+        default=None, description="Why not to expand (if should_expand=false)"
+    )
+
+
+class DirectoryScoringBatch(BaseModel):
+    """Batch of directory scoring results from LLM.
+
+    This is the top-level model passed to LiteLLM's response_format.
+    The LLM returns a list of DirectoryScoringResult objects.
+    """
+
+    results: list[DirectoryScoringResult] = Field(
+        description="List of scoring results, one per input directory, in order"
+    )
 
 
 @dataclass

@@ -5391,7 +5391,8 @@ def discover() -> None:
 
     \b
     Iterative discovery (runs scan→score loop):
-      imas-codex discover run <facility> --budget 10.0
+      imas-codex discover run <facility>              # Default $10 limit
+      imas-codex discover run <facility> --cost-limit 20.0
 
     \b
     Manual control (explicit subcommands):
@@ -5409,11 +5410,11 @@ def discover() -> None:
 @discover.command("run")
 @click.argument("facility")
 @click.option(
-    "--budget",
+    "--cost-limit",
     "-b",
     type=float,
-    required=True,
-    help="Maximum LLM spend in USD",
+    default=10.0,
+    help="Maximum LLM spend in USD (default: $10)",
 )
 @click.option(
     "--max-cycles",
@@ -5444,7 +5445,7 @@ def discover() -> None:
 )
 def discover_run(
     facility: str,
-    budget: float,
+    cost_limit: float,
     max_cycles: int,
     focus: str | None,
     threshold: float,
@@ -5454,23 +5455,23 @@ def discover_run(
 
     Automatically seeds facility root paths if none exist, then
     alternates between scanning (SSH) and scoring (LLM) until:
-    - Budget is exhausted
+    - Cost limit is exhausted
     - Max cycles reached
     - No more frontier to explore
 
     Examples:
-        # Run with $10 budget
-        imas-codex discover run iter --budget 10.0
+        # Run with default $10 limit
+        imas-codex discover run iter
 
-        # Focus on equilibrium codes
-        imas-codex discover run iter --budget 5.0 --focus "equilibrium"
+        # Focus on equilibrium codes with $5 limit
+        imas-codex discover run iter --cost-limit 5.0 --focus "equilibrium"
 
         # More workers for faster parallel execution
-        imas-codex discover run iter --budget 10.0 --workers 4
+        imas-codex discover run iter --cost-limit 20.0 --workers 4
     """
     _run_iterative_discovery(
         facility=facility,
-        budget=budget,
+        budget=cost_limit,
         max_cycles=max_cycles,
         focus=focus,
         threshold=threshold,
@@ -5491,6 +5492,7 @@ def _run_iterative_discovery(
 
     from rich.console import Console
 
+    from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
     console = Console()
@@ -5502,10 +5504,16 @@ def _run_iterative_discovery(
         seed_facility_roots(facility)
         stats = get_discovery_stats(facility)
 
+    # Get model name for display
+    model_name = get_model_for_task("score")
+    if model_name.startswith("anthropic/"):
+        model_name = model_name[len("anthropic/") :]
+
     console.print(f"[bold]Starting discovery for {facility}[/bold]")
     console.print(
-        f"Budget: ${budget:.2f} | Max cycles: {max_cycles} | Workers: {workers}"
+        f"Cost limit: ${budget:.2f} | Max cycles: {max_cycles} | Workers: {workers}"
     )
+    console.print(f"Model: {model_name}")
     if focus:
         console.print(f"Focus: {focus}")
 
@@ -5523,13 +5531,8 @@ def _run_iterative_discovery(
             )
         )
 
-        console.print()
-        console.print("[bold green]Discovery complete![/bold green]")
-        console.print(f"  Cycles: {result['cycles']}")
-        console.print(f"  Scanned: {result['scanned']}")
-        console.print(f"  Scored: {result['scored']}")
-        console.print(f"  Expanded: {result['expanded']}")
-        console.print(f"  Cost: ${result['cost']:.2f}")
+        # Print detailed summary
+        _print_discovery_summary(console, facility, result)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Discovery interrupted by user[/yellow]")
@@ -5537,6 +5540,104 @@ def _run_iterative_discovery(
     except Exception as e:
         console.print(f"\n[red]Error: {e}[/red]", highlight=False)
         raise SystemExit(1) from e
+
+
+def _print_discovery_summary(console, facility: str, result: dict) -> None:
+    """Print detailed discovery summary with statistics."""
+    from rich.panel import Panel
+    from rich.table import Table
+
+    from imas_codex.discovery import get_discovery_stats
+    from imas_codex.discovery.frontier import get_high_value_paths
+
+    console.print()
+
+    # Build summary table
+    table = Table.grid(padding=(0, 2))
+    table.add_column(justify="right", style="bold")
+    table.add_column(justify="left")
+    table.add_column(justify="right", style="bold")
+    table.add_column(justify="left")
+
+    # Row 1: Cycles and elapsed time
+    elapsed = result.get("elapsed_seconds", 0)
+    elapsed_str = f"{elapsed / 60:.1f}m" if elapsed >= 60 else f"{elapsed:.1f}s"
+    table.add_row(
+        "Cycles:",
+        str(result["cycles"]),
+        "Elapsed:",
+        elapsed_str,
+    )
+
+    # Row 2: Scanned and scored
+    table.add_row(
+        "Scanned:",
+        f"{result['scanned']:,}",
+        "Scored:",
+        f"{result['scored']:,}",
+    )
+
+    # Row 3: Expanded and cost
+    table.add_row(
+        "Expanded:",
+        f"{result['expanded']:,}",
+        "Cost:",
+        f"${result['cost']:.3f}",
+    )
+
+    # Row 4: Rates
+    scan_rate = result.get("scan_rate")
+    score_rate = result.get("score_rate")
+    scan_str = f"{scan_rate:.1f}/s" if scan_rate else "-"
+    score_str = f"{score_rate:.1f}/s" if score_rate else "-"
+    table.add_row(
+        "Scan rate:",
+        scan_str,
+        "Score rate:",
+        score_str,
+    )
+
+    # Get final graph stats
+    stats = get_discovery_stats(facility)
+    coverage = stats["scored"] / stats["total"] * 100 if stats["total"] > 0 else 0
+
+    # Row 5: Graph state
+    table.add_row(
+        "Total paths:",
+        f"{stats['total']:,}",
+        "Coverage:",
+        f"{coverage:.1f}%",
+    )
+    table.add_row(
+        "Frontier:",
+        f"{stats['pending']:,}",
+        "",
+        "",
+    )
+
+    console.print(
+        Panel(
+            table,
+            title="[bold green]Discovery Complete[/bold green]",
+            border_style="green",
+        )
+    )
+
+    # Show high-value paths found
+    high_value = get_high_value_paths(facility, min_score=0.7, limit=8)
+    if high_value:
+        console.print()
+        console.print(f"[bold]High-value paths discovered ({len(high_value)}):[/bold]")
+        for p in high_value[:5]:
+            purpose = p.get("path_purpose", "unknown")
+            desc = p.get("description", "")[:60]
+            if len(p.get("description", "")) > 60:
+                desc += "..."
+            console.print(f"  [{p['score']:.2f}] [cyan]{p['path']}[/cyan]")
+            if desc:
+                console.print(f"         {purpose}: {desc}")
+        if len(high_value) > 5:
+            console.print(f"  ... and {len(high_value) - 5} more high-value paths")
 
 
 async def _async_discovery_loop(
@@ -5549,7 +5650,9 @@ async def _async_discovery_loop(
     console,
 ) -> dict:
     """Async discovery loop with parallel scan/score workers."""
+    import time
 
+    from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery import get_discovery_stats
     from imas_codex.discovery.progress import DiscoveryProgressDisplay
 
@@ -5558,10 +5661,15 @@ async def _async_discovery_loop(
     total_expanded = 0
     total_cost = 0.0
     current_cycle = 0
+    start_time = time.time()
 
     with DiscoveryProgressDisplay(console=console) as display:
         display.stats.budget_limit = budget
         display.stats.max_cycles = max_cycles
+        display.stats.facility = facility
+        display.stats.model = get_model_for_task("score")
+        display.stats.scan_start_time = start_time
+        display.stats.score_start_time = start_time
         display.refresh_from_graph(facility)
 
         while current_cycle < max_cycles:
@@ -5570,7 +5678,7 @@ async def _async_discovery_loop(
 
             # Check budget
             if total_cost >= budget:
-                display.update(description=f"Budget exhausted: ${total_cost:.2f}")
+                display.update(description=f"Cost limit reached: ${total_cost:.2f}")
                 break
 
             # Check frontier
@@ -5603,6 +5711,10 @@ async def _async_discovery_loop(
             total_expanded += cycle_result["expanded"]
             total_cost += cycle_result["cost"]
 
+            # Update rate tracking
+            display.stats.scan_count += cycle_result["scanned"]
+            display.stats.score_count += cycle_result["scored"]
+
             display.stats.accumulated_cost = total_cost
             display.refresh_from_graph(facility)
 
@@ -5610,12 +5722,19 @@ async def _async_discovery_loop(
             if cycle_result["scanned"] == 0 and cycle_result["scored"] == 0:
                 break
 
+    elapsed = time.time() - start_time
+    scan_rate = total_scanned / elapsed if elapsed > 0 and total_scanned > 0 else None
+    score_rate = total_scored / elapsed if elapsed > 0 and total_scored > 0 else None
+
     return {
         "cycles": current_cycle,
         "scanned": total_scanned,
         "scored": total_scored,
         "expanded": total_expanded,
         "cost": total_cost,
+        "elapsed_seconds": elapsed,
+        "scan_rate": scan_rate,
+        "score_rate": score_rate,
     }
 
 
@@ -5759,7 +5878,7 @@ def discover_scan(facility: str, limit: int, dry_run: bool) -> None:
     help="Paths per LLM call",
 )
 @click.option(
-    "--budget",
+    "--cost-limit",
     "-b",
     type=float,
     help="Maximum spend in USD",
@@ -5793,7 +5912,7 @@ def discover_score(
     facility: str,
     limit: int,
     batch_size: int,
-    budget: float | None,
+    cost_limit: float | None,
     focus: str | None,
     threshold: float,
     model: str | None,
@@ -5812,8 +5931,8 @@ def discover_score(
         # Score up to 100 paths
         imas-codex discover score iter
 
-        # Score with focus and budget
-        imas-codex discover score iter --focus "equilibrium" --budget 5.0
+        # Score with focus and cost limit
+        imas-codex discover score iter --focus "equilibrium" --cost-limit 5.0
 
         # Dry run to test without graph changes
         imas-codex discover score iter --dry-run
@@ -5832,8 +5951,8 @@ def discover_score(
         console.print(f"[cyan]Scoring paths for {facility}...[/cyan]")
         if focus:
             console.print(f"Focus: {focus}")
-        if budget:
-            console.print(f"Budget: ${budget:.2f}")
+        if cost_limit:
+            console.print(f"Cost limit: ${cost_limit:.2f}")
 
         result = score_facility_paths(
             facility=facility,
@@ -5842,7 +5961,7 @@ def discover_score(
             focus=focus,
             threshold=threshold,
             model=model,
-            budget=budget,
+            budget=cost_limit,
             dry_run=dry_run,
         )
 

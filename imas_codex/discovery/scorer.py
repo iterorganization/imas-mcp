@@ -4,18 +4,18 @@ LLM-based directory scoring with grounded evidence.
 This module implements the scoring phase of graph-led discovery:
 1. Query graph for scanned but unscored paths
 2. Build batched prompts with directory context
-3. Call LLM to collect evidence and classify directories
+3. Call LLM with structured output schema for reliable parsing
 4. Apply grounded scoring function to compute final scores
 5. Set expand_to for high-value paths
 
-The scorer uses LiteLLM for model access (via OpenRouter), then a
-deterministic function computes the final score from evidence.
-This "grounded scoring" approach ensures reproducibility.
+The scorer uses LiteLLM for model access (via OpenRouter) with Pydantic
+models for structured output, then a deterministic function computes
+the final score from evidence. This "grounded scoring" approach ensures
+reproducibility.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -25,6 +25,7 @@ from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.discovery.models import (
     DirectoryEvidence,
+    DirectoryScoringBatch,
     PathPurpose,
     ScoredBatch,
     ScoredDirectory,
@@ -148,7 +149,7 @@ class DirectoryScorer:
         focus: str | None = None,
         threshold: float = 0.7,
     ) -> ScoredBatch:
-        """Score a batch of directories.
+        """Score a batch of directories using LLM with structured output.
 
         Args:
             directories: List of directory info dicts with:
@@ -188,7 +189,7 @@ class DirectoryScorer:
                 "Set it in .env or export it."
             )
 
-        # Call LLM via LiteLLM (OpenRouter prefix)
+        # Call LLM via LiteLLM (OpenRouter prefix) with structured output
         model_id = self.model
         if not model_id.startswith("openrouter/"):
             model_id = f"openrouter/{model_id}"
@@ -197,15 +198,15 @@ class DirectoryScorer:
             model=model_id,
             api_key=api_key,
             max_tokens=4000,
+            response_format=DirectoryScoringBatch,  # Pydantic structured output
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         )
 
-        # Parse response
-        result_text = response.choices[0].message.content
-        scored_dirs = self._parse_response(result_text, directories, threshold)
+        # Parse response using structured output
+        scored_dirs = self._parse_structured_response(response, directories, threshold)
 
         # Calculate cost from LiteLLM response
         input_tokens = response.usage.prompt_tokens
@@ -262,6 +263,8 @@ class DirectoryScorer:
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
         """Build user prompt with directories to score."""
+        import json as json_module
+
         lines = ["Score these directories:\n"]
 
         for i, d in enumerate(directories, 1):
@@ -275,8 +278,8 @@ class DirectoryScorer:
             if file_types:
                 if isinstance(file_types, str):
                     try:
-                        file_types = json.loads(file_types)
-                    except json.JSONDecodeError:
+                        file_types = json_module.loads(file_types)
+                    except json_module.JSONDecodeError:
                         file_types = {}
                 lines.append(f"File types: {file_types}")
 
@@ -292,10 +295,103 @@ class DirectoryScorer:
                 lines.append(f"Patterns: {', '.join(patterns)}")
 
         lines.append(
-            "\n\nReturn JSON array with results for each directory (in order)."
+            "\n\nReturn results for each directory in order. "
+            "The response format is enforced by the schema."
         )
 
         return "\n".join(lines)
+
+    def _parse_structured_response(
+        self,
+        response,
+        directories: list[dict[str, Any]],
+        threshold: float,
+    ) -> list[ScoredDirectory]:
+        """Parse structured LLM response into ScoredDirectory objects.
+
+        Uses LiteLLM's structured output - the response is already validated
+        against the DirectoryScoringBatch Pydantic model.
+        """
+        try:
+            # LiteLLM returns content as JSON string when using response_format
+            content = response.choices[0].message.content
+            batch = DirectoryScoringBatch.model_validate_json(content)
+            results = batch.results
+        except Exception as e:
+            logger.warning(f"Failed to parse structured LLM response: {e}")
+            # Fallback: return empty scores for all
+            return [
+                ScoredDirectory(
+                    path=d["path"],
+                    path_purpose=PathPurpose.unknown,
+                    description="Parse error",
+                    evidence=DirectoryEvidence(),
+                    score_code=0.0,
+                    score_data=0.0,
+                    score_imas=0.0,
+                    score=0.0,
+                    should_expand=False,
+                    skip_reason=f"LLM response parse failed: {e}",
+                )
+                for d in directories
+            ]
+
+        scored = []
+        for i, result in enumerate(results[: len(directories)]):
+            path = directories[i]["path"]
+
+            # Clamp scores (should already be valid from schema)
+            score_code = max(0.0, min(1.0, result.score_code))
+            score_data = max(0.0, min(1.0, result.score_data))
+            score_imas = max(0.0, min(1.0, result.score_imas))
+
+            # Convert Pydantic enum to graph PathPurpose
+            purpose = parse_path_purpose(result.path_purpose.value)
+
+            # Build evidence from Pydantic model
+            evidence = DirectoryEvidence(
+                code_indicators=result.evidence.code_indicators,
+                data_indicators=result.evidence.data_indicators,
+                imas_indicators=result.evidence.imas_indicators,
+                physics_indicators=result.evidence.physics_indicators,
+                quality_indicators=result.evidence.quality_indicators,
+            )
+
+            # Compute grounded score
+            combined = grounded_score(
+                score_code,
+                score_data,
+                score_imas,
+                evidence,
+                purpose,
+            )
+
+            # Expansion decision
+            should_expand = (
+                combined >= threshold
+                and result.should_expand
+                and purpose not in SUPPRESSED_PURPOSES
+            )
+
+            scored_dir = ScoredDirectory(
+                path=path,
+                path_purpose=purpose,
+                description=result.description,
+                evidence=evidence,
+                score_code=score_code,
+                score_data=score_data,
+                score_imas=score_imas,
+                score=combined,
+                should_expand=should_expand,
+                keywords=result.keywords[:5] if result.keywords else [],
+                physics_domain=result.physics_domain,
+                expansion_reason=result.expansion_reason,
+                skip_reason=result.skip_reason,
+            )
+
+            scored.append(scored_dir)
+
+        return scored
 
     def _parse_response(
         self,
@@ -303,7 +399,9 @@ class DirectoryScorer:
         directories: list[dict[str, Any]],
         threshold: float,
     ) -> list[ScoredDirectory]:
-        """Parse Claude's response into ScoredDirectory objects."""
+        """Parse unstructured LLM response (legacy fallback)."""
+        import json
+
         try:
             # Extract JSON from response
             json_start = response_text.find("[")

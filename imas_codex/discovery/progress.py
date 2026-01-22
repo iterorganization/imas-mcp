@@ -44,6 +44,7 @@ class DiscoveryStats:
     # Current operation
     current_phase: str = "idle"  # scan, score, idle
     current_path: str = ""
+    facility: str = ""  # Facility being discovered
 
     # Budget tracking (score phase)
     accumulated_cost: float = 0.0
@@ -53,6 +54,12 @@ class DiscoveryStats:
     # Cycle tracking (discover command)
     current_cycle: int = 0
     max_cycles: int = 0
+
+    # Rate tracking
+    scan_count: int = 0
+    score_count: int = 0
+    scan_start_time: float | None = None
+    score_start_time: float | None = None
 
     @property
     def frontier_size(self) -> int:
@@ -72,6 +79,30 @@ class DiscoveryStats:
         if not self.budget_limit:
             return 0.0
         return self.accumulated_cost / self.budget_limit
+
+    @property
+    def scan_rate(self) -> float | None:
+        """Scans per second, or None if not tracking."""
+        import time
+
+        if self.scan_start_time is None or self.scan_count == 0:
+            return None
+        elapsed = time.time() - self.scan_start_time
+        if elapsed <= 0:
+            return None
+        return self.scan_count / elapsed
+
+    @property
+    def score_rate(self) -> float | None:
+        """Scores per second, or None if not tracking."""
+        import time
+
+        if self.score_start_time is None or self.score_count == 0:
+            return None
+        elapsed = time.time() - self.score_start_time
+        if elapsed <= 0:
+            return None
+        return self.score_count / elapsed
 
 
 class DiscoveryProgressDisplay:
@@ -135,17 +166,24 @@ class DiscoveryProgressDisplay:
             table.add_row(
                 "Spent:",
                 f"${self.stats.accumulated_cost:.2f}",
-                "Budget:",
+                "Limit:",
                 f"${self.stats.budget_limit:.2f} ({budget_pct:.0f}%)",
             )
+
+        # Row 5: Model (if set)
+        if self.stats.model:
+            # Display abbreviated model name
+            model_display = self.stats.model
+            if model_display.startswith("anthropic/"):
+                model_display = model_display[len("anthropic/") :]
             table.add_row(
                 "Model:",
-                self.stats.model,
+                model_display,
                 "",
                 "",
             )
 
-        # Row 5: Cycle (if in discover mode)
+        # Row 6: Cycle (if in discover mode)
         if self.stats.max_cycles > 0:
             table.add_row(
                 "Cycle:",
@@ -154,7 +192,25 @@ class DiscoveryProgressDisplay:
                 f"[yellow]{self.stats.current_phase}[/yellow]",
             )
 
-        return Panel(table, title="Discovery Progress", border_style="blue")
+        # Row 7: Rates (if tracking)
+        scan_rate = self.stats.scan_rate
+        score_rate = self.stats.score_rate
+        if scan_rate is not None or score_rate is not None:
+            scan_str = f"{scan_rate:.1f}/s" if scan_rate else "-"
+            score_str = f"{score_rate:.1f}/s" if score_rate else "-"
+            table.add_row(
+                "Scan rate:",
+                scan_str,
+                "Score rate:",
+                score_str,
+            )
+
+        # Build title with facility name
+        title = "Discovery Progress"
+        if self.stats.facility:
+            title = f"Discovering {self.stats.facility} filesystem"
+
+        return Panel(table, title=title, border_style="blue")
 
     def _build_display(self) -> Group:
         """Build complete display."""

@@ -7,39 +7,21 @@ task: score
 
 You are analyzing directories at a fusion research facility to enrich the knowledge graph with structured metadata. Your output directly populates graph node properties.
 
+**Note:** The response format is enforced via JSON schema. Focus on accurate scoring based on the evidence.
+
 ## Task
 
-For each directory, collect evidence about its contents and purpose, then provide a structured assessment that will enrich the facility path nodes in our knowledge graph.
+For each directory, collect evidence about its contents and purpose, then provide scores:
 
-## Output Schema
+1. **Analyze** the directory path, file counts, and detected patterns
+2. **Classify** the directory purpose (physics_code, data_files, documentation, etc.)
+3. **Score** three dimensions: code value, data value, IMAS relevance (0.0-1.0)
+4. **Decide** whether to expand into child directories
+5. **Extract** keywords and physics domain if applicable
 
-Each directory response MUST include these fields:
+## path_purpose Values
 
-### Required Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `path` | string | The directory path (echo from input) |
-| `path_purpose` | enum | Classification (see values below) |
-| `description` | string | Concise description of directory contents (1-2 sentences) |
-| `score_code` | float | Code discovery value (0.0-1.0) |
-| `score_data` | float | Data discovery value (0.0-1.0) |
-| `score_imas` | float | IMAS relevance (0.0-1.0) |
-| `should_expand` | bool | Whether to explore children |
-| `evidence` | object | Structured evidence (see below) |
-
-### Optional Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `keywords` | string[] | Relevant keywords for search (max 5) |
-| `physics_domain` | string | Primary physics domain if applicable |
-| `expansion_reason` | string | Why to expand (if should_expand=true) |
-| `skip_reason` | string | Why to skip (if should_expand=false) |
-
-### path_purpose Values
-
-- `physics_code`: Simulation or analysis code (equilibrium, transport, MHD, heating, etc.)
+- `physics_code`: Simulation or analysis code (equilibrium, transport, MHD, heating)
 - `data_files`: Scientific data storage (HDF5, NetCDF, MDSplus trees)
 - `documentation`: Docs, wikis, READMEs, manuals
 - `configuration`: Config files, settings, environment scripts
@@ -48,18 +30,6 @@ Each directory response MUST include these fields:
 - `user_home`: Personal directories (usually low value)
 - `system`: OS or infrastructure (/usr, /lib, /etc)
 - `unknown`: Cannot determine from available evidence
-
-### Evidence Object
-
-```json
-{
-  "code_indicators": ["py", "f90", "cpp"],
-  "data_indicators": ["nc", "h5", "mat"],
-  "imas_indicators": ["put_slice", "ids_properties"],
-  "physics_indicators": ["equilibrium", "transport"],
-  "quality_indicators": ["has_readme", "has_git"]
-}
-```
 
 ## Scoring Guidelines
 
@@ -96,6 +66,15 @@ Each directory response MUST include these fields:
 - Low scores across all dimensions (< 0.3)
 - Leaf directory with only files
 
+## Evidence Collection
+
+For each directory, collect evidence in these categories:
+- **code_indicators**: Programming file extensions (py, f90, cpp, c, jl)
+- **data_indicators**: Data file extensions (nc, h5, mat, csv, json)
+- **imas_indicators**: IMAS-specific patterns (put_slice, get_slice, IDS names)
+- **physics_indicators**: Physics domains (equilibrium, transport, MHD)
+- **quality_indicators**: Project quality signals (has_readme, has_makefile, has_git)
+
 {% if focus %}
 ## Focus Area
 
@@ -103,31 +82,3 @@ Prioritize paths related to: **{{ focus }}**
 
 Boost scores for directories matching this focus. Add focus-related keywords.
 {% endif %}
-
-## Response Format
-
-Return a valid JSON array with one object per directory, maintaining input order:
-
-```json
-[
-  {
-    "path": "/home/codes/liuqe",
-    "path_purpose": "physics_code",
-    "description": "LIUQE equilibrium reconstruction code with Fortran core and Python bindings",
-    "keywords": ["equilibrium", "reconstruction", "liuqe", "tokamak"],
-    "physics_domain": "equilibrium",
-    "evidence": {
-      "code_indicators": ["f90", "py", "c"],
-      "data_indicators": [],
-      "imas_indicators": ["put_slice", "equilibrium IDS"],
-      "physics_indicators": ["equilibrium", "flux surfaces"],
-      "quality_indicators": ["has_readme", "has_makefile", "has_git"]
-    },
-    "score_code": 0.95,
-    "score_data": 0.15,
-    "score_imas": 0.85,
-    "should_expand": true,
-    "expansion_reason": "High-value equilibrium code with active IMAS integration"
-  }
-]
-```
