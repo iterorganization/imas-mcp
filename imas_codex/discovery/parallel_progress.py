@@ -1,14 +1,14 @@
 """
 Dual-panel progress display for parallel discovery.
 
-Shows scan and score workers side-by-side with independent progress tracking.
+Shows scan and score workers side-by-side with progress bars.
 Each panel displays:
 - Worker status (scanning/scoring/idle/waiting)
+- Progress bar based on graph state
 - Count processed
 - Rate (items/second)
-- Last batch info
 
-The graph state is shown in a summary row at the bottom.
+The graph state is shown in a summary row at the bottom with overall progress.
 """
 
 from __future__ import annotations
@@ -69,6 +69,32 @@ class ParallelProgressState:
         else:
             return f"{e / 3600:.1f}h"
 
+    @property
+    def scan_work_remaining(self) -> int:
+        """Paths awaiting scan (pending)."""
+        return self.pending
+
+    @property
+    def score_work_remaining(self) -> int:
+        """Paths awaiting score (scanned but not scored)."""
+        return max(0, self.scanned - self.scored)
+
+    @property
+    def scan_progress_pct(self) -> float:
+        """Percentage of frontier that has been scanned."""
+        total = self.scanned + self.pending
+        return (self.scanned / total * 100) if total > 0 else 0
+
+    @property
+    def score_progress_pct(self) -> float:
+        """Percentage of scanned paths that have been scored."""
+        return (self.scored / self.scanned * 100) if self.scanned > 0 else 0
+
+    @property
+    def overall_progress_pct(self) -> float:
+        """Overall coverage - percentage of all paths scored."""
+        return (self.scored / self.total_paths * 100) if self.total_paths > 0 else 0
+
 
 class ParallelProgressDisplay:
     """Dual-panel progress display for parallel scan/score workers.
@@ -111,16 +137,29 @@ class ParallelProgressDisplay:
         self._last_scan_msg: str = ""
         self._last_score_msg: str = ""
 
+    def _make_progress_bar(self, completed: int, total: int, color: str) -> Text:
+        """Create a simple text-based progress bar as a Rich Text object."""
+        width = 20
+        if total <= 0:
+            return Text("─" * width, style="dim")
+        pct = min(1.0, completed / total)
+        filled = int(width * pct)
+        empty = width - filled
+        bar = Text()
+        bar.append("█" * filled, style=color)
+        bar.append("░" * empty, style="dim")
+        return bar
+
     def _build_worker_panel(
         self,
         title: str,
         status: str,
         processed: int,
+        remaining: int,
         rate: float | None,
-        last_msg: str,
-        style: str = "blue",
+        color: str = "blue",
     ) -> Panel:
-        """Build a single worker status panel."""
+        """Build a single worker status panel with progress bar."""
         # Status indicator
         if "idle" in status.lower() or "waiting" in status.lower():
             indicator = "[yellow]○[/yellow]"
@@ -137,36 +176,60 @@ class ParallelProgressDisplay:
         table.add_column(justify="left")
 
         table.add_row("Status:", f"[{status_style}]{status}[/{status_style}]")
-        table.add_row("Processed:", f"{processed:,}")
+
+        # Progress bar - compose Text object with bar and percentage
+        total = processed + remaining
+        bar = self._make_progress_bar(processed, total, color)
+        pct = (processed / total * 100) if total > 0 else 0
+        bar_row = Text()
+        bar_row.append_text(bar)
+        bar_row.append(f" {pct:.0f}%")
+        table.add_row("Progress:", bar_row)
+
+        # Counts
+        table.add_row("Done:", f"{processed:,}")
+        table.add_row("Remaining:", f"{remaining:,}")
+
         rate_str = f"{rate:.1f}/s" if rate else "—"
         table.add_row("Rate:", rate_str)
-        if last_msg:
-            # Truncate long messages
-            if len(last_msg) > 30:
-                last_msg = last_msg[:27] + "..."
-            table.add_row("Last:", f"[dim]{last_msg}[/dim]")
 
         return Panel(
             table,
             title=f"{indicator} {title}",
-            border_style=style,
-            width=35,
+            border_style=color,
+            width=38,
         )
 
     def _build_summary_row(self) -> Table:
-        """Build the bottom summary row."""
+        """Build the bottom summary row with overall progress bar."""
         table = Table.grid(padding=(0, 2))
         table.add_column()
+
+        # Overall progress bar (scored/total)
+        overall_bar = self._make_progress_bar(
+            self.state.scored, self.state.total_paths, "magenta"
+        )
+        overall_pct = (
+            (self.state.scored / self.state.total_paths * 100)
+            if self.state.total_paths > 0
+            else 0
+        )
+        progress_text = Text()
+        progress_text.append("Overall: ", style="bold")
+        progress_text.append(overall_bar)
+        progress_text.append(f" {overall_pct:.1f}%  ")
+        progress_text.append(
+            f"({self.state.scored:,}/{self.state.total_paths:,} scored)", style="dim"
+        )
+        table.add_row(progress_text)
 
         # Graph state
         graph_text = Text()
         graph_text.append("Graph: ", style="bold")
-        graph_text.append(f"{self.state.total_paths:,} total", style="white")
-        graph_text.append(" | ")
         graph_text.append(f"{self.state.pending:,} pending", style="cyan")
-        graph_text.append(" | ")
+        graph_text.append(" → ")
         graph_text.append(f"{self.state.scanned:,} scanned", style="blue")
-        graph_text.append(" | ")
+        graph_text.append(" → ")
         graph_text.append(f"{self.state.scored:,} scored", style="green")
 
         table.add_row(graph_text)
@@ -206,34 +269,37 @@ class ParallelProgressDisplay:
         workers.add_column()
         workers.add_column()
 
+        # Scanner: remaining = pending paths
         scan_panel = self._build_worker_panel(
             title="Scanner",
             status=self.state.scan_status,
-            processed=self.state.total_scanned,
+            processed=self.state.scanned,
+            remaining=self.state.pending,
             rate=self.state.scan_rate,
-            last_msg=self._last_scan_msg,
-            style="blue",
+            color="blue",
         )
 
+        # Scorer: remaining = scanned but not scored
+        scanned_unscored = max(0, self.state.scanned - self.state.scored)
         score_panel = self._build_worker_panel(
             title="Scorer",
             status=self.state.score_status,
-            processed=self.state.total_scored,
+            processed=self.state.scored,
+            remaining=scanned_unscored,
             rate=self.state.score_rate,
-            last_msg=self._last_score_msg,
-            style="green",
+            color="green",
         )
 
         workers.add_row(scan_panel, score_panel)
 
-        # Combine with summary
+        # Combine with summary (width matches two panels + padding)
         full_display = Group(
             workers,
-            Panel(self._build_summary_row(), border_style="dim"),
+            Panel(self._build_summary_row(), border_style="dim", width=80),
         )
 
         title = f"Discovering {self.state.facility} filesystem"
-        return Panel(full_display, title=title, border_style="cyan")
+        return Panel(full_display, title=title, border_style="cyan", width=84)
 
     def __enter__(self) -> ParallelProgressDisplay:
         """Start live display."""
