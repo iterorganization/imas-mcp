@@ -85,6 +85,7 @@ class ScoredDirectory:
     """Result of LLM scoring for a single directory.
 
     Contains all scores, evidence, and expansion decision.
+    Enriches the graph with metadata beyond just scores.
     """
 
     path: str
@@ -114,6 +115,12 @@ class ScoredDirectory:
     should_expand: bool = False
     """Whether to explore children of this directory."""
 
+    keywords: list[str] = field(default_factory=list)
+    """Searchable keywords for this directory (max 5)."""
+
+    physics_domain: str | None = None
+    """Primary physics domain if applicable (equilibrium, transport, etc)."""
+
     expansion_reason: str | None = None
     """Why this directory should be expanded."""
 
@@ -134,6 +141,8 @@ class ScoredDirectory:
             "score_imas": self.score_imas,
             "score": self.score,
             "should_expand": self.should_expand,
+            "keywords": self.keywords,
+            "physics_domain": self.physics_domain,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
         }

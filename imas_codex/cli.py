@@ -5390,11 +5390,11 @@ def discover() -> None:
     """Graph-led facility discovery pipeline.
 
     \b
-    Iterative discovery (scan + score loop):
+    Iterative discovery (runs scan→score loop):
       imas-codex discover run <facility> --budget 10.0
 
     \b
-    Manual control:
+    Manual control (explicit subcommands):
       imas-codex discover scan <facility>    Scan directory frontier (SSH)
       imas-codex discover score <facility>   Score scanned paths (LLM)
       imas-codex discover status <facility>  Show discovery statistics
@@ -5780,8 +5780,8 @@ def discover_scan(facility: str, limit: int, dry_run: bool) -> None:
 @click.option(
     "--model",
     "-m",
-    default="anthropic/claude-sonnet-4.5",
-    help="LLM model to use",
+    default=None,
+    help="LLM model to use (default: from config 'score' task)",
 )
 @click.option(
     "--dry-run",
@@ -5796,7 +5796,7 @@ def discover_score(
     budget: float | None,
     focus: str | None,
     threshold: float,
-    model: str,
+    model: str | None,
     dry_run: bool,
 ) -> None:
     """Score scanned paths using LLM.

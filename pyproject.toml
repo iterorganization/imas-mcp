@@ -196,6 +196,8 @@ exploration = "anthropic/claude-sonnet-4.5"
 summarization = "anthropic/claude-haiku-4.5"
 # Capable model for driving scout exploration (when context is controlled)
 scout = "anthropic/claude-sonnet-4.5"
+# Model for LLM-based scoring (directories, wiki pages, code quality)
+score = "anthropic/claude-sonnet-4.5"
 # Available model presets
 [tool.imas-codex.models.presets]
 gemini-flash = "google/gemini-3-flash-preview"

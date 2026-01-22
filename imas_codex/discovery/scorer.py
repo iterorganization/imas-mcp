@@ -21,6 +21,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.discovery.models import (
     DirectoryEvidence,
@@ -123,7 +124,7 @@ class DirectoryScorer:
     4. Frontier expansion logic
 
     Args:
-        model: Model name (default: anthropic/claude-sonnet-4.5)
+        model: Model name (None = use "score" task model from config)
 
     Example:
         scorer = DirectoryScorer()
@@ -134,7 +135,12 @@ class DirectoryScorer:
         )
     """
 
-    model: str = "anthropic/claude-sonnet-4.5"
+    model: str | None = None
+
+    def __post_init__(self):
+        """Initialize model from config if not provided."""
+        if self.model is None:
+            self.model = get_model_for_task("score")
 
     def score_batch(
         self,
@@ -224,97 +230,35 @@ class DirectoryScorer:
         )
 
     def _build_system_prompt(self, focus: str | None = None) -> str:
-        """Build system prompt for directory scoring."""
-        try:
-            prompts = load_prompts()
-            prompt_def = prompts.get("discovery-scorer")
-            if prompt_def:
-                prompt = prompt_def.content
-                if focus:
-                    prompt = prompt.replace("{{ focus }}", focus)
-                    prompt = prompt.replace("{% if focus %}", "")
-                    prompt = prompt.replace("{% endif %}", "")
-                else:
-                    # Remove focus section
-                    import re
+        """Build system prompt for directory scoring.
 
-                    prompt = re.sub(
-                        r"{%\s*if focus\s*%}.*?{%\s*endif\s*%}",
-                        "",
-                        prompt,
-                        flags=re.DOTALL,
-                    )
-                return prompt
-            else:
-                return self._fallback_system_prompt(focus)
-        except Exception:
-            # Fallback inline prompt
-            return self._fallback_system_prompt(focus)
+        Loads prompt from prompts/discovery/scorer.md file.
+        Raises error if prompt not found - no fallback.
+        """
+        import re
 
-    def _fallback_system_prompt(self, focus: str | None = None) -> str:
-        """Fallback system prompt if file not found."""
-        base = """You are analyzing directories at a fusion research facility to determine their value for IMAS code discovery.
+        prompts = load_prompts()
+        prompt_def = prompts.get("discovery/scorer")
+        if prompt_def is None:
+            raise ValueError(
+                "Required prompt 'discovery/scorer' not found. "
+                "Ensure prompts/discovery/scorer.md exists."
+            )
 
-For each directory, collect evidence about its contents and purpose, then provide a structured assessment.
-
-## Evidence Categories
-
-1. **path_purpose**: Classify as one of:
-   - physics_code: Simulation or analysis code
-   - data_files: Scientific data storage
-   - documentation: Documentation, wikis
-   - configuration: Config files
-   - build_artifacts: Compiled outputs
-   - test_files: Test suites
-   - user_home: Personal directories
-   - system: OS or infrastructure
-   - unknown: Cannot determine
-
-2. **evidence**: Specific observations:
-   - code_indicators: Programming files present (list extensions)
-   - data_indicators: Data files present
-   - imas_indicators: IMAS-related patterns
-   - physics_indicators: Physics domain patterns
-   - quality_indicators: Project signals (readme, makefile, git)
-
-3. **should_expand**: Whether to explore children (true/false)
-
-## Scoring
-
-Provide three independent scores (0.0-1.0):
-- **score_code**: Value for code discovery
-- **score_data**: Value for data discovery
-- **score_imas**: IMAS relevance
-
-## Response Format
-
-Return a JSON array with one object per directory:
-```json
-[
-  {
-    "path": "/path/to/dir",
-    "path_purpose": "physics_code",
-    "description": "One sentence description",
-    "evidence": {
-      "code_indicators": ["py", "f90"],
-      "data_indicators": [],
-      "imas_indicators": ["put_slice"],
-      "physics_indicators": ["equilibrium"],
-      "quality_indicators": ["has_readme", "has_git"]
-    },
-    "score_code": 0.9,
-    "score_data": 0.2,
-    "score_imas": 0.8,
-    "should_expand": true,
-    "expansion_reason": "High-value physics code"
-  }
-]
-```
-"""
+        prompt = prompt_def.content
         if focus:
-            base += f"\n\n## Special Focus\n\nPrioritize paths related to: {focus}\nBoost scores for relevant matches."
-
-        return base
+            prompt = prompt.replace("{{ focus }}", focus)
+            prompt = prompt.replace("{% if focus %}", "")
+            prompt = prompt.replace("{% endif %}", "")
+        else:
+            # Remove focus section
+            prompt = re.sub(
+                r"{%\s*if focus\s*%}.*?{%\s*endif\s*%}",
+                "",
+                prompt,
+                flags=re.DOTALL,
+            )
+        return prompt
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
         """Build user prompt with directories to score."""
@@ -436,6 +380,8 @@ Return a JSON array with one object per directory:
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
+                keywords=result.get("keywords", [])[:5],  # Cap at 5
+                physics_domain=result.get("physics_domain"),
                 expansion_reason=result.get("expansion_reason"),
                 skip_reason=result.get("skip_reason"),
             )
@@ -451,7 +397,7 @@ def score_facility_paths(
     batch_size: int = 25,
     focus: str | None = None,
     threshold: float = 0.7,
-    model: str = "anthropic/claude-sonnet-4.5",
+    model: str | None = None,
     budget: float | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
@@ -466,7 +412,7 @@ def score_facility_paths(
         batch_size: Paths per LLM call
         focus: Natural language focus query
         threshold: Min score to expand
-        model: LLM model name
+        model: LLM model name (None = use "score" task model from config)
         budget: Maximum spend in USD
         dry_run: If True, don't persist to graph
 
@@ -481,7 +427,7 @@ def score_facility_paths(
         logger.info(f"No paths to score for {facility}")
         return {"scored": 0, "expanded": 0, "cost": 0.0, "errors": 0}
 
-    scorer = DirectoryScorer(model=model)
+    scorer = DirectoryScorer(model=model)  # Uses config default if None
     total_scored = 0
     total_expanded = 0
     total_cost = 0.0
