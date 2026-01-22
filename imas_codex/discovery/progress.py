@@ -10,7 +10,7 @@ Provides a comprehensive progress UI showing:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.console import Console, Group
@@ -256,10 +256,18 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
 
     # Status breakdown
     total = stats["total"] or 1  # Avoid division by zero
-    console.print(f"├─ Pending:   {stats['pending']:,} ({stats['pending']/total*100:.1f}%)")
-    console.print(f"├─ Scanned:  {stats['scanned']:,} ({stats['scanned']/total*100:.1f}%)")
-    console.print(f"├─ Scored:   {stats['scored']:,} ({stats['scored']/total*100:.1f}%)")
-    console.print(f"└─ Skipped:   {stats['skipped']:,} ({stats['skipped']/total*100:.1f}%)")
+    console.print(
+        f"├─ Pending:   {stats['pending']:,} ({stats['pending'] / total * 100:.1f}%)"
+    )
+    console.print(
+        f"├─ Scanned:  {stats['scanned']:,} ({stats['scanned'] / total * 100:.1f}%)"
+    )
+    console.print(
+        f"├─ Scored:   {stats['scored']:,} ({stats['scored'] / total * 100:.1f}%)"
+    )
+    console.print(
+        f"└─ Skipped:   {stats['skipped']:,} ({stats['skipped'] / total * 100:.1f}%)"
+    )
 
     # Summary
     console.print(f"\nFrontier: {stats['pending']} paths awaiting scan")

@@ -5381,6 +5381,211 @@ def enrich_mark_stale(
 
 
 # ============================================================================
+# Discovery Commands - Graph-Led Facility Exploration
+# ============================================================================
+
+
+@main.group()
+def discover() -> None:
+    """Graph-led facility discovery pipeline.
+
+    Separates deterministic SSH scanning from LLM-based scoring:
+
+    \b
+      imas-codex discover scan <facility>    Scan directory frontier (SSH only)
+      imas-codex discover score <facility>   Score scanned paths (LLM)
+      imas-codex discover status <facility>  Show discovery statistics
+      imas-codex discover clear <facility>   Clear all paths (reset)
+
+    The graph is the single source of truth. Commands query the graph
+    for work rather than accepting path parameters.
+    """
+    pass
+
+
+@discover.command("scan")
+@click.argument("facility")
+@click.option(
+    "--limit",
+    "-l",
+    default=100,
+    type=int,
+    help="Maximum paths to scan this run",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Scan without persisting to graph",
+)
+def discover_scan(facility: str, limit: int, dry_run: bool) -> None:
+    """Scan directory frontier at a facility.
+
+    Graph-led scanning:
+    1. Query graph for paths with status='pending'
+    2. If none, seed facility root paths
+    3. Run SSH commands (fd, du) to collect stats
+    4. Create child paths for discovered directories
+    5. Mark paths as 'scanned'
+
+    Examples:
+        # Scan up to 100 paths on ITER
+        imas-codex discover scan iter
+
+        # Dry run to test SSH connectivity
+        imas-codex discover scan iter --dry-run
+
+        # Scan more paths
+        imas-codex discover scan iter --limit 500
+    """
+    from imas_codex.discovery import scan_facility_sync
+    from imas_codex.discovery.progress import print_discovery_status
+
+    if dry_run:
+        click.echo("DRY RUN - no graph changes will be made")
+
+    def progress(current: int, total: int, path: str) -> None:
+        # Simple inline progress
+        click.echo(f"[{current}/{total}] {path}", nl=False)
+        click.echo("\r", nl=False)
+
+    try:
+        stats = scan_facility_sync(
+            facility=facility,
+            limit=limit,
+            dry_run=dry_run,
+            progress_callback=progress,
+        )
+
+        # Clear the progress line
+        click.echo(" " * 80, nl=False)
+        click.echo("\r", nl=False)
+
+        click.echo(f"✓ Scanned: {stats['scanned']}")
+        click.echo(f"  Children created: {stats['children_created']}")
+        click.echo(f"  Errors: {stats['errors']}")
+
+        if not dry_run:
+            click.echo()
+            print_discovery_status(facility)
+
+    except Exception as e:
+        click.echo(f"\nError: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("status")
+@click.argument("facility")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def discover_status(facility: str, as_json: bool) -> None:
+    """Show discovery statistics for a facility.
+
+    Displays:
+    - Path counts by status (pending, scanned, scored, skipped)
+    - Coverage percentage
+    - Frontier size (paths awaiting scan)
+    - High-value paths (score > 0.7)
+
+    Examples:
+        imas-codex discover status iter
+        imas-codex discover status iter --json
+    """
+    import json as json_module
+
+    from imas_codex.discovery import get_discovery_stats, get_high_value_paths
+    from imas_codex.discovery.progress import print_discovery_status
+
+    try:
+        if as_json:
+            stats = get_discovery_stats(facility)
+            high_value = get_high_value_paths(facility, min_score=0.7, limit=20)
+            output = {
+                "facility": facility,
+                "stats": stats,
+                "high_value_paths": high_value,
+            }
+            click.echo(json_module.dumps(output, indent=2))
+        else:
+            print_discovery_status(facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("clear")
+@click.argument("facility")
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def discover_clear(facility: str, force: bool) -> None:
+    """Clear all discovered paths for a facility.
+
+    This is a destructive operation that removes all FacilityPath nodes
+    for the specified facility. Use with caution.
+
+    Examples:
+        imas-codex discover clear iter
+        imas-codex discover clear iter --force
+    """
+    from imas_codex.discovery import clear_facility_paths, get_discovery_stats
+
+    try:
+        stats = get_discovery_stats(facility)
+        total = stats.get("total", 0)
+
+        if total == 0:
+            click.echo(f"No paths to clear for {facility}")
+            return
+
+        if not force:
+            click.confirm(
+                f"This will delete {total} paths for {facility}. Continue?",
+                abort=True,
+            )
+
+        deleted = clear_facility_paths(facility)
+        click.echo(f"✓ Deleted {deleted} paths for {facility}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("seed")
+@click.argument("facility")
+@click.option(
+    "--path",
+    "-p",
+    multiple=True,
+    help="Additional root paths to seed",
+)
+def discover_seed(facility: str, path: tuple[str, ...]) -> None:
+    """Seed facility root paths without scanning.
+
+    Creates initial FacilityPath nodes for the facility's actionable paths
+    and any additional paths specified. Useful for testing graph setup.
+
+    Examples:
+        imas-codex discover seed iter
+        imas-codex discover seed iter -p /home/custom/path
+    """
+    from imas_codex.discovery import seed_facility_roots
+
+    try:
+        additional_paths = list(path) if path else None
+        created = seed_facility_roots(facility, additional_paths)
+        click.echo(f"✓ Created {created} root path(s) for {facility}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+# ============================================================================
 # Dynamic Facility Commands
 # ============================================================================
 

@@ -14,16 +14,16 @@ remote systems.
 Async Branch Isolation:
     For graph-led discovery, we need to ensure that parallel SSH processes
     don't interfere with each other. The strategy:
-    
+
     1. Initial discovery from filesystem root runs SINGLE-THREADED to build
        the initial frontier without conflicts.
-    
+
     2. Once the frontier has expanded (multiple independent branches), parallel
        processes can each claim a BRANCH exclusively via graph locking.
-    
+
     3. A branch is a subtree rooted at a path. Once claimed, no other process
        can discover within that subtree until the claim is released.
-    
+
     The BranchExecutor class implements this pattern.
 """
 
@@ -92,7 +92,9 @@ class ParallelExecutor:
                 output = await asyncio.wait_for(
                     loop.run_in_executor(
                         None,
-                        lambda: sync_run(cmd, facility=self.facility, timeout=self.timeout),
+                        lambda: sync_run(
+                            cmd, facility=self.facility, timeout=self.timeout
+                        ),
                     ),
                     timeout=self.timeout + 5,
                 )
@@ -103,7 +105,7 @@ class ParallelExecutor:
                     output = parts[0].strip()
                     stderr = parts[1].strip() if len(parts) > 1 else ""
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 output = ""
                 stderr = "Timeout"
                 returncode = -1

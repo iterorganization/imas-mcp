@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from imas_codex.graph import GraphClient
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            RETURN 
+            RETURN
                 count(p) AS total,
                 sum(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END) AS pending,
                 sum(CASE WHEN p.status = 'scanned' THEN 1 ELSE 0 END) AS scanned,
@@ -113,7 +113,7 @@ def get_frontier(
             f"""
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE {where_clause}
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, 
+            RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.status AS status, p.parent_path_id AS parent_path_id
             ORDER BY p.depth ASC, p.path ASC
             LIMIT $limit
@@ -182,7 +182,9 @@ def seed_facility_roots(
         if isinstance(paths_config, dict):
             root_paths = paths_config.get("actionable_paths", [])
             if isinstance(root_paths, list) and root_paths:
-                root_paths = [p.get("path") if isinstance(p, dict) else p for p in root_paths]
+                root_paths = [
+                    p.get("path") if isinstance(p, dict) else p for p in root_paths
+                ]
             else:
                 # Fallback to common exploration roots
                 root_paths = ["/home", "/work", "/opt"]
@@ -386,7 +388,9 @@ def mark_paths_scored(
                 now=now,
                 score=score_data.get("score"),
                 score_code=score_data.get("score_code"),
-                score_data=score_data.get("score_data_score"),  # Avoid conflict with params
+                score_data=score_data.get(
+                    "score_data_score"
+                ),  # Avoid conflict with params
                 score_imas=score_data.get("score_imas"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
@@ -490,3 +494,150 @@ def clear_facility_paths(facility: str) -> int:
         )
 
         return result[0]["deleted"] if result else 0
+
+
+def persist_scan_results(
+    facility: str,
+    results: list[tuple[str, dict, list[str], str | None]],
+) -> dict[str, int]:
+    """Persist multiple scan results in a single transaction.
+
+    Much faster than calling mark_path_scanned/create_child_paths per path.
+
+    Args:
+        facility: Facility ID
+        results: List of (path, stats_dict, child_dirs, error) tuples
+
+    Returns:
+        Dict with scanned, children_created, errors counts
+    """
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC).isoformat()
+    scanned = 0
+    children_created = 0
+    errors = 0
+
+    # Separate successes and errors
+    successes = []
+    all_children = []
+
+    for path, stats, child_dirs, error in results:
+        path_id = f"{facility}:{path}"
+        if error:
+            errors += 1
+            # Mark as skipped
+            successes.append(
+                {
+                    "id": path_id,
+                    "status": "skipped",
+                    "skip_reason": error,
+                    "scanned_at": now,
+                }
+            )
+        else:
+            scanned += 1
+            successes.append(
+                {
+                    "id": path_id,
+                    "status": "scanned",
+                    "scanned_at": now,
+                    "total_files": stats.get("total_files", 0),
+                    "total_dirs": stats.get("total_dirs", 0),
+                    "has_readme": stats.get("has_readme", False),
+                    "has_makefile": stats.get("has_makefile", False),
+                    "has_git": stats.get("has_git", False),
+                }
+            )
+            # Prepare children
+            for child_path in child_dirs:
+                all_children.append(
+                    {
+                        "id": f"{facility}:{child_path}",
+                        "facility_id": facility,
+                        "path": child_path,
+                        "parent_id": path_id,
+                    }
+                )
+
+    with GraphClient() as gc:
+        # Batch update scanned/skipped paths
+        if successes:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.status = item.status,
+                    p.scanned_at = item.scanned_at,
+                    p.skip_reason = item.skip_reason,
+                    p.total_files = item.total_files,
+                    p.total_dirs = item.total_dirs,
+                    p.has_readme = item.has_readme,
+                    p.has_makefile = item.has_makefile,
+                    p.has_git = item.has_git
+                """,
+                items=successes,
+            )
+
+        # Batch create children
+        if all_children:
+            # First get parent depths
+            parent_ids = list({c["parent_id"] for c in all_children})
+            depth_result = gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (p:FacilityPath {id: id})
+                RETURN p.id AS id, p.depth AS depth
+                """,
+                ids=parent_ids,
+            )
+            depth_map = {r["id"]: r["depth"] or 0 for r in depth_result}
+
+            # Add depth to children
+            for child in all_children:
+                child["depth"] = depth_map.get(child["parent_id"], 0) + 1
+                child["status"] = "pending"
+                child["path_type"] = "code_directory"
+                child["discovered_at"] = now
+
+            # Create child nodes
+            gc.query(
+                """
+                UNWIND $children AS child
+                MERGE (c:FacilityPath {id: child.id})
+                ON CREATE SET c.facility_id = child.facility_id,
+                              c.path = child.path,
+                              c.path_type = child.path_type,
+                              c.status = child.status,
+                              c.depth = child.depth,
+                              c.parent_path_id = child.parent_id,
+                              c.discovered_at = child.discovered_at
+                """,
+                children=all_children,
+            )
+
+            # Create FACILITY_ID relationships
+            gc.query(
+                """
+                UNWIND $children AS child
+                MATCH (c:FacilityPath {id: child.id})
+                MATCH (f:Facility {id: child.facility_id})
+                MERGE (c)-[:FACILITY_ID]->(f)
+                """,
+                children=all_children,
+            )
+
+            # Create PARENT relationships
+            gc.query(
+                """
+                UNWIND $children AS child
+                MATCH (c:FacilityPath {id: child.id})
+                MATCH (p:FacilityPath {id: child.parent_id})
+                MERGE (c)-[:PARENT]->(p)
+                """,
+                children=all_children,
+            )
+
+            children_created = len(all_children)
+
+    return {"scanned": scanned, "children_created": children_created, "errors": errors}
