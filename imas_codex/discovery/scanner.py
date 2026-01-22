@@ -40,26 +40,21 @@ def _get_rg_patterns() -> dict[str, str]:
 
     Returns a dict of category -> pattern string for ripgrep.
     Categories are used as keys in the rg_matches output.
+    All patterns are included since rg runs server-side and is fast.
     """
     config = get_discovery_config()
 
-    # Build category patterns from data systems
+    # Build category patterns from data systems - use ALL patterns
     patterns = {}
 
-    # Group by data system - use top patterns (highest weight) from each
     for name, ds in config.scoring.data_systems.items():
-        # Take top 3 patterns by weight
-        top_patterns = sorted(ds.patterns, key=lambda p: p.weight, reverse=True)[:3]
-        if top_patterns:
-            patterns[name] = "|".join(p.pattern for p in top_patterns)
+        if ds.patterns:
+            patterns[name] = "|".join(p.pattern for p in ds.patterns)
 
-    # Add physics domains - equilibrium and core_profiles are most important
-    for name in ["equilibrium", "core_profiles", "mhd"]:
-        if name in config.scoring.physics_domains:
-            pd = config.scoring.physics_domains[name]
-            top_patterns = sorted(pd.patterns, key=lambda p: p.weight, reverse=True)[:2]
-            if top_patterns:
-                patterns[name] = "|".join(p.pattern for p in top_patterns)
+    # Add ALL physics domains
+    for name, pd in config.scoring.physics_domains.items():
+        if pd.patterns:
+            patterns[name] = "|".join(p.pattern for p in pd.patterns)
 
     return patterns
 
