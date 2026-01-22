@@ -212,6 +212,44 @@ enums:
       binary_directory:
         description: Directory containing executables
 
+  PathPurpose:
+    description: >-
+      LLM-classified purpose of a directory. Used during discovery scoring
+      to determine expansion priority and relevance. More granular than PathType.
+    permissible_values:
+      physics_code:
+        description: Physics simulation or analysis code (highest priority)
+      data_files:
+        description: Scientific data storage (HDF5, NetCDF, etc.)
+      documentation:
+        description: Documentation, wikis, READMEs
+      configuration:
+        description: Configuration files, settings
+      build_artifacts:
+        description: Compiled outputs, caches, build directories
+      test_files:
+        description: Test suites and testing infrastructure
+      user_home:
+        description: Personal user directories (usually skip expansion)
+      system:
+        description: OS or infrastructure directories (skip)
+      unknown:
+        description: Cannot determine purpose
+
+  DiscoveryStatus:
+    description: >-
+      Lifecycle status for graph-led discovery pipeline.
+      Simplified from PathStatus for scan/score workflow.
+    permissible_values:
+      pending:
+        description: Path awaiting scan (newly seeded or from expansion)
+      scanned:
+        description: Directory enumerated, DirStats collected
+      scored:
+        description: LLM has evaluated and scored
+      skipped:
+        description: Excluded (dead-end, error, or low value)
+
   DataReferenceType:
     description: Type of data reference found in source code
     permissible_values:

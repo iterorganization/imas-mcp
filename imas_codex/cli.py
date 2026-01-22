@@ -5389,18 +5389,286 @@ def enrich_mark_stale(
 def discover() -> None:
     """Graph-led facility discovery pipeline.
 
-    Separates deterministic SSH scanning from LLM-based scoring:
+    \b
+    Iterative discovery (scan + score loop):
+      imas-codex discover run <facility> --budget 10.0
 
     \b
-      imas-codex discover scan <facility>    Scan directory frontier (SSH only)
+    Manual control:
+      imas-codex discover scan <facility>    Scan directory frontier (SSH)
       imas-codex discover score <facility>   Score scanned paths (LLM)
       imas-codex discover status <facility>  Show discovery statistics
       imas-codex discover clear <facility>   Clear all paths (reset)
+      imas-codex discover seed <facility>    Seed root paths without scanning
 
     The graph is the single source of truth. Commands query the graph
     for work rather than accepting path parameters.
     """
-    pass
+
+
+@discover.command("run")
+@click.argument("facility")
+@click.option(
+    "--budget",
+    "-b",
+    type=float,
+    required=True,
+    help="Maximum LLM spend in USD",
+)
+@click.option(
+    "--max-cycles",
+    "-c",
+    default=10,
+    type=int,
+    help="Maximum scan→score cycles",
+)
+@click.option(
+    "--focus",
+    "-f",
+    type=str,
+    help="Natural language focus (e.g., 'equilibrium codes')",
+)
+@click.option(
+    "--threshold",
+    "-t",
+    default=0.7,
+    type=float,
+    help="Minimum score to expand paths",
+)
+@click.option(
+    "--workers",
+    "-w",
+    default=2,
+    type=int,
+    help="Parallel branch workers (scan + score can overlap)",
+)
+def discover_run(
+    facility: str,
+    budget: float,
+    max_cycles: int,
+    focus: str | None,
+    threshold: float,
+    workers: int,
+) -> None:
+    """Run iterative scan→score discovery loop.
+
+    Automatically seeds facility root paths if none exist, then
+    alternates between scanning (SSH) and scoring (LLM) until:
+    - Budget is exhausted
+    - Max cycles reached
+    - No more frontier to explore
+
+    Examples:
+        # Run with $10 budget
+        imas-codex discover run iter --budget 10.0
+
+        # Focus on equilibrium codes
+        imas-codex discover run iter --budget 5.0 --focus "equilibrium"
+
+        # More workers for faster parallel execution
+        imas-codex discover run iter --budget 10.0 --workers 4
+    """
+    _run_iterative_discovery(
+        facility=facility,
+        budget=budget,
+        max_cycles=max_cycles,
+        focus=focus,
+        threshold=threshold,
+        workers=workers,
+    )
+
+
+def _run_iterative_discovery(
+    facility: str,
+    budget: float,
+    max_cycles: int,
+    focus: str | None,
+    threshold: float,
+    workers: int,
+) -> None:
+    """Run iterative scan→score discovery with parallel branches."""
+    import asyncio
+
+    from rich.console import Console
+
+    from imas_codex.discovery import get_discovery_stats, seed_facility_roots
+
+    console = Console()
+
+    # Check if we have any paths, seed if not
+    stats = get_discovery_stats(facility)
+    if stats["total"] == 0:
+        console.print(f"[cyan]Seeding root paths for {facility}...[/cyan]")
+        seed_facility_roots(facility)
+        stats = get_discovery_stats(facility)
+
+    console.print(f"[bold]Starting discovery for {facility}[/bold]")
+    console.print(
+        f"Budget: ${budget:.2f} | Max cycles: {max_cycles} | Workers: {workers}"
+    )
+    if focus:
+        console.print(f"Focus: {focus}")
+
+    # Run the async discovery loop
+    try:
+        result = asyncio.run(
+            _async_discovery_loop(
+                facility=facility,
+                budget=budget,
+                max_cycles=max_cycles,
+                focus=focus,
+                threshold=threshold,
+                workers=workers,
+                console=console,
+            )
+        )
+
+        console.print()
+        console.print("[bold green]Discovery complete![/bold green]")
+        console.print(f"  Cycles: {result['cycles']}")
+        console.print(f"  Scanned: {result['scanned']}")
+        console.print(f"  Scored: {result['scored']}")
+        console.print(f"  Expanded: {result['expanded']}")
+        console.print(f"  Cost: ${result['cost']:.2f}")
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Discovery interrupted by user[/yellow]")
+        raise SystemExit(130) from None
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]", highlight=False)
+        raise SystemExit(1) from e
+
+
+async def _async_discovery_loop(
+    facility: str,
+    budget: float,
+    max_cycles: int,
+    focus: str | None,
+    threshold: float,
+    workers: int,
+    console,
+) -> dict:
+    """Async discovery loop with parallel scan/score workers."""
+
+    from imas_codex.discovery import get_discovery_stats
+    from imas_codex.discovery.progress import DiscoveryProgressDisplay
+
+    total_scanned = 0
+    total_scored = 0
+    total_expanded = 0
+    total_cost = 0.0
+    current_cycle = 0
+
+    with DiscoveryProgressDisplay(console=console) as display:
+        display.stats.budget_limit = budget
+        display.stats.max_cycles = max_cycles
+        display.refresh_from_graph(facility)
+
+        while current_cycle < max_cycles:
+            current_cycle += 1
+            display.stats.current_cycle = current_cycle
+
+            # Check budget
+            if total_cost >= budget:
+                display.update(description=f"Budget exhausted: ${total_cost:.2f}")
+                break
+
+            # Check frontier
+            stats = get_discovery_stats(facility)
+            if stats["pending"] == 0 and stats["scanned"] == 0:
+                # No more work - check if we just need to wait for scoring
+                if stats["scanned"] == 0:
+                    display.update(description="No more frontier to explore")
+                    break
+
+            # Run scan and score in parallel
+            display.stats.current_phase = "scan+score"
+            display.update(
+                description=f"Cycle {current_cycle}: scanning and scoring...",
+                total=100,
+            )
+
+            # Use parallel branch discovery
+            cycle_result = await _run_parallel_cycle(
+                facility=facility,
+                focus=focus,
+                threshold=threshold,
+                budget_remaining=budget - total_cost,
+                workers=workers,
+                display=display,
+            )
+
+            total_scanned += cycle_result["scanned"]
+            total_scored += cycle_result["scored"]
+            total_expanded += cycle_result["expanded"]
+            total_cost += cycle_result["cost"]
+
+            display.stats.accumulated_cost = total_cost
+            display.refresh_from_graph(facility)
+
+            # If nothing happened this cycle, we're done
+            if cycle_result["scanned"] == 0 and cycle_result["scored"] == 0:
+                break
+
+    return {
+        "cycles": current_cycle,
+        "scanned": total_scanned,
+        "scored": total_scored,
+        "expanded": total_expanded,
+        "cost": total_cost,
+    }
+
+
+async def _run_parallel_cycle(
+    facility: str,
+    focus: str | None,
+    threshold: float,
+    budget_remaining: float,
+    workers: int,
+    display,
+) -> dict:
+    """Run one scan+score cycle with parallel workers."""
+    import asyncio
+
+    from imas_codex.discovery import scan_facility_sync
+    from imas_codex.discovery.scorer import score_facility_paths
+
+    # Run scan synchronously (it's already batched for SSH efficiency)
+    display.stats.current_phase = "scan"
+    display.update(description="Scanning frontier...")
+
+    loop = asyncio.get_event_loop()
+    scan_result = await loop.run_in_executor(
+        None,
+        lambda: scan_facility_sync(facility=facility, limit=200),
+    )
+
+    display.refresh_from_graph(facility)
+
+    # Run score (also synchronous, LLM calls)
+    display.stats.current_phase = "score"
+    display.update(description="Scoring scanned paths...")
+
+    score_result = await loop.run_in_executor(
+        None,
+        lambda: score_facility_paths(
+            facility=facility,
+            limit=100,
+            batch_size=25,
+            focus=focus,
+            threshold=threshold,
+            budget=budget_remaining,
+        ),
+    )
+
+    display.refresh_from_graph(facility)
+
+    return {
+        "scanned": scan_result.get("scanned", 0),
+        "scored": score_result.get("scored", 0),
+        "expanded": score_result.get("expanded", 0),
+        "cost": score_result.get("cost", 0.0),
+    }
 
 
 @discover.command("scan")
@@ -5471,6 +5739,125 @@ def discover_scan(facility: str, limit: int, dry_run: bool) -> None:
 
     except Exception as e:
         click.echo(f"\nError: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("score")
+@click.argument("facility")
+@click.option(
+    "--limit",
+    "-l",
+    default=100,
+    type=int,
+    help="Maximum paths to score this run",
+)
+@click.option(
+    "--batch-size",
+    "-s",
+    default=25,
+    type=int,
+    help="Paths per LLM call",
+)
+@click.option(
+    "--budget",
+    "-b",
+    type=float,
+    help="Maximum spend in USD",
+)
+@click.option(
+    "--focus",
+    "-f",
+    type=str,
+    help="Natural language focus (e.g., 'equilibrium codes')",
+)
+@click.option(
+    "--threshold",
+    "-t",
+    default=0.7,
+    type=float,
+    help="Minimum score to expand paths",
+)
+@click.option(
+    "--model",
+    "-m",
+    default="anthropic/claude-sonnet-4.5",
+    help="LLM model to use",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Score without persisting to graph",
+)
+def discover_score(
+    facility: str,
+    limit: int,
+    batch_size: int,
+    budget: float | None,
+    focus: str | None,
+    threshold: float,
+    model: str,
+    dry_run: bool,
+) -> None:
+    """Score scanned paths using LLM.
+
+    Graph-led scoring:
+    1. Query graph for paths with status='scanned' and no score
+    2. Build batched prompts with directory context
+    3. Call LLM to collect evidence and classify directories
+    4. Apply grounded scoring function
+    5. Mark high-value paths for expansion
+
+    Examples:
+        # Score up to 100 paths
+        imas-codex discover score iter
+
+        # Score with focus and budget
+        imas-codex discover score iter --focus "equilibrium" --budget 5.0
+
+        # Dry run to test without graph changes
+        imas-codex discover score iter --dry-run
+    """
+    from rich.console import Console
+
+    from imas_codex.discovery.progress import print_discovery_status
+    from imas_codex.discovery.scorer import score_facility_paths
+
+    console = Console()
+
+    if dry_run:
+        console.print("[yellow]DRY RUN - no graph changes will be made[/yellow]")
+
+    try:
+        console.print(f"[cyan]Scoring paths for {facility}...[/cyan]")
+        if focus:
+            console.print(f"Focus: {focus}")
+        if budget:
+            console.print(f"Budget: ${budget:.2f}")
+
+        result = score_facility_paths(
+            facility=facility,
+            limit=limit,
+            batch_size=batch_size,
+            focus=focus,
+            threshold=threshold,
+            model=model,
+            budget=budget,
+            dry_run=dry_run,
+        )
+
+        console.print(f"[green]✓ Scored: {result['scored']}[/green]")
+        console.print(f"  Expanded: {result['expanded']}")
+        console.print(f"  Cost: ${result['cost']:.4f}")
+        if result["errors"] > 0:
+            console.print(f"  [red]Errors: {result['errors']}[/red]")
+
+        if not dry_run:
+            console.print()
+            print_discovery_status(facility)
+
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]", highlight=False)
         raise SystemExit(1) from e
 
 
