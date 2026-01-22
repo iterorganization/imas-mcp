@@ -149,7 +149,8 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
                    p.has_readme AS has_readme, p.has_makefile AS has_makefile,
-                   p.has_git AS has_git, p.patterns_detected AS patterns_detected
+                   p.has_git AS has_git, p.patterns_detected AS patterns_detected,
+                   p.child_names AS child_names
             """,
             facility=facility,
             limit=limit,
@@ -190,7 +191,8 @@ def mark_score_complete(
 
 async def scan_worker(
     state: DiscoveryState,
-    on_progress: Callable[[str, WorkerStats, list[str] | None], None] | None = None,
+    on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
+    | None = None,
 ) -> None:
     """Async scanner worker.
 
@@ -208,7 +210,7 @@ async def scan_worker(
         if not paths:
             state.scan_idle_count += 1
             if on_progress:
-                on_progress("idle", state.scan_stats, None)
+                on_progress("idle", state.scan_stats, None, None)
             # Wait before polling again
             await asyncio.sleep(1.0)
             continue
@@ -217,7 +219,7 @@ async def scan_worker(
         path_strs = [p["path"] for p in paths]
 
         if on_progress:
-            on_progress(f"scanning {len(paths)} paths", state.scan_stats, None)
+            on_progress(f"scanning {len(paths)} paths", state.scan_stats, None, None)
 
         # Run scan in thread pool (blocking SSH call)
         # Capture variables for lambda to avoid late binding issue
@@ -239,10 +241,31 @@ async def scan_worker(
         state.scan_stats.processed += stats["scanned"]
         state.scan_stats.errors += stats["errors"]
 
-        # Pass scanned paths to progress callback for ticker
+        # Build detailed scan results for progress display
+        scan_results = [
+            {
+                "path": r.path,
+                "total_files": r.stats.total_files,
+                "total_dirs": r.stats.total_dirs,
+                "has_readme": r.stats.has_readme,
+                "has_makefile": r.stats.has_makefile,
+                "has_git": r.stats.has_git,
+                "file_types": {},  # Could be extracted if available
+                "error": r.error,
+            }
+            for r in results
+            if not r.error
+        ]
+
+        # Pass detailed scan results to progress callback
         scanned_paths = [r.path for r in results if not r.error]
         if on_progress:
-            on_progress(f"scanned {stats['scanned']}", state.scan_stats, scanned_paths)
+            on_progress(
+                f"scanned {stats['scanned']}",
+                state.scan_stats,
+                scanned_paths,
+                scan_results,
+            )
 
         # Brief yield to allow score worker to run
         await asyncio.sleep(0.1)
@@ -256,6 +279,9 @@ async def score_worker(
 
     Continuously claims scanned paths, scores via LLM, marks complete.
     Runs until stop_requested, budget exhausted, or no more scanned paths.
+
+    Optimization: Empty directories (total_files=0 AND total_dirs=0) are
+    auto-skipped without LLM call since they have no content to evaluate.
     """
     from imas_codex.discovery.scorer import DirectoryScorer
 
@@ -282,14 +308,77 @@ async def score_worker(
 
         state.score_idle_count = 0
 
+        # Split paths into empty (auto-skip) and non-empty (need LLM)
+        empty_paths = []
+        paths_to_score = []
+        for p in paths:
+            total_files = p.get("total_files", 0) or 0
+            total_dirs = p.get("total_dirs", 0) or 0
+            if total_files == 0 and total_dirs == 0:
+                empty_paths.append(p)
+            else:
+                paths_to_score.append(p)
+
+        # Auto-skip empty directories with 0.0 score
+        skipped_results = []
+        if empty_paths:
+            skip_data = [
+                {
+                    "path": p["path"],
+                    "score": 0.0,
+                    "path_purpose": "empty_directory",
+                    "description": "Empty directory - no files or subdirectories",
+                    "score_code": 0.0,
+                    "score_data": 0.0,
+                    "score_imas": 0.0,
+                    "should_expand": False,
+                    "skip_reason": "empty",
+                }
+                for p in empty_paths
+            ]
+            mark_score_complete(state.facility, skip_data)
+            state.score_stats.processed += len(empty_paths)
+
+            skipped_results = [
+                {
+                    "path": p["path"],
+                    "score": 0.0,
+                    "label": "empty_directory",
+                    "path_purpose": "empty_directory",
+                    "description": "Empty directory - no files or subdirectories",
+                    "score_code": 0.0,
+                    "score_data": 0.0,
+                    "score_imas": 0.0,
+                    "skip_reason": "empty",
+                    "total_files": 0,
+                }
+                for p in empty_paths
+            ]
+
+            if on_progress and not paths_to_score:
+                # Only skipped paths, show progress
+                on_progress(
+                    f"skipped {len(empty_paths)} empty",
+                    state.score_stats,
+                    skipped_results,
+                )
+                continue
+
+        if not paths_to_score:
+            continue
+
         if on_progress:
-            on_progress(f"scoring {len(paths)} paths", state.score_stats, None)
+            on_progress(f"scoring {len(paths_to_score)} paths", state.score_stats, None)
 
         # Run scoring in thread pool (blocking LLM call)
         # Capture variables for lambda to avoid late binding issue
         loop = asyncio.get_event_loop()
         start = time.time()
-        dirs_to_score, focus_val, thresh_val = paths, state.focus, state.threshold
+        dirs_to_score, focus_val, thresh_val = (
+            paths_to_score,
+            state.focus,
+            state.threshold,
+        )
         try:
             result = await loop.run_in_executor(
                 None,
@@ -308,27 +397,39 @@ async def score_worker(
 
             state.score_stats.processed += len(result.scored_dirs)
 
-            # Pass score results to progress callback for ticker
-            ticker_results = [
+            # Build detailed score results for progress callback
+            detailed_results = [
                 {
                     "path": d.path,
                     "score": d.score,
                     "label": d.path_purpose.value if d.path_purpose else "",
+                    "path_purpose": d.path_purpose.value if d.path_purpose else "",
+                    "description": d.description,
+                    "score_code": d.score_code,
+                    "score_data": d.score_data,
+                    "score_imas": d.score_imas,
+                    "skip_reason": d.skip_reason or "",
+                    "total_files": 0,  # Not available at score time
                 }
                 for d in result.scored_dirs
             ]
+            # Combine with any skipped results
+            all_results = skipped_results + detailed_results
             if on_progress:
+                skipped_msg = (
+                    f" (+{len(skipped_results)} skipped)" if skipped_results else ""
+                )
                 on_progress(
-                    f"scored {len(result.scored_dirs)} (${result.total_cost:.3f})",
+                    f"scored {len(result.scored_dirs)} (${result.total_cost:.3f}){skipped_msg}",
                     state.score_stats,
-                    ticker_results,
+                    all_results,
                 )
 
         except Exception as e:
             logger.exception(f"Score error: {e}")
-            state.score_stats.errors += len(paths)
+            state.score_stats.errors += len(paths_to_score)
             # Revert claimed paths to scanned status
-            _revert_scoring_claim(state.facility, [p["path"] for p in paths])
+            _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
 
         # Brief yield
         await asyncio.sleep(0.1)
@@ -361,17 +462,32 @@ async def run_parallel_discovery(
     path_limit: int | None = None,
     focus: str | None = None,
     threshold: float = 0.7,
-    on_scan_progress: Callable[[str, WorkerStats, list[str] | None], None]
+    num_scan_workers: int = 2,
+    num_score_workers: int = 4,
+    on_scan_progress: Callable[
+        [str, WorkerStats, list[str] | None, list[dict] | None], None
+    ]
     | None = None,
     on_score_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
 ) -> dict[str, Any]:
     """Run parallel scan and score workers.
 
+    Args:
+        facility: Facility ID to discover
+        cost_limit: Maximum LLM cost in dollars
+        path_limit: Maximum paths to process (optional)
+        focus: Focus string for scoring (optional)
+        threshold: Score threshold for expansion
+        num_scan_workers: Number of concurrent scan workers (default: 2)
+        num_score_workers: Number of concurrent score workers (default: 4)
+        on_scan_progress: Callback for scan progress
+        on_score_progress: Callback for score progress
+
     Terminates when:
     - Cost limit reached
     - Path limit reached (if set)
-    - Both workers idle (no more work)
+    - All workers idle (no more work)
 
     Returns:
         Summary dict with scanned, scored, cost, elapsed, rates
@@ -392,12 +508,19 @@ async def run_parallel_discovery(
         threshold=threshold,
     )
 
-    # Run both workers concurrently
+    # Create worker tasks
+    scan_tasks = [
+        scan_worker(state, on_progress=on_scan_progress)
+        for _ in range(num_scan_workers)
+    ]
+    score_tasks = [
+        score_worker(state, on_progress=on_score_progress)
+        for _ in range(num_score_workers)
+    ]
+
+    # Run all workers concurrently
     try:
-        await asyncio.gather(
-            scan_worker(state, on_progress=on_scan_progress),
-            score_worker(state, on_progress=on_score_progress),
-        )
+        await asyncio.gather(*scan_tasks, *score_tasks)
     except asyncio.CancelledError:
         state.stop_requested = True
 

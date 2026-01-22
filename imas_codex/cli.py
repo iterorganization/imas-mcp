@@ -5436,12 +5436,26 @@ def discover() -> None:
     type=float,
     help="Minimum score to expand paths",
 )
+@click.option(
+    "--scan-workers",
+    default=2,
+    type=int,
+    help="Number of scan workers (default: 2)",
+)
+@click.option(
+    "--score-workers",
+    default=4,
+    type=int,
+    help="Number of score workers (default: 4)",
+)
 def discover_run(
     facility: str,
     cost_limit: float,
     limit: int | None,
     focus: str | None,
     threshold: float,
+    scan_workers: int,
+    score_workers: int,
 ) -> None:
     """Run parallel scan and score discovery.
 
@@ -5463,6 +5477,8 @@ def discover_run(
         limit=limit,
         focus=focus,
         threshold=threshold,
+        num_scan_workers=scan_workers,
+        num_score_workers=score_workers,
     )
 
 
@@ -5472,6 +5488,8 @@ def _run_iterative_discovery(
     limit: int | None,
     focus: str | None,
     threshold: float,
+    num_scan_workers: int = 2,
+    num_score_workers: int = 4,
 ) -> None:
     """Run parallel scan/score discovery."""
     import asyncio
@@ -5495,17 +5513,18 @@ def _run_iterative_discovery(
     if model_name.startswith("anthropic/"):
         model_name = model_name[len("anthropic/") :]
 
-    console.print(f"[bold]Starting parallel discovery for {facility}[/bold]")
+    console.print(f"[bold]Starting parallel discovery for {facility.upper()}[/bold]")
     console.print(f"Cost limit: ${budget:.2f}")
     if limit:
         console.print(f"Path limit: {limit}")
     console.print(f"Model: {model_name}")
+    console.print(f"Workers: {num_scan_workers} scan, {num_score_workers} score")
     if focus:
         console.print(f"Focus: {focus}")
 
     # Run the async discovery loop
     try:
-        result = asyncio.run(
+        result, scored_this_run = asyncio.run(
             _async_discovery_loop(
                 facility=facility,
                 budget=budget,
@@ -5513,11 +5532,13 @@ def _run_iterative_discovery(
                 focus=focus,
                 threshold=threshold,
                 console=console,
+                num_scan_workers=num_scan_workers,
+                num_score_workers=num_score_workers,
             )
         )
 
-        # Print detailed summary
-        _print_discovery_summary(console, facility, result)
+        # Print detailed summary with paths scored this run
+        _print_discovery_summary(console, facility, result, scored_this_run)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Discovery interrupted by user[/yellow]")
@@ -5527,88 +5548,98 @@ def _run_iterative_discovery(
         raise SystemExit(1) from e
 
 
-def _print_discovery_summary(console, facility: str, result: dict) -> None:
-    """Print detailed discovery summary with statistics."""
+def _print_discovery_summary(
+    console, facility: str, result: dict, scored_this_run: set[str] | None = None
+) -> None:
+    """Print detailed discovery summary with statistics.
+
+    Args:
+        console: Rich console
+        facility: Facility ID
+        result: Discovery result dict
+        scored_this_run: Set of paths scored in this discovery run
+    """
     from rich.panel import Panel
-    from rich.table import Table
+    from rich.text import Text
 
     from imas_codex.discovery import get_discovery_stats
     from imas_codex.discovery.frontier import get_high_value_paths
 
     console.print()
 
-    # Build summary table
-    table = Table.grid(padding=(0, 2))
-    table.add_column(justify="right", style="bold")
-    table.add_column(justify="left")
-    table.add_column(justify="right", style="bold")
-    table.add_column(justify="left")
-
-    # Row 1: Elapsed time and cost
-    elapsed = result.get("elapsed_seconds", 0)
-    elapsed_str = f"{elapsed / 60:.1f}m" if elapsed >= 60 else f"{elapsed:.1f}s"
-    table.add_row(
-        "Elapsed:",
-        elapsed_str,
-        "Cost:",
-        f"${result['cost']:.3f}",
-    )
-
-    # Row 2: Scanned and scored
-    table.add_row(
-        "Scanned:",
-        f"{result['scanned']:,}",
-        "Scored:",
-        f"{result['scored']:,}",
-    )
-
-    # Row 3: Rates
-    scan_rate = result.get("scan_rate")
-    score_rate = result.get("score_rate")
-    scan_str = f"{scan_rate:.1f}/s" if scan_rate else "-"
-    score_str = f"{score_rate:.1f}/s" if score_rate else "-"
-    table.add_row(
-        "Scan rate:",
-        scan_str,
-        "Score rate:",
-        score_str,
-    )
-
     # Get final graph stats
     stats = get_discovery_stats(facility)
     coverage = stats["scored"] / stats["total"] * 100 if stats["total"] > 0 else 0
+    elapsed = result.get("elapsed_seconds", 0)
+    elapsed_str = f"{elapsed / 60:.1f}m" if elapsed >= 60 else f"{elapsed:.1f}s"
+    scan_rate = result.get("scan_rate")
+    score_rate = result.get("score_rate")
 
-    # Row 5: Graph state
-    table.add_row(
-        "Total paths:",
-        f"{stats['total']:,}",
-        "Coverage:",
-        f"{coverage:.1f}%",
+    # Build compact summary - width=100 to match progress display
+    facility_upper = facility.upper()
+    summary = Text()
+
+    # Row 1: This Run stats
+    summary.append("This Run  ", style="bold cyan")
+    summary.append(f"scanned {result['scanned']:,}", style="white")
+    summary.append(" · ", style="dim")
+    summary.append(f"scored {result['scored']:,}", style="white")
+    summary.append(" · ", style="dim")
+    summary.append(f"cost ${result['cost']:.3f}", style="yellow")
+    summary.append(" · ", style="dim")
+    summary.append(f"{elapsed_str}", style="cyan")
+    summary.append("\n")
+
+    # Row 2: Rates
+    summary.append("Rates     ", style="bold blue")
+    if scan_rate:
+        summary.append(f"scan {scan_rate:.1f}/s", style="white")
+    else:
+        summary.append("scan -", style="dim")
+    summary.append(" · ", style="dim")
+    if score_rate:
+        summary.append(f"score {score_rate:.1f}/s", style="white")
+    else:
+        summary.append("score -", style="dim")
+    summary.append("\n")
+
+    # Row 3: Graph State
+    summary.append("Graph     ", style="bold green")
+    summary.append(f"total {stats['total']:,}", style="white")
+    summary.append(" · ", style="dim")
+    summary.append(
+        f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
     )
-    table.add_row(
-        "Frontier:",
-        f"{stats['pending']:,}",
-        "",
-        "",
-    )
+    summary.append(" · ", style="dim")
+    summary.append(f"frontier {stats['pending']:,}", style="cyan")
 
     console.print(
         Panel(
-            table,
-            title="[bold green]Discovery Complete[/bold green]",
+            summary,
+            title=f"[bold green]{facility_upper} Discovery Complete[/bold green]",
             border_style="green",
+            width=100,  # Match progress display width
         )
     )
 
-    # Show high-value paths found
-    high_value = get_high_value_paths(facility, min_score=0.7, limit=8)
+    # Show high-value paths found IN THIS RUN only
+    all_high_value = get_high_value_paths(facility, min_score=0.7, limit=50)
+
+    # Filter to paths scored in this run
+    if scored_this_run:
+        high_value = [p for p in all_high_value if p["path"] in scored_this_run]
+    else:
+        high_value = all_high_value
+
     if high_value:
         console.print()
-        console.print(f"[bold]High-value paths discovered ({len(high_value)}):[/bold]")
+        console.print(
+            f"[bold]High-value paths discovered this run ({len(high_value)}):[/bold]"
+        )
         for p in high_value[:5]:
             purpose = p.get("path_purpose", "unknown")
-            desc = p.get("description", "")[:60]
-            if len(p.get("description", "")) > 60:
+            desc = p.get("description", "")[:55]
+            if len(p.get("description", "")) > 55:
                 desc += "..."
             console.print(f"  [{p['score']:.2f}] [cyan]{p['path']}[/cyan]")
             if desc:
@@ -5624,8 +5655,14 @@ async def _async_discovery_loop(
     focus: str | None,
     threshold: float,
     console,
-) -> dict:
-    """Async discovery loop with parallel scan/score workers."""
+    num_scan_workers: int = 2,
+    num_score_workers: int = 4,
+) -> tuple[dict, set[str]]:
+    """Async discovery loop with parallel scan/score workers.
+
+    Returns:
+        Tuple of (result dict, set of paths scored in this run)
+    """
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery.parallel import run_parallel_discovery
     from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
@@ -5647,14 +5684,29 @@ async def _async_discovery_loop(
                 display.refresh_from_graph(facility)
                 await asyncio.sleep(2.0)
 
-        # Start graph refresh task
+        # Streaming queue ticker - drains queues for smooth display
+        async def queue_ticker():
+            """Background task to drain streaming queues for smooth display."""
+            import asyncio
+
+            while True:
+                display.tick()
+                await asyncio.sleep(0.15)  # ~7 ticks/second for smooth streaming
+
+        # Start background tasks
         import asyncio
 
         refresh_task = asyncio.create_task(refresh_graph_state())
+        ticker_task = asyncio.create_task(queue_ticker())
 
         # Wrap display callbacks to match new signature with paths/results
-        def on_scan(msg: str, stats, paths: list[str] | None = None):
-            display.update_scan(msg, stats, paths=paths)
+        def on_scan(
+            msg: str,
+            stats,
+            paths: list[str] | None = None,
+            scan_results: list[dict] | None = None,
+        ):
+            display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
 
         def on_score(msg: str, stats, results: list[dict] | None = None):
             display.update_score(msg, stats, results=results)
@@ -5666,30 +5718,43 @@ async def _async_discovery_loop(
                 path_limit=limit,
                 focus=focus,
                 threshold=threshold,
+                num_scan_workers=num_scan_workers,
+                num_score_workers=num_score_workers,
                 on_scan_progress=on_scan,
                 on_score_progress=on_score,
             )
         finally:
             refresh_task.cancel()
+            ticker_task.cancel()
             try:
                 await refresh_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await ticker_task
             except asyncio.CancelledError:
                 pass
 
         # Final refresh
         display.refresh_from_graph(facility)
 
+        # Get paths scored in this run for filtering high-value display
+        scored_this_run = display.get_paths_scored_this_run()
+
     # Return result for summary (box printed by caller, no duplicate text)
-    return {
-        "cycles": 1,  # Continuous operation, not cycle-based
-        "scanned": result["scanned"],
-        "scored": result["scored"],
-        "expanded": result.get("expanded", 0),
-        "cost": result["cost"],
-        "elapsed_seconds": result["elapsed_seconds"],
-        "scan_rate": result.get("scan_rate"),
-        "score_rate": result.get("score_rate"),
-    }
+    return (
+        {
+            "cycles": 1,  # Continuous operation, not cycle-based
+            "scanned": result["scanned"],
+            "scored": result["scored"],
+            "expanded": result.get("expanded", 0),
+            "cost": result["cost"],
+            "elapsed_seconds": result["elapsed_seconds"],
+            "scan_rate": result.get("scan_rate"),
+            "score_rate": result.get("score_rate"),
+        },
+        scored_this_run,
+    )
 
 
 @discover.command("scan")
@@ -5915,6 +5980,164 @@ def discover_status(facility: str, as_json: bool) -> None:
             click.echo(json_module.dumps(output, indent=2))
         else:
             print_discovery_status(facility)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover.command("inspect")
+@click.argument("facility")
+@click.option(
+    "--scanned",
+    "-s",
+    default=5,
+    type=int,
+    help="Number of scanned paths to show",
+)
+@click.option(
+    "--scored",
+    "-r",
+    default=5,
+    type=int,
+    help="Number of scored paths to show",
+)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) -> None:
+    """Inspect scanned and scored paths from the graph.
+
+    Displays sample paths with their attributes to assess how well
+    the scan and score processes are functioning.
+
+    Examples:
+        imas-codex discover inspect iter
+        imas-codex discover inspect iter --scanned 10 --scored 10
+        imas-codex discover inspect iter --json
+    """
+    import json
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    try:
+        with GraphClient() as gc:
+            # Get sample scanned paths
+            scanned_paths = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WHERE p.status = 'scanned'
+                RETURN p.path AS path, p.total_files AS total_files,
+                       p.total_dirs AS total_dirs, p.has_readme AS has_readme,
+                       p.has_makefile AS has_makefile, p.has_git AS has_git,
+                       p.depth AS depth, p.scanned_at AS scanned_at
+                ORDER BY p.scanned_at DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                limit=scanned,
+            )
+
+            # Get sample scored paths
+            scored_paths = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WHERE p.status = 'scored' AND p.score IS NOT NULL
+                RETURN p.path AS path, p.score AS score,
+                       p.score_code AS score_code, p.score_data AS score_data,
+                       p.score_imas AS score_imas, p.path_purpose AS path_purpose,
+                       p.description AS description, p.total_files AS total_files,
+                       p.scored_at AS scored_at
+                ORDER BY p.score DESC
+                LIMIT $limit
+                """,
+                facility=facility,
+                limit=scored,
+            )
+
+        if as_json:
+            output = {
+                "facility": facility,
+                "scanned_paths": list(scanned_paths),
+                "scored_paths": list(scored_paths),
+            }
+            console.print_json(json.dumps(output, default=str))
+            return
+
+        # Print scanned paths table
+        console.print(f"\n[bold cyan]Scanned Paths ({len(scanned_paths)})[/bold cyan]")
+        if scanned_paths:
+            scan_table = Table(show_header=True, header_style="bold")
+            scan_table.add_column("Path", style="cyan", no_wrap=True, max_width=40)
+            scan_table.add_column("Files", justify="right")
+            scan_table.add_column("Dirs", justify="right")
+            scan_table.add_column("README", justify="center")
+            scan_table.add_column("Makefile", justify="center")
+            scan_table.add_column("Git", justify="center")
+            scan_table.add_column("Depth", justify="right")
+
+            for p in scanned_paths:
+                path_display = p["path"]
+                if len(path_display) > 40:
+                    path_display = "..." + path_display[-37:]
+                scan_table.add_row(
+                    path_display,
+                    str(p.get("total_files", 0) or 0),
+                    str(p.get("total_dirs", 0) or 0),
+                    "✓" if p.get("has_readme") else "",
+                    "✓" if p.get("has_makefile") else "",
+                    "✓" if p.get("has_git") else "",
+                    str(p.get("depth", 0) or 0),
+                )
+            console.print(scan_table)
+        else:
+            console.print("  (no scanned paths found)")
+
+        # Print scored paths table
+        console.print(f"\n[bold green]Scored Paths ({len(scored_paths)})[/bold green]")
+        if scored_paths:
+            score_table = Table(show_header=True, header_style="bold")
+            score_table.add_column("Path", style="cyan", no_wrap=True, max_width=35)
+            score_table.add_column("Score", justify="right", style="bold")
+            score_table.add_column("Code", justify="right")
+            score_table.add_column("Data", justify="right")
+            score_table.add_column("IMAS", justify="right")
+            score_table.add_column("Purpose", max_width=15)
+            score_table.add_column("Description", max_width=30)
+
+            for p in scored_paths:
+                path_display = p["path"]
+                if len(path_display) > 35:
+                    path_display = "..." + path_display[-32:]
+
+                # Color score
+                score_val = p.get("score", 0) or 0
+                if score_val >= 0.7:
+                    score_str = f"[green]{score_val:.2f}[/green]"
+                elif score_val >= 0.4:
+                    score_str = f"[yellow]{score_val:.2f}[/yellow]"
+                else:
+                    score_str = f"[red]{score_val:.2f}[/red]"
+
+                desc = p.get("description", "") or ""
+                if len(desc) > 30:
+                    desc = desc[:27] + "..."
+
+                score_table.add_row(
+                    path_display,
+                    score_str,
+                    f"{p.get('score_code', 0) or 0:.2f}",
+                    f"{p.get('score_data', 0) or 0:.2f}",
+                    f"{p.get('score_imas', 0) or 0:.2f}",
+                    p.get("path_purpose", "") or "",
+                    desc,
+                )
+            console.print(score_table)
+        else:
+            console.print("  (no scored paths found)")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
