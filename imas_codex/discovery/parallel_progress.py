@@ -1,16 +1,12 @@
 """
-Dual-panel progress display for parallel discovery.
+Clean progress display for parallel facility discovery.
 
-Shows scan and score workers side-by-side with:
-- Single current path display with stats/details
-- Full-width progress bars
-- Summary statistics panel
-
-Design: Each worker panel shows only the current item with rich detail,
-not a scrolling history. Stats are shown inline for immediate feedback.
-
-Streaming: Items are queued and released at the observed rate to give
-the impression of continuous processing rather than batch updates.
+Design principles:
+- Minimal visual clutter (no emojis, no stopwatch icons)
+- Clear hierarchy: Target → Progress → Activity → Resources
+- Gradient progress bars with percentage
+- Resource gauges for time and cost budgets
+- Compact current activity with relevant details only
 """
 
 from __future__ import annotations
@@ -20,18 +16,22 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 if TYPE_CHECKING:
     from imas_codex.discovery.parallel import WorkerStats
 
 
-def clip_path(path: str, max_len: int = 60) -> str:
-    """Clip middle of path if too long: /home/user/.../deep/dir"""
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+
+def clip_path(path: str, max_len: int = 55) -> str:
+    """Clip middle of path: /home/user/.../deep/dir"""
     if len(path) <= max_len:
         return path
     keep_start = max_len // 3
@@ -39,144 +39,165 @@ def clip_path(path: str, max_len: int = 60) -> str:
     return f"{path[:keep_start]}...{path[-keep_end:]}"
 
 
-def format_duration(seconds: float) -> str:
-    """Format duration in human-readable form: 1h 23m, 5m 30s, 45s."""
+def format_time(seconds: float) -> str:
+    """Format duration: 1h 23m, 5m 30s, 45s"""
     if seconds < 0:
-        return "-"
+        return "--"
     if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        mins = int(seconds // 60)
-        secs = int(seconds % 60)
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        mins, secs = divmod(int(seconds), 60)
         return f"{mins}m {secs:02d}s" if secs else f"{mins}m"
+    hours, rem = divmod(int(seconds), 3600)
+    mins = rem // 60
+    return f"{hours}h {mins:02d}m" if mins else f"{hours}h"
+
+
+def make_bar(
+    ratio: float, width: int, filled_char: str = "█", empty_char: str = "░"
+) -> str:
+    """Create a simple progress bar string."""
+    ratio = max(0.0, min(1.0, ratio))
+    filled = int(width * ratio)
+    return filled_char * filled + empty_char * (width - filled)
+
+
+def make_gradient_bar(ratio: float, width: int) -> Text:
+    """Create a gradient progress bar (green → yellow → red as it fills)."""
+    ratio = max(0.0, min(1.0, ratio))
+    filled = int(width * ratio)
+
+    bar = Text()
+    for i in range(width):
+        if i < filled:
+            # Gradient based on position
+            pos_ratio = i / width
+            if pos_ratio < 0.5:
+                bar.append("━", style="green")
+            elif pos_ratio < 0.75:
+                bar.append("━", style="yellow")
+            else:
+                bar.append("━", style="red")
+        else:
+            bar.append("─", style="dim")
+    return bar
+
+
+def make_resource_gauge(
+    used: float, limit: float, width: int = 20, unit: str = ""
+) -> Text:
+    """Create a resource consumption gauge with color coding."""
+    ratio = used / limit if limit > 0 else 0
+    ratio = max(0.0, min(1.0, ratio))
+
+    # Color based on consumption
+    if ratio < 0.5:
+        color = "green"
+    elif ratio < 0.8:
+        color = "yellow"
     else:
-        hours = int(seconds // 3600)
-        mins = int((seconds % 3600) // 60)
-        return f"{hours}h {mins:02d}m" if mins else f"{hours}h"
+        color = "red"
+
+    filled = int(width * ratio)
+
+    gauge = Text()
+    gauge.append("▐", style="dim")
+    gauge.append("█" * filled, style=color)
+    gauge.append("░" * (width - filled), style="dim")
+    gauge.append("▌", style="dim")
+
+    return gauge
 
 
-def format_size(bytes_val: int | None) -> str:
-    """Format bytes as human-readable size."""
-    if bytes_val is None or bytes_val == 0:
-        return "-"
-    size = float(bytes_val)
-    for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.0f}{unit}"
-        size /= 1024
-    return f"{size:.1f}TB"
+# ============================================================================
+# Display Items
+# ============================================================================
 
 
 @dataclass
-class ScanDisplayItem:
-    """Current item being displayed in scanner panel."""
+class ScanItem:
+    """Current scan activity."""
 
     path: str
-    total_files: int = 0
-    total_dirs: int = 0
-    file_types: dict[str, int] = field(default_factory=dict)
-    has_readme: bool = False
-    has_makefile: bool = False
-    has_git: bool = False
+    files: int = 0
+    dirs: int = 0
+    has_code: bool = False  # README, Makefile, git
 
 
 @dataclass
-class ScoreDisplayItem:
-    """Current item being displayed in scorer panel."""
+class ScoreItem:
+    """Current score activity."""
 
     path: str
     score: float | None = None
     purpose: str = ""
-    description: str = ""
-    score_code: float = 0.0
-    score_data: float = 0.0
-    score_imas: float = 0.0
     skipped: bool = False
-    skip_reason: str = ""
 
 
 @dataclass
-class StreamingQueue:
-    """Queue that releases items at an approximate rate.
-
-    When a batch arrives, items are queued and released one at a time
-    based on the observed rate, giving impression of continuous streaming.
-    """
+class StreamQueue:
+    """Rate-limited queue for smooth display updates."""
 
     items: deque = field(default_factory=deque)
-    last_release_time: float = field(default_factory=time.time)
-    observed_rate: float = 1.0  # items per second
-    min_interval: float = 0.1  # minimum seconds between releases
+    last_pop: float = field(default_factory=time.time)
+    rate: float = 2.0  # items per second
 
-    def add_batch(self, items: list, rate: float | None = None) -> None:
-        """Add a batch of items to the queue."""
+    def add(self, items: list, rate: float | None = None) -> None:
         self.items.extend(items)
         if rate and rate > 0:
-            self.observed_rate = rate
+            self.rate = rate
 
-    def pop_ready(self) -> Any | None:
-        """Pop an item if enough time has passed based on rate."""
+    def pop(self) -> Any | None:
         if not self.items:
             return None
-
-        # Calculate time between releases based on rate
-        interval = (
-            max(self.min_interval, 1.0 / self.observed_rate)
-            if self.observed_rate > 0
-            else 0.5
-        )
+        interval = 1.0 / self.rate if self.rate > 0 else 0.5
         now = time.time()
-
-        if now - self.last_release_time >= interval:
-            self.last_release_time = now
+        if now - self.last_pop >= interval:
+            self.last_pop = now
             return self.items.popleft()
         return None
-
-    def peek(self) -> Any | None:
-        """Peek at the next item without removing it."""
-        return self.items[0] if self.items else None
 
     def __len__(self) -> int:
         return len(self.items)
 
 
+# ============================================================================
+# Progress State
+# ============================================================================
+
+
 @dataclass
-class ParallelProgressState:
-    """State for dual-panel progress display."""
+class ProgressState:
+    """All state for the progress display."""
 
     facility: str
     cost_limit: float
     model: str = ""
+    focus: str = ""
 
-    # Graph state
-    total_paths: int = 0
+    # Graph totals
+    total: int = 0
     pending: int = 0
     scanned: int = 0
     scored: int = 0
 
-    # Worker status
-    scan_status: str = "starting"
-    score_status: str = "starting"
-
-    # Accumulated stats
-    total_scanned: int = 0
-    total_scored: int = 0
-    total_cost: float = 0.0
+    # This run
+    run_scanned: int = 0
+    run_scored: int = 0
+    run_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
 
-    # Current display items
-    current_scan: ScanDisplayItem | None = None
-    current_score: ScoreDisplayItem | None = None
+    # Current items
+    current_scan: ScanItem | None = None
+    current_score: ScoreItem | None = None
 
-    # Streaming queues for smooth display
-    scan_queue: StreamingQueue = field(default_factory=StreamingQueue)
-    score_queue: StreamingQueue = field(default_factory=StreamingQueue)
+    # Streaming
+    scan_queue: StreamQueue = field(default_factory=StreamQueue)
+    score_queue: StreamQueue = field(default_factory=StreamQueue)
 
-    # Track paths scored in this run for filtering high-value display
-    scored_this_run: set[str] = field(default_factory=set)
-
-    # Timing
+    # Tracking
+    scored_paths: set[str] = field(default_factory=set)
     start_time: float = field(default_factory=time.time)
 
     @property
@@ -184,46 +205,47 @@ class ParallelProgressState:
         return time.time() - self.start_time
 
     @property
-    def elapsed_str(self) -> str:
-        return format_duration(self.elapsed)
+    def coverage(self) -> float:
+        """Percentage of total paths scored."""
+        return (self.scored / self.total * 100) if self.total > 0 else 0
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimate time remaining based on score rate."""
+        """Estimated time to completion based on score rate."""
         if not self.score_rate or self.score_rate <= 0:
             return None
-        remaining = self.pending + (self.scanned - self.scored)
-        if remaining <= 0:
-            return 0.0
-        return remaining / self.score_rate
+        remaining = self.pending + max(0, self.scanned - self.scored)
+        return remaining / self.score_rate if remaining > 0 else 0
 
-    @property
-    def eta_str(self) -> str:
-        """Format ETA as human-readable string."""
-        eta = self.eta_seconds
-        if eta is None:
-            return "calculating..."
-        if eta <= 0:
-            return "done"
-        return format_duration(eta)
+
+# ============================================================================
+# Main Display Class
+# ============================================================================
 
 
 class ParallelProgressDisplay:
-    """Dual-panel progress display for parallel scan/score workers.
+    """Clean progress display for parallel discovery.
 
-    Each worker shows a single current item with full details rather
-    than a scrolling ticker. This provides more useful information
-    about what's happening.
+    Layout (80 chars wide):
+    ┌─────────────────────────────────────────────────────────────────────────────┐
+    │                         ITER Discovery                                      │
+    │                     Focus: equilibrium codes                                │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────  1,234  42%  │
+    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────    892  28%  │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │  /gss/work/imas/codes/chease/src                                            │
+    │    Scan:  45 files, 3 dirs, code project                                    │
+    │    Score: 0.85 simulation_code                                              │
+    ├─────────────────────────────────────────────────────────────────────────────┤
+    │  COST   ▐████████░░░░░░░░░░░▌  $4.50 / $10.00                               │
+    │  TIME   ▐██████████████░░░░░▌  12m 30s  ETA 8m                              │
+    └─────────────────────────────────────────────────────────────────────────────┘
     """
 
-    # Layout constants - sized for 100-col terminal to give more space
-    # Full outer width = 100, outer borders = 4, inner content = 96
-    # Each panel = 48 (half of inner content)
-    OUTER_WIDTH = 100
-    PANEL_WIDTH = 48
-    CONTENT_WIDTH = 44  # Inside each panel after borders/padding
-    # Fixed number of lines per panel to prevent flicker
-    PANEL_LINES = 8
+    WIDTH = 80
+    BAR_WIDTH = 50
+    GAUGE_WIDTH = 20
 
     def __init__(
         self,
@@ -231,311 +253,195 @@ class ParallelProgressDisplay:
         cost_limit: float,
         model: str = "",
         console: Console | None = None,
-        cumulative_cost: float = 0.0,  # Previous discovery costs for this facility
+        focus: str = "",
     ) -> None:
         self.console = console or Console()
-        self.state = ParallelProgressState(
+        self.state = ProgressState(
             facility=facility,
             cost_limit=cost_limit,
             model=model,
+            focus=focus,
         )
-        self.cumulative_cost = cumulative_cost  # Total historical cost
         self._live: Live | None = None
 
-    def _make_full_bar(
-        self, completed: int, total: int, color: str, width: int
-    ) -> Text:
-        """Create a thin progress bar spanning specified width."""
-        if total <= 0:
-            return Text("─" * width, style="dim")
+    def _build_header(self) -> Text:
+        """Build centered header with facility and focus."""
+        header = Text()
 
-        pct = min(1.0, completed / total)
-        filled = int(width * pct)
-        partial = (width * pct) - filled
-        empty = width - filled - (1 if partial > 0.5 else 0)
+        # Facility name
+        title = f"{self.state.facility.upper()} Discovery"
+        header.append(title.center(self.WIDTH - 4), style="bold cyan")
 
-        bar = Text()
-        bar.append("━" * filled, style=color)
-        if partial > 0.5:
-            bar.append("╸", style=color)
-        bar.append("─" * empty, style="dim")
-        return bar
+        # Focus (if set)
+        if self.state.focus:
+            header.append("\n")
+            focus_line = f"Focus: {self.state.focus}"
+            header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
 
-    def _build_scanner_panel(self) -> Panel:
-        """Build scan panel with current path and stats.
+        return header
 
-        Fixed height (PANEL_LINES) to prevent flicker.
-        """
-        # Status indicator
-        status = self.state.scan_status
-        if "idle" in status.lower() or "waiting" in status.lower():
-            indicator = "[yellow]○[/yellow]"
-        elif "error" in status.lower():
-            indicator = "[red]✗[/red]"
-        else:
-            indicator = "[green]●[/green]"
+    def _build_progress_section(self) -> Text:
+        """Build the main progress bars for scan and score."""
+        section = Text()
 
-        lines: list[Text] = []
+        # Calculate totals and percentages
+        scan_total = self.state.scanned + self.state.pending
+        scan_pct = (self.state.scanned / scan_total * 100) if scan_total > 0 else 0
 
-        # Line 1: Progress on single line - fraction | bar | %
-        total = self.state.scanned + self.state.pending
-        pct = (self.state.scanned / total * 100) if total > 0 else 0
-        rate_str = f" {self.state.scan_rate:.1f}/s" if self.state.scan_rate else ""
-        progress_line = Text()
-        progress_line.append(f"{self.state.scanned:,}", style="bold")
-        progress_line.append(f"/{total:,}", style="dim")
-        progress_line.append(rate_str, style="cyan")
-        lines.append(progress_line)
+        score_total = self.state.scanned  # Score works through scanned items
+        score_pct = (self.state.scored / score_total * 100) if score_total > 0 else 0
 
-        # Line 2: Progress bar with % at end
-        bar_width = self.CONTENT_WIDTH - 6  # Leave room for " 100%"
-        bar = self._make_full_bar(self.state.scanned, total, "blue", bar_width)
-        bar.append(f" {pct:3.0f}%", style="bold cyan")
-        lines.append(bar)
+        # Shorter bar to fit everything on one line
+        bar_width = 40
 
-        # Line 3: Separator
-        lines.append(Text("─" * self.CONTENT_WIDTH, style="dim"))
+        # SCAN row: "  SCAN  ████░░░░  1,234  42%  12.3/s"
+        section.append("  SCAN  ", style="bold blue")
+        scan_ratio = self.state.scanned / scan_total if scan_total > 0 else 0
+        section.append(make_bar(scan_ratio, bar_width), style="blue")
+        section.append(f" {self.state.scanned:>6,}", style="bold")
+        section.append(f" {scan_pct:>3.0f}%", style="cyan")
+        if self.state.scan_rate:
+            section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
+        section.append("\n")
 
-        # Lines 5+: Current scan item with stats
-        item = self.state.current_scan
-        if item:
-            # Path (clipped)
-            path_line = Text()
-            path_line.append(clip_path(item.path, self.CONTENT_WIDTH), style="white")
-            lines.append(path_line)
+        # SCORE row: "  SCORE ████░░░░    892  28%   4.2/s"
+        section.append("  SCORE ", style="bold green")
+        score_ratio = self.state.scored / score_total if score_total > 0 else 0
+        section.append(make_bar(score_ratio, bar_width), style="green")
+        section.append(f" {self.state.scored:>6,}", style="bold")
+        section.append(f" {score_pct:>3.0f}%", style="cyan")
+        if self.state.score_rate:
+            section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
 
-            # Stats line: files/dirs + markers
-            stats_line = Text()
-            stats_line.append(f"{item.total_files} files", style="cyan")
-            stats_line.append(" · ", style="dim")
-            stats_line.append(f"{item.total_dirs} dirs", style="cyan")
-            markers = []
-            if item.has_readme:
-                markers.append("README")
-            if item.has_makefile:
-                markers.append("Make")
-            if item.has_git:
-                markers.append("git")
-            if markers:
-                stats_line.append(f"  [{', '.join(markers)}]", style="green dim")
-            lines.append(stats_line)
-        else:
-            lines.append(Text("(waiting...)", style="dim"))
-            lines.append(Text(""))
+        return section
 
-        # Pad to fixed height
-        while len(lines) < self.PANEL_LINES:
-            lines.append(Text(""))
+    def _build_activity_section(self) -> Text:
+        """Build the current activity section showing what's happening now."""
+        section = Text()
 
-        # Combine into content
-        content = Text()
-        for i, line in enumerate(lines[: self.PANEL_LINES]):
-            if i > 0:
-                content.append("\n")
-            content.append_text(line)
+        # Current path (prioritize score item, fall back to scan)
+        current = self.state.current_score or self.state.current_scan
+        if current:
+            section.append("  ", style="dim")
+            section.append(clip_path(current.path, self.WIDTH - 6), style="white")
+            section.append("\n")
 
-        return Panel(
-            content,
-            title=f"{indicator} Scan",
-            border_style="blue",
-            width=self.PANEL_WIDTH,
-            padding=(0, 1),
-        )
+        # Scan details
+        scan = self.state.current_scan
+        if scan:
+            section.append("    Scan:  ", style="dim")
+            section.append(f"{scan.files} files", style="cyan")
+            section.append(", ", style="dim")
+            section.append(f"{scan.dirs} dirs", style="cyan")
+            if scan.has_code:
+                section.append("  ", style="dim")
+                section.append("code project", style="green dim")
+            section.append("\n")
 
-    def _build_scorer_panel(self) -> Panel:
-        """Build score panel with current path and score details.
-
-        Fixed height (PANEL_LINES) to prevent flicker.
-        """
-        status = self.state.score_status
-        if "idle" in status.lower() or "waiting" in status.lower():
-            indicator = "[yellow]○[/yellow]"
-        elif "error" in status.lower():
-            indicator = "[red]✗[/red]"
-        else:
-            indicator = "[green]●[/green]"
-
-        lines: list[Text] = []
-
-        # Line 1: Progress on single line - fraction | rate
-        scanned_unscored = max(0, self.state.scanned - self.state.scored)
-        total = self.state.scored + scanned_unscored
-        pct = (self.state.scored / total * 100) if total > 0 else 0
-        rate_str = f" {self.state.score_rate:.1f}/s" if self.state.score_rate else ""
-        progress_line = Text()
-        progress_line.append(f"{self.state.scored:,}", style="bold")
-        progress_line.append(f"/{total:,}", style="dim")
-        progress_line.append(rate_str, style="cyan")
-        lines.append(progress_line)
-
-        # Line 2: Progress bar with % at end
-        bar_width = self.CONTENT_WIDTH - 6  # Leave room for " 100%"
-        bar = self._make_full_bar(self.state.scored, total, "green", bar_width)
-        bar.append(f" {pct:3.0f}%", style="bold cyan")
-        lines.append(bar)
-
-        # Line 3: Separator
-        lines.append(Text("─" * self.CONTENT_WIDTH, style="dim"))
-
-        # Lines 5+: Current score item with details
-        item = self.state.current_score
-        if item:
-            # Path (clipped)
-            path_line = Text()
-            path_line.append(clip_path(item.path, self.CONTENT_WIDTH), style="white")
-            lines.append(path_line)
-
-            if item.skipped:
-                # Show skip reason
-                skip_line = Text()
-                skip_line.append("→ ", style="dim")
-                skip_line.append("skipped", style="yellow")
-                skip_line.append(f": {item.skip_reason}", style="dim")
-                lines.append(skip_line)
-            elif item.score is not None:
-                # Score with color and purpose
-                score_line = Text()
-                score_line.append("→ ", style="dim")
-                if item.score >= 0.7:
-                    score_style = "green bold"
-                elif item.score >= 0.4:
-                    score_style = "yellow"
+        # Score details
+        score = self.state.current_score
+        if score:
+            section.append("    Score: ", style="dim")
+            if score.skipped:
+                section.append("skipped", style="yellow")
+            elif score.score is not None:
+                # Color code the score
+                if score.score >= 0.7:
+                    style = "bold green"
+                elif score.score >= 0.4:
+                    style = "yellow"
                 else:
-                    score_style = "red"
-                score_line.append(f"{item.score:.2f}", style=score_style)
-                if item.purpose:
-                    score_line.append(f"  {item.purpose}", style="italic dim")
-                lines.append(score_line)
+                    style = "red"
+                section.append(f"{score.score:.2f}", style=style)
+                if score.purpose:
+                    section.append(f"  {score.purpose}", style="italic dim")
 
-                # Dimension scores on same line
-                dim_line = Text()
-                dim_line.append(
-                    f"code={item.score_code:.1f} data={item.score_data:.1f} imas={item.score_imas:.1f}",
-                    style="dim",
-                )
-                lines.append(dim_line)
-        else:
-            lines.append(Text("(waiting...)", style="dim"))
-            lines.append(Text(""))
+        # Fallback if nothing is happening
+        if not current:
+            section.append("    ", style="dim")
+            section.append("Initializing...", style="italic dim")
 
-        # Pad to fixed height
-        while len(lines) < self.PANEL_LINES:
-            lines.append(Text(""))
+        return section
 
-        # Combine into content
-        content = Text()
-        for i, line in enumerate(lines[: self.PANEL_LINES]):
-            if i > 0:
-                content.append("\n")
-            content.append_text(line)
+    def _build_resources_section(self) -> Text:
+        """Build the resource consumption gauges."""
+        section = Text()
 
-        return Panel(
-            content,
-            title=f"{indicator} Score",
-            border_style="green",
-            width=self.PANEL_WIDTH,
-            padding=(0, 1),
-        )
-
-    def _build_summary_row(self) -> Panel:
-        """Build the bottom summary row with clean stats layout.
-
-        Two lines:
-        - Line 1: scored/total | progress bar | %
-        - Line 2: Cost | Elapsed | ETA | Flow
-        """
-        summary_width = self.PANEL_WIDTH * 2
-
-        # Line 1: scored/total | bar | %
-        pct = (
-            (self.state.scored / self.state.total_paths * 100)
-            if self.state.total_paths > 0
-            else 0
-        )
-        progress = Text()
-        progress.append(f"{self.state.scored:,}", style="bold green")
-        progress.append(f"/{self.state.total_paths:,}", style="dim")
-        progress.append(" ", style="dim")
-
-        # Bar takes remaining width
-        bar_width = summary_width - 25
-        bar = self._make_full_bar(
-            self.state.scored, self.state.total_paths, "magenta", bar_width
-        )
-        progress.append_text(bar)
-        progress.append(f" {pct:3.0f}%", style="bold magenta")
-
-        # Line 2: Cost | Elapsed | ETA | Model | Flow
-        this_run_cost = self.state.total_cost
-        stats = Text()
-
-        # Cost
-        stats.append(f"${this_run_cost:.2f}", style="yellow bold")
-        stats.append(f"/${self.state.cost_limit:.2f}", style="dim")
-
-        # Elapsed time
-        stats.append("  ⏱ ", style="dim")
-        stats.append(f"{self.state.elapsed_str}", style="cyan")
-
-        # ETA
-        stats.append("  → ", style="dim")
-        eta_str = self.state.eta_str
-        if "calculating" in eta_str or "done" in eta_str:
-            stats.append(eta_str, style="dim italic")
-        else:
-            stats.append(f"ETA {eta_str}", style="green")
-
-        # Model (compact)
-        if self.state.model:
-            model_short = self.state.model.replace("anthropic/", "").replace(
-                "claude-", ""
+        # Cost gauge
+        self.state.run_cost / self.state.cost_limit if self.state.cost_limit > 0 else 0
+        section.append("  COST  ", style="bold yellow")
+        section.append_text(
+            make_resource_gauge(
+                self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
             )
-            stats.append(f"  [{model_short}]", style="dim")
+        )
+        section.append(f"  ${self.state.run_cost:.2f}", style="bold")
+        section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
+        section.append("\n")
 
-        content = Text()
-        content.append_text(progress)
-        content.append("\n")
-        content.append_text(stats)
+        # Time with ETA
+        section.append("  TIME  ", style="bold cyan")
 
-        return Panel(content, border_style="dim", width=summary_width)
+        # Estimate total time if we have an ETA
+        eta = self.state.eta_seconds
+        if eta is not None and eta > 0:
+            total_est = self.state.elapsed + eta
+            self.state.elapsed / total_est
+            section.append_text(
+                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
+            )
+        else:
+            # Unknown total - show elapsed only
+            section.append("▐", style="dim")
+            section.append("█" * self.GAUGE_WIDTH, style="cyan")
+            section.append("▌", style="dim")
+
+        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
+
+        if eta is not None:
+            if eta <= 0:
+                section.append("  done", style="green dim")
+            else:
+                section.append(f"  ETA {format_time(eta)}", style="dim")
+
+        return section
 
     def _build_display(self) -> Panel:
-        """Build the complete dual-panel display."""
-        scan_panel = self._build_scanner_panel()
-        score_panel = self._build_scorer_panel()
+        """Build the complete display."""
+        sections = [
+            self._build_header(),
+            Text("─" * (self.WIDTH - 4), style="dim"),
+            self._build_progress_section(),
+            Text("─" * (self.WIDTH - 4), style="dim"),
+            self._build_activity_section(),
+            Text("─" * (self.WIDTH - 4), style="dim"),
+            self._build_resources_section(),
+        ]
 
-        # Use Table.grid for side-by-side layout
-        workers = Table.grid(expand=False)
-        workers.add_column(width=self.PANEL_WIDTH)
-        workers.add_column(width=self.PANEL_WIDTH)
-        workers.add_row(scan_panel, score_panel)
+        content = Text()
+        for i, section in enumerate(sections):
+            if i > 0:
+                content.append("\n")
+            content.append_text(section)
 
-        full_display = Group(workers, self._build_summary_row())
-
-        # Uppercase facility name for title
-        facility_upper = self.state.facility.upper()
-        title = f"{facility_upper} Discovery"
         return Panel(
-            full_display,
-            title=title,
+            content,
             border_style="cyan",
-            width=self.OUTER_WIDTH,
+            width=self.WIDTH,
+            padding=(0, 1),
         )
 
-    def __enter__(self) -> ParallelProgressDisplay:
-        """Start live display.
+    # ========================================================================
+    # Public API
+    # ========================================================================
 
-        Uses:
-        - vertical_overflow="visible" with fixed-height panels to prevent truncation
-        - transient=False to keep display stable
-        - refresh_per_second=2 to reduce flicker
-        """
+    def __enter__(self) -> ParallelProgressDisplay:
+        """Start live display."""
         self._live = Live(
             self._build_display(),
             console=self.console,
-            refresh_per_second=2,
+            refresh_per_second=4,
             vertical_overflow="visible",
-            transient=False,
         )
         self._live.__enter__()
         return self
@@ -552,44 +458,29 @@ class ParallelProgressDisplay:
         paths: list[str] | None = None,
         scan_results: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Update scanner status with current path and stats.
-
-        Items are queued and released at the observed rate to simulate
-        continuous streaming rather than batch updates.
-
-        Args:
-            message: Status message
-            stats: Worker stats
-            paths: List of paths being scanned (shows last one)
-            scan_results: List of scan result dicts with file/dir counts
-        """
-        self.state.scan_status = message.split()[0] if message else "idle"
-        self.state.total_scanned = stats.processed
+        """Update scanner state."""
+        self.state.run_scanned = stats.processed
         self.state.scan_rate = stats.rate
 
-        # Add batch to streaming queue
+        # Queue scan results for streaming
         if scan_results:
-            display_items = [
-                ScanDisplayItem(
+            items = [
+                ScanItem(
                     path=r.get("path", ""),
-                    total_files=r.get("total_files", 0),
-                    total_dirs=r.get("total_dirs", 0),
-                    file_types=r.get("file_types", {}),
-                    has_readme=r.get("has_readme", False),
-                    has_makefile=r.get("has_makefile", False),
-                    has_git=r.get("has_git", False),
+                    files=r.get("total_files", 0),
+                    dirs=r.get("total_dirs", 0),
+                    has_code=r.get("has_readme")
+                    or r.get("has_makefile")
+                    or r.get("has_git", False),
                 )
                 for r in scan_results
             ]
-            self.state.scan_queue.add_batch(display_items, stats.rate)
+            self.state.scan_queue.add(items, stats.rate)
 
-        # Pop next item from queue if ready
-        next_item = self.state.scan_queue.pop_ready()
+        # Pop next item
+        next_item = self.state.scan_queue.pop()
         if next_item:
             self.state.current_scan = next_item
-        elif not self.state.current_scan and paths:
-            # Fallback: just show path if no detailed results
-            self.state.current_scan = ScanDisplayItem(path=paths[-1])
 
         self._refresh()
 
@@ -599,91 +490,56 @@ class ParallelProgressDisplay:
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update scorer status with current path and score details.
-
-        Items are queued and released at the observed rate to simulate
-        continuous streaming rather than batch updates.
-
-        Args:
-            message: Status message
-            stats: Worker stats
-            results: List of score result dicts
-        """
-        self.state.score_status = message.split()[0] if message else "waiting"
-        self.state.total_scored = stats.processed
+        """Update scorer state."""
+        self.state.run_scored = stats.processed
         self.state.score_rate = stats.rate
-        self.state.total_cost = stats.cost
+        self.state.run_cost = stats.cost
 
-        # Add batch to streaming queue
+        # Queue score results for streaming
         if results:
-            display_items = []
+            items = []
             for r in results:
                 path = r.get("path", "")
-                self.state.scored_this_run.add(path)
-
-                skip_reason = r.get("skip_reason", "")
-                purpose = r.get("label", "") or r.get("path_purpose", "")
-
-                is_skipped = bool(skip_reason)
-                if purpose == "user_home" and r.get("total_files", 0) == 0:
-                    is_skipped = True
-                    skip_reason = "empty user home"
-
-                display_items.append(
-                    ScoreDisplayItem(
+                self.state.scored_paths.add(path)
+                items.append(
+                    ScoreItem(
                         path=path,
                         score=r.get("score"),
-                        purpose=purpose,
-                        description=r.get("description", ""),
-                        score_code=r.get("score_code", 0.0),
-                        score_data=r.get("score_data", 0.0),
-                        score_imas=r.get("score_imas", 0.0),
-                        skipped=is_skipped,
-                        skip_reason=skip_reason,
+                        purpose=r.get("label", "") or r.get("path_purpose", ""),
+                        skipped=bool(r.get("skip_reason")),
                     )
                 )
-            self.state.score_queue.add_batch(display_items, stats.rate)
+            self.state.score_queue.add(items, stats.rate)
 
-        # Pop next item from queue if ready
-        next_item = self.state.score_queue.pop_ready()
+        # Pop next item
+        next_item = self.state.score_queue.pop()
         if next_item:
             self.state.current_score = next_item
 
         self._refresh()
 
     def refresh_from_graph(self, facility: str) -> None:
-        """Refresh graph state from database."""
+        """Refresh totals from graph database."""
         from imas_codex.discovery.frontier import get_discovery_stats
 
         stats = get_discovery_stats(facility)
-        self.state.total_paths = stats["total"]
+        self.state.total = stats["total"]
         self.state.pending = stats["pending"]
         self.state.scanned = stats["scanned"]
         self.state.scored = stats["scored"]
 
         self._refresh()
 
-    def _refresh(self) -> None:
-        """Refresh the live display."""
-        if self._live:
-            self._live.update(self._build_display())
-
     def tick(self) -> None:
-        """Called periodically to drain streaming queues.
-
-        This should be called in an async loop to provide smooth
-        streaming of items even between batch updates.
-        """
+        """Drain streaming queues for smooth display."""
         updated = False
 
-        # Try to pop from scan queue
-        next_scan = self.state.scan_queue.pop_ready()
+        next_scan = self.state.scan_queue.pop()
         if next_scan:
             self.state.current_scan = next_scan
             updated = True
 
-        # Try to pop from score queue
-        next_score = self.state.score_queue.pop_ready()
+        next_score = self.state.score_queue.pop()
         if next_score:
             self.state.current_score = next_score
             updated = True
@@ -692,5 +548,10 @@ class ParallelProgressDisplay:
             self._refresh()
 
     def get_paths_scored_this_run(self) -> set[str]:
-        """Get the set of paths that were scored during this run."""
-        return self.state.scored_this_run
+        """Get paths scored during this run."""
+        return self.state.scored_paths
+
+    def _refresh(self) -> None:
+        """Refresh the live display."""
+        if self._live:
+            self._live.update(self._build_display())
