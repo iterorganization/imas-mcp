@@ -12,12 +12,15 @@ The scorer uses LiteLLM for model access (via OpenRouter) with Pydantic
 models for structured output, then a deterministic function computes
 the final score from evidence. This "grounded scoring" approach ensures
 reproducibility.
+
+Retry logic handles rate limiting (OpenRouter "Overloaded" errors).
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +37,9 @@ from imas_codex.discovery.models import (
 
 logger = logging.getLogger(__name__)
 
+# Retry configuration for rate limiting
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
 
 # Dimension weights for grounded scoring
 SCORE_WEIGHTS = {
@@ -193,16 +199,41 @@ class DirectoryScorer:
         if not model_id.startswith("openrouter/"):
             model_id = f"openrouter/{model_id}"
 
-        response = litellm.completion(
-            model=model_id,
-            api_key=api_key,
-            max_tokens=4000,
-            response_format=DirectoryScoringBatch,  # Pydantic structured output
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        # Retry loop for rate limiting / overloaded errors
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = litellm.completion(
+                    model=model_id,
+                    api_key=api_key,
+                    max_tokens=4000,
+                    response_format=DirectoryScoringBatch,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                # Retry on rate limiting, overloaded, or transient errors
+                if any(
+                    x in error_msg
+                    for x in ["overloaded", "rate", "429", "503", "timeout"]
+                ):
+                    delay = RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        f"LLM request failed (attempt {attempt + 1}/{MAX_RETRIES}), "
+                        f"retrying in {delay:.1f}s: {e}"
+                    )
+                    time.sleep(delay)
+                else:
+                    # Non-retryable error
+                    raise
+        else:
+            # All retries exhausted
+            raise last_error  # type: ignore[misc]
 
         # Parse response using structured output
         scored_dirs = self._parse_structured_response(response, directories, threshold)

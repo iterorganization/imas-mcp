@@ -5444,9 +5444,9 @@ def discover() -> None:
 )
 @click.option(
     "--score-workers",
-    default=4,
+    default=2,
     type=int,
-    help="Number of score workers (default: 4)",
+    help="Number of score workers (default: 2, reduces API rate limiting)",
 )
 def discover_run(
     facility: str,
