@@ -49,9 +49,11 @@ SCORE_WEIGHTS = {
 }
 
 # Purposes that should be suppressed (lower scores)
+# These get a 0.3 multiplier and should_expand=False
 SUPPRESSED_PURPOSES = {
     PathPurpose.system,
     PathPurpose.build_artifacts,
+    PathPurpose.user_home,
 }
 
 
@@ -203,10 +205,12 @@ class DirectoryScorer:
         last_error = None
         for attempt in range(MAX_RETRIES):
             try:
+                # max_tokens=32000 supports batches of 50+ directories
+                # Sonnet 4.5 has 200k context, output is ~250 tokens/dir
                 response = litellm.completion(
                     model=model_id,
                     api_key=api_key,
-                    max_tokens=8000,
+                    max_tokens=32000,
                     response_format=DirectoryScoringBatch,
                     messages=[
                         {"role": "system", "content": system_prompt},

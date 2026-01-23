@@ -132,6 +132,7 @@ class ScoreItem:
     score: float | None = None
     purpose: str = ""
     skipped: bool = False
+    skip_reason: str = ""
 
 
 @dataclass
@@ -334,16 +335,14 @@ class ParallelProgressDisplay:
         """Build the current activity section showing what's happening now."""
         section = Text()
 
-        # Current path (prioritize score item, fall back to scan)
-        current = self.state.current_score or self.state.current_scan
-        if current:
-            section.append("  ", style="dim")
-            section.append(clip_path(current.path, self.WIDTH - 6), style="white")
-            section.append("\n")
-
-        # Scan details
         scan = self.state.current_scan
+        score = self.state.current_score
+
+        # Show scan path and details
         if scan:
+            section.append("  ", style="dim")
+            section.append(clip_path(scan.path, self.WIDTH - 6), style="white")
+            section.append("\n")
             section.append("    Scan:  ", style="dim")
             section.append(f"{scan.files} files", style="cyan")
             section.append(", ", style="dim")
@@ -353,12 +352,28 @@ class ParallelProgressDisplay:
                 section.append("code project", style="green dim")
             section.append("\n")
 
-        # Score details
-        score = self.state.current_score
+        # Show score for the SAME path if available, otherwise show last scored
         if score:
-            section.append("    Score: ", style="dim")
+            # Check if score is for same path as scan
+            same_path = scan and score.path == scan.path
+            if not same_path and scan:
+                # Different path - show abbreviated
+                section.append("    Score: ", style="dim")
+                short_path = score.path.split("/")[-1] if score.path else ""
+                section.append(f"[{short_path}] ", style="dim italic")
+            else:
+                section.append("    Score: ", style="dim")
+
             if score.skipped:
                 section.append("skipped", style="yellow")
+                if score.skip_reason:
+                    # Clip reason to fit display
+                    reason = (
+                        score.skip_reason[:30] + "..."
+                        if len(score.skip_reason) > 30
+                        else score.skip_reason
+                    )
+                    section.append(f" ({reason})", style="dim")
             elif score.score is not None:
                 # Color code the score
                 if score.score >= 0.7:
@@ -372,7 +387,7 @@ class ParallelProgressDisplay:
                     section.append(f"  {score.purpose}", style="italic dim")
 
         # Fallback if nothing is happening
-        if not current:
+        if not scan and not score:
             section.append("    ", style="dim")
             section.append("Initializing...", style="italic dim")
 
@@ -530,6 +545,7 @@ class ParallelProgressDisplay:
                         score=r.get("score"),
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
                         skipped=bool(r.get("skip_reason")),
+                        skip_reason=r.get("skip_reason", ""),
                     )
                 )
             self.state.score_queue.add(items, stats.rate)
