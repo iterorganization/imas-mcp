@@ -197,9 +197,12 @@ include-error-fields = false
 # Notes:
 # - Haiku: Failed structured output (wraps JSON in markdown, returns invalid 'unknown' purpose)
 # - Opus: Best accuracy (100% score, 97% purpose) but most expensive
-# - Sonnet: Near-Opus accuracy (97%/94%) at 60% cost - best for accuracy-sensitive tasks
-# - Flash: Best value (89%/94% accuracy at 6x cheaper) - RECOMMENDED for bulk scoring
+# - Sonnet: Near-Opus accuracy (97%/94%) at 60% cost - RECOMMENDED for scoring
+# - Flash: Best value (89%/94% accuracy at 6x cheaper) but 10% less accurate
 # - Pro: No advantage over Flash despite 7x cost
+# 
+# Decision: Sonnet chosen for scoring - 10% accuracy improvement justifies 6x cost for
+# discovery pipeline where scoring errors propagate to wasted exploration/ingestion.
 [tool.imas-codex.models]
 # Default model for general agent tasks
 default = "anthropic/claude-haiku-4.5"
@@ -216,8 +219,8 @@ summarization = "anthropic/claude-haiku-4.5"
 # Capable model for driving scout exploration (when context is controlled)
 scout = "anthropic/claude-sonnet-4.5"
 # Model for LLM-based scoring (directories, wiki pages, code quality)
-# Gemini Flash: 89% score / 94% purpose accuracy, 6x cheaper than alternatives
-score = "google/gemini-3-flash-preview"
+# Sonnet: 97% score / 94% purpose accuracy - worth 6x cost for accuracy-critical scoring
+score = "anthropic/claude-sonnet-4.5"
 # Available model presets
 [tool.imas-codex.models.presets]
 gemini-flash = "google/gemini-3-flash-preview"
