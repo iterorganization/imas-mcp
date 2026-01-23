@@ -602,6 +602,9 @@ async def run_parallel_discovery(
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
+    # Note: SSH socket health is now checked automatically at the low level
+    # in run_command() on first access to each host per process lifetime.
+
     # Recover any orphaned paths from previous runs (crashed workers, timeouts)
     recover_orphaned_paths(facility)
 

@@ -21,6 +21,8 @@ See imas_codex/config/README.md for exploration guidance.
 
 # Low-level executor (no facility imports - avoids circular imports)
 from imas_codex.remote.executor import (
+    cleanup_stale_sockets,
+    ensure_ssh_healthy,
     is_local_host,
     run_command,
     run_script_via_stdin,
@@ -44,6 +46,8 @@ from imas_codex.remote.tools import (
 
 __all__ = [
     # Low-level executor
+    "cleanup_stale_sockets",
+    "ensure_ssh_healthy",
     "is_local_host",
     "run_command",
     "run_script_via_stdin",

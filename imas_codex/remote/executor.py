@@ -12,6 +12,8 @@ Functions:
 - run_command(): Execute command locally or via SSH
 - run_script_via_stdin(): Execute multi-line script via stdin
 - is_local_host(): Check if ssh_host refers to local machine
+- check_ssh_socket(): Verify SSH control master is healthy
+- cleanup_stale_sockets(): Remove stale SSH control master sockets
 """
 
 import logging
@@ -22,6 +24,178 @@ from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# SSH Socket Health Management
+# ============================================================================
+
+
+def get_ssh_socket_dir() -> Path:
+    """Get the SSH control socket directory from config or default."""
+    ssh_config_path = Path.home() / ".ssh" / "config"
+
+    # Default socket directory
+    socket_dir = Path.home() / ".ssh" / "sockets"
+
+    if ssh_config_path.exists():
+        try:
+            content = ssh_config_path.read_text()
+            # Look for ControlPath directive
+            for line in content.splitlines():
+                line = line.strip()
+                if line.lower().startswith("controlpath"):
+                    # Extract directory from path pattern
+                    # e.g., "ControlPath ~/.ssh/sockets/%r@%h-%p"
+                    path_pattern = line.split(None, 1)[1]
+                    # Expand ~ and get directory portion
+                    path_pattern = path_pattern.replace("~", str(Path.home()))
+                    socket_dir = Path(path_pattern).parent
+                    break
+        except Exception:
+            pass
+
+    return socket_dir
+
+
+def check_ssh_socket(ssh_host: str, timeout: int = 5) -> bool:
+    """Check if SSH control master socket is healthy.
+
+    Args:
+        ssh_host: SSH host alias (e.g., 'epfl', 'iter')
+        timeout: Timeout in seconds for check
+
+    Returns:
+        True if socket is healthy or doesn't exist, False if stale
+    """
+    try:
+        result = subprocess.run(
+            ["ssh", "-O", "check", ssh_host],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        # Exit code 0 means master is running and healthy
+        # Exit code 255 means no master (also fine - will create new one)
+        return result.returncode in (0, 255)
+    except subprocess.TimeoutExpired:
+        # Timeout usually means stale socket
+        logger.warning(f"SSH socket check timed out for {ssh_host}")
+        return False
+    except Exception as e:
+        logger.debug(f"SSH socket check failed for {ssh_host}: {e}")
+        return True  # Unknown state, let SSH attempt handle it
+
+
+def cleanup_stale_socket(ssh_host: str) -> bool:
+    """Clean up a stale SSH control master socket.
+
+    Args:
+        ssh_host: SSH host alias
+
+    Returns:
+        True if cleanup was performed, False otherwise
+    """
+    socket_dir = get_ssh_socket_dir()
+
+    # Try graceful exit first
+    try:
+        result = subprocess.run(
+            ["ssh", "-O", "exit", ssh_host],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            logger.info(f"Gracefully closed SSH master for {ssh_host}")
+            return True
+    except subprocess.TimeoutExpired:
+        pass  # Master is stuck, need to remove socket file
+    except Exception:
+        pass
+
+    # Find and remove socket files matching this host
+    if socket_dir.exists():
+        for socket_file in socket_dir.glob(f"*{ssh_host}*"):
+            if socket_file.is_socket():
+                try:
+                    socket_file.unlink()
+                    logger.info(f"Removed stale socket: {socket_file}")
+                    return True
+                except Exception as e:
+                    logger.warning(f"Failed to remove socket {socket_file}: {e}")
+
+    return False
+
+
+def cleanup_stale_sockets(ssh_hosts: list[str] | None = None) -> dict[str, bool]:
+    """Check and cleanup stale SSH sockets for given hosts.
+
+    Args:
+        ssh_hosts: List of SSH host aliases to check. If None, check all.
+
+    Returns:
+        Dict of {host: was_cleaned} for hosts that needed cleanup
+    """
+    socket_dir = get_ssh_socket_dir()
+    cleaned = {}
+
+    if ssh_hosts is None and socket_dir.exists():
+        # Get all hosts from socket files
+        ssh_hosts = []
+        for socket_file in socket_dir.iterdir():
+            if socket_file.is_socket():
+                # Extract host from socket name (e.g., "user@host-22")
+                name = socket_file.name
+                if "@" in name:
+                    host = name.split("@")[1].rsplit("-", 1)[0]
+                    ssh_hosts.append(host)
+
+    if not ssh_hosts:
+        return cleaned
+
+    for host in ssh_hosts:
+        if not check_ssh_socket(host):
+            if cleanup_stale_socket(host):
+                cleaned[host] = True
+            else:
+                cleaned[host] = False
+
+    return cleaned
+
+
+def ensure_ssh_healthy(ssh_host: str) -> None:
+    """Ensure SSH connection to host is healthy, cleaning stale sockets if needed.
+
+    This is called automatically by run_command() on first SSH access to each host.
+    Uses caching to only check once per host per process lifetime.
+
+    Args:
+        ssh_host: SSH host alias to check
+    """
+    if is_local_host(ssh_host):
+        return
+
+    if not check_ssh_socket(ssh_host):
+        logger.info(f"Detected stale SSH socket for {ssh_host}, cleaning up...")
+        cleanup_stale_socket(ssh_host)
+
+
+# Track which hosts we've already verified this session
+_verified_hosts: set[str] = set()
+
+
+def _ensure_ssh_healthy_once(ssh_host: str) -> None:
+    """Check SSH health once per host per process lifetime."""
+    if ssh_host in _verified_hosts:
+        return
+    ensure_ssh_healthy(ssh_host)
+    _verified_hosts.add(ssh_host)
+
+
+# ============================================================================
+# Hostname Resolution
+# ============================================================================
 
 
 @lru_cache(maxsize=1)
@@ -131,6 +305,9 @@ def run_command(
     Low-level execution primitive. Does NOT do facility lookup.
     For facility-aware execution, use run() from tools.py.
 
+    Automatically checks SSH socket health on first access to each host
+    to prevent hangs from stale control master sockets.
+
     Args:
         cmd: Shell command to execute
         ssh_host: SSH host to connect to (None = local)
@@ -152,6 +329,9 @@ def run_command(
             timeout=timeout,
         )
     else:
+        # Check SSH health once per host per session (prevents stale socket hangs)
+        _ensure_ssh_healthy_once(ssh_host)
+
         # SSH execution with -T to disable pseudo-terminal allocation
         # This avoids triggering .bashrc on systems where it's loaded for PTY sessions
         result = subprocess.run(
@@ -223,6 +403,9 @@ def run_script_via_stdin(
             timeout=timeout,
         )
     else:
+        # Check SSH health once per host per session (prevents stale socket hangs)
+        _ensure_ssh_healthy_once(ssh_host)
+
         # SSH execution via stdin - avoids bash -c overhead
         # Use 'interpreter [args]' to read script from stdin
         result = subprocess.run(
