@@ -94,8 +94,8 @@ uv run imas-codex discover <facility> [options]
 | `--cost-limit` | 10.0 | Maximum LLM cost in USD |
 | `--limit N` | (none) | Maximum paths to process |
 | `--threshold` | 0.7 | Minimum score to expand |
-| `--scan-workers` | 2 | Parallel SSH scanner workers |
-| `--score-workers` | 2 | Parallel LLM scorer workers |
+| `--scan-workers` | 1 | SSH scanner workers (single connection) |
+| `--score-workers` | 4 | Parallel LLM scorer workers |
 
 ### Admin Commands
 
@@ -176,9 +176,9 @@ Defined in `config/patterns/scoring/`:
 
 | Operation | Throughput | Notes |
 |-----------|------------|-------|
-| Light scan (enumeration only) | 65-100 paths/s | Batch 200+ paths per SSH call |
+| Light scan (enumeration only) | 65-100 paths/s | Batch 200 paths per SSH call |
 | Scan with rg patterns | 6-8 paths/s | Pattern detection adds ~15s overhead |
-| LLM scoring | 0.35-0.45 paths/s | Batch 50 dirs, Sonnet 4.5, 32k max_tokens |
+| LLM scoring | 0.35-0.45 paths/s | Batch 100 dirs, Sonnet 4.5, 32k max_tokens |
 
 ### Batch Size Optimization
 
@@ -196,9 +196,9 @@ LLM scoring throughput is constant (~0.4/s) but cost scales with batch:
 | Batch Size | Time (s) | Cost ($) | Tokens | Notes |
 |------------|----------|----------|--------|-------|
 | 10 | 34 | 0.046 | 8k | Small batch |
-| 25 | 81 | 0.101 | 15k | Old default |
-| 50 | 132 | 0.182 | 26k | New default |
-| 100 | 258 | 0.342 | 45k | Max practical |
+| 25 | 81 | 0.101 | 15k | Minimum viable |
+| 50 | 132 | 0.182 | 26k | Good balance |
+| 100 | 258 | 0.342 | 45k | New default |
 
 Key optimizations:
 - **Batch SSH calls**: Same ~5s overhead whether 1 or 500 paths
@@ -229,7 +229,7 @@ Key constants in `parallel.py`:
 |----------|-------|-------------|
 | `ORPHAN_TIMEOUT_MINUTES` | 10 | Reset orphaned claims after 10 min |
 | `scan_batch_size` | 200 | Paths per SSH call |
-| `score_batch_size` | 50 | Paths per LLM call |
+| `score_batch_size` | 100 | Paths per LLM call |
 
 Key constants in `scorer.py`:
 
