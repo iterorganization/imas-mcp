@@ -12,37 +12,31 @@ Before starting:
 ## Quick Start (5-minute bootstrap)
 
 ```bash
-# 1. Create facility config files
-cat > imas_codex/config/facilities/jet.yaml << 'EOF'
-# JET - Joint European Torus
-#
-# Public facility configuration for graph and mappings.
-# Infrastructure data is in jet_private.yaml (gitignored).
-
-facility: jet
-name: Joint European Torus
-machine: JET
-description: Joint European Torus at Culham
-location: Culham, United Kingdom
-
-# SSH connection alias (configure in ~/.ssh/config)
-ssh_host: jet
-
-# Data systems available at this facility
+# 1. Create facility config file
+cat > imas_codex/config/facilities/myfacility.yaml << 'EOF'
+facility: myfacility
+name: My Facility Full Name
+machine: TOKAMAK
+description: Brief description
+location: City, Country
+ssh_host: myfacility
 data_systems:
-  - ppf
-  - jpf
+  - imas
   - mdsplus
 EOF
 
 # 2. Verify SSH access
-ssh jet "hostname && whoami && pwd"
+ssh myfacility "hostname && whoami && pwd"
 
-# 3. Run initial discovery
-uv run imas-codex discover jet --cost-limit 1.0 --limit 50
+# 3. Check and install fast tools
+uv run imas-codex tools check myfacility
+uv run imas-codex tools install myfacility
 
-# 4. Check progress
-uv run imas-codex discovery status jet
+# 4. Populate infrastructure via MCP (from python() REPL)
+# See Phase 2 below
+
+# 5. Run initial discovery
+uv run imas-codex discover myfacility --cost-limit 1.0 --limit 50
 ```
 
 ## Phase 1: Configuration Setup
@@ -85,9 +79,21 @@ wiki_sites:
 Add to `~/.ssh/config`:
 
 ```
-Host jet
-    HostName login.jet.example.org
+Host myfacility
+    HostName login.facility.org
     User your-username
+    ControlMaster auto
+    ControlPath ~/.ssh/sockets/%r@%h-%p
+    ControlPersist 600
+```
+
+For facilities behind jump hosts (ProxyJump):
+```
+Host myfacility
+    HostName localhost
+    Port 12345
+    User your-username
+    ProxyJump gateway.facility.org
     ControlMaster auto
     ControlPath ~/.ssh/sockets/%r@%h-%p
     ControlPersist 600
@@ -103,118 +109,145 @@ chmod 700 ~/.ssh/sockets
 
 ```bash
 # Test SSH
-ssh jet "hostname && pwd"
+ssh myfacility "hostname && pwd"
 
-# Test fast tools (may not be installed yet)
-ssh jet "which rg fd || echo 'Fast tools not available'"
+# Check fast tools status
+uv run imas-codex tools check myfacility
 ```
 
-## Phase 2: Infrastructure Discovery
+## Phase 2: Fast Tools Installation
 
-### Step 2.1: Check Available Tools
+### Step 2.1: Install Required Tools
+
+The CLI handles all installation automatically:
 
 ```bash
-uv run imas-codex tools check jet
+# Check current status
+uv run imas-codex tools check myfacility
+
+# Install required tools only (rg, fd)
+uv run imas-codex tools install myfacility --required-only
+
+# Install all tools (recommended)
+uv run imas-codex tools install myfacility
 ```
 
-If fast tools are missing:
+Tools are installed to `~/bin` on the remote system. The installer:
+- Auto-detects architecture (x86_64/aarch64)
+- Downloads pre-built binaries from GitHub releases
+- Verifies installation with version check
+
+### Step 2.2: Verify PATH Configuration
+
+The tools require `~/bin` to be in PATH. Check:
+
 ```bash
-# Install to ~/bin on remote system
-uv run imas-codex tools install jet
+ssh myfacility 'echo $PATH | grep -o "$HOME/bin" || echo "~/bin NOT in PATH"'
 ```
 
-### Step 2.2: Discover System Environment
+If not in PATH, add to `~/.bashrc`:
+```bash
+ssh myfacility 'echo "export PATH=\$HOME/bin:\$PATH" >> ~/.bashrc'
+```
 
-Use MCP REPL to explore and persist:
+### Step 2.3: Handle Module Systems
+
+Many HPC facilities use environment modules. If Python or other tools need modules:
+
+```bash
+# Check if modules persist over SSH
+ssh -T myfacility 'module list 2>&1'
+
+# If not, add to ~/.bashrc
+ssh myfacility 'echo "module load python/3.11" >> ~/.bashrc'
+```
+
+**Note:** Bash reads `.bashrc` even with `ssh -T` for non-login remote commands.
+
+## Phase 3: Infrastructure Discovery
+
+### Step 3.1: Gather System Information
+
+Use SSH to gather grounded information:
+
+```bash
+# Gather OS info
+ssh myfacility "uname -a; cat /etc/os-release | head -5"
+
+# Gather Python info
+ssh myfacility "which python3; python3 --version"
+
+# Find key paths
+ssh myfacility "ls -la /common /work /home 2>/dev/null | head -30"
+```
+
+### Step 3.2: Persist via MCP Tools
+
+Use the MCP tools to persist infrastructure (creates private YAML automatically):
 
 ```python
-# Check OS, Python, and available tools
-python("""
-import socket
-result = run('uname -a; python3 --version; which rg fd tree', facility='jet')
-print(result)
-""")
-
-# Persist infrastructure findings
-python("""
-update_infrastructure('jet', {
-    'os_info': {'name': 'RHEL', 'version': '8.9'},
-    'python_info': {'version': '3.9.16'},
-    'tools': {
-        'rg': {'version': '14.1.1', 'path': '~/bin/rg'},
-        'fd': {'version': '10.2.0', 'path': '~/bin/fd'}
+# Update infrastructure (private, gitignored)
+update_facility_infrastructure("myfacility", {
+    "hostname": "compute-node-001",
+    "os": {
+        "name": "RHEL",
+        "version": "8.9",
+        "kernel": "4.18.0-513.el8.x86_64"
+    },
+    "python": {
+        "version": "3.11.5",
+        "path": "/usr/bin/python3"
+    },
+    "paths": {
+        "imas": {"root": "/common/IMAS"},
+        "codes": {"shared": "/common/codes"}
     }
 })
-""")
+
+# Update tool versions
+update_facility_tools("myfacility", {
+    "rg": {"version": "14.1.1", "path": "/home/user/bin/rg", "purpose": "Fast pattern search"},
+    "fd": {"version": "10.2.0", "path": "/home/user/bin/fd", "purpose": "Fast file finder"}
+})
+
+# Add exploration notes
+add_exploration_note("myfacility", "Initial setup complete, IMAS at /common/IMAS")
 ```
 
-### Step 2.3: Identify Key Paths
-
-```bash
-# Find code directories
-ssh jet "ls -la /home; ls -la /work 2>/dev/null || echo 'No /work'"
-ssh jet "find /home -maxdepth 2 -type d -name '*.py' 2>/dev/null | head -20"
-```
-
-Persist discovered paths:
+### Step 3.3: Verify Configuration
 
 ```python
-python("""
-update_infrastructure('jet', {
-    'paths': {
-        'codes': {
-            'user_scripts': '/home/users',
-            'shared_codes': '/common/codes',
-            'diagnostics': '/diagnostics/scripts'
-        }
-    },
-    'actionable_paths': [
-        {'path': '/common/codes', 'priority': 'high'},
-        {'path': '/diagnostics/scripts', 'priority': 'medium'}
-    ]
-})
-""")
+# Read back infrastructure
+get_facility_infrastructure("myfacility")
 ```
 
-## Phase 3: Discovery Pipeline
+## Phase 4: Discovery Pipeline
 
-### Step 3.1: Seed Initial Paths
-
-The discovery CLI auto-seeds from `actionable_paths` on first run:
-
-```bash
-# Run discovery with small budget to test
-uv run imas-codex discover jet --cost-limit 1.0 --limit 50 -v
-```
-
-Or manually seed specific paths:
+### Step 4.1: Seed Initial Paths
 
 ```python
 python("""
 add_to_graph('FacilityPath', [
-    {'id': 'jet:/common/codes', 'path': '/common/codes',
-     'facility_id': 'jet', 'path_type': 'code_directory', 
-     'status': 'discovered', 'interest_score': 0.8},
-    {'id': 'jet:/diagnostics', 'path': '/diagnostics',
-     'facility_id': 'jet', 'path_type': 'code_directory',
-     'status': 'discovered', 'interest_score': 0.7}
+    {'id': 'myfacility:/common/codes', 'path': '/common/codes',
+     'facility_id': 'myfacility', 'path_type': 'code_directory', 
+     'status': 'discovered', 'interest_score': 0.8}
 ])
 """)
 ```
 
-### Step 3.2: Run Discovery
+### Step 4.2: Run Discovery
 
 ```bash
-# Full discovery run
-uv run imas-codex discover jet --cost-limit 10.0
+# Discovery with cost limit
+uv run imas-codex discover myfacility --cost-limit 10.0
 
 # Monitor progress
-uv run imas-codex discovery status jet
+uv run imas-codex discovery status myfacility
 ```
 
-### Step 3.3: Handle Timeouts
+### Step 4.3: Handle Timeouts
 
-If paths cause timeouts, persist the constraint immediately:
+If paths cause timeouts, persist constraints immediately:
 
 ```python
 python("""
