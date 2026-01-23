@@ -214,6 +214,23 @@ class ProgressState:
         return self.discovered + self.listed
 
     @property
+    def cost_per_path(self) -> float | None:
+        """Average cost per scored path."""
+        if self.run_scored > 0:
+            return self.run_cost / self.run_scored
+        return None
+
+    @property
+    def estimated_total_cost(self) -> float | None:
+        """Estimated total cost based on current rate."""
+        cpp = self.cost_per_path
+        if cpp is not None and self.total > 0:
+            # Estimate: paths remaining * cost per path + current cost
+            remaining = self.frontier_size
+            return self.run_cost + (remaining * cpp)
+        return None
+
+    @property
     def coverage(self) -> float:
         """Percentage of total paths scored."""
         return (self.scored / self.total * 100) if self.total > 0 else 0
@@ -365,7 +382,7 @@ class ParallelProgressDisplay:
             section.append("  SCORE ", style="bold green")
             section.append(clip_path(score.path, self.WIDTH - 10), style="white")
             section.append("\n")
-            # Score/reason indented below
+            # Score details indented below (matching SCAN layout)
             section.append("    ", style="dim")
 
             if score.skipped:
@@ -401,16 +418,18 @@ class ParallelProgressDisplay:
         """Build the resource consumption gauges."""
         section = Text()
 
-        # Cost gauge
-        self.state.run_cost / self.state.cost_limit if self.state.cost_limit > 0 else 0
+        # Cost gauge with ETA
+        est_cost = self.state.estimated_total_cost
+        cost_limit = est_cost if est_cost else self.state.cost_limit
         section.append("  COST  ", style="bold yellow")
         section.append_text(
-            make_resource_gauge(
-                self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
-            )
+            make_resource_gauge(self.state.run_cost, cost_limit, self.GAUGE_WIDTH)
         )
         section.append(f"  ${self.state.run_cost:.2f}", style="bold")
         section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
+        # Show estimated total cost
+        if est_cost is not None and est_cost > self.state.run_cost:
+            section.append(f"  ETA ${est_cost:.2f}", style="dim")
         section.append("\n")
 
         # Time with ETA
