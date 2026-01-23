@@ -38,18 +38,18 @@ purpose_multipliers:
   physics_code: 1.0
   data_files: 1.0
   documentation: 0.8
+  user_home: 0.8  # User dirs often contain valuable code at facilities
   configuration: 0.7
   test_files: 0.6
-  build_artifacts: 0.3
-  user_home: 0.3
-  system: 0.2
   unknown: 0.5
+  build_artifacts: 0.3
+  system: 0.2
 
 # Suppressed purposes - these should not be expanded
+# Note: user_home is NOT suppressed - researcher directories contain valuable code
 suppressed_purposes:
   - system
   - build_artifacts
-  - user_home
 
 # Evidence-based score boosts
 evidence_boosts:

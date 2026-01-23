@@ -53,7 +53,6 @@ SCORE_WEIGHTS = {
 SUPPRESSED_PURPOSES = {
     PathPurpose.system,
     PathPurpose.build_artifacts,
-    PathPurpose.user_home,
 }
 
 
@@ -108,12 +107,17 @@ def grounded_score(
     if len(evidence.code_indicators) > 3:
         quality_boost += 0.05
 
-    # Purpose suppression
+    # Purpose-based multipliers
+    # - Suppressed (system, build_artifacts): 0.3 - low value
+    # - Test files: 0.6 - some value but not primary
+    # - User home: 0.8 - often contains valuable code at facilities
     purpose_multiplier = 1.0
     if purpose in SUPPRESSED_PURPOSES:
         purpose_multiplier = 0.3
     elif purpose == PathPurpose.test_files:
         purpose_multiplier = 0.6
+    elif purpose == PathPurpose.user_home:
+        purpose_multiplier = 0.8
 
     combined = (base_score + quality_boost) * purpose_multiplier
 

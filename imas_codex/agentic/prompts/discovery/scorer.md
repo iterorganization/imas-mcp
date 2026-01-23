@@ -27,7 +27,7 @@ For each directory, analyze the path and available metadata to provide structure
 - `*transport*`, `*astra*`, `*jetto*` → transport code, score_imas ≥ 0.6
 - `*mhd*`, `*jorek*` → MHD code, score_imas ≥ 0.6
 - `*data*`, `*database*`, `*archive*` → data_files, score_data ≥ 0.5
-- `/home/*/` with username pattern → user_home (suppress)
+- `/home/*/` with username pattern → user_home (valuable - researchers store code here)
 - `/opt/*`, `/usr/*`, `/lib/*` → system (suppress)
 
 ## path_purpose Values
@@ -38,7 +38,7 @@ For each directory, analyze the path and available metadata to provide structure
 - `configuration`: Config files, settings, environment scripts
 - `build_artifacts`: Compiled outputs, caches, __pycache__, .o files
 - `test_files`: Test suites, pytest directories, test data
-- `user_home`: Personal directories (usually low value)
+- `user_home`: Researcher home directories (often contain valuable code)
 - `system`: OS or infrastructure (/usr, /lib, /etc)
 - `unknown`: Cannot determine from available evidence
 
@@ -81,7 +81,7 @@ For each directory, analyze the path and available metadata to provide structure
 - Is a project root (has .git, Makefile, setup.py)
 
 **Don't expand** (should_expand=false) when:
-- path_purpose is: user_home, system, build_artifacts
+- path_purpose is: system, build_artifacts
 - Low scores across all dimensions (< 0.2)
 - Leaf directory with only files and low scores
 
