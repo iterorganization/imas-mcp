@@ -384,9 +384,9 @@ async def score_worker(
     from imas_codex.discovery.scorer import DirectoryScorer
 
     scorer = DirectoryScorer()
-    # LLM batch size: 50 paths with 32k max_tokens provides optimal throughput
-    # Sonnet 4.5 has 200k context window, output is ~250 tokens/dir
-    batch_size = 50
+    # LLM batch size: 100 paths with 32k max_tokens for optimal throughput
+    # Sonnet 4.5 has 200k context, output is ~250 tokens/dir = 25k output tokens
+    batch_size = 100
     loop = asyncio.get_event_loop()
 
     while not state.should_stop():
@@ -570,7 +570,7 @@ async def run_parallel_discovery(
     path_limit: int | None = None,
     focus: str | None = None,
     threshold: float = 0.7,
-    num_scan_workers: int = 2,
+    num_scan_workers: int = 1,
     num_score_workers: int = 4,
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
@@ -587,7 +587,7 @@ async def run_parallel_discovery(
         path_limit: Maximum paths to process (optional)
         focus: Focus string for scoring (optional)
         threshold: Score threshold for expansion
-        num_scan_workers: Number of concurrent scan workers (default: 2)
+        num_scan_workers: Number of concurrent scan workers (default: 1)
         num_score_workers: Number of concurrent score workers (default: 4)
         on_scan_progress: Callback for scan progress
         on_score_progress: Callback for score progress

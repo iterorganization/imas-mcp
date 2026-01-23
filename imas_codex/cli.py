@@ -5416,15 +5416,15 @@ def enrich_mark_stale(
 )
 @click.option(
     "--scan-workers",
-    default=2,
+    default=1,
     type=int,
-    help="Number of scan workers (default: 2)",
+    help="Number of scan workers (default: 1, single SSH connection)",
 )
 @click.option(
     "--score-workers",
-    default=2,
+    default=4,
     type=int,
-    help="Number of score workers (default: 2, reduces API rate limiting)",
+    help="Number of score workers (default: 4, parallel LLM calls)",
 )
 def discover_cmd(
     facility: str,
@@ -5471,7 +5471,7 @@ def _run_iterative_discovery(
     limit: int | None,
     focus: str | None,
     threshold: float,
-    num_scan_workers: int = 2,
+    num_scan_workers: int = 1,
     num_score_workers: int = 4,
 ) -> None:
     """Run parallel scan/score discovery."""
