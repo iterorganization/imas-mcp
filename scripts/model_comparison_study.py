@@ -6,12 +6,17 @@ Evaluates different LLM models on their ability to score discovered paths
 for the discovery pipeline. Tests:
 - Claude 4.5 family: Haiku, Sonnet, Opus
 - Gemini 3 family: Flash, Pro
+- OpenAI family: GPT-4o, GPT-4o-mini, o3-mini, GPT-o1
+- Reasoning models: DeepSeek-R1, Qwen QwQ-32B
 
 Metrics evaluated:
 - Score accuracy (does the score reflect the path's actual value?)
-- Description quality (is the description accurate and informative?)
+- Purpose accuracy (is the directory purpose classified correctly?)
 - Cost efficiency (tokens/$ per path)
 - Latency (time per batch)
+
+Note: Scientific classification tasks benefit from models with strong
+reasoning capabilities. Smaller/faster models may trade accuracy for cost.
 """
 
 from __future__ import annotations
@@ -22,9 +27,14 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Ensure project root is in path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# Load environment variables from .env file
+load_dotenv(project_root / ".env")
 
 # Test directory data - simulates real scan results
 # These represent realistic paths from fusion facilities (EPFL, ITER, JET)
@@ -797,13 +807,25 @@ TEST_DIRECTORIES = [
     },
 ]
 
-# Models to test
+# Models to test - organized by provider
+# Includes reasoning-focused models for scientific classification accuracy
 MODELS_TO_TEST = [
+    # Claude family - excellent at structured output and scientific reasoning
     ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
     ("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5"),
     ("anthropic/claude-opus-4.5", "Claude Opus 4.5"),
+    # Gemini family - competitive pricing, good structured output
     ("google/gemini-3-flash-preview", "Gemini 3 Flash"),
     ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
+    # OpenAI family - GPT-4o variants for cost-accuracy tradeoff
+    ("openai/gpt-4o", "GPT-4o"),
+    ("openai/gpt-4o-mini", "GPT-4o Mini"),
+    # OpenAI reasoning models - strong on scientific/technical tasks
+    ("openai/o3-mini", "GPT o3-mini"),
+    ("openai/o1", "GPT o1"),
+    # Open-source reasoning models - cost-effective alternatives
+    ("deepseek/deepseek-r1", "DeepSeek R1"),
+    ("qwen/qwq-32b", "Qwen QwQ-32B"),
 ]
 
 
