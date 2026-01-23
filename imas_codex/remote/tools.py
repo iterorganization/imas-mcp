@@ -315,17 +315,30 @@ def check_tool(
 
     try:
         output = run(check_cmd, facility=facility, timeout=10)
-        if output and "[stderr]" not in output.lower():
-            # Extract version number
+        # Check for valid version output (not empty/error placeholder)
+        if (
+            output
+            and "(no output)" not in output.lower()
+            and "[stderr]" not in output.lower()
+        ):
+            # Extract version number - must be a real version
             import re
 
             version_match = re.search(r"(\d+\.\d+\.?\d*)", output)
-            version = version_match.group(1) if version_match else output.split()[0]
+            if not version_match:
+                # No valid version found
+                raise ValueError("No version number in output")
+
+            version = version_match.group(1)
 
             # Check which path
             which_cmd = f"which ~/bin/{tool.binary} 2>/dev/null || which {tool.binary} 2>/dev/null"
             path_output = run(which_cmd, facility=facility, timeout=5)
-            path = path_output.split("\n")[0] if path_output else None
+            path = (
+                path_output.split("\n")[0]
+                if path_output and "(no output)" not in path_output.lower()
+                else None
+            )
 
             return {
                 "available": True,

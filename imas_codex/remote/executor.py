@@ -224,26 +224,30 @@ def _get_local_hostnames() -> set[str]:
 
 
 @lru_cache(maxsize=16)
-def _parse_ssh_config_host(ssh_host: str) -> str | None:
-    """Parse ~/.ssh/config to get HostName for an alias.
+def _parse_ssh_config_host(ssh_host: str) -> tuple[str | None, bool]:
+    """Parse ~/.ssh/config to get HostName and proxy status for an alias.
 
     Args:
         ssh_host: SSH host alias (e.g., 'epfl')
 
     Returns:
-        Resolved HostName or None if not found
+        Tuple of (resolved HostName or None, has_proxy)
+        has_proxy is True if ProxyJump or ProxyCommand is configured
     """
     ssh_config_path = Path.home() / ".ssh" / "config"
     if not ssh_config_path.exists():
-        return None
+        return None, False
 
     try:
         content = ssh_config_path.read_text()
     except Exception:
-        return None
+        return None, False
 
     # Parse SSH config - look for Host block matching ssh_host
     current_host = None
+    hostname = None
+    has_proxy = False
+
     for line in content.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -252,17 +256,31 @@ def _parse_ssh_config_host(ssh_host: str) -> str | None:
         # Match "Host <pattern>" line
         host_match = re.match(r"^Host\s+(.+)$", line, re.IGNORECASE)
         if host_match:
+            # If we were in a matching block and found hostname, return it
+            if current_host and hostname is not None:
+                return hostname, has_proxy
             hosts = host_match.group(1).split()
             current_host = ssh_host if ssh_host in hosts else None
+            hostname = None
+            has_proxy = False
             continue
 
-        # If we're in the right Host block, look for HostName
+        # If we're in the right Host block, look for HostName and Proxy
         if current_host:
             hostname_match = re.match(r"^HostName\s+(.+)$", line, re.IGNORECASE)
             if hostname_match:
-                return hostname_match.group(1).strip()
+                hostname = hostname_match.group(1).strip()
+                continue
 
-    return None
+            proxy_match = re.match(r"^Proxy(Jump|Command)\s+", line, re.IGNORECASE)
+            if proxy_match:
+                has_proxy = True
+
+    # Handle case where matching block was at end of file
+    if current_host and hostname is not None:
+        return hostname, has_proxy
+
+    return None, False
 
 
 def is_local_host(ssh_host: str | None) -> bool:
@@ -287,7 +305,13 @@ def is_local_host(ssh_host: str | None) -> bool:
         return True
 
     # Resolve ssh_host via SSH config
-    resolved = _parse_ssh_config_host(ssh_host)
+    resolved, has_proxy = _parse_ssh_config_host(ssh_host)
+
+    # If there's a proxy (ProxyJump/ProxyCommand), the resolved hostname
+    # is relative to the jump host, not local - so never treat as local
+    if has_proxy:
+        return False
+
     if resolved and resolved.lower() in local_hostnames:
         return True
 
