@@ -11,7 +11,8 @@ agents/                          # Domain-specific deep-dives (optional)
 ├── explore.md                   # Remote facility exploration
 ├── develop.md                   # Development workflows
 ├── ingest.md                    # Code ingestion pipeline
-└── graph.md                     # Knowledge graph operations
+├── graph.md                     # Knowledge graph operations
+└── onboard.md                   # New facility onboarding guide
 
 .github/agents/                  # VS Code shims (thin wrappers)
 ├── explore.agent.md

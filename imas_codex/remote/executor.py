@@ -276,20 +276,11 @@ def run_python_script(
     import importlib.resources
     import json
 
-    # Load script from package
-    try:
-        # Python 3.9+ style
-        script_path = importlib.resources.files("imas_codex.remote.scripts").joinpath(
-            script_name
-        )
-        script_content = script_path.read_text()
-    except (AttributeError, TypeError):
-        # Python 3.8 fallback
-        import pkg_resources
-
-        script_content = pkg_resources.resource_string(
-            "imas_codex.remote.scripts", script_name
-        ).decode("utf-8")
+    # Load script from package (Python 3.12+ required)
+    script_path = importlib.resources.files("imas_codex.remote.scripts").joinpath(
+        script_name
+    )
+    script_content = script_path.read_text()
 
     is_local = is_local_host(ssh_host)
 
