@@ -332,18 +332,25 @@ class ParallelProgressDisplay:
         return section
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section showing what's happening now."""
+        """Build the current activity section showing what's happening now.
+
+        Format:
+          SCAN <path>
+            <stats>
+          SCORE <path>  <score> <reason>
+        """
         section = Text()
 
         scan = self.state.current_scan
         score = self.state.current_score
 
-        # Show scan path and details
+        # SCAN <path>
         if scan:
-            section.append("  ", style="dim")
-            section.append(clip_path(scan.path, self.WIDTH - 6), style="white")
+            section.append("  SCAN ", style="bold blue")
+            section.append(clip_path(scan.path, self.WIDTH - 10), style="white")
             section.append("\n")
-            section.append("    Scan:  ", style="dim")
+            # Stats indented below
+            section.append("    ", style="dim")
             section.append(f"{scan.files} files", style="cyan")
             section.append(", ", style="dim")
             section.append(f"{scan.dirs} dirs", style="cyan")
@@ -352,25 +359,22 @@ class ParallelProgressDisplay:
                 section.append("code project", style="green dim")
             section.append("\n")
 
-        # Show score for the SAME path if available, otherwise show last scored
+        # SCORE <path>
+        #   <score> <reason>
         if score:
-            # Check if score is for same path as scan
-            same_path = scan and score.path == scan.path
-            if not same_path and scan:
-                # Different path - show abbreviated
-                section.append("    Score: ", style="dim")
-                short_path = score.path.split("/")[-1] if score.path else ""
-                section.append(f"[{short_path}] ", style="dim italic")
-            else:
-                section.append("    Score: ", style="dim")
+            section.append("  SCORE ", style="bold green")
+            section.append(clip_path(score.path, self.WIDTH - 10), style="white")
+            section.append("\n")
+            # Score/reason indented below
+            section.append("    ", style="dim")
 
             if score.skipped:
                 section.append("skipped", style="yellow")
                 if score.skip_reason:
                     # Clip reason to fit display
                     reason = (
-                        score.skip_reason[:30] + "..."
-                        if len(score.skip_reason) > 30
+                        score.skip_reason[:40] + "..."
+                        if len(score.skip_reason) > 40
                         else score.skip_reason
                     )
                     section.append(f" ({reason})", style="dim")
@@ -388,7 +392,7 @@ class ParallelProgressDisplay:
 
         # Fallback if nothing is happening
         if not scan and not score:
-            section.append("    ", style="dim")
+            section.append("  ", style="dim")
             section.append("Initializing...", style="italic dim")
 
         return section
