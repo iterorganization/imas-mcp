@@ -214,11 +214,11 @@ class DirectoryEvidence:
 
 
 def parse_path_purpose(value: str) -> PathPurpose:
-    """Parse string to PathPurpose, defaulting to unknown."""
+    """Parse string to PathPurpose, defaulting to container."""
     try:
         return PathPurpose(value.lower())
     except ValueError:
-        return PathPurpose.unknown
+        return PathPurpose.container
 
 
 @dataclass

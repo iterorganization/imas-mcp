@@ -429,7 +429,7 @@ class ParallelProgressDisplay:
         section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
         # Show estimated total cost
         if est_cost is not None and est_cost > self.state.run_cost:
-            section.append(f"  ETA ${est_cost:.2f}", style="dim")
+            section.append(f"  Est ${est_cost:.2f}", style="dim")
         section.append("\n")
 
         # Time with ETA

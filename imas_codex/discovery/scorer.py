@@ -380,18 +380,26 @@ class DirectoryScorer:
         Uses LiteLLM's structured output - the response is already validated
         against the DirectoryScoringBatch Pydantic model.
         """
+        import re
+
         try:
             # LiteLLM returns content as JSON string when using response_format
             content = response.choices[0].message.content
+            # Sanitize: remove control characters (except newline/tab) and surrogates
+            # LLM sometimes includes invalid Unicode from file paths
+            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+            content = content.encode("utf-8", errors="surrogateescape").decode(
+                "utf-8", errors="replace"
+            )
             batch = DirectoryScoringBatch.model_validate_json(content)
             results = batch.results
         except Exception as e:
             logger.warning(f"Failed to parse structured LLM response: {e}")
-            # Fallback: return empty scores for all
+            # Fallback: return empty scores for all (use container as neutral purpose)
             return [
                 ScoredDirectory(
                     path=d["path"],
-                    path_purpose=PathPurpose.unknown,
+                    path_purpose=PathPurpose.container,
                     description="Parse error",
                     evidence=DirectoryEvidence(),
                     score_code=0.0,
@@ -481,11 +489,11 @@ class DirectoryScorer:
             results = json.loads(json_str)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse LLM response: {e}")
-            # Fallback: return empty scores for all
+            # Fallback: return empty scores for all (use container as neutral purpose)
             return [
                 ScoredDirectory(
                     path=d["path"],
-                    path_purpose=PathPurpose.unknown,
+                    path_purpose=PathPurpose.container,
                     description="Parse error",
                     evidence=DirectoryEvidence(),
                     score_code=0.0,
