@@ -5,10 +5,11 @@ Architecture:
 - Two independent async workers: Scanner and Scorer
 - Graph is the coordination mechanism (no locks needed)
 - Atomic status transitions prevent race conditions:
-  - pending → scanning → scanned (Scanner worker)
-  - scanned → scoring → scored (Scorer worker)
+  - discovered → listing → listed (Scanner worker)
+  - listed → scoring → scored (Scorer worker)
 - Workers continuously poll graph for work
 - Cost-based termination for Scorer
+- Orphan recovery: paths stuck in transient states >10 min are reset
 
 Key insight: The graph acts as a thread-safe work queue. Each worker
 claims work by atomically updating status, processes it, then marks complete.
@@ -23,10 +24,15 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.graph.models import PathStatus
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+# Orphan recovery timeout (10 minutes)
+ORPHAN_TIMEOUT_MINUTES = 10
 
 
 @dataclass
@@ -102,38 +108,103 @@ class DiscoveryState:
 
 
 # ============================================================================
+# Orphan Recovery
+# ============================================================================
+
+
+def recover_orphaned_paths(facility: str) -> dict[str, int]:
+    """Recover paths stuck in transient states (listing, scoring).
+
+    Paths claimed more than ORPHAN_TIMEOUT_MINUTES ago are reset to their
+    previous state. This handles worker crashes and timeouts gracefully.
+
+    Returns:
+        Dict with counts: listing_recovered, scoring_recovered
+    """
+    from imas_codex.graph import GraphClient
+
+    timeout_duration = f"PT{ORPHAN_TIMEOUT_MINUTES}M"
+
+    with GraphClient() as gc:
+        # Reset orphaned listing paths back to discovered
+        listing_result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $listing
+              AND p.claimed_at < datetime() - duration($timeout)
+            SET p.status = $discovered, p.claimed_at = null
+            RETURN count(p) AS recovered
+            """,
+            facility=facility,
+            listing=PathStatus.listing.value,
+            discovered=PathStatus.discovered.value,
+            timeout=timeout_duration,
+        )
+        listing_recovered = listing_result[0]["recovered"] if listing_result else 0
+
+        # Reset orphaned scoring paths back to listed
+        scoring_result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $scoring
+              AND p.claimed_at < datetime() - duration($timeout)
+            SET p.status = $listed, p.claimed_at = null
+            RETURN count(p) AS recovered
+            """,
+            facility=facility,
+            scoring=PathStatus.scoring.value,
+            listed=PathStatus.listed.value,
+            timeout=timeout_duration,
+        )
+        scoring_recovered = scoring_result[0]["recovered"] if scoring_result else 0
+
+    if listing_recovered or scoring_recovered:
+        logger.info(
+            f"Recovered orphaned paths: {listing_recovered} listing, "
+            f"{scoring_recovered} scoring"
+        )
+
+    return {
+        "listing_recovered": listing_recovered,
+        "scoring_recovered": scoring_recovered,
+    }
+
+
+# ============================================================================
 # Graph-based work claiming (atomic status transitions)
 # ============================================================================
 
 
 def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim pending paths for scanning.
+    """Atomically claim discovered paths for scanning.
 
-    Uses atomic status transition: pending → scanning
+    Uses atomic status transition: discovered → listing
     Returns paths that this worker now owns.
     """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
-        # Atomic claim: find pending, set to scanning, return claimed
+        # Atomic claim: find discovered, set to listing, return claimed
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = 'pending'
+            WHERE p.status = $discovered
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.status = 'scanning', p.claimed_at = datetime()
+            SET p.status = $listing, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth
             """,
             facility=facility,
             limit=limit,
+            discovered=PathStatus.discovered.value,
+            listing=PathStatus.listing.value,
         )
         return list(result)
 
 
 def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, Any]]:
-    """Atomically claim scanned paths for scoring.
+    """Atomically claim listed paths for scoring.
 
-    Uses atomic status transition: scanned → scoring
+    Uses atomic status transition: listed → scoring
     Returns paths that this worker now owns.
     """
     from imas_codex.graph import GraphClient
@@ -142,9 +213,9 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = 'scanned' AND p.score IS NULL
+            WHERE p.status = $listed AND p.interest_score IS NULL
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.status = 'scoring', p.claimed_at = datetime()
+            SET p.status = $scoring, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -154,6 +225,8 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
             """,
             facility=facility,
             limit=limit,
+            listed=PathStatus.listed.value,
+            scoring=PathStatus.scoring.value,
         )
         return list(result)
 
@@ -165,7 +238,7 @@ def mark_scan_complete(
 ) -> dict[str, int]:
     """Mark scanned paths complete and create children.
 
-    Transition: scanning → scanned (or skipped on error)
+    Transition: listing → listed (or skipped on error)
 
     Args:
         facility: Facility ID
@@ -207,7 +280,7 @@ async def scan_worker(
     """
     from imas_codex.discovery.scanner import scan_paths
 
-    batch_size = 50  # Paths per SSH call
+    batch_size = 100  # Paths per SSH call (optimized for ~45 paths/s throughput)
 
     while not state.should_stop():
         # Claim work from graph
@@ -243,6 +316,7 @@ async def scan_worker(
         state.scan_stats.last_batch_time = time.time() - start
 
         # Persist results (marks scanning → scanned)
+        # Run in executor to avoid blocking event loop
         batch_data = [
             (r.path, r.stats.to_dict(), r.child_dirs, r.error) for r in results
         ]
@@ -253,10 +327,13 @@ async def scan_worker(
             for excluded_path, reason in r.excluded_dirs:
                 excluded_data.append((excluded_path, r.path, reason))
 
-        stats = mark_scan_complete(
-            state.facility,
-            batch_data,
-            excluded=excluded_data if excluded_data else None,
+        stats = await loop.run_in_executor(
+            None,
+            lambda bd=batch_data, ed=excluded_data: mark_scan_complete(
+                state.facility,
+                bd,
+                excluded=ed if ed else None,
+            ),
         )
 
         state.scan_stats.processed += stats["scanned"]
@@ -307,7 +384,10 @@ async def score_worker(
     from imas_codex.discovery.scorer import DirectoryScorer
 
     scorer = DirectoryScorer()
-    batch_size = 25  # Paths per LLM call
+    # LLM batch size: 25 paths provides good balance of throughput vs context
+    # Larger batches risk context overflow, smaller batches waste prompt tokens
+    batch_size = 25
+    loop = asyncio.get_event_loop()
 
     while not state.should_stop():
         # Check budget before claiming work
@@ -357,7 +437,9 @@ async def score_worker(
                 }
                 for p in empty_paths
             ]
-            mark_score_complete(state.facility, skip_data)
+            await loop.run_in_executor(
+                None, lambda sd=skip_data: mark_score_complete(state.facility, sd)
+            )
             state.score_stats.processed += len(empty_paths)
 
             skipped_results = [
@@ -413,8 +495,11 @@ async def score_worker(
             state.score_stats.cost += result.total_cost
 
             # Persist results (marks scoring → scored)
+            # Run in executor to avoid blocking event loop
             score_data = [d.to_graph_dict() for d in result.scored_dirs]
-            mark_score_complete(state.facility, score_data)
+            await loop.run_in_executor(
+                None, lambda sd=score_data: mark_score_complete(state.facility, sd)
+            )
 
             state.score_stats.processed += len(result.scored_dirs)
 
@@ -457,18 +542,20 @@ async def score_worker(
 
 
 def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from scoring back to scanned on error."""
+    """Revert paths from scoring back to listed on error."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = 'scoring'
-            SET p.status = 'scanned', p.claimed_at = null
+            WHERE p.path IN $paths AND p.status = $scoring
+            SET p.status = $listed, p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
+            scoring=PathStatus.scoring.value,
+            listed=PathStatus.listed.value,
         )
 
 
@@ -514,6 +601,9 @@ async def run_parallel_discovery(
         Summary dict with scanned, scored, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
+
+    # Recover any orphaned paths from previous runs (crashed workers, timeouts)
+    recover_orphaned_paths(facility)
 
     # Ensure we have paths to discover
     stats = get_discovery_stats(facility)

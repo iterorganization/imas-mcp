@@ -206,7 +206,7 @@ class DirectoryScorer:
                 response = litellm.completion(
                     model=model_id,
                     api_key=api_key,
-                    max_tokens=4000,
+                    max_tokens=8000,
                     response_format=DirectoryScoringBatch,
                     messages=[
                         {"role": "system", "content": system_prompt},

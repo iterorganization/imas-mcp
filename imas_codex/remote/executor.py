@@ -178,8 +178,9 @@ def run_script_via_stdin(
     ssh_host: str | None = None,
     timeout: int = 60,
     check: bool = False,
+    interpreter: str = "bash",
 ) -> str:
-    """Execute a multi-line script via stdin to avoid bash -c overhead.
+    """Execute a multi-line script via stdin to avoid shell -c overhead.
 
     Unlike run_command(), this passes the script via stdin which avoids the ~11s
     overhead of bash loading .bashrc when invoked with 'bash -c'.
@@ -191,20 +192,31 @@ def run_script_via_stdin(
     For facility-aware execution, use run_script() from tools.py.
 
     Args:
-        script: Multi-line bash script to execute
+        script: Multi-line script to execute
         ssh_host: SSH host to connect to (None = local)
         timeout: Command timeout in seconds
         check: Raise exception on non-zero exit
+        interpreter: Interpreter to use ("bash", "python3", etc.)
 
     Returns:
         Command output (stdout + stderr)
     """
     is_local = is_local_host(ssh_host)
 
+    # Build interpreter command
+    # For bash: use 'bash -s' to read from stdin
+    # For python: use 'python3 -' to read from stdin
+    if interpreter == "bash":
+        interp_cmd = ["bash", "-s"]
+    elif interpreter in ("python3", "python"):
+        interp_cmd = ["python3", "-"]
+    else:
+        interp_cmd = [interpreter]
+
     if is_local:
         # Local execution via stdin
         result = subprocess.run(
-            ["bash"],
+            interp_cmd,
             input=script,
             capture_output=True,
             text=True,
@@ -212,9 +224,9 @@ def run_script_via_stdin(
         )
     else:
         # SSH execution via stdin - avoids bash -c overhead
-        # Use 'bash -s' to read script from stdin (non-login shell, no bashrc)
+        # Use 'interpreter [args]' to read script from stdin
         result = subprocess.run(
-            ["ssh", "-T", ssh_host, "bash -s"],
+            ["ssh", "-T", ssh_host, " ".join(interp_cmd)],
             input=script,
             capture_output=True,
             text=True,
@@ -231,3 +243,95 @@ def run_script_via_stdin(
         )
 
     return output.strip() or "(no output)"
+
+
+def run_python_script(
+    script_name: str,
+    input_data: dict | list | None = None,
+    ssh_host: str | None = None,
+    timeout: int = 60,
+) -> str:
+    """Execute a Python script from the remote/scripts package.
+
+    Loads the script from imas_codex/remote/scripts/ and executes it
+    via SSH (or locally). Input data is passed as JSON on stdin.
+
+    The script is sent via stdin to Python, followed by the JSON input
+    using a heredoc-style approach.
+
+    Args:
+        script_name: Script filename (e.g., "scan_directories.py")
+        input_data: Dict/list to pass as JSON on stdin (None = no input)
+        ssh_host: SSH host to connect to (None = local)
+        timeout: Command timeout in seconds
+
+    Returns:
+        Script output (stdout)
+
+    Raises:
+        FileNotFoundError: If script doesn't exist
+        subprocess.CalledProcessError: On non-zero exit
+    """
+    import base64
+    import importlib.resources
+    import json
+
+    # Load script from package
+    try:
+        # Python 3.9+ style
+        script_path = importlib.resources.files("imas_codex.remote.scripts").joinpath(
+            script_name
+        )
+        script_content = script_path.read_text()
+    except (AttributeError, TypeError):
+        # Python 3.8 fallback
+        import pkg_resources
+
+        script_content = pkg_resources.resource_string(
+            "imas_codex.remote.scripts", script_name
+        ).decode("utf-8")
+
+    is_local = is_local_host(ssh_host)
+
+    # Prepare JSON input
+    json_input = json.dumps(input_data) if input_data is not None else "{}"
+
+    # Encode script as base64 to avoid quoting issues
+    script_b64 = base64.b64encode(script_content.encode()).decode()
+
+    # Single-line Python that decodes script, runs it with JSON on stdin
+    # This avoids nested quoting and subprocess overhead
+    runner = (
+        f"import base64,subprocess,sys;"
+        f's=base64.b64decode("{script_b64}");'
+        f'exec(compile(s,"script","exec"))'
+    )
+
+    if is_local:
+        result = subprocess.run(
+            ["python3", "-c", runner],
+            input=json_input,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    else:
+        # SSH execution with JSON piped through
+        result = subprocess.run(
+            ["ssh", "-T", ssh_host, f"python3 -c '{runner}'"],
+            input=json_input,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    output = result.stdout
+    if result.stderr:
+        output += f"\n[stderr]: {result.stderr}"
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, script_name, result.stdout, result.stderr
+        )
+
+    return output.strip()

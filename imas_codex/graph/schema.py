@@ -408,6 +408,7 @@ class GraphSchema:
             # Default indexes based on common query patterns
             indexes = {
                 "Facility": ["ssh_host"],
+                "FacilityPath": ["id"],  # Critical for MERGE performance
                 "MDSplusServer": ["role"],
                 "TreeNode": ["node_type"],
                 "Diagnostic": ["category"],

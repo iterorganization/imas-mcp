@@ -1,30 +1,29 @@
 """
 Graph-led directory scanner.
 
-Scans directories at remote facilities using fast tools (fd, rg, dust).
-Uses the DiscoveryConfig for exclusion patterns and the run() function
-from remote/tools.py for transparent local/SSH execution.
+Scans directories at remote facilities using os.scandir and optional rg.
+Uses the remote/scripts/scan_directories.py script for actual scanning.
 
 Key design:
-- Uses fd for directory enumeration (5x faster than find)
+- Uses Python's os.scandir for fast directory enumeration
 - Uses rg for pattern detection (IMAS, MDSplus, physics keywords)
-- Uses dust for directory size estimation
-- Single SSH call per batch minimizes latency (~8s network overhead)
-- Outputs JSON for reliable parsing
+- Single SSH call per batch minimizes latency (~1.8s network overhead)
+- Outputs JSON for reliable parsing (handles control chars, unicode)
 - All data collected for grounded LLM scoring decisions
+
+The remote script (scan_directories.py) is pure Python 3.8+ stdlib.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.config.discovery_config import get_discovery_config
 from imas_codex.discovery.facility import get_facility
-from imas_codex.remote.executor import run_script_via_stdin
+from imas_codex.remote.executor import run_python_script
 
 if TYPE_CHECKING:
     pass
@@ -68,8 +67,8 @@ class DirStats:
     child_names: list[str] | None = None  # First 30 child file/dir names
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
-    # New: fast tool data for grounded scoring
-    size_bytes: int | None = None  # Directory size from dust
+    # Fast tool data for grounded scoring
+    size_bytes: int | None = None  # Directory size from du
     rg_matches: dict[str, int] = field(default_factory=dict)  # pattern -> match count
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,185 +103,6 @@ class ScanResult:
     error: str | None = None
 
 
-def _build_scan_script(
-    paths: list[str], enable_rg: bool = True, enable_size: bool = False
-) -> str:
-    """Build a bash script that uses fast tools for comprehensive scanning.
-
-    Uses fd, rg, dust with fallbacks. Outputs JSON for parsing.
-    All data collection happens in a SINGLE SSH call for efficiency.
-    Patterns are loaded from config/patterns/scoring/*.yaml.
-
-    Args:
-        paths: List of directory paths to scan
-        enable_rg: If True, run rg pattern detection (slower but more data).
-                   If False, skip rg for faster enumeration-only scans.
-        enable_size: If True, calculate directory size with dust/du.
-                     If False, skip size calculation (much faster).
-    """
-    # Escape paths for shell
-    escaped_paths = " ".join(shlex.quote(p) for p in paths)
-
-    # Build rg commands only if enabled
-    rg_block = ""
-    rg_json = ""
-    if enable_rg:
-        # Get patterns from config
-        rg_patterns = _get_rg_patterns()
-
-        # Combine ALL patterns into a single rg call for speed
-        # This is 14x faster than running rg separately per category
-        all_patterns = "|".join(rg_patterns.values())
-        escaped_all = shlex.quote(all_patterns)
-
-        # Single rg call gets total match count, plus per-category breakdown
-        # We use --max-depth 1 for speed (depth 2 is 2-10x slower on large dirs)
-        rg_commands = [
-            f"        local total_matches=$(rg -c --max-depth 1 {escaped_all} \"$p\" 2>/dev/null | awk -F: '{{s+=$2}} END {{print s+0}}')"
-        ]
-        rg_json_parts = ['\\"total\\":$total_matches']
-
-        # Only get per-category breakdown if there are matches (optimization)
-        for cat, pattern in rg_patterns.items():
-            var_name = f"{cat}_cnt"
-            escaped_pattern = shlex.quote(pattern)
-            # Use -l to just count files, faster than -c
-            rg_commands.append(
-                f'        local {var_name}=$(rg -l --max-depth 1 {escaped_pattern} "$p" 2>/dev/null | wc -l)'
-            )
-            rg_json_parts.append(f'\\"{cat}\\":${var_name}')
-
-        rg_block = "\n".join(rg_commands)
-        rg_json = ",".join(rg_json_parts)
-
-    # Size calculation block - skip in fast mode
-    # Always use du -sb for byte output since dust human-readable format breaks JSON
-    if enable_size:
-        size_block = """
-    # Get directory size using du (dust output is human-readable, can't use for JSON)
-    local size_bytes=0
-    size_bytes=$(du -sb "$p" 2>/dev/null | awk '{print $1}')
-    [ -z "$size_bytes" ] && size_bytes=0"""
-    else:
-        size_block = """
-    # Size calculation disabled for speed
-    local size_bytes=0"""
-
-    # Bash script using fast tools with fallbacks
-    script = f"""#!/bin/bash
-set -o pipefail
-
-# Detect available tools (cached for session)
-HAS_FD=$(command -v fd >/dev/null 2>&1 && echo 1 || echo 0)
-HAS_RG=$(command -v rg >/dev/null 2>&1 && echo 1 || echo 0)
-HAS_DUST=$(command -v dust >/dev/null 2>&1 && echo 1 || echo 0)
-
-# JSON escape function - handles backslashes and quotes
-# Uses bash parameter expansion for reliability
-json_escape() {{
-    local s="$1"
-    # Escape backslashes first, then quotes
-    s="${{s//\\\\/\\\\\\\\}}"
-    s="${{s//\\"/\\\\\\"}}"
-    printf '%s' "$s"
-}}
-
-scan_dir() {{
-    local p="$1"
-    local p_escaped=$(json_escape "$p")
-
-    # Check accessibility
-    if [ ! -d "$p" ]; then
-        printf '{{"path":"%s","error":"not a directory"}}\\n' "$p_escaped"
-        return
-    fi
-    if [ ! -r "$p" ]; then
-        printf '{{"path":"%s","error":"permission denied"}}\\n' "$p_escaped"
-        return
-    fi
-
-    # Use fd for file/dir enumeration, fallback to find
-    local files dirs
-    if [ "$HAS_FD" = "1" ]; then
-        files=$(fd -t f -d 1 . "$p" 2>/dev/null | wc -l)
-        dirs=$(fd -t d -d 1 . "$p" 2>/dev/null | wc -l)
-    else
-        files=$(find "$p" -maxdepth 1 -type f 2>/dev/null | wc -l)
-        dirs=$(find "$p" -maxdepth 1 -type d 2>/dev/null | tail -n +2 | wc -l)
-    fi
-
-    # Get child directories (full paths) - with JSON escaping
-    local child_dirs=""
-    if [ "$HAS_FD" = "1" ]; then
-        while IFS= read -r d; do
-            [ -z "$d" ] && continue
-            local d_escaped=$(json_escape "$d")
-            [ -n "$child_dirs" ] && child_dirs="$child_dirs,"
-            child_dirs="$child_dirs\\"$d_escaped\\""
-        done < <(fd -t d -d 1 . "$p" 2>/dev/null)
-    else
-        while IFS= read -r d; do
-            [ -z "$d" ] && continue
-            local d_escaped=$(json_escape "$d")
-            [ -n "$child_dirs" ] && child_dirs="$child_dirs,"
-            child_dirs="$child_dirs\\"$d_escaped\\""
-        done < <(find "$p" -maxdepth 1 -type d 2>/dev/null | tail -n +2)
-    fi
-
-    # Get first 30 entry names for context - with JSON escaping
-    local names=""
-    local count=0
-    while IFS= read -r e && [ $count -lt 30 ]; do
-        [ -z "$e" ] && continue
-        local e_escaped=$(json_escape "$e")
-        [ -n "$names" ] && names="$names,"
-        names="$names\\"$e_escaped\\""
-        count=$((count + 1))
-    done < <(ls -1A "$p" 2>/dev/null)
-
-    # Check for quality indicators
-    local has_readme=false has_makefile=false has_git=false
-    [ -f "$p/README.md" ] || [ -f "$p/README.rst" ] || [ -f "$p/README" ] && has_readme=true
-    [ -f "$p/Makefile" ] || [ -f "$p/CMakeLists.txt" ] && has_makefile=true
-    [ -d "$p/.git" ] && has_git=true
-
-    # Count file extensions (for scoring) - extensions are simple, no escape needed
-    local ext_counts=""
-    local ext_data=$(ls -1 "$p" 2>/dev/null | grep -E '\\.[a-zA-Z0-9]+$' | sed 's/.*\\.//' | sort | uniq -c | head -10)
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        local cnt=$(echo "$line" | awk '{{print $1}}')
-        local ext=$(echo "$line" | awk '{{print $2}}')
-        [ -n "$ext_counts" ] && ext_counts="$ext_counts,"
-        ext_counts="$ext_counts\\"$ext\\":$cnt"
-    done <<< "$ext_data"
-
-    # Use rg for pattern detection (quick, depth-limited)
-    local rg_matches=""
-    if [ "$HAS_RG" = "1" ]; then
-{rg_block}
-        rg_matches="{rg_json}"
-    fi
-{size_block}
-
-    # Output JSON with escaped path
-    printf '{{"path":"%s","stats":{{"total_files":%d,"total_dirs":%d,"has_readme":%s,"has_makefile":%s,"has_git":%s,"size_bytes":%s,"file_type_counts":{{%s}},"rg_matches":{{%s}}}},"child_dirs":[%s],"child_names":[%s]}}\\n' \\
-        "$p_escaped" "$files" "$dirs" "$has_readme" "$has_makefile" "$has_git" "$size_bytes" "$ext_counts" "$rg_matches" "$child_dirs" "$names"
-}}
-
-# Output as JSON array
-echo "["
-first=1
-for p in {escaped_paths}; do
-    [ $first -eq 0 ] && echo ","
-    first=0
-    scan_dir "$p"
-done
-echo "]"
-"""
-    return script
-
-
 def scan_paths(
     facility: str,
     paths: list[str],
@@ -290,9 +110,9 @@ def scan_paths(
     enable_rg: bool = True,
     enable_size: bool = False,
 ) -> list[ScanResult]:
-    """Scan multiple paths using bash script with ls.
+    """Scan multiple paths using the remote scan_directories.py script.
 
-    Uses run_script_via_stdin() for transparent local/SSH execution.
+    Uses run_python_script() for transparent local/SSH execution.
     Applies exclusion patterns from DiscoveryConfig.
 
     Args:
@@ -316,11 +136,22 @@ def scan_paths(
 
     discovery_config = get_discovery_config()
 
-    # Build and execute the scan script
-    script = _build_scan_script(paths, enable_rg=enable_rg, enable_size=enable_size)
+    # Build input data for the remote script
+    rg_patterns = _get_rg_patterns() if enable_rg else {}
+    input_data = {
+        "paths": paths,
+        "rg_patterns": rg_patterns,
+        "enable_rg": enable_rg,
+        "enable_size": enable_size,
+    }
 
     try:
-        output = run_script_via_stdin(script, ssh_host=ssh_host, timeout=timeout)
+        output = run_python_script(
+            "scan_directories.py",
+            input_data=input_data,
+            ssh_host=ssh_host,
+            timeout=timeout,
+        )
     except Exception as e:
         logger.warning(f"Scan failed for {facility}: {e}")
         return [

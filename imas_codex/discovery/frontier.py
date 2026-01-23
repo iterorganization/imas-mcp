@@ -2,11 +2,17 @@
 Frontier management for graph-led discovery.
 
 The frontier is the set of FacilityPath nodes that are ready for scanning
-(status='pending') or ready for expansion (expand_to > depth). This module
+(status='discovered') or ready for scoring (status='listed'). This module
 provides queries and utilities for managing the frontier.
 
+State machine:
+    discovered → listing → listed → scoring → scored
+
+    Transient states (listing, scoring) auto-recover to previous state on timeout.
+    Paths with score >= 0.75 are rescored after enrichment (is_enriched=true).
+
 Key concepts:
-    - Frontier: Paths awaiting scan (status='pending' or expand_to > depth)
+    - Frontier: Paths awaiting work (discovered → scan, listed → score)
     - Coverage: Fraction of known paths that are scored
     - Seeding: Creating initial root paths for a facility
 """
@@ -17,6 +23,8 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from imas_codex.graph.models import PathStatus
 
 if TYPE_CHECKING:
     pass
@@ -30,15 +38,29 @@ class DiscoveryStats:
 
     facility: str
     total: int = 0
-    pending: int = 0
-    scanned: int = 0
-    scored: int = 0
-    skipped: int = 0
+    discovered: int = 0  # Awaiting scan
+    listed: int = 0  # Awaiting score
+    scored: int = 0  # Scored (including rescored)
+    skipped: int = 0  # Low value or dead-end
+    excluded: int = 0  # Matched exclusion pattern
+    max_depth: int = 0  # Maximum depth in tree
+    listing: int = 0  # In-progress scan (transient)
+    scoring: int = 0  # In-progress score (transient)
 
     @property
     def frontier_size(self) -> int:
+        """Number of paths awaiting work (scan or score)."""
+        return self.discovered + self.listed
+
+    @property
+    def scan_frontier(self) -> int:
         """Number of paths awaiting scan."""
-        return self.pending
+        return self.discovered
+
+    @property
+    def score_frontier(self) -> int:
+        """Number of paths awaiting score."""
+        return self.listed
 
     @property
     def coverage(self) -> float:
@@ -52,7 +74,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
     """Get discovery statistics for a facility.
 
     Returns:
-        Dict with counts: total, pending, scanned, scored, skipped
+        Dict with counts: total, discovered, listed, scored, skipped, excluded,
+        max_depth, listing, scoring
     """
     from imas_codex.graph import GraphClient
 
@@ -62,51 +85,81 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             RETURN
                 count(p) AS total,
-                sum(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                sum(CASE WHEN p.status = 'scanned' THEN 1 ELSE 0 END) AS scanned,
-                sum(CASE WHEN p.status = 'scored' THEN 1 ELSE 0 END) AS scored,
-                sum(CASE WHEN p.status = 'skipped' THEN 1 ELSE 0 END) AS skipped
+                sum(CASE WHEN p.status = $discovered THEN 1 ELSE 0 END) AS discovered,
+                sum(CASE WHEN p.status = $listing THEN 1 ELSE 0 END) AS listing,
+                sum(CASE WHEN p.status = $listed THEN 1 ELSE 0 END) AS listed,
+                sum(CASE WHEN p.status = $scoring THEN 1 ELSE 0 END) AS scoring,
+                sum(CASE WHEN p.status = $scored THEN 1 ELSE 0 END) AS scored,
+                sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
+                sum(CASE WHEN p.status = $excluded THEN 1 ELSE 0 END) AS excluded,
+                max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
+            discovered=PathStatus.discovered.value,
+            listing=PathStatus.listing.value,
+            listed=PathStatus.listed.value,
+            scoring=PathStatus.scoring.value,
+            scored=PathStatus.scored.value,
+            skipped=PathStatus.skipped.value,
+            excluded=PathStatus.excluded.value,
         )
 
         if result:
             return {
                 "total": result[0]["total"],
-                "pending": result[0]["pending"],
-                "scanned": result[0]["scanned"],
+                "discovered": result[0]["discovered"],
+                "listing": result[0]["listing"],
+                "listed": result[0]["listed"],
+                "scoring": result[0]["scoring"],
                 "scored": result[0]["scored"],
                 "skipped": result[0]["skipped"],
+                "excluded": result[0]["excluded"],
+                "max_depth": result[0]["max_depth"] or 0,
             }
 
-        return {"total": 0, "pending": 0, "scanned": 0, "scored": 0, "skipped": 0}
+        return {
+            "total": 0,
+            "discovered": 0,
+            "listing": 0,
+            "listed": 0,
+            "scoring": 0,
+            "scored": 0,
+            "skipped": 0,
+            "excluded": 0,
+            "max_depth": 0,
+        }
 
 
 def get_frontier(
     facility: str,
     limit: int = 100,
-    include_expansions: bool = True,
+    include_rescore: bool = True,
 ) -> list[dict[str, Any]]:
-    """Get paths in the frontier (awaiting scan).
+    """Get paths in the frontier (awaiting scan or rescore).
 
     Frontier includes:
-    1. Paths with status='pending' (newly seeded or from parent expansion)
-    2. Paths where expand_to > depth (marked for expansion by scorer)
+    1. Paths with status='discovered' (awaiting initial scan)
+    2. Paths with status='scored', is_enriched=true, interest_score >= 0.75,
+       rescore_count < 1 (awaiting rescore)
 
     Args:
         facility: Facility ID
         limit: Maximum paths to return
-        include_expansions: Include paths marked for expansion (expand_to > depth)
+        include_rescore: Include paths marked for rescore
 
     Returns:
         List of dicts with path info: id, path, depth, status, parent_path_id
     """
     from imas_codex.graph import GraphClient
 
-    if include_expansions:
-        where_clause = "(p.status = 'pending' OR (p.expand_to IS NOT NULL AND p.expand_to > p.depth))"
+    if include_rescore:
+        where_clause = (
+            f"p.status = '{PathStatus.discovered.value}' OR "
+            f"(p.status = '{PathStatus.scored.value}' AND p.is_enriched = true AND "
+            f"p.interest_score >= 0.75 AND coalesce(p.rescore_count, 0) < 1)"
+        )
     else:
-        where_clause = "p.status = 'pending'"
+        where_clause = f"p.status = '{PathStatus.discovered.value}'"
 
     with GraphClient() as gc:
         result = gc.query(
@@ -126,7 +179,7 @@ def get_frontier(
 
 
 def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
-    """Get paths that are ready for scoring (scanned but not scored).
+    """Get paths that are ready for scoring (listed but not scored).
 
     Returns:
         List of dicts with path info, DirStats, and child_names for LLM context
@@ -137,7 +190,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = 'scanned' AND p.score IS NULL
+            WHERE p.status = $listed AND p.interest_score IS NULL
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -149,6 +202,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
             """,
             facility=facility,
             limit=limit,
+            listed=PathStatus.listed.value,
         )
 
         return list(result)
@@ -202,7 +256,7 @@ def seed_facility_roots(
                 "facility_id": facility,
                 "path": path,
                 "path_type": "code_directory",  # Default, will be updated during scan
-                "status": "pending",
+                "status": PathStatus.discovered.value,
                 "depth": 0,
                 "discovered_at": now,
             }
@@ -261,7 +315,7 @@ def create_child_paths(
                 "facility_id": facility,
                 "path": child_path,
                 "path_type": "code_directory",
-                "status": "pending",
+                "status": PathStatus.discovered.value,
                 "depth": parent_depth + 1,
                 "parent_path_id": parent_id,
                 "discovered_at": now,
@@ -293,7 +347,7 @@ def mark_path_scanned(
     path: str,
     stats: dict[str, Any],
 ) -> None:
-    """Update path with scan results and mark as scanned.
+    """Update path with scan results and mark as listed.
 
     Args:
         facility: Facility ID
@@ -309,8 +363,8 @@ def mark_path_scanned(
         gc.query(
             """
             MATCH (p:FacilityPath {id: $id})
-            SET p.status = 'scanned',
-                p.scanned_at = $now,
+            SET p.status = $listed,
+                p.listed_at = $now,
                 p.total_files = $total_files,
                 p.total_dirs = $total_dirs,
                 p.total_size_bytes = $total_size_bytes,
@@ -323,6 +377,7 @@ def mark_path_scanned(
             """,
             id=path_id,
             now=now,
+            listed=PathStatus.listed.value,
             total_files=stats.get("total_files", 0),
             total_dirs=stats.get("total_dirs", 0),
             total_size_bytes=stats.get("total_size_bytes"),
@@ -343,8 +398,9 @@ def mark_paths_scored(
 
     Args:
         facility: Facility ID
-        scores: List of dicts with path, score, score_code, score_data, score_imas,
-                description, path_purpose, evidence, should_expand
+        scores: List of dicts with path, interest_score, physics_relevance,
+                code_quality, data_access_patterns, description, path_purpose,
+                score_reasoning
 
     Returns:
         Number of paths updated
@@ -359,43 +415,29 @@ def mark_paths_scored(
             path = score_data["path"]
             path_id = f"{facility}:{path}"
 
-            # Determine expand_to based on should_expand
-            expand_to = None
-            if score_data.get("should_expand"):
-                # Get current depth and set expand_to = depth + 1
-                result = gc.query(
-                    "MATCH (p:FacilityPath {id: $id}) RETURN p.depth AS depth",
-                    id=path_id,
-                )
-                if result:
-                    expand_to = (result[0]["depth"] or 0) + 1
-
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
-                SET p.status = 'scored',
+                SET p.status = $scored,
                     p.scored_at = $now,
-                    p.score = $score,
-                    p.score_code = $score_code,
-                    p.score_data = $score_data,
-                    p.score_imas = $score_imas,
+                    p.interest_score = $interest_score,
+                    p.physics_relevance = $physics_relevance,
+                    p.code_quality = $code_quality,
+                    p.data_access_patterns = $data_access_patterns,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
-                    p.evidence = $evidence,
-                    p.expand_to = $expand_to
+                    p.score_reasoning = $score_reasoning
                 """,
                 id=path_id,
                 now=now,
-                score=score_data.get("score"),
-                score_code=score_data.get("score_code"),
-                score_data=score_data.get(
-                    "score_data_score"
-                ),  # Avoid conflict with params
-                score_imas=score_data.get("score_imas"),
+                interest_score=score_data.get("interest_score"),
+                physics_relevance=score_data.get("physics_relevance"),
+                code_quality=score_data.get("code_quality"),
+                data_access_patterns=score_data.get("data_access_patterns"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
-                evidence=score_data.get("evidence"),
-                expand_to=expand_to,
+                score_reasoning=score_data.get("score_reasoning"),
+                scored=PathStatus.scored.value,
             )
             updated += 1
 
@@ -423,13 +465,14 @@ def mark_path_skipped(
         gc.query(
             """
             MATCH (p:FacilityPath {id: $id})
-            SET p.status = 'skipped',
+            SET p.status = $skipped,
                 p.skipped_at = $now,
                 p.skip_reason = $reason
             """,
             id=path_id,
             now=now,
             reason=reason,
+            skipped=PathStatus.skipped.value,
         )
 
 
@@ -533,9 +576,9 @@ def persist_scan_results(
             successes.append(
                 {
                     "id": path_id,
-                    "status": "skipped",
+                    "status": PathStatus.skipped.value,
                     "skip_reason": error,
-                    "scanned_at": now,
+                    "listed_at": now,
                 }
             )
         else:
@@ -543,8 +586,8 @@ def persist_scan_results(
             # Build update dict with child_names if available
             update_dict = {
                 "id": path_id,
-                "status": "scanned",
-                "scanned_at": now,
+                "status": PathStatus.listed.value,
+                "listed_at": now,
                 "total_files": stats.get("total_files", 0),
                 "total_dirs": stats.get("total_dirs", 0),
                 "has_readme": stats.get("has_readme", False),
@@ -590,7 +633,7 @@ def persist_scan_results(
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
                 SET p.status = item.status,
-                    p.scanned_at = item.scanned_at,
+                    p.listed_at = item.listed_at,
                     p.skip_reason = item.skip_reason,
                     p.total_files = item.total_files,
                     p.total_dirs = item.total_dirs,
@@ -619,14 +662,16 @@ def persist_scan_results(
             # Add depth to children
             for child in all_children:
                 child["depth"] = depth_map.get(child["parent_id"], 0) + 1
-                child["status"] = "pending"
+                child["status"] = PathStatus.discovered.value
                 child["path_type"] = "code_directory"
                 child["discovered_at"] = now
 
-            # Create child nodes
+            # Create child nodes with relationships in a single query
             gc.query(
                 """
                 UNWIND $children AS child
+                MATCH (f:Facility {id: child.facility_id})
+                MATCH (parent:FacilityPath {id: child.parent_id})
                 MERGE (c:FacilityPath {id: child.id})
                 ON CREATE SET c.facility_id = child.facility_id,
                               c.path = child.path,
@@ -635,28 +680,8 @@ def persist_scan_results(
                               c.depth = child.depth,
                               c.parent_path_id = child.parent_id,
                               c.discovered_at = child.discovered_at
-                """,
-                children=all_children,
-            )
-
-            # Create FACILITY_ID relationships
-            gc.query(
-                """
-                UNWIND $children AS child
-                MATCH (c:FacilityPath {id: child.id})
-                MATCH (f:Facility {id: child.facility_id})
                 MERGE (c)-[:FACILITY_ID]->(f)
-                """,
-                children=all_children,
-            )
-
-            # Create PARENT relationships
-            gc.query(
-                """
-                UNWIND $children AS child
-                MATCH (c:FacilityPath {id: child.id})
-                MATCH (p:FacilityPath {id: child.parent_id})
-                MERGE (c)-[:PARENT]->(p)
+                MERGE (c)-[:PARENT]->(parent)
                 """,
                 children=all_children,
             )
@@ -682,7 +707,7 @@ def persist_scan_results(
                         "path": path,
                         "parent_id": parent_id,
                         "depth": (parent_depth or 0) + 1,
-                        "status": "excluded",
+                        "status": PathStatus.excluded.value,
                         "skip_reason": reason,
                         "discovered_at": now,
                     }
