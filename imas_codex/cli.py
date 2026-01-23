@@ -3,6 +3,7 @@
 import logging
 import os
 import warnings
+from datetime import UTC
 from typing import Literal, cast
 
 # Suppress third-party deprecation warnings before importing other modules
@@ -2172,20 +2173,30 @@ def release(
 # ============================================================================
 
 
-@main.group()
+@main.group(deprecated=True)
 def wiki() -> None:
-    """Discover and ingest wiki documentation from remote facilities.
+    """[DEPRECATED] Wiki commands - use 'discover docs' instead.
+
+    This command group is deprecated and will be removed in a future version.
+    Please migrate to the new discovery pipeline:
 
     \b
-      imas-codex wiki discover <facility>  Full pipeline: crawl + score
-      imas-codex wiki crawl <facility>     Crawl links only (no LLM)
-      imas-codex wiki score <facility>     Score pages and artifacts (uses LLM)
-      imas-codex wiki ingest <facility>    Ingest pages and artifacts
-      imas-codex wiki status <facility>    Show ingestion statistics
-      imas-codex wiki sites <facility>     List configured wiki sites
-      imas-codex wiki credentials ...      Manage site credentials
+    OLD                              NEW
+    imas-codex wiki discover         imas-codex discover docs
+    imas-codex wiki crawl            imas-codex discover docs (integrated)
+    imas-codex wiki score            imas-codex discover docs (integrated)
+    imas-codex wiki ingest           imas-codex ingest docs
+    imas-codex wiki status           imas-codex discover status --domain docs
+    imas-codex wiki sites            imas-codex discover sources list
+    imas-codex wiki credentials      (credentials still stored in keyring)
     """
-    pass
+    import warnings
+
+    warnings.warn(
+        "The 'wiki' command group is deprecated. Use 'discover docs' instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -3293,27 +3304,31 @@ def _run_exploration_agent(
         raise SystemExit(1) from e
 
 
-@main.group()
+@main.group(deprecated=True)
 def scout() -> None:
-    """Scout facility resources with graph-first exploration.
+    """[DEPRECATED] Scout commands - use 'discover' instead.
 
-    Scout commands explore facilities using a stateless, graph-first approach.
-    Each step queries the graph for frontier paths, the LLM decides one action,
-    and results are persisted to the graph. No context carried between steps.
-
-    \b
-    Discovery Commands:
-      scout files <facility>    Discover source files (primary)
-      scout wiki <facility>     Discover wiki documentation
-      scout codes <facility>    Find physics simulation codes
-      scout data <facility>     Find data sources (MDSplus, HDF5, IMAS)
-      scout paths <facility>    Map directory structure
+    This command group is deprecated and will be removed in a future version.
+    Please migrate to the new discovery pipeline:
 
     \b
-    Status:
-      scout status <facility>   Show exploration progress and frontier
+    OLD                              NEW
+    scout files <facility>           discover code <facility>
+    scout wiki <facility>            discover docs <facility>
+    scout codes <facility>           discover code <facility>
+    scout data <facility>            discover data <facility>
+    scout paths <facility>           discover paths <facility>
+    scout status <facility>          discover status <facility>
+
+    The new 'discover' group provides a unified, graph-led discovery pipeline.
     """
-    pass
+    import warnings
+
+    warnings.warn(
+        "The 'scout' command group is deprecated. Use 'discover' instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 @scout.command("files")
@@ -5385,7 +5400,38 @@ def enrich_mark_stale(
 # ============================================================================
 
 
-@main.command("discover")
+@main.group()
+def discover():
+    """Discover facility resources with graph-led exploration.
+
+    \b
+    Discovery Pipeline:
+      1. discover paths → Directory structure + LLM scoring
+      2. discover code  → Source files in scored paths
+         discover docs  → Wiki pages + filesystem artifacts
+         discover data  → MDSplus trees, HDF5, IMAS DBs
+
+    \b
+    Commands:
+      discover paths <facility>    Scan and score directory structure
+      discover code <facility>     Find source files (placeholder)
+      discover docs <facility>     Find documentation (placeholder)
+      discover data <facility>     Find data sources (placeholder)
+
+    \b
+    Management:
+      discover status <facility>   Show discovery statistics
+      discover inspect <facility>  Debug view of scanned/scored paths
+      discover clear <facility>    Clear paths (reset discovery)
+      discover sources             Manage documentation sources
+
+    The graph is the single source of truth. All discovery operations
+    are idempotent and resume from the current graph state.
+    """
+    pass
+
+
+@discover.command("paths")
 @click.argument("facility")
 @click.option(
     "--cost-limit",
@@ -5426,7 +5472,7 @@ def enrich_mark_stale(
     type=int,
     help="Number of score workers (default: 4, parallel LLM calls)",
 )
-def discover_cmd(
+def discover_paths(
     facility: str,
     cost_limit: float,
     limit: int | None,
@@ -5435,24 +5481,17 @@ def discover_cmd(
     scan_workers: int,
     score_workers: int,
 ) -> None:
-    """Graph-led facility discovery with parallel scan and score.
+    """Discover and score directory structure at a facility.
 
     \b
-    Run discovery:
-      imas-codex discover <facility>              # Default $10 limit
-      imas-codex discover <facility> -c 20.0      # $20 limit
-      imas-codex discover iter --focus "equilibrium codes"
+    Examples:
+      imas-codex discover paths <facility>              # Default $10 limit
+      imas-codex discover paths <facility> -c 20.0      # $20 limit
+      imas-codex discover paths iter --focus "equilibrium codes"
 
-    \b
-    Related commands (see 'imas-codex discovery --help'):
-      imas-codex discovery status <facility>  Show discovery statistics
-      imas-codex discovery clear <facility>   Clear all paths (reset)
-      imas-codex discovery seed <facility>    Seed root paths
-      imas-codex discovery inspect <facility> Inspect scanned/scored paths
-
-    The graph is the single source of truth. Parallel scan workers
-    enumerate directories via SSH while score workers classify paths
-    using LLM. Both run concurrently with the graph as coordination.
+    Parallel scan workers enumerate directories via SSH while score workers
+    classify paths using LLM. Both run concurrently with the graph as
+    coordination. Discovery is idempotent - rerun to continue from current state.
     """
     _run_iterative_discovery(
         facility=facility,
@@ -5753,26 +5792,19 @@ async def _async_discovery_loop(
     )
 
 
-@main.group()
-def discovery():
-    """Discovery utility commands for managing facility exploration.
-
-    \b
-    Commands:
-      status   Show discovery statistics
-      clear    Clear all paths (reset)
-      seed     Seed root paths
-      inspect  Inspect scanned/scored paths
-
-    For running discovery, use 'imas-codex discover <facility>'.
-    """
-    pass
+# Status and management commands under discover group
 
 
-@discovery.command("status")
+@discover.command("status")
 @click.argument("facility")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
-def discover_status(facility: str, as_json: bool) -> None:
+@click.option(
+    "--domain",
+    "-d",
+    type=click.Choice(["paths", "code", "docs", "data"]),
+    help="Show detailed status for specific domain",
+)
+def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
     """Show discovery statistics for a facility.
 
     Displays:
@@ -5782,8 +5814,9 @@ def discover_status(facility: str, as_json: bool) -> None:
     - High-value paths (score > 0.7)
 
     Examples:
-        imas-codex discovery status iter
-        imas-codex discovery status iter --json
+        imas-codex discover status iter
+        imas-codex discover status iter --json
+        imas-codex discover status iter --domain paths
     """
     import json as json_module
 
@@ -5808,7 +5841,7 @@ def discover_status(facility: str, as_json: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discovery.command("inspect")
+@discover.command("inspect")
 @click.argument("facility")
 @click.option(
     "--scanned",
@@ -5966,7 +5999,7 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
         raise SystemExit(1) from e
 
 
-@discovery.command("clear")
+@discover.command("clear")
 @click.argument("facility")
 @click.option(
     "--force",
@@ -6008,7 +6041,7 @@ def discover_clear(facility: str, force: bool) -> None:
         raise SystemExit(1) from e
 
 
-@discovery.command("seed")
+@discover.command("seed")
 @click.argument("facility")
 @click.option(
     "--path",
@@ -6032,6 +6065,502 @@ def discover_seed(facility: str, path: tuple[str, ...]) -> None:
         additional_paths = list(path) if path else None
         created = seed_facility_roots(facility, additional_paths)
         click.echo(f"✓ Created {created} root path(s) for {facility}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+# ============================================================================
+# Placeholder Discovery Commands (Future Implementation)
+# ============================================================================
+
+
+@discover.command("code")
+@click.argument("facility")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be discovered without making changes",
+)
+def discover_code(facility: str, dry_run: bool) -> None:
+    """Discover source files in scored paths.
+
+    NOT YET IMPLEMENTED.
+
+    This command will scan high-value paths (score >= 0.7) and create
+    SourceFile nodes for Python, Fortran, MATLAB, and other code files.
+
+    Prerequisites:
+        Run 'discover paths <facility>' first to identify high-value directories.
+
+    Examples:
+        imas-codex discover code iter
+        imas-codex discover code iter --dry-run
+    """
+    from rich.console import Console
+
+    from imas_codex.discovery import get_discovery_stats
+
+    console = Console()
+    stats = get_discovery_stats(facility)
+
+    if stats.get("scored", 0) == 0:
+        console.print(
+            f"[yellow]⚠ No scored paths found for {facility.upper()}[/yellow]\n"
+        )
+        console.print("Discovery pipeline:")
+        console.print(
+            "  1. [bold]discover paths[/bold] → 2. discover code → 3. ingest code"
+        )
+        console.print(f"\nNext step: [cyan]imas-codex discover paths {facility}[/cyan]")
+        raise SystemExit(1)
+
+    console.print("[yellow]discover code: Not yet implemented[/yellow]")
+    console.print(f"\nCurrent paths status for {facility.upper()}:")
+    console.print(f"  Scored paths: {stats.get('scored', 0)}")
+    console.print(f"  High-value (≥0.7): {stats.get('high_value', 'unknown')}")
+    console.print("\nThis feature will scan scored paths for source files.")
+    raise SystemExit(1)
+
+
+@discover.command("docs")
+@click.argument("facility")
+@click.option(
+    "--source",
+    "-s",
+    help="Specific DocSource ID to crawl (otherwise all for facility)",
+)
+@click.option(
+    "--cost-limit",
+    "-c",
+    type=float,
+    default=5.0,
+    help="Maximum LLM spend in USD (default: $5)",
+)
+def discover_docs(facility: str, source: str | None, cost_limit: float) -> None:
+    """Discover documentation: wiki pages and filesystem artifacts.
+
+    NOT YET IMPLEMENTED.
+
+    This command crawls configured documentation sources (wiki sites,
+    readthedocs, etc.) and scans scored paths for document artifacts
+    (PDFs, READMEs, etc.).
+
+    Prerequisites:
+        - Configure doc sources: 'discover sources add --facility <facility> ...'
+        - Or run 'discover paths' first for filesystem artifacts
+
+    Examples:
+        imas-codex discover docs iter
+        imas-codex discover docs iter --source iter-confluence
+        imas-codex discover docs iter -c 10.0
+    """
+    from rich.console import Console
+
+    console = Console()
+    console.print("[yellow]discover docs: Not yet implemented[/yellow]")
+    console.print("\nThis feature will:")
+    console.print("  1. Crawl configured DocSource sites (wikis, readthedocs)")
+    console.print("  2. Scan scored paths for document artifacts (PDFs, READMEs)")
+    console.print("  3. Score and prioritize discovered documentation")
+    console.print(
+        f"\nUse 'discover sources' to manage documentation sources for {facility}."
+    )
+    raise SystemExit(1)
+
+
+@discover.command("data")
+@click.argument("facility")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be discovered without making changes",
+)
+def discover_data(facility: str, dry_run: bool) -> None:
+    """Discover data sources: MDSplus trees, HDF5 files, IMAS databases.
+
+    NOT YET IMPLEMENTED.
+
+    This command scans for data infrastructure and creates nodes for
+    MDSplus servers/trees, HDF5 datasets, and IMAS database entries.
+
+    Prerequisites:
+        Run 'discover paths <facility>' first to identify data directories.
+
+    Examples:
+        imas-codex discover data iter
+        imas-codex discover data iter --dry-run
+    """
+    from rich.console import Console
+
+    console = Console()
+    console.print("[yellow]discover data: Not yet implemented[/yellow]")
+    console.print("\nThis feature will discover:")
+    console.print("  - MDSplus servers and tree structures")
+    console.print("  - HDF5 datasets and schemas")
+    console.print("  - IMAS database entries")
+    raise SystemExit(1)
+
+
+# ============================================================================
+# Documentation Sources Management
+# ============================================================================
+
+
+@discover.group("sources")
+def discover_sources():
+    """Manage documentation sources for discovery.
+
+    \b
+    Commands:
+      list     List all configured sources
+      add      Add a new documentation source
+      rm       Remove a documentation source
+      enable   Enable a paused source
+      disable  Disable a source
+
+    Documentation sources are stored in the graph and can be queried.
+    Credentials are stored securely in the system keyring.
+
+    Examples:
+        imas-codex discover sources list
+        imas-codex discover sources add --name "ITER Wiki" --url https://...
+    """
+    pass
+
+
+@discover_sources.command("list")
+@click.option("--facility", "-f", help="Filter by facility")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def sources_list(facility: str | None, as_json: bool) -> None:
+    """List all configured documentation sources.
+
+    Examples:
+        imas-codex discover sources list
+        imas-codex discover sources list --facility iter
+        imas-codex discover sources list --json
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    from imas_codex.graph import GraphClient
+
+    console = Console()
+
+    try:
+        with GraphClient() as gc:
+            if facility:
+                sources = gc.query(
+                    """
+                    MATCH (s:DocSource)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                    RETURN s.id AS id, s.name AS name, s.url AS url,
+                           s.source_type AS type, s.status AS status,
+                           s.page_count AS pages
+                    ORDER BY s.name
+                    """,
+                    facility=facility,
+                )
+            else:
+                sources = gc.query(
+                    """
+                    MATCH (s:DocSource)
+                    OPTIONAL MATCH (s)-[:FACILITY_ID]->(f:Facility)
+                    RETURN s.id AS id, s.name AS name, s.url AS url,
+                           s.source_type AS type, s.status AS status,
+                           s.page_count AS pages, f.id AS facility
+                    ORDER BY s.name
+                    """
+                )
+
+        if as_json:
+            import json
+
+            console.print_json(json.dumps(list(sources), default=str))
+            return
+
+        if not sources:
+            console.print("[dim]No documentation sources configured.[/dim]")
+            console.print("\nAdd a source with:")
+            console.print("  imas-codex discover sources add --name '...' --url '...'")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("ID", style="cyan")
+        table.add_column("Name")
+        table.add_column("Type")
+        table.add_column("Status")
+        table.add_column("Pages", justify="right")
+        if not facility:
+            table.add_column("Facility")
+
+        for idx, src in enumerate(sources):
+            status = src.get("status", "active")
+            status_style = "green" if status == "active" else "yellow"
+            row = [
+                str(idx),
+                src["id"],
+                src.get("name", ""),
+                src.get("type", ""),
+                f"[{status_style}]{status}[/{status_style}]",
+                str(src.get("pages", 0) or 0),
+            ]
+            if not facility:
+                row.append(src.get("facility", "-"))
+            table.add_row(*row)
+
+        console.print(table)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover_sources.command("add")
+@click.option("--name", "-n", required=True, help="Human-readable name")
+@click.option("--url", "-u", required=True, help="Base URL of the source")
+@click.option("--portal", "-p", help="Portal/starting page (relative to URL)")
+@click.option(
+    "--type",
+    "-t",
+    "source_type",
+    type=click.Choice(
+        [
+            "mediawiki",
+            "confluence",
+            "readthedocs",
+            "github_wiki",
+            "sphinx",
+            "generic_html",
+        ]
+    ),
+    default="generic_html",
+    help="Type of documentation site",
+)
+@click.option(
+    "--auth",
+    type=click.Choice(["none", "ssh_proxy", "basic", "session"]),
+    default="none",
+    help="Authentication method",
+)
+@click.option("--facility", "-f", help="Link to facility (creates if doesn't exist)")
+@click.option("--credential-service", help="Keyring service name for credentials")
+def sources_add(
+    name: str,
+    url: str,
+    portal: str | None,
+    source_type: str,
+    auth: str,
+    facility: str | None,
+    credential_service: str | None,
+) -> None:
+    """Add a new documentation source.
+
+    Examples:
+        imas-codex discover sources add -n "ITER Wiki" -u https://wiki.iter.org
+        imas-codex discover sources add -n "TCV Wiki" -u https://spcwiki.epfl.ch \\
+            --facility epfl --type mediawiki --auth ssh_proxy
+        imas-codex discover sources add -n "CHEASE Docs" -u https://chease.readthedocs.io \\
+            --type readthedocs
+    """
+    import re
+    from datetime import datetime
+
+    from imas_codex.graph import GraphClient
+
+    # Generate ID from name
+    source_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+    try:
+        with GraphClient() as gc:
+            # Check if source already exists
+            existing = gc.query(
+                "MATCH (s:DocSource {id: $id}) RETURN s.id", id=source_id
+            )
+            if existing:
+                click.echo(f"Error: Source '{source_id}' already exists", err=True)
+                raise SystemExit(1)
+
+            # Create facility if specified and doesn't exist
+            if facility:
+                fac_exists = gc.query(
+                    "MATCH (f:Facility {id: $id}) RETURN f.id", id=facility
+                )
+                if not fac_exists:
+                    gc.query(
+                        """
+                        CREATE (f:Facility {id: $id, name: $name})
+                        """,
+                        id=facility,
+                        name=facility.upper(),
+                    )
+                    click.echo(f"Created facility: {facility}")
+
+            # Create DocSource
+            now = datetime.now(UTC).isoformat()
+            gc.query(
+                """
+                CREATE (s:DocSource {
+                    id: $id,
+                    name: $name,
+                    url: $url,
+                    portal_page: $portal,
+                    source_type: $source_type,
+                    auth_type: $auth,
+                    credential_service: $credential_service,
+                    status: 'active',
+                    created_at: datetime($now),
+                    page_count: 0,
+                    artifact_count: 0
+                })
+                """,
+                id=source_id,
+                name=name,
+                url=url,
+                portal=portal,
+                source_type=source_type,
+                auth=auth,
+                credential_service=credential_service,
+                now=now,
+            )
+
+            # Link to facility if specified
+            if facility:
+                gc.query(
+                    """
+                    MATCH (s:DocSource {id: $source_id})
+                    MATCH (f:Facility {id: $facility_id})
+                    CREATE (s)-[:FACILITY_ID]->(f)
+                    """,
+                    source_id=source_id,
+                    facility_id=facility,
+                )
+
+        click.echo(f"✓ Created documentation source: {source_id}")
+        if facility:
+            click.echo(f"  Linked to facility: {facility}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover_sources.command("rm")
+@click.argument("source_id")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+def sources_rm(source_id: str, force: bool) -> None:
+    """Remove a documentation source.
+
+    Examples:
+        imas-codex discover sources rm iter-wiki
+        imas-codex discover sources rm iter-wiki --force
+    """
+    from imas_codex.graph import GraphClient
+
+    try:
+        with GraphClient() as gc:
+            # Check if exists and get stats
+            result = gc.query(
+                """
+                MATCH (s:DocSource {id: $id})
+                OPTIONAL MATCH (s)<-[:SOURCE]-(p:WikiPage)
+                RETURN s.name AS name, count(p) AS page_count
+                """,
+                id=source_id,
+            )
+
+            if not result:
+                click.echo(f"Error: Source '{source_id}' not found", err=True)
+                raise SystemExit(1)
+
+            name = result[0]["name"]
+            page_count = result[0]["page_count"]
+
+            if not force:
+                msg = f"Delete source '{name}'"
+                if page_count:
+                    msg += f" and {page_count} associated pages"
+                msg += "?"
+                click.confirm(msg, abort=True)
+
+            # Delete source and associated pages
+            gc.query(
+                """
+                MATCH (s:DocSource {id: $id})
+                OPTIONAL MATCH (s)<-[:SOURCE]-(p:WikiPage)
+                DETACH DELETE s, p
+                """,
+                id=source_id,
+            )
+
+        click.echo(f"✓ Deleted source: {source_id}")
+        if page_count:
+            click.echo(f"  Removed {page_count} associated pages")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover_sources.command("enable")
+@click.argument("source_id")
+def sources_enable(source_id: str) -> None:
+    """Enable a paused documentation source.
+
+    Examples:
+        imas-codex discover sources enable iter-wiki
+    """
+    from imas_codex.graph import GraphClient
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (s:DocSource {id: $id})
+                SET s.status = 'active'
+                RETURN s.name AS name
+                """,
+                id=source_id,
+            )
+
+            if not result:
+                click.echo(f"Error: Source '{source_id}' not found", err=True)
+                raise SystemExit(1)
+
+        click.echo(f"✓ Enabled: {source_id}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@discover_sources.command("disable")
+@click.argument("source_id")
+def sources_disable(source_id: str) -> None:
+    """Disable a documentation source.
+
+    Examples:
+        imas-codex discover sources disable iter-wiki
+    """
+    from imas_codex.graph import GraphClient
+
+    try:
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (s:DocSource {id: $id})
+                SET s.status = 'disabled'
+                RETURN s.name AS name
+                """,
+                id=source_id,
+            )
+
+            if not result:
+                click.echo(f"Error: Source '{source_id}' not found", err=True)
+                raise SystemExit(1)
+
+        click.echo(f"✓ Disabled: {source_id}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
