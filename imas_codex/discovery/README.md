@@ -158,33 +158,145 @@ Process repeats
 max_depth: 15  # Stop recursing beyond this depth
 ```
 
-### State Rename: 'expanded' → 'enriched'
+### State Rename: 'expanded' → 'enriched' (Removed as State)
 
-The `expanded` state was confusing because it implied recursive descent into
-subdirectories. The actual behavior is **rich scanning** (rg + dust) without
-changing scope. 
+The `expanded`/`enriched` concept was confusing. After review, **enrichment is 
+not a separate state** - it's a data-gathering step that feeds back into scoring.
 
-**New name: `enriched`**
+**Revised states** (simpler):
 
 | State | Meaning |
 |-------|---------|
 | `discovered` | Path found, not yet enumerated |
 | `listing` | Worker actively enumerating (transient) |
-| `listed` | Has file/dir counts, children created |
+| `listed` | Has file/dir counts, children created, ready for scoring |
 | `scoring` | Worker actively scoring (transient) |
-| `scored` | LLM scored all dimensions |
-| `enriched` | **Rich scan complete** (rg matches, size) |
-| `skipped` | Score below threshold |
+| `scored` | LLM scored, final unless stale |
+| `skipped` | Score below threshold (< 0.2) |
 | `excluded` | Matched exclusion pattern |
 | `stale` | Needs re-discovery |
 
-**Transition to `enriched`**:
-- Trigger: `interest_score >= 0.5` after scoring
-- Action: Run `rg` patterns + `dust` size estimation
-- Purpose: Gather evidence for high-value paths before ingestion
+**Enrichment is a property, not a state**:
+- `is_enriched: bool` - whether rg/dust data is populated
+- `enriched_at: datetime` - when enrichment occurred
+- `previous_reasoning: str` - LLM reasoning from first pass (for rescore context)
 
-This happens IN PLACE - no new child paths are created. The path already
-has children from the initial listing phase.
+### Rescore Loop for High-Value Paths
+
+High-scoring paths get a second pass with richer evidence:
+
+```
+                                    ┌──────────────────────────────┐
+                                    │  score >= RESCORE_THRESHOLD  │
+                                    │  (default: 0.75)             │
+                                    └──────────────┬───────────────┘
+                                                   │
+┌─────────────┐     ┌─────────────┐     ┌─────────▼─────────┐
+│  discovered │────▶│   listed    │────▶│      scored       │
+└─────────────┘     └─────────────┘     │ (initial pass)    │
+                                        └─────────┬─────────┘
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │  Enrich (rg + dust)       │
+                                    │  - Run pattern search     │
+                                    │  - Estimate size          │
+                                    │  - Store previous_reasoning│
+                                    └─────────────┬─────────────┘
+                                                  │
+                                        SET status = 'listed'
+                                        SET is_enriched = true
+                                                  │
+                                    ┌─────────────▼─────────────┐
+                                    │      scored (final)       │
+                                    │  - LLM sees enrichment    │
+                                    │  - LLM sees prev reasoning│
+                                    │  - Higher confidence score│
+                                    └───────────────────────────┘
+```
+
+**Why 0.75 threshold (not 0.5)?**
+- Limits rescore to truly high-value paths
+- Reduces LLM costs (fewer rescores)
+- 0.5 would rescore ~50% of paths; 0.75 rescores ~20%
+
+### Scorer with Enrichment Context
+
+When scoring an enriched path, the LLM prompt includes:
+
+```python
+def build_score_prompt(path_info: dict) -> str:
+    base = f"""
+    Path: {path_info['path']}
+    File count: {path_info['file_count']}
+    Dir count: {path_info['dir_count']}
+    Child names: {path_info['child_names'][:30]}
+    """
+    
+    # Add enrichment data if available
+    if path_info.get('is_enriched'):
+        base += f"""
+    
+    === ENRICHED DATA (second pass) ===
+    Size: {path_info['size_bytes']} bytes
+    Pattern matches: {path_info['rg_matches']}
+    
+    Previous assessment:
+    {path_info['previous_reasoning']}
+    
+    Based on the additional evidence above, refine your scores.
+    The previous assessment was made with less information.
+    """
+    
+    return base
+```
+
+**Benefits of two-pass scoring**:
+1. First pass is cheap (light scan data only)
+2. Only high-value paths get expensive rg/dust + rescore
+3. Second pass has more evidence AND previous reasoning
+4. Final scores are more confident and grounded
+
+### FacilityPath Enrichment Properties
+
+```yaml
+FacilityPath:
+  attributes:
+    # === Enrichment tracking ===
+    is_enriched:
+      description: Whether rg/dust enrichment has been performed
+      range: boolean
+      
+    enriched_at:
+      description: When enrichment was performed
+      range: datetime
+      
+    previous_reasoning:
+      description: LLM reasoning from first scoring pass (for rescore context)
+      range: string
+    
+    rescore_count:
+      description: Number of times this path has been rescored
+      range: integer
+    
+    # === Enrichment data ===
+    rg_matches:
+      description: Pattern match counts from rg (JSON dict)
+      range: string  # JSON serialized
+      
+    size_bytes:
+      description: Directory size from dust
+      range: integer
+```
+
+### Configuration
+
+```yaml
+# In config/patterns/scoring/base.yaml
+thresholds:
+  skip: 0.2           # Below this → status='skipped'
+  rescore: 0.75       # Above this → enrich and rescore
+  max_rescores: 1     # Prevent infinite loops
+```
 
 ### Status Transitions and Scoring
 
@@ -192,6 +304,10 @@ has children from the initial listing phase.
 
 ```
 discovered → listing → listed → scoring → scored
+                         ↑                   │
+                         │     (if score >= 0.75 and not enriched)
+                         │                   │
+                         └───── enrich ──────┘
 ```
 
 **With multi-dimensional scoring**, a path is scored when the LLM evaluates it.
@@ -220,20 +336,6 @@ This ensures:
 - Code-only directories score highly on `score_code`
 - Mixed directories don't get artificially boosted
 - NULL scores are treated as 0 (not scored yet)
-
-### Enriched State Explained
-
-`enriched` means we run a **rich scan** for additional evidence:
-
-1. **Trigger**: Path scores above threshold (`interest_score >= 0.5`)
-2. **Action**: Run `rg` (pattern search) and `dust` (size) inside the directory
-3. **Scope**: Only the current directory, not subdirs (they're already separate nodes)
-4. **Result**: Enhanced data (`rg_matches`, `size_bytes`) stored in graph
-5. **No new children**: Children were already created during the listing phase
-
-**Enrichment is in-place**: The path transitions from `scored` → `enriched` without
-creating new FacilityPath nodes. This is purely about gathering more evidence
-for high-value directories before ingestion.
 
 ### 50 Paths/Second Throughput
 
@@ -461,12 +563,14 @@ States have an implicit order that defines valid transitions and fallback behavi
     1     listing      discovered   Yes
     2     listed       -            No
     3     scoring      listed       Yes
-    4     scored       -            No
+    4     scored       -            No  (may loop back to listed for rescore)
     4     skipped      -            No  (terminal alternative)
     4     excluded     -            No  (terminal alternative)
-    5     enriched     -            No
-    6     stale        -            No  (triggers re-entry at 0)
+    5     stale        -            No  (triggers re-entry at 0)
 ```
+
+Note: `enriched` is not a state - enrichment data is tracked via `is_enriched` property.
+High-scoring paths get enriched then set back to `listed` for rescoring.
 
 ### Long-Lived States (work queues)
 
@@ -474,9 +578,8 @@ States have an implicit order that defines valid transitions and fallback behavi
 |-------|-------------|-------------|
 | `discovered` | Path found, awaiting enumeration | Scanner claims |
 | `listed` | Enumerated, awaiting LLM score | Scorer claims |
-| `scored` | LLM scored, interest_score set | Done or ingest |
-| `enriched` | High-value, rich scan completed | Ready for ingestion |
-| `skipped` | Low value (score < threshold) | None |
+| `scored` | LLM scored, interest_score set | Done (or enrich→rescore if high) |
+| `skipped` | Low value (score < 0.2) | None |
 | `excluded` | Matched exclusion pattern | None |
 | `stale` | Path may have changed | Re-discover |
 
@@ -509,28 +612,42 @@ SET p.status = 'listed', p.claimed_at = null
 
 ```
 discovered ──(claim)──> listing ──(complete)──> listed
-                            │
-                        (timeout)
-                            │
-                            ▼
-                       discovered
-
-listed ──(claim)──> scoring ──(score >= threshold)──> scored
-                        │           │
-                        │      (score < 0.2)
-                        │           │
-                        │           ▼
-                        │       skipped
-                        │
-                   (score > 0.5)
-                        │
-                        ▼
-                    enriched   (terminal, ready for ingestion)
-
-scored ──(rescore)──> listed  (when new --focus requested)
+                            │                      │
+                        (timeout)                  │
+                            │                      ▼
+                            ▼                   scoring
+                       discovered                  │
+                                                   │
+                    ┌──────────────────────────────┼──────────────────────────────┐
+                    │                              │                              │
+               score < 0.2                  0.2 <= score < 0.75           score >= 0.75
+                    │                              │                    AND not is_enriched
+                    ▼                              ▼                              │
+                skipped                         scored                            │
+                                                   │                              ▼
+                                                   │                    ┌─────────────────┐
+                                                   │                    │ Enrich (rg/dust)│
+                                                   │                    │ Store reasoning │
+                                                   │                    │ is_enriched=true│
+                                                   │                    └────────┬────────┘
+                                                   │                             │
+                                                   │                    status = 'listed'
+                                                   │                             │
+                                                   │                             ▼
+                                                   │                    scoring (2nd pass)
+                                                   │                             │
+                                                   └─────────────────────────────┼
+                                                                                 ▼
+                                                                         scored (final)
 
 stale ──(rediscover)──> discovered
 ```
+
+**Key transitions**:
+- `score < 0.2` → `skipped` (low value, terminal)
+- `0.2 <= score < 0.75` → `scored` (good enough, no rescore)
+- `score >= 0.75 AND not is_enriched` → enrich → `listed` → rescore → `scored`
+- `score >= 0.75 AND is_enriched` → `scored` (already rescored, prevent loops)
 
 ## Two-Pass Scan/Score
 
@@ -541,14 +658,15 @@ stale ──(rediscover)──> discovered
 - **No**: rg patterns, dust size
 - **Performance**: ~50 paths/second
 
-### Phase 2: Rich Scan (for high-scoring paths)
-- **Trigger**: `score >= 0.5` or explicit `expand_to` set
-- **Goal**: Deep evidence for informed scoring
+### Phase 2: Rich Scan (for high-scoring paths ≥ 0.75)
+- **Trigger**: `interest_score >= 0.75 AND NOT is_enriched`
+- **Goal**: Deep evidence for informed rescoring
 - **Tools**: 
   - `rg` for IMAS/MDSplus/physics patterns
   - `dust` for size (with timeouts)
 - **Data**: rg_matches, size_bytes, patterns_found
 - **Safety**: Timeout per directory, skip if >10s
+- **Next**: Set `is_enriched=true`, `status='listed'`, trigger rescore
 
 ### Preventing Hangs
 
@@ -739,18 +857,19 @@ PathStatus:
     listed:
       description: Enumerated (file_count, dir_count set), awaiting score
     scoring:
-      description: Scorer worker active (fallback → listed or scored)
+      description: Scorer worker active (fallback → listed)
     scored:
-      description: All requested dimensions scored
-    enriched:
-      description: High-value path with rich scan data (rg matches, size)
+      description: LLM scored (may have been rescored if high-value)
     skipped:
-      description: Low value or dead-end
+      description: Low value (score < 0.2)
     excluded:
       description: Matched exclusion pattern (not enumerated)
     stale:
       description: Path may have changed, needs re-discovery
 ```
+
+Note: `enriched` is NOT a status. Enrichment is tracked via `is_enriched` boolean.
+High-value paths (score >= 0.75) get enriched then set back to `listed` for rescoring.
 
 #### 2. PathPurpose Enum (facility.yaml)
 
