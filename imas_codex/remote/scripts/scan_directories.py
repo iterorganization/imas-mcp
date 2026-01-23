@@ -48,6 +48,15 @@ from pathlib import Path
 from typing import Any
 
 
+def sanitize_str(s: str) -> str:
+    """Remove surrogate characters that cannot be encoded as JSON.
+
+    Some filesystems have filenames with invalid UTF-8 bytes. Python represents
+    these as surrogate characters which json.dumps() cannot encode.
+    """
+    return s.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+
+
 def has_command(cmd: str) -> bool:
     """Check if command exists in PATH."""
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
@@ -109,11 +118,11 @@ def scan_directory(
             # Entry may have been deleted or permission denied
             pass
 
-    # Child directories (full paths)
-    child_dirs = [entry.path for entry in dirs]
+    # Child directories (full paths) - sanitize for JSON encoding
+    child_dirs = [sanitize_str(entry.path) for entry in dirs]
 
-    # First 30 names for context (for LLM scoring)
-    child_names = [entry.name for entry in entries[:30]]
+    # First 30 names for context (for LLM scoring) - sanitize for JSON encoding
+    child_names = [sanitize_str(entry.name) for entry in entries[:30]]
 
     # Quality indicators (case-insensitive check)
     names_lower: set[str] = set()
@@ -126,12 +135,12 @@ def scan_directory(
     has_makefile = "makefile" in names_lower or "cmakelists.txt" in names_lower
     has_git = ".git" in names_lower
 
-    # Extension counts (for file type distribution)
+    # Extension counts (for file type distribution) - sanitize keys for JSON
     ext_counts: dict[str, int] = {}
     for f in files:
         suffix = Path(f.name).suffix
         if suffix:
-            ext = suffix.lstrip(".")
+            ext = sanitize_str(suffix.lstrip("."))
             ext_counts[ext] = ext_counts.get(ext, 0) + 1
 
     # rg pattern matching (if enabled and available)
