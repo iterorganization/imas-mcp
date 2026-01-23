@@ -280,7 +280,7 @@ async def scan_worker(
     """
     from imas_codex.discovery.scanner import scan_paths
 
-    batch_size = 100  # Paths per SSH call (optimized for ~45 paths/s throughput)
+    batch_size = 200  # Paths per SSH call (optimized for ~65 paths/s throughput)
 
     while not state.should_stop():
         # Claim work from graph
@@ -384,9 +384,9 @@ async def score_worker(
     from imas_codex.discovery.scorer import DirectoryScorer
 
     scorer = DirectoryScorer()
-    # LLM batch size: 25 paths provides good balance of throughput vs context
-    # Larger batches risk context overflow, smaller batches waste prompt tokens
-    batch_size = 25
+    # LLM batch size: 50 paths with 32k max_tokens provides optimal throughput
+    # Sonnet 4.5 has 200k context window, output is ~250 tokens/dir
+    batch_size = 50
     loop = asyncio.get_event_loop()
 
     while not state.should_stop():

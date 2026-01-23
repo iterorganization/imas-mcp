@@ -7,7 +7,7 @@ Graph-led filesystem discovery with parallel scan and score workers.
 The discovery pipeline uses SSH to enumerate remote filesystems, storing all state
 in Neo4j. Two types of async workers operate in parallel:
 
-- **Scanners**: Enumerate directories via `fd`/`ls`, create child FacilityPath nodes
+- **Scanners**: Enumerate directories via `os.scandir`, create child FacilityPath nodes
 - **Scorers**: LLM-evaluate paths for interest (code quality, physics relevance, etc.)
 
 All state transitions are atomic via Cypher queries, enabling crash recovery.
@@ -93,7 +93,7 @@ uv run imas-codex discover <facility> [options]
 | `--focus TEXT` | (all dims) | Natural language focus for scoring |
 | `--cost-limit` | 10.0 | Maximum LLM cost in USD |
 | `--limit N` | (none) | Maximum paths to process |
-| `--threshold` | 0.3 | Minimum score to expand |
+| `--threshold` | 0.7 | Minimum score to expand |
 | `--scan-workers` | 2 | Parallel SSH scanner workers |
 | `--score-workers` | 2 | Parallel LLM scorer workers |
 
@@ -176,11 +176,33 @@ Defined in `config/patterns/scoring/`:
 
 | Operation | Throughput | Notes |
 |-----------|------------|-------|
-| Light scan (fd only) | 25-50 paths/s | Batch SSH with 50+ paths |
-| LLM scoring | 0.5-1.0 paths/s | Depends on model and batch size |
+| Light scan (enumeration only) | 65-100 paths/s | Batch 200+ paths per SSH call |
+| Scan with rg patterns | 6-8 paths/s | Pattern detection adds ~15s overhead |
+| LLM scoring | 0.35-0.45 paths/s | Batch 50 dirs, Sonnet 4.5, 32k max_tokens |
+
+### Batch Size Optimization
+
+SSH overhead dominates scan time (~5s constant). Larger batches amortize this:
+
+| Batch Size | Time (s) | Paths/s | Notes |
+|------------|----------|---------|-------|
+| 25 | 5.2 | 4.8 | Small batch |
+| 100 | 4.8 | 20.9 | Good balance |
+| 200 | 4.8 | 41.6 | Recommended |
+| 500 | 5.0 | 100.3 | Maximum tested |
+
+LLM scoring throughput is constant (~0.4/s) but cost scales with batch:
+
+| Batch Size | Time (s) | Cost ($) | Tokens | Notes |
+|------------|----------|----------|--------|-------|
+| 10 | 34 | 0.046 | 8k | Small batch |
+| 25 | 81 | 0.101 | 15k | Old default |
+| 50 | 132 | 0.182 | 26k | New default |
+| 100 | 258 | 0.342 | 45k | Max practical |
 
 Key optimizations:
-- **Batch SSH calls**: Same 1.8s overhead whether 1 or 100 paths
+- **Batch SSH calls**: Same ~5s overhead whether 1 or 500 paths
+- **max_tokens=32000**: Supports 50+ paths per LLM call without truncation
 - **Persistent workers**: No Python restart between batches
 - **Atomic claims**: Cypher transactions prevent race conditions
 
@@ -195,3 +217,25 @@ Key optimizations:
 | `scanner.py` | SSH batch enumeration |
 | `scorer.py` | LLM path evaluation |
 | `config.py` | Pattern loading from YAML |
+| `models.py` | Pydantic models for scoring |
+| `executor.py` | Discovery loop orchestration |
+| `facility.py` | Facility configuration access |
+
+## Configuration Constants
+
+Key constants in `parallel.py`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ORPHAN_TIMEOUT_MINUTES` | 10 | Reset orphaned claims after 10 min |
+| `scan_batch_size` | 200 | Paths per SSH call |
+| `score_batch_size` | 50 | Paths per LLM call |
+
+Key constants in `scorer.py`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_RETRIES` | 3 | Retry count for rate limits |
+| `RETRY_BASE_DELAY` | 2.0 | Base delay in seconds (doubles each retry) |
+| `max_tokens` | 32000 | LLM output token limit |
+| `SCORE_WEIGHTS` | code=1.0, data=0.8, imas=1.2 | Dimension weights |
