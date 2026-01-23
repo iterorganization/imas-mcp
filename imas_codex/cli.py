@@ -5554,7 +5554,16 @@ def _print_discovery_summary(
     stats = get_discovery_stats(facility)
     coverage = stats["scored"] / stats["total"] * 100 if stats["total"] > 0 else 0
     elapsed = result.get("elapsed_seconds", 0)
-    elapsed_str = f"{elapsed / 60:.1f}m" if elapsed >= 60 else f"{elapsed:.1f}s"
+    # Use consistent time format: Xh Ym Zs
+    if elapsed >= 3600:
+        hours, rem = divmod(int(elapsed), 3600)
+        mins = rem // 60
+        elapsed_str = f"{hours}h {mins:02d}m" if mins else f"{hours}h"
+    elif elapsed >= 60:
+        mins, secs = divmod(int(elapsed), 60)
+        elapsed_str = f"{mins}m {secs:02d}s" if secs else f"{mins}m"
+    else:
+        elapsed_str = f"{int(elapsed)}s"
     scan_rate = result.get("scan_rate")
     score_rate = result.get("score_rate")
 
@@ -5594,7 +5603,10 @@ def _print_discovery_summary(
         f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
     )
     summary.append(" · ", style="dim")
-    summary.append(f"frontier {stats['pending']:,}", style="cyan")
+    frontier = stats.get("discovered", 0) + stats.get("listed", 0)
+    summary.append(f"frontier {frontier:,}", style="cyan")
+    summary.append(" · ", style="dim")
+    summary.append(f"depth {stats.get('max_depth', 0)}", style="cyan")
 
     console.print(
         Panel(

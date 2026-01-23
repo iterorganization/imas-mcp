@@ -34,12 +34,14 @@ if TYPE_CHECKING:
 class DiscoveryStats:
     """Live statistics for discovery progress."""
 
-    # Counts
+    # Counts (aligned with PathStatus enum)
     total_paths: int = 0
-    pending: int = 0
-    scanned: int = 0
+    discovered: int = 0  # Awaiting scan
+    listed: int = 0  # Awaiting score
     scored: int = 0
     skipped: int = 0
+    excluded: int = 0
+    max_depth: int = 0
 
     # Current operation
     current_phase: str = "idle"  # scan, score, idle
@@ -63,8 +65,8 @@ class DiscoveryStats:
 
     @property
     def frontier_size(self) -> int:
-        """Paths awaiting scan."""
-        return self.pending
+        """Paths awaiting work (scan or score)."""
+        return self.discovered + self.listed
 
     @property
     def completion_fraction(self) -> float:
@@ -145,8 +147,8 @@ class DiscoveryProgressDisplay:
 
         # Row 2: Status breakdown
         table.add_row(
-            "Scanned:",
-            f"{self.stats.scanned:,}",
+            "Listed:",
+            f"{self.stats.listed:,}",
             "Scored:",
             f"[green]{self.stats.scored:,}[/green]",
         )
@@ -284,10 +286,12 @@ class DiscoveryProgressDisplay:
 
         stats = get_discovery_stats(facility)
         self.stats.total_paths = stats["total"]
-        self.stats.pending = stats["pending"]
-        self.stats.scanned = stats["scanned"]
+        self.stats.discovered = stats["discovered"]
+        self.stats.listed = stats["listed"]
         self.stats.scored = stats["scored"]
         self.stats.skipped = stats["skipped"]
+        self.stats.excluded = stats["excluded"]
+        self.stats.max_depth = stats["max_depth"]
 
         # Refresh display
         if self._live:
@@ -312,22 +316,24 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
 
     # Status breakdown
     total = stats["total"] or 1  # Avoid division by zero
-    console.print(
-        f"├─ Pending:   {stats['pending']:,} ({stats['pending'] / total * 100:.1f}%)"
-    )
-    console.print(
-        f"├─ Scanned:  {stats['scanned']:,} ({stats['scanned'] / total * 100:.1f}%)"
-    )
-    console.print(
-        f"├─ Scored:   {stats['scored']:,} ({stats['scored'] / total * 100:.1f}%)"
-    )
-    console.print(
-        f"└─ Skipped:   {stats['skipped']:,} ({stats['skipped'] / total * 100:.1f}%)"
-    )
+    discovered = stats.get("discovered", 0)
+    listed = stats.get("listed", 0)
+    scored = stats.get("scored", 0)
+    skipped = stats.get("skipped", 0)
+    excluded = stats.get("excluded", 0)
+    max_depth = stats.get("max_depth", 0)
+
+    console.print(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
+    console.print(f"├─ Listed:     {listed:,} ({listed / total * 100:.1f}%)")
+    console.print(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
+    console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
+    console.print(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
 
     # Summary
-    console.print(f"\nFrontier: {stats['pending']} paths awaiting scan")
-    coverage = stats["scored"] / total * 100 if total > 0 else 0
+    frontier = discovered + listed
+    console.print(f"\nFrontier: {frontier} paths awaiting work")
+    console.print(f"Max depth: {max_depth}")
+    coverage = scored / total * 100 if total > 0 else 0
     console.print(f"Coverage: {coverage:.1f}% scored")
 
     # High value paths

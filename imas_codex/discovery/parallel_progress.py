@@ -175,11 +175,14 @@ class ProgressState:
     model: str = ""
     focus: str = ""
 
-    # Graph totals
+    # Graph totals (aligned with new state machine)
     total: int = 0
-    pending: int = 0
-    scanned: int = 0
-    scored: int = 0
+    discovered: int = 0  # Awaiting scan
+    listed: int = 0  # Awaiting score
+    scored: int = 0  # Scored complete
+    skipped: int = 0  # Low value or dead-end
+    excluded: int = 0  # Matched exclusion pattern
+    max_depth: int = 0  # Maximum tree depth
 
     # This run
     run_scanned: int = 0
@@ -205,6 +208,11 @@ class ProgressState:
         return time.time() - self.start_time
 
     @property
+    def frontier_size(self) -> int:
+        """Total paths awaiting work (scan or score)."""
+        return self.discovered + self.listed
+
+    @property
     def coverage(self) -> float:
         """Percentage of total paths scored."""
         return (self.scored / self.total * 100) if self.total > 0 else 0
@@ -214,7 +222,7 @@ class ProgressState:
         """Estimated time to completion based on score rate."""
         if not self.score_rate or self.score_rate <= 0:
             return None
-        remaining = self.pending + max(0, self.scanned - self.scored)
+        remaining = self.discovered + self.listed
         return remaining / self.score_rate if remaining > 0 else 0
 
 
@@ -285,19 +293,14 @@ class ParallelProgressDisplay:
         section = Text()
 
         # Calculate totals and percentages
-        # Scan progress: scanned out of total known paths
-        scan_total = (
-            self.state.total
-            if self.state.total > 0
-            else (self.state.scanned + self.state.pending)
-        )
-        scan_pct = (self.state.scanned / scan_total * 100) if scan_total > 0 else 0
+        # Scan progress: listed out of total known paths
+        # "listed" means scan is complete, discovered means awaiting scan
+        scanned_count = self.state.total - self.state.discovered
+        scan_total = self.state.total if self.state.total > 0 else 1
+        scan_pct = (scanned_count / scan_total * 100) if scan_total > 0 else 0
 
-        # Score progress: scored out of scanned paths (can only score what's scanned)
-        # Use max(scanned, scored) as denominator to handle graph state inconsistencies
-        score_total = (
-            max(self.state.scanned, self.state.scored) if self.state.scanned > 0 else 1
-        )
+        # Score progress: scored out of listed paths
+        score_total = max(scanned_count, self.state.scored) if scanned_count > 0 else 1
         score_pct = (self.state.scored / score_total * 100) if score_total > 0 else 0
         score_pct = min(score_pct, 100.0)  # Cap at 100%
 
@@ -306,9 +309,9 @@ class ParallelProgressDisplay:
 
         # SCAN row: "  SCAN  ━━━━────  1,234  42%  12.3/s"
         section.append("  SCAN  ", style="bold blue")
-        scan_ratio = min(self.state.scanned / scan_total, 1.0) if scan_total > 0 else 0
+        scan_ratio = min(scanned_count / scan_total, 1.0) if scan_total > 0 else 0
         section.append(make_bar(scan_ratio, bar_width), style="blue")
-        section.append(f" {self.state.scanned:>6,}", style="bold")
+        section.append(f" {scanned_count:>6,}", style="bold")
         section.append(f" {scan_pct:>3.0f}%", style="cyan")
         if self.state.scan_rate:
             section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
@@ -415,6 +418,14 @@ class ParallelProgressDisplay:
                 section.append("  done", style="green dim")
             else:
                 section.append(f"  ETA {format_time(eta)}", style="dim")
+
+        # Frontier and depth metrics
+        section.append("\n")
+        section.append("  STATS ", style="bold magenta")
+        section.append(f"frontier={self.state.frontier_size}", style="cyan")
+        section.append(f"  depth={self.state.max_depth}", style="cyan")
+        section.append(f"  skipped={self.state.skipped}", style="yellow")
+        section.append(f"  excluded={self.state.excluded}", style="dim")
 
         return section
 
@@ -536,9 +547,12 @@ class ParallelProgressDisplay:
 
         stats = get_discovery_stats(facility)
         self.state.total = stats["total"]
-        self.state.pending = stats["pending"]
-        self.state.scanned = stats["scanned"]
+        self.state.discovered = stats["discovered"]
+        self.state.listed = stats["listed"]
         self.state.scored = stats["scored"]
+        self.state.skipped = stats["skipped"]
+        self.state.excluded = stats["excluded"]
+        self.state.max_depth = stats["max_depth"]
 
         self._refresh()
 

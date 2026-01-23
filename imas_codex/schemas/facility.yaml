@@ -534,6 +534,30 @@ classes:
         multivalued: true
       notes:
         description: Free-form notes about this path (append, don't overwrite)
+      # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
+      physics_relevance:
+        description: Score for fusion physics content (IMAS patterns, equilibrium, etc.)
+        range: float
+      code_quality:
+        description: Score for code organization and documentation
+        range: float
+      data_access_patterns:
+        description: Score for data I/O patterns (MDSplus, HDF5, etc.)
+        range: float
+      score_reasoning:
+        description: LLM explanation for interest_score assignment
+      # Rescore loop (for high-value paths)
+      is_enriched:
+        description: Whether this path has been enriched with deep scan data
+        range: boolean
+      enriched_at:
+        description: When enrichment was completed
+        range: datetime
+      previous_reasoning:
+        description: Reasoning from previous score (for rescore context)
+      rescore_count:
+        description: Number of times this path has been rescored
+        range: integer
       # Scout session tracking
       skip_reason:
         description: Why this path was skipped (dead-end pattern, low priority, etc.)

@@ -60,25 +60,26 @@ enums:
 
   PathStatus:
     description: >-
-      Lifecycle status for facility path exploration.
-      Progress is graph-derived: check file_count, child SourceFile nodes.
-      Scout workflow: discovered -> listed -> scanned -> analyzed -> explored
-      Dead-ends: discovered -> skipped (check skip_reason property)
+      Lifecycle status for facility path discovery.
+      Transient states (listing, scoring) have fallback states for orphan recovery.
+      Progress is graph-derived: check file_count, dir_count, interest_score.
     permissible_values:
       discovered:
-        description: Path found, awaiting exploration
+        description: Path found, awaiting enumeration
+      listing:
+        description: Scanner worker active (fallback to discovered on timeout)
       listed:
-        description: Directory contents enumerated (file_count, dir_count set)
-      scanned:
-        description: Pattern search completed (patterns_found populated)
-      analyzed:
-        description: Files examined, ready for ingestion decision
-      explored:
-        description: Fully examined, all files queued for ingestion
+        description: Enumerated (file_count, dir_count set), awaiting LLM score
+      scoring:
+        description: Scorer worker active (fallback to listed on timeout)
+      scored:
+        description: LLM scored (may have been rescored if high-value)
       skipped:
-        description: Dead-end detected or low value (check skip_reason)
+        description: Low value (score < 0.2) or dead-end
+      excluded:
+        description: Matched exclusion pattern (not enumerated)
       stale:
-        description: Path may no longer exist or has changed
+        description: Path may have changed, needs re-discovery
 
   SourceFileStatus:
     description: >-
