@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -152,10 +153,22 @@ def scan_paths(
             ssh_host=ssh_host,
             timeout=timeout,
         )
-    except Exception as e:
-        logger.warning(f"Scan failed for {facility}: {e}")
+    except subprocess.TimeoutExpired:
+        # Clean error message without base64 script dump
+        error_msg = f"SSH scan timed out after {timeout}s for {facility}"
+        logger.warning(error_msg)
         return [
-            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=str(e))
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_msg)
+            for p in paths
+        ]
+    except Exception as e:
+        # Clip long error messages (avoid base64 script in output)
+        error_str = str(e)
+        if len(error_str) > 200:
+            error_str = error_str[:200] + "..."
+        logger.warning(f"Scan failed for {facility}: {error_str}")
+        return [
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
             for p in paths
         ]
 

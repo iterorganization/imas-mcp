@@ -74,11 +74,25 @@ def _deep_merge(base: dict, updates: dict) -> dict:
 
 
 def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> CommentedMap:
-    """Deep merge updates into ruamel CommentedMap, preserving comments."""
+    """Deep merge updates into ruamel CommentedMap, preserving comments.
+
+    For nested dicts (like tools), replaces entire sub-dict to avoid
+    comment-induced indentation issues. For lists, extends without duplicates.
+    """
     for key, value in updates.items():
         if key in base:
             if isinstance(base[key], CommentedMap) and isinstance(value, dict):
-                _deep_merge_ruamel(base[key], value)
+                # For nested dicts, replace entirely if the incoming value
+                # is a plain dict (not CommentedMap) to avoid YAML formatting issues
+                # when comments exist between keys
+                if not isinstance(value, CommentedMap):
+                    # Convert to CommentedMap and replace
+                    new_map = CommentedMap()
+                    for k, v in value.items():
+                        new_map[k] = v
+                    base[key] = new_map
+                else:
+                    _deep_merge_ruamel(base[key], value)
             elif isinstance(base[key], list | CommentedSeq) and isinstance(value, list):
                 # Extend lists, avoiding duplicates
                 for item in value:
