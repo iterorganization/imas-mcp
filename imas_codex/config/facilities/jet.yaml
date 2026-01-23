@@ -1,0 +1,28 @@
+# JET - Joint European Torus
+#
+# Public facility configuration for graph and mappings.
+# Infrastructure data is in jet_private.yaml (gitignored).
+
+facility: jet
+name: JET (Joint European Torus)
+machine: JET
+description: Joint European Torus - EUROfusion operated tokamak
+location: Culham, United Kingdom
+
+# SSH connection (user configures ~/.ssh/config with this alias)
+ssh_host: jet
+
+# Data systems available at this facility
+data_systems:
+  - ppf    # JET Processed Pulse File system
+  - uda    # Universal Data Access (SAL)
+  - imas   # IMAS data format
+  - mdsplus  # MDSplus (limited use)
+
+# Wiki/documentation sites (if any)
+# wiki_sites:
+#   - url: https://wiki.jet.efda.org
+#     portal_page: Main_Page
+#     site_type: mediawiki
+#     auth_type: session
+#     credential_service: jet-wiki
