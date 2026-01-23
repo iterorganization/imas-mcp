@@ -217,6 +217,22 @@ git log --oneline --all --not main | head -20
 
 ## Code Style
 
+### Python Version
+
+This project requires **Python 3.12** (`requires-python = ">=3.12,<3.13"`). Do not write fallback code for older Python versions. Remove any legacy compatibility patterns you encounter.
+
+```python
+# Wrong - unnecessary fallback for older Python
+try:
+    script_path = importlib.resources.files("package").joinpath("file")
+except (AttributeError, TypeError):
+    import pkg_resources  # Python 3.8 fallback - DELETE THIS
+    ...
+
+# Correct - use Python 3.12 features directly
+script_path = importlib.resources.files("package").joinpath("file")
+```
+
 ### Type Annotations
 
 ```python
