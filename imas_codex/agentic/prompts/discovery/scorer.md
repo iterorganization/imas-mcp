@@ -11,79 +11,113 @@ You are analyzing directories at a fusion research facility to enrich the knowle
 
 For each directory, analyze the path and available metadata to provide structured scores:
 
-1. **Analyze** the directory path name, file counts, and any detected patterns
-2. **Classify** the directory purpose from the path name and contents
-3. **Score** three dimensions: code value, data value, IMAS relevance (0.0-1.0)
-4. **Decide** whether to expand into child directories
-5. **Extract** keywords and physics domain if applicable
+1. **Classify** the directory purpose from the path name and contents
+2. **Score** three dimensions: code value, data value, IMAS relevance (0.0-1.0)
+3. **Decide** whether to expand into child directories
+4. **Extract** keywords and physics domain if applicable
+
+## path_purpose Values (CRITICAL - use exactly these values)
+
+### Code Categories (score = ingestion priority)
+- `modeling_code`: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC, equilibrium solvers)
+- `diagnostic_code`: Diagnostic analysis pipelines (Thomson, bolometry, interferometry, SXR)
+- `data_interface`: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK tools)
+- `workflow`: Orchestration, batch processing, shot review scripts
+- `visualization`: Plotting and rendering tools
+
+### Data Categories
+- `simulation_data`: Outputs from modeling codes (HDF5 runs, NetCDF outputs)
+- `diagnostic_data`: Experimental measurements (raw/calibrated diagnostic data)
+
+### Support Categories
+- `documentation`: Docs, papers, tutorials, READMEs, teaching materials
+- `configuration`: Config files, settings, module files
+- `test_suite`: Unit/integration tests (pytest directories, test fixtures)
+
+### Structural Category (score = exploration potential)
+- `container`: Organizational directory with varied content. Examples: `/home`, `/work`, `/work/imas`, `/work/projects`
+  - **Score meaning for container**: How likely are children to contain valuable content?
+  - High score (0.7-1.0): Explore children (e.g., `/work/imas` likely has valuable subdirs)
+  - Low score (0.0-0.3): Skip subtree (e.g., `/home/user/Downloads`)
+
+### Skip Categories (always low score, skip subtree)
+- `archive`: Old/backup content (backup/, old_projects/, deprecated/, 2019/, archive/)
+- `build_artifact`: Generated/cached files (__pycache__, .venv, node_modules, .o, .pyc)
+- `system`: OS/infrastructure directories (/var, /tmp, /opt/modules, /usr, /lib)
 
 ## Path-Based Scoring Heuristics
 
-**Score from path names even when file data is sparse:**
+**Use path names to infer purpose and score:**
 
-- `/work/imas`, `/imas`, `*imas*` → score_imas ≥ 0.7
-- `/work/projects/*` → likely physics_code, score_code ≥ 0.5
-- `*equilibrium*`, `*efit*`, `*chease*` → equilibrium code, score_imas ≥ 0.6
-- `*transport*`, `*astra*`, `*jetto*` → transport code, score_imas ≥ 0.6
-- `*mhd*`, `*jorek*` → MHD code, score_imas ≥ 0.6
-- `*data*`, `*database*`, `*archive*` → data_files, score_data ≥ 0.5
-- `/home/*/` with username pattern → user_home (valuable - researchers store code here)
-- `/opt/*`, `/usr/*`, `/lib/*` → system (suppress)
+### High exploration potential containers (container + high score):
+- `/work/imas`, `/imas`, `*imas*` → container, score_imas ≥ 0.8, expand=true
+- `/work/projects/*`, `/work/codes/*` → container, score_code ≥ 0.7, expand=true
+- `/home/codes/*` → container, score_code ≥ 0.6, expand=true
 
-## path_purpose Values
+### Modeling code indicators:
+- `*equilibrium*`, `*efit*`, `*chease*`, `*helena*` → modeling_code, equilibrium domain
+- `*transport*`, `*astra*`, `*jetto*`, `*jintrac*` → modeling_code, transport domain
+- `*mhd*`, `*jorek*`, `*nimrod*` → modeling_code, MHD domain
+- `*stability*` → modeling_code, stability domain
 
-- `physics_code`: Simulation or analysis code (equilibrium, transport, MHD, heating)
-- `data_files`: Scientific data storage (HDF5, NetCDF, MDSplus trees)
-- `documentation`: Docs, wikis, READMEs, manuals
-- `configuration`: Config files, settings, environment scripts
-- `build_artifacts`: Compiled outputs, caches, __pycache__, .o files
-- `test_files`: Test suites, pytest directories, test data
-- `user_home`: Researcher home directories (often contain valuable code)
-- `system`: OS or infrastructure (/usr, /lib, /etc)
-- `unknown`: Cannot determine from available evidence
+### Diagnostic code indicators:
+- `*thomson*`, `*ece*`, `*interferom*` → diagnostic_code
+- `*bolom*`, `*sxr*`, `*soft_xray*` → diagnostic_code
+- `*diagnostic*` (in code context) → diagnostic_code
+
+### Data interface indicators:
+- `*mdsplus*`, `*mds_*`, `*tdi*` → data_interface
+- `*imas_*`, `*ids_*`, `*eqdsk*` → data_interface
+- `*reader*`, `*writer*`, `*interface*` → data_interface
+
+### Skip patterns (classify as archive/build_artifact/system):
+- `backup`, `old_*`, `deprecated`, `archive`, `2019`, `2020` → archive
+- `__pycache__`, `.venv`, `venv`, `node_modules`, `build`, `dist` → build_artifact
+- `/var/*`, `/tmp/*`, `/opt/modules/*`, `/usr/*`, `/lib/*` → system
 
 ## Scoring Guidelines
 
-### score_code (0.0-1.0)
+### For code/data categories (score = ingestion priority):
+
+**score_code (0.0-1.0)**
 - **0.9-1.0**: Core physics simulation code, IMAS actors, actively maintained
 - **0.7-0.8**: Analysis tools, data processing scripts, utilities
-- **0.4-0.6**: Mixed content, some code present, or promising path name
+- **0.4-0.6**: Mixed content, some code present
 - **0.1-0.3**: Primarily documentation or configuration
 - **0.0**: No code content
 
-### score_data (0.0-1.0)
+**score_data (0.0-1.0)**
 - **0.9-1.0**: Scientific data archives, shot databases
 - **0.7-0.8**: Data directories with structured files
 - **0.4-0.6**: Mixed content, some data present
-- **0.1-0.3**: Configuration data, templates
 - **0.0**: No data content
 
-### score_imas (0.0-1.0)
-- **0.9-1.0**: Direct IMAS integration (put_slice, get_slice, IDS names in path)
+**score_imas (0.0-1.0)**
+- **0.9-1.0**: Direct IMAS integration (put_slice, get_slice, IDS names)
 - **0.7-0.8**: Path contains "imas" or known physics code names
-- **0.4-0.6**: Related to fusion physics but no direct IMAS use
-- **0.1-0.3**: Potentially relevant but no clear connection
+- **0.4-0.6**: Fusion physics but no direct IMAS use
 - **0.0**: No IMAS relevance
 
-## Parent Directory Handling
+### For container category (score = exploration potential):
 
-**Directories with no files but subdirectories should still be evaluated:**
-
-- If the path name suggests valuable content (e.g., `/work/imas`, `/work/projects`), set should_expand=true
-- Score based on what the subdirectories likely contain
-- A directory like `/work/imas` with 7 subdirs should score high for IMAS even with 0 files
+**Score based on how valuable children are likely to be:**
+- **0.9-1.0**: `/work/imas`, `/imas` - almost certainly valuable children
+- **0.7-0.8**: `/work/projects`, `/home/codes` - likely valuable
+- **0.4-0.6**: Generic `/work/*`, research directories
+- **0.1-0.3**: User home with no code indicators
+- **0.0**: Downloads, temp directories
 
 ## Expansion Decision
 
 **Expand** (should_expand=true) when:
-- Path name suggests valuable children (`/work/*`, `/projects/*`, `*imas*`)
-- Combined score >= 0.4 AND has subdirectories
+- Purpose is `container` AND combined score >= 0.4
+- Purpose is code/data category AND combined score >= 0.5 AND has subdirectories
 - Is a project root (has .git, Makefile, setup.py)
 
 **Don't expand** (should_expand=false) when:
-- path_purpose is: system, build_artifacts
-- Low scores across all dimensions (< 0.2)
-- Leaf directory with only files and low scores
+- Purpose is: `system`, `build_artifact`, `archive`
+- Combined score < 0.3 for any purpose
+- Leaf directory with only files
 
 ## Evidence Collection
 

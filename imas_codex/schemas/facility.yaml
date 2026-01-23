@@ -215,26 +215,45 @@ enums:
   PathPurpose:
     description: >-
       LLM-classified purpose of a directory. Used during discovery scoring
-      to determine expansion priority and relevance. More granular than PathType.
+      to determine expansion priority (for containers) or ingestion priority
+      (for leaf directories). Score semantics vary by purpose type.
     permissible_values:
-      physics_code:
-        description: Physics simulation or analysis code (highest priority)
-      data_files:
-        description: Scientific data storage (HDF5, NetCDF, etc.)
+      # === CODE CATEGORIES (ingest based on score) ===
+      modeling_code:
+        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
+      diagnostic_code:
+        description: Diagnostic analysis pipelines (Thomson, bolometry, interferometry)
+      data_interface:
+        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK)
+      workflow:
+        description: Orchestration and batch processing scripts
+      visualization:
+        description: Plotting and rendering tools
+      # === DATA CATEGORIES ===
+      simulation_data:
+        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs)
+      diagnostic_data:
+        description: Experimental measurements (raw/calibrated diagnostic data)
+      # === SUPPORT CATEGORIES ===
       documentation:
-        description: Documentation, wikis, READMEs
+        description: Docs, papers, tutorials, READMEs
       configuration:
-        description: Configuration files, settings
-      build_artifacts:
-        description: Compiled outputs, caches, build directories
-      test_files:
-        description: Test suites and testing infrastructure
-      user_home:
-        description: Personal user directories (usually skip expansion)
+        description: Config files, settings, module files
+      test_suite:
+        description: Unit/integration tests (pytest directories)
+      # === STRUCTURAL CATEGORIES ===
+      container:
+        description: >-
+          Organizational directory with varied content (/home, /work, /work/imas).
+          Score reflects exploration potential of children, not content value.
+          High score = explore children; low score = skip subtree.
+      # === SKIP CATEGORIES (low score forced) ===
+      archive:
+        description: Old/backup content (backup/, old_projects/, deprecated/)
+      build_artifact:
+        description: Generated/cached files (__pycache__, .venv, node_modules)
       system:
-        description: OS or infrastructure directories (skip)
-      unknown:
-        description: Cannot determine purpose
+        description: OS/infrastructure directories (/var, /tmp, /opt/modules)
 
   DiscoveryStatus:
     description: >-
@@ -302,8 +321,51 @@ enums:
       other:
         description: Other file types
 
+  DocSourceType:
+    description: Types of documentation sources for discovery
+    permissible_values:
+      mediawiki:
+        description: MediaWiki-based sites (Wikipedia, SPCwiki)
+      confluence:
+        description: Atlassian Confluence (REST API available)
+      readthedocs:
+        description: ReadTheDocs hosted documentation
+      github_wiki:
+        description: GitHub wiki pages
+      sphinx:
+        description: Sphinx-generated documentation
+      generic_html:
+        description: Generic HTML site (scrape only)
+
+  DocSourceStatus:
+    description: Status of a documentation source
+    permissible_values:
+      active:
+        description: Source is enabled for discovery
+      paused:
+        description: Temporarily disabled (e.g., auth issues)
+      disabled:
+        description: Permanently disabled
+
+  FileCategory:
+    description: Category of a discovered file
+    permissible_values:
+      code:
+        description: Source code file (Python, Fortran, etc.)
+      document:
+        description: Document file (PDF, Word, README, etc.)
+      data:
+        description: Data file (HDF5, NetCDF, CSV, etc.)
+      config:
+        description: Configuration file (YAML, JSON, INI, etc.)
+      notebook:
+        description: Computational notebook (Jupyter, Mathematica)
+      other:
+        description: Other file types
+
+  # Legacy alias - will be removed in future version
   WikiSiteType:
-    description: Types of wiki/documentation sites
+    description: "[DEPRECATED] Use DocSourceType instead"
     permissible_values:
       mediawiki:
         description: MediaWiki-based sites (Wikipedia, SPCwiki)
@@ -1082,13 +1144,14 @@ classes:
     description: >-
       A source file queued for ingestion into the knowledge graph.
       
-      Lifecycle: queued -> fetching -> embedding -> ready
+      Lifecycle: discovered -> ingested -> stale
       On failure: any state -> failed (check error field)
-      On re-scan: ready -> stale -> queued (if changed)
+      On re-scan: ingested -> stale -> discovered (if changed)
       
       SourceFile is the unit of work for the ingestion pipeline.
-      Scouts create SourceFile nodes; CLI processes them.
-      When ready, a CodeExample node is created with chunks.
+      Handles all file types - code, documents, data, configs.
+      File category determines processing: code files get tree-sitter parsing,
+      documents get text extraction, data files get schema extraction.
     class_uri: facility:SourceFile
     attributes:
       id:
@@ -1106,9 +1169,16 @@ classes:
         description: Current lifecycle status
         range: SourceFileStatus
         required: true
+      file_category:
+        description: Category of file (code, document, data, config, notebook)
+        range: FileCategory
+        required: true
       language:
-        description: Programming language (detected from extension)
+        description: Programming language (for code files, detected from extension)
         range: ProgrammingLanguage
+      artifact_type:
+        description: Artifact type (for document files)
+        range: ArtifactType
       parent_path_id:
         description: FacilityPath that contains this file (for tracking)
         range: FacilityPath
@@ -1297,6 +1367,70 @@ classes:
         description: Compressed context summary from previous windows
 
 # =============================================================================
+# Documentation Source Classes
+# =============================================================================
+
+  DocSource:
+    description: >-
+      A documentation source for discovery (wiki, readthedocs, etc.).
+      Stored in graph for queryability and dynamic management.
+      
+      Access configuration (SSH proxy host, credentials) is stored separately:
+      - credential_service references keyring service name
+      - Access method details stored in facility private YAML
+      
+      Relationships:
+      - FACILITY_ID -> Facility (optional, for facility-specific sources)
+      - DOCUMENTS_CODE -> AnalysisCode (optional, for readthedocs etc.)
+    class_uri: facility:DocSource
+    attributes:
+      id:
+        identifier: true
+        description: Unique identifier (e.g., "iter-confluence", "chease-readthedocs")
+        required: true
+      name:
+        description: Human-readable name (e.g., "ITER Confluence Wiki")
+        required: true
+      url:
+        description: Base URL of the documentation source
+        required: true
+      portal_page:
+        description: Starting page for discovery (relative to url)
+      source_type:
+        description: Type of documentation site
+        range: DocSourceType
+        required: true
+      auth_type:
+        description: Authentication method required
+        range: WikiAuthType
+      credential_service:
+        description: Keyring service name for credentials (no secrets stored)
+      facility_id:
+        description: Parent facility (if facility-specific)
+        range: Facility
+      documents_code:
+        description: Code project this documents (for readthedocs, etc.)
+        range: AnalysisCode
+      status:
+        description: Discovery status
+        range: DocSourceStatus
+        required: true
+      last_crawled:
+        description: When this source was last fully crawled
+        range: datetime
+      page_count:
+        description: Total WikiPage nodes from this source
+        range: integer
+      artifact_count:
+        description: Total artifact nodes from this source
+        range: integer
+      created_at:
+        description: When this source was added
+        range: datetime
+      notes:
+        description: Admin notes about this source
+
+# =============================================================================
 # Wiki Documentation Classes
 # =============================================================================
 
@@ -1330,6 +1464,9 @@ classes:
         description: Parent facility ID
         required: true
         range: Facility
+      doc_source_id:
+        description: DocSource this page came from
+        range: DocSource
       url:
         description: Original wiki URL
         required: true

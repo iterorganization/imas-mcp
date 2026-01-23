@@ -52,7 +52,13 @@ SCORE_WEIGHTS = {
 # These get a 0.3 multiplier and should_expand=False
 SUPPRESSED_PURPOSES = {
     PathPurpose.system,
-    PathPurpose.build_artifacts,
+    PathPurpose.build_artifact,
+    PathPurpose.archive,
+}
+
+# Purposes that are containers (score = exploration potential)
+CONTAINER_PURPOSES = {
+    PathPurpose.container,
 }
 
 
@@ -65,11 +71,18 @@ def grounded_score(
 ) -> float:
     """Compute combined score from dimension scores with evidence adjustments.
 
-    Grounded scoring:
-    1. Start with weighted average of dimension scores
-    2. Boost for quality indicators (readme, makefile, git)
-    3. Boost for IMAS indicators
-    4. Suppress for low-quality purposes (system, build_artifacts)
+    Grounded scoring with purpose-aware semantics:
+
+    For CONTAINER purposes:
+        Score = exploration potential (should we scan children?)
+        Based on path heuristics and IMAS indicators
+
+    For CODE/DATA purposes:
+        Score = ingestion priority (should we process this?)
+        Based on code quality, IMAS relevance, evidence
+
+    For SKIP purposes (system, build_artifact, archive):
+        Score = always low (0.3 multiplier)
 
     Args:
         score_code: Code interest dimension (0.0-1.0)
@@ -108,16 +121,15 @@ def grounded_score(
         quality_boost += 0.05
 
     # Purpose-based multipliers
-    # - Suppressed (system, build_artifacts): 0.3 - low value
-    # - Test files: 0.6 - some value but not primary
-    # - User home: 0.8 - often contains valuable code at facilities
+    # - Suppressed (system, build_artifact, archive): 0.3 - low value
+    # - Test suite: 0.6 - some value but not primary
+    # - Container: 1.0 - score already reflects exploration potential
+    # - All others: 1.0 - full value
     purpose_multiplier = 1.0
     if purpose in SUPPRESSED_PURPOSES:
         purpose_multiplier = 0.3
-    elif purpose == PathPurpose.test_files:
+    elif purpose == PathPurpose.test_suite:
         purpose_multiplier = 0.6
-    elif purpose == PathPurpose.user_home:
-        purpose_multiplier = 0.8
 
     combined = (base_score + quality_boost) * purpose_multiplier
 

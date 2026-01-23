@@ -182,11 +182,24 @@ include-error-fields = false
 # LLM model configuration for different agent tasks
 # All models accessed via OpenRouter API
 #
-# Model selection based on comparative study (2026-01-23):
-# - Haiku: Failed structured output (wraps JSON in markdown)
-# - Sonnet/Opus: 100% score accuracy but 5x more expensive than Flash
-# - Gemini Flash: 100% accuracy, fastest, cheapest - RECOMMENDED for scoring
-# - Gemini Pro: No advantage over Flash for structured tasks
+# Model selection based on comparative study (2026-01-23, updated with new PathPurpose taxonomy):
+# 
+# Study: 35 test directories with 14 purpose categories (container, modeling_code, etc.)
+# 
+# | Model              | Score Acc | Purpose Acc | Time (s) | Cost ($) | $/path |
+# |--------------------|-----------|-------------|----------|----------|--------|
+# | Claude Haiku 4.5   | ERROR     | ERROR       | -        | -        | -      |
+# | Claude Sonnet 4.5  | 97.1%     | 94.3%       | 102.9    | 0.1154   | 0.0033 |
+# | Claude Opus 4.5    | 100.0%    | 97.1%       | 76.7     | 0.1820   | 0.0052 |
+# | Gemini 3 Flash     | 88.6%     | 94.3%       | 32.4     | 0.0195   | 0.0006 |
+# | Gemini 3 Pro       | 74.3%     | 97.1%       | 88.4     | 0.1370   | 0.0039 |
+# 
+# Notes:
+# - Haiku: Failed structured output (wraps JSON in markdown, returns invalid 'unknown' purpose)
+# - Opus: Best accuracy (100% score, 97% purpose) but most expensive
+# - Sonnet: Near-Opus accuracy (97%/94%) at 60% cost - best for accuracy-sensitive tasks
+# - Flash: Best value (89%/94% accuracy at 6x cheaper) - RECOMMENDED for bulk scoring
+# - Pro: No advantage over Flash despite 7x cost
 [tool.imas-codex.models]
 # Default model for general agent tasks
 default = "anthropic/claude-haiku-4.5"
@@ -203,7 +216,7 @@ summarization = "anthropic/claude-haiku-4.5"
 # Capable model for driving scout exploration (when context is controlled)
 scout = "anthropic/claude-sonnet-4.5"
 # Model for LLM-based scoring (directories, wiki pages, code quality)
-# Gemini Flash: 100% accuracy, 5x cheaper than Sonnet, fastest (17.5s vs 25s)
+# Gemini Flash: 89% score / 94% purpose accuracy, 6x cheaper than alternatives
 score = "google/gemini-3-flash-preview"
 # Available model presets
 [tool.imas-codex.models.presets]

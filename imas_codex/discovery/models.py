@@ -39,17 +39,33 @@ __all__ = [
 
 # Pydantic enum for LLM output (must be a regular Enum for Pydantic/LiteLLM)
 class PathPurposeEnum(str, Enum):
-    """Path purpose classification for LLM output."""
+    """Path purpose classification for LLM output.
 
-    physics_code = "physics_code"
-    data_files = "data_files"
+    Score semantics vary by category:
+    - Code/data categories: score = ingestion priority
+    - Container: score = exploration potential of children
+    - Skip categories: always low score, skip subtree
+    """
+
+    # Code categories (ingest based on score)
+    modeling_code = "modeling_code"
+    diagnostic_code = "diagnostic_code"
+    data_interface = "data_interface"
+    workflow = "workflow"
+    visualization = "visualization"
+    # Data categories
+    simulation_data = "simulation_data"
+    diagnostic_data = "diagnostic_data"
+    # Support categories
     documentation = "documentation"
     configuration = "configuration"
-    build_artifacts = "build_artifacts"
-    test_files = "test_files"
-    user_home = "user_home"
+    test_suite = "test_suite"
+    # Structural categories
+    container = "container"
+    # Skip categories (low score forced)
+    archive = "archive"
+    build_artifact = "build_artifact"
     system = "system"
-    unknown = "unknown"
 
 
 # ============================================================================
@@ -99,8 +115,9 @@ class DirectoryScoringResult(BaseModel):
     path: str = Field(description="The directory path (echo from input)")
 
     path_purpose: PathPurposeEnum = Field(
-        description="Classification: physics_code, data_files, documentation, "
-        "configuration, build_artifacts, test_files, user_home, system, unknown"
+        description="Classification: modeling_code, diagnostic_code, data_interface, "
+        "workflow, visualization, simulation_data, diagnostic_data, documentation, "
+        "configuration, test_suite, container, archive, build_artifact, system"
     )
 
     description: str = Field(
