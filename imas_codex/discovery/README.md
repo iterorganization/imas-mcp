@@ -1,31 +1,80 @@
 # Discovery Pipeline
 
-Graph-led filesystem discovery with parallel scan and score workers.
+Graph-led facility discovery with parallel scan and score workers.
 
 ## Overview
 
-The discovery pipeline uses SSH to enumerate remote filesystems, storing all state
-in Neo4j. Two types of async workers operate in parallel:
+The discovery pipeline provides unified exploration of remote facilities:
 
-- **Scanners**: Enumerate directories via `os.scandir`, create child FacilityPath nodes
-- **Scorers**: LLM-evaluate paths for interest (code quality, physics relevance, etc.)
+- **Paths**: Directory structure with LLM scoring for prioritization
+- **Code**: Source files in high-value directories (Python, Fortran, etc.)
+- **Docs**: Wiki pages, READMEs, and document artifacts (PDFs, etc.)
+- **Data**: MDSplus trees, HDF5 datasets, IMAS databases
 
-All state transitions are atomic via Cypher queries, enabling crash recovery.
+All state is stored in Neo4j with atomic state transitions via Cypher queries,
+enabling crash recovery and idempotent operations.
 
 ## Quick Start
 
 ```bash
-# Discover paths on a facility (auto-seeds on first run)
-uv run imas-codex discover epfl --cost-limit 5.0
+# Discover directory structure (foundation)
+uv run imas-codex discover paths epfl --cost-limit 5.0
 
 # Check discovery progress
-uv run imas-codex discovery status epfl
+uv run imas-codex discover status epfl
+
+# Manage documentation sources
+uv run imas-codex discover sources list
+uv run imas-codex discover sources add --name "EPFL Wiki" --url https://... --facility epfl
 
 # Clear all paths (for fresh start)
-uv run imas-codex discovery clear epfl --force
+uv run imas-codex discover clear epfl --force
 ```
 
-## State Machine
+## CLI Structure
+
+```
+imas-codex discover
+├── paths <facility>    # Scan and score directory structure
+│   ├── --seed-only     # Only seed roots, don't scan
+│   └── -p, --path      # Additional paths to seed
+├── code <facility>     # Find source files [PLACEHOLDER]
+├── docs <facility>     # Find documentation [PLACEHOLDER]
+├── data <facility>     # Find data sources [PLACEHOLDER]
+├── status <facility>   # Show discovery statistics
+├── inspect <facility>  # Debug view of scanned/scored paths
+├── clear <facility>    # Clear paths (reset discovery)
+└── sources             # Manage documentation sources
+    ├── list            # List all sources
+    ├── add             # Add a new source
+    ├── rm              # Remove a source
+    ├── enable          # Enable a paused source
+    └── disable         # Disable a source
+```
+
+## Discovery Pipeline
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   PATHS     │     │    CODE     │     │   INGEST    │
+│  discover   │────>│  discover   │────>│   (code)    │
+│   paths     │     │    code     │     │             │
+└─────────────┘     └─────────────┘     └─────────────┘
+      │
+      │ (parallel)
+      ▼
+┌─────────────┐     ┌─────────────┐
+│    DOCS     │────>│   INGEST    │
+│  discover   │     │   (docs)    │
+│    docs     │     │             │
+└─────────────┘     └─────────────┘
+```
+
+Prerequisites:
+- `discover paths` must run first to identify high-value directories
+- `discover docs` can run in parallel with paths (for wiki sources)
+
+## Path Discovery State Machine
 
 States are defined in the LinkML schema (`schemas/common.yaml`) as the `PathStatus` enum.
 All code imports `PathStatus` from generated models - no hardcoded strings.
@@ -56,11 +105,11 @@ discovered ──(claim)──> listing ──(complete)──> listed ──(cl
      │                 (timeout)                                      │
      │                     ↓                                          │
      └─────────────── discovered                            ┌─────────┴─────────┐
-                                                            │                   │
-                                                       score < 0.2         score >= 0.2
-                                                            │                   │
-                                                            ↓                   ↓
-                                                         skipped             scored
+              │            │            │
+         Low value    Good value     Error
+              │            │            │
+           skipped      scored       listed
+                                   (retry)
 ```
 
 ### Orphan Recovery
@@ -80,12 +129,12 @@ WHERE p.claimed_at < datetime() - duration('PT10M')
 SET p.status = 'listed', p.claimed_at = null
 ```
 
-## CLI Interface
+## CLI Options
 
-### Primary Command
+### discover paths
 
 ```bash
-uv run imas-codex discover <facility> [options]
+uv run imas-codex discover paths <facility> [options]
 ```
 
 | Option | Default | Description |
@@ -97,19 +146,39 @@ uv run imas-codex discover <facility> [options]
 | `--scan-workers` | 1 | SSH scanner workers (single connection) |
 | `--score-workers` | 4 | Parallel LLM scorer workers |
 
-### Admin Commands
+### discover status
 
 ```bash
-uv run imas-codex discovery status <facility>   # Show progress
-uv run imas-codex discovery clear <facility>    # Delete all paths
+uv run imas-codex discover status <facility> [options]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output as JSON |
+| `--domain [paths\|code\|docs\|data]` | Show detailed status for specific domain |
+
+### discover sources
+
+```bash
+uv run imas-codex discover sources add [options]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--name, -n` | Yes | Human-readable name |
+| `--url, -u` | Yes | Base URL of the source |
+| `--portal, -p` | No | Portal/starting page |
+| `--type, -t` | No | Site type (mediawiki, confluence, readthedocs, etc.) |
+| `--auth` | No | Auth method (none, ssh_proxy, basic, session) |
+| `--facility, -f` | No | Link to facility |
+| `--credential-service` | No | Keyring service name |
 
 ## Architecture
 
 ```
                     ┌─────────────┐
                     │  discover   │  Single CLI command
-                    │    epfl     │  Auto-seeds on first run
+                    │ paths epfl  │  Auto-seeds on first run
                     └──────┬──────┘
                            │
         ┌──────────────────▼──────────────────┐
@@ -239,3 +308,10 @@ Key constants in `scorer.py`:
 | `RETRY_BASE_DELAY` | 2.0 | Base delay in seconds (doubles each retry) |
 | `max_tokens` | 32000 | LLM output token limit |
 | `SCORE_WEIGHTS` | code=1.0, data=0.8, imas=1.2 | Dimension weights |
+
+## Deprecation Notice
+
+The following command groups are deprecated and will be removed:
+
+- `imas-codex wiki` → Use `imas-codex discover docs` instead
+- `imas-codex scout` → Use `imas-codex discover` instead

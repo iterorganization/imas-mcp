@@ -5472,6 +5472,18 @@ def discover():
     type=int,
     help="Number of score workers (default: 4, parallel LLM calls)",
 )
+@click.option(
+    "--seed-only",
+    is_flag=True,
+    help="Only seed root paths, don't scan or score",
+)
+@click.option(
+    "--path",
+    "-p",
+    "extra_paths",
+    multiple=True,
+    help="Additional root paths to seed (use with --seed-only)",
+)
 def discover_paths(
     facility: str,
     cost_limit: float,
@@ -5480,6 +5492,8 @@ def discover_paths(
     threshold: float,
     scan_workers: int,
     score_workers: int,
+    seed_only: bool,
+    extra_paths: tuple[str, ...],
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -5488,11 +5502,22 @@ def discover_paths(
       imas-codex discover paths <facility>              # Default $10 limit
       imas-codex discover paths <facility> -c 20.0      # $20 limit
       imas-codex discover paths iter --focus "equilibrium codes"
+      imas-codex discover paths iter --seed-only        # Only seed roots
+      imas-codex discover paths iter --seed-only -p /custom/path
 
     Parallel scan workers enumerate directories via SSH while score workers
     classify paths using LLM. Both run concurrently with the graph as
     coordination. Discovery is idempotent - rerun to continue from current state.
     """
+    from imas_codex.discovery import seed_facility_roots
+
+    # Handle --seed-only: just seed roots and exit
+    if seed_only:
+        additional_paths = list(extra_paths) if extra_paths else None
+        created = seed_facility_roots(facility, additional_paths)
+        click.echo(f"✓ Created {created} root path(s) for {facility}")
+        return
+
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
@@ -6035,36 +6060,6 @@ def discover_clear(facility: str, force: bool) -> None:
 
         deleted = clear_facility_paths(facility)
         click.echo(f"✓ Deleted {deleted} paths for {facility}")
-
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        raise SystemExit(1) from e
-
-
-@discover.command("seed")
-@click.argument("facility")
-@click.option(
-    "--path",
-    "-p",
-    multiple=True,
-    help="Additional root paths to seed",
-)
-def discover_seed(facility: str, path: tuple[str, ...]) -> None:
-    """Seed facility root paths without scanning.
-
-    Creates initial FacilityPath nodes for the facility's actionable paths
-    and any additional paths specified. Useful for testing graph setup.
-
-    Examples:
-        imas-codex discover seed iter
-        imas-codex discover seed iter -p /home/custom/path
-    """
-    from imas_codex.discovery import seed_facility_roots
-
-    try:
-        additional_paths = list(path) if path else None
-        created = seed_facility_roots(facility, additional_paths)
-        click.echo(f"✓ Created {created} root path(s) for {facility}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
