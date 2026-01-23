@@ -219,7 +219,7 @@ git log --oneline --all --not main | head -20
 
 ### Python Version
 
-This project requires **Python 3.12** (`requires-python = ">=3.12,<3.13"`). Do not write fallback code for older Python versions. Remove any legacy compatibility patterns you encounter.
+This project requires Python greater or equal to 3.12 (`requires-python = ">=3.12"`). Do not write fallback code for older Python versions. Remove any legacy compatibility patterns you encounter.
 
 ```python
 # Wrong - unnecessary fallback for older Python
