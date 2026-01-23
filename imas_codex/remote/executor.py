@@ -152,9 +152,10 @@ def run_command(
             timeout=timeout,
         )
     else:
-        # SSH execution
+        # SSH execution with -T to disable pseudo-terminal allocation
+        # This avoids triggering .bashrc on systems where it's loaded for PTY sessions
         result = subprocess.run(
-            ["ssh", ssh_host, cmd],
+            ["ssh", "-T", ssh_host, cmd],
             capture_output=True,
             text=True,
             timeout=timeout,
