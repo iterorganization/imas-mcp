@@ -20,6 +20,10 @@ enabling crash recovery and idempotent operations.
 # Discover directory structure (foundation)
 uv run imas-codex discover paths epfl --cost-limit 5.0
 
+# Phase-separated discovery (scan requires SSH, score is offline)
+uv run imas-codex discover paths epfl --scan-only    # Fast SSH enumeration
+uv run imas-codex discover paths epfl --score-only   # Offline LLM scoring
+
 # Check discovery progress
 uv run imas-codex discover status epfl
 
@@ -36,8 +40,11 @@ uv run imas-codex discover clear epfl --force
 ```
 imas-codex discover
 ├── paths <facility>    # Scan and score directory structure
-│   ├── --seed-only     # Only seed roots, don't scan
-│   └── -p, --path      # Additional paths to seed
+│   ├── --scan-only     # SSH enumeration only (no LLM scoring)
+│   ├── --score-only    # LLM scoring only (no SSH, offline)
+│   ├── --cost-limit    # Maximum LLM spend in USD
+│   ├── --focus         # Natural language focus for scoring
+│   └── --threshold     # Minimum score to expand paths
 ├── code <facility>     # Find source files [PLACEHOLDER]
 ├── docs <facility>     # Find documentation [PLACEHOLDER]
 ├── data <facility>     # Find data sources [PLACEHOLDER]
@@ -145,6 +152,39 @@ uv run imas-codex discover paths <facility> [options]
 | `--threshold` | 0.7 | Minimum score to expand |
 | `--scan-workers` | 1 | SSH scanner workers (single connection) |
 | `--score-workers` | 4 | Parallel LLM scorer workers |
+| `--scan-only` | False | SSH enumeration only, no LLM scoring |
+| `--score-only` | False | LLM scoring only, no SSH (offline) |
+
+#### Phase Separation
+
+The `--scan-only` and `--score-only` flags enable phase-separated discovery:
+
+| Phase | Requires | Cost | Use Case |
+|-------|----------|------|----------|
+| **Scan** | SSH access | Free | Enumerate directories during work hours |
+| **Score** | Graph only | LLM $ | Score offline or from CI without SSH |
+
+This is useful when:
+- SSH access is intermittent or time-limited
+- You want to batch-score overnight without facility access
+- You need fast enumeration without waiting for LLM calls
+
+**Workflow:**
+```bash
+# 1. Fast scan with SSH access (no LLM cost)
+uv run imas-codex discover paths iter --scan-only
+
+# 2. Later: score from graph (no SSH needed)
+uv run imas-codex discover paths iter --score-only --cost-limit 20.0
+
+# 3. Iterate: new scan expands scored paths above threshold
+uv run imas-codex discover paths iter --scan-only
+```
+
+**Notes:**
+- `--score-only` errors if graph is empty (must scan first)
+- `--score-only` only expands paths already scored above threshold
+- Flags are mutually exclusive
 
 ### discover status
 

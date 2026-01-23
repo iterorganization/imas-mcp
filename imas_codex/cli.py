@@ -5472,6 +5472,18 @@ def discover():
     type=int,
     help="Number of score workers (default: 4, parallel LLM calls)",
 )
+@click.option(
+    "--scan-only",
+    is_flag=True,
+    default=False,
+    help="SSH scan only, no LLM scoring (fast, requires SSH access)",
+)
+@click.option(
+    "--score-only",
+    is_flag=True,
+    default=False,
+    help="LLM scoring only, no SSH scanning (offline, graph-only)",
+)
 def discover_paths(
     facility: str,
     cost_limit: float,
@@ -5480,6 +5492,8 @@ def discover_paths(
     threshold: float,
     scan_workers: int,
     score_workers: int,
+    scan_only: bool,
+    score_only: bool,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -5488,11 +5502,31 @@ def discover_paths(
       imas-codex discover paths <facility>              # Default $10 limit
       imas-codex discover paths <facility> -c 20.0      # $20 limit
       imas-codex discover paths iter --focus "equilibrium codes"
+      imas-codex discover paths iter --scan-only        # SSH only, no LLM
+      imas-codex discover paths iter --score-only       # LLM only, no SSH
 
     Parallel scan workers enumerate directories via SSH while score workers
     classify paths using LLM. Both run concurrently with the graph as
     coordination. Discovery is idempotent - rerun to continue from current state.
+
+    \b
+    Phase separation:
+      --scan-only   Fast enumeration requiring SSH access. Populates graph
+                    with directory listings but no LLM scoring.
+      --score-only  Offline scoring using existing graph data. No SSH required.
+                    Only expands paths already scored above threshold.
     """
+    from rich.console import Console
+
+    console = Console()
+
+    # Validate mutually exclusive flags
+    if scan_only and score_only:
+        console.print(
+            "[red]Error: --scan-only and --score-only are mutually exclusive[/red]"
+        )
+        raise SystemExit(1)
+
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
@@ -5501,6 +5535,8 @@ def discover_paths(
         threshold=threshold,
         num_scan_workers=scan_workers,
         num_score_workers=score_workers,
+        scan_only=scan_only,
+        score_only=score_only,
     )
 
 
@@ -5512,8 +5548,22 @@ def _run_iterative_discovery(
     threshold: float,
     num_scan_workers: int = 1,
     num_score_workers: int = 4,
+    scan_only: bool = False,
+    score_only: bool = False,
 ) -> None:
-    """Run parallel scan/score discovery."""
+    """Run parallel scan/score discovery.
+
+    Args:
+        facility: Facility ID
+        budget: Maximum LLM cost in dollars
+        limit: Maximum paths to process
+        focus: Natural language focus for scoring
+        threshold: Minimum score to expand paths
+        num_scan_workers: Number of parallel scan workers
+        num_score_workers: Number of parallel score workers
+        scan_only: If True, only run SSH scanning (no LLM scoring)
+        score_only: If True, only run LLM scoring (no SSH scanning)
+    """
     import asyncio
 
     from rich.console import Console
@@ -5526,22 +5576,58 @@ def _run_iterative_discovery(
     # Check if we have any paths, seed if not
     stats = get_discovery_stats(facility)
     if stats["total"] == 0:
+        if score_only:
+            console.print(
+                "[red]Error: --score-only requires existing paths in the graph.[/red]"
+            )
+            console.print(
+                f"[yellow]Run 'imas-codex discover paths {facility}' or "
+                "'--scan-only' first to populate the graph.[/yellow]"
+            )
+            raise SystemExit(1)
         console.print(f"[cyan]Seeding root paths for {facility}...[/cyan]")
         seed_facility_roots(facility)
         stats = get_discovery_stats(facility)
+
+    # For score_only, check we have listed (scannable) paths
+    if score_only and stats.get("listed", 0) == 0:
+        console.print(
+            "[yellow]Warning: No 'listed' paths available for scoring.[/yellow]"
+        )
+        console.print(
+            "Paths must be scanned before they can be scored. "
+            "Checking for already-scored paths to expand..."
+        )
+
+    # Adjust worker counts based on mode flags
+    effective_scan_workers = 0 if score_only else num_scan_workers
+    effective_score_workers = 0 if scan_only else num_score_workers
 
     # Get model name for display
     model_name = get_model_for_task("score")
     if model_name.startswith("anthropic/"):
         model_name = model_name[len("anthropic/") :]
 
-    console.print(f"[bold]Starting parallel discovery for {facility.upper()}[/bold]")
-    console.print(f"Cost limit: ${budget:.2f}")
+    # Display mode
+    mode_str = ""
+    if scan_only:
+        mode_str = " [bold cyan](SCAN ONLY)[/bold cyan]"
+    elif score_only:
+        mode_str = " [bold green](SCORE ONLY)[/bold green]"
+
+    console.print(
+        f"[bold]Starting parallel discovery for {facility.upper()}[/bold]{mode_str}"
+    )
+    if not scan_only:
+        console.print(f"Cost limit: ${budget:.2f}")
     if limit:
         console.print(f"Path limit: {limit}")
-    console.print(f"Model: {model_name}")
-    console.print(f"Workers: {num_scan_workers} scan, {num_score_workers} score")
-    if focus:
+    if not scan_only:
+        console.print(f"Model: {model_name}")
+    console.print(
+        f"Workers: {effective_scan_workers} scan, {effective_score_workers} score"
+    )
+    if focus and not scan_only:
         console.print(f"Focus: {focus}")
 
     # Run the async discovery loop
@@ -5554,13 +5640,17 @@ def _run_iterative_discovery(
                 focus=focus,
                 threshold=threshold,
                 console=console,
-                num_scan_workers=num_scan_workers,
-                num_score_workers=num_score_workers,
+                num_scan_workers=effective_scan_workers,
+                num_score_workers=effective_score_workers,
+                scan_only=scan_only,
+                score_only=score_only,
             )
         )
 
         # Print detailed summary with paths scored this run
-        _print_discovery_summary(console, facility, result, scored_this_run)
+        _print_discovery_summary(
+            console, facility, result, scored_this_run, scan_only=scan_only
+        )
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Discovery interrupted by user[/yellow]")
@@ -5571,7 +5661,11 @@ def _run_iterative_discovery(
 
 
 def _print_discovery_summary(
-    console, facility: str, result: dict, scored_this_run: set[str] | None = None
+    console,
+    facility: str,
+    result: dict,
+    scored_this_run: set[str] | None = None,
+    scan_only: bool = False,
 ) -> None:
     """Print detailed discovery summary with statistics.
 
@@ -5580,6 +5674,7 @@ def _print_discovery_summary(
         facility: Facility ID
         result: Discovery result dict
         scored_this_run: Set of paths scored in this discovery run
+        scan_only: If True, show scan-focused summary
     """
     from rich.panel import Panel
     from rich.text import Text
@@ -5610,13 +5705,14 @@ def _print_discovery_summary(
     facility_upper = facility.upper()
     summary = Text()
 
-    # Row 1: This Run stats
+    # Row 1: This Run stats (adjust based on scan_only mode)
     summary.append("This Run  ", style="bold cyan")
     summary.append(f"scanned {result['scanned']:,}", style="white")
-    summary.append(" · ", style="dim")
-    summary.append(f"scored {result['scored']:,}", style="white")
-    summary.append(" · ", style="dim")
-    summary.append(f"cost ${result['cost']:.3f}", style="yellow")
+    if not scan_only:
+        summary.append(" · ", style="dim")
+        summary.append(f"scored {result['scored']:,}", style="white")
+        summary.append(" · ", style="dim")
+        summary.append(f"cost ${result['cost']:.3f}", style="yellow")
     summary.append(" · ", style="dim")
     summary.append(f"{elapsed_str}", style="cyan")
     summary.append("\n")
@@ -5627,36 +5723,55 @@ def _print_discovery_summary(
         summary.append(f"scan {scan_rate:.1f}/s", style="white")
     else:
         summary.append("scan -", style="dim")
-    summary.append(" · ", style="dim")
-    if score_rate:
-        summary.append(f"score {score_rate:.1f}/s", style="white")
-    else:
-        summary.append("score -", style="dim")
+    if not scan_only:
+        summary.append(" · ", style="dim")
+        if score_rate:
+            summary.append(f"score {score_rate:.1f}/s", style="white")
+        else:
+            summary.append("score -", style="dim")
     summary.append("\n")
 
     # Row 3: Graph State
     summary.append("Graph     ", style="bold green")
     summary.append(f"total {stats['total']:,}", style="white")
     summary.append(" · ", style="dim")
-    summary.append(
-        f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
-    )
-    summary.append(" · ", style="dim")
+    if not scan_only:
+        summary.append(
+            f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
+        )
+        summary.append(" · ", style="dim")
     frontier = stats.get("discovered", 0) + stats.get("listed", 0)
     summary.append(f"frontier {frontier:,}", style="cyan")
     summary.append(" · ", style="dim")
     summary.append(f"depth {stats.get('max_depth', 0)}", style="cyan")
 
+    # Title based on mode
+    if scan_only:
+        title = f"[bold blue]{facility_upper} Scan Complete[/bold blue]"
+        border = "blue"
+    else:
+        title = f"[bold green]{facility_upper} Discovery Complete[/bold green]"
+        border = "green"
+
     console.print(
         Panel(
             summary,
-            title=f"[bold green]{facility_upper} Discovery Complete[/bold green]",
-            border_style="green",
+            title=title,
+            border_style=border,
             width=100,  # Match progress display width
         )
     )
 
-    # Show high-value paths found IN THIS RUN only
+    # Show high-value paths found IN THIS RUN only (skip in scan_only mode)
+    if scan_only:
+        # Show next step hint
+        console.print()
+        console.print(
+            f"[dim]Next step: Run 'imas-codex discover paths {facility} --score-only' "
+            "to score listed paths.[/dim]"
+        )
+        return
+
     all_high_value = get_high_value_paths(facility, min_score=0.7, limit=50)
 
     # Filter to paths scored in this run
@@ -5691,8 +5806,22 @@ async def _async_discovery_loop(
     console,
     num_scan_workers: int = 2,
     num_score_workers: int = 4,
+    scan_only: bool = False,
+    score_only: bool = False,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers.
+
+    Args:
+        facility: Facility ID
+        budget: Maximum LLM cost in dollars
+        limit: Maximum paths to process
+        focus: Natural language focus for scoring
+        threshold: Minimum score to expand paths
+        console: Rich console for output
+        num_scan_workers: Number of parallel scan workers
+        num_score_workers: Number of parallel score workers
+        scan_only: If True, skip scoring (scan workers only)
+        score_only: If True, skip scanning (score workers only)
 
     Returns:
         Tuple of (result dict, set of paths scored in this run)
@@ -5709,6 +5838,8 @@ async def _async_discovery_loop(
         model=model_name,
         console=console,
         focus=focus or "",
+        scan_only=scan_only,
+        score_only=score_only,
     ) as display:
         # Periodic graph state refresh
         async def refresh_graph_state():

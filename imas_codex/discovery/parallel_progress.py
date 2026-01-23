@@ -176,6 +176,10 @@ class ProgressState:
     model: str = ""
     focus: str = ""
 
+    # Mode flags
+    scan_only: bool = False
+    score_only: bool = False
+
     # Graph totals (aligned with new state machine)
     total: int = 0
     discovered: int = 0  # Awaiting scan
@@ -280,6 +284,8 @@ class ParallelProgressDisplay:
         model: str = "",
         console: Console | None = None,
         focus: str = "",
+        scan_only: bool = False,
+        score_only: bool = False,
     ) -> None:
         self.console = console or Console()
         self.state = ProgressState(
@@ -287,6 +293,8 @@ class ParallelProgressDisplay:
             cost_limit=cost_limit,
             model=model,
             focus=focus,
+            scan_only=scan_only,
+            score_only=score_only,
         )
         self._live: Live | None = None
 
@@ -294,12 +302,16 @@ class ParallelProgressDisplay:
         """Build centered header with facility and focus."""
         header = Text()
 
-        # Facility name
+        # Facility name with mode indicator
         title = f"{self.state.facility.upper()} Discovery"
+        if self.state.scan_only:
+            title += " (SCAN ONLY)"
+        elif self.state.score_only:
+            title += " (SCORE ONLY)"
         header.append(title.center(self.WIDTH - 4), style="bold cyan")
 
-        # Focus (if set)
-        if self.state.focus:
+        # Focus (if set and not scan_only)
+        if self.state.focus and not self.state.scan_only:
             header.append("\n")
             focus_line = f"Focus: {self.state.focus}"
             header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
@@ -325,26 +337,38 @@ class ParallelProgressDisplay:
         # Shorter bar to fit everything on one line
         bar_width = 40
 
-        # SCAN row: "  SCAN  ━━━━────  1,234  42%  12.3/s"
-        section.append("  SCAN  ", style="bold blue")
-        scan_ratio = min(scanned_count / scan_total, 1.0) if scan_total > 0 else 0
-        section.append(make_bar(scan_ratio, bar_width), style="blue")
-        section.append(f" {scanned_count:>6,}", style="bold")
-        section.append(f" {scan_pct:>3.0f}%", style="cyan")
-        if self.state.scan_rate:
-            section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
+        # SCAN row: "  SCAN  ━━━━────  1,234  42%  12.3/s" or disabled
+        if self.state.score_only:
+            # Disabled state - show as dim with "disabled" indicator
+            section.append("  SCAN  ", style="dim")
+            section.append("─" * bar_width, style="dim")
+            section.append("    disabled", style="dim italic")
+        else:
+            section.append("  SCAN  ", style="bold blue")
+            scan_ratio = min(scanned_count / scan_total, 1.0) if scan_total > 0 else 0
+            section.append(make_bar(scan_ratio, bar_width), style="blue")
+            section.append(f" {scanned_count:>6,}", style="bold")
+            section.append(f" {scan_pct:>3.0f}%", style="cyan")
+            if self.state.scan_rate:
+                section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # SCORE row: "  SCORE ━━━━────    892  28%   4.2/s"
-        section.append("  SCORE ", style="bold green")
-        score_ratio = (
-            min(self.state.scored / score_total, 1.0) if score_total > 0 else 0
-        )
-        section.append(make_bar(score_ratio, bar_width), style="green")
-        section.append(f" {self.state.scored:>6,}", style="bold")
-        section.append(f" {score_pct:>3.0f}%", style="cyan")
-        if self.state.score_rate:
-            section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
+        # SCORE row: "  SCORE ━━━━────    892  28%   4.2/s" or disabled
+        if self.state.scan_only:
+            # Disabled state - show as dim with "disabled" indicator
+            section.append("  SCORE ", style="dim")
+            section.append("─" * bar_width, style="dim")
+            section.append("    disabled", style="dim italic")
+        else:
+            section.append("  SCORE ", style="bold green")
+            score_ratio = (
+                min(self.state.scored / score_total, 1.0) if score_total > 0 else 0
+            )
+            section.append(make_bar(score_ratio, bar_width), style="green")
+            section.append(f" {self.state.scored:>6,}", style="bold")
+            section.append(f" {score_pct:>3.0f}%", style="cyan")
+            if self.state.score_rate:
+                section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -418,25 +442,26 @@ class ParallelProgressDisplay:
         """Build the resource consumption gauges."""
         section = Text()
 
-        # Cost gauge with ETA
-        est_cost = self.state.estimated_total_cost
-        cost_limit = est_cost if est_cost else self.state.cost_limit
-        section.append("  COST  ", style="bold yellow")
-        section.append_text(
-            make_resource_gauge(self.state.run_cost, cost_limit, self.GAUGE_WIDTH)
-        )
-        section.append(f"  ${self.state.run_cost:.2f}", style="bold")
-        section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
-        # Show estimated total cost
-        if est_cost is not None and est_cost > self.state.run_cost:
-            section.append(f"  Est ${est_cost:.2f}", style="dim")
-        section.append("\n")
+        # Cost gauge with ETA (hidden in scan_only mode)
+        if not self.state.scan_only:
+            est_cost = self.state.estimated_total_cost
+            cost_limit = est_cost if est_cost else self.state.cost_limit
+            section.append("  COST  ", style="bold yellow")
+            section.append_text(
+                make_resource_gauge(self.state.run_cost, cost_limit, self.GAUGE_WIDTH)
+            )
+            section.append(f"  ${self.state.run_cost:.2f}", style="bold")
+            section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
+            # Show estimated total cost
+            if est_cost is not None and est_cost > self.state.run_cost:
+                section.append(f"  Est ${est_cost:.2f}", style="dim")
+            section.append("\n")
 
         # Time with ETA
         section.append("  TIME  ", style="bold cyan")
 
-        # Estimate total time if we have an ETA
-        eta = self.state.eta_seconds
+        # Estimate total time if we have an ETA (score_only mode only)
+        eta = None if self.state.scan_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             self.state.elapsed / total_est
