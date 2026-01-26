@@ -632,9 +632,9 @@ classes:
       score_imas:
         description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
         range: float
-      score_multiformat:
-        description: Score for format conversion (loads one format, writes another)
-        range: float
+      is_multiformat:
+        description: True if code loads one format and writes another (indicates mapping utility)
+        range: boolean
       evidence_id:
         description: Link to Evidence node with semantic indicators
         range: Evidence

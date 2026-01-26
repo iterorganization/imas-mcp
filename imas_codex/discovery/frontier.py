@@ -393,6 +393,56 @@ def create_child_paths(
     return result["processed"]
 
 
+def _is_repo_publicly_accessible(url: str, timeout: float = 5.0) -> bool:
+    """Check if a git repository is publicly accessible via HTTP.
+
+    Makes a lightweight HEAD request to the repository URL.
+    Returns True only if repo is confirmed public (HTTP 200).
+    Returns False if private (401/403/404) or can't determine.
+
+    Args:
+        url: Git remote URL
+        timeout: Request timeout in seconds
+
+    Returns:
+        True if confirmed publicly accessible, False otherwise
+    """
+    import re
+    import urllib.request
+    from urllib.error import HTTPError, URLError
+
+    # Convert SSH URL to HTTPS for visibility check
+    # git@github.com:owner/repo.git -> https://github.com/owner/repo
+    ssh_match = re.match(r"git@([^:]+):(.+?)(?:\.git)?$", url)
+    if ssh_match:
+        host, path = ssh_match.groups()
+        url = f"https://{host}/{path}"
+    elif not url.startswith("http"):
+        # Local path - not public
+        return False
+
+    # Remove .git suffix if present
+    url = re.sub(r"\.git$", "", url)
+
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        req.add_header("User-Agent", "imas-codex/1.0")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            # 200 = public repo
+            return resp.status == 200
+    except HTTPError as e:
+        # 401/403/404 = private or doesn't exist
+        logger.debug(f"Repo {url} not public: HTTP {e.code}")
+        return False
+    except URLError as e:
+        # Network error - assume not public to be conservative
+        logger.debug(f"Repo {url} check failed: {e}")
+        return False
+    except Exception as e:
+        logger.debug(f"Repo visibility check failed: {e}")
+        return False
+
+
 def _parse_git_remote_url(url: str) -> tuple[str, str | None, str | None]:
     """Parse git remote URL to extract source type and normalized repo ID.
 
@@ -804,23 +854,32 @@ def persist_scan_results(
             successes.append(update_dict)
 
             # Decide whether to skip children for git repos
-            # Skip ONLY public repos (github, gitlab) that are accessible elsewhere
+            # Skip ONLY verified public repos that are accessible elsewhere
             # Continue scanning private/local repos - they contain unique facility code
             is_git_repo = stats.get("has_git", False)
             git_remote_url = stats.get("git_remote_url", "")
 
             if is_git_repo and git_remote_url:
-                # Check if this is a public hosting service
-                is_public = any(
+                # Check if this is on a public hosting service (quick heuristic)
+                is_public_host = any(
                     host in git_remote_url.lower()
                     for host in ["github.com", "gitlab.com", "bitbucket.org"]
                 )
-                if is_public:
-                    # Public repo - skip children, content available from source
-                    logger.debug(
-                        f"Skipping children for public repo: {path} ({git_remote_url})"
+                if is_public_host:
+                    # Verify actual visibility via HTTP (confirms not private)
+                    is_public = _is_repo_publicly_accessible(
+                        git_remote_url, timeout=3.0
                     )
-                    continue
+                    if is_public:
+                        # Confirmed public - skip children, content available from source
+                        logger.debug(
+                            f"Skip children: public repo {path} ({git_remote_url})"
+                        )
+                        continue
+                    else:
+                        logger.debug(
+                            f"Scan children: private repo on public host {path}"
+                        )
                 # Private/internal repo - continue scanning
 
             # Prepare children for non-public-git directories

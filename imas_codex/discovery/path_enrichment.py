@@ -85,7 +85,7 @@ class EnrichmentResult:
             "enriched_at": datetime.now(UTC).isoformat(),
             "read_formats_found": self.read_formats_found,
             "write_formats_found": self.write_formats_found,
-            "score_multiformat": 1.0 if self.is_multiformat else 0.0,
+            "is_multiformat": self.is_multiformat,
             "conversion_pairs": self.conversion_pairs,
             "total_bytes": self.total_bytes,
             "total_lines": self.total_lines,
@@ -100,7 +100,7 @@ def _build_enrichment_script(paths: list[str]) -> str:
 
     Collects:
     - rg pattern matches for format conversion detection (simplified patterns)
-    - du for storage (more portable than dust)
+    - dust for storage (faster than du on large dirs), falls back to du
     - tokei for lines of code
 
     Returns JSON array with results per path.
@@ -161,8 +161,12 @@ for path in "${{PATHS[@]}}"; do
         write_count=$(rg -c --no-messages --max-depth 3 -e '{write_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
     fi
 
-    # Storage (portable du)
-    total_bytes=$(du -sb "$path" 2>/dev/null | cut -f1 || echo 0)
+    # Storage - prefer dust (faster on large dirs), fallback to du
+    if command -v dust &> /dev/null; then
+        total_bytes=$(dust -sb "$path" 2>/dev/null | awk '{{print $1}}' | head -1 || echo 0)
+    else
+        total_bytes=$(du -sb "$path" 2>/dev/null | cut -f1 || echo 0)
+    fi
 
     # Lines of code with tokei (if available)
     if command -v tokei &> /dev/null; then
@@ -292,7 +296,7 @@ def persist_enrichment(facility: str, results: list[EnrichmentResult]) -> int:
             MATCH (p:FacilityPath {id: u.id})
             SET p.is_enriched = u.is_enriched,
                 p.enriched_at = u.enriched_at,
-                p.score_multiformat = u.score_multiformat,
+                p.is_multiformat = u.is_multiformat,
                 p.total_bytes = u.total_bytes,
                 p.total_lines = u.total_lines,
                 p.language_breakdown = u.language_breakdown
