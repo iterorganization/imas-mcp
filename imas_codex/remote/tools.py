@@ -177,6 +177,11 @@ class FastTool:
         url = self.get_download_url(arch)
         install_dir = "~/bin"
 
+        # Map architecture for simplified naming (amd64/arm64)
+        arch_simple = (
+            self.releases.arch_map.get(arch, arch) if self.releases.arch_map else arch
+        )
+
         if self.releases.is_binary:
             # Direct binary download
             return f'curl -sL "{url}" -o {install_dir}/{self.binary} && chmod +x {install_dir}/{self.binary}'
@@ -188,6 +193,7 @@ class FastTool:
             binary_path = self.releases.binary_path.format(
                 version=self.releases.version,
                 arch=self._get_musl_arch(arch),
+                arch_simple=arch_simple,
             )
             return f'curl -sL "{url}" | tar xz {strip} -C {install_dir} {binary_path}'
         else:

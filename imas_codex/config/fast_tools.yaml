@@ -53,6 +53,25 @@ required:
       remote: "ssh facility 'fd -e py /path/to/search'"
       pattern: "fd 'pattern' /path"  # pattern first, then path
 
+  gh:
+    name: GitHub CLI
+    purpose: GitHub API access for repo visibility checking and git operations
+    binary: gh
+    fallback: null
+    releases:
+      repo: cli/cli
+      version: "2.67.0"
+      # gh uses different naming: gh_2.67.0_linux_amd64.tar.gz
+      asset_pattern: "gh_{version}_linux_{arch_simple}.tar.gz"
+      strip_components: 1
+      binary_path: "gh_{version}_linux_{arch_simple}/bin/gh"
+      arch_map:
+        x86_64: "amd64"
+        aarch64: "arm64"
+    examples:
+      local: "gh api repos/owner/repo"
+      remote: "ssh('gh api repos/owner/repo')"
+
 # Optional tools - enhance exploration but not required
 optional:
   tokei:
