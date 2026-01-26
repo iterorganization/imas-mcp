@@ -143,8 +143,9 @@ def grounded_score(
 
     combined = (base_score + quality_boost) * purpose_multiplier
 
-    # Clamp to [0, 1]
-    return max(0.0, min(1.0, combined))
+    # Clamp to [0, 0.95] - reserve 1.0 for manually curated ground truth
+    # This ensures all LLM-scored paths are distinguishable from perfect scores
+    return max(0.0, min(0.95, combined))
 
 
 @dataclass

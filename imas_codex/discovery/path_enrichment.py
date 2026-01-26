@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from imas_codex.discovery.facility import get_facility
-from imas_codex.remote.executor import run_script as run_remote
+from imas_codex.remote.executor import run_script_via_stdin as run_remote
 
 logger = logging.getLogger(__name__)
 
