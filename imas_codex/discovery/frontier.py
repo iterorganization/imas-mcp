@@ -398,9 +398,10 @@ def mark_paths_scored(
 
     Args:
         facility: Facility ID
-        scores: List of dicts with path, interest_score, physics_relevance,
-                code_quality, data_access_patterns, description, path_purpose,
-                score_reasoning
+        scores: List of dicts from ScoredDirectory.to_graph_dict() with:
+                path, path_purpose, description, evidence, score_code,
+                score_data, score_docs, score_imas, score, should_expand,
+                keywords, physics_domain, expansion_reason, skip_reason
 
     Returns:
         Number of paths updated
@@ -420,23 +421,35 @@ def mark_paths_scored(
                 MATCH (p:FacilityPath {id: $id})
                 SET p.status = $scored,
                     p.scored_at = $now,
-                    p.interest_score = $interest_score,
-                    p.physics_relevance = $physics_relevance,
-                    p.code_quality = $code_quality,
-                    p.data_access_patterns = $data_access_patterns,
+                    p.score = $score,
+                    p.score_code = $score_code,
+                    p.score_data = $score_data,
+                    p.score_docs = $score_docs,
+                    p.score_imas = $score_imas,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
-                    p.score_reasoning = $score_reasoning
+                    p.evidence = $evidence,
+                    p.should_expand = $should_expand,
+                    p.keywords = $keywords,
+                    p.physics_domain = $physics_domain,
+                    p.expansion_reason = $expansion_reason,
+                    p.skip_reason = $skip_reason
                 """,
                 id=path_id,
                 now=now,
-                interest_score=score_data.get("interest_score"),
-                physics_relevance=score_data.get("physics_relevance"),
-                code_quality=score_data.get("code_quality"),
-                data_access_patterns=score_data.get("data_access_patterns"),
+                score=score_data.get("score"),
+                score_code=score_data.get("score_code"),
+                score_data=score_data.get("score_data"),
+                score_docs=score_data.get("score_docs"),
+                score_imas=score_data.get("score_imas"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
-                score_reasoning=score_data.get("score_reasoning"),
+                evidence=score_data.get("evidence"),
+                should_expand=score_data.get("should_expand"),
+                keywords=score_data.get("keywords"),
+                physics_domain=score_data.get("physics_domain"),
+                expansion_reason=score_data.get("expansion_reason"),
+                skip_reason=score_data.get("skip_reason"),
                 scored=PathStatus.scored.value,
             )
             updated += 1

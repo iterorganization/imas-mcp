@@ -77,6 +77,7 @@ class EvidenceSchema(BaseModel):
     """Evidence collected about a directory's contents.
 
     Used by LLM for structured output - maps directly to DirectoryEvidence.
+    Generic semantic signal container reusable across node types.
     """
 
     code_indicators: list[str] = Field(
@@ -86,6 +87,10 @@ class EvidenceSchema(BaseModel):
     data_indicators: list[str] = Field(
         default_factory=list,
         description="Data file extensions found (e.g., ['nc', 'h5', 'csv'])",
+    )
+    doc_indicators: list[str] = Field(
+        default_factory=list,
+        description="Documentation signals (e.g., ['README', 'docs/', 'pdf', 'tutorial'])",
     )
     imas_indicators: list[str] = Field(
         default_factory=list,
@@ -133,6 +138,8 @@ class DirectoryScoringResult(BaseModel):
 
     score_data: float = Field(description="Data discovery value (0.0-1.0)")
 
+    score_docs: float = Field(description="Documentation discovery value (0.0-1.0)")
+
     score_imas: float = Field(description="IMAS relevance (0.0-1.0)")
 
     should_expand: bool = Field(description="Whether to explore child directories")
@@ -174,6 +181,9 @@ class DirectoryEvidence:
 
     Used for grounded scoring - the LLM collects evidence, then
     a deterministic function computes the final score.
+
+    Generic semantic signal container - reusable across FacilityPath,
+    CodeFile, WikiPage, etc. Quantitative metrics belong on domain nodes.
     """
 
     code_indicators: list[str] = field(default_factory=list)
@@ -181,6 +191,9 @@ class DirectoryEvidence:
 
     data_indicators: list[str] = field(default_factory=list)
     """Data file extensions found (e.g., ['nc', 'h5', 'csv'])"""
+
+    doc_indicators: list[str] = field(default_factory=list)
+    """Documentation signals (e.g., ['README', 'docs/', 'pdf', 'tutorial'])"""
 
     imas_indicators: list[str] = field(default_factory=list)
     """IMAS-related patterns found (e.g., ['put_slice', 'ids_properties'])"""
@@ -196,6 +209,7 @@ class DirectoryEvidence:
         return {
             "code_indicators": self.code_indicators,
             "data_indicators": self.data_indicators,
+            "doc_indicators": self.doc_indicators,
             "imas_indicators": self.imas_indicators,
             "physics_indicators": self.physics_indicators,
             "quality_indicators": self.quality_indicators,
@@ -207,6 +221,7 @@ class DirectoryEvidence:
         return cls(
             code_indicators=data.get("code_indicators", []),
             data_indicators=data.get("data_indicators", []),
+            doc_indicators=data.get("doc_indicators", []),
             imas_indicators=data.get("imas_indicators", []),
             physics_indicators=data.get("physics_indicators", []),
             quality_indicators=data.get("quality_indicators", []),
@@ -247,6 +262,9 @@ class ScoredDirectory:
     score_data: float
     """Data interest dimension (0.0-1.0)."""
 
+    score_docs: float
+    """Documentation interest dimension (0.0-1.0)."""
+
     score_imas: float
     """IMAS relevance dimension (0.0-1.0)."""
 
@@ -279,6 +297,7 @@ class ScoredDirectory:
             "evidence": json.dumps(self.evidence.to_dict()),
             "score_code": self.score_code,
             "score_data": self.score_data,
+            "score_docs": self.score_docs,
             "score_imas": self.score_imas,
             "score": self.score,
             "should_expand": self.should_expand,

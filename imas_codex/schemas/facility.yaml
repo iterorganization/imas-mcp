@@ -588,43 +588,66 @@ classes:
         description: Files extracted to CodeExample nodes
         range: integer
       # Scout guidance
-      interest_score:
-        description: Priority for investigation (0.0-1.0, higher = more interesting)
-        range: float
       patterns_found:
         description: Patterns that matched during scanning (e.g., "equilibrium", "IMAS")
         multivalued: true
       notes:
         description: Free-form notes about this path (append, don't overwrite)
       # Scoring dimensions (LLM-assigned, 0.0-1.0 each)
-      physics_relevance:
-        description: Score for fusion physics content (IMAS patterns, equilibrium, etc.)
+      # All score_* fields follow consistent naming: score_<dimension>
+      score:
+        description: Composite interest score (0.0-1.0), computed from dimension scores
         range: float
-      code_quality:
-        description: Score for code organization and documentation
+      score_code:
+        description: Score for code discovery value (programming files, structure)
         range: float
-      data_access_patterns:
-        description: Score for data I/O patterns (MDSplus, HDF5, etc.)
+      score_data:
+        description: Score for data file value (HDF5, NetCDF, MDSplus, etc.)
         range: float
-      score_reasoning:
-        description: LLM explanation for interest_score assignment
-      # Rescore loop (for high-value paths)
+      score_docs:
+        description: Score for documentation value (READMEs, tutorials, papers)
+        range: float
+      score_imas:
+        description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
+        range: float
+      evidence:
+        description: JSON-encoded evidence dict from LLM (indicators per dimension)
+      should_expand:
+        description: Whether to explore child directories
+        range: boolean
+      expansion_reason:
+        description: Why this directory should be expanded
+      keywords:
+        description: Searchable keywords for this directory
+        multivalued: true
+      physics_domain:
+        description: Primary physics domain (equilibrium, transport, etc.)
+      path_purpose:
+        description: Classified purpose of the directory
+        range: PathPurpose
+      # Enrichment tracking (for high-value paths with dust/tokei/scc data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data
         range: boolean
       enriched_at:
         description: When enrichment was completed
         range: datetime
-      previous_reasoning:
-        description: Reasoning from previous score (for rescore context)
-      rescore_count:
-        description: Number of times this path has been rescored
+      total_bytes:
+        description: Total size in bytes (from dust)
         range: integer
+      total_lines:
+        description: Total lines of code (from tokei/scc)
+        range: integer
+      language_breakdown:
+        description: JSON-encoded language breakdown from tokei/scc
       # Scout session tracking
       skip_reason:
-        description: Why this path was skipped (dead-end pattern, low priority, etc.)
+        description: Why this path was skipped or not expanded
       skipped_at:
         description: When this path was marked as skipped
+        range: datetime
+      scored_at:
+        description: When this path was scored
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path

@@ -12,7 +12,7 @@ You are analyzing directories at a fusion research facility to enrich the knowle
 For each directory, analyze the path and available metadata to provide structured scores:
 
 1. **Classify** the directory purpose from the path name and contents
-2. **Score** three dimensions: code value, data value, IMAS relevance (0.0-1.0)
+2. **Score** four dimensions: code value, data value, docs value, IMAS relevance (0.0-1.0)
 3. **Decide** whether to expand into child directories
 4. **Extract** keywords and physics domain if applicable
 
@@ -92,6 +92,13 @@ For each directory, analyze the path and available metadata to provide structure
 - **0.4-0.6**: Mixed content, some data present
 - **0.0**: No data content
 
+**score_docs (0.0-1.0)**
+- **0.9-1.0**: Dedicated documentation directories (docs/, tutorials/, papers/)
+- **0.7-0.8**: Contains README, guides, or scientific papers
+- **0.4-0.6**: Some documentation present alongside code
+- **0.1-0.3**: Minimal docs (just comments in code)
+- **0.0**: No documentation content
+
 **score_imas (0.0-1.0)**
 - **0.9-1.0**: Direct IMAS integration (put_slice, get_slice, IDS names)
 - **0.7-0.8**: Path contains "imas" or known physics code names
@@ -124,6 +131,7 @@ For each directory, analyze the path and available metadata to provide structure
 For each directory, collect evidence in these categories:
 - **code_indicators**: Programming file extensions (py, f90, cpp, c, jl)
 - **data_indicators**: Data file extensions (nc, h5, mat, csv, json)
+- **doc_indicators**: Documentation signals (README, docs/, pdf, tutorial, paper, guide)
 - **imas_indicators**: IMAS-specific patterns (put_slice, get_slice, IDS names, "imas" in path)
 - **physics_indicators**: Physics domains (equilibrium, transport, MHD)
 - **quality_indicators**: Project quality signals (has_readme, has_makefile, has_git)

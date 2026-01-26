@@ -45,8 +45,12 @@ RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
 SCORE_WEIGHTS = {
     "code": 1.0,
     "data": 0.8,
+    "docs": 0.6,
     "imas": 1.2,
 }
+
+# Container expansion threshold (lower than default to explore containers)
+CONTAINER_THRESHOLD = 0.1
 
 # Purposes that should be suppressed (lower scores)
 # These get a 0.3 multiplier and should_expand=False
@@ -65,6 +69,7 @@ CONTAINER_PURPOSES = {
 def grounded_score(
     score_code: float,
     score_data: float,
+    score_docs: float,
     score_imas: float,
     evidence: DirectoryEvidence,
     purpose: PathPurpose,
@@ -87,6 +92,7 @@ def grounded_score(
     Args:
         score_code: Code interest dimension (0.0-1.0)
         score_data: Data interest dimension (0.0-1.0)
+        score_docs: Documentation interest dimension (0.0-1.0)
         score_imas: IMAS relevance dimension (0.0-1.0)
         evidence: Collected evidence from LLM
         purpose: Classified purpose
@@ -99,6 +105,7 @@ def grounded_score(
     base_score = (
         score_code * SCORE_WEIGHTS["code"]
         + score_data * SCORE_WEIGHTS["data"]
+        + score_docs * SCORE_WEIGHTS["docs"]
         + score_imas * SCORE_WEIGHTS["imas"]
     ) / total_weight
 
@@ -404,6 +411,7 @@ class DirectoryScorer:
                     evidence=DirectoryEvidence(),
                     score_code=0.0,
                     score_data=0.0,
+                    score_docs=0.0,
                     score_imas=0.0,
                     score=0.0,
                     should_expand=False,
@@ -419,6 +427,7 @@ class DirectoryScorer:
             # Clamp scores (should already be valid from schema)
             score_code = max(0.0, min(1.0, result.score_code))
             score_data = max(0.0, min(1.0, result.score_data))
+            score_docs = max(0.0, min(1.0, result.score_docs))
             score_imas = max(0.0, min(1.0, result.score_imas))
 
             # Convert Pydantic enum to graph PathPurpose
@@ -428,6 +437,7 @@ class DirectoryScorer:
             evidence = DirectoryEvidence(
                 code_indicators=result.evidence.code_indicators,
                 data_indicators=result.evidence.data_indicators,
+                doc_indicators=result.evidence.doc_indicators,
                 imas_indicators=result.evidence.imas_indicators,
                 physics_indicators=result.evidence.physics_indicators,
                 quality_indicators=result.evidence.quality_indicators,
@@ -437,14 +447,18 @@ class DirectoryScorer:
             combined = grounded_score(
                 score_code,
                 score_data,
+                score_docs,
                 score_imas,
                 evidence,
                 purpose,
             )
 
-            # Expansion decision
+            # Expansion decision - containers use lower threshold
+            effective_threshold = (
+                CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
+            )
             should_expand = (
-                combined >= threshold
+                combined >= effective_threshold
                 and result.should_expand
                 and purpose not in SUPPRESSED_PURPOSES
             )
@@ -456,6 +470,7 @@ class DirectoryScorer:
                 evidence=evidence,
                 score_code=score_code,
                 score_data=score_data,
+                score_docs=score_docs,
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
@@ -498,6 +513,7 @@ class DirectoryScorer:
                     evidence=DirectoryEvidence(),
                     score_code=0.0,
                     score_data=0.0,
+                    score_docs=0.0,
                     score_imas=0.0,
                     score=0.0,
                     should_expand=False,
@@ -513,6 +529,7 @@ class DirectoryScorer:
             # Extract and clamp scores
             score_code = max(0.0, min(1.0, float(result.get("score_code", 0.0))))
             score_data = max(0.0, min(1.0, float(result.get("score_data", 0.0))))
+            score_docs = max(0.0, min(1.0, float(result.get("score_docs", 0.0))))
             score_imas = max(0.0, min(1.0, float(result.get("score_imas", 0.0))))
 
             # Parse purpose
@@ -523,6 +540,7 @@ class DirectoryScorer:
             evidence = DirectoryEvidence(
                 code_indicators=evidence_data.get("code_indicators", []),
                 data_indicators=evidence_data.get("data_indicators", []),
+                doc_indicators=evidence_data.get("doc_indicators", []),
                 imas_indicators=evidence_data.get("imas_indicators", []),
                 physics_indicators=evidence_data.get("physics_indicators", []),
                 quality_indicators=evidence_data.get("quality_indicators", []),
@@ -532,14 +550,18 @@ class DirectoryScorer:
             combined = grounded_score(
                 score_code,
                 score_data,
+                score_docs,
                 score_imas,
                 evidence,
                 purpose,
             )
 
-            # Expansion decision
+            # Expansion decision - containers use lower threshold
+            effective_threshold = (
+                CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
+            )
             should_expand = (
-                combined >= threshold
+                combined >= effective_threshold
                 and result.get("should_expand", False)
                 and purpose not in SUPPRESSED_PURPOSES
             )
@@ -551,6 +573,7 @@ class DirectoryScorer:
                 evidence=evidence,
                 score_code=score_code,
                 score_data=score_data,
+                score_docs=score_docs,
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
