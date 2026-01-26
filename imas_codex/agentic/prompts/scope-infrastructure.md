@@ -182,7 +182,29 @@ cat ~/.bash_profile 2>/dev/null | grep -E 'module load|PATH|export' | head -10
 ls -la ~/.bash* ~/.profile 2>/dev/null
 ```
 
-### Phase 7: Exclusions & Large Directories (2 min)
+### Phase 7: Internal Git Servers (1 min)
+
+Discover internal git servers (GitLab, GitHub Enterprise). Code on these servers
+will have children skipped during discovery (content is version-controlled).
+
+```bash
+# Check git config for internal remotes
+git config --global -l 2>/dev/null | grep -i url
+cat ~/.gitconfig 2>/dev/null | grep -iE 'url|insteadof' | head -10
+
+# Check for known internal server patterns (substitute facility-specific domains)
+# ITER: git.iter.org
+# EPFL: gitlab.epfl.ch  
+# IPP: gitlab.mpcdf.mpg.de
+# EUROfusion: git.euro-fusion.org
+
+# Sample git remotes from code directories (if any exist)
+find ~/codes ~/projects ~/*codes* -maxdepth 3 -name '.git' 2>/dev/null | head -5 | while read gitdir; do
+  git -C "$(dirname "$gitdir")" remote -v 2>/dev/null | grep fetch | head -1
+done
+```
+
+### Phase 8: Exclusions & Large Directories (2 min)
 
 Identify directories to exclude from code scanning. **Do NOT run du/dust on shared filesystems.**
 
@@ -317,7 +339,16 @@ update_facility_infrastructure("FACILITY", {
 })
 ```
 
-### 7. Update Tools
+### 7. Update Internal Git Servers
+If the facility has internal GitLab/GitHub servers that we can access, add them
+so code discovery skips walking their children (content is version-controlled):
+```python
+update_facility_infrastructure("FACILITY", {
+    "internal_git_servers": ["git.iter.org", "gitlab.epfl.ch"]
+})
+```
+
+### 9. Update Tools
 ```python
 update_facility_tools("FACILITY", {
     "rg": {"version": "14.1.1", "path": "/usr/bin/rg"},
@@ -326,7 +357,7 @@ update_facility_tools("FACILITY", {
 })
 ```
 
-### 8. Add Exploration Notes
+### 10. Add Exploration Notes
 ```python
 add_exploration_note("FACILITY", "Initial infrastructure scoping complete")
 add_exploration_note("FACILITY", "Found legacy PPF data at /common/ppf")
