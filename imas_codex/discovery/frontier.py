@@ -750,30 +750,44 @@ def get_high_value_paths(
         return list(result)
 
 
-def clear_facility_paths(facility: str) -> int:
-    """Delete all FacilityPath nodes for a facility.
+def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
+    """Delete all FacilityPath nodes for a facility in batches.
 
-    Use this before starting a fresh discovery.
+    Uses batched deletion to avoid memory exhaustion on large facilities.
 
     Args:
         facility: Facility ID
+        batch_size: Nodes to delete per batch (default 5000)
 
     Returns:
-        Number of paths deleted
+        Total number of paths deleted
     """
     from imas_codex.graph import GraphClient
 
-    with GraphClient() as gc:
-        result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            DETACH DELETE p
-            RETURN count(p) AS deleted
-            """,
-            facility=facility,
-        )
+    total_deleted = 0
 
-        return result[0]["deleted"] if result else 0
+    with GraphClient() as gc:
+        while True:
+            # Delete a batch and return count
+            result = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WITH p LIMIT $batch_size
+                DETACH DELETE p
+                RETURN count(p) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+
+            deleted = result[0]["deleted"] if result else 0
+            total_deleted += deleted
+
+            # If we deleted less than batch_size, we're done
+            if deleted < batch_size:
+                break
+
+    return total_deleted
 
 
 def persist_scan_results(
@@ -1025,11 +1039,10 @@ def persist_scan_results(
 def normalize_scores(facility: str) -> dict[str, int]:
     """Compute percentile ranks for scored paths within a facility.
 
-    Updates score_percentile field for all scored paths. Should be run
-    periodically after scoring completes.
+    Updates score_percentile field for all scored paths. Uses average rank
+    method for tied scores - paths with the same score get the same percentile.
 
-    Percentile is computed as: rank / (total - 1) to give 0.0 to 1.0 range.
-    Top 5% means score_percentile >= 0.95.
+    Percentile range: 0.0 to 1.0. Top 5% means score_percentile >= 0.95.
 
     Args:
         facility: Facility ID
@@ -1037,6 +1050,8 @@ def normalize_scores(facility: str) -> dict[str, int]:
     Returns:
         Dict with count of paths updated
     """
+    from itertools import groupby
+
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
@@ -1063,11 +1078,17 @@ def normalize_scores(facility: str) -> dict[str, int]:
             )
             return {"updated": 1}
 
-        # Compute percentile ranks
+        # Compute percentile ranks with average rank for ties
         updates = []
-        for rank, row in enumerate(result):
-            percentile = rank / (total - 1)  # 0.0 to 1.0
-            updates.append({"id": row["id"], "percentile": percentile})
+        current_rank = 0
+        for _score, group in groupby(result, key=lambda r: r["score"]):
+            group_list = list(group)
+            # Average rank for tied scores: midpoint of the rank range
+            avg_rank = current_rank + (len(group_list) - 1) / 2
+            percentile = avg_rank / (total - 1)  # 0.0 to 1.0
+            for row in group_list:
+                updates.append({"id": row["id"], "percentile": round(percentile, 4)})
+            current_rank += len(group_list)
 
         # Batch update
         gc.query(
@@ -1080,3 +1101,63 @@ def normalize_scores(facility: str) -> dict[str, int]:
         )
 
         return {"updated": len(updates)}
+
+
+def sample_scored_paths(
+    facility: str, per_quartile: int = 3
+) -> dict[str, list[dict[str, Any]]]:
+    """Sample paths from each score quartile for LLM calibration.
+
+    Returns representative examples from low, medium, high, and very_high
+    score ranges to help the LLM calibrate its scoring decisions.
+
+    Args:
+        facility: Facility ID
+        per_quartile: Number of paths to sample from each quartile
+
+    Returns:
+        Dict with keys: low, medium, high, very_high
+        Each value is a list of dicts with: path, score, purpose, description
+    """
+    from imas_codex.graph import GraphClient
+
+    quartiles = {
+        "low": (0.0, 0.25),
+        "medium": (0.25, 0.5),
+        "high": (0.5, 0.75),
+        "very_high": (0.75, 0.95),  # Cap at 0.95, we forbid 1.0
+    }
+
+    samples: dict[str, list[dict[str, Any]]] = {}
+
+    with GraphClient() as gc:
+        for name, (min_score, max_score) in quartiles.items():
+            result = gc.query(
+                """
+                MATCH (p:FacilityPath {facility_id: $facility})
+                WHERE p.status = 'scored'
+                    AND p.score >= $min_score
+                    AND p.score < $max_score
+                RETURN p.path AS path,
+                       p.score AS score,
+                       p.path_purpose AS purpose,
+                       p.description AS description
+                ORDER BY rand()
+                LIMIT $limit
+                """,
+                facility=facility,
+                min_score=min_score,
+                max_score=max_score,
+                limit=per_quartile,
+            )
+            samples[name] = [
+                {
+                    "path": r["path"],
+                    "score": r["score"],
+                    "purpose": r["purpose"] or "unknown",
+                    "description": (r["description"] or "")[:100],
+                }
+                for r in result
+            ]
+
+    return samples

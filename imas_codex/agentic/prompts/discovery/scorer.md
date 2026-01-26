@@ -171,3 +171,45 @@ This is a RESCORE pass for paths with enrichment data. You have additional conte
 **Provided enrichment data**:
 {{ enrichment_data }}
 {% endif %}
+
+## Score Precision (CRITICAL)
+
+- Use exactly 2 decimal places (e.g., 0.85, 0.72, 0.31)
+- **Maximum allowed score is 0.95** - NEVER use 1.0
+- Scores of 1.0 are FORBIDDEN and will cause batch rejection
+- Minimum non-zero score is 0.05
+- Reserve scores above 0.90 for truly exceptional directories only
+
+## Score Distribution Guidelines
+
+Aim for a natural distribution across facilities:
+- **0.00-0.25 (Low)**: ~25% of paths - build artifacts, archives, system dirs
+- **0.25-0.50 (Medium)**: ~35% of paths - generic containers, mixed content
+- **0.50-0.75 (High)**: ~30% of paths - valuable code, data, documentation
+- **0.75-0.95 (Very High)**: ~10% of paths - core physics codes, IMAS integration
+
+{% if example_paths %}
+## Calibration Examples from This Facility
+
+Use these previously scored paths to calibrate your decisions:
+
+**Low (0.0-0.25):**
+{% for p in example_paths.low %}
+- `{{ p.path }}` → {{ p.score }} ({{ p.purpose }})
+{% endfor %}
+
+**Medium (0.25-0.5):**
+{% for p in example_paths.medium %}
+- `{{ p.path }}` → {{ p.score }} ({{ p.purpose }})
+{% endfor %}
+
+**High (0.5-0.75):**
+{% for p in example_paths.high %}
+- `{{ p.path }}` → {{ p.score }} ({{ p.purpose }})
+{% endfor %}
+
+**Very High (0.75-0.95):**
+{% for p in example_paths.very_high %}
+- `{{ p.path }}` → {{ p.score }} ({{ p.purpose }})
+{% endfor %}
+{% endif %}

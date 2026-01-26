@@ -401,7 +401,7 @@ async def score_worker(
     """
     from imas_codex.discovery.scorer import DirectoryScorer
 
-    scorer = DirectoryScorer()
+    scorer = DirectoryScorer(facility=state.facility)
     # LLM batch size: 100 paths with 32k max_tokens for optimal throughput
     # Sonnet 4.5 has 200k context, output is ~250 tokens/dir = 25k output tokens
     batch_size = 100
@@ -675,6 +675,12 @@ async def run_parallel_discovery(
         state.stop_requested = True
 
     elapsed = max(state.scan_stats.elapsed, state.score_stats.elapsed)
+
+    # Auto-normalize scores after scoring completes
+    if state.score_stats.processed > 0:
+        from imas_codex.discovery.frontier import normalize_scores
+
+        normalize_scores(facility)
 
     return {
         "scanned": state.scan_stats.processed,

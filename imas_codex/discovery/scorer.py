@@ -159,9 +159,10 @@ class DirectoryScorer:
 
     Args:
         model: Model name (None = use "score" task model from config)
+        facility: Facility ID for sampling calibration examples
 
     Example:
-        scorer = DirectoryScorer()
+        scorer = DirectoryScorer(facility="epfl")
         batch = scorer.score_batch(
             directories=[...],
             focus="equilibrium codes",
@@ -170,6 +171,7 @@ class DirectoryScorer:
     """
 
     model: str | None = None
+    facility: str | None = None
 
     def __post_init__(self):
         """Initialize model from config if not provided."""
@@ -296,8 +298,14 @@ class DirectoryScorer:
 
         Loads prompt from prompts/discovery/scorer.md file.
         Raises error if prompt not found - no fallback.
+
+        Injects:
+        - focus: optional natural language focus
+        - example_paths: calibration examples from previously scored paths
         """
         import re
+
+        from imas_codex.discovery.frontier import sample_scored_paths
 
         prompts = load_prompts()
         prompt_def = prompts.get("discovery/scorer")
@@ -308,6 +316,8 @@ class DirectoryScorer:
             )
 
         prompt = prompt_def.content
+
+        # Handle focus section
         if focus:
             prompt = prompt.replace("{{ focus }}", focus)
             prompt = prompt.replace("{% if focus %}", "")
@@ -320,6 +330,55 @@ class DirectoryScorer:
                 prompt,
                 flags=re.DOTALL,
             )
+
+        # Handle example_paths section for LLM calibration
+        if self.facility:
+            example_paths = sample_scored_paths(self.facility, per_quartile=3)
+            # Check if we have any examples
+            has_examples = any(example_paths.get(q) for q in example_paths)
+            if has_examples:
+                # Render the examples section
+                examples_text = []
+                for quartile in ["low", "medium", "high", "very_high"]:
+                    paths = example_paths.get(quartile, [])
+                    for p in paths:
+                        examples_text.append(
+                            f"- `{p['path']}` → {p['score']} ({p['purpose']})"
+                        )
+
+                # Replace the template markers
+                prompt = prompt.replace("{% if example_paths %}", "")
+                # Replace individual quartile loops with actual content
+                for quartile in ["low", "medium", "high", "very_high"]:
+                    q_paths = example_paths.get(quartile, [])
+                    q_lines = "\n".join(
+                        f"- `{p['path']}` → {p['score']} ({p['purpose']})"
+                        for p in q_paths
+                    )
+                    # Remove the for loop markers and replace with content
+                    pattern = (
+                        rf"{{% for p in example_paths\.{quartile} %}}\s*"
+                        rf"-.*?\{{{{ p\.\w+ }}}}.*?\s*"
+                        rf"{{% endfor %}}"
+                    )
+                    prompt = re.sub(pattern, q_lines, prompt, flags=re.DOTALL)
+            else:
+                # Remove the entire example_paths section
+                prompt = re.sub(
+                    r"{%\s*if example_paths\s*%}.*?{%\s*endif\s*%}",
+                    "",
+                    prompt,
+                    flags=re.DOTALL,
+                )
+        else:
+            # No facility, remove example section
+            prompt = re.sub(
+                r"{%\s*if example_paths\s*%}.*?{%\s*endif\s*%}",
+                "",
+                prompt,
+                flags=re.DOTALL,
+            )
+
         return prompt
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
