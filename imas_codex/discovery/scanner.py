@@ -166,7 +166,16 @@ def scan_paths(
         error_str = str(e)
         if len(error_str) > 200:
             error_str = error_str[:200] + "..."
-        logger.warning(f"Scan failed for {facility}: {error_str}")
+        
+        # Add SSH-specific advice for connection failures
+        if "exit status 255" in error_str:
+            logger.warning(
+                f"Scan failed for {facility}: SSH connection failed. "
+                f"Verify connectivity with 'ssh {facility}'. "
+                f"Check: VPN connected, SSH key loaded (ssh-add), host in ~/.ssh/config"
+            )
+        else:
+            logger.warning(f"Scan failed for {facility}: {error_str}")
         return [
             ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
             for p in paths

@@ -241,9 +241,11 @@ def seed_facility_roots(
                     p.get("path") if isinstance(p, dict) else p for p in actionable
                 ]
             else:
-                # Use all path values from config as seed roots
+                # Use path values from config, excluding personal/user paths
+                # These categories are for infrastructure docs, not discovery seeds
+                excluded_categories = {"user", "actionable_paths"}
                 for key, value in paths_config.items():
-                    if key == "actionable_paths":
+                    if key in excluded_categories:
                         continue
                     if isinstance(value, str) and value.startswith("/"):
                         root_paths.append(value)

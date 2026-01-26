@@ -37,7 +37,7 @@ See [facility.yaml](../../imas_codex/schemas/facility.yaml) for complete schema 
 
 ## Scoring
 
-LLM-based scoring assigns interests scores (0.0-1.0) across dimensions:
+LLM-based scoring assigns interest scores (0.0-1.0) across dimensions:
 
 | Dimension | Weight | Description |
 |-----------|--------|-------------|
@@ -50,6 +50,8 @@ LLM-based scoring assigns interests scores (0.0-1.0) across dimensions:
 ```
 score = Σ(dimension_score × weight) / Σ(weights)
 ```
+
+> **Note:** This uses weighted average across dimensions. Directories with high relevance in only one dimension (e.g., pure data with no code) may score lower than expected. An alternative max-based approach would preserve single-dimension excellence.
 
 **Thresholds:**
 - `CONTAINER_THRESHOLD = 0.1` — Minimum score to expand directories
@@ -117,15 +119,38 @@ Evidence nodes are content-addressed (SHA256 of indicators) for automatic dedupl
 ## CLI Commands
 
 ```bash
-# Scan a facility root
-uv run imas-codex discovery scan iter /home
+# Scan and score in one run (recommended)
+uv run imas-codex discover paths iter --limit 500
 
-# Score pending paths
-uv run imas-codex discovery score iter --batch-size 20
+# Scan only (no LLM cost)
+uv run imas-codex discover paths iter --scan-only
+
+# Score only (rescore already-scanned paths)
+uv run imas-codex discover paths iter --score-only
 
 # Check discovery status
-uv run imas-codex discovery status iter
+uv run imas-codex discover status iter
+
+# Clear and restart
+uv run imas-codex discover clear iter
 ```
+
+### SSH Connection Errors
+
+If discovery fails with exit code 255:
+```
+Scan failed for iter: Command 'scan_directories.py' returned non-zero exit status 255.
+```
+
+This indicates SSH connection failure. Verify connectivity:
+```bash
+ssh iter  # Should connect successfully
+```
+
+Common causes:
+- VPN not connected
+- SSH key not loaded (`ssh-add`)
+- Host not configured in `~/.ssh/config`
 
 ## Related Documentation
 
