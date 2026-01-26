@@ -119,6 +119,10 @@ def recover_orphaned_paths(facility: str) -> dict[str, int]:
     Paths claimed more than ORPHAN_TIMEOUT_MINUTES ago are reset to their
     previous state. This handles worker crashes and timeouts gracefully.
 
+    For listing paths:
+    - If score IS NULL (first scan): reset to 'discovered'
+    - If score IS NOT NULL (expansion): reset to 'scored'
+
     Returns:
         Dict with counts: listing_recovered, scoring_recovered
     """
@@ -127,12 +131,13 @@ def recover_orphaned_paths(facility: str) -> dict[str, int]:
     timeout_duration = f"PT{ORPHAN_TIMEOUT_MINUTES}M"
 
     with GraphClient() as gc:
-        # Reset orphaned listing paths back to discovered
-        listing_result = gc.query(
+        # Reset orphaned first-scan paths back to discovered
+        first_scan_result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WHERE p.status = $listing
               AND p.claimed_at < datetime() - duration($timeout)
+              AND p.score IS NULL
             SET p.status = $discovered, p.claimed_at = null
             RETURN count(p) AS recovered
             """,
@@ -141,7 +146,30 @@ def recover_orphaned_paths(facility: str) -> dict[str, int]:
             discovered=PathStatus.discovered.value,
             timeout=timeout_duration,
         )
-        listing_recovered = listing_result[0]["recovered"] if listing_result else 0
+        first_scan_recovered = (
+            first_scan_result[0]["recovered"] if first_scan_result else 0
+        )
+
+        # Reset orphaned expansion paths back to scored
+        expansion_result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $listing
+              AND p.claimed_at < datetime() - duration($timeout)
+              AND p.score IS NOT NULL
+            SET p.status = $scored, p.claimed_at = null
+            RETURN count(p) AS recovered
+            """,
+            facility=facility,
+            listing=PathStatus.listing.value,
+            scored=PathStatus.scored.value,
+            timeout=timeout_duration,
+        )
+        expansion_recovered = (
+            expansion_result[0]["recovered"] if expansion_result else 0
+        )
+
+        listing_recovered = first_scan_recovered + expansion_recovered
 
         # Reset orphaned scoring paths back to listed
         scoring_result = gc.query(
@@ -177,29 +205,56 @@ def recover_orphaned_paths(facility: str) -> dict[str, int]:
 
 
 def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim discovered paths for scanning.
+    """Atomically claim paths for scanning.
 
-    Uses atomic status transition: discovered → listing
-    Returns paths that this worker now owns.
+    Claims two types of paths:
+    1. Discovered (unscored): First scan, enumerate only, no children created
+    2. Scored + should_expand: Expansion scan, enumerate and create children
+
+    Uses atomic status transition: discovered/scored → listing
+    Returns paths with is_expanding flag to indicate which mode.
     """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
-        # Atomic claim: find discovered, set to listing, return claimed
-        result = gc.query(
+        # Claim unscored discovered paths (breadth-first by depth)
+        unscored = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $discovered
+            WHERE p.status = $discovered AND p.score IS NULL
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
             SET p.status = $listing, p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
             """,
             facility=facility,
             limit=limit,
             discovered=PathStatus.discovered.value,
             listing=PathStatus.listing.value,
         )
-        return list(result)
+        unscored_list = list(unscored)
+
+        # If we have room, claim expansion paths (score-descending for valuable first)
+        remaining = limit - len(unscored_list)
+        expansion_list = []
+        if remaining > 0:
+            expansion = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WHERE p.status = $scored
+                  AND p.should_expand = true
+                  AND NOT EXISTS { (child:FacilityPath)-[:PARENT]->(p) }
+                WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
+                SET p.status = $listing, p.claimed_at = datetime()
+                RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
+                """,
+                facility=facility,
+                limit=remaining,
+                scored=PathStatus.scored.value,
+                listing=PathStatus.listing.value,
+            )
+            expansion_list = list(expansion)
+
+        return unscored_list + expansion_list
 
 
 def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, Any]]:
@@ -234,16 +289,16 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
 
 def mark_scan_complete(
     facility: str,
-    scan_results: list[tuple[str, dict, list[str], str | None]],
+    scan_results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
-    """Mark scanned paths complete and create children.
+    """Mark scanned paths complete and conditionally create children.
 
-    Transition: listing → listed (or skipped on error)
+    Transition: listing → listed (first scan) or scored (expansion scan)
 
     Args:
         facility: Facility ID
-        scan_results: List of (path, stats_dict, child_dirs, error) tuples
+        scan_results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
     """
     from imas_codex.discovery.frontier import persist_scan_results
@@ -297,6 +352,7 @@ async def scan_worker(
 
         state.scan_idle_count = 0
         path_strs = [p["path"] for p in paths]
+        expanding_paths = {p["path"] for p in paths if p.get("is_expanding", False)}
 
         if on_progress:
             on_progress(f"scanning {len(paths)} paths", state.scan_stats, None, None)
@@ -336,7 +392,14 @@ async def scan_worker(
         # Persist results (marks scanning → scanned)
         # Run in executor to avoid blocking event loop
         batch_data = [
-            (r.path, r.stats.to_dict(), r.child_dirs, r.error) for r in results
+            (
+                r.path,
+                r.stats.to_dict(),
+                r.child_dirs,
+                r.error,
+                r.path in expanding_paths,
+            )
+            for r in results
         ]
 
         # Collect excluded directories with parent paths and reasons
@@ -578,20 +641,37 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
 
 
 def _revert_listing_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from listing back to discovered on transient error."""
+    """Revert paths from listing back to their pre-claim state on transient error.
+
+    For first-scan paths (score IS NULL): revert to 'discovered'
+    For expansion paths (score IS NOT NULL): revert to 'scored'
+    """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
+        # Revert first-scan paths to discovered
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $listing
+            WHERE p.path IN $paths AND p.status = $listing AND p.score IS NULL
             SET p.status = $discovered, p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
             listing=PathStatus.listing.value,
             discovered=PathStatus.discovered.value,
+        )
+        # Revert expansion paths to scored
+        gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.path IN $paths AND p.status = $listing AND p.score IS NOT NULL
+            SET p.status = $scored, p.claimed_at = null
+            """,
+            facility=facility,
+            paths=paths,
+            listing=PathStatus.listing.value,
+            scored=PathStatus.scored.value,
         )
 
 

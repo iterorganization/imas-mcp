@@ -806,16 +806,20 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
 
 def persist_scan_results(
     facility: str,
-    results: list[tuple[str, dict, list[str], str | None]],
+    results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Persist multiple scan results in a single transaction.
 
     Much faster than calling mark_path_scanned/create_child_paths per path.
 
+    Two modes based on is_expanding flag:
+    1. First scan (is_expanding=False): Set status='listed', no children created
+    2. Expansion scan (is_expanding=True): Keep status='scored', create children
+
     Args:
         facility: Facility ID
-        results: List of (path, stats_dict, child_dirs, error) tuples
+        results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
 
     Returns:
@@ -836,16 +840,17 @@ def persist_scan_results(
     except ValueError:
         facility_config = {}
 
-    # Separate successes and errors
-    successes = []
+    # Separate by mode: first_scan vs expansion
+    first_scan_updates = []
+    expansion_updates = []
     all_children = []
 
-    for path, stats, child_dirs, error in results:
+    for path, stats, child_dirs, error, is_expanding in results:
         path_id = f"{facility}:{path}"
         if error:
             errors += 1
             # Mark as skipped
-            successes.append(
+            first_scan_updates.append(
                 {
                     "id": path_id,
                     "status": PathStatus.skipped.value,
@@ -858,7 +863,6 @@ def persist_scan_results(
             # Build update dict with child_names if available
             update_dict = {
                 "id": path_id,
-                "status": PathStatus.listed.value,
                 "listed_at": now,
                 "total_files": stats.get("total_files", 0),
                 "total_dirs": stats.get("total_dirs", 0),
@@ -888,67 +892,78 @@ def persist_scan_results(
             patterns = stats.get("patterns_detected")
             if patterns:
                 update_dict["patterns_detected"] = patterns
-            successes.append(update_dict)
 
-            # Decide whether to skip children for git repos
-            # Skip children when:
-            #   1. Public repo on github/gitlab/bitbucket (verified via HTTP)
-            #   2. Repo on trusted_git_servers (facility has access, content available)
-            # Continue scanning only unknown private repos
-            is_git_repo = stats.get("has_git", False)
-            git_remote_url = stats.get("git_remote_url", "")
+            if is_expanding:
+                # Expansion scan: keep scored status, create children
+                update_dict["status"] = PathStatus.scored.value
+                expansion_updates.append(update_dict)
 
-            if is_git_repo and git_remote_url:
-                should_skip = False
-                skip_reason = ""
+                # Create children for expanding paths
+                # (with git repo skip logic below)
+                should_create_children = True
+            else:
+                # First scan: set listed status, no children
+                update_dict["status"] = PathStatus.listed.value
+                first_scan_updates.append(update_dict)
+                should_create_children = False
 
-                # Check if on a public hosting service
-                is_public_host = any(
-                    host in git_remote_url.lower()
-                    for host in ["github.com", "gitlab.com", "bitbucket.org"]
-                )
-                if is_public_host:
-                    # Verify actual visibility via HTTP (confirms not private)
-                    is_public = _is_repo_publicly_accessible(
-                        git_remote_url, timeout=3.0
+            # Child creation only for expansion paths
+            if should_create_children:
+                # Decide whether to skip children for git repos
+                is_git_repo = stats.get("has_git", False)
+                git_remote_url = stats.get("git_remote_url", "")
+
+                if is_git_repo and git_remote_url:
+                    should_skip = False
+
+                    # Check if on a public hosting service
+                    is_public_host = any(
+                        host in git_remote_url.lower()
+                        for host in ["github.com", "gitlab.com", "bitbucket.org"]
                     )
-                    if is_public:
-                        should_skip = True
-                        skip_reason = "public_repo"
-                    else:
-                        logger.debug(
-                            f"Scan children: private repo on public host {path}"
+                    if is_public_host:
+                        # Verify actual visibility via HTTP (confirms not private)
+                        is_public = _is_repo_publicly_accessible(
+                            git_remote_url, timeout=3.0
                         )
-                else:
-                    # Check if on an internal git server (facility has access)
-                    internal_servers = facility_config.get("internal_git_servers", [])
-                    is_internal = any(
-                        server in git_remote_url.lower() for server in internal_servers
-                    )
-                    if is_internal:
-                        should_skip = True
-                        skip_reason = "internal_repo"
+                        if is_public:
+                            should_skip = True
+                        else:
+                            logger.debug(
+                                f"Scan children: private repo on public host {path}"
+                            )
+                    else:
+                        # Check if on an internal git server (facility has access)
+                        internal_servers = facility_config.get(
+                            "internal_git_servers", []
+                        )
+                        is_internal = any(
+                            server in git_remote_url.lower()
+                            for server in internal_servers
+                        )
+                        if is_internal:
+                            should_skip = True
 
-                if should_skip:
-                    logger.debug(
-                        f"Skip children: {skip_reason} {path} ({git_remote_url})"
-                    )
-                    continue
+                    if should_skip:
+                        logger.debug(
+                            f"Skip children: git repo {path} ({git_remote_url})"
+                        )
+                        continue
 
-            # Prepare children for non-public-git directories
-            for child_path in child_dirs:
-                all_children.append(
-                    {
-                        "id": f"{facility}:{child_path}",
-                        "facility_id": facility,
-                        "path": child_path,
-                        "parent_id": path_id,
-                    }
-                )
+                # Prepare children for expanding paths
+                for child_path in child_dirs:
+                    all_children.append(
+                        {
+                            "id": f"{facility}:{child_path}",
+                            "facility_id": facility,
+                            "path": child_path,
+                            "parent_id": path_id,
+                        }
+                    )
 
     with GraphClient() as gc:
-        # Batch update scanned/skipped paths
-        if successes:
+        # Batch update first-scan paths (listing → listed)
+        if first_scan_updates:
             gc.query(
                 """
                 UNWIND $items AS item
@@ -966,7 +981,28 @@ def persist_scan_results(
                     p.git_branch = item.git_branch,
                     p.child_names = item.child_names
                 """,
-                items=successes,
+                items=first_scan_updates,
+            )
+
+        # Batch update expansion paths (listing → scored, keep existing score)
+        if expansion_updates:
+            gc.query(
+                """
+                UNWIND $items AS item
+                MATCH (p:FacilityPath {id: item.id})
+                SET p.status = item.status,
+                    p.listed_at = item.listed_at,
+                    p.total_files = item.total_files,
+                    p.total_dirs = item.total_dirs,
+                    p.has_readme = item.has_readme,
+                    p.has_makefile = item.has_makefile,
+                    p.has_git = item.has_git,
+                    p.git_remote_url = item.git_remote_url,
+                    p.git_head_commit = item.git_head_commit,
+                    p.git_branch = item.git_branch,
+                    p.child_names = item.child_names
+                """,
+                items=expansion_updates,
             )
 
         # Batch create children
@@ -1102,6 +1138,7 @@ def persist_scan_results(
             logger.warning(f"User enrichment failed: {e}")
 
         # Create SoftwareRepo nodes for git repos with remote URLs
+        all_updates = first_scan_updates + expansion_updates
         git_repos = [
             (
                 item["id"],
@@ -1109,7 +1146,7 @@ def persist_scan_results(
                 item.get("git_head_commit"),
                 item.get("git_branch"),
             )
-            for item in successes
+            for item in all_updates
             if item.get("has_git") and item.get("git_remote_url")
         ]
         for path_id, remote_url, head_commit, branch in git_repos:

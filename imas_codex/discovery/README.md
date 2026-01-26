@@ -91,15 +91,48 @@ from imas_codex.graph.models import PathStatus
 # Use: PathStatus.discovered.value, PathStatus.listed.value, etc.
 ```
 
+### Score-Gated Expansion
+
+Children are only created for paths that score highly. This prevents graph pollution
+from low-value directories:
+
+1. **First Scan**: Enumerate directory, set `status='listed'`, no children created
+2. **Score**: LLM evaluates path, sets `score` and `should_expand` flag
+3. **Expansion Scan**: If `should_expand=true`, scanner re-claims path, creates children
+
+```
+                       FIRST DISCOVERY
+                       
+   [seed paths]                                 
+        │                                        
+        ▼                                        
+   discovered ─────SCAN────► listed ─────SCORE────► scored
+   (score=NULL)              (score=NULL)           (should_expand=T/F)
+                                                         │
+                                                         │
+             ┌───────────────────────────────────────────┘
+             │
+             ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │                      POST-SCORE ROUTING                     │
+   │                                                             │
+   │  should_expand=true?                                        │
+   │    YES → Scanner re-claims, creates children                │
+   │          Parent stays 'scored', children → 'discovered'     │
+   │    NO  → Terminal. No children created.                     │
+   │                                                             │
+   └─────────────────────────────────────────────────────────────┘
+```
+
 ### States
 
 | State | Type | Description |
 |-------|------|-------------|
 | `discovered` | Long-lived | Path found, awaiting enumeration |
-| `listing` | Transient | Scanner worker active (fallback → discovered) |
+| `listing` | Transient | Scanner worker active (fallback → discovered/scored) |
 | `listed` | Long-lived | Enumerated with file/dir counts, awaiting score |
 | `scoring` | Transient | Scorer worker active (fallback → listed) |
-| `scored` | Terminal | LLM scored, score set |
+| `scored` | Terminal | LLM scored, may be re-claimed for expansion |
 | `skipped` | Terminal | Low value (score < 0.2) |
 | `excluded` | Terminal | Matched exclusion pattern |
 | `stale` | Long-lived | Path may have changed, needs re-discovery |
@@ -107,16 +140,36 @@ from imas_codex.graph.models import PathStatus
 ### State Transitions
 
 ```
-discovered ──(claim)──> listing ──(complete)──> listed ──(claim)──> scoring
-     ↑                     │                                          │
-     │                 (timeout)                                      │
-     │                     ↓                                          │
-     └─────────────── discovered                            ┌─────────┴─────────┐
-              │            │            │
-         Low value    Good value     Error
-              │            │            │
-           skipped      scored       listed
-                                   (retry)
+                            SCAN WORKER
+     ┌──────────────────────────────────────────────────────────┐
+     │                                                          │
+     │  Claims:                                                 │
+     │    1. status='discovered' AND score IS NULL (first scan) │
+     │    2. status='scored' AND should_expand=true (expansion) │
+     │                                                          │
+     │  Order: First by unscored (breadth-first by depth)       │
+     │         Then by expansion (score DESC, high-value first) │
+     └──────────────────────────────────────────────────────────┘
+                               │
+         ┌─────────────────────┼─────────────────────┐
+         │                     │                     │
+    First Scan            Expansion              Error
+         │                     │                     │
+      listed               scored                 skipped
+   (no children)     (children created)
+         │
+         ▼
+   ┌─────────────────────────────────────────────────────────────┐
+   │                       SCORE WORKER                          │
+   │                                                             │
+   │  Claims: status='listed' AND score IS NULL                  │
+   │  Result: Sets score, should_expand → status='scored'        │
+   │                                                             │
+   │  If should_expand=true:                                     │
+   │    → Path becomes eligible for expansion scan               │
+   │    → Scanner picks up, creates children                     │
+   │                                                             │
+   └─────────────────────────────────────────────────────────────┘
 ```
 
 ### Orphan Recovery
@@ -125,10 +178,17 @@ Transient states (`listing`, `scoring`) have timeouts. When a worker crashes, or
 paths are recovered at next discovery run:
 
 ```cypher
--- Reset orphaned listing states (> 10 min old)
+-- Reset orphaned first-scan paths (score IS NULL)
 MATCH (p:FacilityPath {status: 'listing'})
 WHERE p.claimed_at < datetime() - duration('PT10M')
+  AND p.score IS NULL
 SET p.status = 'discovered', p.claimed_at = null
+
+-- Reset orphaned expansion paths (score IS NOT NULL)
+MATCH (p:FacilityPath {status: 'listing'})
+WHERE p.claimed_at < datetime() - duration('PT10M')
+  AND p.score IS NOT NULL
+SET p.status = 'scored', p.claimed_at = null
 
 -- Reset orphaned scoring states
 MATCH (p:FacilityPath {status: 'scoring'})  

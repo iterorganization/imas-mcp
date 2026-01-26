@@ -92,15 +92,25 @@ class TestClaimPaths:
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
-        mock_gc.query.return_value = [
-            {"id": "test:/path1", "path": "/path1", "depth": 1}
+        # First query returns unscored paths, second returns expansion paths
+        mock_gc.query.side_effect = [
+            [
+                {
+                    "id": "test:/path1",
+                    "path": "/path1",
+                    "depth": 1,
+                    "is_expanding": False,
+                }
+            ],
+            [],  # No expansion paths
         ]
 
         result = claim_paths_for_scanning("test", limit=50)
 
-        assert mock_gc.query.called
+        assert mock_gc.query.call_count == 2  # Unscored + expansion queries
         assert len(result) == 1
         assert result[0]["path"] == "/path1"
+        assert result[0]["is_expanding"] is False
 
     @patch("imas_codex.graph.GraphClient")
     def test_claim_paths_for_scoring_calls_graph(self, mock_gc_class):
