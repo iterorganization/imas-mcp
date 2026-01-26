@@ -37,9 +37,16 @@ from imas_codex.discovery.models import (
 
 logger = logging.getLogger(__name__)
 
+# Suppress verbose litellm logging (rate limit messages, help links, etc.)
+# These are set before import to avoid the default verbose output
+os.environ.setdefault("LITELLM_LOG", "ERROR")
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Retry configuration for rate limiting
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry (5, 10, 20, 40, 80)
 
 # Dimension weights for grounded scoring
 SCORE_WEIGHTS = {
@@ -246,9 +253,10 @@ class DirectoryScorer:
                     for x in ["overloaded", "rate", "429", "503", "timeout"]
                 ):
                     delay = RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        f"LLM request failed (attempt {attempt + 1}/{MAX_RETRIES}), "
-                        f"retrying in {delay:.1f}s: {e}"
+                    # Use debug level to reduce noise - rate limits are expected
+                    logger.debug(
+                        f"LLM rate limited (attempt {attempt + 1}/{MAX_RETRIES}), "
+                        f"waiting {delay:.1f}s..."
                     )
                     time.sleep(delay)
                 else:

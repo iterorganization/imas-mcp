@@ -41,7 +41,7 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 
 def has_command(cmd: str) -> bool:
@@ -53,7 +53,7 @@ def has_command(cmd: str) -> bool:
     return False
 
 
-def get_user_via_getent(username: str) -> dict[str, Any] | None:
+def get_user_via_getent(username: str) -> Optional[Dict[str, Any]]:
     """Get user info via getent passwd (POSIX standard)."""
     try:
         proc = subprocess.run(
@@ -78,7 +78,7 @@ def get_user_via_getent(username: str) -> dict[str, Any] | None:
     return None
 
 
-def get_user_via_passwd_file(username: str) -> dict[str, Any] | None:
+def get_user_via_passwd_file(username: str) -> Optional[Dict[str, Any]]:
     """Get user info via /etc/passwd (fallback)."""
     try:
         with open("/etc/passwd") as f:
@@ -97,7 +97,7 @@ def get_user_via_passwd_file(username: str) -> dict[str, Any] | None:
     return None
 
 
-def get_user_via_id(username: str) -> dict[str, Any] | None:
+def get_user_via_id(username: str) -> Optional[Dict[str, Any]]:
     """Get minimal user info via id command (last resort)."""
     try:
         proc = subprocess.run(
@@ -121,7 +121,7 @@ def get_user_via_id(username: str) -> dict[str, Any] | None:
     return None
 
 
-def get_user_info(username: str) -> dict[str, Any] | None:
+def get_user_info(username: str) -> Optional[Dict[str, Any]]:
     """Get user info with cascading fallbacks.
 
     Order of preference:
@@ -157,10 +157,10 @@ def main() -> None:
         print(json.dumps(result))
         sys.exit(1)
 
-    usernames: list[str] = config.get("usernames", [])
+    usernames: List[str] = config.get("usernames", [])
 
-    users: list[dict[str, Any]] = []
-    errors: list[str] = []
+    users: List[Dict[str, Any]] = []
+    errors: List[str] = []
 
     for username in usernames:
         info = get_user_info(username)

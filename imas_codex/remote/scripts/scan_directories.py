@@ -45,7 +45,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 
 
 def sanitize_str(s: str) -> str:
@@ -68,11 +68,11 @@ def has_command(cmd: str) -> bool:
 
 def scan_directory(
     path: str,
-    rg_patterns: dict[str, str],
+    rg_patterns: Dict[str, str],
     enable_rg: bool,
     enable_size: bool,
     has_rg: bool,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """Scan a single directory and return results dict.
 
     Args:
@@ -85,7 +85,7 @@ def scan_directory(
     Returns:
         Dict with path, stats, child_dirs, child_names, and optional error
     """
-    result: dict[str, Any] = {"path": path}
+    result: Dict[str, Any] = {"path": path}
 
     # Check accessibility
     if not os.path.isdir(path):
@@ -106,8 +106,8 @@ def scan_directory(
         return result
 
     # Separate files and directories (avoid following symlinks)
-    files: list[os.DirEntry] = []
-    dirs: list[os.DirEntry] = []
+    files: List[os.DirEntry] = []
+    dirs: List[os.DirEntry] = []
     for entry in entries:
         try:
             if entry.is_file(follow_symlinks=False):
@@ -136,7 +136,7 @@ def scan_directory(
     has_git = ".git" in names_lower
 
     # Extension counts (for file type distribution) - sanitize keys for JSON
-    ext_counts: dict[str, int] = {}
+    ext_counts: Dict[str, int] = {}
     for f in files:
         suffix = Path(f.name).suffix
         if suffix:
@@ -144,7 +144,7 @@ def scan_directory(
             ext_counts[ext] = ext_counts.get(ext, 0) + 1
 
     # rg pattern matching (if enabled and available)
-    rg_matches: dict[str, int] = {}
+    rg_matches: Dict[str, int] = {}
     if enable_rg and has_rg and rg_patterns:
         all_patterns = "|".join(rg_patterns.values())
         try:
@@ -210,8 +210,8 @@ def main() -> None:
         print(json.dumps({"error": f"Invalid JSON input: {e}"}), file=sys.stderr)
         sys.exit(1)
 
-    paths: list[str] = config.get("paths", [])
-    rg_patterns: dict[str, str] = config.get("rg_patterns", {})
+    paths: List[str] = config.get("paths", [])
+    rg_patterns: Dict[str, str] = config.get("rg_patterns", {})
     enable_rg: bool = config.get("enable_rg", False)
     enable_size: bool = config.get("enable_size", False)
 
