@@ -102,10 +102,40 @@ class DiscoveryState:
             return True
         if self.path_limit_reached:
             return True
-        # Stop if both workers idle for 3+ iterations
+        # Stop if both workers idle for 3+ iterations AND no pending work
         if self.scan_idle_count >= 3 and self.score_idle_count >= 3:
-            return True
+            # Check for pending expansion work before terminating
+            if not has_pending_work(self.facility):
+                return True
         return False
+
+
+def has_pending_work(facility: str) -> bool:
+    """Check if there's pending work in the graph.
+
+    Returns True if any of:
+    - Discovered paths awaiting first scan
+    - Listed paths awaiting scoring
+    - Scored paths with should_expand=true that haven't been expanded
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $discovered
+               OR (p.status = $listed AND p.score IS NULL)
+               OR (p.status = $scored AND p.should_expand = true
+                   AND NOT EXISTS { (child:FacilityPath)-[:PARENT]->(p) })
+            RETURN count(p) AS pending
+            """,
+            facility=facility,
+            discovered=PathStatus.discovered.value,
+            listed=PathStatus.listed.value,
+            scored=PathStatus.scored.value,
+        )
+        return result[0]["pending"] > 0 if result else False
 
 
 # ============================================================================
