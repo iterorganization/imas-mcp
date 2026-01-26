@@ -28,6 +28,7 @@ prefixes:
   linkml: https://w3id.org/linkml/
   facility: https://imas.iter.org/schemas/facility/
   imas: https://imas.iter.org/
+  schema: https://schema.org/
 
 default_prefix: facility
 default_range: string
@@ -610,8 +611,9 @@ classes:
       score_imas:
         description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
         range: float
-      evidence:
-        description: JSON-encoded evidence dict from LLM (indicators per dimension)
+      evidence_id:
+        description: Link to Evidence node with semantic indicators
+        range: Evidence
       should_expand:
         description: Whether to explore child directories
         range: boolean
@@ -651,6 +653,126 @@ classes:
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
+
+# =============================================================================
+# Evidence Class (Linked semantic indicators, reusable across node types)
+# =============================================================================
+
+  Evidence:
+    description: >-
+      Semantic evidence extracted by LLM during scoring. Contains qualitative
+      indicators that describe content type, not quantitative metrics.
+      Designed for reuse across FacilityPath, CodeFile, WikiPage, etc.
+    class_uri: facility:Evidence
+    attributes:
+      id:
+        identifier: true
+        description: Content-addressable hash of indicators
+        required: true
+      code_indicators:
+        description: Programming language/framework indicators (py, f90, cmake, etc.)
+        multivalued: true
+      data_indicators:
+        description: Data file indicators (hdf5, nc, mat, parquet, etc.)
+        multivalued: true
+      doc_indicators:
+        description: Documentation indicators (readme, docs/, pdf, tutorial, etc.)
+        multivalued: true
+      imas_indicators:
+        description: IMAS-specific indicators (ids, put_slice, get_slice, etc.)
+        multivalued: true
+      physics_indicators:
+        description: Physics domain indicators (equilibrium, transport, etc.)
+        multivalued: true
+      quality_indicators:
+        description: Code quality indicators (git, tests, ci, makefile, etc.)
+        multivalued: true
+      created_at:
+        description: When this evidence was extracted
+        range: datetime
+
+# =============================================================================
+# User Classes
+# =============================================================================
+
+  FacilityUser:
+    description: >-
+      A user account at a facility. Discovered from home directories and
+      enriched with GECOS info via getent passwd. Links paths to users
+      and enables cross-facility user identification.
+    class_uri: facility:FacilityUser
+    attributes:
+      id:
+        identifier: true
+        description: Composite ID (facility:username, e.g., "iter:dubrovm")
+        required: true
+      facility_id:
+        description: Parent facility ID
+        required: true
+        range: Facility
+      username:
+        description: Local username at facility
+        required: true
+      # Schema.org-compatible naming (maps to schema:Person properties)
+      name:
+        description: Full name from GECOS field (getent passwd)
+        slot_uri: schema:name
+      given_name:
+        description: First/given name (parsed from GECOS)
+        slot_uri: schema:givenName
+      family_name:
+        description: Last/family name (parsed from GECOS)
+        slot_uri: schema:familyName
+      email:
+        description: Email address if discoverable
+        slot_uri: schema:email
+      home_path:
+        description: User home directory path
+        range: FacilityPath
+      discovered_at:
+        description: When this user was discovered
+        range: datetime
+      enriched_at:
+        description: When GECOS info was fetched
+        range: datetime
+      # Cross-facility linking
+      person_id:
+        description: Link to cross-facility Person node (if identified)
+        range: Person
+
+  Person:
+    description: >-
+      A researcher that may have accounts at multiple facilities.
+      Uses Schema.org Person semantics for interoperability.
+      Enables cross-facility user identification via ORCID or name matching.
+    class_uri: schema:Person
+    attributes:
+      id:
+        identifier: true
+        description: Normalized identifier (orcid:XXXX-XXXX or email)
+        required: true
+      name:
+        description: Full name
+        required: true
+        slot_uri: schema:name
+      given_name:
+        description: First/given name
+        slot_uri: schema:givenName
+      family_name:
+        description: Last/family name
+        slot_uri: schema:familyName
+      email:
+        description: Primary email address
+        slot_uri: schema:email
+      orcid:
+        description: ORCID identifier (https://orcid.org/XXXX-XXXX-XXXX-XXXX)
+        slot_uri: schema:identifier
+      affiliations:
+        description: Known institutional affiliations
+        multivalued: true
+        slot_uri: schema:affiliation
+      # Linked accounts populated via IS_PERSON relationship
+      # (FacilityUser)-[:IS_PERSON]->(Person)
 
 # =============================================================================
 # Data Infrastructure Classes (Public - no IPs or paths)

@@ -232,18 +232,39 @@ def seed_facility_roots(
         config = get_facility(facility)
         paths_config = config.get("paths", {})
 
-        # Look for actionable_paths or use defaults
+        root_paths = []
         if isinstance(paths_config, dict):
-            root_paths = paths_config.get("actionable_paths", [])
-            if isinstance(root_paths, list) and root_paths:
+            # First check for explicit actionable_paths list
+            actionable = paths_config.get("actionable_paths", [])
+            if isinstance(actionable, list) and actionable:
                 root_paths = [
-                    p.get("path") if isinstance(p, dict) else p for p in root_paths
+                    p.get("path") if isinstance(p, dict) else p for p in actionable
                 ]
             else:
-                # Fallback to common exploration roots
-                root_paths = ["/home", "/work", "/opt"]
-        else:
+                # Use all path values from config as seed roots
+                for key, value in paths_config.items():
+                    if key == "actionable_paths":
+                        continue
+                    if isinstance(value, str) and value.startswith("/"):
+                        root_paths.append(value)
+                    elif isinstance(value, dict):
+                        # Nested paths like {root: "/work/imas", core: "/work/imas/core"}
+                        for subvalue in value.values():
+                            if isinstance(subvalue, str) and subvalue.startswith("/"):
+                                root_paths.append(subvalue)
+
+        # Fallback to common exploration roots if no paths found
+        if not root_paths:
             root_paths = ["/home", "/work", "/opt"]
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_paths = []
+        for p in root_paths:
+            if p not in seen:
+                seen.add(p)
+                unique_paths.append(p)
+        root_paths = unique_paths
 
     now = datetime.now(UTC).isoformat()
     items = []
@@ -394,7 +415,7 @@ def mark_paths_scored(
     facility: str,
     scores: list[dict[str, Any]],
 ) -> int:
-    """Update multiple paths with LLM scores.
+    """Update multiple paths with LLM scores and create/link Evidence nodes.
 
     Args:
         facility: Facility ID
@@ -406,6 +427,9 @@ def mark_paths_scored(
     Returns:
         Number of paths updated
     """
+    import hashlib
+    import json
+
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
@@ -416,6 +440,40 @@ def mark_paths_scored(
             path = score_data["path"]
             path_id = f"{facility}:{path}"
 
+            # Create content-addressable Evidence node from indicators
+            evidence_dict = score_data.get("evidence")
+            evidence_id = None
+
+            if evidence_dict and isinstance(evidence_dict, dict):
+                # Compute stable hash from evidence content
+                evidence_json = json.dumps(evidence_dict, sort_keys=True)
+                hash_bytes = hashlib.sha256(evidence_json.encode()).hexdigest()[:16]
+                evidence_id = f"ev:{hash_bytes}"
+
+                # MERGE evidence node (idempotent)
+                gc.query(
+                    """
+                    MERGE (e:Evidence {id: $ev_id})
+                    ON CREATE SET
+                        e.code_indicators = $code_indicators,
+                        e.data_indicators = $data_indicators,
+                        e.doc_indicators = $doc_indicators,
+                        e.imas_indicators = $imas_indicators,
+                        e.physics_indicators = $physics_indicators,
+                        e.quality_indicators = $quality_indicators,
+                        e.created_at = $now
+                    """,
+                    ev_id=evidence_id,
+                    code_indicators=evidence_dict.get("code_indicators", []),
+                    data_indicators=evidence_dict.get("data_indicators", []),
+                    doc_indicators=evidence_dict.get("doc_indicators", []),
+                    imas_indicators=evidence_dict.get("imas_indicators", []),
+                    physics_indicators=evidence_dict.get("physics_indicators", []),
+                    quality_indicators=evidence_dict.get("quality_indicators", []),
+                    now=now,
+                )
+
+            # Update FacilityPath with scores and link to Evidence
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -428,12 +486,17 @@ def mark_paths_scored(
                     p.score_imas = $score_imas,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
-                    p.evidence = $evidence,
+                    p.evidence_id = $evidence_id,
                     p.should_expand = $should_expand,
                     p.keywords = $keywords,
                     p.physics_domain = $physics_domain,
                     p.expansion_reason = $expansion_reason,
                     p.skip_reason = $skip_reason
+                WITH p
+                OPTIONAL MATCH (e:Evidence {id: $evidence_id})
+                FOREACH (_ IN CASE WHEN e IS NOT NULL THEN [1] ELSE [] END |
+                    MERGE (p)-[:HAS_EVIDENCE]->(e)
+                )
                 """,
                 id=path_id,
                 now=now,
@@ -444,7 +507,7 @@ def mark_paths_scored(
                 score_imas=score_data.get("score_imas"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
-                evidence=score_data.get("evidence"),
+                evidence_id=evidence_id,
                 should_expand=score_data.get("should_expand"),
                 keywords=score_data.get("keywords"),
                 physics_domain=score_data.get("physics_domain"),
@@ -754,6 +817,41 @@ def persist_scan_results(
                 )
 
                 excluded_count = len(excluded_nodes)
+
+        # User enrichment: extract users from discovered home paths
+        # Run in same transaction for consistency
+        all_paths = [path for path, _stats, _children, _error in results]
+        try:
+            from imas_codex.discovery.user_enrichment import enrich_users_from_paths
+
+            facility_users = enrich_users_from_paths(facility, all_paths)
+            if facility_users:
+                # Create FacilityUser nodes
+                gc.query(
+                    """
+                    UNWIND $users AS user
+                    MATCH (f:Facility {id: user.facility_id})
+                    MERGE (u:FacilityUser {id: user.id})
+                    ON CREATE SET u.username = user.username,
+                                  u.facility_id = user.facility_id,
+                                  u.name = user.name,
+                                  u.given_name = user.given_name,
+                                  u.family_name = user.family_name,
+                                  u.home_path = user.home_path,
+                                  u.discovered_at = user.discovered_at,
+                                  u.enriched_at = user.enriched_at
+                    ON MATCH SET u.name = COALESCE(user.name, u.name),
+                                 u.given_name = COALESCE(user.given_name, u.given_name),
+                                 u.family_name = COALESCE(user.family_name, u.family_name),
+                                 u.enriched_at = COALESCE(user.enriched_at, u.enriched_at)
+                    MERGE (u)-[:FACILITY_ID]->(f)
+                    """,
+                    users=facility_users,
+                )
+                logger.debug(f"Enriched {len(facility_users)} users for {facility}")
+        except Exception as e:
+            # User enrichment is non-critical; don't fail scan
+            logger.warning(f"User enrichment failed: {e}")
 
     return {
         "scanned": scanned,
