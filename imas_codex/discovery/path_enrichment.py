@@ -99,55 +99,78 @@ def _build_enrichment_script(paths: list[str]) -> str:
     """Build a bash script for enrichment data collection.
 
     Collects:
-    - rg pattern matches for format conversion detection
-    - dust for storage breakdown
+    - rg pattern matches for format conversion detection (simplified patterns)
+    - du for storage (more portable than dust)
     - tokei for lines of code
 
     Returns JSON array with results per path.
     """
-    # Combine all patterns for a single rg call
-    read_pattern = "|".join(f"({p})" for p in FORMAT_READ_PATTERNS.values())
-    write_pattern = "|".join(f"({p})" for p in FORMAT_WRITE_PATTERNS.values())
+    # Simplified patterns - shorter to avoid arg length issues
+    read_patterns = [
+        "read_eqdsk|load_eqdsk|from_eqdsk",
+        "mdsconnect|mdsopen|MDSplus",
+        "h5py\\.File|hdf5|netCDF4",
+        "xr\\.open|xarray\\.open",
+        "json\\.load|pickle\\.load",
+        "imas\\.database|get_ids|get_slice",
+        "ppf\\.read|ppfget",
+    ]
+    write_patterns = [
+        "put_slice|ids\\.put|imas\\.create",
+        "to_hdf|hdf5\\.write",
+        "to_netcdf|netcdf\\.create",
+        "json\\.dump|pickle\\.dump",
+        "write_eqdsk|to_eqdsk",
+    ]
 
-    paths_json = json.dumps(paths)
+    read_pattern = "|".join(read_patterns)
+    write_pattern = "|".join(write_patterns)
+
+    # Generate path list as bash array entries
+    path_entries = "\n".join(f'  "{p}"' for p in paths)
 
     script = f"""#!/bin/bash
-set -e
 
-PATHS='{paths_json}'
+PATHS=(
+{path_entries}
+)
+
 echo "["
 first=true
 
-for path in $(echo "$PATHS" | jq -r '.[]'); do
+for path in "${{PATHS[@]}}"; do
+    if [ ! -d "$path" ]; then
+        continue
+    fi
+
     if [ "$first" = true ]; then
         first=false
     else
         echo ","
     fi
 
-    result='{{"path": "'$path'"}}'
+    # Initialize counts
+    read_count=0
+    write_count=0
+    total_bytes=0
+    total_lines=0
 
     # Pattern search with rg (if available)
-    if command -v rg &> /dev/null && [ -d "$path" ]; then
-        read_count=$(rg -c --no-messages --max-depth 3 '{read_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
-        write_count=$(rg -c --no-messages --max-depth 3 '{write_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
-        result=$(echo "$result" | jq ". + {{\\"read_matches\\": $read_count, \\"write_matches\\": $write_count}}")
+    if command -v rg &> /dev/null; then
+        read_count=$(rg -c --no-messages --max-depth 3 -e '{read_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
+        write_count=$(rg -c --no-messages --max-depth 3 -e '{write_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
     fi
 
-    # Storage analysis with dust (if available)
-    if command -v dust &> /dev/null && [ -d "$path" ]; then
-        total_bytes=$(du -sb "$path" 2>/dev/null | cut -f1 || echo 0)
-        result=$(echo "$result" | jq ". + {{\\"total_bytes\\": $total_bytes}}")
-    fi
+    # Storage (portable du)
+    total_bytes=$(du -sb "$path" 2>/dev/null | cut -f1 || echo 0)
 
     # Lines of code with tokei (if available)
-    if command -v tokei &> /dev/null && [ -d "$path" ]; then
-        tokei_json=$(tokei "$path" -o json 2>/dev/null || echo '{{}}')
-        total_lines=$(echo "$tokei_json" | jq '.Total.code // 0')
-        result=$(echo "$result" | jq ". + {{\\"total_lines\\": $total_lines, \\"tokei\\": $tokei_json}}")
+    if command -v tokei &> /dev/null; then
+        total_lines=$(tokei "$path" -o json 2>/dev/null | grep -o '"code":[0-9]*' | head -1 | grep -o '[0-9]*' || echo 0)
     fi
 
-    echo "$result"
+    # Output JSON (no jq required)
+    echo "{{\\"path\\":\\"$path\\",\\"read_matches\\":$read_count,\\"write_matches\\":$write_count,\\"total_bytes\\":$total_bytes,\\"total_lines\\":$total_lines}}"
 done
 
 echo "]"
