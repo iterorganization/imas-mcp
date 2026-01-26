@@ -139,7 +139,7 @@ def get_frontier(
 
     Frontier includes:
     1. Paths with status='discovered' (awaiting initial scan)
-    2. Paths with status='scored', is_enriched=true, interest_score >= 0.75,
+    2. Paths with status='scored', is_enriched=true, score >= 0.75,
        rescore_count < 1 (awaiting rescore)
 
     Args:
@@ -156,7 +156,7 @@ def get_frontier(
         where_clause = (
             f"p.status = '{PathStatus.discovered.value}' OR "
             f"(p.status = '{PathStatus.scored.value}' AND p.is_enriched = true AND "
-            f"p.interest_score >= 0.75 AND coalesce(p.rescore_count, 0) < 1)"
+            f"p.score >= 0.75 AND coalesce(p.rescore_count, 0) < 1)"
         )
     else:
         where_clause = f"p.status = '{PathStatus.discovered.value}'"
@@ -190,7 +190,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $listed AND p.interest_score IS NULL
+            WHERE p.status = $listed AND p.score IS NULL
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -393,6 +393,119 @@ def create_child_paths(
     return result["processed"]
 
 
+def _parse_git_remote_url(url: str) -> tuple[str, str | None, str | None]:
+    """Parse git remote URL to extract source type and normalized repo ID.
+
+    Args:
+        url: Git remote URL (https, git@, or local path)
+
+    Returns:
+        Tuple of (source_type, owner, repo_name) or (source_type, None, None) for local
+    """
+    import re
+
+    # SSH format: git@github.com:owner/repo.git
+    ssh_match = re.match(r"git@([^:]+):([^/]+)/(.+?)(?:\.git)?$", url)
+    if ssh_match:
+        host, owner, repo = ssh_match.groups()
+        if "github" in host.lower():
+            return "github", owner, repo
+        elif "gitlab" in host.lower():
+            return "gitlab", owner, repo
+        elif "bitbucket" in host.lower():
+            return "bitbucket", owner, repo
+        return "gitlab", owner, repo  # Default to gitlab for other hosts
+
+    # HTTPS format: https://github.com/owner/repo.git
+    https_match = re.match(r"https?://([^/]+)/([^/]+)/(.+?)(?:\.git)?$", url)
+    if https_match:
+        host, owner, repo = https_match.groups()
+        if "github" in host.lower():
+            return "github", owner, repo
+        elif "gitlab" in host.lower():
+            return "gitlab", owner, repo
+        elif "bitbucket" in host.lower():
+            return "bitbucket", owner, repo
+        return "gitlab", owner, repo
+
+    # Local or unknown format
+    return "local", None, None
+
+
+def _create_software_repo_link(
+    gc: Any,
+    facility: str,
+    path_id: str,
+    remote_url: str,
+    head_commit: str | None,
+    branch: str | None,
+    now: str,
+) -> None:
+    """Create SoftwareRepo node and CLONE_OF relationship.
+
+    Args:
+        gc: GraphClient instance
+        facility: Facility ID
+        path_id: FacilityPath ID
+        remote_url: Git remote origin URL
+        head_commit: Current HEAD commit hash
+        branch: Current branch name
+        now: ISO timestamp
+    """
+    source_type, owner, repo_name = _parse_git_remote_url(remote_url)
+
+    if source_type == "local" or not owner or not repo_name:
+        # Local repo or can't parse - create with path-based ID
+        repo_id = f"local:{facility}:{path_id.split(':', 1)[1]}"
+        name = path_id.split("/")[-1] if "/" in path_id else path_id
+    else:
+        # Remote repo - create with normalized ID
+        repo_id = f"{source_type}:{owner}/{repo_name}"
+        name = repo_name
+
+    # MERGE SoftwareRepo (deduplicates across clones)
+    gc.query(
+        """
+        MERGE (r:SoftwareRepo {id: $repo_id})
+        ON CREATE SET
+            r.source_type = $source_type,
+            r.remote_url = $remote_url,
+            r.name = $name,
+            r.head_commit = $head_commit,
+            r.default_branch = $branch,
+            r.discovered_at = $now,
+            r.discovered_via = $facility,
+            r.clone_count = 1
+        ON MATCH SET
+            r.clone_count = coalesce(r.clone_count, 0) + 1,
+            r.head_commit = CASE
+                WHEN $head_commit IS NOT NULL THEN $head_commit
+                ELSE r.head_commit
+            END
+        """,
+        repo_id=repo_id,
+        source_type=source_type,
+        remote_url=remote_url,
+        name=name,
+        head_commit=head_commit,
+        branch=branch,
+        now=now,
+        facility=facility,
+    )
+
+    # Link FacilityPath to SoftwareRepo
+    gc.query(
+        """
+        MATCH (p:FacilityPath {id: $path_id})
+        MATCH (r:SoftwareRepo {id: $repo_id})
+        MERGE (p)-[:CLONE_OF]->(r)
+        SET p.software_repo_id = $repo_id
+        """,
+        path_id=path_id,
+        repo_id=repo_id,
+    )
+
+
 def mark_path_scanned(
     facility: str,
     path: str,
@@ -410,6 +523,12 @@ def mark_path_scanned(
     path_id = f"{facility}:{path}"
     now = datetime.now(UTC).isoformat()
 
+    # Extract git fields
+    git_remote_url = stats.get("git_remote_url")
+    git_head_commit = stats.get("git_head_commit")
+    git_branch = stats.get("git_branch")
+    has_git = stats.get("has_git", False)
+
     with GraphClient() as gc:
         gc.query(
             """
@@ -424,6 +543,9 @@ def mark_path_scanned(
                 p.has_readme = $has_readme,
                 p.has_makefile = $has_makefile,
                 p.has_git = $has_git,
+                p.git_remote_url = $git_remote_url,
+                p.git_head_commit = $git_head_commit,
+                p.git_branch = $git_branch,
                 p.patterns_detected = $patterns_detected
             """,
             id=path_id,
@@ -436,9 +558,18 @@ def mark_path_scanned(
             file_type_counts=stats.get("file_type_counts", "{}"),
             has_readme=stats.get("has_readme", False),
             has_makefile=stats.get("has_makefile", False),
-            has_git=stats.get("has_git", False),
+            has_git=has_git,
+            git_remote_url=git_remote_url,
+            git_head_commit=git_head_commit,
+            git_branch=git_branch,
             patterns_detected=stats.get("patterns_detected", []),
         )
+
+        # Create SoftwareRepo node and relationship if git metadata exists
+        if has_git and git_remote_url:
+            _create_software_repo_link(
+                gc, facility, path_id, git_remote_url, git_head_commit, git_branch, now
+            )
 
 
 def mark_paths_scored(
@@ -889,3 +1020,63 @@ def persist_scan_results(
         "excluded": excluded_count,
         "errors": errors,
     }
+
+
+def normalize_scores(facility: str) -> dict[str, int]:
+    """Compute percentile ranks for scored paths within a facility.
+
+    Updates score_percentile field for all scored paths. Should be run
+    periodically after scoring completes.
+
+    Percentile is computed as: rank / (total - 1) to give 0.0 to 1.0 range.
+    Top 5% means score_percentile >= 0.95.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Dict with count of paths updated
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        # Get all scored paths with their scores
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility})
+            WHERE p.status = 'scored' AND p.score IS NOT NULL
+            RETURN p.id AS id, p.score AS score
+            ORDER BY p.score ASC
+            """,
+            facility=facility,
+        )
+
+        if not result:
+            return {"updated": 0}
+
+        total = len(result)
+        if total == 1:
+            # Single path gets percentile 0.5
+            gc.query(
+                "MATCH (p:FacilityPath {id: $id}) SET p.score_percentile = 0.5",
+                id=result[0]["id"],
+            )
+            return {"updated": 1}
+
+        # Compute percentile ranks
+        updates = []
+        for rank, row in enumerate(result):
+            percentile = rank / (total - 1)  # 0.0 to 1.0
+            updates.append({"id": row["id"], "percentile": percentile})
+
+        # Batch update
+        gc.query(
+            """
+            UNWIND $updates AS u
+            MATCH (p:FacilityPath {id: u.id})
+            SET p.score_percentile = u.percentile
+            """,
+            updates=updates,
+        )
+
+        return {"updated": len(updates)}

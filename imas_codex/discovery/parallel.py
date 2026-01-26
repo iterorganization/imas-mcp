@@ -214,7 +214,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $listed AND p.interest_score IS NULL
+            WHERE p.status = $listed AND p.score IS NULL
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
             SET p.status = $scoring, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,

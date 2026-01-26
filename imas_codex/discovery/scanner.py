@@ -69,6 +69,9 @@ class DirStats:
     has_readme: bool = False
     has_makefile: bool = False
     has_git: bool = False
+    git_remote_url: str | None = None  # Git remote origin URL
+    git_head_commit: str | None = None  # Git HEAD commit hash
+    git_branch: str | None = None  # Current branch name
     child_names: list[str] | None = None  # First 30 child file/dir names
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
@@ -84,6 +87,12 @@ class DirStats:
             "has_makefile": self.has_makefile,
             "has_git": self.has_git,
         }
+        if self.git_remote_url:
+            result["git_remote_url"] = self.git_remote_url
+        if self.git_head_commit:
+            result["git_head_commit"] = self.git_head_commit
+        if self.git_branch:
+            result["git_branch"] = self.git_branch
         if self.child_names:
             result["child_names"] = self.child_names
         if self.file_type_counts:
@@ -240,6 +249,9 @@ def scan_paths(
             has_readme=stats_data.get("has_readme", False),
             has_makefile=stats_data.get("has_makefile", False),
             has_git=stats_data.get("has_git", False),
+            git_remote_url=stats_data.get("git_remote_url"),
+            git_head_commit=stats_data.get("git_head_commit"),
+            git_branch=stats_data.get("git_branch"),
             child_names=data.get("child_names", []),
             file_type_counts=stats_data.get("file_type_counts", {}),
             size_bytes=size_bytes,

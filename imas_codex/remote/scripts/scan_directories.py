@@ -185,12 +185,62 @@ def scan_directory(
         except Exception:
             pass
 
+    # Git metadata extraction (if .git directory exists)
+    git_remote_url: str | None = None
+    git_head_commit: str | None = None
+    git_branch: str | None = None
+
+    if has_git:
+        git_dir = os.path.join(path, ".git")
+        if os.path.isdir(git_dir):
+            # Extract remote origin URL
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", path, "config", "--get", "remote.origin.url"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    git_remote_url = sanitize_str(proc.stdout.strip())
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
+            # Extract HEAD commit hash
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", path, "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    git_head_commit = sanitize_str(proc.stdout.strip())
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
+            # Extract current branch name
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", path, "symbolic-ref", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    git_branch = sanitize_str(proc.stdout.strip())
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
     result["stats"] = {
         "total_files": len(files),
         "total_dirs": len(dirs),
         "has_readme": has_readme,
         "has_makefile": has_makefile,
         "has_git": has_git,
+        "git_remote_url": git_remote_url,
+        "git_head_commit": git_head_commit,
+        "git_branch": git_branch,
         "size_bytes": size_bytes,
         "file_type_counts": ext_counts,
         "rg_matches": rg_matches,

@@ -12,6 +12,8 @@ This is a greenfield project under active development. We move fast and do not m
 - Avoid "enhanced", "new", "refactored" in names - just use the good name
 - When patterns change, update all usages - don't leave old patterns alongside new ones
 - Prefer explicit over clever - future agents will read this code
+- Never create documentation for transient analysis - `docs/` is for mature infrastructure only
+- Exploration notes go in facility YAML, not markdown files
 
 ## Schema System
 

@@ -99,7 +99,7 @@ from imas_codex.graph.models import PathStatus
 | `listing` | Transient | Scanner worker active (fallback → discovered) |
 | `listed` | Long-lived | Enumerated with file/dir counts, awaiting score |
 | `scoring` | Transient | Scorer worker active (fallback → listed) |
-| `scored` | Terminal | LLM scored, interest_score set |
+| `scored` | Terminal | LLM scored, score set |
 | `skipped` | Terminal | Low value (score < 0.2) |
 | `excluded` | Terminal | Matched exclusion pattern |
 | `stale` | Long-lived | Path may have changed, needs re-discovery |
@@ -240,7 +240,7 @@ uv run imas-codex discover sources add [options]
         │         3. SCORER WORKERS           │
         │  Claims listed paths atomically     │
         │  Batches for LLM scoring            │
-        │  Sets interest_score                │
+        │  Sets score                       │
         └──────────────────┬──────────────────┘
                            │
               ┌────────────┼────────────┐

@@ -435,6 +435,20 @@ enums:
       failed:
         description: Error occurred during processing
 
+  RepoSourceType:
+    description: Source hosting type for software repositories
+    permissible_values:
+      github:
+        description: GitHub-hosted repository
+      gitlab:
+        description: GitLab-hosted repository (public or self-hosted)
+      bitbucket:
+        description: Bitbucket-hosted repository
+      svn:
+        description: Subversion repository
+      local:
+        description: Local repository without public remote
+
 # =============================================================================
 # Core Classes
 # =============================================================================
@@ -603,6 +617,9 @@ classes:
       score:
         description: Composite interest score (0.0-1.0), computed from dimension scores
         range: float
+      score_percentile:
+        description: Percentile rank within facility (0.0-1.0), updated periodically
+        range: float
       score_code:
         description: Score for code discovery value (programming files, structure)
         range: float
@@ -614,6 +631,9 @@ classes:
         range: float
       score_imas:
         description: Score for IMAS relevance (IDS patterns, put_slice, etc.)
+        range: float
+      score_multiformat:
+        description: Score for format conversion (loads one format, writes another)
         range: float
       evidence_id:
         description: Link to Evidence node with semantic indicators
@@ -657,6 +677,19 @@ classes:
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
+      # Git repository detection (set during scan if .git exists)
+      has_git:
+        description: Whether this directory contains a .git folder
+        range: boolean
+      git_remote_url:
+        description: Git remote origin URL if available
+      git_head_commit:
+        description: HEAD commit hash at time of discovery
+      git_branch:
+        description: Current git branch name
+      software_repo_id:
+        description: Link to SoftwareRepo node if this is a git clone
+        range: SoftwareRepo
 
 # =============================================================================
 # Evidence Class (Linked semantic indicators, reusable across node types)
@@ -693,6 +726,71 @@ classes:
         multivalued: true
       created_at:
         description: When this evidence was extracted
+        range: datetime
+
+  SoftwareRepo:
+    description: >-
+      A software repository discovered at a facility. Tracks git/svn
+      repositories found during path discovery. For public repos, ingestion
+      can happen via GitHub API instead of facility SSH.
+      
+      Relationships:
+      - (FacilityPath)-[:CLONE_OF]->(SoftwareRepo) for local clones
+      - (SoftwareRepo)-[:FACILITY_ID]->(Facility) for discovery context
+      
+      Schema.org alignment: Based on schema:SoftwareSourceCode vocabulary.
+    class_uri: facility:SoftwareRepo
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Unique identifier. Format: github:owner/repo, gitlab:host/owner/repo,
+          svn:url, or local:facility:/path for non-remote repos.
+        required: true
+      source_type:
+        description: Repository hosting type
+        range: RepoSourceType
+        required: true
+      remote_url:
+        description: Full URL to repository (e.g., https://github.com/owner/repo)
+        slot_uri: schema:codeRepository
+      is_public:
+        description: Whether repository is publicly accessible (for GitHub API ingest)
+        range: boolean
+      name:
+        description: Repository name (e.g., "imas-python")
+        slot_uri: schema:name
+      description:
+        description: Repository description
+        slot_uri: schema:description
+      primary_language:
+        description: Primary programming language
+        slot_uri: schema:programmingLanguage
+      # Git-specific metadata (captured at discovery time)
+      default_branch:
+        description: Default branch name (e.g., "main", "master")
+      head_commit:
+        description: HEAD commit hash at discovery time
+      head_commit_date:
+        description: Date of HEAD commit
+        range: datetime
+      # Discovery tracking
+      discovered_at:
+        description: When this repository was first discovered
+        range: datetime
+      discovered_via:
+        description: Path where this repository was discovered
+        range: FacilityPath
+      # Clone tracking (populated from FacilityPath relationships)
+      clone_count:
+        description: Number of clones found across facility paths
+        range: integer
+      # Ingestion status
+      should_ingest_via_github:
+        description: If true, use GitHub API instead of facility SSH
+        range: boolean
+      ingested_at:
+        description: When repository was ingested (locally or via API)
         range: datetime
 
 # =============================================================================

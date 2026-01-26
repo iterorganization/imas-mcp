@@ -146,3 +146,28 @@ For paths matching this focus:
 - Add focus-related keywords
 - Set should_expand=true if any dimension >= 0.4
 {% endif %}
+
+{% if is_rescore %}
+## Second-Pass Rescoring (Enriched Paths)
+
+This is a RESCORE pass for paths with enrichment data. You have additional context from:
+- **Pattern matches**: Code pattern search results
+- **Format conversion**: Whether path contains multi-format conversion code
+- **Lines of code**: Total LOC and language breakdown
+- **Storage size**: Directory size in bytes
+
+### Rescoring Guidelines
+
+**Multi-format detection** (score_multiformat):
+- If path has both READ and WRITE format patterns, set score_multiformat = 1.0
+- This indicates data conversion/mapping utilities - HIGH VALUE
+- Examples: load EQDSK + write IMAS, read MDSplus + save HDF5
+
+**Adjust scores based on enrichment**:
+- LOC > 10,000 lines in physics language (Fortran, Python) → boost score_code by 0.1
+- Total bytes > 1GB → boost score_data by 0.1
+- Has multiple format reads/writes → this is a data interface, boost score_imas by 0.2
+
+**Provided enrichment data**:
+{{ enrichment_data }}
+{% endif %}
