@@ -1104,7 +1104,7 @@ def persist_scan_results(
 
         # User enrichment: extract users from discovered home paths
         # Run in same transaction for consistency
-        all_paths = [path for path, _stats, _children, _error in results]
+        all_paths = [path for path, _stats, _children, _error, _expanding in results]
         try:
             from imas_codex.discovery.user_enrichment import enrich_users_from_paths
 
