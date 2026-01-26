@@ -7,15 +7,16 @@ Remote facility exploration and content discovery for fusion code indexing.
 The discovery pipeline identifies and prioritizes files of interest across remote facilities. It operates in phases: **scan** → **score** → **ingest**.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Discovery Pipeline                         │
-├─────────────┬─────────────┬─────────────┬──────────────────────┤
-│    Scan     │    Score    │   Ingest    │       Link           │
-├─────────────┼─────────────┼─────────────┼──────────────────────┤
-│ List paths  │ LLM scoring │ Parse code  │ FacilityUser→Person  │
-│ User lookup │ Evidence    │ Embeddings  │ Evidence dedup       │
-│ Metadata    │ Weights     │ CodeChunk   │ Cross-facility       │
-└─────────────┴─────────────┴─────────────┴──────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                   Discovery Pipeline                     │
+├───────────────────┬─────────────────┬───────────────────┤
+│       Scan        │      Score      │      Ingest       │
+├───────────────────┼─────────────────┼───────────────────┤
+│ List paths        │ LLM scoring     │ Parse code        │
+│ User lookup       │ Evidence nodes  │ Embeddings        │
+│ GECOS→FacilityUser│ Expand/skip     │ CodeChunk         │
+│ Person linking    │                 │                   │
+└───────────────────┴─────────────────┴───────────────────┘
 ```
 
 ## Data Model
@@ -37,21 +38,21 @@ See [facility.yaml](../../imas_codex/schemas/facility.yaml) for complete schema 
 
 ## Scoring
 
-LLM-based scoring assigns interest scores (0.0-1.0) across dimensions:
+LLM-based scoring assigns interest scores (0.0-1.0) across four dimensions:
 
-| Dimension | Weight | Description |
-|-----------|--------|-------------|
-| `code`    | 1.0    | Source code presence |
-| `data`    | 0.8    | Data files (HDF5, NetCDF) |
-| `docs`    | 0.6    | Documentation/readmes |
-| `imas`    | 1.2    | IMAS-related content |
+| Dimension | Description |
+|-----------|-------------|
+| `code`    | Source code presence (Python, Fortran, etc.) |
+| `data`    | Data files (HDF5, NetCDF, MDSplus) |
+| `docs`    | Documentation, readmes, wikis |
+| `imas`    | IMAS-related content |
 
 **Final score formula:**
 ```
-score = Σ(dimension_score × weight) / Σ(weights)
+score = max(score_code, score_data, score_docs, score_imas) + quality_boosts
 ```
 
-> **Note:** This uses weighted average across dimensions. Directories with high relevance in only one dimension (e.g., pure data with no code) may score lower than expected. An alternative max-based approach would preserve single-dimension excellence.
+Using MAX (not weighted average) ensures paths excelling in a single dimension rank appropriately. A pure data directory with `score_data=0.9` should rank high, even if `score_code=0`.
 
 **Thresholds:**
 - `CONTAINER_THRESHOLD = 0.1` — Minimum score to expand directories

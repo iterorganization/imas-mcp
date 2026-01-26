@@ -76,15 +76,16 @@ def grounded_score(
 ) -> float:
     """Compute combined score from dimension scores with evidence adjustments.
 
+    Uses MAX of dimension scores (not weighted average) so that paths excelling
+    in a single dimension (e.g., pure data, pure docs) are not penalized.
+
     Grounded scoring with purpose-aware semantics:
 
     For CONTAINER purposes:
         Score = exploration potential (should we scan children?)
-        Based on path heuristics and IMAS indicators
 
     For CODE/DATA purposes:
         Score = ingestion priority (should we process this?)
-        Based on code quality, IMAS relevance, evidence
 
     For SKIP purposes (system, build_artifact, archive):
         Score = always low (0.3 multiplier)
@@ -100,14 +101,9 @@ def grounded_score(
     Returns:
         Combined score (0.0-1.0)
     """
-    # Start with weighted average
-    total_weight = sum(SCORE_WEIGHTS.values())
-    base_score = (
-        score_code * SCORE_WEIGHTS["code"]
-        + score_data * SCORE_WEIGHTS["data"]
-        + score_docs * SCORE_WEIGHTS["docs"]
-        + score_imas * SCORE_WEIGHTS["imas"]
-    ) / total_weight
+    # Use max dimension score - paths may excel in only one dimension
+    # (e.g., pure data directories should rank high if data score is high)
+    base_score = max(score_code, score_data, score_docs, score_imas)
 
     # Quality boost
     quality_boost = 0.0

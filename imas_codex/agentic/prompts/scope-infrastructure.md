@@ -202,6 +202,40 @@ du -sh /tmp 2>/dev/null   # Usually local, bounded
 # - *.dat, *.h5, *.nc (data files, not code)
 ```
 
+### Phase 8: User Information (GECOS) Discovery (2 min)
+
+Discover how user names are formatted in `/etc/passwd` or LDAP. This enables the pipeline to extract and link user identities.
+
+```bash
+# Check GECOS format for current user - the 5th field contains full name
+getent passwd $USER
+grep $USER /etc/passwd 2>/dev/null
+
+# Sample a few other users to confirm format
+getent passwd $(ls /home | head -5 | tr '\n' ' ') 2>/dev/null | head -10
+
+# Check for LDAP/NIS integration
+getent -s ldap passwd 2>/dev/null | head -3
+niscat passwd 2>/dev/null | head -3
+```
+
+**GECOS Patterns by Facility:**
+- **ITER**: `last_first` format with suffix → "Dubrov Maksim EXT" → family="Dubrov", given="Maksim"
+- **EPFL/JET/Most sites**: `first_last` format → "Alessandro Balestri" → given="Alessandro", family="Balestri"
+
+After determining the format, update facility config:
+```python
+update_facility_infrastructure("FACILITY", {
+    "user_info": {
+        "name_format": "first_last",  # or "last_first"
+        "gecos_suffix_pattern": "\\s+EXT$",  # Optional: pattern to strip
+        "lookup_tools": ["getent", "passwd", "id"]  # Ordered fallback
+    }
+})
+```
+
+See [facility.yaml](../../imas_codex/schemas/facility.yaml) for `user_info` schema and [user_enrichment.py](../../imas_codex/discovery/user_enrichment.py) for parsing implementation.
+
 ## Data Systems Reference
 
 | System | Facility | Key Commands | Check For |
