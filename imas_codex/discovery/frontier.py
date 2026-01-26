@@ -506,72 +506,6 @@ def _create_software_repo_link(
     )
 
 
-def mark_path_scanned(
-    facility: str,
-    path: str,
-    stats: dict[str, Any],
-) -> None:
-    """Update path with scan results and mark as listed.
-
-    Args:
-        facility: Facility ID
-        path: Path string
-        stats: DirStats dict with file_type_counts, total_files, etc.
-    """
-    from imas_codex.graph import GraphClient
-
-    path_id = f"{facility}:{path}"
-    now = datetime.now(UTC).isoformat()
-
-    # Extract git fields
-    git_remote_url = stats.get("git_remote_url")
-    git_head_commit = stats.get("git_head_commit")
-    git_branch = stats.get("git_branch")
-    has_git = stats.get("has_git", False)
-
-    with GraphClient() as gc:
-        gc.query(
-            """
-            MATCH (p:FacilityPath {id: $id})
-            SET p.status = $listed,
-                p.listed_at = $now,
-                p.total_files = $total_files,
-                p.total_dirs = $total_dirs,
-                p.total_size_bytes = $total_size_bytes,
-                p.size_skipped = $size_skipped,
-                p.file_type_counts = $file_type_counts,
-                p.has_readme = $has_readme,
-                p.has_makefile = $has_makefile,
-                p.has_git = $has_git,
-                p.git_remote_url = $git_remote_url,
-                p.git_head_commit = $git_head_commit,
-                p.git_branch = $git_branch,
-                p.patterns_detected = $patterns_detected
-            """,
-            id=path_id,
-            now=now,
-            listed=PathStatus.listed.value,
-            total_files=stats.get("total_files", 0),
-            total_dirs=stats.get("total_dirs", 0),
-            total_size_bytes=stats.get("total_size_bytes"),
-            size_skipped=stats.get("size_skipped", False),
-            file_type_counts=stats.get("file_type_counts", "{}"),
-            has_readme=stats.get("has_readme", False),
-            has_makefile=stats.get("has_makefile", False),
-            has_git=has_git,
-            git_remote_url=git_remote_url,
-            git_head_commit=git_head_commit,
-            git_branch=git_branch,
-            patterns_detected=stats.get("patterns_detected", []),
-        )
-
-        # Create SoftwareRepo node and relationship if git metadata exists
-        if has_git and git_remote_url:
-            _create_software_repo_link(
-                gc, facility, path_id, git_remote_url, git_head_commit, git_branch, now
-            )
-
-
 def mark_paths_scored(
     facility: str,
     scores: list[dict[str, Any]],
@@ -844,6 +778,9 @@ def persist_scan_results(
                 "has_readme": stats.get("has_readme", False),
                 "has_makefile": stats.get("has_makefile", False),
                 "has_git": stats.get("has_git", False),
+                "git_remote_url": stats.get("git_remote_url"),
+                "git_head_commit": stats.get("git_head_commit"),
+                "git_branch": stats.get("git_branch"),
             }
             # Store file_type_counts if available
             file_type_counts = stats.get("file_type_counts")
@@ -865,7 +802,28 @@ def persist_scan_results(
             if patterns:
                 update_dict["patterns_detected"] = patterns
             successes.append(update_dict)
-            # Prepare children
+
+            # Decide whether to skip children for git repos
+            # Skip ONLY public repos (github, gitlab) that are accessible elsewhere
+            # Continue scanning private/local repos - they contain unique facility code
+            is_git_repo = stats.get("has_git", False)
+            git_remote_url = stats.get("git_remote_url", "")
+
+            if is_git_repo and git_remote_url:
+                # Check if this is a public hosting service
+                is_public = any(
+                    host in git_remote_url.lower()
+                    for host in ["github.com", "gitlab.com", "bitbucket.org"]
+                )
+                if is_public:
+                    # Public repo - skip children, content available from source
+                    logger.debug(
+                        f"Skipping children for public repo: {path} ({git_remote_url})"
+                    )
+                    continue
+                # Private/internal repo - continue scanning
+
+            # Prepare children for non-public-git directories
             for child_path in child_dirs:
                 all_children.append(
                     {
@@ -891,6 +849,9 @@ def persist_scan_results(
                     p.has_readme = item.has_readme,
                     p.has_makefile = item.has_makefile,
                     p.has_git = item.has_git,
+                    p.git_remote_url = item.git_remote_url,
+                    p.git_head_commit = item.git_head_commit,
+                    p.git_branch = item.git_branch,
                     p.child_names = item.child_names
                 """,
                 items=successes,
@@ -1027,6 +988,25 @@ def persist_scan_results(
         except Exception as e:
             # User enrichment is non-critical; don't fail scan
             logger.warning(f"User enrichment failed: {e}")
+
+        # Create SoftwareRepo nodes for git repos with remote URLs
+        git_repos = [
+            (
+                item["id"],
+                item["git_remote_url"],
+                item.get("git_head_commit"),
+                item.get("git_branch"),
+            )
+            for item in successes
+            if item.get("has_git") and item.get("git_remote_url")
+        ]
+        for path_id, remote_url, head_commit, branch in git_repos:
+            try:
+                _create_software_repo_link(
+                    gc, facility, path_id, remote_url, head_commit, branch, now
+                )
+            except Exception as e:
+                logger.debug(f"Failed to create SoftwareRepo for {path_id}: {e}")
 
     return {
         "scanned": scanned,

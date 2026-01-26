@@ -143,9 +143,11 @@ def grounded_score(
 
     combined = (base_score + quality_boost) * purpose_multiplier
 
-    # Clamp to [0, 0.95] - reserve 1.0 for manually curated ground truth
-    # This ensures all LLM-scored paths are distinguishable from perfect scores
-    return max(0.0, min(0.95, combined))
+    # No upper cap - allow natural values > 1.0 for paths with multiple
+    # quality indicators. Use percentile normalization for ranking.
+    # Scores > 1.0 indicate exceptional paths (e.g., git repo with README,
+    # Makefile, IMAS indicators, and high dimension scores).
+    return max(0.0, combined)
 
 
 @dataclass
