@@ -19,6 +19,15 @@ data_systems:
   - imas   # IMAS data format
   - mdsplus  # MDSplus (limited use)
 
+# User info discovery configuration
+# GECOS = General Comprehensive Operating System (5th field in /etc/passwd)
+user_info:
+  name_format: first_last  # Standard "First Last" format
+  lookup_tools:  # Ordered fallback list
+    - getent   # POSIX standard, includes LDAP/NIS/SSSD
+    - passwd   # /etc/passwd fallback
+    - id       # existence check only
+
 # Wiki/documentation sites (if any)
 # wiki_sites:
 #   - url: https://wiki.jet.efda.org

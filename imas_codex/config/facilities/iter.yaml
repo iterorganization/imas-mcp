@@ -26,3 +26,13 @@ wiki_sites:
     auth_type: session
     credential_service: iter-confluence
     requires_ssh: false  # Confluence uses REST API directly
+
+# User info discovery configuration
+# GECOS = General Comprehensive Operating System (5th field in /etc/passwd)
+user_info:
+  name_format: last_first  # ITER uses "Last First [EXT]" format
+  gecos_suffix_pattern: "\\s+EXT$"  # Strip trailing " EXT" from names
+  lookup_tools:  # Ordered fallback list
+    - getent   # POSIX standard, includes LDAP/NIS/SSSD
+    - passwd   # /etc/passwd fallback
+    - id       # existence check only

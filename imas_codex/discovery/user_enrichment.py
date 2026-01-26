@@ -42,12 +42,6 @@ HOME_PATH_PATTERNS = [
     re.compile(r"^/work/([a-z0-9_-]+)(?:/|$)", re.IGNORECASE),  # /work/username
 ]
 
-# ITER uses "Last First [EXT]" format
-ITER_NAME_PATTERN = re.compile(r"^(\S+)\s+(.+?)(?:\s+EXT)?$")
-
-# Standard "First Last" format (EPFL, most others)
-STANDARD_NAME_PATTERN = re.compile(r"^(.+?)\s+(\S+)$")
-
 
 @dataclass
 class UserInfo:
@@ -77,62 +71,57 @@ def extract_username_from_path(path: str) -> str | None:
     return None
 
 
-def parse_name_iter(gecos: str) -> tuple[str | None, str | None]:
-    """Parse ITER-style name: "Last First [EXT]".
-
-    Args:
-        gecos: GECOS field value (e.g., "Dubrov Maksim EXT")
-
-    Returns:
-        (given_name, family_name) tuple
-    """
-    if not gecos:
-        return None, None
-
-    match = ITER_NAME_PATTERN.match(gecos.strip())
-    if match:
-        family_name = match.group(1)
-        given_name = match.group(2)
-        return given_name, family_name
-
-    return None, None
-
-
-def parse_name_standard(gecos: str) -> tuple[str | None, str | None]:
-    """Parse standard name: "First Last".
-
-    Args:
-        gecos: GECOS field value (e.g., "Alessandro Balestri")
-
-    Returns:
-        (given_name, family_name) tuple
-    """
-    if not gecos:
-        return None, None
-
-    match = STANDARD_NAME_PATTERN.match(gecos.strip())
-    if match:
-        given_name = match.group(1)
-        family_name = match.group(2)
-        return given_name, family_name
-
-    return None, None
-
-
 def get_name_parser(facility_id: str):
-    """Get the appropriate name parser for a facility.
+    """Get the appropriate name parser for a facility from config.
+
+    Reads user_info.name_format and user_info.gecos_suffix_pattern from
+    the facility YAML config exposed via get_facility().
 
     Args:
         facility_id: Facility identifier
 
     Returns:
-        Name parser function
+        Name parser function that returns (given_name, family_name) tuple
     """
-    # ITER uses "Last First" format
-    if facility_id == "iter":
-        return parse_name_iter
-    # Most facilities use "First Last"
-    return parse_name_standard
+    # Read parsing config from facility YAML
+    try:
+        config = get_facility(facility_id)
+        user_info = config.get("user_info", {})
+    except (ValueError, KeyError):
+        user_info = {}
+
+    name_format = user_info.get("name_format", "first_last")
+    suffix_pattern = user_info.get("gecos_suffix_pattern")
+
+    # Compile suffix pattern if provided
+    suffix_regex = re.compile(suffix_pattern) if suffix_pattern else None
+
+    def parser(gecos: str) -> tuple[str | None, str | None]:
+        """Parse GECOS name field based on facility config."""
+        if not gecos:
+            return None, None
+
+        text = gecos.strip()
+
+        # Apply suffix pattern if configured (e.g., strip " EXT" from ITER names)
+        if suffix_regex:
+            text = suffix_regex.sub("", text).strip()
+
+        # Parse based on configured format
+        if name_format == "last_first":
+            # ITER-style: "Last First" -> (given, family)
+            parts = text.split(None, 1)
+            if len(parts) == 2:
+                return parts[1], parts[0]  # given=second, family=first
+        else:
+            # Standard: "First Last" -> (given, family)
+            parts = text.rsplit(None, 1)
+            if len(parts) == 2:
+                return parts[0], parts[1]  # given=first, family=last
+
+        return None, None
+
+    return parser
 
 
 def fetch_user_info(

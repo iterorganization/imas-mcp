@@ -2,6 +2,8 @@
 
 Facility exploration for discovering source files, MDSplus trees, and analysis codes.
 
+**Architecture Documentation:** [docs/architecture/discovery.md](../docs/architecture/discovery.md)
+
 ## Critical: Check Constraints First
 
 **Before ANY disk-intensive operation, check facility excludes:**
