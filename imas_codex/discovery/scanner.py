@@ -10,6 +10,7 @@ Key design:
 - Single SSH call per batch minimizes latency (~1.8s network overhead)
 - Outputs JSON for reliable parsing (handles control chars, unicode)
 - All data collected for grounded LLM scoring decisions
+- Facility-specific exclusions merged from *_private.yaml
 
 The remote script (scan_directories.py) is pure Python 3.8+ stdlib.
 """
@@ -22,7 +23,10 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.config.discovery_config import get_discovery_config
+from imas_codex.config.discovery_config import (
+    get_discovery_config,
+    get_exclusion_config_for_facility,
+)
 from imas_codex.discovery.facility import get_facility
 from imas_codex.remote.executor import run_python_script
 
@@ -114,7 +118,8 @@ def scan_paths(
     """Scan multiple paths using the remote scan_directories.py script.
 
     Uses run_python_script() for transparent local/SSH execution.
-    Applies exclusion patterns from DiscoveryConfig.
+    Applies exclusion patterns from DiscoveryConfig merged with facility-specific
+    exclusions from *_private.yaml.
 
     Args:
         facility: Facility identifier for SSH/local execution
@@ -135,7 +140,8 @@ def scan_paths(
     except ValueError:
         ssh_host = facility
 
-    discovery_config = get_discovery_config()
+    # Use facility-specific exclusion config (merges base + facility excludes)
+    exclusion_config = get_exclusion_config_for_facility(facility)
 
     # Build input data for the remote script
     rg_patterns = _get_rg_patterns() if enable_rg else {}
@@ -166,7 +172,7 @@ def scan_paths(
         error_str = str(e)
         if len(error_str) > 200:
             error_str = error_str[:200] + "..."
-        
+
         # Add SSH-specific advice for connection failures
         if "exit status 255" in error_str:
             logger.warning(
@@ -233,11 +239,9 @@ def scan_paths(
             rg_matches=rg_matches,
         )
 
-        # Filter child directories using exclusion config
+        # Filter child directories using facility-specific exclusion config
         all_child_dirs = data.get("child_dirs", [])
-        included_dirs, excluded_dirs = discovery_config.exclusions.filter_paths(
-            all_child_dirs
-        )
+        included_dirs, excluded_dirs = exclusion_config.filter_paths(all_child_dirs)
 
         # Log exclusions at debug level
         if excluded_dirs:

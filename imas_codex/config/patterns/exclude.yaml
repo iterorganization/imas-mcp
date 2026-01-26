@@ -3,18 +3,41 @@
 #
 # Loaded by: imas_codex.discovery.config.DiscoveryConfig.load()
 # Applied by: imas_codex.discovery.scanner.scan_paths()
+#
+# DESIGN PHILOSOPHY:
+# 1. Deterministic exclusions happen BEFORE scanning (this file)
+# 2. LLM scoring happens AFTER scanning for nuanced decisions
+# 3. Facility-specific excludes in *_private.yaml are merged at runtime
+#
+# WHAT TO EXCLUDE (definitely no scientific value):
+# - System dirs: /proc, /sys, /var/log - OS internals
+# - Build artifacts: __pycache__, node_modules - generated files
+# - Caches: .cache, .local - user environment state
+# - Scratch/temp: /scratch, /tmp - transient job files
+# - Personal media: Desktop, Downloads, Music, Pictures, Videos - XDG user dirs
+#
+# WHAT TO NEVER EXCLUDE (potentially valuable scientific data):
+# - Video diagnostics: videodata, fast_camera - fusion diagnostic data!
+# - Simulation outputs: large_runs, run_outputs - physics results
+# - Data directories: Documents (may have code), data, results
+# - Archive directories: old, backup - may have valuable legacy code
+#
+# When in doubt: LET THE SCANNER FIND IT, let the LLM SCORE IT.
+# A high score doesn't mean we download everything - just that it's valuable.
 
-version: "1.0"
+version: "1.1"
 
-# Directory names to always exclude (matched against basename)
-# These create child FacilityPath nodes with status='excluded'
+# =============================================================================
+# DIRECTORY NAMES (matched against basename - deterministic exclusion)
+# =============================================================================
 directories:
-  # Version control
+  # Version control internals (metadata, not source)
   - ".git"
   - ".svn"
   - ".hg"
+  - ".bzr"
   
-  # Python
+  # Python build/cache
   - "__pycache__"
   - ".venv"
   - "venv"
@@ -24,61 +47,195 @@ directories:
   - ".mypy_cache"
   - ".ruff_cache"
   - ".tox"
+  - ".nox"
+  - "site-packages"  # Usually in venvs, rarely interesting
   
   # JavaScript/Node
   - "node_modules"
   - ".npm"
   - ".yarn"
+  - "bower_components"
   
   # Build artifacts
   - "build"
   - "dist"
   - "_build"
-  - "target"  # Rust
+  - "target"  # Rust/Java
   - "cmake-build-*"
+  - "CMakeFiles"
+  - "*.dSYM"  # macOS debug
   
-  # IDE/Editor
+  # IDE/Editor metadata
   - ".idea"
   - ".vscode"
   - ".eclipse"
+  - ".project"
+  - ".settings"
+  - "*.xcodeproj"
+  - "*.xcworkspace"
   
-  # System/User caches
+  # System/User caches (NEVER contain scientific code)
   - ".cache"
   - ".local"
   - ".config"
+  - ".gnome"
+  - ".gnome2"
+  - ".kde"
+  - ".kde4"
+  - ".dbus"
+  - ".gconf"
+  - ".gconfd"
+  
+  # XDG user directories (desktop/media - never contain scientific code)
+  # These appear in home directories copied from Windows or created by Linux DEs
+  # NOTE: We exclude personal media dirs but NOT Documents (may have code)
+  - "Desktop"
+  - "Downloads"
+  - "Music"
+  - "Pictures"
+  - "Public"
+  - "Templates"
+  - "Videos"
+  
+  # Trash and recovery
+  - ".Trash"
+  - ".Trash-*"
+  - "lost+found"
+  - ".ORCLdeleted_files"  # Oracle NFS deleted files
+  
+  # Application data
+  - ".mozilla"
+  - ".thunderbird"
+  - ".chrome"
+  - ".chromium"
+  - ".firefox"
+  - ".steam"
+  
+  # Container/VM artifacts
+  - ".docker"
+  - ".vagrant"
+  - ".virtualbox"
+  
+  # Jupyter/notebook checkpoints
+  - ".ipynb_checkpoints"
 
-# Patterns for hidden directories (dotfiles)
-# These are matched with fnmatch against basename
+# =============================================================================
+# SCRATCH DIRECTORIES (special handling - usually temporary/disposable)
+# =============================================================================
+# These are matched against full path components, not just basename
+scratch_patterns:
+  # Exact directory names indicating scratch/temp space
+  names:
+    - "scratch"
+    - "tmp"
+    - "temp"
+    - "temporary"
+    - "SCRATCH"
+    - "TMP"
+    - "TEMP"
+  
+  # Path patterns (fnmatch against full path)
+  # These prevent scanning entirely, not just scoring low
+  path_patterns:
+    - "*/scratch/*"
+    - "*/SCRATCH/*"
+    - "*/tmp/*"
+    - "*/temp/*"
+  
+  # Exception: scratch dirs can be scanned if explicitly in facility config
+  # with "scan: true" in the path definition
+  allow_if_configured: true
+
+# =============================================================================
+# DOTFILE PATTERNS
+# =============================================================================
 dotfile_patterns:
-  # Exclude most dotfiles
+  # Exclude most dotfiles (user configs, not code)
   exclude: true
-  # But allow these specific ones
+  # But allow these specific ones (may contain useful configs/workflows)
   allow:
-    - ".github"  # GitHub workflows may have useful info
-    - ".gitlab"
+    - ".github"    # GitHub workflows/actions
+    - ".gitlab"    # GitLab CI
+    - ".circleci"  # CircleCI
+    - ".travis"    # Travis CI
+    - ".jenkins"   # Jenkins
+    - ".gitignore" # (file, not dir, but for reference)
+    - ".env"       # Environment configs
 
-# Directory name patterns to exclude (using fnmatch)
+# =============================================================================
+# DIRECTORY NAME PATTERNS (fnmatch against basename)
+# =============================================================================
 patterns:
+  # Conda environments (contain binaries, not source)
   - "anaconda*"
   - "miniconda*"
-  - "*backup*"
-  - "*old*"
-  - "*deprecated*"
+  - "conda-*"
+  - "mambaforge*"
+  
+  # Explicitly marked as old/deprecated
+  - "*_deprecated"
+  - "*_obsolete"
+  - "*_OBSOLETE"
+  
+  # Log directories (just logs, no code)
+  - "*_logs"
+  - "*_log"
+  - "logs"
+  - "log"
+  
+  # Java log files (common at JET from user listing)
+  - "java.log.*"
+  
+  # Snapshots (filesystem snapshots, not useful)
+  - ".snapshots"
+  - ".snapshot"
 
-# Absolute path prefixes to never scan
-# These prevent even creating FacilityPath nodes
+# =============================================================================
+# ABSOLUTE PATH PREFIXES (never scan, never create FacilityPath nodes)
+# =============================================================================
 path_prefixes:
+  # System directories (never contain user code)
   - "/proc"
   - "/sys"
   - "/dev"
   - "/run"
+  - "/boot"
+  - "/sbin"
+  - "/bin"        # System binaries
+  - "/lib"
+  - "/lib64"
+  
+  # System temp directories
   - "/tmp"
   - "/var/tmp"
   - "/var/cache"
   - "/var/log"
+  - "/var/spool"
+  - "/var/run"
+  
+  # Package management
+  - "/var/lib/dpkg"
+  - "/var/lib/rpm"
+  - "/var/lib/apt"
+  - "/var/lib/yum"
+  
+  # Lost+found (filesystem recovery)
+  - "/lost+found"
 
-# Archive file extensions - directories named with these are opaque containers
-# we can't scan directly, and often contain duplicated/built artifacts
+# =============================================================================
+# FACILITY-SPECIFIC PATH PREFIXES (merged from *_private.yaml at runtime)
+# =============================================================================
+# These are loaded by get_facility_exclusions(facility) and merged
+# Example from iter_private.yaml:
+#   excludes:
+#     path_prefixes:
+#       - "/mnt/HPC_T2/ITER/HPC/scratch"
+#     directories:
+#       - "videodata"
+
+# =============================================================================
+# ARCHIVE EXTENSIONS (opaque containers)
+# =============================================================================
 archive_extensions:
   - ".tar"
   - ".tar.gz"
@@ -93,9 +250,19 @@ archive_extensions:
   - ".gz"
   - ".bz2"
   - ".xz"
+  - ".iso"
+  - ".img"
+  - ".dmg"
 
-# Maximum depth to scan (prevents runaway recursion)
+# =============================================================================
+# SCANNING LIMITS (prevent runaway recursion)
+# =============================================================================
+
+# Maximum depth to scan 
 max_depth: 15
 
 # Directories with more than this many entries trigger size_skipped
 large_dir_threshold: 10000
+
+# Maximum time (seconds) for a single directory scan before timeout
+scan_timeout: 30

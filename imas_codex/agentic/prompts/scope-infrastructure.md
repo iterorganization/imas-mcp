@@ -122,10 +122,16 @@ make --version 2>/dev/null | head -1
 
 **CRITICAL**: Fusion facilities have petabyte-scale storage. NEVER run `dust`, `du`, or recursive `find` on `/work`, `/scratch`, or shared filesystems - these will hang indefinitely.
 
+**CRITICAL**: Do NOT add scratch/temp paths to `paths:` in facility config! Paths in config are used as discovery seeds. Scratch directories contain transient job files, not code. They should be in `excludes:` only.
+
 ```bash
 # File system mounts - use df (instant, no recursion)
 df -hT 2>/dev/null | grep -vE 'tmpfs|devtmpfs|overlay'
 mount | grep -E 'nfs|gpfs|lustre|ceph' | head -10
+
+# Identify scratch vs work mounts (scratch = excluded, work = scanned)
+# Scratch paths: /scratch, /mnt/*/scratch, /home/*/scratch, /tmp
+# Work paths: /work, /home, /common, /opt
 
 # Directory structure - use ls, NOT du/dust/find on large dirs
 ls -la /work 2>/dev/null | head -20          # Top-level only
@@ -182,24 +188,89 @@ cat ~/.bash_profile 2>/dev/null | grep -E 'module load|PATH|export' | head -10
 ls -la ~/.bash* ~/.profile 2>/dev/null
 ```
 
-### Phase 7: Exclusions & Large Directories (2 min)
+### Phase 7: Exclusions & Large Directories (3 min)
 
 Identify directories to exclude from code scanning. **Do NOT run du/dust on shared filesystems.**
 
+The discovery pipeline uses exclusion patterns from `imas_codex/config/patterns/exclude.yaml`. 
+Your job is to identify any **facility-specific** exclusions not already in the base config.
+
+**EXCLUSION PHILOSOPHY:**
+
+Exclude only directories with **NO scientific value**. Let the scanner discover everything else,
+and let the LLM scoring decide if it's valuable. A high score doesn't mean we download everything.
+
+**What to EXCLUDE (no scientific value):**
+
+| Category | Examples | Rationale |
+|----------|----------|-----------|
+| System | `/proc`, `/sys`, `/tmp`, `/var` | OS directories, no user code |
+| Build artifacts | `__pycache__`, `node_modules`, `build/` | Generated, not source |
+| Personal media | `Desktop`, `Downloads`, `Music`, `Pictures`, `Videos` | XDG user dirs from Windows/desktop |
+| Scratch/temp | `scratch`, `tmp`, `temp`, `SCRATCH` | Transient job files (ephemeral) |
+| Caches | `.cache`, `.local`, `.conda`, `.venv` | Environment/cache dirs |
+| Logs | `logs`, `*_logs`, `java.log.*` | Log files only |
+
+**What to NEVER EXCLUDE (potentially valuable scientific data):**
+
+| Category | Examples | Why Valuable |
+|----------|----------|--------------|
+| Video diagnostics | `videodata`, `fast_camera`, `camera_images` | Fusion diagnostic data! |
+| Simulation outputs | `large_runs`, `run_outputs`, `results` | Physics results |
+| Documents | `Documents` | May contain code or analysis scripts |
+| Archives | `old`, `backup`, `archive` | Legacy code with valuable algorithms |
+| Data directories | `data`, `shots`, `pulses` | Shot data files |
+
+**Check for facility-specific exclusions:**
+
 ```bash
-# Check if common exclusion paths exist (don't measure size)
-ls -d /scratch 2>/dev/null && echo "EXCLUDE: /scratch exists"
-ls -d /tmp 2>/dev/null && echo "EXCLUDE: /tmp exists"  
-ls -d /var/tmp 2>/dev/null && echo "EXCLUDE: /var/tmp exists"
+# Check if facility has specific scratch paths (common on HPC)
+ls -d /scratch /mnt/*/scratch /work/scratch 2>/dev/null | head -5
 
-# Only measure small local directories
-du -sh /tmp 2>/dev/null   # Usually local, bounded
+# Check for facility-specific temp directories
+ls -d /var/hpc/tmp /local/tmp 2>/dev/null
 
-# Standard exclusions (don't search, just document)
-# - /scratch, /tmp, /var/tmp (temporary files)
-# - */logs*, */log (log files)
-# - *backup*, *archive* (backups)
-# - *.dat, *.h5, *.nc (data files, not code)
+# Check for backup/archive mounts (don't exclude - may have code!)
+# Just document these, don't add to excludes
+ls -d /backup /archive /mnt/backup 2>/dev/null | head -5
+```
+
+**Document facility-specific exclusions (ONLY true noise):**
+
+```python
+# Add ONLY facility-specific NOISE patterns
+# Do NOT add scientific data directories!
+update_facility_infrastructure("FACILITY", {
+    "excludes": {
+        "path_prefixes": [
+            # Full paths that are definitely scratch/temp
+            "/mnt/HPC_T2/ITER/HPC/scratch",  # HPC scratch filesystem (ephemeral)
+        ],
+        "patterns": [
+            "*.dat.old.bak",    # Double backup suffix
+        ]
+        # NOTE: Do NOT add videodata, large_runs, results, etc.
+        # These may contain valuable fusion data!
+    }
+})
+```
+
+**Validation:** After updating, verify exclusions work:
+```python
+# In MCP python() REPL - test exclusion logic
+from imas_codex.config.discovery_config import get_exclusion_config_for_facility
+exc = get_exclusion_config_for_facility("FACILITY")
+
+# Test specific paths - should exclude
+print(exc.should_exclude("/mnt/HPC_T2/ITER/HPC/scratch/users"))  # (True, "scratch:...")
+print(exc.should_exclude("/home/user/Desktop"))                   # (True, "directory:Desktop")
+print(exc.should_exclude("/home/user/Downloads"))                 # (True, "directory:Downloads")
+
+# Test paths that should NOT be excluded (scientific data!)
+print(exc.should_exclude("/work/codes/chease"))                   # (False, None)
+print(exc.should_exclude("/home/user/Documents"))                 # (False, None) - may have code
+print(exc.should_exclude("/data/videodata"))                      # (False, None) - diagnostic data!
+print(exc.should_exclude("/work/large_runs"))                     # (False, None) - simulation outputs
 ```
 
 ### Phase 8: User Information (GECOS) Discovery (2 min)

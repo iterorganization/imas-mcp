@@ -10,9 +10,18 @@ config/
 ├── facilities/                  # Per-facility configuration
 │   ├── epfl.yaml               # Public (git tracked)
 │   ├── epfl_private.yaml       # Private (gitignored)
-│   └── iter.yaml               # ITER/SDCC (auto-detected as local)
+│   ├── iter.yaml
+│   ├── iter_private.yaml
+│   ├── jet.yaml
+│   └── jet_private.yaml
 ├── patterns/                    # Discovery patterns
-│   └── discovery.yaml          # Multi-dimensional scoring patterns
+│   ├── exclude.yaml            # Exclusion patterns (deterministic, fast)
+│   ├── file_types.yaml         # File extension categories
+│   ├── discovery.yaml          # (deprecated)
+│   └── scoring/                # LLM scoring patterns
+│       ├── base.yaml           # Dimension weights
+│       ├── data_systems.yaml   # IMAS, MDSplus, etc.
+│       └── physics.yaml        # Physics domain patterns
 └── fast_tools.yaml              # Fast CLI tools configuration
 ```
 
@@ -276,104 +285,87 @@ cypher('''
 - Privilege escalation: `sudo`, `su`
 - System control: `kill`, `shutdown`, `reboot`
 
-## Structured Exploration Approach
+## Structured Discovery Workflow
 
 ### FacilityPath Nodes
 
-Use `FacilityPath` nodes to track exploration state in the graph.
+Use `FacilityPath` nodes to track discovery state in the graph.
 
-### Multi-Pass Exploration Workflow
+### Two-Phase Discovery Pipeline
+
+The discovery pipeline uses parallel workers for scanning (file enumeration) and scoring (LLM evaluation):
 
 ```
-┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  SCOUT PASS │   │ TRIAGE PASS │   │ INGEST PASS │
-│             │   │             │   │             │
-│ discovered  │   │ scanned     │   │ flagged     │
-│     ↓       │   │     ↓       │   │     ↓       │
-│  listed     │   │  flagged    │   │ analyzed    │
-│     ↓       │   │     or      │   │     ↓       │
-│  scanned    │   │  skipped    │   │ ingested    │
-└─────────────┘   └─────────────┘   └─────────────┘
+┌─────────────────────┐        ┌─────────────────────┐
+│    SCAN WORKERS     │        │   SCORE WORKERS     │
+│                     │        │                     │
+│ discovered          │        │ listed              │
+│     ↓ (listing)     │        │     ↓ (scoring)     │
+│  listed             │───────>│  scored             │
+│     or              │        │     or              │
+│  excluded           │        │  skipped            │
+└─────────────────────┘        └─────────────────────┘
 ```
 
-**Scout Pass**: Discover and scan paths
+**Scan Phase**: Enumerate directory contents
 ```python
-# Start with discovered paths
-result = get_facility("epfl")
-# actionable_paths sorted by interest_score
+# Start with discovered paths (seeded from facility config)
+# Scanner worker claims paths, enumerates files/dirs, updates counts
 
-# After pattern search, batch update all paths
-ingest_nodes("FacilityPath", [
-    {
-        "id": "epfl:/home/codes/transport",
-        "status": "scanned",
-        "files_scanned": 15,
-        "patterns_found": ["equilibrium", "IMAS", "write_ids"],
-        "last_examined": "2025-01-15T10:30:00Z"
-    },
-    {
-        "id": "epfl:/home/codes/helena",
-        "status": "scanned",
-        "files_scanned": 8,
-        "patterns_found": ["equilibrium"]
-    }
-])
+# After enumeration:
+add_to_graph("FacilityPath", [{
+    "id": "epfl:/home/codes/transport",
+    "status": "listed",  # Ready for scoring
+    "file_count": 15,
+    "dir_count": 3,
+    "last_examined": "2025-01-15T10:30:00Z"
+}])
+
+# Paths matching exclusion patterns:
+add_to_graph("FacilityPath", [{
+    "id": "epfl:/home/user/.cache",
+    "status": "excluded",  # Never scored
+}])
 ```
 
-**Triage Pass**: Prioritize interesting paths
+**Score Phase**: LLM evaluates directory value
 ```python
-# Batch update paths after triage
-ingest_nodes("FacilityPath", [
-    {
-        "id": "epfl:/home/codes/transport",
-        "status": "flagged",
-        "interest_score": 0.9,
-        "notes": "Found IMAS integration, multiple IDS writes"
-    },
-    {
-        "id": "epfl:/home/codes/old_backup",
-        "status": "skipped",
-        "notes": "Stale backup, no active development"
-    }
-])
+# Scorer worker claims listed paths, evaluates with LLM
+
+# After scoring:
+add_to_graph("FacilityPath", [{
+    "id": "epfl:/home/codes/transport",
+    "status": "scored",
+    "score": 0.85,
+    "score_imas": 0.9,
+    "score_code": 0.8,
+    "notes": "IMAS integration, equilibrium code"
+}])
+
+# Low-value paths:
+add_to_graph("FacilityPath", [{
+    "id": "epfl:/home/user/random_scripts",
+    "status": "skipped",
+    "score": 0.15,
+}])
 ```
 
-**Ingest Pass**: Extract code to graph
-```python
-# After reading and understanding code
-ingest_nodes("FacilityPath", [
-    {
-        "id": "epfl:/home/codes/transport",
-        "status": "analyzed",
-        "notes": "Main entry: run_transport.py, uses ASTRA"
-    }
-])
+### Path Status Values (LinkML Schema)
 
-# After code ingestion complete
-ingest_nodes("FacilityPath", [
-    {
-        "id": "epfl:/home/codes/transport",
-        "status": "ingested",
-        "files_ingested": 12
-    }
-])
-```
+| Status | Phase | Meaning |
+|--------|-------|---------|
+| `discovered` | Seed | Found, awaiting enumeration |
+| `listing` | Scan | Scanner worker active (transient) |
+| `listed` | Scan→Score | Enumerated, awaiting LLM score |
+| `scoring` | Score | Scorer worker active (transient) |
+| `scored` | Score | LLM evaluated, has score |
+| `skipped` | Score | Low value (score < 0.2) |
+| `excluded` | Scan | Matched exclusion pattern |
+| `stale` | Any | Path may have changed |
 
-### Path Status Values
+Transient states (`listing`, `scoring`) auto-recover to previous state on timeout.
 
-| Status | Pass | Meaning |
-|--------|------|---------|
-| `discovered` | Scout | Found but not examined |
-| `listed` | Scout | Contents listed, counts known |
-| `scanned` | Scout | Pattern search complete |
-| `flagged` | Triage | Interesting, should analyze |
-| `skipped` | Triage | Not interesting enough |
-| `analyzed` | Ingest | Structure understood |
-| `ingested` | Ingest | Code extracted to graph |
-| `excluded` | Any | Permanently skip (e.g., /tmp) |
-| `stale` | Any | May no longer exist |
-
-### Interest Score Guidelines
+### Score Guidelines
 
 | Score | Use Case |
 |-------|----------|
@@ -381,7 +373,7 @@ ingest_nodes("FacilityPath", [
 | 0.7+ | MDSplus access, equilibrium codes |
 | 0.5+ | General analysis codes |
 | 0.3+ | Utilities, helpers |
-| <0.3 | Config files, documentation |
+| <0.3 | Config files, documentation → may be skipped |
 
 ### Tool Preferences
 
@@ -413,3 +405,96 @@ The infrastructure file provides **agent guidance** for exploration but is never
 - Committed to git
 - Loaded into the graph
 - Distributed in OCI artifacts
+
+---
+
+# Discovery Exclusion Strategy
+
+Discovery uses a **two-tier filtering** approach:
+
+## Exclusion Philosophy
+
+**Exclude only directories with NO scientific value.** Let the scanner discover 
+everything else, and let the LLM scoring decide value. A high score doesn't mean 
+we download everything - it just marks the directory as valuable.
+
+### What to EXCLUDE (deterministic, before scanning)
+
+| Category | Examples | Rationale |
+|----------|----------|-----------|
+| **System directories** | `/proc`, `/sys`, `/tmp`, `/var/log` | No user code |
+| **Build artifacts** | `__pycache__`, `node_modules`, `build/` | Generated files |
+| **Personal media** | `Desktop`, `Downloads`, `Music`, `Pictures`, `Videos` | XDG dirs |
+| **Scratch/temp** | `scratch`, `tmp`, `temp` directories | Transient job files |
+| **Caches** | `.cache`, `.local`, `.conda` | Environment state |
+| **Archives** | `.tar.gz`, `.zip` | Opaque containers |
+
+### What to NEVER EXCLUDE (let LLM score)
+
+| Category | Examples | Why Valuable |
+|----------|----------|--------------|
+| **Video diagnostics** | `videodata`, `fast_camera` | Fusion diagnostic data! |
+| **Simulation outputs** | `large_runs`, `run_outputs` | Physics results |
+| **Documents** | `Documents` | May contain code/scripts |
+| **Archives/backups** | `old`, `backup` | Legacy code with algorithms |
+| **Data directories** | `data`, `shots`, `pulses` | Shot data files |
+
+## Tier 1: Deterministic Exclusion (BEFORE scanning)
+
+Fast, zero-cost, no SSH/LLM overhead. Defined in `patterns/exclude.yaml`
+and merged with facility-specific excludes from `*_private.yaml`.
+
+### Scratch Pattern Detection
+
+Scratch directories are detected by:
+1. **Name matching**: `scratch`, `tmp`, `temp`, `SCRATCH`, etc.
+2. **Path patterns**: `*/scratch/*`, `*/SCRATCH/*`, `*/tmp/*`
+
+## Tier 2: LLM Scoring (AFTER scanning)
+
+For nuanced decisions requiring directory content context:
+- "backup", "old" directories (may contain valuable code)
+- Purpose classification: physics_code, data_files, test_suite
+
+## Facility-Specific Exclusions
+
+Each facility's `*_private.yaml` can define exclusions for true noise only:
+
+```yaml
+excludes:
+  path_prefixes:
+    - /mnt/HPC_T2/ITER/HPC/scratch  # HPC scratch (ephemeral)
+  patterns:
+    - "*.dat.old.bak"                # Double backup suffix
+  # NOTE: Do NOT add videodata, large_runs, results, etc.
+  # These may contain valuable fusion data!
+```
+
+These are merged via `get_exclusion_config_for_facility(facility)`.
+
+## API Usage
+
+```python
+from imas_codex.config.discovery_config import (
+    get_discovery_config,
+    get_exclusion_config_for_facility,
+)
+
+# Base config (no facility-specific merging)
+config = get_discovery_config()
+
+# With facility-specific excludes merged
+exclusions = get_exclusion_config_for_facility("iter")
+should_exclude, reason = exclusions.should_exclude("/mnt/scratch/user")
+is_scratch = exclusions.is_scratch_path("/mnt/HPC_T2/ITER/HPC/scratch/users")
+
+# Test that scientific data is NOT excluded
+exclusions.should_exclude("/data/videodata")  # (False, None) - diagnostic data!
+exclusions.should_exclude("/work/large_runs") # (False, None) - simulation outputs
+```
+
+## Adding New Exclusions
+
+1. **Global exclusions**: Add to `patterns/exclude.yaml`
+2. **Facility-specific**: Add to `facilities/<facility>_private.yaml` under `excludes:`
+3. **Clear cache after changes**: `clear_config_cache()`

@@ -12,6 +12,8 @@ Configuration structure:
         ├── base.yaml         # Dimension weights and thresholds
         ├── data_systems.yaml # IMAS, MDSplus, HDF5, etc.
         └── physics.yaml      # Physics domain patterns
+
+Facility-specific exclusions are merged from *_private.yaml files.
 """
 
 from __future__ import annotations
@@ -30,7 +32,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ExclusionConfig:
-    """Configuration for path exclusions."""
+    """Configuration for path exclusions.
+
+    Two-tier exclusion system:
+    1. Deterministic exclusions (this config) - fast, no SSH/LLM cost
+    2. LLM scoring (scorer.py) - nuanced decisions after scanning
+
+    Facility-specific exclusions can be merged via merge_facility_excludes().
+    """
 
     directories: list[str] = field(default_factory=list)
     """Directory basenames to exclude (e.g., '.git', '__pycache__')"""
@@ -42,7 +51,7 @@ class ExclusionConfig:
     """Absolute path prefixes to never scan (e.g., '/proc', '/tmp')"""
 
     archive_extensions: list[str] = field(default_factory=list)
-    """File extensions indicating archive directories to skip (e.g., '.tar.gz', '.zip')"""
+    """File extensions indicating archive directories to skip"""
 
     dotfile_exclude: bool = True
     """Whether to exclude dotfiles by default"""
@@ -50,11 +59,68 @@ class ExclusionConfig:
     dotfile_allow: list[str] = field(default_factory=list)
     """Specific dotfiles to allow (e.g., '.github')"""
 
+    scratch_names: list[str] = field(default_factory=list)
+    """Directory names indicating scratch/temp space (e.g., 'scratch', 'tmp')"""
+
+    scratch_path_patterns: list[str] = field(default_factory=list)
+    """Full path patterns for scratch directories (e.g., '*/scratch/*')"""
+
     max_depth: int = 15
     """Maximum scan depth"""
 
     large_dir_threshold: int = 10000
     """Directory entry count that triggers size_skipped"""
+
+    scan_timeout: int = 30
+    """Maximum seconds for a single directory scan"""
+
+    def merge_facility_excludes(self, facility_excludes: dict) -> ExclusionConfig:
+        """Merge facility-specific exclusions from *_private.yaml.
+
+        Args:
+            facility_excludes: Dict with optional keys:
+                - directories: list[str]
+                - patterns: list[str]
+                - path_prefixes: list[str]
+
+        Returns:
+            New ExclusionConfig with merged values
+        """
+        if not facility_excludes:
+            return self
+
+        return ExclusionConfig(
+            directories=self.directories + facility_excludes.get("directories", []),
+            patterns=self.patterns + facility_excludes.get("patterns", []),
+            path_prefixes=self.path_prefixes
+            + facility_excludes.get("path_prefixes", []),
+            archive_extensions=self.archive_extensions,
+            dotfile_exclude=self.dotfile_exclude,
+            dotfile_allow=self.dotfile_allow,
+            scratch_names=self.scratch_names,
+            scratch_path_patterns=self.scratch_path_patterns,
+            max_depth=self.max_depth,
+            large_dir_threshold=self.large_dir_threshold,
+            scan_timeout=self.scan_timeout,
+        )
+
+    def is_scratch_path(self, path: str) -> bool:
+        """Check if path is a scratch/temporary directory.
+
+        Scratch directories are excluded from seeding and scanning.
+        """
+        basename = path.rstrip("/").split("/")[-1]
+
+        # Check scratch names
+        if basename.lower() in [n.lower() for n in self.scratch_names]:
+            return True
+
+        # Check scratch path patterns
+        for pattern in self.scratch_path_patterns:
+            if fnmatch.fnmatch(path, pattern):
+                return True
+
+        return False
 
     def should_exclude(self, path: str) -> tuple[bool, str | None]:
         """Check if a path should be excluded.
@@ -71,6 +137,10 @@ class ExclusionConfig:
         for prefix in self.path_prefixes:
             if path.startswith(prefix):
                 return True, f"path_prefix:{prefix}"
+
+        # Check scratch patterns (before other checks)
+        if self.is_scratch_path(path):
+            return True, f"scratch:{basename}"
 
         # Check explicit directory exclusions
         if basename in self.directories:
@@ -273,6 +343,7 @@ class DiscoveryConfig:
             data = yaml.safe_load(f) or {}
 
         dotfile_config = data.get("dotfile_patterns", {})
+        scratch_config = data.get("scratch_patterns", {})
 
         return ExclusionConfig(
             directories=data.get("directories", []),
@@ -281,8 +352,11 @@ class DiscoveryConfig:
             archive_extensions=data.get("archive_extensions", []),
             dotfile_exclude=dotfile_config.get("exclude", True),
             dotfile_allow=dotfile_config.get("allow", []),
+            scratch_names=scratch_config.get("names", []),
+            scratch_path_patterns=scratch_config.get("path_patterns", []),
             max_depth=data.get("max_depth", 15),
             large_dir_threshold=data.get("large_dir_threshold", 10000),
+            scan_timeout=data.get("scan_timeout", 30),
         )
 
     @classmethod
@@ -407,6 +481,40 @@ def get_discovery_config() -> DiscoveryConfig:
         DiscoveryConfig instance (cached)
     """
     return DiscoveryConfig.load()
+
+
+def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
+    """Get exclusion config with facility-specific patterns merged.
+
+    Loads base exclusions from patterns/exclude.yaml, then merges
+    any facility-specific exclusions from the facility's private config.
+
+    Args:
+        facility: Facility identifier (e.g., 'iter', 'epfl', 'jet')
+
+    Returns:
+        ExclusionConfig with merged facility-specific excludes
+    """
+    base_config = get_discovery_config().exclusions
+
+    try:
+        from imas_codex.discovery.facility import get_facility_infrastructure
+
+        infra = get_facility_infrastructure(facility)
+        facility_excludes = infra.get("excludes", {})
+
+        if facility_excludes:
+            logger.debug(
+                f"Merging facility excludes for {facility}: "
+                f"{len(facility_excludes.get('directories', []))} dirs, "
+                f"{len(facility_excludes.get('path_prefixes', []))} prefixes"
+            )
+            return base_config.merge_facility_excludes(facility_excludes)
+
+    except Exception as e:
+        logger.debug(f"Could not load facility excludes for {facility}: {e}")
+
+    return base_config
 
 
 def clear_config_cache() -> None:

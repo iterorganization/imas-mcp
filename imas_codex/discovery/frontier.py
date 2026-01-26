@@ -215,7 +215,8 @@ def seed_facility_roots(
     """Create initial FacilityPath nodes for discovery.
 
     If no root paths provided, uses facility config's paths.actionable_paths
-    or falls back to common root paths.
+    or falls back to common root paths. Paths are filtered through exclusion
+    rules to prevent seeding scratch/temp directories.
 
     Args:
         facility: Facility ID
@@ -224,8 +225,12 @@ def seed_facility_roots(
     Returns:
         Number of paths created
     """
+    from imas_codex.config.discovery_config import get_exclusion_config_for_facility
     from imas_codex.discovery import get_facility
     from imas_codex.graph import GraphClient
+
+    # Get exclusion config with facility-specific patterns
+    exclusion_config = get_exclusion_config_for_facility(facility)
 
     # Get root paths from config if not provided
     if root_paths is None:
@@ -246,7 +251,7 @@ def seed_facility_roots(
                 ]
             else:
                 # Use path values from config, excluding personal/user paths
-                # These categories are for infrastructure docs, not discovery seeds
+                # and infrastructure docs (categories that shouldn't be seeded)
                 excluded_categories = {"user", "actionable_paths"}
                 for key, value in paths_config.items():
                     if key in excluded_categories:
@@ -270,6 +275,26 @@ def seed_facility_roots(
                 seen.add(p)
                 unique_paths.append(p)
         root_paths = unique_paths
+
+    # Filter out paths that should be excluded (scratch, system, etc.)
+    filtered_paths = []
+    excluded_paths = []
+    for path in root_paths:
+        should_exclude, reason = exclusion_config.should_exclude(path)
+        if should_exclude:
+            excluded_paths.append((path, reason))
+            logger.debug(f"Excluding seed path {path}: {reason}")
+        else:
+            filtered_paths.append(path)
+
+    if excluded_paths:
+        logger.info(
+            f"Filtered {len(excluded_paths)} paths from seeding: "
+            f"{[p for p, _ in excluded_paths[:5]]}"
+            + ("..." if len(excluded_paths) > 5 else "")
+        )
+
+    root_paths = filtered_paths
 
     now = datetime.now(UTC).isoformat()
     items = []
