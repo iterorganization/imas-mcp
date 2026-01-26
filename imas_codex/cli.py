@@ -401,13 +401,18 @@ def tools_check(facility: str | None, as_json: bool) -> None:
 
 @tools.command("install")
 @click.argument("facility", required=False)
+@click.option("--tool", "tool_name", help="Install a specific tool (e.g., gh, rg)")
 @click.option(
-    "--required-only", is_flag=True, help="Only install required tools (rg, fd)"
+    "--required-only", is_flag=True, help="Only install required tools (rg, fd, gh)"
 )
 @click.option("--force", is_flag=True, help="Reinstall even if already present")
 @click.option("--dry-run", is_flag=True, help="Show what would be installed")
 def tools_install(
-    facility: str | None, required_only: bool, force: bool, dry_run: bool
+    facility: str | None,
+    tool_name: str | None,
+    required_only: bool,
+    force: bool,
+    dry_run: bool,
 ) -> None:
     """Install fast CLI tools on a facility.
 
@@ -416,18 +421,51 @@ def tools_install(
       imas-codex tools install              # Install locally
       imas-codex tools install iter         # Install on ITER (auto-detects local)
       imas-codex tools install epfl         # Install on EPFL (via SSH)
+      imas-codex tools install --tool gh    # Install only gh
+      imas-codex tools install iter --tool gh  # Install gh on ITER
       imas-codex tools install --dry-run    # Show what would be installed
     """
     from imas_codex.remote.tools import (
         check_all_tools,
         detect_architecture,
         install_all_tools,
+        install_tool,
         is_local_facility,
         load_fast_tools,
     )
 
     is_local = is_local_facility(facility)
     location = "locally" if is_local else f"via SSH to {facility}"
+
+    # Single tool installation
+    if tool_name:
+        config = load_fast_tools()
+        if tool_name not in config.all_tools:
+            click.echo(f"Unknown tool: {tool_name}")
+            click.echo(f"Available: {', '.join(config.all_tools.keys())}")
+            raise SystemExit(1)
+
+        if dry_run:
+            tool = config.get_tool(tool_name)
+            cmd = tool.get_install_command(detect_architecture(facility=facility))
+            click.echo(f"Dry run - would install {tool_name} {location}:")
+            click.echo(f"  {cmd}")
+            return
+
+        click.echo(f"Installing {tool_name} {location}...")
+        result = install_tool(tool_name, facility=facility, force=force)
+
+        if result.get("success"):
+            if result.get("action") == "already_installed":
+                click.echo(
+                    f"• {tool_name} already installed (v{result.get('version')})"
+                )
+            else:
+                click.echo(f"✓ Installed {tool_name} (v{result.get('version')})")
+        else:
+            click.echo(f"✗ Failed: {result.get('error')}")
+            raise SystemExit(1)
+        return
 
     if dry_run:
         click.echo(f"Dry run - would install tools {location}:")
