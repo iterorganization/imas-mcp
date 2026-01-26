@@ -116,7 +116,7 @@ def has_pending_work(facility: str) -> bool:
     Returns True if any of:
     - Discovered paths awaiting first scan
     - Listed paths awaiting scoring
-    - Scored paths with should_expand=true that haven't been expanded
+    - Scored paths with should_expand=true that haven't been expanded yet
     """
     from imas_codex.graph import GraphClient
 
@@ -127,7 +127,7 @@ def has_pending_work(facility: str) -> bool:
             WHERE p.status = $discovered
                OR (p.status = $listed AND p.score IS NULL)
                OR (p.status = $scored AND p.should_expand = true
-                   AND NOT EXISTS { (child:FacilityPath)-[:PARENT]->(p) })
+                   AND p.expanded_at IS NULL)
             RETURN count(p) AS pending
             """,
             facility=facility,
@@ -272,7 +272,7 @@ def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, A
                 MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
                 WHERE p.status = $scored
                   AND p.should_expand = true
-                  AND NOT EXISTS { (child:FacilityPath)-[:PARENT]->(p) }
+                  AND p.expanded_at IS NULL
                 WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
                 SET p.status = $listing, p.claimed_at = datetime()
                 RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding

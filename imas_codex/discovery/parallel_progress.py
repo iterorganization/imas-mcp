@@ -385,9 +385,9 @@ class ParallelProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
 
-        # SCAN <path>
+        # SCAN section - show path or idle
+        section.append("  SCAN ", style="bold blue")
         if scan:
-            section.append("  SCAN ", style="bold blue")
             section.append(clip_path(scan.path, self.WIDTH - 10), style="white")
             section.append("\n")
             # Stats indented below
@@ -398,43 +398,42 @@ class ParallelProgressDisplay:
             if scan.has_code:
                 section.append("  ", style="dim")
                 section.append("code project", style="green dim")
-            section.append("\n")
+        else:
+            section.append("idle", style="dim italic")
+        section.append("\n")
 
-        # SCORE <path>
-        #   <score> <reason>
-        if score:
+        # SCORE section - show path or idle (skip in scan_only mode)
+        if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
-            section.append(clip_path(score.path, self.WIDTH - 10), style="white")
-            section.append("\n")
-            # Score details indented below (matching SCAN layout)
-            section.append("    ", style="dim")
+            if score:
+                section.append(clip_path(score.path, self.WIDTH - 10), style="white")
+                section.append("\n")
+                # Score details indented below (matching SCAN layout)
+                section.append("    ", style="dim")
 
-            if score.skipped:
-                section.append("skipped", style="yellow")
-                if score.skip_reason:
-                    # Clip reason to fit display
-                    reason = (
-                        score.skip_reason[:40] + "..."
-                        if len(score.skip_reason) > 40
-                        else score.skip_reason
-                    )
-                    section.append(f" ({reason})", style="dim")
-            elif score.score is not None:
-                # Color code the score
-                if score.score >= 0.7:
-                    style = "bold green"
-                elif score.score >= 0.4:
-                    style = "yellow"
-                else:
-                    style = "red"
-                section.append(f"{score.score:.2f}", style=style)
-                if score.purpose:
-                    section.append(f"  {score.purpose}", style="italic dim")
-
-        # Fallback if nothing is happening
-        if not scan and not score:
-            section.append("  ", style="dim")
-            section.append("Initializing...", style="italic dim")
+                if score.skipped:
+                    section.append("skipped", style="yellow")
+                    if score.skip_reason:
+                        # Clip reason to fit display
+                        reason = (
+                            score.skip_reason[:40] + "..."
+                            if len(score.skip_reason) > 40
+                            else score.skip_reason
+                        )
+                        section.append(f" ({reason})", style="dim")
+                elif score.score is not None:
+                    # Color code the score
+                    if score.score >= 0.7:
+                        style = "bold green"
+                    elif score.score >= 0.4:
+                        style = "yellow"
+                    else:
+                        style = "red"
+                    section.append(f"{score.score:.2f}", style=style)
+                    if score.purpose:
+                        section.append(f"  {score.purpose}", style="italic dim")
+            else:
+                section.append("idle", style="dim italic")
 
         return section
 
@@ -548,6 +547,12 @@ class ParallelProgressDisplay:
         self.state.run_scanned = stats.processed
         self.state.scan_rate = stats.rate
 
+        # Clear current item when idle (no work available)
+        if message == "idle":
+            self.state.current_scan = None
+            self._refresh()
+            return
+
         # Queue scan results for streaming
         if scan_results:
             items = [
@@ -580,6 +585,12 @@ class ParallelProgressDisplay:
         self.state.run_scored = stats.processed
         self.state.score_rate = stats.rate
         self.state.run_cost = stats.cost
+
+        # Clear current item when idle (no work available)
+        if message == "idle":
+            self.state.current_score = None
+            self._refresh()
+            return
 
         # Queue score results for streaming
         if results:

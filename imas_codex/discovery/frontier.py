@@ -894,8 +894,9 @@ def persist_scan_results(
                 update_dict["patterns_detected"] = patterns
 
             if is_expanding:
-                # Expansion scan: keep scored status, create children
+                # Expansion scan: keep scored status, mark as expanded
                 update_dict["status"] = PathStatus.scored.value
+                update_dict["expanded_at"] = now
                 expansion_updates.append(update_dict)
 
                 # Create children for expanding paths
@@ -991,6 +992,7 @@ def persist_scan_results(
                 UNWIND $items AS item
                 MATCH (p:FacilityPath {id: item.id})
                 SET p.status = item.status,
+                    p.expanded_at = item.expanded_at,
                     p.listed_at = item.listed_at,
                     p.total_files = item.total_files,
                     p.total_dirs = item.total_dirs,
