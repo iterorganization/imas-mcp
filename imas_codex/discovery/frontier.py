@@ -232,12 +232,16 @@ def seed_facility_roots(
         config = get_facility(facility)
         paths_config = config.get("paths", {})
 
-        root_paths = []
+        # Standard root paths for breadth-first discovery (always included)
+        standard_roots = ["/home", "/work", "/opt", "/common", "/usr/local"]
+
+        # Facility-specific paths from config (targeted discovery)
+        config_paths = []
         if isinstance(paths_config, dict):
             # First check for explicit actionable_paths list
             actionable = paths_config.get("actionable_paths", [])
             if isinstance(actionable, list) and actionable:
-                root_paths = [
+                config_paths = [
                     p.get("path") if isinstance(p, dict) else p for p in actionable
                 ]
             else:
@@ -248,18 +252,17 @@ def seed_facility_roots(
                     if key in excluded_categories:
                         continue
                     if isinstance(value, str) and value.startswith("/"):
-                        root_paths.append(value)
+                        config_paths.append(value)
                     elif isinstance(value, dict):
                         # Nested paths like {root: "/work/imas", core: "/work/imas/core"}
                         for subvalue in value.values():
                             if isinstance(subvalue, str) and subvalue.startswith("/"):
-                                root_paths.append(subvalue)
+                                config_paths.append(subvalue)
 
-        # Fallback to common exploration roots if no paths found
-        if not root_paths:
-            root_paths = ["/home", "/work", "/opt"]
+        # Combine: standard roots first (breadth-first base), then config paths (targeted)
+        root_paths = standard_roots + config_paths
 
-        # Deduplicate while preserving order
+        # Deduplicate while preserving order (standard roots take priority)
         seen = set()
         unique_paths = []
         for p in root_paths:
