@@ -66,6 +66,37 @@ module avail 2>&1 | grep -i west
 module avail 2>&1 | grep -i tsbase
 ```
 
+### Phase 2.5: Data Storage & Access Methods (5 min)
+
+Discover where shot data is stored and how it's accessed. This is critical for data integration.
+
+```bash
+# Check for IMAS databases (shared and user)
+ls -la /work/imas/shared/imasdb 2>/dev/null | head -20    # ITER shared
+ls -la /common/imas 2>/dev/null | head -10                # JET/EUROfusion
+ls -la ~/public/imasdb 2>/dev/null | head -10             # User databases
+
+# After loading IMAS module (if available):
+# env | grep -iE 'imas|imasdb' | head -20
+
+# Check for MDSplus tree paths
+env | grep -iE 'mds|tree|_path' | head -30
+echo $MDS_PATH | tr ';' '\n' | head -10
+
+# Check for PPF/JPF (JET legacy)
+env | grep -iE 'ppf|jpf' | head -10
+ls -la /common/EFDA-DATA-PPF-JPF 2>/dev/null | head -10
+
+# Check MATLAB data access paths
+echo $MATLABPATH | tr ':' '\n' | grep -iE 'ppf|jpf|imas' | head -10
+```
+
+**Document for each data system:**
+1. **Storage location**: Where is shot/pulse data physically stored?
+2. **Access method**: API calls (imas.DBEntry, MDSplus.Tree, getdat)
+3. **File format**: HDF5, MDSplus trees, binary (PPF/JPF)
+4. **Server**: Remote data servers (e.g., tcvdata::, ppfhost.jetdata.eu)
+
 ### Phase 3: Compilers & Build Tools (3 min)
 
 ```bash
@@ -89,29 +120,32 @@ make --version 2>/dev/null | head -1
 
 ### Phase 4: Storage Layout & File Systems (5 min)
 
-```bash
-# Disk usage overview (if dust available)
-dust -d 2 /work 2>/dev/null || du -h --max-depth=2 /work 2>/dev/null | sort -rh | head -20
+**CRITICAL**: Fusion facilities have petabyte-scale storage. NEVER run `dust`, `du`, or recursive `find` on `/work`, `/scratch`, or shared filesystems - these will hang indefinitely.
 
-# File system mounts (NFS, GPFS, Lustre, etc.)
+```bash
+# File system mounts - use df (instant, no recursion)
 df -hT 2>/dev/null | grep -vE 'tmpfs|devtmpfs|overlay'
 mount | grep -E 'nfs|gpfs|lustre|ceph' | head -10
 
-# Common code locations
-ls -la /work 2>/dev/null
-ls -la /home/$USER 2>/dev/null
-ls -la /common 2>/dev/null
-ls -la /usr/local 2>/dev/null
-
-# Find potential code directories
-find /work -maxdepth 3 -type d -name 'codes' 2>/dev/null
-find /work -maxdepth 3 -type d -name 'scripts' 2>/dev/null
-find /home -maxdepth 3 -type d -name 'codes' 2>/dev/null
+# Directory structure - use ls, NOT du/dust/find on large dirs
+ls -la /work 2>/dev/null | head -20          # Top-level only
+ls -la /home/$USER 2>/dev/null | head -20    # User home
+ls -la /common 2>/dev/null | head -20        # Common area
+ls -la /usr/local 2>/dev/null | head -20     # Local installs
 
 # Check for containers (Apptainer/Singularity)
 which apptainer 2>/dev/null && apptainer --version
 which singularity 2>/dev/null && singularity --version
-ls /data/apptainer 2>/dev/null || ls /common/containers 2>/dev/null || ls /work/containers 2>/dev/null
+ls /data/apptainer 2>/dev/null | head -10
+ls /common/containers 2>/dev/null | head -10
+```
+
+**Safe code discovery** - only in user home or known small directories:
+```bash
+# Only search in user home (bounded size)
+find ~/ -maxdepth 3 -type d -name 'codes' 2>/dev/null | head -10
+ls -la ~/codes 2>/dev/null
+ls -la ~/projects 2>/dev/null
 ```
 
 ### Phase 5: Fast Tools Availability (2 min)
@@ -150,23 +184,22 @@ ls -la ~/.bash* ~/.profile 2>/dev/null
 
 ### Phase 7: Exclusions & Large Directories (2 min)
 
-Identify directories to exclude from code scanning:
+Identify directories to exclude from code scanning. **Do NOT run du/dust on shared filesystems.**
 
 ```bash
-# Large data directories (should exclude from code search)
-du -sh /scratch 2>/dev/null
-du -sh /tmp 2>/dev/null
-du -sh /var/tmp 2>/dev/null
+# Check if common exclusion paths exist (don't measure size)
+ls -d /scratch 2>/dev/null && echo "EXCLUDE: /scratch exists"
+ls -d /tmp 2>/dev/null && echo "EXCLUDE: /tmp exists"  
+ls -d /var/tmp 2>/dev/null && echo "EXCLUDE: /var/tmp exists"
 
-# Log directories
-find / -maxdepth 3 -type d -name 'logs*' 2>/dev/null | head -10
+# Only measure small local directories
+du -sh /tmp 2>/dev/null   # Usually local, bounded
 
-# Backup/archive patterns
-find /work -maxdepth 2 -type d -name '*backup*' 2>/dev/null
-find /work -maxdepth 2 -type d -name '*archive*' 2>/dev/null
-
-# Binary/data directories (large, not code)
-find /work -maxdepth 2 -type d -name '*data*' 2>/dev/null | head -10
+# Standard exclusions (don't search, just document)
+# - /scratch, /tmp, /var/tmp (temporary files)
+# - */logs*, */log (log files)
+# - *backup*, *archive* (backups)
+# - *.dat, *.h5, *.nc (data files, not code)
 ```
 
 ## Data Systems Reference
@@ -234,6 +267,28 @@ update_facility_infrastructure("FACILITY", {
         "mdsplus": {"available": True, "module": "mdsplus/7.153.3"},
         "uda": {"available": False},
         "ppf": {"available": True, "commands": ["ppfget", "getdat", "jpfget"]}
+    },
+    "data_storage": {
+        "imas_databases": {
+            "shared": "/work/imas/shared/imasdb",  # Shared databases
+            "user": "~/public/imasdb",              # User databases
+            "machines": ["ITER_SCENARIOS", "JET", "AMNS"]  # Available machines
+        },
+        "mdsplus_trees": {
+            "server": "tcvdata::",                  # Remote server
+            "paths": ["/tcvssd/trees", "/Terra16/mdsplus/trees"],
+            "tree_types": ["tcv_shot", "results", "magnetics"]
+        },
+        "ppf_jpf": {
+            "server": "ppfhost.jetdata.eu",
+            "matlab_path": "/jet/share32/matlab/ppf",
+            "access_command": "getdat"
+        }
+    },
+    "file_formats": {
+        "primary": "HDF5",           # or "MDSplus", "binary"
+        "backends": ["HDF5_BACKEND", "MDSPLUS_BACKEND"],  # IMAS backends
+        "extensions": [".h5", ".hdf5", ".nc", ".tree"]
     }
 })
 ```
