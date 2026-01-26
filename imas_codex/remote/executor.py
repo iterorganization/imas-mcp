@@ -514,6 +514,9 @@ def run_python_script(
             timeout=timeout,
         )
     else:
+        # Check SSH health once per host per session (prevents stale socket hangs)
+        _ensure_ssh_healthy_once(ssh_host)
+
         # SSH execution with JSON piped through
         result = subprocess.run(
             ["ssh", "-T", ssh_host, f"python3 -c '{runner}'"],

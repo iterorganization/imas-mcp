@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -307,12 +308,29 @@ async def scan_worker(
         facility, paths_to_scan = state.facility, path_strs
         # Use enable_rg=False and enable_size=False for speed
         # Pattern detection is expensive and not needed for basic discovery
-        results = await loop.run_in_executor(
-            None,
-            lambda fac=facility, pts=paths_to_scan: scan_paths(
-                fac, pts, enable_rg=False, enable_size=False
-            ),
-        )
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda fac=facility, pts=paths_to_scan: scan_paths(
+                    fac, pts, enable_rg=False, enable_size=False
+                ),
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            # Transient failure (timeout or SSH connection error)
+            # Revert paths to 'discovered' for retry
+            logger.warning(f"Transient scan failure, reverting {len(paths)} paths: {e}")
+            _revert_listing_claim(state.facility, path_strs)
+            state.scan_stats.errors += len(paths)
+            if on_progress:
+                on_progress(
+                    f"transient error, will retry {len(paths)} paths",
+                    state.scan_stats,
+                    None,
+                    None,
+                )
+            # Wait before retrying to avoid hammering a down connection
+            await asyncio.sleep(30.0)
+            continue
         state.scan_stats.last_batch_time = time.time() - start
 
         # Persist results (marks scanning → scanned)
@@ -556,6 +574,24 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
             paths=paths,
             scoring=PathStatus.scoring.value,
             listed=PathStatus.listed.value,
+        )
+
+
+def _revert_listing_claim(facility: str, paths: list[str]) -> None:
+    """Revert paths from listing back to discovered on transient error."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.path IN $paths AND p.status = $listing
+            SET p.status = $discovered, p.claimed_at = null
+            """,
+            facility=facility,
+            paths=paths,
+            listing=PathStatus.listing.value,
+            discovered=PathStatus.discovered.value,
         )
 
 

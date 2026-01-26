@@ -160,28 +160,35 @@ def scan_paths(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        # Clean error message without base64 script dump
-        error_msg = f"SSH scan timed out after {timeout}s for {facility}"
-        logger.warning(error_msg)
-        return [
-            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_msg)
-            for p in paths
-        ]
-    except Exception as e:
-        # Clip long error messages (avoid base64 script in output)
-        error_str = str(e)
-        if len(error_str) > 200:
-            error_str = error_str[:200] + "..."
-
-        # Add SSH-specific advice for connection failures
-        if "exit status 255" in error_str:
+        # Timeout is transient - re-raise so paths stay in 'listing' for retry
+        logger.warning(
+            f"SSH scan timed out after {timeout}s for {facility}. "
+            f"Paths will be retried via orphan recovery."
+        )
+        raise
+    except subprocess.CalledProcessError as e:
+        # SSH connection failures (exit 255) are transient - re-raise for retry
+        if e.returncode == 255:
             logger.warning(
                 f"Scan failed for {facility}: SSH connection failed. "
                 f"Verify connectivity with 'ssh {facility}'. "
-                f"Check: VPN connected, SSH key loaded (ssh-add), host in ~/.ssh/config"
+                f"Check: VPN connected, SSH key loaded (ssh-add), host in ~/.ssh/config. "
+                f"Paths will be retried via orphan recovery."
             )
-        else:
-            logger.warning(f"Scan failed for {facility}: {error_str}")
+            raise
+        # Other CalledProcessError: mark paths as errors (actual script failures)
+        error_str = str(e)[:200]
+        logger.warning(f"Scan script failed for {facility}: {error_str}")
+        return [
+            ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
+            for p in paths
+        ]
+    except Exception as e:
+        # Unknown errors - log and return as path errors
+        error_str = str(e)
+        if len(error_str) > 200:
+            error_str = error_str[:200] + "..."
+        logger.warning(f"Scan failed for {facility}: {error_str}")
         return [
             ScanResult(path=p, stats=DirStats(), child_dirs=[], error=error_str)
             for p in paths
