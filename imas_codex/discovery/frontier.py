@@ -662,6 +662,36 @@ def mark_paths_scored(
             )
             updated += 1
 
+            # Data container child-skip: mark children as skipped if parent is
+            # a data container that shouldn't expand (simulation_data, diagnostic_data)
+            path_purpose = score_data.get("path_purpose")
+            should_expand = score_data.get("should_expand", True)
+            data_purposes = {"simulation_data", "diagnostic_data"}
+
+            if path_purpose in data_purposes and not should_expand:
+                # Mark all discovered children as skipped
+                skipped_result = gc.query(
+                    """
+                    MATCH (child:FacilityPath)-[:CHILD_OF]->(p:FacilityPath {id: $id})
+                    WHERE child.status = 'discovered'
+                    SET child.status = $skipped,
+                        child.skipped_at = $now,
+                        child.skip_reason = $reason
+                    RETURN count(child) AS skipped_count
+                    """,
+                    id=path_id,
+                    now=now,
+                    reason=f"parent_{path_purpose}",
+                    skipped=PathStatus.skipped.value,
+                )
+                skipped_count = (
+                    skipped_result[0]["skipped_count"] if skipped_result else 0
+                )
+                if skipped_count > 0:
+                    logger.debug(
+                        f"Skipped {skipped_count} children of {path_purpose}: {path}"
+                    )
+
     return updated
 
 
@@ -791,6 +821,7 @@ def persist_scan_results(
     Returns:
         Dict with scanned, children_created, excluded, errors counts
     """
+    from imas_codex.discovery.facility import get_facility
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
@@ -798,6 +829,12 @@ def persist_scan_results(
     children_created = 0
     excluded_count = 0
     errors = 0
+
+    # Load facility config for trusted_git_servers
+    try:
+        facility_config = get_facility(facility)
+    except ValueError:
+        facility_config = {}
 
     # Separate successes and errors
     successes = []
@@ -854,13 +891,18 @@ def persist_scan_results(
             successes.append(update_dict)
 
             # Decide whether to skip children for git repos
-            # Skip ONLY verified public repos that are accessible elsewhere
-            # Continue scanning private/local repos - they contain unique facility code
+            # Skip children when:
+            #   1. Public repo on github/gitlab/bitbucket (verified via HTTP)
+            #   2. Repo on trusted_git_servers (facility has access, content available)
+            # Continue scanning only unknown private repos
             is_git_repo = stats.get("has_git", False)
             git_remote_url = stats.get("git_remote_url", "")
 
             if is_git_repo and git_remote_url:
-                # Check if this is on a public hosting service (quick heuristic)
+                should_skip = False
+                skip_reason = ""
+
+                # Check if on a public hosting service
                 is_public_host = any(
                     host in git_remote_url.lower()
                     for host in ["github.com", "gitlab.com", "bitbucket.org"]
@@ -871,16 +913,27 @@ def persist_scan_results(
                         git_remote_url, timeout=3.0
                     )
                     if is_public:
-                        # Confirmed public - skip children, content available from source
-                        logger.debug(
-                            f"Skip children: public repo {path} ({git_remote_url})"
-                        )
-                        continue
+                        should_skip = True
+                        skip_reason = "public_repo"
                     else:
                         logger.debug(
                             f"Scan children: private repo on public host {path}"
                         )
-                # Private/internal repo - continue scanning
+                else:
+                    # Check if on an internal git server (facility has access)
+                    internal_servers = facility_config.get("internal_git_servers", [])
+                    is_internal = any(
+                        server in git_remote_url.lower() for server in internal_servers
+                    )
+                    if is_internal:
+                        should_skip = True
+                        skip_reason = "internal_repo"
+
+                if should_skip:
+                    logger.debug(
+                        f"Skip children: {skip_reason} {path} ({git_remote_url})"
+                    )
+                    continue
 
             # Prepare children for non-public-git directories
             for child_path in child_dirs:
