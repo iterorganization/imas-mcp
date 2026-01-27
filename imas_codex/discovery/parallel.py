@@ -105,8 +105,13 @@ class DiscoveryState:
         # Stop if both workers idle for 3+ iterations AND no pending work
         if self.scan_idle_count >= 3 and self.score_idle_count >= 3:
             # Check for pending expansion work before terminating
-            if not has_pending_work(self.facility):
-                return True
+            if has_pending_work(self.facility):
+                # Reset idle counts to force workers to re-poll for new work
+                # (e.g., expansion paths that became available after scoring)
+                self.scan_idle_count = 0
+                self.score_idle_count = 0
+                return False
+            return True
         return False
 
 
