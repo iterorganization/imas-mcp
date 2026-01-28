@@ -26,7 +26,6 @@ Output (JSON on stdout):
             "stats": {
                 "total_files": 10,
                 "total_dirs": 5,
-                "total_symlink_dirs": 2,
                 "has_readme": true,
                 "has_makefile": false,
                 "has_git": true,
@@ -35,9 +34,6 @@ Output (JSON on stdout):
                 "rg_matches": {"total": 15}
             },
             "child_dirs": ["/path/to/scan/subdir", ...],
-            "symlink_dirs": [
-                {"path": "/path/to/scan/link", "realpath": "/real/target"}
-            ],
             "child_names": ["file1.py", "subdir", ...]
         },
         ...
@@ -91,20 +87,27 @@ def scan_directory(
     """
     result: Dict[str, Any] = {"path": path}
 
-    # Check if path itself is a symlink and resolve it
-    path_is_symlink = os.path.islink(path)
-    path_realpath: str | None = None
-    if path_is_symlink:
-        try:
-            path_realpath = sanitize_str(os.path.realpath(path))
-        except OSError:
-            pass
-    result["is_symlink"] = path_is_symlink
-    result["realpath"] = path_realpath
+    # Resolve symlink status and realpath for the scanned path itself
+    is_symlink = os.path.islink(path)
+    try:
+        realpath = os.path.realpath(path) if is_symlink else None
+    except OSError:
+        realpath = None
+
+    # Get device:inode for deduplication (detects bind mounts)
+    # Format: "device:inode" e.g. "64:9468985"
+    device_inode: str | None = None
+    try:
+        stat_info = os.stat(path)
+        device_inode = f"{stat_info.st_dev}:{stat_info.st_ino}"
+    except OSError:
+        pass
 
     # Check accessibility
     if not os.path.isdir(path):
         result["error"] = "not a directory"
+        result["is_symlink"] = is_symlink
+        result["realpath"] = realpath
         return result
     if not os.access(path, os.R_OK):
         result["error"] = "permission denied"
@@ -123,40 +126,48 @@ def scan_directory(
     # Separate files and directories (avoid following symlinks)
     files: List[os.DirEntry] = []
     dirs: List[os.DirEntry] = []
-    symlink_dirs: List[os.DirEntry] = []
     for entry in entries:
         try:
             if entry.is_file(follow_symlinks=False):
                 files.append(entry)
             elif entry.is_dir(follow_symlinks=False):
-                # Check if it's a symlink pointing to a directory
-                if entry.is_symlink():
-                    symlink_dirs.append(entry)
-                else:
-                    dirs.append(entry)
+                dirs.append(entry)
         except OSError:
             # Entry may have been deleted or permission denied
             pass
 
-    # Child directories (full paths) - sanitize for JSON encoding
-    # Only include non-symlink directories for expansion
-    child_dirs = [sanitize_str(entry.path) for entry in dirs]
-
-    # Symlink directories with their resolved targets
-    # Format: [{path: "/symlink/path", realpath: "/real/target"}]
-    symlink_info: List[Dict[str, str]] = []
-    for entry in symlink_dirs:
+    # Child directories with symlink and device_inode info - enables deduplication
+    # Each entry is {path, is_symlink, realpath, device_inode} for graph relationship creation
+    child_dirs: List[Dict[str, Any]] = []
+    for entry in dirs:
+        child_path = sanitize_str(entry.path)
+        child_device_inode: str | None = None
         try:
-            resolved = os.path.realpath(entry.path)
-            symlink_info.append(
-                {
-                    "path": sanitize_str(entry.path),
-                    "realpath": sanitize_str(resolved),
-                }
-            )
+            child_is_symlink = entry.is_symlink()
+            if child_is_symlink:
+                try:
+                    child_realpath = sanitize_str(os.path.realpath(entry.path))
+                except OSError:
+                    child_realpath = None
+            else:
+                child_realpath = None
+            # Get device:inode for deduplication
+            try:
+                child_stat = os.stat(entry.path)  # follows symlinks
+                child_device_inode = f"{child_stat.st_dev}:{child_stat.st_ino}"
+            except OSError:
+                pass
         except OSError:
-            # Can't resolve symlink, skip it
-            pass
+            child_is_symlink = False
+            child_realpath = None
+        child_dirs.append(
+            {
+                "path": child_path,
+                "is_symlink": child_is_symlink,
+                "realpath": child_realpath,
+                "device_inode": child_device_inode,
+            }
+        )
 
     # First 30 names for context (for LLM scoring) - sanitize for JSON encoding
     child_names = [sanitize_str(entry.name) for entry in entries[:30]]
@@ -231,14 +242,10 @@ def scan_directory(
     if has_git:
         git_dir = os.path.join(path, ".git")
         if os.path.isdir(git_dir):
-            # Git base command with safe.directory bypass for cross-user access
-            # This is safe for read-only discovery operations
-            git_base = ["git", "-c", "safe.directory=*", "-C", path]
-
             # Extract remote origin URL
             try:
                 proc = subprocess.run(
-                    git_base + ["config", "--get", "remote.origin.url"],
+                    ["git", "-C", path, "config", "--get", "remote.origin.url"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -251,7 +258,7 @@ def scan_directory(
             # Extract HEAD commit hash
             try:
                 proc = subprocess.run(
-                    git_base + ["rev-parse", "HEAD"],
+                    ["git", "-C", path, "rev-parse", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -264,7 +271,7 @@ def scan_directory(
             # Extract current branch name
             try:
                 proc = subprocess.run(
-                    git_base + ["symbolic-ref", "--short", "HEAD"],
+                    ["git", "-C", path, "symbolic-ref", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -277,7 +284,7 @@ def scan_directory(
             # Extract root commit (first commit in history)
             try:
                 proc = subprocess.run(
-                    git_base + ["rev-list", "--max-parents=0", "HEAD"],
+                    ["git", "-C", path, "rev-list", "--max-parents=0", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -291,7 +298,6 @@ def scan_directory(
     result["stats"] = {
         "total_files": len(files),
         "total_dirs": len(dirs),
-        "total_symlink_dirs": len(symlink_dirs),
         "has_readme": has_readme,
         "has_makefile": has_makefile,
         "has_git": has_git,
@@ -304,8 +310,11 @@ def scan_directory(
         "rg_matches": rg_matches,
     }
     result["child_dirs"] = child_dirs
-    result["symlink_dirs"] = symlink_info
     result["child_names"] = child_names
+    # Include symlink status and device_inode for the scanned path itself
+    result["is_symlink"] = is_symlink
+    result["realpath"] = realpath
+    result["device_inode"] = device_inode
 
     return result
 

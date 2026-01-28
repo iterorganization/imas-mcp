@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ChildDirInfo:
+    """Information about a child directory including symlink status."""
+
+    path: str
+    is_symlink: bool = False
+    realpath: str | None = None  # Only set if is_symlink=True
+    device_inode: str | None = None  # "device:inode" for deduplication
+
+
 def _get_rg_patterns() -> dict[str, str]:
     """Get regex patterns for rg detection from config.
 
@@ -115,9 +125,13 @@ class ScanResult:
 
     path: str
     stats: DirStats
-    child_dirs: list[str]
+    child_dirs: list[ChildDirInfo]
     excluded_dirs: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
+    # Symlink info for the scanned path itself
+    is_symlink: bool = False
+    realpath: str | None = None  # Only set if is_symlink=True
+    device_inode: str | None = None  # "device:inode" for deduplication
 
 
 def scan_paths(
@@ -262,9 +276,34 @@ def scan_paths(
             rg_matches=rg_matches,
         )
 
+        # Parse child directories - now includes symlink info
+        raw_child_dirs = data.get("child_dirs", [])
+
+        # Handle both old format (list of strings) and new format (list of dicts)
+        child_dir_infos: list[ChildDirInfo] = []
+        for item in raw_child_dirs:
+            if isinstance(item, str):
+                # Legacy format: just path string
+                child_dir_infos.append(ChildDirInfo(path=item))
+            elif isinstance(item, dict):
+                # New format: {path, is_symlink, realpath, device_inode}
+                child_dir_infos.append(
+                    ChildDirInfo(
+                        path=item.get("path", ""),
+                        is_symlink=item.get("is_symlink", False),
+                        realpath=item.get("realpath"),
+                        device_inode=item.get("device_inode"),
+                    )
+                )
+
         # Filter child directories using facility-specific exclusion config
-        all_child_dirs = data.get("child_dirs", [])
-        included_dirs, excluded_dirs = exclusion_config.filter_paths(all_child_dirs)
+        # Extract just paths for exclusion check
+        all_paths = [c.path for c in child_dir_infos]
+        _, excluded_dirs = exclusion_config.filter_paths(all_paths)
+        excluded_path_set = {p for p, _ in excluded_dirs}
+
+        # Filter to included dirs, preserving symlink info
+        included_dirs = [c for c in child_dir_infos if c.path not in excluded_path_set]
 
         # Log exclusions at debug level
         if excluded_dirs:
@@ -273,6 +312,11 @@ def scan_paths(
                 f"{[d for d, _ in excluded_dirs[:5]]}"
             )
 
+        # Extract symlink info for the scanned path itself
+        path_is_symlink = data.get("is_symlink", False)
+        path_realpath = data.get("realpath")
+        path_device_inode = data.get("device_inode")
+
         results.append(
             ScanResult(
                 path=path,
@@ -280,6 +324,9 @@ def scan_paths(
                 child_dirs=included_dirs,
                 excluded_dirs=excluded_dirs,
                 error=None,
+                is_symlink=path_is_symlink,
+                realpath=path_realpath,
+                device_inode=path_device_inode,
             )
         )
 

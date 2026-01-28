@@ -579,6 +579,31 @@ classes:
       path:
         description: Absolute filesystem path
         required: true
+      realpath:
+        description: >-
+          Resolved real path after symlink resolution (via os.path.realpath).
+          Used for deduplication when same directory is accessible via multiple
+          paths (e.g., /mnt/HPC/home/user vs /home/user pointing to same location).
+          Null if path is not a symlink and hasn't been resolved.
+      is_symlink:
+        description: >-
+          True if this path entry is a symlink to another location.
+          Symlink directories are discovered but not expanded to avoid
+          scanning the same content multiple times.
+        range: boolean
+      device_inode:
+        description: >-
+          Filesystem device:inode identifier (e.g., "64:9468985").
+          PRIMARY deduplication key for detecting paths that resolve to the
+          same physical directory, including bind mounts that os.path.realpath
+          cannot detect. Paths with matching device_inode are aliases.
+      alias_of_id:
+        description: >-
+          Link to the canonical FacilityPath that this symlink resolves to.
+          Only set when is_symlink=true. Enables queries like:
+          MATCH (alias)-[:ALIAS_OF]->(real) WHERE alias.path = $search_path
+          RETURN real  -- gets the actual content node
+        range: FacilityPath
       path_type:
         description: Type of path
         range: PathType

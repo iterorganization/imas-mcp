@@ -387,7 +387,7 @@ async def mark_scan_complete(
     Args:
         facility: Facility ID
         scan_results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples.
-                      child_dirs is list of {path, is_symlink, realpath} dicts.
+                      child_dirs is list of {path, is_symlink, realpath, device_inode} dicts.
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
     """
     from imas_codex.discovery.frontier import persist_scan_results
@@ -675,7 +675,12 @@ async def scan_worker(
                 r.path,
                 r.stats.to_dict(),
                 [
-                    {"path": c.path, "is_symlink": c.is_symlink, "realpath": c.realpath}
+                    {
+                        "path": c.path,
+                        "is_symlink": c.is_symlink,
+                        "realpath": c.realpath,
+                        "device_inode": c.device_inode,
+                    }
                     for c in r.child_dirs
                 ],
                 r.error,
@@ -794,7 +799,12 @@ async def expand_worker(
                 r.path,
                 r.stats.to_dict(),
                 [
-                    {"path": c.path, "is_symlink": c.is_symlink, "realpath": c.realpath}
+                    {
+                        "path": c.path,
+                        "is_symlink": c.is_symlink,
+                        "realpath": c.realpath,
+                        "device_inode": c.device_inode,
+                    }
                     for c in r.child_dirs
                 ],
                 r.error,

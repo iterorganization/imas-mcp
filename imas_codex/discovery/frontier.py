@@ -1000,7 +1000,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
 
 async def persist_scan_results(
     facility: str,
-    results: list[tuple[str, dict, list[str], str | None, bool]],
+    results: list[tuple[str, dict, list[dict], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Persist multiple scan results in a single transaction.
@@ -1011,9 +1011,15 @@ async def persist_scan_results(
     1. First scan (is_expanding=False): Set status='listed', no children created
     2. Expansion scan (is_expanding=True): Keep status='scored', create children
 
+    Symlink handling:
+    - Symlink children are created with is_symlink=True, status='excluded'
+    - An ALIAS_OF relationship links symlink → its realpath target
+    - This allows searching by symlink paths while avoiding duplicate scans
+
     Args:
         facility: Facility ID
-        results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
+        results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples.
+                 child_dirs is list of {path, is_symlink, realpath} dicts.
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
 
     Returns:
@@ -1147,13 +1153,31 @@ async def persist_scan_results(
                         continue
 
                 # Prepare children for expanding paths
-                for child_path in child_dirs:
+                # child_dirs is now list of {path, is_symlink, realpath, device_inode} dicts
+                for child_info in child_dirs:
+                    # Handle both old format (string) and new format (dict)
+                    if isinstance(child_info, str):
+                        child_path = child_info
+                        child_is_symlink = False
+                        child_realpath = None
+                        child_device_inode = None
+                    else:
+                        child_path = child_info.get("path", "")
+                        child_is_symlink = child_info.get("is_symlink", False)
+                        child_realpath = child_info.get("realpath")
+                        child_device_inode = child_info.get("device_inode")
+
+                    child_id = f"{facility}:{child_path}"
+
                     all_children.append(
                         {
-                            "id": f"{facility}:{child_path}",
+                            "id": child_id,
                             "facility_id": facility,
                             "path": child_path,
                             "parent_id": path_id,
+                            "is_symlink": child_is_symlink,
+                            "realpath": child_realpath,
+                            "device_inode": child_device_inode,
                         }
                     )
 
@@ -1218,32 +1242,134 @@ async def persist_scan_results(
             )
             depth_map = {r["id"]: r["depth"] or 0 for r in depth_result}
 
-            # Add depth to children
+            # Add depth to children and handle symlinks
+            symlink_children = []
+            regular_children = []
             for child in all_children:
                 child["depth"] = depth_map.get(child["parent_id"], 0) + 1
-                child["status"] = PathStatus.discovered.value
                 child["path_type"] = "code_directory"
                 child["discovered_at"] = now
 
-            # Create child nodes with relationships in a single query
-            gc.query(
-                """
-                UNWIND $children AS child
-                MATCH (f:Facility {id: child.facility_id})
-                MATCH (parent:FacilityPath {id: child.parent_id})
-                MERGE (c:FacilityPath {id: child.id})
-                ON CREATE SET c.facility_id = child.facility_id,
-                              c.path = child.path,
-                              c.path_type = child.path_type,
-                              c.status = child.status,
-                              c.depth = child.depth,
-                              c.parent_path_id = child.parent_id,
-                              c.discovered_at = child.discovered_at
-                MERGE (c)-[:FACILITY_ID]->(f)
-                MERGE (c)-[:PARENT]->(parent)
-                """,
-                children=all_children,
-            )
+                if child.get("is_symlink"):
+                    # Symlinks are excluded from scanning to avoid duplicates
+                    child["status"] = PathStatus.excluded.value
+                    child["skip_reason"] = "symlink"
+                    symlink_children.append(child)
+                else:
+                    child["status"] = PathStatus.discovered.value
+                    regular_children.append(child)
+
+            # Create regular child nodes with device_inode-based deduplication
+            # If a node with same device_inode already exists, create ALIAS_OF instead
+            if regular_children:
+                # First pass: create nodes that don't have device_inode conflicts
+                gc.query(
+                    """
+                    UNWIND $children AS child
+                    MATCH (f:Facility {id: child.facility_id})
+                    MATCH (parent:FacilityPath {id: child.parent_id})
+
+                    // Check if a node with same device_inode already exists (bind mount)
+                    OPTIONAL MATCH (existing:FacilityPath)
+                    WHERE existing.device_inode = child.device_inode
+                      AND existing.device_inode IS NOT NULL
+                      AND existing.id <> child.id
+                      AND existing.facility_id = child.facility_id
+
+                    // Only create new node if no device_inode conflict
+                    FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
+                        MERGE (c:FacilityPath {id: child.id})
+                        ON CREATE SET c.facility_id = child.facility_id,
+                                      c.path = child.path,
+                                      c.path_type = child.path_type,
+                                      c.status = child.status,
+                                      c.depth = child.depth,
+                                      c.parent_path_id = child.parent_id,
+                                      c.discovered_at = child.discovered_at,
+                                      c.device_inode = child.device_inode
+                        MERGE (c)-[:FACILITY_ID]->(f)
+                        MERGE (c)-[:PARENT]->(parent)
+                    )
+
+                    // If device_inode conflict exists (bind mount), create as alias
+                    FOREACH (_ IN CASE WHEN existing IS NOT NULL THEN [1] ELSE [] END |
+                        MERGE (alias:FacilityPath {id: child.id})
+                        ON CREATE SET alias.facility_id = child.facility_id,
+                                      alias.path = child.path,
+                                      alias.path_type = child.path_type,
+                                      alias.status = 'excluded',
+                                      alias.skip_reason = 'bind_mount_duplicate',
+                                      alias.depth = child.depth,
+                                      alias.parent_path_id = child.parent_id,
+                                      alias.discovered_at = child.discovered_at,
+                                      alias.device_inode = child.device_inode,
+                                      alias.alias_of_id = existing.id
+                        MERGE (alias)-[:FACILITY_ID]->(f)
+                        MERGE (alias)-[:PARENT]->(parent)
+                        MERGE (alias)-[:ALIAS_OF]->(existing)
+                    )
+                    """,
+                    children=regular_children,
+                )
+
+            # Create symlink nodes with ALIAS_OF relationships
+            if symlink_children:
+                # First create the symlink nodes (excluded status)
+                gc.query(
+                    """
+                    UNWIND $children AS child
+                    MATCH (f:Facility {id: child.facility_id})
+                    MATCH (parent:FacilityPath {id: child.parent_id})
+                    MERGE (c:FacilityPath {id: child.id})
+                    ON CREATE SET c.facility_id = child.facility_id,
+                                  c.path = child.path,
+                                  c.path_type = child.path_type,
+                                  c.status = child.status,
+                                  c.skip_reason = child.skip_reason,
+                                  c.depth = child.depth,
+                                  c.parent_path_id = child.parent_id,
+                                  c.discovered_at = child.discovered_at,
+                                  c.is_symlink = true,
+                                  c.realpath = child.realpath,
+                                  c.device_inode = child.device_inode
+                    MERGE (c)-[:FACILITY_ID]->(f)
+                    MERGE (c)-[:PARENT]->(parent)
+                    """,
+                    children=symlink_children,
+                )
+
+                # Create target nodes for symlinks and ALIAS_OF relationships
+                # Only for children with valid realpath within the facility
+                symlinks_with_targets = [
+                    c
+                    for c in symlink_children
+                    if c.get("realpath") and c["realpath"].startswith("/")
+                ]
+                if symlinks_with_targets:
+                    gc.query(
+                        """
+                        UNWIND $children AS child
+                        MATCH (f:Facility {id: child.facility_id})
+                        MATCH (symlink:FacilityPath {id: child.id})
+
+                        // Create or match the target (realpath) node
+                        // Device_inode is inherited from the symlink (they point to same inode)
+                        MERGE (target:FacilityPath {id: child.facility_id + ':' + child.realpath})
+                        ON CREATE SET target.facility_id = child.facility_id,
+                                      target.path = child.realpath,
+                                      target.path_type = 'code_directory',
+                                      target.status = $discovered,
+                                      target.discovered_at = child.discovered_at,
+                                      target.is_symlink = false,
+                                      target.device_inode = child.device_inode
+                        MERGE (target)-[:FACILITY_ID]->(f)
+
+                        // Create ALIAS_OF relationship from symlink to target
+                        MERGE (symlink)-[:ALIAS_OF]->(target)
+                        """,
+                        children=symlinks_with_targets,
+                        discovered=PathStatus.discovered.value,
+                    )
 
             children_created = len(all_children)
 
