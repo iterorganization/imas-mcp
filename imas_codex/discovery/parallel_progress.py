@@ -193,18 +193,21 @@ class ProgressState:
     pending_scan: int = 0  # discovered + listing
     pending_score: int = 0  # listed + scoring
     pending_expand: int = 0  # scored + should_expand + not expanded
+    pending_enrich: int = 0  # scored + should_enrich + not enriched
+    pending_rescore: int = 0  # enriched + not rescored
 
-    # Pending work counts (from get_work_status)
-    pending_scan: int = 0  # discovered paths
-    pending_score: int = 0  # listed paths
-    pending_expand: int = 0  # scored with should_expand=true
-
-    # This run
+    # This run stats
     run_scanned: int = 0
     run_scored: int = 0
+    run_expanded: int = 0
+    run_enriched: int = 0
+    run_rescored: int = 0
     run_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
+    expand_rate: float | None = None
+    enrich_rate: float | None = None
+    rescore_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -227,8 +230,13 @@ class ProgressState:
 
     @property
     def pending_work(self) -> int:
-        """Total pending work: scan + score + expand queues."""
-        return self.pending_scan + self.pending_score + self.pending_expand
+        """Total pending work: scan + score + expand + enrich queues."""
+        return (
+            self.pending_scan
+            + self.pending_score
+            + self.pending_expand
+            + self.pending_enrich
+        )
 
     @property
     def cost_per_path(self) -> float | None:
@@ -259,7 +267,19 @@ class ProgressState:
 
     @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to completion based on score rate."""
+        """Estimated time to termination based on limits.
+
+        If cost_limit is set, estimates time based on cost rate.
+        Otherwise estimates time to complete remaining work.
+        """
+        # Try cost-based ETA first (if we have cost data)
+        if self.run_cost > 0 and self.cost_limit > 0:
+            cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
+            if cost_rate > 0:
+                remaining_budget = self.cost_limit - self.run_cost
+                return max(0, remaining_budget / cost_rate)
+
+        # Fall back to work-based ETA
         if not self.score_rate or self.score_rate <= 0:
             return None
         remaining = self.pending_scan + self.pending_score + self.pending_expand
@@ -389,17 +409,26 @@ class ParallelProgressDisplay:
                 section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # EXPAND row: shows paths ready for expansion after scoring
+        # EXPAND row: shows actual expansion progress (expanded paths this run)
+        # The bar shows expanded out of (expanded + pending_expand)
         if not self.state.scan_only and not self.state.score_only:
             section.append("  EXPAND", style="bold magenta")
-            expand_count = self.state.pending_expand
-            expand_total = max(self.state.scored, 1)
-            expand_ratio = (
-                min(expand_count / expand_total, 1.0) if expand_count > 0 else 0
-            )
+            expanded_this_run = self.state.run_expanded
+            expand_total = expanded_this_run + self.state.pending_expand
+            if expand_total > 0:
+                expand_ratio = expanded_this_run / expand_total
+                expand_pct = expand_ratio * 100
+            else:
+                expand_ratio = 0.0
+                expand_pct = 0.0
             section.append(make_bar(expand_ratio, bar_width), style="magenta")
-            section.append(f" {expand_count:>6,}", style="bold")
-            section.append("  ready", style="dim")
+            section.append(f" {expanded_this_run:>6,}", style="bold")
+            if expand_total > 0:
+                section.append(f" {expand_pct:>3.0f}%", style="cyan")
+            if self.state.expand_rate:
+                section.append(f" {self.state.expand_rate:>5.1f}/s", style="dim")
+            elif self.state.pending_expand > 0:
+                section.append(f"  +{self.state.pending_expand} ready", style="dim")
 
         return section
 
@@ -469,29 +498,54 @@ class ParallelProgressDisplay:
         return section
 
     def _build_resources_section(self) -> Text:
-        """Build the resource consumption gauges."""
+        """Build the resource consumption gauges.
+
+        Order: TIME, COST, TOTAL (as requested for visual flow).
+        """
         section = Text()
 
-        # Cost gauge with ETA (hidden in scan_only mode)
-        if not self.state.scan_only:
-            est_cost = self.state.estimated_total_cost
-            cost_limit = est_cost if est_cost else self.state.cost_limit
-            section.append("  COST  ", style="bold yellow")
+        # TIME row first - elapsed with ETA
+        section.append("  TIME  ", style="bold cyan")
+
+        # Estimate total time if we have an ETA
+        eta = None if self.state.scan_only else self.state.eta_seconds
+        if eta is not None and eta > 0:
+            total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.run_cost, cost_limit, self.GAUGE_WIDTH)
+                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
+            )
+        else:
+            # Unknown total - show elapsed only with full bar (complete or unknown)
+            section.append("│", style="dim")
+            section.append("━" * self.GAUGE_WIDTH, style="cyan")
+            section.append("│", style="dim")
+
+        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
+
+        if eta is not None:
+            if eta <= 0:
+                section.append("  done", style="green dim")
+            else:
+                section.append(f"  ETA {format_time(eta)}", style="dim")
+        section.append("\n")
+
+        # COST row - this run's cost against budget (hidden in scan_only mode)
+        if not self.state.scan_only:
+            section.append("  COST  ", style="bold yellow")
+            # Cost bar uses cost_limit as 100% - no estimates
+            section.append_text(
+                make_resource_gauge(
+                    self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
+                )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
-            # Show estimated total cost
-            if est_cost is not None and est_cost > self.state.run_cost:
-                section.append(f"  Est ${est_cost:.2f}", style="dim")
             section.append("\n")
 
-            # Accumulated facility cost (across all runs) - only show if we have historical cost
+            # TOTAL row - accumulated facility cost (across all runs)
             if self.state.accumulated_cost > 0:
                 total_facility_cost = self.state.accumulated_cost + self.state.run_cost
                 section.append("  TOTAL ", style="bold white")
-                # Progress bar shows accumulated cost vs projected total for this facility
                 # Estimate total based on remaining paths
                 paths_remaining = self.state.pending_scan + self.state.pending_score
                 cpp = self.state.cost_per_path
@@ -504,37 +558,12 @@ class ParallelProgressDisplay:
                     )
                 )
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
+                # Est marker only on TOTAL row
                 if projected_total > total_facility_cost:
                     section.append(f"  Est ${projected_total:.2f}", style="dim")
                 section.append("\n")
 
-        # Time with ETA
-        section.append("  TIME  ", style="bold cyan")
-
-        # Estimate total time if we have an ETA (score_only mode only)
-        eta = None if self.state.scan_only else self.state.eta_seconds
-        if eta is not None and eta > 0:
-            total_est = self.state.elapsed + eta
-            self.state.elapsed / total_est
-            section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
-            )
-        else:
-            # Unknown total - show elapsed only with thin bar
-            section.append("│", style="dim")
-            section.append("━" * self.GAUGE_WIDTH, style="cyan")
-            section.append("│", style="dim")
-
-        section.append(f"  {format_time(self.state.elapsed)}", style="bold")
-
-        if eta is not None:
-            if eta <= 0:
-                section.append("  done", style="green dim")
-            else:
-                section.append(f"  ETA {format_time(eta)}", style="dim")
-
-        # Frontier and depth metrics
-        section.append("\n")
+        # STATS row - frontier and depth metrics
         section.append("  STATS ", style="bold magenta")
         section.append(f"pending={self.state.pending_work}", style="cyan")
         section.append(f"  depth={self.state.max_depth}", style="cyan")
@@ -666,6 +695,38 @@ class ParallelProgressDisplay:
         if next_item:
             self.state.current_score = next_item
 
+        self._refresh()
+
+    def update_expand(
+        self,
+        message: str,
+        stats: WorkerStats,
+    ) -> None:
+        """Update expand worker state."""
+        self.state.run_expanded = stats.processed
+        self.state.expand_rate = stats.rate
+        self._refresh()
+
+    def update_enrich(
+        self,
+        message: str,
+        stats: WorkerStats,
+    ) -> None:
+        """Update enrich worker state."""
+        self.state.run_enriched = stats.processed
+        self.state.enrich_rate = stats.rate
+        self._refresh()
+
+    def update_rescore(
+        self,
+        message: str,
+        stats: WorkerStats,
+    ) -> None:
+        """Update rescore worker state."""
+        self.state.run_rescored = stats.processed
+        self.state.rescore_rate = stats.rate
+        # Add rescore cost to run cost
+        self.state.run_cost += stats.cost
         self._refresh()
 
     def refresh_from_graph(self, facility: str) -> None:

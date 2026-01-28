@@ -5794,22 +5794,11 @@ def _print_discovery_summary(
     console.print()
 
     # Build compact summary - width=100 to match progress display
+    # Order: Rates, This Run, Overall, Graph (as requested)
     facility_upper = facility.upper()
     summary = Text()
 
-    # Row 1: This Run stats (adjust based on scan_only mode)
-    summary.append("This Run  ", style="bold cyan")
-    summary.append(f"scanned {result['scanned']:,}", style="white")
-    if not scan_only:
-        summary.append(" · ", style="dim")
-        summary.append(f"scored {result['scored']:,}", style="white")
-        summary.append(" · ", style="dim")
-        summary.append(f"cost ${result['cost']:.3f}", style="yellow")
-    summary.append(" · ", style="dim")
-    summary.append(f"{elapsed_str}", style="cyan")
-    summary.append("\n")
-
-    # Row 2: Rates
+    # Row 1: Rates (most actionable info first)
     summary.append("Rates     ", style="bold blue")
     if scan_rate:
         summary.append(f"scan {scan_rate:.1f}/s", style="white")
@@ -5821,6 +5810,36 @@ def _print_discovery_summary(
             summary.append(f"score {score_rate:.1f}/s", style="white")
         else:
             summary.append("score -", style="dim")
+        # Add enrich/rescore rates if available
+        enrich_rate = result.get("enrich_rate")
+        rescore_rate = result.get("rescore_rate")
+        if enrich_rate:
+            summary.append(" · ", style="dim")
+            summary.append(f"enrich {enrich_rate:.1f}/s", style="white")
+        if rescore_rate:
+            summary.append(" · ", style="dim")
+            summary.append(f"rescore {rescore_rate:.1f}/s", style="white")
+    summary.append("\n")
+
+    # Row 2: This Run stats
+    summary.append("This Run  ", style="bold cyan")
+    summary.append(f"scanned {result['scanned']:,}", style="white")
+    if not scan_only:
+        summary.append(" · ", style="dim")
+        summary.append(f"scored {result['scored']:,}", style="white")
+        # Add enriched/rescored if present
+        enriched = result.get("enriched", 0)
+        rescored = result.get("rescored", 0)
+        if enriched > 0:
+            summary.append(" · ", style="dim")
+            summary.append(f"enriched {enriched:,}", style="white")
+        if rescored > 0:
+            summary.append(" · ", style="dim")
+            summary.append(f"rescored {rescored:,}", style="white")
+        summary.append(" · ", style="dim")
+        summary.append(f"cost ${result['cost']:.3f}", style="yellow")
+    summary.append(" · ", style="dim")
+    summary.append(f"{elapsed_str}", style="cyan")
     summary.append("\n")
 
     # Row 3: Graph State
@@ -5967,6 +5986,15 @@ async def _async_discovery_loop(
             def on_score(msg, stats, results=None):
                 display.update_score(msg, stats, results=results)
 
+            def on_expand(msg, stats, results=None):
+                display.update_expand(msg, stats)
+
+            def on_enrich(msg, stats, results=None):
+                display.update_enrich(msg, stats)
+
+            def on_rescore(msg, stats, results=None):
+                display.update_rescore(msg, stats)
+
             try:
                 result = await run_parallel_discovery(
                     facility=facility,
@@ -5978,6 +6006,9 @@ async def _async_discovery_loop(
                     num_score_workers=num_score_workers,
                     on_scan_progress=on_scan,
                     on_score_progress=on_score,
+                    on_expand_progress=on_expand,
+                    on_enrich_progress=on_enrich,
+                    on_rescore_progress=on_rescore,
                 )
             finally:
                 refresh_task.cancel()
