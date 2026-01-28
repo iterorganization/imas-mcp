@@ -24,7 +24,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.facility import get_facility
 from imas_codex.remote.executor import run_python_script
@@ -203,6 +203,7 @@ def fetch_user_info(
 def enrich_users_from_paths(
     facility: str,
     paths: list[str],
+    gc: Any | None = None,
 ) -> list[dict]:
     """Extract and enrich users from a list of paths.
 
@@ -213,6 +214,7 @@ def enrich_users_from_paths(
     Args:
         facility: Facility identifier
         paths: List of directory paths to extract users from
+        gc: Optional GraphClient instance (skips users already in graph)
 
     Returns:
         List of dicts suitable for add_to_graph("FacilityUser", ...)
@@ -232,7 +234,22 @@ def enrich_users_from_paths(
     if not usernames:
         return []
 
-    logger.info(f"Enriching {len(usernames)} users for {facility}")
+    # Skip users already in the graph (optimization for incremental discovery)
+    if gc is not None:
+        try:
+            user_ids = [f"{facility}:{u}" for u in usernames]
+            existing = gc.query(
+                "UNWIND $ids AS id MATCH (u:FacilityUser {id: id}) RETURN u.username AS username",
+                ids=user_ids,
+            )
+            existing_usernames = {r["username"] for r in existing}
+            usernames = usernames - existing_usernames
+            if not usernames:
+                return []
+        except Exception:
+            pass  # Continue with all usernames if query fails
+
+    logger.debug(f"Enriching {len(usernames)} new users for {facility}")
 
     # Fetch user info
     user_info = fetch_user_info(facility, list(usernames))
