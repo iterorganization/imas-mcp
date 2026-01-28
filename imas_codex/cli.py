@@ -6178,7 +6178,9 @@ async def _async_discovery_loop(
                 display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
 
             def on_expand(msg, stats, paths=None, scan_results=None):
-                display.update_expand(msg, stats)
+                display.update_expand(
+                    msg, stats, paths=paths, scan_results=scan_results
+                )
 
             def on_score(msg, stats, results=None):
                 display.update_score(msg, stats, results=results)
@@ -6187,7 +6189,7 @@ async def _async_discovery_loop(
                 display.update_enrich(msg, stats)
 
             def on_rescore(msg, stats, results=None):
-                display.update_rescore(msg, stats)
+                display.update_rescore(msg, stats, results=results)
 
             try:
                 result = await run_parallel_discovery(

@@ -779,10 +779,32 @@ class ParallelProgressDisplay:
         self,
         message: str,
         stats: WorkerStats,
+        paths: list[str] | None = None,
+        scan_results: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Update expand worker state."""
+        """Update expand worker state.
+
+        Expand results are added to the scan queue since they are scan operations
+        on high-value directories.
+        """
         self.state.run_expanded = stats.processed
         self.state.expand_rate = stats.rate
+
+        # Queue expand results to scan stream (they are scans of valuable paths)
+        if scan_results:
+            items = [
+                ScanItem(
+                    path=r.get("path", ""),
+                    files=r.get("total_files", 0),
+                    dirs=r.get("total_dirs", 0),
+                    has_code=r.get("has_readme")
+                    or r.get("has_makefile")
+                    or r.get("has_git", False),
+                )
+                for r in scan_results
+            ]
+            self.state.scan_queue.add(items, stats.rate)
+
         self._refresh()
 
     def update_enrich(
@@ -799,12 +821,33 @@ class ParallelProgressDisplay:
         self,
         message: str,
         stats: WorkerStats,
+        results: list[dict] | None = None,
     ) -> None:
-        """Update rescore worker state."""
+        """Update rescore worker state.
+
+        Rescore results are added to the score queue since they update scores.
+        """
         self.state.run_rescored = stats.processed
         self.state.rescore_rate = stats.rate
         # Add rescore cost to run cost
         self.state.run_cost += stats.cost
+
+        # Queue rescore results to score stream
+        if results:
+            items = []
+            for r in results:
+                path = r.get("path", "")
+                items.append(
+                    ScoreItem(
+                        path=path,
+                        score=r.get("score"),
+                        purpose="rescored",
+                        skipped=False,
+                        skip_reason="",
+                    )
+                )
+            self.state.score_queue.add(items, stats.rate if stats.rate else 1.0)
+
         self._refresh()
 
     def refresh_from_graph(self, facility: str) -> None:
