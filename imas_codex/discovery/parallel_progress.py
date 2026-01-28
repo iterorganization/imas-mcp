@@ -212,9 +212,11 @@ class ProgressState:
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
-    # Current items
+    # Current items (and their processing state)
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
+    scan_processing: bool = False  # True when awaiting SSH batch
+    score_processing: bool = False  # True when awaiting LLM batch
 
     # Streaming
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
@@ -311,8 +313,8 @@ class ParallelProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 88
-    BAR_WIDTH = 50
+    WIDTH = 100
+    BAR_WIDTH = 55
     GAUGE_WIDTH = 20
 
     def __init__(
@@ -357,78 +359,84 @@ class ParallelProgressDisplay:
         return header
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars for scan and score."""
+        """Build the main progress bars for scan and score.
+
+        SCAN is an ensemble metric: scan + expand + enrich (all SSH operations)
+        SCORE is an ensemble metric: score + rescore (all LLM operations)
+        """
         section = Text()
 
-        # Calculate totals and percentages
-        # Scan progress: listed out of total known paths
-        # "listed" means scan is complete, discovered means awaiting scan
-        scanned_count = self.state.total - self.state.discovered
-        scan_total = self.state.total if self.state.total > 0 else 1
-        scan_pct = (scanned_count / scan_total * 100) if scan_total > 0 else 0
+        # Calculate ensemble totals
+        # SCAN ensemble: initial scan + expansion + enrichment (SSH-bound operations)
+        scan_processed = (
+            self.state.run_scanned + self.state.run_expanded + self.state.run_enriched
+        )
+        scan_pending = (
+            self.state.pending_scan
+            + self.state.pending_expand
+            + self.state.pending_enrich
+        )
+        scan_total = (
+            scan_processed + scan_pending if (scan_processed + scan_pending) > 0 else 1
+        )
+        scan_pct = (scan_processed / scan_total * 100) if scan_total > 0 else 0
 
-        # Score progress: scored out of listed paths
-        score_total = max(scanned_count, self.state.scored) if scanned_count > 0 else 1
-        score_pct = (self.state.scored / score_total * 100) if score_total > 0 else 0
-        score_pct = min(score_pct, 100.0)  # Cap at 100%
+        # SCORE ensemble: scoring + rescoring (LLM operations)
+        score_processed = self.state.run_scored + self.state.run_rescored
+        score_pending = self.state.pending_score + self.state.pending_rescore
+        score_total = (
+            score_processed + score_pending
+            if (score_processed + score_pending) > 0
+            else 1
+        )
+        score_pct = (score_processed / score_total * 100) if score_total > 0 else 0
 
-        # Shorter bar to fit everything on one line
-        bar_width = 40
+        bar_width = self.BAR_WIDTH
 
-        # SCAN row: "  SCAN  ━━━━────  1,234  42%  12.3/s" or disabled
+        # SCAN row: ensemble of scan + expand + enrich
         if self.state.score_only:
-            # Disabled state - show as dim with "disabled" indicator
             section.append("  SCAN  ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCAN  ", style="bold blue")
-            scan_ratio = min(scanned_count / scan_total, 1.0) if scan_total > 0 else 0
+            scan_ratio = min(scan_processed / scan_total, 1.0) if scan_total > 0 else 0
             section.append(make_bar(scan_ratio, bar_width), style="blue")
-            section.append(f" {scanned_count:>6,}", style="bold")
+            section.append(f" {scan_processed:>6,}", style="bold")
             section.append(f" {scan_pct:>3.0f}%", style="cyan")
-            if self.state.scan_rate:
-                section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
+            # Show combined rate (scan + expand + enrich)
+            combined_rate = sum(
+                r
+                for r in [
+                    self.state.scan_rate,
+                    self.state.expand_rate,
+                    self.state.enrich_rate,
+                ]
+                if r
+            )
+            if combined_rate > 0:
+                section.append(f" {combined_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # SCORE row: "  SCORE ━━━━────    892  28%   4.2/s" or disabled
+        # SCORE row: ensemble of score + rescore
         if self.state.scan_only:
-            # Disabled state - show as dim with "disabled" indicator
             section.append("  SCORE ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCORE ", style="bold green")
             score_ratio = (
-                min(self.state.scored / score_total, 1.0) if score_total > 0 else 0
+                min(score_processed / score_total, 1.0) if score_total > 0 else 0
             )
             section.append(make_bar(score_ratio, bar_width), style="green")
-            section.append(f" {self.state.scored:>6,}", style="bold")
+            section.append(f" {score_processed:>6,}", style="bold")
             section.append(f" {score_pct:>3.0f}%", style="cyan")
-            if self.state.score_rate:
-                section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
-        section.append("\n")
-
-        # EXPAND row: shows actual expansion progress (expanded paths this run)
-        # The bar shows expanded out of (expanded + pending_expand)
-        if not self.state.scan_only and not self.state.score_only:
-            section.append("  EXPAND", style="bold magenta")
-            expanded_this_run = self.state.run_expanded
-            expand_total = expanded_this_run + self.state.pending_expand
-            if expand_total > 0:
-                expand_ratio = expanded_this_run / expand_total
-                expand_pct = expand_ratio * 100
-            else:
-                expand_ratio = 0.0
-                expand_pct = 0.0
-            section.append(make_bar(expand_ratio, bar_width), style="magenta")
-            section.append(f" {expanded_this_run:>6,}", style="bold")
-            if expand_total > 0:
-                section.append(f" {expand_pct:>3.0f}%", style="cyan")
-            if self.state.expand_rate:
-                section.append(f" {self.state.expand_rate:>5.1f}/s", style="dim")
-            elif self.state.pending_expand > 0:
-                section.append(f"  +{self.state.pending_expand} ready", style="dim")
+            # Show combined rate (score + rescore)
+            combined_rate = sum(
+                r for r in [self.state.score_rate, self.state.rescore_rate] if r
+            )
+            if combined_rate > 0:
+                section.append(f" {combined_rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -445,7 +453,7 @@ class ParallelProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
 
-        # SCAN section - show path or idle
+        # SCAN section - show path, processing, or idle
         section.append("  SCAN ", style="bold blue")
         if scan:
             section.append(clip_path(scan.path, self.WIDTH - 10), style="white")
@@ -458,11 +466,13 @@ class ParallelProgressDisplay:
             if scan.has_code:
                 section.append("  ", style="dim")
                 section.append("code project", style="green dim")
+        elif self.state.scan_processing:
+            section.append("processing batch...", style="cyan italic")
         else:
             section.append("idle", style="dim italic")
         section.append("\n")
 
-        # SCORE section - show path or idle (skip in scan_only mode)
+        # SCORE section - show path, processing, or idle (skip in scan_only mode)
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
@@ -492,6 +502,8 @@ class ParallelProgressDisplay:
                     section.append(f"{score.score:.2f}", style=style)
                     if score.purpose:
                         section.append(f"  {score.purpose}", style="italic dim")
+            elif self.state.score_processing:
+                section.append("processing batch...", style="cyan italic")
             else:
                 section.append("idle", style="dim italic")
 
@@ -563,11 +575,15 @@ class ParallelProgressDisplay:
                     section.append(f"  Est ${projected_total:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - frontier and depth metrics
+        # STATS row - work counts and depth metrics
         section.append("  STATS ", style="bold magenta")
         section.append(f"pending={self.state.pending_work}", style="cyan")
+        section.append(f"  expanded={self.state.run_expanded}", style="cyan")
+        section.append(f"  enriched={self.state.run_enriched}", style="cyan")
         section.append(f"  depth={self.state.max_depth}", style="cyan")
-        section.append(f"  skipped={self.state.skipped}", style="yellow")
+        section.append("\n")
+        section.append("        ", style="dim")  # Indent to align with STATS
+        section.append(f"skipped={self.state.skipped}", style="yellow")
         section.append(f"  excluded={self.state.excluded}", style="dim")
 
         return section
@@ -628,11 +644,16 @@ class ParallelProgressDisplay:
         self.state.run_scanned = stats.processed
         self.state.scan_rate = stats.rate
 
-        # Clear current item when idle (no work available)
+        # Track processing state for display
         if message == "idle":
             self.state.current_scan = None
+            self.state.scan_processing = False
             self._refresh()
             return
+        elif "processing" in message.lower() or "batch" in message.lower():
+            self.state.scan_processing = True
+        else:
+            self.state.scan_processing = False
 
         # Queue scan results for streaming
         if scan_results:
@@ -667,11 +688,16 @@ class ParallelProgressDisplay:
         self.state.score_rate = stats.rate
         self.state.run_cost = stats.cost
 
-        # Clear current item when idle (no work available)
+        # Track processing state for display
         if message == "idle":
             self.state.current_score = None
+            self.state.score_processing = False
             self._refresh()
             return
+        elif "processing" in message.lower() or "batch" in message.lower():
+            self.state.score_processing = True
+        else:
+            self.state.score_processing = False
 
         # Queue score results for streaming
         if results:

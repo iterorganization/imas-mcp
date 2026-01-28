@@ -5753,7 +5753,7 @@ def _print_discovery_summary(
         scan_only: If True, show scan-focused summary
     """
     from imas_codex.discovery import get_discovery_stats
-    from imas_codex.discovery.frontier import get_high_value_paths
+    from imas_codex.discovery.frontier import get_accumulated_cost, get_high_value_paths
 
     disc_logger = logging.getLogger("imas_codex.discovery")
 
@@ -5860,6 +5860,11 @@ def _print_discovery_summary(
         summary.append(
             f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
         )
+        summary.append(" · ", style="dim")
+        # Get accumulated cost from graph
+        cost_data = get_accumulated_cost(facility)
+        total_cost = cost_data.get("total_cost", 0.0)
+        summary.append(f"cost ${total_cost:.2f}", style="yellow")
         summary.append(" · ", style="dim")
     frontier = stats.get("discovered", 0) + stats.get("listed", 0)
     summary.append(f"frontier {frontier:,}", style="cyan")
