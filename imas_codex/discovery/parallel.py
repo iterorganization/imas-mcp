@@ -69,6 +69,7 @@ class DiscoveryState:
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
+    expand_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
     rescore_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -76,6 +77,7 @@ class DiscoveryState:
     # Control
     stop_requested: bool = False
     scan_idle_count: int = 0
+    expand_idle_count: int = 0
     score_idle_count: int = 0
     enrich_idle_count: int = 0
     rescore_idle_count: int = 0
@@ -114,6 +116,7 @@ class DiscoveryState:
         # Stop if all workers idle for 3+ iterations AND no pending work
         all_idle = (
             self.scan_idle_count >= 3
+            and self.expand_idle_count >= 3
             and self.score_idle_count >= 3
             and self.enrich_idle_count >= 3
             and self.rescore_idle_count >= 3
@@ -123,6 +126,7 @@ class DiscoveryState:
             if has_pending_work(self.facility):
                 # Reset idle counts to force workers to re-poll for new work
                 self.scan_idle_count = 0
+                self.expand_idle_count = 0
                 self.score_idle_count = 0
                 self.enrich_idle_count = 0
                 self.rescore_idle_count = 0
@@ -242,20 +246,18 @@ def reset_transient_paths(facility: str) -> dict[str, int]:
 
 
 def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim paths for scanning.
+    """Atomically claim discovered paths for initial scanning.
 
-    Claims two types of paths:
-    1. Discovered (unscored): First scan, enumerate only, no children created
-    2. Scored + should_expand: Expansion scan, enumerate and create children
+    Claims only unscored discovered paths (first scan, enumerate only).
+    Expansion is handled by separate expand_worker.
 
-    Uses atomic status transition: discovered/scored → listing
-    Returns paths with is_expanding flag to indicate which mode.
+    Uses atomic status transition: discovered → listing
     """
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
         # Claim unscored discovered paths (breadth-first by depth)
-        unscored = gc.query(
+        result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WHERE p.status = $discovered AND p.score IS NULL
@@ -268,30 +270,37 @@ def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, A
             discovered=PathStatus.discovered.value,
             listing=PathStatus.listing.value,
         )
-        unscored_list = list(unscored)
+        return list(result)
 
-        # If we have room, claim expansion paths (score-descending for valuable first)
-        remaining = limit - len(unscored_list)
-        expansion_list = []
-        if remaining > 0:
-            expansion = gc.query(
-                """
-                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-                WHERE p.status = $scored
-                  AND p.should_expand = true
-                  AND p.expanded_at IS NULL
-                WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
-                SET p.status = $listing, p.claimed_at = datetime()
-                RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
-                """,
-                facility=facility,
-                limit=remaining,
-                scored=PathStatus.scored.value,
-                listing=PathStatus.listing.value,
-            )
-            expansion_list = list(expansion)
 
-        return unscored_list + expansion_list
+def claim_paths_for_expanding(facility: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Atomically claim scored paths for expansion scanning.
+
+    Claims paths with should_expand=true that haven't been expanded yet.
+    These are scored high-value directories that need child enumeration.
+
+    Uses atomic status transition: scored → listing
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        # Claim expansion paths (score-descending for valuable first)
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.should_expand = true
+              AND p.expanded_at IS NULL
+            WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
+            SET p.status = $listing, p.claimed_at = datetime()
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
+            """,
+            facility=facility,
+            limit=limit,
+            scored=PathStatus.scored.value,
+            listing=PathStatus.listing.value,
+        )
+        return list(result)
 
 
 def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, Any]]:
@@ -550,7 +559,6 @@ async def scan_worker(
 
         state.scan_idle_count = 0
         path_strs = [p["path"] for p in paths]
-        expanding_paths = {p["path"] for p in paths if p.get("is_expanding", False)}
 
         if on_progress:
             on_progress(f"scanning {len(paths)} paths", state.scan_stats, None, None)
@@ -617,13 +625,14 @@ async def scan_worker(
 
         # Persist results (marks scanning → scanned)
         # Run in executor to avoid blocking event loop
+        # is_expanding=False since scan_worker only handles initial scans
         batch_data = [
             (
                 r.path,
                 r.stats.to_dict(),
                 r.child_dirs,
                 r.error,
-                r.path in expanding_paths,
+                False,  # Not expanding - that's handled by expand_worker
             )
             for r in results
         ]
@@ -673,6 +682,121 @@ async def scan_worker(
             )
 
         # Brief yield to allow score worker to run
+        await asyncio.sleep(0.1)
+
+
+async def expand_worker(
+    state: DiscoveryState,
+    on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
+    | None = None,
+    batch_size: int = 50,
+) -> None:
+    """Async expansion worker.
+
+    Expands scored high-value paths by enumerating their children.
+    Runs independently of scan_worker, claiming paths with should_expand=true.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Paths per SSH call (default 50)
+    """
+    from imas_codex.discovery.scanner import scan_paths
+
+    while not state.should_stop():
+        # Claim expansion work from graph - paths with should_expand=true
+        paths = claim_paths_for_expanding(state.facility, limit=batch_size)
+
+        if not paths:
+            state.expand_idle_count += 1
+            if on_progress:
+                on_progress("idle", state.expand_stats, None, None)
+            # Wait before polling again
+            await asyncio.sleep(1.0)
+            continue
+
+        state.expand_idle_count = 0
+        path_strs = [p["path"] for p in paths]
+
+        if on_progress:
+            on_progress(f"expanding {len(paths)} paths", state.expand_stats, None, None)
+
+        # Run scan in thread pool (blocking SSH call)
+        loop = asyncio.get_running_loop()
+        start = time.time()
+        facility, paths_to_scan = state.facility, path_strs
+
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda fac=facility, pts=paths_to_scan: scan_paths(
+                    fac, pts, enable_rg=False, enable_size=False
+                ),
+            )
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+            # Transient failure - revert paths for retry
+            logger.warning(f"Expand SSH failure: {e}")
+            _revert_listing_claim(state.facility, path_strs)
+            state.expand_stats.errors += len(paths)
+            await asyncio.sleep(5.0)
+            continue
+
+        state.expand_stats.last_batch_time = time.time() - start
+
+        # Persist results with is_expanding=True to create child paths
+        batch_data = [
+            (
+                r.path,
+                r.stats.to_dict(),
+                r.child_dirs,
+                r.error,
+                True,  # is_expanding - creates child paths
+            )
+            for r in results
+        ]
+
+        # Collect excluded directories
+        excluded_data = []
+        for r in results:
+            for excluded_path, reason in r.excluded_dirs:
+                excluded_data.append((excluded_path, r.path, reason))
+
+        stats = await loop.run_in_executor(
+            None,
+            lambda bd=batch_data, ed=excluded_data: mark_scan_complete(
+                state.facility,
+                bd,
+                excluded=ed if ed else None,
+            ),
+        )
+
+        state.expand_stats.processed += stats["scanned"]
+        state.expand_stats.errors += stats["errors"]
+
+        # Build detailed scan results for progress display
+        scan_results = [
+            {
+                "path": r.path,
+                "total_files": r.stats.total_files,
+                "total_dirs": r.stats.total_dirs,
+                "has_readme": r.stats.has_readme,
+                "has_makefile": r.stats.has_makefile,
+                "has_git": r.stats.has_git,
+                "error": r.error,
+            }
+            for r in results
+            if not r.error
+        ]
+
+        expanded_paths = [r.path for r in results if not r.error]
+        if on_progress:
+            on_progress(
+                f"expanded {stats['scanned']}",
+                state.expand_stats,
+                expanded_paths,
+                scan_results,
+            )
+
         await asyncio.sleep(0.1)
 
 
@@ -1178,14 +1302,20 @@ async def run_parallel_discovery(
     focus: str | None = None,
     threshold: float = 0.7,
     num_scan_workers: int = 1,
-    num_score_workers: int = 4,
+    num_expand_workers: int = 1,
+    num_score_workers: int = 2,  # Reduced: less rate limit contention
     num_enrich_workers: int = 1,
     num_rescore_workers: int = 0,
     scan_batch_size: int = 50,
-    score_batch_size: int = 25,
-    enrich_batch_size: int = 25,
-    rescore_batch_size: int = 10,
+    expand_batch_size: int = 50,
+    score_batch_size: int = 50,  # Increased: more work per API call
+    enrich_batch_size: int = 10,  # Smaller: heavy SSH operations (dust/tokei)
+    rescore_batch_size: int = 50,  # Increased: lightweight heuristic rescore
     on_scan_progress: Callable[
+        [str, WorkerStats, list[str] | None, list[dict] | None], None
+    ]
+    | None = None,
+    on_expand_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
     | None = None,
@@ -1200,11 +1330,12 @@ async def run_parallel_discovery(
 
     Workers:
     - scan: Lists directories, discovers child paths (SSH-bound)
+    - expand: Expands scored high-value paths (should_expand=true)
     - score: LLM-based scoring with should_expand/should_enrich decisions
     - enrich: Deep analysis (dust/tokei/patterns) for should_enrich=true paths
     - rescore: Refines scores using enrichment data (optional)
 
-    All workers run in PARALLEL - enrich does not wait for expand.
+    All workers run in PARALLEL - expand/enrich do not wait for each other.
 
     Args:
         facility: Facility ID to discover
@@ -1213,14 +1344,17 @@ async def run_parallel_discovery(
         focus: Focus string for scoring (optional)
         threshold: Score threshold for expansion
         num_scan_workers: Number of concurrent scan workers (default: 1)
-        num_score_workers: Number of concurrent score workers (default: 4)
+        num_expand_workers: Number of concurrent expand workers (default: 1)
+        num_score_workers: Number of concurrent score workers (default: 2)
         num_enrich_workers: Number of concurrent enrich workers (default: 1)
         num_rescore_workers: Number of concurrent rescore workers (default: 0)
         scan_batch_size: Paths per SSH call (default: 50)
-        score_batch_size: Paths per LLM call (default: 25)
-        enrich_batch_size: Paths per SSH call (default: 25)
-        rescore_batch_size: Paths per rescore (default: 10)
+        expand_batch_size: Paths per expand SSH call (default: 50)
+        score_batch_size: Paths per LLM call (default: 50)
+        enrich_batch_size: Paths per SSH call (default: 10)
+        rescore_batch_size: Paths per rescore (default: 50)
         on_scan_progress: Callback for scan progress
+        on_expand_progress: Callback for expand progress
         on_score_progress: Callback for score progress
         on_enrich_progress: Callback for enrich progress
         on_rescore_progress: Callback for rescore progress
@@ -1231,7 +1365,7 @@ async def run_parallel_discovery(
     - All workers idle (no more work)
 
     Returns:
-        Summary dict with scanned, scored, enriched, rescored, cost, elapsed, rates
+        Summary dict with scanned, expanded, scored, enriched, rescored, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
@@ -1263,6 +1397,12 @@ async def run_parallel_discovery(
         scan_worker(state, on_progress=on_scan_progress, batch_size=scan_batch_size)
         for _ in range(num_scan_workers)
     ]
+    expand_tasks = [
+        expand_worker(
+            state, on_progress=on_expand_progress, batch_size=expand_batch_size
+        )
+        for _ in range(num_expand_workers)
+    ]
     score_tasks = [
         score_worker(state, on_progress=on_score_progress, batch_size=score_batch_size)
         for _ in range(num_score_workers)
@@ -1280,7 +1420,7 @@ async def run_parallel_discovery(
         for _ in range(num_rescore_workers)
     ]
 
-    all_tasks = scan_tasks + score_tasks + enrich_tasks + rescore_tasks
+    all_tasks = scan_tasks + expand_tasks + score_tasks + enrich_tasks + rescore_tasks
 
     # Run all workers concurrently
     try:
@@ -1304,6 +1444,7 @@ async def run_parallel_discovery(
 
     elapsed = max(
         state.scan_stats.elapsed,
+        state.expand_stats.elapsed,
         state.score_stats.elapsed,
         state.enrich_stats.elapsed,
         state.rescore_stats.elapsed,
@@ -1311,16 +1452,19 @@ async def run_parallel_discovery(
 
     return {
         "scanned": state.scan_stats.processed,
+        "expanded": state.expand_stats.processed,
         "scored": state.score_stats.processed,
         "enriched": state.enrich_stats.processed,
         "rescored": state.rescore_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,
+        "expand_rate": state.expand_stats.rate,
         "score_rate": state.score_stats.rate,
         "enrich_rate": state.enrich_stats.rate,
         "rescore_rate": state.rescore_stats.rate,
         "scan_errors": state.scan_stats.errors,
+        "expand_errors": state.expand_stats.errors,
         "score_errors": state.score_stats.errors,
         "enrich_errors": state.enrich_stats.errors,
         "rescore_errors": state.rescore_stats.errors,

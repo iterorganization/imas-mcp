@@ -65,6 +65,7 @@ class TestDiscoveryState:
         """Test should_stop returns True when all workers idle."""
         state = DiscoveryState(facility="test", cost_limit=10.0)
         state.scan_idle_count = 3
+        state.expand_idle_count = 3
         state.score_idle_count = 3
         state.enrich_idle_count = 3
         state.rescore_idle_count = 3
@@ -95,25 +96,46 @@ class TestClaimPaths:
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
         mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
-        # First query returns unscored paths, second returns expansion paths
-        mock_gc.query.side_effect = [
-            [
-                {
-                    "id": "test:/path1",
-                    "path": "/path1",
-                    "depth": 1,
-                    "is_expanding": False,
-                }
-            ],
-            [],  # No expansion paths
+        # Single query returns unscored paths (expansion now handled by expand_worker)
+        mock_gc.query.return_value = [
+            {
+                "id": "test:/path1",
+                "path": "/path1",
+                "depth": 1,
+                "is_expanding": False,
+            }
         ]
 
         result = claim_paths_for_scanning("test", limit=50)
 
-        assert mock_gc.query.call_count == 2  # Unscored + expansion queries
+        assert mock_gc.query.call_count == 1  # Only unscored query
         assert len(result) == 1
         assert result[0]["path"] == "/path1"
         assert result[0]["is_expanding"] is False
+
+    @patch("imas_codex.graph.GraphClient")
+    def test_claim_paths_for_expanding_calls_graph(self, mock_gc_class):
+        """Test claim_paths_for_expanding claims expansion paths."""
+        from imas_codex.discovery.parallel import claim_paths_for_expanding
+
+        mock_gc = MagicMock()
+        mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
+        mock_gc_class.return_value.__exit__ = MagicMock(return_value=None)
+        mock_gc.query.return_value = [
+            {
+                "id": "test:/path2",
+                "path": "/path2",
+                "depth": 2,
+                "is_expanding": True,
+            }
+        ]
+
+        result = claim_paths_for_expanding("test", limit=50)
+
+        assert mock_gc.query.call_count == 1
+        assert len(result) == 1
+        assert result[0]["path"] == "/path2"
+        assert result[0]["is_expanding"] is True
 
     @patch("imas_codex.graph.GraphClient")
     def test_claim_paths_for_scoring_calls_graph(self, mock_gc_class):

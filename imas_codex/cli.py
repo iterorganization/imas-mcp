@@ -5805,6 +5805,11 @@ def _print_discovery_summary(
     else:
         summary.append("scan -", style="dim")
     if not scan_only:
+        # Add expand rate if available
+        expand_rate = result.get("expand_rate")
+        if expand_rate:
+            summary.append(" · ", style="dim")
+            summary.append(f"expand {expand_rate:.1f}/s", style="white")
         summary.append(" · ", style="dim")
         if score_rate:
             summary.append(f"score {score_rate:.1f}/s", style="white")
@@ -5825,6 +5830,11 @@ def _print_discovery_summary(
     summary.append("This Run  ", style="bold cyan")
     summary.append(f"scanned {result['scanned']:,}", style="white")
     if not scan_only:
+        # Add expanded if present
+        expanded = result.get("expanded", 0)
+        if expanded > 0:
+            summary.append(" · ", style="dim")
+            summary.append(f"expanded {expanded:,}", style="white")
         summary.append(" · ", style="dim")
         summary.append(f"scored {result['scored']:,}", style="white")
         # Add enriched/rescored if present
@@ -5842,9 +5852,9 @@ def _print_discovery_summary(
     summary.append(f"{elapsed_str}", style="cyan")
     summary.append("\n")
 
-    # Row 3: Graph State
-    summary.append("Graph     ", style="bold green")
-    summary.append(f"total {stats['total']:,}", style="white")
+    # Row 3: Total (merged graph stats + overall)
+    summary.append("Total     ", style="bold green")
+    summary.append(f"paths {stats['total']:,}", style="white")
     summary.append(" · ", style="dim")
     if not scan_only:
         summary.append(
@@ -5983,11 +5993,11 @@ async def _async_discovery_loop(
             def on_scan(msg, stats, paths=None, scan_results=None):
                 display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
 
+            def on_expand(msg, stats, paths=None, scan_results=None):
+                display.update_expand(msg, stats)
+
             def on_score(msg, stats, results=None):
                 display.update_score(msg, stats, results=results)
-
-            def on_expand(msg, stats, results=None):
-                display.update_expand(msg, stats)
 
             def on_enrich(msg, stats, results=None):
                 display.update_enrich(msg, stats)
@@ -6005,8 +6015,8 @@ async def _async_discovery_loop(
                     num_scan_workers=num_scan_workers,
                     num_score_workers=num_score_workers,
                     on_scan_progress=on_scan,
-                    on_score_progress=on_score,
                     on_expand_progress=on_expand,
+                    on_score_progress=on_score,
                     on_enrich_progress=on_enrich,
                     on_rescore_progress=on_rescore,
                 )
