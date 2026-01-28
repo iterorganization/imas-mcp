@@ -365,6 +365,7 @@ async def mark_scan_complete(
     facility: str,
     scan_results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
+    symlinks: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Mark scanned paths complete and conditionally create children.
 
@@ -374,10 +375,13 @@ async def mark_scan_complete(
         facility: Facility ID
         scan_results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
+        symlinks: Optional list of (symlink_path, realpath, parent_path) for symlinks
     """
     from imas_codex.discovery.frontier import persist_scan_results
 
-    return await persist_scan_results(facility, scan_results, excluded=excluded)
+    return await persist_scan_results(
+        facility, scan_results, excluded=excluded, symlinks=symlinks
+    )
 
 
 def mark_score_complete(
@@ -671,10 +675,25 @@ async def scan_worker(
             for excluded_path, reason in r.excluded_dirs:
                 excluded_data.append((excluded_path, r.path, reason))
 
+        # Collect symlink directories with parent paths
+        symlinks_data = []
+        for r in results:
+            # Child symlinks discovered during scan
+            for symlink_info in r.symlink_dirs:
+                symlinks_data.append((symlink_info.path, symlink_info.realpath, r.path))
+            # If the scanned path itself is a symlink, add it too
+            # (uses parent derived from path, or empty for root paths)
+            if r.is_symlink and r.realpath:
+                import os
+
+                parent_path = os.path.dirname(r.path.rstrip("/"))
+                symlinks_data.append((r.path, r.realpath, parent_path or "/"))
+
         stats = await mark_scan_complete(
             state.facility,
             batch_data,
             excluded=excluded_data if excluded_data else None,
+            symlinks=symlinks_data if symlinks_data else None,
         )
 
         state.scan_stats.processed += stats["scanned"]
@@ -786,10 +805,24 @@ async def expand_worker(
             for excluded_path, reason in r.excluded_dirs:
                 excluded_data.append((excluded_path, r.path, reason))
 
+        # Collect symlink directories with parent paths
+        symlinks_data = []
+        for r in results:
+            # Child symlinks discovered during scan
+            for symlink_info in r.symlink_dirs:
+                symlinks_data.append((symlink_info.path, symlink_info.realpath, r.path))
+            # If the scanned path itself is a symlink, add it too
+            if r.is_symlink and r.realpath:
+                import os
+
+                parent_path = os.path.dirname(r.path.rstrip("/"))
+                symlinks_data.append((r.path, r.realpath, parent_path or "/"))
+
         stats = await mark_scan_complete(
             state.facility,
             batch_data,
             excluded=excluded_data if excluded_data else None,
+            symlinks=symlinks_data if symlinks_data else None,
         )
 
         state.expand_stats.processed += stats["scanned"]

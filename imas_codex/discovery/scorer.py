@@ -526,6 +526,20 @@ class DirectoryScorer:
                 purpose,
             )
 
+            # CRITICAL: Penalize git repos with remote URLs
+            # Code is available elsewhere (GitHub, GitLab, etc.) so we don't need
+            # to prioritize exploring it on the facility filesystem. We still want
+            # to know the repo exists (for mapping), but it shouldn't drive high
+            # expand/enrich actions.
+            has_git = directories[i].get("has_git", False)
+            git_remote_url = directories[i].get("git_remote_url")
+            if has_git and git_remote_url:
+                # Significant penalty: code available elsewhere
+                combined *= 0.4
+            elif has_git:
+                # Moderate penalty: git repo but no remote (local-only)
+                combined *= 0.7
+
             # Expansion decision - containers use lower threshold
             effective_threshold = (
                 CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
@@ -561,6 +575,14 @@ class DirectoryScorer:
             # Enrichment decision - LLM decides, but override for known-large paths
             should_enrich = getattr(result, "should_enrich", True)
             enrich_skip_reason = getattr(result, "enrich_skip_reason", None)
+
+            # Override: never enrich git repos with remotes (can get LOC from remote)
+            if has_git and git_remote_url:
+                should_enrich = False
+                enrich_skip_reason = (
+                    enrich_skip_reason
+                    or "git repo with remote - code available elsewhere"
+                )
 
             # Override: never enrich data containers (too many files)
             if purpose in data_purposes:
@@ -665,6 +687,14 @@ class DirectoryScorer:
                 purpose,
             )
 
+            # CRITICAL: Penalize git repos with remote URLs (legacy path)
+            has_git = directories[i].get("has_git", False)
+            git_remote_url = directories[i].get("git_remote_url")
+            if has_git and git_remote_url:
+                combined *= 0.4
+            elif has_git:
+                combined *= 0.7
+
             # Expansion decision - containers use lower threshold
             effective_threshold = (
                 CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
@@ -674,6 +704,16 @@ class DirectoryScorer:
                 and result.get("should_expand", False)
                 and purpose not in SUPPRESSED_PURPOSES
             )
+
+            # Enrichment override for git repos with remotes
+            should_enrich = result.get("should_enrich", True)
+            enrich_skip_reason = result.get("enrich_skip_reason")
+            if has_git and git_remote_url:
+                should_enrich = False
+                enrich_skip_reason = (
+                    enrich_skip_reason
+                    or "git repo with remote - code available elsewhere"
+                )
 
             scored_dir = ScoredDirectory(
                 path=path,
@@ -686,12 +726,12 @@ class DirectoryScorer:
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
-                should_enrich=result.get("should_enrich", True),
+                should_enrich=should_enrich,
                 keywords=result.get("keywords", [])[:5],  # Cap at 5
                 physics_domain=result.get("physics_domain"),
                 expansion_reason=result.get("expansion_reason"),
                 skip_reason=result.get("skip_reason"),
-                enrich_skip_reason=result.get("enrich_skip_reason"),
+                enrich_skip_reason=enrich_skip_reason,
             )
 
             scored.append(scored_dir)
