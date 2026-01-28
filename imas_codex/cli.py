@@ -5793,7 +5793,7 @@ def _print_discovery_summary(
 
     console.print()
 
-    # Build compact summary - width=100 to match progress display
+    # Build compact summary - width=120 to match progress display
     # Order: Rates, This Run, Overall, Graph (as requested)
     facility_upper = facility.upper()
     summary = Text()
@@ -5884,7 +5884,7 @@ def _print_discovery_summary(
             summary,
             title=title,
             border_style=border,
-            width=100,  # Match progress display width
+            width=120,  # Match progress display width
         )
     )
 
@@ -5973,6 +5973,7 @@ async def _async_discovery_loop(
         with ParallelProgressDisplay(
             facility=facility,
             cost_limit=budget,
+            path_limit=limit,
             model=model_name,
             console=console,
             focus=focus or "",

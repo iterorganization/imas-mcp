@@ -173,6 +173,7 @@ class ProgressState:
 
     facility: str
     cost_limit: float
+    path_limit: int | None = None  # Optional limit from -l flag
     model: str = ""
     focus: str = ""
 
@@ -271,8 +272,10 @@ class ProgressState:
     def eta_seconds(self) -> float | None:
         """Estimated time to termination based on limits.
 
-        If cost_limit is set, estimates time based on cost rate.
-        Otherwise estimates time to complete remaining work.
+        Priority order:
+        1. Cost limit: if -c flag set, estimate time to exhaust budget
+        2. Path limit: if -l flag set, estimate time to process that many paths
+        3. Full work: estimate time to complete all remaining work
         """
         # Try cost-based ETA first (if we have cost data)
         if self.run_cost > 0 and self.cost_limit > 0:
@@ -280,6 +283,14 @@ class ProgressState:
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
                 return max(0, remaining_budget / cost_rate)
+
+        # Try path-limit-based ETA (if -l flag set)
+        if self.path_limit is not None and self.path_limit > 0:
+            total_processed = self.run_scanned + self.run_scored
+            if total_processed > 0 and self.elapsed > 0:
+                rate = total_processed / self.elapsed
+                remaining = self.path_limit - total_processed
+                return max(0, remaining / rate) if rate > 0 else None
 
         # Fall back to work-based ETA
         if not self.score_rate or self.score_rate <= 0:
@@ -313,14 +324,15 @@ class ParallelProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 100
-    BAR_WIDTH = 55
-    GAUGE_WIDTH = 20
+    WIDTH = 120
+    BAR_WIDTH = 60
+    GAUGE_WIDTH = 25
 
     def __init__(
         self,
         facility: str,
         cost_limit: float,
+        path_limit: int | None = None,
         model: str = "",
         console: Console | None = None,
         focus: str = "",
@@ -331,6 +343,7 @@ class ParallelProgressDisplay:
         self.state = ProgressState(
             facility=facility,
             cost_limit=cost_limit,
+            path_limit=path_limit,
             model=model,
             focus=focus,
             scan_only=scan_only,
@@ -575,16 +588,14 @@ class ParallelProgressDisplay:
                     section.append(f"  Est ${projected_total:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - work counts and depth metrics
+        # STATS row - all on one line
         section.append("  STATS ", style="bold magenta")
         section.append(f"pending={self.state.pending_work}", style="cyan")
-        section.append(f"  expanded={self.state.run_expanded}", style="cyan")
-        section.append(f"  enriched={self.state.run_enriched}", style="cyan")
+        section.append(f"  exp={self.state.run_expanded}", style="cyan")
+        section.append(f"  enr={self.state.run_enriched}", style="cyan")
+        section.append(f"  skip={self.state.skipped}", style="yellow")
+        section.append(f"  excl={self.state.excluded}", style="dim")
         section.append(f"  depth={self.state.max_depth}", style="cyan")
-        section.append("\n")
-        section.append("        ", style="dim")  # Indent to align with STATS
-        section.append(f"skipped={self.state.skipped}", style="yellow")
-        section.append(f"  excluded={self.state.excluded}", style="dim")
 
         return section
 
