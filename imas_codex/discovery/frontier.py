@@ -1384,7 +1384,7 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
             WHERE p.status = $scored
               AND p.should_enrich = true
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
-              AND (p.claimed_at IS NULL OR p.claimed_at < $cutoff)
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
             ORDER BY p.score DESC, p.depth ASC
             LIMIT $limit
@@ -1514,7 +1514,7 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
               AND p.is_enriched = true
               AND p.score >= 0.5
               AND p.rescored_at IS NULL
-              AND (p.claimed_at IS NULL OR p.claimed_at < $cutoff)
+              AND (p.claimed_at IS NULL OR p.claimed_at < datetime($cutoff))
             WITH p
             ORDER BY p.score DESC
             LIMIT $limit
