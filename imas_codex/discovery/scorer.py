@@ -526,19 +526,48 @@ class DirectoryScorer:
                 purpose,
             )
 
-            # CRITICAL: Penalize git repos with remote URLs
-            # Code is available elsewhere (GitHub, GitLab, etc.) so we don't need
-            # to prioritize exploring it on the facility filesystem. We still want
-            # to know the repo exists (for mapping), but it shouldn't drive high
-            # expand/enrich actions.
+            # Extract git metadata for penalty and expansion decisions
             has_git = directories[i].get("has_git", False)
             git_remote_url = directories[i].get("git_remote_url")
+
+            # Determine if repo is accessible elsewhere (public or on internal servers)
+            # Private repos on public hosts contain unique content we want to scan
+            repo_accessible_elsewhere = False
             if has_git and git_remote_url:
-                # Significant penalty: code available elsewhere
-                combined *= 0.4
-            elif has_git:
-                # Moderate penalty: git repo but no remote (local-only)
-                combined *= 0.7
+                # Check if on public hosting service
+                is_public_host = any(
+                    host in git_remote_url.lower()
+                    for host in ["github.com", "gitlab.com", "bitbucket.org"]
+                )
+                if is_public_host:
+                    # Verify actual visibility via HTTP (confirms not private)
+                    from imas_codex.discovery.frontier import (
+                        _is_repo_publicly_accessible,
+                    )
+
+                    repo_accessible_elsewhere = _is_repo_publicly_accessible(
+                        git_remote_url, timeout=2.0
+                    )
+                else:
+                    # Check if on facility's internal git servers
+                    # TODO: Could load from facility config here
+                    internal_servers = ["gitlab.iter.org", "git.iter.org"]
+                    repo_accessible_elsewhere = any(
+                        server in git_remote_url.lower() for server in internal_servers
+                    )
+
+            # Score penalty for git repos based on accessibility
+            # Only penalize repos that are accessible elsewhere
+            # Private repos may contain unique work we want to discover
+            if has_git:
+                if repo_accessible_elsewhere:
+                    # Large penalty: code is available via git clone elsewhere
+                    combined *= 0.3
+                elif git_remote_url:
+                    # Moderate penalty: has remote but we can't access it
+                    # May be private or on unknown server - still less unique
+                    combined *= 0.6
+                # Local repos without remotes: no penalty (unique local work)
 
             # Expansion decision - containers use lower threshold
             effective_threshold = (
@@ -553,19 +582,9 @@ class DirectoryScorer:
             )
 
             # CRITICAL: Never expand git repos (code is available via git clone)
-            has_git = directories[i].get("has_git", False)
+            # Even private repos don't need child expansion - files are at repo root
             if has_git:
                 should_expand = False
-                # Apply score penalty for software repos (available elsewhere)
-                # Heavier penalty for repos with remotes (forks/clones)
-                git_remote = directories[i].get("git_remote_url")
-                if git_remote:
-                    # Public repo or internal clone - heavily penalize
-                    # These are lowest priority since code is available via git
-                    combined = min(combined * 0.3, 0.4)
-                else:
-                    # Local repo without remote - moderate penalty
-                    combined = min(combined * 0.5, 0.6)
 
             # CRITICAL: Never expand data containers (too many files)
             data_purposes = {PathPurpose.simulation_data, PathPurpose.diagnostic_data}
@@ -576,13 +595,18 @@ class DirectoryScorer:
             should_enrich = getattr(result, "should_enrich", True)
             enrich_skip_reason = getattr(result, "enrich_skip_reason", None)
 
-            # Override: never enrich git repos with remotes (can get LOC from remote)
-            if has_git and git_remote_url:
+            # Override: never enrich git repos with accessible remotes
+            # (can get LOC from remote API)
+            if has_git and repo_accessible_elsewhere:
                 should_enrich = False
                 enrich_skip_reason = (
                     enrich_skip_reason
-                    or "git repo with remote - code available elsewhere"
+                    or "git repo accessible elsewhere - code available via git"
                 )
+            elif has_git and git_remote_url:
+                # Private repo with remote: still worth enriching
+                # since we can't get metrics from the remote
+                pass
 
             # Override: never enrich data containers (too many files)
             if purpose in data_purposes:
@@ -687,13 +711,14 @@ class DirectoryScorer:
                 purpose,
             )
 
-            # CRITICAL: Penalize git repos with remote URLs (legacy path)
+            # Extract git metadata for penalty (legacy path - simplified check)
             has_git = directories[i].get("has_git", False)
             git_remote_url = directories[i].get("git_remote_url")
-            if has_git and git_remote_url:
-                combined *= 0.4
-            elif has_git:
-                combined *= 0.7
+            if has_git:
+                if git_remote_url:
+                    # Has remote - apply moderate penalty (can't check accessibility here)
+                    combined *= 0.4
+                # Local repos without remotes: no penalty
 
             # Expansion decision - containers use lower threshold
             effective_threshold = (
@@ -704,6 +729,10 @@ class DirectoryScorer:
                 and result.get("should_expand", False)
                 and purpose not in SUPPRESSED_PURPOSES
             )
+
+            # Never expand git repos
+            if has_git:
+                should_expand = False
 
             # Enrichment override for git repos with remotes
             should_enrich = result.get("should_enrich", True)

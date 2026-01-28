@@ -508,35 +508,46 @@ def _create_software_repo_link(
     Args:
         gc: GraphClient instance
         facility: Facility ID
-        path_id: FacilityPath ID
+        path_id: FacilityPath ID (format: facility:path)
         remote_url: Git remote origin URL (if available)
         root_commit: First commit hash in repo history
         head_commit: Current HEAD commit hash
         branch: Current branch name
         now: ISO timestamp
     """
+    # Initialize variables
+    repo_id: str
+    name: str
+    source_type: str = "local"  # Default
+
+    # Extract path from path_id for name extraction
+    path_part = path_id.split(":", 1)[1] if ":" in path_id else path_id
+    default_name = (
+        path_part.rstrip("/").split("/")[-1] if "/" in path_part else path_part
+    )
+
     # Determine SoftwareRepo identity and metadata
     if remote_url:
-        source_type, owner, repo_name = _parse_git_remote_url(remote_url)
-        if source_type != "local" and owner and repo_name:
+        parsed_type, owner, repo_name = _parse_git_remote_url(remote_url)
+        if parsed_type != "local" and owner and repo_name:
             # Use remote URL as identity
+            source_type = parsed_type
             repo_id = f"{source_type}:{owner}/{repo_name}"
             name = repo_name
         else:
-            # Can't parse remote URL, fall back to root commit
-            remote_url = None  # Ignore unparseable URL
+            # Can't parse remote URL, fall through to root_commit or path-based
+            remote_url = None  # Clear unparseable URL
 
     if not remote_url:
-        # No remote or unparseable - use root commit as identity
+        # No remote or unparseable - try root commit as identity
         if root_commit:
             repo_id = f"root:{root_commit}"
-            # Extract name from path
-            name = path_id.split("/")[-1] if "/" in path_id else path_id
+            name = default_name
             source_type = "local"
         else:
-            # No remote and no root commit - rare case, use path-based ID
-            repo_id = f"local:{facility}:{path_id.split(':', 1)[1]}"
-            name = path_id.split("/")[-1] if "/" in path_id else path_id
+            # No remote and no root commit - use path-based ID
+            repo_id = f"local:{facility}:{path_part}"
+            name = default_name
             source_type = "local"
 
     # MERGE SoftwareRepo (deduplicates across facilities and clones)
@@ -1002,6 +1013,7 @@ async def persist_scan_results(
     facility: str,
     results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
+    symlinks: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Persist multiple scan results in a single transaction.
 
@@ -1011,13 +1023,18 @@ async def persist_scan_results(
     1. First scan (is_expanding=False): Set status='listed', no children created
     2. Expansion scan (is_expanding=True): Keep status='scored', create children
 
+    Symlinks are created as excluded nodes with ALIAS_OF relationships to their
+    resolved targets. This preserves path information for search while avoiding
+    duplicate scanning of the same physical directories.
+
     Args:
         facility: Facility ID
         results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
+        symlinks: Optional list of (symlink_path, realpath, parent_path) for symlinks
 
     Returns:
-        Dict with scanned, children_created, excluded, errors counts
+        Dict with scanned, children_created, excluded, symlinks_created, errors counts
     """
     from imas_codex.discovery.facility import get_facility
     from imas_codex.graph import GraphClient
@@ -1356,7 +1373,9 @@ async def persist_scan_results(
             # User enrichment is non-critical; don't fail scan
             logger.warning(f"User enrichment failed: {e}")
 
-        # Create SoftwareRepo nodes for git repos (with remote URL or root commit)
+        # Create SoftwareRepo nodes for git repos
+        # Priority: remote_url > root_commit > path-based (fallback)
+        # Even repos without remote or commit info get linked for deduplication
         all_updates = first_scan_updates + expansion_updates
         git_repos = [
             (
@@ -1367,9 +1386,16 @@ async def persist_scan_results(
                 item.get("git_branch"),
             )
             for item in all_updates
-            if item.get("has_git")
-            and (item.get("git_remote_url") or item.get("git_root_commit"))
+            if item.get(
+                "has_git"
+            )  # Link ALL git repos, not just those with remote/commit
         ]
+        if git_repos:
+            logger.debug(
+                f"Creating SoftwareRepo links for {len(git_repos)} git repos "
+                f"({sum(1 for r in git_repos if r[1])} with remote, "
+                f"{sum(1 for r in git_repos if r[2])} with root commit)"
+            )
         for path_id, remote_url, root_commit, head_commit, branch in git_repos:
             try:
                 _create_software_repo_link(
@@ -1385,10 +1411,109 @@ async def persist_scan_results(
             except Exception as e:
                 logger.debug(f"Failed to create SoftwareRepo for {path_id}: {e}")
 
+        # Handle symlink directories (create with status='excluded', ALIAS_OF relationship)
+        symlinks_created = 0
+        if symlinks:
+            symlink_nodes = []
+            for symlink_path, realpath, parent_path in symlinks:
+                symlink_id = f"{facility}:{symlink_path}"
+                realpath_id = f"{facility}:{realpath}"
+                parent_id = f"{facility}:{parent_path}"
+
+                # Get parent depth
+                depth_result = gc.query(
+                    "MATCH (p:FacilityPath {id: $id}) RETURN p.depth AS depth",
+                    id=parent_id,
+                )
+                parent_depth = depth_result[0]["depth"] if depth_result else 0
+
+                symlink_nodes.append(
+                    {
+                        "id": symlink_id,
+                        "facility_id": facility,
+                        "path": symlink_path,
+                        "realpath": realpath,
+                        "realpath_id": realpath_id,
+                        "parent_id": parent_id,
+                        "depth": (parent_depth or 0) + 1,
+                        "status": PathStatus.excluded.value,
+                        "skip_reason": "symlink",
+                        "is_symlink": True,
+                        "discovered_at": now,
+                    }
+                )
+
+            if symlink_nodes:
+                # Create symlink nodes
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MERGE (s:FacilityPath {id: node.id})
+                    ON CREATE SET s.facility_id = node.facility_id,
+                                  s.path = node.path,
+                                  s.realpath = node.realpath,
+                                  s.status = node.status,
+                                  s.skip_reason = node.skip_reason,
+                                  s.is_symlink = node.is_symlink,
+                                  s.depth = node.depth,
+                                  s.parent_path_id = node.parent_id,
+                                  s.discovered_at = node.discovered_at
+                    """,
+                    nodes=symlink_nodes,
+                )
+
+                # Create FACILITY_ID relationships
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MATCH (s:FacilityPath {id: node.id})
+                    MATCH (f:Facility {id: node.facility_id})
+                    MERGE (s)-[:FACILITY_ID]->(f)
+                    """,
+                    nodes=symlink_nodes,
+                )
+
+                # Ensure target path nodes exist (MERGE to avoid duplicates)
+                # Then create ALIAS_OF relationships
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MERGE (target:FacilityPath {id: node.realpath_id})
+                    ON CREATE SET target.facility_id = node.facility_id,
+                                  target.path = node.realpath,
+                                  target.status = $discovered,
+                                  target.path_type = 'code_directory',
+                                  target.discovered_at = node.discovered_at
+                    WITH target, node
+                    MATCH (s:FacilityPath {id: node.id})
+                    MERGE (s)-[:ALIAS_OF]->(target)
+                    """,
+                    nodes=symlink_nodes,
+                    discovered=PathStatus.discovered.value,
+                )
+
+                # Create FACILITY_ID for new target nodes
+                gc.query(
+                    """
+                    UNWIND $nodes AS node
+                    MATCH (target:FacilityPath {id: node.realpath_id})
+                    WHERE NOT (target)-[:FACILITY_ID]->(:Facility)
+                    MATCH (f:Facility {id: node.facility_id})
+                    MERGE (target)-[:FACILITY_ID]->(f)
+                    """,
+                    nodes=symlink_nodes,
+                )
+
+                symlinks_created = len(symlink_nodes)
+                logger.debug(
+                    f"Created {symlinks_created} symlink nodes with ALIAS_OF relationships"
+                )
+
     return {
         "scanned": scanned,
         "children_created": children_created,
         "excluded": excluded_count,
+        "symlinks_created": symlinks_created,
         "errors": errors,
     }
 
