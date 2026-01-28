@@ -62,7 +62,7 @@ def check_ssh_socket(ssh_host: str, timeout: int = 5) -> bool:
     """Check if SSH control master socket is healthy.
 
     Args:
-        ssh_host: SSH host alias (e.g., 'epfl', 'iter')
+        ssh_host: SSH host alias (e.g., 'tcv', 'iter')
         timeout: Timeout in seconds for check
 
     Returns:
@@ -228,7 +228,7 @@ def _parse_ssh_config_host(ssh_host: str) -> tuple[str | None, bool]:
     """Parse ~/.ssh/config to get HostName and proxy status for an alias.
 
     Args:
-        ssh_host: SSH host alias (e.g., 'epfl')
+        ssh_host: SSH host alias (e.g., 'tcv')
 
     Returns:
         Tuple of (resolved HostName or None, has_proxy)

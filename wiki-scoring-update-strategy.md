@@ -137,11 +137,11 @@ The new system (commit `72c043d`) implements a **two-stage LLM-centric approach*
 uv run imas-codex neo4j dump
 
 # 2. Prefetch all pages
-uv run imas-codex wiki prefetch epfl
+uv run imas-codex wiki prefetch tcv
 uv run imas-codex wiki prefetch iter
 
 # 3. Re-score all pages
-uv run imas-codex wiki score epfl --rescore
+uv run imas-codex wiki score tcv --rescore
 uv run imas-codex wiki score iter --rescore
 
 # 4. Validate results
@@ -171,11 +171,11 @@ uv run imas-codex wiki stats
 uv run imas-codex neo4j dump
 
 # 2. Prefetch high-value + ITER pages
-uv run imas-codex wiki prefetch epfl --filter "interest_score >= 0.5"
+uv run imas-codex wiki prefetch tcv --filter "interest_score >= 0.5"
 uv run imas-codex wiki prefetch iter
 
 # 3. Re-score filtered pages
-uv run imas-codex wiki score epfl --filter "interest_score >= 0.5" --rescore
+uv run imas-codex wiki score tcv --filter "interest_score >= 0.5" --rescore
 uv run imas-codex wiki score iter --rescore
 ```
 
@@ -199,9 +199,9 @@ uv run imas-codex wiki score iter --rescore
 **Steps**:
 ```bash
 # 1. Pilot (200 pages)
-uv run imas-codex wiki prefetch epfl --max-pages 100
+uv run imas-codex wiki prefetch tcv --max-pages 100
 uv run imas-codex wiki prefetch iter --max-pages 100
-uv run imas-codex wiki score epfl --max-pages 100 --rescore
+uv run imas-codex wiki score tcv --max-pages 100 --rescore
 uv run imas-codex wiki score iter --max-pages 100 --rescore
 
 # 2. Validate pilot results
@@ -210,9 +210,9 @@ uv run imas-codex wiki score iter --max-pages 100 --rescore
 # - Manual review 20 pages
 
 # 3. If successful, full rollout
-uv run imas-codex wiki prefetch epfl
+uv run imas-codex wiki prefetch tcv
 uv run imas-codex wiki prefetch iter
-uv run imas-codex wiki score epfl --rescore
+uv run imas-codex wiki score tcv --rescore
 uv run imas-codex wiki score iter --rescore
 ```
 
@@ -386,7 +386,7 @@ If the new scoring system fails validation:
 **Day 1: Prefetch**
 ```bash
 # Morning: EPFL (2,972 pages, ~6 hours)
-uv run imas-codex wiki prefetch epfl
+uv run imas-codex wiki prefetch tcv
 
 # Afternoon: ITER (541 pages, ~1 hour)
 uv run imas-codex wiki prefetch iter
@@ -400,7 +400,7 @@ uv run imas-codex wiki prefetch iter
 **Day 2: Re-score**
 ```bash
 # Morning: EPFL (2,972 pages, ~3 hours)
-uv run imas-codex wiki score epfl --rescore
+uv run imas-codex wiki score tcv --rescore
 
 # Afternoon: ITER (541 pages, ~30 min)
 uv run imas-codex wiki score iter --rescore

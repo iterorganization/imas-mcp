@@ -365,7 +365,7 @@ def tools_check(facility: str | None, as_json: bool) -> None:
     Examples:
       imas-codex tools check           # Check local tools
       imas-codex tools check iter      # Check on ITER (auto-detects local)
-      imas-codex tools check epfl      # Check on EPFL (via SSH)
+      imas-codex tools check tcv      # Check on TCV (via SSH)
     """
     import json as json_mod
 
@@ -420,7 +420,7 @@ def tools_install(
     Examples:
       imas-codex tools install              # Install locally
       imas-codex tools install iter         # Install on ITER (auto-detects local)
-      imas-codex tools install epfl         # Install on EPFL (via SSH)
+      imas-codex tools install tcv         # Install on TCV (via SSH)
       imas-codex tools install --tool gh    # Install only gh
       imas-codex tools install iter --tool gh  # Install gh on ITER
       imas-codex tools install --dry-run    # Show what would be installed
@@ -1462,16 +1462,16 @@ def ingest_run(
 
     Examples:
         # Process all discovered files
-        imas-codex ingest run epfl
+        imas-codex ingest run tcv
 
         # Process only high-priority files
-        imas-codex ingest run epfl --min-score 0.7
+        imas-codex ingest run tcv --min-score 0.7
 
         # Limit to 100 files
-        imas-codex ingest run epfl -n 100
+        imas-codex ingest run tcv -n 100
 
         # Preview what would be processed
-        imas-codex ingest run epfl --dry-run
+        imas-codex ingest run tcv --dry-run
     """
     import asyncio
 
@@ -1565,7 +1565,7 @@ def ingest_status(facility: str) -> None:
     """Show queue statistics for a facility.
 
     Examples:
-        imas-codex ingest status epfl
+        imas-codex ingest status tcv
     """
     from rich.console import Console
     from rich.table import Table
@@ -1637,19 +1637,19 @@ def ingest_queue(
 
     Examples:
         # Discover paths directly (LLM-friendly)
-        imas-codex ingest queue epfl /path/a.py /path/b.py /path/c.py
+        imas-codex ingest queue tcv /path/a.py /path/b.py /path/c.py
 
         # Discover from file (for large batches)
-        imas-codex ingest queue epfl -f files.txt
+        imas-codex ingest queue tcv -f files.txt
 
         # Discover from stdin (pipe from rg)
-        ssh epfl 'rg -l "IMAS" /home' | imas-codex ingest queue epfl --stdin
+        ssh tcv 'rg -l "IMAS" /home' | imas-codex ingest queue tcv --stdin
 
         # Set priority score
-        imas-codex ingest queue epfl /path/a.py -s 0.9
+        imas-codex ingest queue tcv /path/a.py -s 0.9
 
         # Preview
-        imas-codex ingest queue epfl /path/a.py --dry-run
+        imas-codex ingest queue tcv /path/a.py --dry-run
     """
     import sys
     from pathlib import Path
@@ -1735,13 +1735,13 @@ def ingest_list(facility: str, status: str, limit: int) -> None:
 
     Examples:
         # List discovered files
-        imas-codex ingest list epfl
+        imas-codex ingest list tcv
 
         # List failed files
-        imas-codex ingest list epfl -s failed
+        imas-codex ingest list tcv -s failed
 
         # List all files
-        imas-codex ingest list epfl -s all
+        imas-codex ingest list tcv -s all
     """
     from rich.console import Console
     from rich.table import Table
@@ -2463,7 +2463,7 @@ def wiki_sites(facility: str) -> None:
 
     Examples:
         imas-codex wiki sites iter
-        imas-codex wiki sites epfl
+        imas-codex wiki sites tcv
     """
     from imas_codex.wiki.auth import CredentialManager
     from imas_codex.wiki.discovery import WikiConfig
@@ -2563,16 +2563,16 @@ def wiki_discover(
 
     Examples:
         # Full discovery with default settings
-        imas-codex wiki discover epfl
+        imas-codex wiki discover tcv
 
         # Focus on equilibrium topics
-        imas-codex wiki discover epfl -p "equilibrium reconstruction"
+        imas-codex wiki discover tcv -p "equilibrium reconstruction"
 
         # Limit crawl scope
-        imas-codex wiki discover epfl -n 500 --max-depth 3
+        imas-codex wiki discover tcv -n 500 --max-depth 3
 
         # Verbose mode to see agent reasoning
-        imas-codex wiki discover epfl -v
+        imas-codex wiki discover tcv -v
     """
     import asyncio
 
@@ -2630,13 +2630,13 @@ def wiki_crawl(
 
     Examples:
         # Full crawl to completion
-        imas-codex wiki crawl epfl
+        imas-codex wiki crawl tcv
 
         # Crawl up to 500 pages this session
-        imas-codex wiki crawl epfl -n 500
+        imas-codex wiki crawl tcv -n 500
 
         # Shallow crawl
-        imas-codex wiki crawl epfl --max-depth 3
+        imas-codex wiki crawl tcv --max-depth 3
     """
     from rich.console import Console
 
@@ -2658,7 +2658,7 @@ def wiki_crawl(
         console.print(f"  Links found: {discovery.stats.links_found}")
         console.print(f"  Max depth: {discovery.stats.max_depth_reached}")
         console.print(f"  Frontier: {discovery.stats.frontier_size} pages pending")
-        console.print("\nRun 'imas-codex wiki score epfl' to evaluate pages")
+        console.print("\nRun 'imas-codex wiki score tcv' to evaluate pages")
     finally:
         discovery.close()
 
@@ -2698,7 +2698,7 @@ def wiki_prefetch(
         imas-codex wiki prefetch iter --max-pages 100
 
         # Prefetch all discovered pages
-        imas-codex wiki prefetch epfl
+        imas-codex wiki prefetch tcv
 
         # Prefetch including already-scored pages
         imas-codex wiki prefetch iter --include-scored
@@ -2791,19 +2791,19 @@ def wiki_score(
 
     Examples:
         # Score all crawled pages (up to $20 cost)
-        imas-codex wiki score epfl
+        imas-codex wiki score tcv
 
         # Focus on equilibrium topics
-        imas-codex wiki score epfl -p "equilibrium reconstruction"
+        imas-codex wiki score tcv -p "equilibrium reconstruction"
 
         # Score with verbose agent output
-        imas-codex wiki score epfl -v
+        imas-codex wiki score tcv -v
 
         # Limit to 500 pages
-        imas-codex wiki score epfl -n 500
+        imas-codex wiki score tcv -n 500
 
         # Limit cost to $5
-        imas-codex wiki score epfl --cost-limit 5.0
+        imas-codex wiki score tcv --cost-limit 5.0
     """
     import asyncio
 
@@ -2897,25 +2897,25 @@ def wiki_ingest(
 
     Examples:
         # Ingest all scored content (pages + artifacts)
-        imas-codex wiki ingest epfl
+        imas-codex wiki ingest tcv
 
         # Ingest only pages
-        imas-codex wiki ingest epfl --type pages
+        imas-codex wiki ingest tcv --type pages
 
         # Ingest only artifacts (PDFs, etc.)
-        imas-codex wiki ingest epfl --type artifacts
+        imas-codex wiki ingest tcv --type artifacts
 
         # Ingest only high-score content
-        imas-codex wiki ingest epfl --min-score 0.7
+        imas-codex wiki ingest tcv --min-score 0.7
 
         # Allow larger artifacts (10 MB)
-        imas-codex wiki ingest epfl --max-size-mb 10
+        imas-codex wiki ingest tcv --max-size-mb 10
 
         # Ingest specific pages (bypasses queue)
-        imas-codex wiki ingest epfl -p Thomson -p Ion_Temperature_Nodes
+        imas-codex wiki ingest tcv -p Thomson -p Ion_Temperature_Nodes
 
         # Preview without saving
-        imas-codex wiki ingest epfl --dry-run
+        imas-codex wiki ingest tcv --dry-run
     """
     import asyncio
 
@@ -3137,7 +3137,7 @@ def wiki_status(facility: str) -> None:
     statistics about already-ingested pages.
 
     Examples:
-        imas-codex wiki status epfl
+        imas-codex wiki status tcv
     """
     from rich.console import Console
     from rich.table import Table
@@ -3405,16 +3405,16 @@ def scout_files(
     \b
     EXAMPLES:
         # Default exploration (20 steps)
-        imas-codex scout files epfl
+        imas-codex scout files tcv
 
         # More steps with specific focus
-        imas-codex scout files epfl -n 50 --focus imas
+        imas-codex scout files tcv -n 50 --focus imas
 
         # Start from specific paths
-        imas-codex scout files epfl -p /home/codes -p /work/imas
+        imas-codex scout files tcv -p /home/codes -p /work/imas
 
         # Dry-run to test LLM behavior without graph persistence
-        imas-codex scout files epfl --dry-run -n 5
+        imas-codex scout files tcv --dry-run -n 5
     """
     from rich.console import Console
 
@@ -3566,13 +3566,13 @@ def scout_status(
     \b
     EXAMPLES:
         # Show frontier summary
-        imas-codex scout status epfl
+        imas-codex scout status tcv
 
         # Show unexplored high-priority paths
-        imas-codex scout status epfl --paths
+        imas-codex scout status tcv --paths
 
         # Show what was skipped as dead-ends
-        imas-codex scout status epfl --skipped
+        imas-codex scout status tcv --skipped
     """
     from rich.console import Console
     from rich.table import Table
@@ -3729,7 +3729,7 @@ def scout_wiki(
         imas-codex scout wiki iter
 
         # Start from specific portal
-        imas-codex scout wiki epfl --portal Portal:TCV
+        imas-codex scout wiki tcv --portal Portal:TCV
 
         # Limit scope
         imas-codex scout wiki iter --max-pages 500 --max-depth 3
@@ -3836,10 +3836,10 @@ def scout_codes(
     \\b
     EXAMPLES:
         # Discover all codes at EPFL
-        imas-codex scout codes epfl
+        imas-codex scout codes tcv
 
         # Find specific codes
-        imas-codex scout codes epfl --focus "CHEASE LIUQE"
+        imas-codex scout codes tcv --focus "CHEASE LIUQE"
 
         # Search ITER for transport codes
         imas-codex scout codes iter --focus "transport JINTRAC"
@@ -3907,7 +3907,7 @@ def scout_data(
         imas-codex scout data iter
 
         # Focus on MDSplus trees
-        imas-codex scout data epfl --focus "MDSplus tree structure"
+        imas-codex scout data tcv --focus "MDSplus tree structure"
 
         # Find IMAS databases
         imas-codex scout data iter --focus "IMAS IDS locations"
@@ -3972,7 +3972,7 @@ def scout_paths(
     \\b
     EXAMPLES:
         # Map EPFL directory structure
-        imas-codex scout paths epfl
+        imas-codex scout paths tcv
 
         # Find shared code locations
         imas-codex scout paths iter --focus "shared modules"
@@ -6000,7 +6000,9 @@ async def _async_discovery_loop(
             """Log scan progress only on significant batches."""
             # Only log when batch completed (not idle/waiting messages)
             # Debug: always log to confirm callback is working
-            disc_logger.debug(f"scan callback: msg={msg}, results={len(scan_results) if scan_results else 0}")
+            disc_logger.debug(
+                f"scan callback: msg={msg}, results={len(scan_results) if scan_results else 0}"
+            )
             if scan_results and len(scan_results) > 0:
                 disc_logger.info(
                     f"SCAN batch: {len(scan_results)} paths, "
@@ -6616,7 +6618,7 @@ def sources_add(
     Examples:
         imas-codex discover sources add -n "ITER Wiki" -u https://wiki.iter.org
         imas-codex discover sources add -n "TCV Wiki" -u https://spcwiki.epfl.ch \\
-            --facility epfl --type mediawiki --auth ssh_proxy
+            --facility tcv --type mediawiki --auth ssh_proxy
         imas-codex discover sources add -n "CHEASE Docs" -u https://chease.readthedocs.io \\
             --type readthedocs
     """
@@ -6838,16 +6840,16 @@ def _create_facility_command(facility_name: str, description: str) -> click.Comm
 
         Facility knowledge is now stored in the graph database.
         Use SSH directly for exploration:
-            ssh epfl "which python3; python3 --version"
+            ssh tcv "which python3; python3 --version"
 
         See imas_codex/config/README.md for comprehensive exploration guidance.
 
         Examples:
             # Show facility info
-            imas-codex epfl
+            imas-codex tcv
 
             # Show full config
-            imas-codex epfl --config
+            imas-codex tcv --config
         """
         from imas_codex.discovery import get_facility
 

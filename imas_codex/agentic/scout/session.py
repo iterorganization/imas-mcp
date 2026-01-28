@@ -188,7 +188,7 @@ class ScoutSession:
     immediately, so no data is lost if the session is interrupted.
 
     Usage:
-        config = ScoutConfig(facility="epfl", window_size=10, max_steps=50)
+        config = ScoutConfig(facility="tcv", window_size=10, max_steps=50)
         session = ScoutSession(config)
 
         # Run with automatic window management

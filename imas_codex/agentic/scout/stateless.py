@@ -794,7 +794,7 @@ class StatelessScout:
     4. Return (next step is fresh)
 
     Usage:
-        scout = StatelessScout(ScoutConfig(facility="epfl"))
+        scout = StatelessScout(ScoutConfig(facility="tcv"))
 
         # Single step
         result = scout.step()

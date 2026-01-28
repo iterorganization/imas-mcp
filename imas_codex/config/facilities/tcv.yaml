@@ -1,16 +1,16 @@
-# EPFL Swiss Plasma Center - TCV Tokamak
+# TCV Tokamak - Swiss Plasma Center (EPFL)
 #
 # Public facility configuration for graph and mappings.
-# Infrastructure data is in epfl_infrastructure.yaml (gitignored).
+# Infrastructure data is in tcv_private.yaml (gitignored).
 
-facility: epfl
-name: École Polytechnique Fédérale de Lausanne
+facility: tcv
+name: TCV Tokamak
 machine: TCV
-description: Swiss Plasma Center - TCV Tokamak
+description: Swiss Plasma Center - TCV Tokamak at EPFL
 location: Lausanne, Switzerland
 
 # SSH connection (user configures ~/.ssh/config with this alias)
-ssh_host: epfl
+ssh_host: tcv
 
 # Data systems available at this facility
 data_systems:
@@ -22,7 +22,7 @@ wiki_sites:
     portal_page: Portal:TCV
     site_type: mediawiki
     auth_type: ssh_proxy
-    ssh_host: epfl
+    ssh_host: tcv
 
 # User info discovery configuration
 # GECOS = General Comprehensive Operating System (5th field in /etc/passwd)

@@ -12,7 +12,7 @@ Example:
     from imas_codex.wiki.discovery import WikiDiscovery
 
     # Run complete pipeline
-    discovery = WikiDiscovery("epfl", cost_limit_usd=10.0)
+    discovery = WikiDiscovery("tcv", cost_limit_usd=10.0)
     await discovery.run()
 
     # Or run individual steps
@@ -174,12 +174,12 @@ class WikiConfig:
 
         # Default configurations per facility (legacy support)
         configs = {
-            "epfl": {
+            "tcv": {
                 "base_url": "https://spcwiki.epfl.ch/wiki",
                 "portal_page": "Portal:TCV",
                 "site_type": "mediawiki",
                 "auth_type": "ssh_proxy",
-                "ssh_host": "epfl",
+                "ssh_host": "tcv",
             },
             "iter": {
                 "base_url": "https://confluence.iter.org",
@@ -1950,7 +1950,7 @@ LOW SCORE (0.0-0.4):
 
 
 async def run_wiki_discovery(
-    facility: str = "epfl",
+    facility: str = "tcv",
     cost_limit_usd: float = 10.0,
     max_pages: int | None = None,
     max_depth: int | None = None,
@@ -1961,7 +1961,7 @@ async def run_wiki_discovery(
     """Run wiki discovery and return stats as dict.
 
     Args:
-        facility: Facility ID (e.g., "epfl")
+        facility: Facility ID (e.g., "tcv")
         cost_limit_usd: Maximum cost budget
         max_pages: Maximum pages to crawl (None = unlimited)
         max_depth: Maximum link depth from portal

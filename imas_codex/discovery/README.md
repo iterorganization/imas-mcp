@@ -18,21 +18,21 @@ enabling crash recovery and idempotent operations.
 
 ```bash
 # Discover directory structure (foundation)
-uv run imas-codex discover paths epfl --cost-limit 5.0
+uv run imas-codex discover paths tcv --cost-limit 5.0
 
 # Phase-separated discovery (scan requires SSH, score is offline)
-uv run imas-codex discover paths epfl --scan-only    # Fast SSH enumeration
-uv run imas-codex discover paths epfl --score-only   # Offline LLM scoring
+uv run imas-codex discover paths tcv --scan-only    # Fast SSH enumeration
+uv run imas-codex discover paths tcv --score-only   # Offline LLM scoring
 
 # Check discovery progress
-uv run imas-codex discover status epfl
+uv run imas-codex discover status tcv
 
 # Manage documentation sources
 uv run imas-codex discover sources list
-uv run imas-codex discover sources add --name "EPFL Wiki" --url https://... --facility epfl
+uv run imas-codex discover sources add --name "EPFL Wiki" --url https://... --facility tcv
 
 # Clear all paths (for fresh start)
-uv run imas-codex discover clear epfl --force
+uv run imas-codex discover clear tcv --force
 ```
 
 ## CLI Structure
@@ -278,7 +278,7 @@ uv run imas-codex discover sources add [options]
 ```
                     ┌─────────────┐
                     │  discover   │  Single CLI command
-                    │ paths epfl  │  Auto-seeds on first run
+                    │ paths tcv  │  Auto-seeds on first run
                     └──────┬──────┘
                            │
         ┌──────────────────▼──────────────────┐

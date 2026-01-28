@@ -67,12 +67,12 @@ Each page has measurable properties:
 ```json
 [
   {
-    "id": "epfl:Thomson",
+    "id": "tcv:Thomson",
     "score": 0.95,
     "reasoning": "in_degree=47, depth=1, core diagnostic documentation"
   },
   {
-    "id": "epfl:Meeting_2024",
+    "id": "tcv:Meeting_2024",
     "score": 0.1,
     "reasoning": "in_degree=0, depth=4, meeting notes",
     "skip_reason": "administrative content, no technical value"

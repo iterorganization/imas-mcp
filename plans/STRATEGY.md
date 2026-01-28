@@ -105,8 +105,8 @@ sequenceDiagram
     participant R as Remote Facility
     participant K as Knowledge Store
 
-    H->>C: /explore_files epfl /common/tcv
-    C->>K: Load common.md + epfl.yaml + file_explorer.md
+    H->>C: /explore_files tcv /common/tcv
+    C->>K: Load common.md + tcv.yaml + file_explorer.md
     K-->>C: Instructions + existing knowledge
     C->>A: dispatch(task, context)
     
@@ -119,7 +119,7 @@ sequenceDiagram
     A-->>C: {findings, learnings}
     C->>H: "Found X. Learned: rg unavailable. Persist as knowledge?"
     H->>C: "Yes"
-    C->>K: Update epfl.yaml knowledge section
+    C->>K: Update tcv.yaml knowledge section
 ```
 
 #### Knowledge Hierarchy

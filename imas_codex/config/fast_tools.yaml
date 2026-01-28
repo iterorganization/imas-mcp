@@ -5,7 +5,7 @@
 #
 # Tools are installed to ~/bin/ and accessed via:
 # - Local: `rg 'pattern'` (when ~/bin is in PATH)
-# - Remote: `run('rg "pattern"', facility='epfl')` (auto-detects SSH vs local)
+# - Remote: `run('rg "pattern"', facility='tcv')` (auto-detects SSH vs local)
 #
 # The ReAct installer agent uses this file to install missing tools.
 # CLI: uv run imas-codex tools check/install <facility>

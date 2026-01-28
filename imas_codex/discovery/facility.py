@@ -44,7 +44,7 @@ def list_facilities() -> list[str]:
     """List all available facility configurations.
 
     Returns:
-        List of facility IDs (e.g., ["epfl", "iter"])
+        List of facility IDs (e.g., ["tcv", "iter"])
     """
     facilities_dir = get_facilities_dir()
     if not facilities_dir.exists():
@@ -117,7 +117,7 @@ def get_facility(facility_id: str) -> dict[str, Any]:
     For graph ingestion, use get_facility_metadata() instead.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
 
     Returns:
         Merged facility data as dict with all fields
@@ -161,7 +161,7 @@ def get_facility_metadata(facility_id: str) -> dict[str, Any]:
     Use this before writing facility data to the graph.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
 
     Returns:
         Dict with only public fields (name, machine, data_systems, etc.)
@@ -185,7 +185,7 @@ def get_facility_infrastructure(facility_id: str) -> dict[str, Any]:
     This data is never stored in the graph or OCI artifacts.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
 
     Returns:
         Dict with only private fields (hostnames, paths, tools, etc.)
@@ -214,7 +214,7 @@ def update_infrastructure(facility_id: str, data: dict[str, Any]) -> None:
     - Exploration notes
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
         data: Data to merge into private file
 
     Examples:
@@ -266,7 +266,7 @@ def update_metadata(facility_id: str, data: dict[str, Any]) -> None:
     - Wiki site URLs (if public)
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
         data: Data to merge into public file
 
     Examples:
@@ -346,7 +346,7 @@ def add_exploration_note(facility_id: str, note: str) -> list[str]:
     in the exploration_notes list in the private config.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl", "iter")
+        facility_id: Facility identifier (e.g., "tcv", "iter")
         note: Exploration note to add
 
     Returns:

@@ -53,7 +53,7 @@ class AsyncExecutor:
         timeout: Per-command timeout in seconds (default: 30)
     
     Example:
-        executor = AsyncExecutor(facility="epfl", max_sessions=4)
+        executor = AsyncExecutor(facility="tcv", max_sessions=4)
         commands = [
             ("fd -e py", "/home/codes"),
             ("du -sb", "/home/data"),
@@ -207,7 +207,7 @@ class DirectoryScanner:
         config: DiscoveryScanConfig with facility and limits
     
     Example:
-        config = DiscoveryScanConfig(facility="epfl", timeout=30)
+        config = DiscoveryScanConfig(facility="tcv", timeout=30)
         scanner = DirectoryScanner(config)
         stats = await scanner.scan_directory("/home/codes")
     """
@@ -590,7 +590,7 @@ async def test_file_type_parsing():
 def test_scan_config_validation():
     """Test configuration validation."""
     config = DiscoveryScanConfig(
-        facility="epfl",
+        facility="tcv",
         timeout=30,
         max_sessions=4,
     )

@@ -13,16 +13,16 @@ ingestion because it:
 
 Usage:
     # Ingest a single tree
-    uv run ingest-mdsplus epfl results --shot 84469
+    uv run ingest-mdsplus tcv results --shot 84469
 
     # Ingest multiple trees
-    uv run ingest-mdsplus epfl results tcv_shot magnetics --shot 84469
+    uv run ingest-mdsplus tcv results tcv_shot magnetics --shot 84469
 
     # Dry run to see what would be ingested
-    uv run ingest-mdsplus epfl results --shot 84469 --dry-run
+    uv run ingest-mdsplus tcv results --shot 84469 --dry-run
 
     # Limit number of nodes (for testing)
-    uv run ingest-mdsplus epfl results --shot 84469 --limit 100
+    uv run ingest-mdsplus tcv results --shot 84469 --limit 100
 """
 
 import json
@@ -90,7 +90,7 @@ def introspect_tree_ssh(
     4. Returns JSON array of node dicts
 
     Args:
-        facility: SSH host alias (e.g., "epfl")
+        facility: SSH host alias (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "results")
         shot: Shot number to use for introspection
         limit: Optional limit on number of nodes to fetch
@@ -185,7 +185,7 @@ def ingest_tree_nodes(
     """Ingest tree nodes into Neo4j.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl")
+        facility_id: Facility identifier (e.g., "tcv")
         tree_name: MDSplus tree name
         nodes: List of node dicts from introspection
         shot: Reference shot number
@@ -286,13 +286,13 @@ def ingest_mdsplus(
 ) -> int:
     """Ingest MDSplus tree structure from a remote facility.
 
-    FACILITY is the SSH host alias (e.g., "epfl").
+    FACILITY is the SSH host alias (e.g., "tcv").
     TREES are the MDSplus tree names to ingest (e.g., "results", "tcv_shot").
 
     Examples:
-        ingest-mdsplus epfl results --shot 84469
-        ingest-mdsplus epfl results tcv_shot --shot 84469 -v
-        ingest-mdsplus epfl results --shot 84469 --limit 100 --dry-run
+        ingest-mdsplus tcv results --shot 84469
+        ingest-mdsplus tcv results tcv_shot --shot 84469 -v
+        ingest-mdsplus tcv results --shot 84469 --limit 100 --dry-run
     """
     # Set up logging
     if quiet:

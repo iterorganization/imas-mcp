@@ -116,7 +116,7 @@ class ExplorationAgent:
         """Initialize the exploration agent.
 
         Args:
-            facility: Facility ID to explore (e.g., "iter", "epfl")
+            facility: Facility ID to explore (e.g., "iter", "tcv")
             model: LLM model to use (default: exploration model from config)
             verbose: Enable verbose output
             max_steps: Maximum agent iterations

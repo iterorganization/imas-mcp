@@ -10,7 +10,7 @@ Facility exploration for discovering source files, MDSplus trees, and analysis c
 
 ```python
 python("""
-info = get_facility('epfl')
+info = get_facility('tcv')
 excludes = info.get('excludes', {})
 print(f"Large dirs: {excludes.get('large_dirs', [])}")
 print(f"Depth limits: {excludes.get('depth_limits', {})}")
@@ -43,13 +43,13 @@ Before exploring a new facility, ensure fast CLI tools are installed:
 
 ```python
 # Check tool availability
-python("print(check_tools('epfl'))")
+python("print(check_tools('tcv'))")
 
 # If tools are missing, install them (uses ReAct agent)
-python("result = setup_tools('epfl'); print(result.summary)")
+python("result = setup_tools('tcv'); print(result.summary)")
 
 # Or quick install without agent
-python("print(quick_setup('epfl', required_only=True))")
+python("print(quick_setup('tcv', required_only=True))")
 ```
 
 Tool definitions are in [`imas_codex/config/fast_tools.yaml`](../imas_codex/config/fast_tools.yaml).
@@ -77,9 +77,9 @@ Use **direct SSH** for single commands:
 
 ```bash
 # Direct SSH
-ssh epfl "rg -l 'IMAS' /home/codes"
-ssh epfl "fd -e py /home/codes | head -20"
-ssh epfl "dust -d 2 /home/codes"
+ssh tcv "rg -l 'IMAS' /home/codes"
+ssh tcv "fd -e py /home/codes | head -20"
+ssh tcv "dust -d 2 /home/codes"
 ```
 
 ### Chained Processing & Graph Operations
@@ -92,22 +92,22 @@ Use `python()` only when you need:
 ```python
 # Chained processing (run() auto-detects local/remote)
 python("""
-files = run('fd -e py /home/codes', facility='epfl').strip().split('\\n')
+files = run('fd -e py /home/codes', facility='tcv').strip().split('\\n')
 for f in files[:10]:
-    content = run(f'head -20 {f}', facility='epfl')
+    content = run(f'head -20 {f}', facility='tcv')
     if 'write_ids' in content:
         print(f'IDS writer: {f}')
 """)
 
 # Graph operations
-python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
+python("info = get_facility('tcv'); print(info['actionable_paths'][:5])")
 python("print(search_code('equilibrium reconstruction'))")
 
 # Persist discoveries
 python("""
 add_to_graph("FacilityPath", [
-    {"id": "epfl:/home/codes/liuqe", "path": "/home/codes/liuqe",
-     "facility_id": "epfl", "path_type": "code_directory", "status": "discovered"}
+    {"id": "tcv:/home/codes/liuqe", "path": "/home/codes/liuqe",
+     "facility_id": "tcv", "path_type": "code_directory", "status": "discovered"}
 ])
 """)
 ```
@@ -133,14 +133,14 @@ fd -e py /home/codes | wc -l
 scc /home/codes/liuqe --format json
 
 # Remote facility - direct SSH
-ssh epfl "rg -l 'write_ids|read_ids' /home/codes -g '*.py' | head -20"
-ssh epfl "fd -e py /home/codes | wc -l"
+ssh tcv "rg -l 'write_ids|read_ids' /home/codes -g '*.py' | head -20"
+ssh tcv "fd -e py /home/codes | wc -l"
 
 # Chained processing - use python() with run()
 python("""
-files = run('fd -e py /home/codes', facility='epfl').strip().split('\\n')
+files = run('fd -e py /home/codes', facility='tcv').strip().split('\\n')
 for f in files[:10]:
-    content = run(f'head -20 {f}', facility='epfl')
+    content = run(f'head -20 {f}', facility='tcv')
     if 'write_ids' in content:
         print(f'IDS writer: {f}')
 """)
@@ -189,16 +189,16 @@ Example persistence:
 python("""
 # Persist discovered source files
 add_to_graph("SourceFile", [
-    {"id": "epfl:/home/codes/liuqe/liuqe.py", 
+    {"id": "tcv:/home/codes/liuqe/liuqe.py", 
      "path": "/home/codes/liuqe/liuqe.py",
-     "facility_id": "epfl", "status": "discovered", 
+     "facility_id": "tcv", "status": "discovered", 
      "interest_score": 0.8}
 ])
 """)
 
 python("""
 # Update private infrastructure data
-update_infrastructure("epfl", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
+update_infrastructure("tcv", {"tools": {"rg": "14.1.1", "fd": "10.2.0"}})
 """)
 ```
 
@@ -209,7 +209,7 @@ When a command times out or hangs, **persist the constraint immediately**:
 ```python
 python("""
 # Get current excludes and merge
-info = get_facility('epfl')
+info = get_facility('tcv')
 excludes = info.get('excludes', {})
 large_dirs = excludes.get('large_dirs', [])
 if '/work' not in large_dirs:
@@ -218,7 +218,7 @@ if '/work' not in large_dirs:
 depth_limits = excludes.get('depth_limits', {})
 depth_limits['/work'] = 2  # Set safe depth limit
 
-update_infrastructure('epfl', {
+update_infrastructure('tcv', {
     'excludes': {
         'large_dirs': large_dirs,
         'depth_limits': depth_limits
@@ -226,7 +226,7 @@ update_infrastructure('epfl', {
 })
 
 # Add human-readable context
-add_exploration_note('epfl', '/work causes timeouts - use --max-depth 2 or target /work/imas')
+add_exploration_note('tcv', '/work causes timeouts - use --max-depth 2 or target /work/imas')
 """)
 ```
 
@@ -254,7 +254,7 @@ Infrastructure (private) - security-sensitive:
 
 ```python
 # Wiki requires -k flag (SSL cert issue)
-python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facility='epfl'))")
+python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facility='tcv'))")
 ```
 
 ## Handoff to Ingestion
@@ -262,4 +262,4 @@ python("print(run('curl -skL \"https://spcwiki.epfl.ch/wiki/PageName\"', facilit
 After discovering files, hand off to the `ingest` agent:
 1. Queue files: `add_to_graph("SourceFile", [...])`
 2. Use handoff button → "Queue for Ingestion"
-3. Ingest agent runs: `uv run imas-codex ingest run epfl`
+3. Ingest agent runs: `uv run imas-codex ingest run tcv`

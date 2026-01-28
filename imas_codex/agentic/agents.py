@@ -329,7 +329,7 @@ def get_scout_agent(
     - Documenting findings in the knowledge graph
 
     Args:
-        facility: Facility ID to explore (e.g., "iter", "epfl")
+        facility: Facility ID to explore (e.g., "iter", "tcv")
         verbose: Enable verbose output
         model: Override model (default: exploration model from config)
         cost_limit_usd: Budget limit in USD

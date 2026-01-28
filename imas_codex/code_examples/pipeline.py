@@ -231,9 +231,9 @@ def _link_example_mdsplus_paths(
     result = graph_client.query(
         """
         MATCH (e:CodeExample {id: $example_id})-[:HAS_CHUNK]->(c:CodeChunk)
-        WHERE c.mdsplus_paths IS NOT NULL
+        WHERE c.mdsplus_paths IS NOT NULL AND e.facility_id IS NOT NULL
         UNWIND c.mdsplus_paths AS path
-        WITH c, coalesce(e.facility_id, 'epfl') AS facility, path
+        WITH c, e.facility_id AS facility, path
         MERGE (d:DataReference {raw_string: path, facility_id: facility})
         ON CREATE SET
             d.id = facility + ':mdsplus_path:' + path,
@@ -299,7 +299,7 @@ async def ingest_code_files(
     - **MDSplus linking**: Extracted paths are linked to TreeNode entities
 
     Args:
-        facility: Facility SSH host alias (e.g., "epfl")
+        facility: Facility SSH host alias (e.g., "tcv")
         remote_paths: List of remote file paths to ingest (if None, uses graph queue)
         description: Optional description for all files
         progress_callback: Optional callback for progress reporting

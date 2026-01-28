@@ -6,13 +6,13 @@ It handles architecture detection, PATH configuration, and verification.
 
 Usage from python() REPL:
     # Check and install tools on EPFL
-    result = setup_tools('epfl')
+    result = setup_tools('tcv')
 
     # Check and install tools locally (ITER/SDCC)
     result = setup_tools('iter')
 
     # Install specific tool
-    result = install_tool('rg', facility='epfl')
+    result = install_tool('rg', facility='tcv')
 """
 
 import logging
@@ -290,7 +290,7 @@ def setup_tools(
 
     Examples:
         # Setup tools on EPFL
-        result = setup_tools('epfl')
+        result = setup_tools('tcv')
         print(result.summary)
 
         # Setup only required tools locally

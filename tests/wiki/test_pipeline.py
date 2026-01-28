@@ -121,7 +121,7 @@ class TestPipelineIntegration:
         from imas_codex.wiki.pipeline import WikiIngestionPipeline
 
         try:
-            p = WikiIngestionPipeline("epfl")
+            p = WikiIngestionPipeline("tcv")
             yield p
         except Exception:
             pytest.skip("Neo4j not available")

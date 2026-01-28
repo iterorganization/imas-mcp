@@ -42,15 +42,15 @@ The system uses a three-phase pipeline:
 
 ```bash
 # Full discovery pipeline: crawl + score
-uv run imas-codex wiki discover epfl
+uv run imas-codex wiki discover tcv
 
 # Individual phases
-uv run imas-codex wiki crawl epfl       # Link extraction only
-uv run imas-codex wiki score epfl       # Agent evaluation
-uv run imas-codex wiki ingest epfl      # Fetch, chunk, embed
+uv run imas-codex wiki crawl tcv       # Link extraction only
+uv run imas-codex wiki score tcv       # Agent evaluation
+uv run imas-codex wiki ingest tcv      # Fetch, chunk, embed
 
 # Check status
-uv run imas-codex wiki status epfl
+uv run imas-codex wiki status tcv
 ```
 
 ## Graph Schema
@@ -131,10 +131,10 @@ The system also handles wiki artifacts (PDFs, presentations):
 
 ```bash
 # Ingest only artifacts
-uv run imas-codex wiki ingest epfl --type artifacts
+uv run imas-codex wiki ingest tcv --type artifacts
 
 # Control max file size
-uv run imas-codex wiki ingest epfl --max-size-mb 10
+uv run imas-codex wiki ingest tcv --max-size-mb 10
 ```
 
 Supported artifact types:
@@ -162,8 +162,8 @@ hits = query("""
 from imas_codex.wiki.scraper import fetch_wiki_page
 from imas_codex.wiki.pipeline import WikiIngestionPipeline
 
-page = fetch_wiki_page("Thomson", facility="epfl")
-pipeline = WikiIngestionPipeline(facility_id="epfl")
+page = fetch_wiki_page("Thomson", facility="tcv")
+pipeline = WikiIngestionPipeline(facility_id="tcv")
 stats = await pipeline.ingest_page(page)
 ```
 
@@ -181,13 +181,13 @@ Wiki access is configured per facility. For EPFL:
 Query current wiki ingestion state:
 
 ```bash
-uv run imas-codex wiki status epfl
+uv run imas-codex wiki status tcv
 ```
 
 Or via Cypher:
 
 ```cypher
-MATCH (wp:WikiPage {facility_id: 'epfl'})
+MATCH (wp:WikiPage {facility_id: 'tcv'})
 RETURN wp.status AS status, count(*) AS count
 ORDER BY count DESC
 ```

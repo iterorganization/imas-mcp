@@ -26,7 +26,7 @@ python("result = query('MATCH (f:Facility) RETURN f.id'); print(result)")
 python("schema = get_graph_schema(); print(schema)")
 
 # Ingest nodes with validation
-python("ingest_nodes('Facility', [{'id': 'epfl', 'name': 'EPFL'}])")
+python("ingest_nodes('Facility', [{'id': 'tcv', 'name': 'EPFL'}])")
 ```
 
 ## CLI Commands (Fallback)

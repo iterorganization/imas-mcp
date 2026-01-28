@@ -267,7 +267,7 @@ def fetch_imas_paths(paths: str) -> str:
 
 
 @tool
-def search_wiki(query: str, limit: int = 5, facility: str = "epfl") -> str:
+def search_wiki(query: str, limit: int = 5, facility: str = "tcv") -> str:
     """Search wiki documentation using semantic vector search.
 
     Use for official signal descriptions, sign conventions, and diagnostic specs.
@@ -276,7 +276,7 @@ def search_wiki(query: str, limit: int = 5, facility: str = "epfl") -> str:
     Args:
         query: Natural language query (e.g., 'Thomson scattering calibration')
         limit: Maximum number of results (default: 5)
-        facility: Facility ID (default: 'epfl')
+        facility: Facility ID (default: 'tcv')
 
     Returns:
         Matching wiki chunks with page titles, sections, and content
@@ -327,7 +327,7 @@ def search_wiki(query: str, limit: int = 5, facility: str = "epfl") -> str:
 
 
 @tool
-def get_wiki_context_for_path(path: str, facility: str = "epfl") -> str:
+def get_wiki_context_for_path(path: str, facility: str = "tcv") -> str:
     """Get wiki documentation for a specific MDSplus path.
 
     Searches for WikiChunks that document a given path. Use during enrichment
@@ -335,7 +335,7 @@ def get_wiki_context_for_path(path: str, facility: str = "epfl") -> str:
 
     Args:
         path: MDSplus path (e.g., '\\RESULTS::THOMSON:NE')
-        facility: Facility ID (default: 'epfl')
+        facility: Facility ID (default: 'tcv')
 
     Returns:
         Wiki content that documents this path
@@ -619,7 +619,7 @@ def get_exploration_tools(facility: str) -> list[Tool]:
     ]
 
 
-def get_all_tools(facility: str = "epfl") -> list[Tool]:
+def get_all_tools(facility: str = "tcv") -> list[Tool]:
     """Get all available tools.
 
     Warning: Includes IMAS tools which have ~30s startup cost for embeddings.

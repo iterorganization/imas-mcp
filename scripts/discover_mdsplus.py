@@ -7,25 +7,25 @@ builds the "super tree" - TreeNodes with applicability ranges (first_shot/last_s
 
 Usage:
     # Full discovery with metadata extraction (default)
-    uv run discover-mdsplus epfl results
+    uv run discover-mdsplus tcv results
 
     # Use legacy sequential mode (slower, rough boundaries)
-    uv run discover-mdsplus epfl results --sequential --step 100
+    uv run discover-mdsplus tcv results --sequential --step 100
 
     # Refine existing rough boundaries
-    uv run discover-mdsplus epfl results --refine
+    uv run discover-mdsplus tcv results --refine
 
     # Skip metadata extraction (faster but less complete)
-    uv run discover-mdsplus epfl results --skip-metadata
+    uv run discover-mdsplus tcv results --skip-metadata
 
     # Dry run to preview
-    uv run discover-mdsplus epfl results --dry-run
+    uv run discover-mdsplus tcv results --dry-run
 
     # Resume interrupted discovery
-    uv run discover-mdsplus epfl results --checkpoint discovery.json
+    uv run discover-mdsplus tcv results --checkpoint discovery.json
 
     # Specify shot range
-    uv run discover-mdsplus epfl results --start 80000 --end 89000
+    uv run discover-mdsplus tcv results --start 80000 --end 89000
 """
 
 import logging
@@ -96,7 +96,7 @@ def main(
 ) -> int:
     """Discover MDSplus tree structure epochs and build super tree.
 
-    FACILITY is the SSH host alias (e.g., "epfl").
+    FACILITY is the SSH host alias (e.g., "tcv").
     TREE_NAME is the MDSplus tree name (e.g., "results").
 
     By default uses optimized batch mode with exact boundaries and metadata extraction.
@@ -109,10 +109,10 @@ def main(
     - Real units and descriptions extracted from MDSplus
 
     Examples:
-        discover-mdsplus epfl results
-        discover-mdsplus epfl results --sequential --step 100
-        discover-mdsplus epfl results --checkpoint discovery.json
-        discover-mdsplus epfl results --dry-run -v
+        discover-mdsplus tcv results
+        discover-mdsplus tcv results --sequential --step 100
+        discover-mdsplus tcv results --checkpoint discovery.json
+        discover-mdsplus tcv results --dry-run -v
     """
     # Set up logging
     if quiet:

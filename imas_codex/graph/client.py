@@ -10,7 +10,7 @@ Example:
     >>> from imas_codex.graph import GraphClient
     >>> with GraphClient() as client:
     ...     client.initialize_schema()
-    ...     client.create_node("Facility", "epfl", {"name": "EPFL/TCV"})
+    ...     client.create_node("Facility", "tcv", {"name": "EPFL/TCV"})
 """
 
 import logging
@@ -237,8 +237,8 @@ class GraphClient:
 
         Example:
             >>> client.create_nodes("FacilityPath", [
-            ...     {"id": "epfl:/home/codes", "path": "/home/codes", "facility_id": "epfl"},
-            ...     {"id": "epfl:/home/anasrv", "path": "/home/anasrv", "facility_id": "epfl"},
+            ...     {"id": "tcv:/home/codes", "path": "/home/codes", "facility_id": "tcv"},
+            ...     {"id": "tcv:/home/anasrv", "path": "/home/anasrv", "facility_id": "tcv"},
             ... ])
             {"processed": 2}
         """

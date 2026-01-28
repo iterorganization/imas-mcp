@@ -41,7 +41,7 @@ result = client.query("""
 """, name="EFIT")
 
 # High-level method (convenience for common patterns)
-tools = client.get_tools("epfl")
+tools = client.get_tools("tcv")
 ```
 
 ## Multi-Facility Support
@@ -51,7 +51,7 @@ tools = client.get_tools("epfl")
 | Field | Purpose | Example |
 |-------|---------|---------|
 | `id`/`name`/`path` | **Identifier** - uniquely identifies entity type | `"LIUQE"`, `"Thomson"` |
-| `facility_id` | **Owner** - which facility this belongs to | `"epfl"`, `"jet"` |
+| `facility_id` | **Owner** - which facility this belongs to | `"tcv"`, `"jet"` |
 
 **Both are required** to uniquely identify most nodes:
 
@@ -59,7 +59,7 @@ tools = client.get_tools("epfl")
 ┌─────────────────────────────────────────────────────────────┐
 │ AnalysisCode nodes in the graph:                            │
 ├─────────────────────────────────────────────────────────────┤
-│ name: "EFIT"     facility_id: "epfl"  ← EPFL's EFIT         │
+│ name: "EFIT"     facility_id: "tcv"  ← EPFL's EFIT         │
 │ name: "EFIT"     facility_id: "jet"   ← JET's EFIT          │
 │ name: "EFIT"     facility_id: "iter"  ← ITER's EFIT         │
 └─────────────────────────────────────────────────────────────┘
@@ -74,7 +74,7 @@ Constraint: (name, facility_id) IS UNIQUE
 # Using Python accessor
 efit_instances = client.get_nodes_across_facilities("AnalysisCode", name="EFIT")
 facilities = [e["facility_id"] for e in efit_instances]
-# ["epfl", "jet", "iter"]
+# ["tcv", "jet", "iter"]
 
 # Using direct Cypher
 facilities = client.query("""
@@ -87,16 +87,16 @@ facilities = client.query("""
 ```python
 comparison = client.compare_facilities(
     "Diagnostic", 
-    facility_ids=["epfl", "jet", "iter"]
+    facility_ids=["tcv", "jet", "iter"]
 )
-# {"epfl": [...], "jet": [...], "iter": [...]}
+# {"tcv": [...], "jet": [...], "iter": [...]}
 ```
 
 **Find shared IMAS mappings:**
 ```python
 shared = client.find_shared_imas_mappings()
 # [{"path": "equilibrium/time_slice/global_quantities/ip", 
-#   "facilities": ["epfl", "jet", "iter"]}]
+#   "facilities": ["tcv", "jet", "iter"]}]
 ```
 
 ## Module Structure
@@ -161,8 +161,8 @@ with GraphClient() as client:
     client.initialize_schema()
     
     # High-level CRUD
-    client.create_facility("epfl", name="EPFL/TCV", machine="TCV")
-    client.create_tool("epfl", name="git", available=True, category="vcs")
+    client.create_facility("tcv", name="EPFL/TCV", machine="TCV")
+    client.create_tool("tcv", name="git", available=True, category="vcs")
     
     # Direct Cypher for complex queries
     result = client.query("""

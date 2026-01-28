@@ -127,10 +127,10 @@ class TestFacilityAgnosticScoring:
         # Should be scored on content, not metrics alone
         assert page["preview_summary"]
 
-    def test_epfl_mediawiki_scoring(self):
+    def test_tcv_mediawiki_scoring(self):
         """EPFL MediaWiki pages should score consistently."""
         page = {
-            "id": "epfl:Thomson",
+            "id": "tcv:Thomson",
             "title": "Thomson Scattering",
             "preview_summary": "Thomson diagnostic system",
             "in_degree": 5,  # Higher in MediaWiki due to different linking

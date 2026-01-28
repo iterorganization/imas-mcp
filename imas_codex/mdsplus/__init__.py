@@ -14,21 +14,21 @@ Usage:
     from imas_codex.graph import GraphClient
 
     # Discover epochs (SSH to facility) - optimized batch version
-    epochs, structures = discover_epochs_optimized("epfl", "results")
+    epochs, structures = discover_epochs_optimized("tcv", "results")
 
     # Or use original sequential version
-    epochs, structures = discover_epochs("epfl", "results", step=500)
+    epochs, structures = discover_epochs("tcv", "results", step=500)
 
     # Ingest to Neo4j
     with GraphClient() as client:
         ingest_epochs(client, epochs)
-        ingest_super_tree(client, "epfl", "results", epochs, structures)
+        ingest_super_tree(client, "tcv", "results", epochs, structures)
 
         # Enrich with real metadata (units, descriptions)
-        enrich_graph_metadata(client, "epfl", "results", shot=89000)
+        enrich_graph_metadata(client, "tcv", "results", shot=89000)
 
         # Refine rough boundaries (for legacy sequential data)
-        refine_boundaries(client, "epfl", "results")
+        refine_boundaries(client, "tcv", "results")
 """
 
 from imas_codex.mdsplus.batch_discovery import (

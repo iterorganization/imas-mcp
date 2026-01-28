@@ -459,7 +459,7 @@ def update_page_scores(scores: list[dict]) -> int:
 ```python
 # test_prefetch.py
 class TestPrefetch:
-    async def test_fetch_epfl_page(self):
+    async def test_fetch_tcv_page(self):
         """Test fetching EPFL wiki page."""
         ...
     
@@ -509,7 +509,7 @@ class TestScoring:
 
 **Steps**:
 1. Prefetch 200 pages: `uv run imas-codex wiki prefetch iter --max-pages 100`
-2. Prefetch EPFL: `uv run imas-codex wiki prefetch epfl --max-pages 100`
+2. Prefetch EPFL: `uv run imas-codex wiki prefetch tcv --max-pages 100`
 3. Re-score with new method
 4. Compare old vs new scores
 5. Manual review of 20 pages
@@ -533,11 +533,11 @@ class TestScoring:
 **Commands**:
 ```bash
 # Prefetch all pages
-uv run imas-codex wiki prefetch epfl
+uv run imas-codex wiki prefetch tcv
 uv run imas-codex wiki prefetch iter
 
 # Re-score all pages (reset status to 'discovered' first)
-uv run imas-codex wiki score epfl --rescore
+uv run imas-codex wiki score tcv --rescore
 uv run imas-codex wiki score iter --rescore
 
 # Validate

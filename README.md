@@ -239,7 +239,7 @@ Add to `~/.ssh/config`:
 
 ```
 # EPFL / Swiss Plasma Center
-Host epfl
+Host tcv
     HostName spcepfl.epfl.ch
     User your_username
     ControlMaster auto
@@ -263,10 +263,10 @@ Host ipp
 **Verify setup:**
 ```bash
 # Check if master connection is active
-ssh -O check epfl
+ssh -O check tcv
 
 # Manually close master connection
-ssh -O exit epfl
+ssh -O exit tcv
 ```
 
 #### Facility Exploration Commands
@@ -275,14 +275,14 @@ Once SSH is configured, explore facilities directly from the terminal:
 
 ```bash
 # Execute commands on remote facility
-uv run imas-codex epfl "python --version"
-uv run imas-codex epfl "ls /common/tcv/codes"
+uv run imas-codex tcv "python --version"
+uv run imas-codex tcv "ls /common/tcv/codes"
 
 # View session history
-uv run imas-codex epfl --status
+uv run imas-codex tcv --status
 
 # Persist learnings when done
-uv run imas-codex epfl --finish << 'EOF'
+uv run imas-codex tcv --finish << 'EOF'
 python:
   version: "3.9.21"
 tools:
@@ -292,7 +292,7 @@ paths:
 EOF
 
 # Or discard session
-uv run imas-codex epfl --discard
+uv run imas-codex tcv --discard
 ```
 
 #### ReAct Agents (Autonomous Discovery)
@@ -310,21 +310,21 @@ Discover and evaluate wiki pages in three phases:
 
 ```bash
 # Full discovery (crawl + score in one command)
-imas-codex wiki discover epfl
+imas-codex wiki discover tcv
 
 # Or run phases separately for more control:
 
 # Phase 1: Fast link crawling (no LLM, builds graph structure)
-imas-codex wiki crawl epfl --max-pages 500
+imas-codex wiki crawl tcv --max-pages 500
 
 # Phase 2: Agent-based scoring (evaluates pages using graph metrics)
-imas-codex wiki score epfl -v  # -v for verbose agent reasoning
+imas-codex wiki score tcv -v  # -v for verbose agent reasoning
 
 # Phase 3: Ingest high-score pages
-imas-codex wiki ingest epfl --min-score 0.7
+imas-codex wiki ingest tcv --min-score 0.7
 
 # Check progress
-imas-codex wiki status epfl
+imas-codex wiki status tcv
 ```
 
 **Model Configuration:**
@@ -344,7 +344,7 @@ Discovery uses a cost budget (default $10) tracked via OpenRouter:
 
 ```bash
 # Set lower cost limit for testing
-imas-codex wiki discover epfl --cost-limit 2.0
+imas-codex wiki discover tcv --cost-limit 2.0
 ```
 
 **Graph-Driven Workflow:**

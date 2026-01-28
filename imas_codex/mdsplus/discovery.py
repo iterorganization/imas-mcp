@@ -16,7 +16,7 @@ class TreeDiscovery:
     """Configuration for MDSplus tree discovery at a facility.
 
     Attributes:
-        facility: SSH host alias (e.g., "epfl", "iter")
+        facility: SSH host alias (e.g., "tcv", "iter")
         shot_tree: Tree name for getting current shot number (facility-specific)
         python_cmd: Python command on remote (default: "python3")
         ssh_timeout: Timeout for SSH commands in seconds
@@ -193,7 +193,7 @@ def discover_epochs(
     """Discover structural epochs by scanning shot history.
 
     Args:
-        facility: SSH host alias (e.g., "epfl")
+        facility: SSH host alias (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "results")
         start_shot: Start of scan range (default: 3000)
         end_shot: End of scan range (default: current shot)

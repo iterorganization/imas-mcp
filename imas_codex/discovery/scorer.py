@@ -165,7 +165,7 @@ class DirectoryScorer:
         facility: Facility ID for sampling calibration examples
 
     Example:
-        scorer = DirectoryScorer(facility="epfl")
+        scorer = DirectoryScorer(facility="tcv")
         batch = scorer.score_batch(
             directories=[...],
             focus="equilibrium codes",

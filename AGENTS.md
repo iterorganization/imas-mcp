@@ -38,8 +38,8 @@ Always import enums and classes from generated models. Never hardcode status val
 from imas_codex.graph.models import SourceFile, SourceFileStatus, TreeNode
 
 sf = SourceFile(
-    id="epfl:/home/codes/liuqe.py",
-    facility_id="epfl",
+    id="tcv:/home/codes/liuqe.py",
+    facility_id="tcv",
     path="/home/codes/liuqe.py",
     status=SourceFileStatus.discovered,  # Use enum, not string
 )
@@ -153,8 +153,8 @@ rg -l "IMAS" /path/to/search
 fd -e py /path/to/search
 
 # Remote facility
-ssh epfl "rg -l 'IMAS' /home/codes"
-ssh epfl "fd -e py /home/codes | head -20"
+ssh tcv "rg -l 'IMAS' /home/codes"
+ssh tcv "fd -e py /home/codes | head -20"
 ```
 
 ## Commit Workflow
@@ -330,9 +330,9 @@ python("print(reload())")
 | Graph query | `python("print(query('MATCH (n) RETURN n.id LIMIT 5'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(search_code('equilibrium'))")` |
-| Facility info | `python("print(get_facility('epfl'))")` |
+| Facility info | `python("print(get_facility('tcv'))")` |
 | Add to graph | `add_to_graph('SourceFile', [...])` |
-| Update infrastructure | `update_facility_infrastructure('epfl', {...})` |
+| Update infrastructure | `update_facility_infrastructure('tcv', {...})` |
 
 ## Domain Workflows
 
@@ -367,8 +367,8 @@ uv run imas-codex neo4j shell
 uv run imas-codex neo4j dump
 
 # Ingestion
-uv run imas-codex ingest queue epfl /path/*.py
-uv run imas-codex ingest run epfl
+uv run imas-codex ingest queue tcv /path/*.py
+uv run imas-codex ingest run tcv
 
 # Testing
 uv run pytest

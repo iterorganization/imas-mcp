@@ -282,17 +282,17 @@ class QueueFilesTool(Tool):
 
 ```bash
 # Start exploration with windowed execution
-imas-codex scout epfl files --window-size 10 --max-windows 5
+imas-codex scout tcv files --window-size 10 --max-windows 5
 
 # Resume interrupted session
-imas-codex scout resume epfl --session-id <uuid>
+imas-codex scout resume tcv --session-id <uuid>
 
 # Check active/recent sessions
-imas-codex scout status epfl
-imas-codex scout list epfl
+imas-codex scout status tcv
+imas-codex scout list tcv
 
 # Force summary of current session
-imas-codex scout summarize epfl --session-id <uuid>
+imas-codex scout summarize tcv --session-id <uuid>
 ```
 
 ### New Python API
@@ -302,16 +302,16 @@ from imas_codex.agentic import ScoutSession, ExplorationAgent
 
 # Create session with explicit windowing
 session = ScoutSession(
-    facility="epfl",
+    facility="tcv",
     window_size=10,
     max_windows=5,
 )
 
 # Resume existing session
-session = ScoutSession.load(facility="epfl", session_id="...")
+session = ScoutSession.load(facility="tcv", session_id="...")
 
 # Use with agent
-async with ExplorationAgent(facility="epfl", session=session) as agent:
+async with ExplorationAgent(facility="tcv", session=session) as agent:
     result = await agent.explore("Find equilibrium codes")
     # Automatically checkpoints at window boundaries
 ```

@@ -1,5 +1,5 @@
 #!/bin/bash
-# MDSplus Tree Ingestion Script for TCV/EPFL
+# MDSplus Tree Ingestion Script for TCV
 # Run from imas-codex project directory with Neo4j running
 #
 # This script ingests all MDSplus trees using discover-mdsplus,
@@ -40,7 +40,7 @@ TREES=(
     "vsystem"
 )
 
-FACILITY="epfl"
+FACILITY="tcv"
 LOGDIR="logs/mdsplus_ingestion"
 mkdir -p "$LOGDIR"
 

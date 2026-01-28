@@ -308,14 +308,17 @@ def persist_enrichment(facility: str, results: list[EnrichmentResult]) -> int:
 
 
 def get_paths_pending_enrichment(facility: str, threshold: float = 0.75) -> list[str]:
-    """Get high-scoring paths that haven't been enriched.
+    """Get paths marked for enrichment that haven't been enriched yet.
+
+    Uses should_enrich flag set by LLM during scoring. The threshold is used
+    as a fallback for paths scored before should_enrich was added.
 
     Args:
         facility: Facility ID
-        threshold: Minimum score for enrichment
+        threshold: Fallback minimum score for legacy paths without should_enrich
 
     Returns:
-        List of paths above threshold without enrichment
+        List of paths ready for enrichment
     """
     from imas_codex.graph import GraphClient
 
@@ -324,8 +327,11 @@ def get_paths_pending_enrichment(facility: str, threshold: float = 0.75) -> list
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status = 'scored'
-                AND p.score >= $threshold
                 AND (p.is_enriched IS NULL OR p.is_enriched = false)
+                AND (
+                    p.should_enrich = true
+                    OR (p.should_enrich IS NULL AND p.score >= $threshold)
+                )
             RETURN p.path AS path
             ORDER BY p.score DESC
             """,

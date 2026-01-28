@@ -154,7 +154,7 @@ Execute command locally or via SSH (auto-detects based on facility).
 **Examples:**
 ```python
 run('rg pattern', facility='iter')  # Local (ITER is local)
-run('rg pattern', facility='epfl')  # SSH to EPFL
+run('rg pattern', facility='tcv')  # SSH to EPFL
 run('rg pattern')                   # Local (no facility)
 ```
 
@@ -166,7 +166,7 @@ Check availability of all fast CLI tools.
 
 **Examples:**
 ```python
-check_tools('epfl')
+check_tools('tcv')
 check_tools('iter')  # Local check
 check_tools()        # Local check
 ```
@@ -270,8 +270,8 @@ For infrastructure data (paths, tools, OS), use `update_infrastructure()` instea
 ```python
 # Via MCP tool
 add_to_graph("SourceFile", [
-    {"id": "epfl:/home/codes/file.py", "path": "/home/codes/file.py",
-     "facility_id": "epfl", "status": "discovered"}
+    {"id": "tcv:/home/codes/file.py", "path": "/home/codes/file.py",
+     "facility_id": "tcv", "status": "discovered"}
 ])
 
 # Via python() REPL - not available as function

@@ -17,8 +17,8 @@ class TestScoutConfig:
 
     def test_default_config(self) -> None:
         """Test default configuration values."""
-        config = ScoutConfig(facility="epfl")
-        assert config.facility == "epfl"
+        config = ScoutConfig(facility="tcv")
+        assert config.facility == "tcv"
         assert config.window_size == 10
         assert config.max_steps == 100
         assert config.warning_threshold == 0.8
@@ -137,15 +137,15 @@ class TestSessionState:
 
     def test_session_initialization(self) -> None:
         """Test session initialization."""
-        config = ScoutConfig(facility="epfl", auto_persist=False)
+        config = ScoutConfig(facility="tcv", auto_persist=False)
         session = ScoutSession(config)
 
         session._init_session()
 
         assert session.state is not None
-        assert session.state.facility == "epfl"
+        assert session.state.facility == "tcv"
         assert session.state.total_steps == 0
-        assert session.state.session_id.startswith("scout-epfl-")
+        assert session.state.session_id.startswith("scout-tcv-")
 
     def test_session_id_format(self) -> None:
         """Test session ID format."""
@@ -181,7 +181,7 @@ class TestSessionState:
         """Test session state checkpoint serialization."""
         state = SessionState(
             session_id="test-123",
-            facility="epfl",
+            facility="tcv",
             total_steps=42,
             total_discoveries=10,
             total_skipped=5,
@@ -191,7 +191,7 @@ class TestSessionState:
         checkpoint = state.to_checkpoint()
 
         assert checkpoint["session_id"] == "test-123"
-        assert checkpoint["facility"] == "epfl"
+        assert checkpoint["facility"] == "tcv"
         assert checkpoint["total_steps"] == 42
         assert checkpoint["total_discoveries"] == 10
 
@@ -317,13 +317,13 @@ class TestFrontierPrompt:
 
     def test_frontier_prompt_includes_context(self) -> None:
         """Test that frontier prompt includes session context."""
-        config = ScoutConfig(facility="epfl", auto_persist=False)
+        config = ScoutConfig(facility="tcv", auto_persist=False)
         session = ScoutSession(config)
         session._init_session()
 
         prompt = session.get_frontier_prompt()
 
-        assert "epfl" in prompt
+        assert "tcv" in prompt
         assert "Scout Session Context" in prompt
         assert "Dead-End Detection" in prompt
 

@@ -278,7 +278,7 @@ class AgentProgressDisplay:
     Usage:
         with AgentProgressDisplay(monitor, total_steps=10) as display:
             for step in steps:
-                display.update_command(f"ssh epfl rg -l 'IMAS' /path")
+                display.update_command(f"ssh tcv rg -l 'IMAS' /path")
                 display.update_output("Found 5 files matching pattern")
                 display.advance()  # Move progress bar
     """

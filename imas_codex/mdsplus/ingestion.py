@@ -160,7 +160,7 @@ def ingest_super_tree(
 
     Args:
         client: Neo4j GraphClient
-        facility: Facility ID (e.g., "epfl")
+        facility: Facility ID (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "results")
         epochs: Epoch list from discover_epochs()
         structures: Structure dict from discover_epochs()
@@ -420,7 +420,7 @@ def merge_legacy_metadata(
 
     Args:
         client: Neo4j GraphClient
-        facility: Facility ID (e.g., "epfl")
+        facility: Facility ID (e.g., "tcv")
         tree_name: MDSplus tree name (e.g., "results")
         dry_run: If True, log but don't write
 

@@ -461,10 +461,10 @@ classes:
       are stored in <facility>_private.yaml only.
     class_uri: facility:Facility
     attributes:
-      # === PUBLIC FIELDS (graph + epfl.yaml) ===
+      # === PUBLIC FIELDS (graph + tcv.yaml) ===
       id:
         identifier: true
-        description: Unique facility identifier (e.g., "epfl", "iter", "jet")
+        description: Unique facility identifier (e.g., "tcv", "iter", "jet")
         required: true
       name:
         description: Human-readable facility name (e.g., "EPFL/TCV")
@@ -479,7 +479,7 @@ classes:
         description: Data systems available (e.g., "mdsplus", "uda")
         multivalued: true
 
-      # === PRIVATE FIELDS (epfl_private.yaml only, never graphed) ===
+      # === PRIVATE FIELDS (<facility>_private.yaml only, never graphed) ===
       ssh_host:
         description: SSH host alias for connection
         annotations:
@@ -570,7 +570,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Composite key as facility:path (e.g., "epfl:/home/codes")
+        description: Composite key as facility:path (e.g., "tcv:/home/codes")
         required: true
       facility_id:
         description: Parent facility ID
@@ -992,7 +992,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Composite ID like epfl:results:v67
+        description: Composite ID like tcv:results:v67
         required: true
       tree_name:
         description: Parent tree name
@@ -1446,7 +1446,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Composite key as facility:path (e.g., epfl:/home/codes/foo.py)
+        description: Composite key as facility:path (e.g., tcv:/home/codes/foo.py)
         required: true
       facility_id:
         description: Parent facility ID
@@ -1587,7 +1587,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: UUID for this run (e.g., "epfl-discover-paths-20260107-1234")
+        description: UUID for this run (e.g., "tcv-discover-paths-20260107-1234")
         required: true
       facility_id:
         description: Target facility for this agent run
@@ -1749,7 +1749,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Composite key as facility:page_name (e.g., "epfl:Thomson")
+        description: Composite key as facility:page_name (e.g., "tcv:Thomson")
         required: true
       facility_id:
         description: Parent facility ID
@@ -1865,7 +1865,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Unique chunk identifier (e.g., "epfl:Thomson:chunk_0")
+        description: Unique chunk identifier (e.g., "tcv:Thomson:chunk_0")
         required: true
       wiki_page_id:
         description: Parent WikiPage ID
@@ -1911,7 +1911,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Composite key as facility:filename (e.g., "epfl:ASTRA_manual.pdf")
+        description: Composite key as facility:filename (e.g., "tcv:ASTRA_manual.pdf")
         required: true
       facility_id:
         description: Parent facility ID

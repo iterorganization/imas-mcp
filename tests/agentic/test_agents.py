@@ -207,7 +207,7 @@ class TestTools:
 
     def test_get_exploration_tools_returns_list(self):
         """Exploration tools returns list of tools."""
-        tools = get_exploration_tools("epfl")
+        tools = get_exploration_tools("tcv")
         assert isinstance(tools, list)
         assert len(tools) >= 4  # At least: run, neo4j, queue, note, info
 
@@ -218,14 +218,14 @@ class TestTools:
 
     def test_queue_files_tool_tracks_state(self):
         """QueueFilesTool tracks queued files."""
-        tool = QueueFilesTool("epfl")
-        assert tool.facility == "epfl"
+        tool = QueueFilesTool("tcv")
+        assert tool.facility == "tcv"
         assert tool.files_queued == []
 
     def test_add_note_tool_tracks_state(self):
         """AddNoteTool tracks notes."""
-        tool = AddNoteTool("epfl")
-        assert tool.facility == "epfl"
+        tool = AddNoteTool("tcv")
+        assert tool.facility == "tcv"
         assert tool.notes == []
 
 

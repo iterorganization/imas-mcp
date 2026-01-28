@@ -150,8 +150,9 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
             MATCH (c:CodeChunk)
             WHERE c.mdsplus_paths IS NOT NULL
             MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+            WHERE e.facility_id IS NOT NULL
             UNWIND c.mdsplus_paths AS path
-            WITH DISTINCT coalesce(e.facility_id, 'epfl') AS facility, path
+            WITH DISTINCT e.facility_id AS facility, path
             MERGE (d:DataReference {raw_string: path, facility_id: facility})
             ON CREATE SET
                 d.id = facility + ':mdsplus_path:' + path,
@@ -167,8 +168,9 @@ def link_chunks_to_tree_nodes(graph_client: GraphClient | None = None) -> int:
             MATCH (c:CodeChunk)
             WHERE c.mdsplus_paths IS NOT NULL
             MATCH (c)<-[:HAS_CHUNK]-(e:CodeExample)
+            WHERE e.facility_id IS NOT NULL
             UNWIND c.mdsplus_paths AS path
-            WITH c, coalesce(e.facility_id, 'epfl') AS facility, path
+            WITH c, e.facility_id AS facility, path
             MATCH (d:DataReference {raw_string: path, facility_id: facility})
             MERGE (c)-[:CONTAINS_REF]->(d)
             RETURN count(*) AS contains_created

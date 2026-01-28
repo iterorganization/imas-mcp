@@ -21,7 +21,7 @@ python("hits = semantic_search('plasma current', 'code_chunk_embedding', 5); pri
 # Add nodes with validation
 python("""
 add_to_graph("Facility", [
-    {"id": "epfl", "name": "EPFL-SPC", "machine": "TCV"}
+    {"id": "tcv", "name": "EPFL-SPC", "machine": "TCV"}
 ])
 """)
 ```
@@ -81,13 +81,13 @@ Generate Cypher directly. Use `UNWIND` for batch operations:
 
 ```python
 python("""
-tools = [{"id": "epfl:gcc", "name": "gcc", "available": True, "version": "11.5.0"}]
+tools = [{"id": "tcv:gcc", "name": "gcc", "available": True, "version": "11.5.0"}]
 query('''
     UNWIND $tools AS tool
     MERGE (t:Tool {id: tool.id})
     SET t += tool
     WITH t
-    MATCH (f:Facility {id: 'epfl'})
+    MATCH (f:Facility {id: 'tcv'})
     MERGE (t)-[:FACILITY_ID]->(f)
 ''', tools=tools)
 """)

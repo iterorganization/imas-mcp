@@ -220,7 +220,7 @@ def _init_repl() -> dict[str, Any]:
         """Get comprehensive facility info including graph state.
 
         Args:
-            facility: Facility ID (e.g., 'epfl')
+            facility: Facility ID (e.g., 'tcv')
 
         Returns:
             Dict with config, tools, paths, graph_summary, actionable_paths
@@ -725,7 +725,7 @@ def _init_repl() -> dict[str, Any]:
 
         Args:
             cmd: Shell command to execute
-            facility: Facility ID (None = local, 'iter' = local, 'epfl' = SSH)
+            facility: Facility ID (None = local, 'iter' = local, 'tcv' = SSH)
             timeout: Command timeout in seconds
 
         Returns:
@@ -733,7 +733,7 @@ def _init_repl() -> dict[str, Any]:
 
         Examples:
             run('rg pattern', facility='iter')  # Local (ITER is local)
-            run('rg pattern', facility='epfl')  # SSH to EPFL
+            run('rg pattern', facility='tcv')  # SSH to EPFL
             run('rg pattern')                   # Local (no facility)
         """
         return _run(cmd, facility=facility, timeout=timeout)
@@ -748,7 +748,7 @@ def _init_repl() -> dict[str, Any]:
             Dict with tool statuses and summary
 
         Example:
-            check_tools('epfl')
+            check_tools('tcv')
             check_tools('iter')  # Local check
             check_tools()        # Local check
         """
@@ -768,7 +768,7 @@ def _init_repl() -> dict[str, Any]:
             Dict with installation results
 
         Example:
-            install_tools('epfl')           # Install all on EPFL
+            install_tools('tcv')           # Install all on EPFL
             install_tools('iter')           # Install all locally
             install_tools(required_only=True)  # Just rg and fd
         """
@@ -1096,14 +1096,14 @@ class AgentsServer:
             Examples:
                 # Queue source files for ingestion
                 add_to_graph("SourceFile", [
-                    {"id": "epfl:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
-                     "facility_id": "epfl", "status": "discovered"}
+                    {"id": "tcv:/home/codes/liuqe.py", "path": "/home/codes/liuqe.py",
+                     "facility_id": "tcv", "status": "discovered"}
                 ])
 
                 # Track discovered directories
                 add_to_graph("FacilityPath", [
-                    {"id": "epfl:/home/codes", "path": "/home/codes",
-                     "facility_id": "epfl", "path_type": "code_directory",
+                    {"id": "tcv:/home/codes", "path": "/home/codes",
+                     "facility_id": "tcv", "path_type": "code_directory",
                      "status": "discovered", "interest_score": 0.8}
                 ])
             """
@@ -1243,7 +1243,7 @@ class AgentsServer:
             - Data system types
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
                 data: If provided, update config. If None, just read.
                 private: If True, update private config. If False, update public.
 
@@ -1307,7 +1307,7 @@ class AgentsServer:
             preserving comments and formatting.
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
                 data: Data to merge into private file
 
             Returns:
@@ -1361,7 +1361,7 @@ class AgentsServer:
             Use this to check what's already stored before updating.
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
 
             Returns:
                 Private infrastructure data dict
@@ -1394,7 +1394,7 @@ class AgentsServer:
             Automatically adds ISO timestamp prefix to the note.
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
                 note: Exploration note to add
 
             Returns:
@@ -1440,7 +1440,7 @@ class AgentsServer:
             Use this to record important directory paths discovered during exploration.
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
                 paths: Nested dict of path categories and paths
 
             Returns:
@@ -1486,7 +1486,7 @@ class AgentsServer:
             Use this after running check_tools() to persist tool information.
 
             Args:
-                facility: Facility identifier (e.g., "epfl", "iter")
+                facility: Facility identifier (e.g., "tcv", "iter")
                 tools: Dict of tool_name -> {version, path, purpose}
 
             Returns:

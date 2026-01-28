@@ -8,8 +8,8 @@ This directory contains all runtime configuration for imas-codex.
 config/
 ├── README.md                    # This file
 ├── facilities/                  # Per-facility configuration
-│   ├── epfl.yaml               # Public (git tracked)
-│   ├── epfl_private.yaml       # Private (gitignored)
+│   ├── tcv.yaml               # Public (git tracked)
+│   ├── tcv_private.yaml       # Private (gitignored)
 │   ├── iter.yaml
 │   ├── iter_private.yaml
 │   ├── jet.yaml
@@ -35,11 +35,11 @@ Fast Rust-based tools for code exploration are defined in `fast_tools.yaml`.
 # Check tool availability
 imas-codex tools check              # Local
 imas-codex tools check iter         # ITER (auto-detects local)
-imas-codex tools check epfl         # EPFL (via SSH)
+imas-codex tools check tcv         # EPFL (via SSH)
 
 # Install missing tools
 imas-codex tools install            # Install locally
-imas-codex tools install epfl       # Install on EPFL
+imas-codex tools install tcv       # Install on EPFL
 imas-codex tools install --dry-run  # Show what would be installed
 
 # List available tools
@@ -50,9 +50,9 @@ imas-codex tools list
 
 ```python
 # Via MCP python() REPL
-python("print(check_tools('epfl'))")
-python("print(run('rg pattern', facility='epfl'))")
-python("result = setup_tools('epfl'); print(result.summary)")
+python("print(check_tools('tcv'))")
+python("print(run('rg pattern', facility='tcv'))")
+python("result = setup_tools('tcv'); print(result.summary)")
 ```
 
 ### Auto-Detection
@@ -96,8 +96,8 @@ Each facility has two configuration files:
 **Example for EPFL:**
 ```
 config/facilities/
-├── epfl.yaml                    # Public - machine, data systems
-└── epfl_infrastructure.yaml     # Private - paths, tools, OS, IPs
+├── tcv.yaml                    # Public - machine, data systems
+└── tcv_infrastructure.yaml     # Private - paths, tools, OS, IPs
 ```
 
 ## Data Classification Policy
@@ -131,15 +131,15 @@ config/facilities/
 Minimal configuration for graph building and connections:
 
 ```yaml
-# epfl.yaml - PUBLIC (version controlled)
-facility: epfl
+# tcv.yaml - PUBLIC (version controlled)
+facility: tcv
 name: École Polytechnique Fédérale de Lausanne
 machine: TCV
 description: Swiss Plasma Center - TCV Tokamak
 location: Lausanne, Switzerland
 
 # SSH connection alias (user configures ~/.ssh/config)
-ssh_host: epfl
+ssh_host: tcv
 
 # Data systems at this facility
 data_systems:
@@ -152,8 +152,8 @@ data_systems:
 Sensitive data for exploration agents:
 
 ```yaml
-# epfl_infrastructure.yaml - PRIVATE (gitignored)
-facility_id: epfl
+# tcv_infrastructure.yaml - PRIVATE (gitignored)
+facility_id: tcv
 last_explored: 2025-01-15T10:30:00Z
 
 # Network infrastructure
@@ -218,10 +218,10 @@ Use batched commands for efficiency:
 
 ```bash
 # Read facility config first
-cat imas_codex/config/facilities/epfl.yaml
+cat imas_codex/config/facilities/tcv.yaml
 
 # SSH using the host alias
-ssh epfl "which python3; python3 --version; pip list | head -10"
+ssh tcv "which python3; python3 --version; pip list | head -10"
 ```
 
 ### 3. Persist Findings
@@ -247,7 +247,7 @@ Use the Agents MCP server tools:
 
 ```python
 # For sensitive data (local only, never graphed)
-update_infrastructure("epfl", {
+update_infrastructure("tcv", {
     "tools": {
         "rg": {"status": "unavailable"},
         "grep": {"status": "available"}
@@ -257,14 +257,14 @@ update_infrastructure("epfl", {
 
 # For public data semantics (goes to graph, always use list)
 ingest_nodes("Diagnostic", [
-    {"name": "XRCS", "facility_id": "epfl", "category": "spectroscopy"},
-    {"name": "Thomson", "facility_id": "epfl", "category": "spectroscopy"},
+    {"name": "XRCS", "facility_id": "tcv", "category": "spectroscopy"},
+    {"name": "Thomson", "facility_id": "tcv", "category": "spectroscopy"},
 ])
 
 # For unstructured discoveries (staging area)
 cypher('''
     CREATE (d:_Discovery {
-        facility: 'epfl',
+        facility: 'tcv',
         type: 'unknown_tree',
         name: 'tcv_raw',
         discovered_at: datetime()
@@ -314,7 +314,7 @@ The discovery pipeline uses parallel workers for scanning (file enumeration) and
 
 # After enumeration:
 add_to_graph("FacilityPath", [{
-    "id": "epfl:/home/codes/transport",
+    "id": "tcv:/home/codes/transport",
     "status": "listed",  # Ready for scoring
     "file_count": 15,
     "dir_count": 3,
@@ -323,7 +323,7 @@ add_to_graph("FacilityPath", [{
 
 # Paths matching exclusion patterns:
 add_to_graph("FacilityPath", [{
-    "id": "epfl:/home/user/.cache",
+    "id": "tcv:/home/user/.cache",
     "status": "excluded",  # Never scored
 }])
 ```
@@ -334,7 +334,7 @@ add_to_graph("FacilityPath", [{
 
 # After scoring:
 add_to_graph("FacilityPath", [{
-    "id": "epfl:/home/codes/transport",
+    "id": "tcv:/home/codes/transport",
     "status": "scored",
     "score": 0.85,
     "score_imas": 0.9,
@@ -344,7 +344,7 @@ add_to_graph("FacilityPath", [{
 
 # Low-value paths:
 add_to_graph("FacilityPath", [{
-    "id": "epfl:/home/user/random_scripts",
+    "id": "tcv:/home/user/random_scripts",
     "status": "skipped",
     "score": 0.15,
 }])
@@ -385,10 +385,10 @@ Check `get_facility(facility)` for available tools:
 Use fast tools when available:
 ```bash
 # If rg available at ~/bin/rg
-ssh epfl "~/bin/rg -l 'pattern' /path --max-depth 4 -g '*.py'"
+ssh tcv "~/bin/rg -l 'pattern' /path --max-depth 4 -g '*.py'"
 
 # Fallback to grep
-ssh epfl "grep -r 'pattern' /path --include='*.py'"
+ssh tcv "grep -r 'pattern' /path --include='*.py'"
 ```
 
 ## Graph vs Local Storage

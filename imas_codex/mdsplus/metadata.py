@@ -104,7 +104,7 @@ def extract_metadata(
     """Extract full metadata from MDSplus tree at a specific shot.
 
     Args:
-        facility: SSH host alias (e.g., "epfl")
+        facility: SSH host alias (e.g., "tcv")
         tree_name: MDSplus tree name
         shot: Shot number to query
         ssh_timeout: SSH timeout in seconds

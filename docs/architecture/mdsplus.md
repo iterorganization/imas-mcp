@@ -27,18 +27,18 @@ Each TreeNode has:
 ```cypher
 (:MDSplusTree {
     name: "results",
-    facility_id: "epfl"
-})-[:FACILITY_ID]->(:Facility {id: "epfl"})
+    facility_id: "tcv"
+})-[:FACILITY_ID]->(:Facility {id: "tcv"})
 ```
 
 ### TreeNode
 
 ```cypher
 (:TreeNode {
-    id: "epfl:results:\\RESULTS::PSI",
+    id: "tcv:results:\\RESULTS::PSI",
     path: "\\RESULTS::PSI",
     tree_name: "results",
-    facility_id: "epfl",
+    facility_id: "tcv",
     parent_path: "\\RESULTS",
     units: "Wb",
     first_shot: 3000,
@@ -53,10 +53,10 @@ Each TreeNode has:
 
 ```bash
 # Discover tree structure
-uv run discover-mdsplus epfl results -v
+uv run discover-mdsplus tcv results -v
 
 # Batch ingest
-uv run ingest-mdsplus epfl results tcv_shot magnetics
+uv run ingest-mdsplus tcv results tcv_shot magnetics
 ```
 
 ## Enrichment
@@ -90,12 +90,12 @@ RETURN n.path, n.units
 
 ```cypher
 -- What nodes existed at shot 50000?
-MATCH (n:TreeNode {tree_name: "results", facility_id: "epfl"})
+MATCH (n:TreeNode {tree_name: "results", facility_id: "tcv"})
 WHERE n.first_shot <= 50000 
   AND (n.last_shot IS NULL OR n.last_shot > 50000)
 RETURN n.path, n.description
 
 -- Physics domain query
-MATCH (n:TreeNode {physics_domain: "equilibrium", facility_id: "epfl"})
+MATCH (n:TreeNode {physics_domain: "equilibrium", facility_id: "tcv"})
 RETURN n.path, n.description, n.units
 ```

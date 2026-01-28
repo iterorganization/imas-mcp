@@ -340,18 +340,18 @@ This section documents the actual SSH commands and data volumes from our deploym
 ```bash
 # Find Python files containing IMAS-related patterns
 # Discovered 238 files in /home/codes
-ssh epfl 'rg -l "write_ids|read_ids|imas\." /home/codes --max-depth 4 -g "*.py"'
+ssh tcv 'rg -l "write_ids|read_ids|imas\." /home/codes --max-depth 4 -g "*.py"'
 
 # Find files with MDSplus imports
 # Found files like /home/agostini/mdsplus_py_tests/mds_put_value.py
-ssh epfl 'rg -l "import MDSplus" /home/agostini -g "*.py" | head -50'
+ssh tcv 'rg -l "import MDSplus" /home/agostini -g "*.py" | head -50'
 
 # List Python files in TCV analysis directory
-ssh epfl 'fd -e py /home/agostini/tcv/lib'
+ssh tcv 'fd -e py /home/agostini/tcv/lib'
 # Returns: TCVLIUQE.py, TCVLIUQEMAT.py, tcv_diag.py, tcv_mag.py
 
 # Directory structure
-ssh epfl 'ls -la /home/agostini/tcv/lib/eqtools'
+ssh tcv 'ls -la /home/agostini/tcv/lib/eqtools'
 ```
 
 ### Code Reading Commands (Real EPFL Examples)
@@ -359,14 +359,14 @@ ssh epfl 'ls -la /home/agostini/tcv/lib/eqtools'
 ```bash
 # Read equilibrium code (LIUQE wrapper)
 # File: /home/agostini/tcv/lib/eqtools/TCVLIUQE.py
-ssh epfl 'head -100 /home/agostini/tcv/lib/eqtools/TCVLIUQE.py'
+ssh tcv 'head -100 /home/agostini/tcv/lib/eqtools/TCVLIUQE.py'
 
 # Read MDSplus interface code
 # File: /home/agostini/tcv/lib/tcvpy-master/tcv/mds.py
-ssh epfl 'head -200 /home/agostini/tcv/lib/tcvpy-master/tcv/mds.py'
+ssh tcv 'head -200 /home/agostini/tcv/lib/tcvpy-master/tcv/mds.py'
 
 # Search for function signatures
-ssh epfl 'rg -C 3 "def get_" /home/agostini/tcv/lib/tcv_diag.py'
+ssh tcv 'rg -C 3 "def get_" /home/agostini/tcv/lib/tcv_diag.py'
 ```
 
 ### MDSplus Metadata Queries (Real EPFL Examples)
@@ -377,7 +377,7 @@ TCV has 29 MDSplus trees including: `magnetics`, `results`, `thomson`, `ecrh`, `
 ```bash
 # Query node metadata from magnetics tree
 # Real nodes: \MAGNETICS::IPLASMA, \MAGNETICS::BPOL_AVG, \MAGNETICS::IPHI
-ssh epfl "python3 -c \"
+ssh tcv "python3 -c \"
 import MDSplus
 tree = MDSplus.Tree('magnetics', 80000)
 node = tree.getNode(r'\\\\MAGNETICS::IPLASMA')
@@ -387,7 +387,7 @@ print('dtype:', node.dtype_str)
 \""
 
 # Query scalar physics quantities for COCOS validation
-ssh epfl "python3 -c \"
+ssh tcv "python3 -c \"
 import MDSplus
 tree = MDSplus.Tree('magnetics', 80000)
 print('ip:', tree.getNode(r'\\\\MAGNETICS::IPLASMA').data())
@@ -395,7 +395,7 @@ print('iphi:', tree.getNode(r'\\\\MAGNETICS::IPHI').data())
 \""
 
 # List child nodes of a structure (hardware calibration)
-ssh epfl "python3 -c \"
+ssh tcv "python3 -c \"
 import MDSplus
 tree = MDSplus.Tree('magnetics', 80000)
 node = tree.getNode(r'\\\\MAGNETICS::TOP.HARDWARE.CALIB')
@@ -410,17 +410,17 @@ TCV wiki at `spcwiki.epfl.ch`.
 
 ```bash
 # Fetch wiki page (requires -k for SSL cert issues)
-ssh epfl 'curl -sk "https://spcwiki.epfl.ch/wiki/Magnetic_probes"'
+ssh tcv 'curl -sk "https://spcwiki.epfl.ch/wiki/Magnetic_probes"'
 
 # Fetch boundary physics documentation
-ssh epfl 'curl -sk "https://spcwiki.epfl.ch/wiki/Boundary_physics"'
+ssh tcv 'curl -sk "https://spcwiki.epfl.ch/wiki/Boundary_physics"'
 
 # Extract MDSplus paths from wiki page
-ssh epfl 'curl -sk "https://spcwiki.epfl.ch/wiki/Magnetic_cabling" | 
+ssh tcv 'curl -sk "https://spcwiki.epfl.ch/wiki/Magnetic_cabling" | 
           grep -oP "\\\\[A-Z_]+::[A-Z0-9_:]+"'
 
 # Get page title
-ssh epfl 'curl -skL "https://spcwiki.epfl.ch/wiki/Onboarding" | 
+ssh tcv 'curl -skL "https://spcwiki.epfl.ch/wiki/Onboarding" | 
           grep -oP "(?<=<title>)[^<]+"'
 ```
 
@@ -428,16 +428,16 @@ ssh epfl 'curl -skL "https://spcwiki.epfl.ch/wiki/Onboarding" |
 
 ```bash
 # Lines of code by language
-ssh epfl 'tokei /home/agostini/tcv'
+ssh tcv 'tokei /home/agostini/tcv'
 
 # Disk usage tree (depth 2)
-ssh epfl 'dust -d 2 /home/codes'
+ssh tcv 'dust -d 2 /home/codes'
 
 # Code complexity metrics
-ssh epfl 'scc /home/agostini/tcv/lib --format json'
+ssh tcv 'scc /home/agostini/tcv/lib --format json'
 
 # Count Python files in analysis directories
-ssh epfl 'fd -e py /home/agostini | wc -l'
+ssh tcv 'fd -e py /home/agostini | wc -l'
 # Result: 284 files discovered
 ```
 
@@ -502,7 +502,7 @@ The mappings discovered by Codex are exported to **imas-ambix** for deterministi
 
 ```cypher
 -- Extract validated EPFL/TCV mappings for ambix export
-MATCH (f:Facility {id: 'epfl'})-[:HAS_TREE]->(t:MDSplusTree)
+MATCH (f:Facility {id: 'tcv'})-[:HAS_TREE]->(t:MDSplusTree)
 MATCH (tn:TreeNode)-[:TREE_NAME]->(t)
 MATCH (tn)-[:MAPS_TO]->(ip:IMASPath)
 WHERE tn.mapping_status = 'validated'
@@ -632,8 +632,8 @@ Recommended SSH setup for ControlMaster (connection reuse):
 
 ```bash
 # ~/.ssh/config on ITER operator machine
-Host epfl
-    HostName <epfl-gateway>
+Host tcv
+    HostName <tcv-gateway>
     User <username>
     ControlMaster auto
     ControlPath ~/.ssh/sockets/%r@%h-%p

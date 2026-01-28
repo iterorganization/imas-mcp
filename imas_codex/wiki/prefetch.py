@@ -10,7 +10,7 @@ This module handles:
 Usage:
     from imas_codex.wiki.prefetch import prefetch_pages
 
-    stats = await prefetch_pages("epfl", batch_size=50, max_pages=100)
+    stats = await prefetch_pages("tcv", batch_size=50, max_pages=100)
     print(f"Fetched: {stats['fetched']}, Failed: {stats['failed']}")
 """
 

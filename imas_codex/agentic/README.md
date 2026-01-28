@@ -104,7 +104,7 @@ python("print(ssh('ls /home/codes | head -5'))")
 python("print(search_imas('electron temperature profile'))")
 
 # Facility info
-python("info = get_facility('epfl'); print(info['graph_summary'])")
+python("info = get_facility('tcv'); print(info['graph_summary'])")
 
 # Variables persist between calls
 python("x = 42")

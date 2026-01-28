@@ -329,7 +329,7 @@ classes:
     attributes:
       id:
         identifier: true
-        description: Unique identifier (e.g., "epfl:cocos:11", "epfl:sign:ip_positive_ccw")
+        description: Unique identifier (e.g., "tcv:cocos:11", "tcv:sign:ip_positive_ccw")
         required: true
       facility_id:
         description: Facility where this convention applies

@@ -8,7 +8,7 @@ The wiki is accessible from EPFL hosts without authentication.
 Use -k flag to skip self-signed certificate verification.
 
 Example:
-    page = fetch_wiki_page("Thomson", facility="epfl")
+    page = fetch_wiki_page("Thomson", facility="tcv")
     print(f"Found {len(page.mdsplus_paths)} MDSplus paths")
     print(f"Conventions: {page.conventions}")
 """
@@ -92,16 +92,16 @@ def canonical_page_id(page_name: str, facility_id: str) -> str:
 
     Args:
         page_name: Page name (may be URL-encoded or decoded)
-        facility_id: Facility identifier (e.g., 'epfl')
+        facility_id: Facility identifier (e.g., 'tcv')
 
     Returns:
-        Canonical ID like 'epfl:Portal:TCV' or 'epfl:Thomson/DDJ'
+        Canonical ID like 'tcv:Portal:TCV' or 'tcv:Thomson/DDJ'
 
     Examples:
-        >>> canonical_page_id('Portal%3ATCV', 'epfl')
-        'epfl:Portal:TCV'
-        >>> canonical_page_id('Thomson/DDJ', 'epfl')
-        'epfl:Thomson/DDJ'
+        >>> canonical_page_id('Portal%3ATCV', 'tcv')
+        'tcv:Portal:TCV'
+        >>> canonical_page_id('Thomson/DDJ', 'tcv')
+        'tcv:Thomson/DDJ'
     """
     import urllib.parse
 
@@ -330,7 +330,7 @@ def _fetch_confluence_page(
 
 def fetch_wiki_page(
     page_name: str,
-    facility: str = "epfl",
+    facility: str = "tcv",
     timeout: int = 60,
     site_type: str = "mediawiki",
 ) -> WikiPage:
@@ -341,7 +341,7 @@ def fetch_wiki_page(
 
     Args:
         page_name: Wiki page name (MediaWiki) or page ID (Confluence)
-        facility: Facility identifier (e.g., "epfl", "iter")
+        facility: Facility identifier (e.g., "tcv", "iter")
         timeout: Request timeout in seconds
         site_type: Site type ("mediawiki" or "confluence")
 
@@ -436,7 +436,7 @@ except Exception as e:
 
 def discover_wiki_pages(
     start_page: str = "Main_Page",
-    facility: str = "epfl",
+    facility: str = "tcv",
     max_pages: int = 100,
     rate_limit: float = 0.5,
 ) -> list[str]:

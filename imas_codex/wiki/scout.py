@@ -13,7 +13,7 @@ Example:
     from imas_codex.wiki.scout import run_wiki_discovery
 
     stats = await run_wiki_discovery(
-        facility="epfl",
+        facility="tcv",
         start_page="Portal:TCV",
         cost_limit_usd=1.00,
     )
@@ -172,7 +172,7 @@ def _get_budget() -> DiscoveryBudget:
 def _crawl_wiki_links(
     start_page: str,
     depth: int = 1,
-    facility: str = "epfl",
+    facility: str = "tcv",
     max_pages: int = 200,
 ) -> str:
     """
@@ -244,7 +244,7 @@ def _crawl_wiki_links(
     return json.dumps({"pages": sorted(discovered), "crawled": len(crawled)})
 
 
-def _fetch_single_preview(page_name: str, facility: str = "epfl") -> dict:
+def _fetch_single_preview(page_name: str, facility: str = "tcv") -> dict:
     """Fetch preview for a single page."""
     import urllib.parse
 
@@ -322,7 +322,7 @@ except Exception as e:
 
 def _fetch_wiki_previews(
     page_names: list[str],
-    facility: str = "epfl",
+    facility: str = "tcv",
     max_workers: int = 10,
 ) -> str:
     """
@@ -367,7 +367,7 @@ def _fetch_wiki_previews(
 def _search_wiki_patterns(
     page_names: list[str],
     patterns: list[str],
-    facility: str = "epfl",
+    facility: str = "tcv",
 ) -> str:
     """
     Search wiki pages for patterns and return match counts.
@@ -448,7 +448,7 @@ def _search_wiki_patterns(
     )
 
 
-def _queue_wiki_pages(evaluations_json: str, facility: str = "epfl") -> str:
+def _queue_wiki_pages(evaluations_json: str, facility: str = "tcv") -> str:
     """
     Queue evaluated wiki pages in the graph.
 
@@ -671,7 +671,7 @@ def _get_wiki_schema() -> str:
     return json.dumps(evaluation_schema, indent=2)
 
 
-def get_wiki_scout_tools(facility: str = "epfl") -> list[Tool]:
+def get_wiki_scout_tools(facility: str = "tcv") -> list[Tool]:
     """Get tools for the wiki scout agent."""
 
     class GetWikiSchemaTool(Tool):
@@ -782,7 +782,7 @@ def get_wiki_scout_tools(facility: str = "epfl") -> list[Tool]:
 
 
 def get_wiki_scout_agent(
-    facility: str = "epfl",
+    facility: str = "tcv",
     verbose: bool = False,
     model: str | None = None,
 ) -> CodeAgent:
@@ -825,7 +825,7 @@ def get_wiki_scout_agent(
 
 
 async def run_wiki_discovery(
-    facility: str = "epfl",
+    facility: str = "tcv",
     start_page: str = "Portal:TCV",
     cost_limit_usd: float = 1.00,
     verbose: bool = False,

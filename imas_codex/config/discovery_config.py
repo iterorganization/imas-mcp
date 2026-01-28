@@ -490,7 +490,7 @@ def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
     any facility-specific exclusions from the facility's private config.
 
     Args:
-        facility: Facility identifier (e.g., 'iter', 'epfl', 'jet')
+        facility: Facility identifier (e.g., 'iter', 'tcv', 'jet')
 
     Returns:
         ExclusionConfig with merged facility-specific excludes

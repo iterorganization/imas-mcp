@@ -54,7 +54,7 @@ def queue_source_files(
     discovered/ingested status are skipped (idempotent).
 
     Args:
-        facility: Facility ID (e.g., "epfl")
+        facility: Facility ID (e.g., "tcv")
         file_paths: List of remote file paths to discover
         interest_score: Priority score (0.0-1.0, higher = sooner)
         patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])

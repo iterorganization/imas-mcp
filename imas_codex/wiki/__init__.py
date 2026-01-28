@@ -13,7 +13,7 @@ Example:
 
     # Run full discovery pipeline
     stats = await run_wiki_discovery(
-        facility="epfl",
+        facility="tcv",
         cost_limit_usd=10.00,
     )
     print(f"Crawled {stats['pages_crawled']} pages")

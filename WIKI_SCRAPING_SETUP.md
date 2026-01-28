@@ -71,7 +71,7 @@ uv run imas-codex wiki credentials get iter-confluence
 ```bash
 # Show all wiki sites for a facility
 uv run imas-codex wiki sites iter
-uv run imas-codex wiki sites epfl
+uv run imas-codex wiki sites tcv
 ```
 
 ## Usage
@@ -195,8 +195,8 @@ wiki_sites:
 ### EPFL (MediaWiki)
 
 ```yaml
-# imas_codex/config/facilities/epfl.yaml
-facility: epfl
+# imas_codex/config/facilities/tcv.yaml
+facility: tcv
 name: École Polytechnique Fédérale de Lausanne
 machine: TCV
 description: Swiss Plasma Center - TCV Tokamak
@@ -211,7 +211,7 @@ wiki_sites:
     portal_page: Portal:TCV
     site_type: mediawiki
     auth_type: ssh_proxy
-    ssh_host: epfl
+    ssh_host: tcv
 ```
 
 ## Troubleshooting

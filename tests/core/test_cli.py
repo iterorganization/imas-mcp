@@ -175,13 +175,13 @@ class TestFacilitiesCLI:
         """Test facilities list command."""
         result = runner.invoke(main, ["facilities", "list"])
         assert result.exit_code == 0
-        assert "epfl" in result.output.lower() or "Available" in result.output
+        assert "tcv" in result.output.lower() or "Available" in result.output
 
     def test_facilities_show(self, runner):
         """Test facilities show command."""
-        result = runner.invoke(main, ["facilities", "show", "epfl"])
+        result = runner.invoke(main, ["facilities", "show", "tcv"])
         assert result.exit_code == 0
-        assert "epfl" in result.output
+        assert "tcv" in result.output
         assert "ssh_host" in result.output
 
     def test_facilities_show_unknown(self, runner):

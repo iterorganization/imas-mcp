@@ -67,7 +67,7 @@ class ParallelExecutor:
         timeout: Per-command timeout in seconds
 
     Example:
-        executor = ParallelExecutor(facility="epfl", max_sessions=4)
+        executor = ParallelExecutor(facility="tcv", max_sessions=4)
         async for result in executor.run_batch(commands):
             print(f"{result.path}: {result.returncode}")
     """

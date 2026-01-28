@@ -70,7 +70,7 @@ Paths to describe:
 When the LLM is uncertain, it can request:
 ```python
 # Get node metadata from MDSplus
-ssh epfl "python3 -c \"
+ssh tcv "python3 -c \"
 import MDSplus
 tree = MDSplus.Tree('results', 80000)
 node = tree.getNode('\\\\RESULTS::TOP.EQUIL_1.RESULTS:I_PL')

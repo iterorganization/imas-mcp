@@ -10,13 +10,13 @@ Entity extraction uses regex patterns for MDSplus paths, IMAS paths, units, conv
 
 Example:
     # Step 1: Crawl wiki (link extraction, no content fetch)
-    # imas-codex wiki crawl epfl
+    # imas-codex wiki crawl tcv
 
     # Step 2: Score pages with LLM agent
-    # imas-codex wiki score epfl
+    # imas-codex wiki score tcv
 
     # Step 3: Ingest high-score pages (deterministic)
-    pipeline = WikiIngestionPipeline(facility_id="epfl")
+    pipeline = WikiIngestionPipeline(facility_id="tcv")
     stats = await pipeline.ingest_from_graph(min_interest_score=0.7)
     print(f"Created {stats['chunks']} chunks")
 """
@@ -583,7 +583,7 @@ class WikiIngestionPipeline:
 
     def __init__(
         self,
-        facility_id: str = "epfl",
+        facility_id: str = "tcv",
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         use_rich: bool = True,
@@ -591,7 +591,7 @@ class WikiIngestionPipeline:
         """Initialize the pipeline.
 
         Args:
-            facility_id: Facility ID (e.g., "epfl")
+            facility_id: Facility ID (e.g., "tcv")
             chunk_size: Target chunk size in characters
             chunk_overlap: Overlap between chunks
             use_rich: Use Rich progress display
@@ -1121,7 +1121,7 @@ def _decode_url(url: str) -> str:
 
 def fetch_artifact_size(
     url: str,
-    facility: str = "epfl",
+    facility: str = "tcv",
     timeout: int = 30,
 ) -> int | None:
     """Fetch artifact file size via HTTP HEAD request.
@@ -1166,7 +1166,7 @@ def fetch_artifact_size(
 
 async def fetch_artifact_content(
     url: str,
-    facility: str = "epfl",
+    facility: str = "tcv",
     timeout: int = 120,
 ) -> tuple[str, bytes]:
     """Fetch artifact content via SSH.
@@ -1232,7 +1232,7 @@ class WikiArtifactPipeline:
 
     def __init__(
         self,
-        facility_id: str = "epfl",
+        facility_id: str = "tcv",
         chunk_size: int = 512,
         chunk_overlap: int = 50,
         use_rich: bool = True,

@@ -35,10 +35,10 @@ python("print(ssh('ls /home/codes'))")
 python("print(search_imas('electron temperature'))")
 
 # Persist discoveries
-python("ingest_nodes('SourceFile', [{'id': 'epfl:/path', 'path': '/path', ...}])")
+python("ingest_nodes('SourceFile', [{'id': 'tcv:/path', 'path': '/path', ...}])")
 
 # Facility info and exploration targets
-python("info = get_facility('epfl'); print(info['actionable_paths'][:5])")
+python("info = get_facility('tcv'); print(info['actionable_paths'][:5])")
 
 # Code search
 python("print(search_code('equilibrium reconstruction'))")
@@ -118,9 +118,9 @@ git push origin main
 | SSH command | `python("print(ssh('ls /home/codes'))")` |
 | IMAS search | `python("print(search_imas('electron temperature'))")` |
 | Code search | `python("print(search_code('equilibrium'))")` |
-| Facility info | `python("print(get_facility('epfl'))")` |
+| Facility info | `python("print(get_facility('tcv'))")` |
 | Ingest nodes | `python("ingest_nodes('SourceFile', [...])")` |
-| Private data | `python("print(private('epfl'))")` |
+| Private data | `python("print(private('tcv'))")` |
 
 ## Code Style
 
@@ -161,9 +161,9 @@ uv run imas-codex neo4j shell
 uv run imas-codex neo4j dump
 
 # Ingestion
-uv run imas-codex ingest queue epfl /path/*.py
-uv run imas-codex ingest run epfl
-uv run imas-codex ingest status epfl
+uv run imas-codex ingest queue tcv /path/*.py
+uv run imas-codex ingest run tcv
+uv run imas-codex ingest status tcv
 
 # Testing and linting
 uv run pytest

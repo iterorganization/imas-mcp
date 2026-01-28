@@ -5,7 +5,7 @@ This script extracts quantity information from TCV TDI function files
 and creates/updates TDIFunction nodes with supported_quantities lists.
 
 Usage:
-    uv run python scripts/ingest_tdi.py epfl [--dry-run]
+    uv run python scripts/ingest_tdi.py tcv [--dry-run]
 """
 
 from __future__ import annotations
@@ -189,7 +189,7 @@ def ingest_tdi_functions(
     """Ingest TDI functions into the knowledge graph.
 
     Args:
-        facility_id: Facility identifier (e.g., "epfl")
+        facility_id: Facility identifier (e.g., "tcv")
         functions: List of parsed TDI function info
         dry_run: If True, don't actually write to graph
 
@@ -266,7 +266,7 @@ def ingest_tdi_functions(
 def main():
     """Parse TDI functions and ingest into graph."""
     parser = argparse.ArgumentParser(description="Ingest TDI functions into graph")
-    parser.add_argument("facility", help="Facility ID (e.g., epfl)")
+    parser.add_argument("facility", help="Facility ID (e.g., tcv)")
     parser.add_argument("--dry-run", action="store_true", help="Don't write to graph")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -278,7 +278,7 @@ def main():
 
     # TDI paths by facility
     tdi_paths = {
-        "epfl": "/usr/local/CRPP/tdi/tcv",
+        "tcv": "/usr/local/CRPP/tdi/tcv",
     }
 
     if args.facility not in tdi_paths:

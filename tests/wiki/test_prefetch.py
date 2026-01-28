@@ -183,7 +183,7 @@ class TestPrefetchPages:
             mock_gc.query = MagicMock(return_value=[])
             mock_gc_class.return_value = mock_gc
 
-            stats = await prefetch_pages("epfl")
+            stats = await prefetch_pages("tcv")
 
             assert stats["fetched"] == 0
             assert stats["summarized"] == 0
@@ -212,6 +212,6 @@ class TestPrefetchPages:
             # Mock summarize
             mock_summarize.return_value = ["Test summary"]
 
-            stats = await prefetch_pages("epfl", max_pages=1)
+            stats = await prefetch_pages("tcv", max_pages=1)
 
             assert stats["fetched"] == 1

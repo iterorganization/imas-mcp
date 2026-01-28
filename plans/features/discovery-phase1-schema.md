@@ -323,7 +323,7 @@ class DiscoveryGraphOps:
         """Create initial pending nodes for facility root paths.
         
         Args:
-            facility: Facility ID (e.g., "epfl", "iter")
+            facility: Facility ID (e.g., "tcv", "iter")
         
         Returns:
             List of seeded paths
@@ -499,23 +499,23 @@ def test_scored_directory_combined_score():
 def test_scan_config_validation():
     """Test ScanConfig validation."""
     with pytest.raises(ValueError, match="max_sessions"):
-        DiscoveryScanConfig(facility="epfl", max_sessions=0).validate()
+        DiscoveryScanConfig(facility="tcv", max_sessions=0).validate()
     
     with pytest.raises(ValueError, match="timeout"):
-        DiscoveryScanConfig(facility="epfl", timeout=2).validate()
+        DiscoveryScanConfig(facility="tcv", timeout=2).validate()
 
 def test_score_config_validation():
     """Test ScoreConfig validation."""
     with pytest.raises(ValueError, match="threshold"):
-        DiscoveryScoreConfig(facility="epfl", threshold=1.5).validate()
+        DiscoveryScoreConfig(facility="tcv", threshold=1.5).validate()
     
     # Valid config should not raise
-    DiscoveryScoreConfig(facility="epfl", threshold=0.7).validate()
+    DiscoveryScoreConfig(facility="tcv", threshold=0.7).validate()
 
 def test_discovery_stats_properties():
     """Test DiscoveryStats computed properties."""
     stats = DiscoveryStats(
-        facility="epfl",
+        facility="tcv",
         total_paths=100,
         pending=10,
         scanned=30,
@@ -556,7 +556,7 @@ def test_persist_scan_result(graph_ops, mock_client):
     
     # This should call client.query() with proper Cypher
     graph_ops.persist_scan_result(
-        facility="epfl",
+        facility="tcv",
         path="/home/codes",
         dir_stats=dir_stats,
         children=["/home/codes/subdir1", "/home/codes/subdir2"],
@@ -575,7 +575,7 @@ def test_get_frontier(graph_ops, mock_client):
         {"path": "/home/codes/dir2"},
     ]
     
-    paths = graph_ops.get_frontier(facility="epfl", limit=10)
+    paths = graph_ops.get_frontier(facility="tcv", limit=10)
     
     assert len(paths) == 2
     mock_client.query.assert_called_once()

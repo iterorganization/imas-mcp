@@ -38,9 +38,9 @@ stale ◀── (re-scan)
 ```python
 python("""
 ingest_nodes("SourceFile", [
-    {"id": "epfl:/home/codes/liuqe.py", 
+    {"id": "tcv:/home/codes/liuqe.py", 
      "path": "/home/codes/liuqe.py",
-     "facility_id": "epfl", 
+     "facility_id": "tcv", 
      "status": "discovered", 
      "interest_score": 0.8}
 ])
@@ -51,50 +51,50 @@ ingest_nodes("SourceFile", [
 
 ```bash
 # Queue specific files
-uv run imas-codex ingest queue epfl /path/a.py /path/b.py
+uv run imas-codex ingest queue tcv /path/a.py /path/b.py
 
 # Pipe from remote search (use run() in MCP or ssh in terminal)
-uv run imas-codex tools check epfl  # Ensure rg is available
-ssh epfl 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | \
-  uv run imas-codex ingest queue epfl --stdin
+uv run imas-codex tools check tcv  # Ensure rg is available
+ssh tcv 'rg -l "equilibrium|IMAS" /home/codes -g "*.py"' | \
+  uv run imas-codex ingest queue tcv --stdin
 
 # From file list
-uv run imas-codex ingest queue epfl -f files.txt
+uv run imas-codex ingest queue tcv -f files.txt
 ```
 
 ## Run Ingestion
 
 ```bash
 # Check queue status
-uv run imas-codex ingest status epfl
+uv run imas-codex ingest status tcv
 
 # Process discovered files
-uv run imas-codex ingest run epfl
+uv run imas-codex ingest run tcv
 
 # Process high-priority only
-uv run imas-codex ingest run epfl --min-score 0.7
+uv run imas-codex ingest run tcv --min-score 0.7
 
 # Process more files
-uv run imas-codex ingest run epfl -n 500
+uv run imas-codex ingest run tcv -n 500
 
 # Preview without processing
-uv run imas-codex ingest run epfl --dry-run
+uv run imas-codex ingest run tcv --dry-run
 
 # Force re-ingestion
-uv run imas-codex ingest run epfl --force
+uv run imas-codex ingest run tcv --force
 ```
 
 ## Monitor Status
 
 ```bash
 # List discovered files
-uv run imas-codex ingest list epfl
+uv run imas-codex ingest list tcv
 
 # List failed files
-uv run imas-codex ingest list epfl -s failed
+uv run imas-codex ingest list tcv -s failed
 
 # List ingested files
-uv run imas-codex ingest list epfl -s ingested
+uv run imas-codex ingest list tcv -s ingested
 ```
 
 ## Key Features
@@ -108,16 +108,16 @@ uv run imas-codex ingest list epfl -s ingested
 
 If ingestion is interrupted:
 1. `SourceFile` nodes retain their status
-2. Rerun `uv run imas-codex ingest run epfl` to continue
+2. Rerun `uv run imas-codex ingest run tcv` to continue
 3. Already-ingested files are skipped automatically
 
 For failed files:
 ```bash
 # List failures
-uv run imas-codex ingest list epfl -s failed
+uv run imas-codex ingest list tcv -s failed
 
 # Retry failed files
-uv run imas-codex ingest run epfl --retry-failed
+uv run imas-codex ingest run tcv --retry-failed
 ```
 
 ## What Gets Extracted

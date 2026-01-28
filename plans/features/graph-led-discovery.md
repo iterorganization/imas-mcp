@@ -231,7 +231,7 @@ imas-codex discover <facility>
 imas-codex discover status <facility>
 
 # Output:
-# Facility: epfl
+# Facility: tcv
 # Total paths: 1,234
 # ├─ Pending:   45 (3.6%)
 # ├─ Scanned:  189 (15.3%)
@@ -393,7 +393,7 @@ class ParallelExecutor:
         timeout: Per-command timeout in seconds
     
     Example:
-        executor = ParallelExecutor(facility="epfl", max_sessions=4)
+        executor = ParallelExecutor(facility="tcv", max_sessions=4)
         async for result in executor.run_batch(commands):
             print(f"{result.path}: {result.returncode}")
     """
@@ -480,7 +480,7 @@ Use `ParallelExecutor` from `imas_codex/discovery/executor.py`:
 from imas_codex.discovery.executor import ParallelExecutor
 
 # Works the same locally or via SSH
-executor = ParallelExecutor(facility="epfl", max_sessions=4)
+executor = ParallelExecutor(facility="tcv", max_sessions=4)
 async for result in executor.run_batch(commands):
     process(result)
 ```
@@ -810,7 +810,7 @@ Return a JSON array:
 4. **Shared Code Patterns**
    ```cypher
    -- Cross-facility code with same IMAS patterns
-   MATCH (p1:FacilityPath)-[:FACILITY_ID]->(f1:Facility {id: 'epfl'})
+   MATCH (p1:FacilityPath)-[:FACILITY_ID]->(f1:Facility {id: 'tcv'})
    MATCH (p2:FacilityPath)-[:FACILITY_ID]->(f2:Facility {id: 'iter'})
    WHERE p1.patterns_detected IS NOT NULL
      AND any(pat IN p1.patterns_detected WHERE pat IN p2.patterns_detected)
