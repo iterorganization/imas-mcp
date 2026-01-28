@@ -189,6 +189,16 @@ class ProgressState:
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum tree depth
 
+    # Pending work counts (for progress bars)
+    pending_scan: int = 0  # discovered + listing
+    pending_score: int = 0  # listed + scoring
+    pending_expand: int = 0  # scored + should_expand + not expanded
+
+    # Pending work counts (from get_work_status)
+    pending_scan: int = 0  # discovered paths
+    pending_score: int = 0  # listed paths
+    pending_expand: int = 0  # scored with should_expand=true
+
     # This run
     run_scanned: int = 0
     run_scored: int = 0
@@ -213,9 +223,9 @@ class ProgressState:
         return time.time() - self.start_time
 
     @property
-    def frontier_size(self) -> int:
-        """Total paths awaiting work (scan or score)."""
-        return self.discovered + self.listed
+    def pending_work(self) -> int:
+        """Total pending work: scan + score + expand queues."""
+        return self.pending_scan + self.pending_score + self.pending_expand
 
     @property
     def cost_per_path(self) -> float | None:
@@ -240,11 +250,16 @@ class ProgressState:
         return (self.scored / self.total * 100) if self.total > 0 else 0
 
     @property
+    def frontier_size(self) -> int:
+        """Total paths awaiting work (scan or score)."""
+        return self.pending_scan + self.pending_score + self.pending_expand
+
+    @property
     def eta_seconds(self) -> float | None:
         """Estimated time to completion based on score rate."""
         if not self.score_rate or self.score_rate <= 0:
             return None
-        remaining = self.discovered + self.listed
+        remaining = self.pending_scan + self.pending_score + self.pending_expand
         return remaining / self.score_rate if remaining > 0 else 0
 
 
@@ -369,6 +384,19 @@ class ParallelProgressDisplay:
             section.append(f" {score_pct:>3.0f}%", style="cyan")
             if self.state.score_rate:
                 section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
+        section.append("\n")
+
+        # EXPAND row: shows paths ready for expansion after scoring
+        if not self.state.scan_only and not self.state.score_only:
+            section.append("  EXPAND", style="bold magenta")
+            expand_count = self.state.pending_expand
+            expand_total = max(self.state.scored, 1)
+            expand_ratio = (
+                min(expand_count / expand_total, 1.0) if expand_count > 0 else 0
+            )
+            section.append(make_bar(expand_ratio, bar_width), style="magenta")
+            section.append(f" {expand_count:>6,}", style="bold")
+            section.append("  ready", style="dim")
 
         return section
 
@@ -484,7 +512,7 @@ class ParallelProgressDisplay:
         # Frontier and depth metrics
         section.append("\n")
         section.append("  STATS ", style="bold magenta")
-        section.append(f"frontier={self.state.frontier_size}", style="cyan")
+        section.append(f"pending={self.state.pending_work}", style="cyan")
         section.append(f"  depth={self.state.max_depth}", style="cyan")
         section.append(f"  skipped={self.state.skipped}", style="yellow")
         section.append(f"  excluded={self.state.excluded}", style="dim")
@@ -628,6 +656,14 @@ class ParallelProgressDisplay:
         self.state.skipped = stats["skipped"]
         self.state.excluded = stats["excluded"]
         self.state.max_depth = stats["max_depth"]
+        self._calculate_pending_from_stats(stats)
+
+        # Update pending work counts
+        self.state.pending_scan = stats["discovered"]
+        self.state.pending_score = stats["listed"]
+        # For expansion, we need a separate query - approximate with 0 for now
+        # Full expansion count requires checking should_expand flag
+        self.state.pending_expand = 0
 
         self._refresh()
 
@@ -651,6 +687,14 @@ class ParallelProgressDisplay:
     def get_paths_scored_this_run(self) -> set[str]:
         """Get paths scored during this run."""
         return self.state.scored_paths
+
+    def _calculate_pending_from_stats(self, stats: dict) -> None:
+        """Calculate pending work counts from graph stats."""
+        listing = stats.get("listing", 0)
+        scoring = stats.get("scoring", 0)
+        self.state.pending_scan = stats.get("discovered", 0) + listing
+        self.state.pending_score = stats.get("listed", 0) + scoring
+        self.state.pending_expand = stats.get("expansion_ready", 0)
 
     def _refresh(self) -> None:
         """Refresh the live display."""

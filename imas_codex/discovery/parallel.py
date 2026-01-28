@@ -76,6 +76,11 @@ class DiscoveryState:
     scan_idle_count: int = 0
     score_idle_count: int = 0
 
+    # SSH retry tracking for exponential backoff
+    ssh_retry_count: int = 0
+    max_ssh_retries: int = 5
+    ssh_error_message: str | None = None
+
     @property
     def total_cost(self) -> float:
         return self.score_stats.cost
@@ -120,6 +125,7 @@ def has_pending_work(facility: str) -> bool:
 
     Returns True if any of:
     - Discovered paths awaiting first scan
+    - Paths currently being scanned (listing) or scored (scoring)
     - Listed paths awaiting scoring
     - Scored paths with should_expand=true that haven't been expanded yet
     """
@@ -130,6 +136,8 @@ def has_pending_work(facility: str) -> bool:
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WHERE p.status = $discovered
+               OR p.status = $listing
+               OR p.status = $scoring
                OR (p.status = $listed AND p.score IS NULL)
                OR (p.status = $scored AND p.should_expand = true
                    AND p.expanded_at IS NULL)
@@ -137,6 +145,8 @@ def has_pending_work(facility: str) -> bool:
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
+            listing=PathStatus.listing.value,
+            scoring=PathStatus.scoring.value,
             listed=PathStatus.listed.value,
             scored=PathStatus.scored.value,
         )
@@ -144,93 +154,69 @@ def has_pending_work(facility: str) -> bool:
 
 
 # ============================================================================
-# Orphan Recovery
+# Startup Reset (single CLI process per facility)
 # ============================================================================
 
 
-def recover_orphaned_paths(facility: str) -> dict[str, int]:
-    """Recover paths stuck in transient states (listing, scoring).
+def reset_transient_paths(facility: str) -> dict[str, int]:
+    """Reset ALL paths in transient states (listing, scoring) on CLI startup.
 
-    Paths claimed more than ORPHAN_TIMEOUT_MINUTES ago are reset to their
-    previous state. This handles worker crashes and timeouts gracefully.
+    Since only one CLI process runs per facility at a time, any paths in
+    transient states are orphans from a previous crashed/killed process.
+    Reset them immediately without waiting for timeout.
 
     For listing paths:
     - If score IS NULL (first scan): reset to 'discovered'
     - If score IS NOT NULL (expansion): reset to 'scored'
 
+    For scoring paths:
+    - Reset to 'listed'
+
     Returns:
-        Dict with counts: listing_recovered, scoring_recovered
+        Dict with counts: listing_reset, scoring_reset
     """
     from imas_codex.graph import GraphClient
 
-    timeout_duration = f"PT{ORPHAN_TIMEOUT_MINUTES}M"
-
     with GraphClient() as gc:
-        # Reset orphaned first-scan paths back to discovered
-        first_scan_result = gc.query(
+        # Reset listing paths: first-scan → discovered, expansion → scored
+        listing_result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status = $listing
-              AND p.claimed_at < datetime() - duration($timeout)
-              AND p.score IS NULL
-            SET p.status = $discovered, p.claimed_at = null
-            RETURN count(p) AS recovered
+            WITH p, CASE WHEN p.score IS NULL THEN $discovered ELSE $scored END AS new_status
+            SET p.status = new_status, p.claimed_at = null
+            RETURN count(p) AS reset_count
             """,
             facility=facility,
             listing=PathStatus.listing.value,
             discovered=PathStatus.discovered.value,
-            timeout=timeout_duration,
-        )
-        first_scan_recovered = (
-            first_scan_result[0]["recovered"] if first_scan_result else 0
-        )
-
-        # Reset orphaned expansion paths back to scored
-        expansion_result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $listing
-              AND p.claimed_at < datetime() - duration($timeout)
-              AND p.score IS NOT NULL
-            SET p.status = $scored, p.claimed_at = null
-            RETURN count(p) AS recovered
-            """,
-            facility=facility,
-            listing=PathStatus.listing.value,
             scored=PathStatus.scored.value,
-            timeout=timeout_duration,
         )
-        expansion_recovered = (
-            expansion_result[0]["recovered"] if expansion_result else 0
-        )
+        listing_reset = listing_result[0]["reset_count"] if listing_result else 0
 
-        listing_recovered = first_scan_recovered + expansion_recovered
-
-        # Reset orphaned scoring paths back to listed
+        # Reset scoring paths → listed
         scoring_result = gc.query(
             """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status = $scoring
-              AND p.claimed_at < datetime() - duration($timeout)
             SET p.status = $listed, p.claimed_at = null
-            RETURN count(p) AS recovered
+            RETURN count(p) AS reset_count
             """,
             facility=facility,
             scoring=PathStatus.scoring.value,
             listed=PathStatus.listed.value,
-            timeout=timeout_duration,
         )
-        scoring_recovered = scoring_result[0]["recovered"] if scoring_result else 0
+        scoring_reset = scoring_result[0]["reset_count"] if scoring_result else 0
 
-    if listing_recovered or scoring_recovered:
+    if listing_reset or scoring_reset:
         logger.info(
-            f"Recovered orphaned paths: {listing_recovered} listing, "
-            f"{scoring_recovered} scoring"
+            f"Reset transient paths on startup: {listing_reset} listing, "
+            f"{scoring_reset} scoring"
         )
 
     return {
-        "listing_recovered": listing_recovered,
-        "scoring_recovered": scoring_recovered,
+        "listing_reset": listing_reset,
+        "scoring_reset": scoring_reset,
     }
 
 
@@ -371,7 +357,7 @@ async def scan_worker(
     """
     from imas_codex.discovery.scanner import scan_paths
 
-    batch_size = 200  # Paths per SSH call (optimized for ~65 paths/s throughput)
+    batch_size = 50  # Paths per SSH call (balanced for throughput + graceful exit)
 
     while not state.should_stop():
         # Claim work from graph
@@ -394,7 +380,7 @@ async def scan_worker(
 
         # Run scan in thread pool (blocking SSH call)
         # Capture variables for lambda to avoid late binding issue
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = time.time()
         facility, paths_to_scan = state.facility, path_strs
         # Use enable_rg=False and enable_size=False for speed
@@ -409,19 +395,47 @@ async def scan_worker(
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             # Transient failure (timeout or SSH connection error)
             # Revert paths to 'discovered' for retry
-            logger.warning(f"Transient scan failure, reverting {len(paths)} paths: {e}")
+            state.ssh_retry_count += 1
+            state.ssh_error_message = str(e)[:100]
+
+            # Exponential backoff: 2s, 4s, 8s, 16s, 32s
+            backoff_seconds = min(2**state.ssh_retry_count, 32)
+
+            logger.warning(
+                f"SSH failure {state.ssh_retry_count}/{state.max_ssh_retries}, "
+                f"retry in {backoff_seconds}s: {e}"
+            )
             _revert_listing_claim(state.facility, path_strs)
             state.scan_stats.errors += len(paths)
+
+            if state.ssh_retry_count >= state.max_ssh_retries:
+                logger.error(
+                    f"SSH connection to {state.facility} failed after "
+                    f"{state.max_ssh_retries} attempts. Check VPN and SSH config."
+                )
+                state.stop_requested = True
+                if on_progress:
+                    on_progress(
+                        f"SSH failed: {state.ssh_error_message}",
+                        state.scan_stats,
+                        None,
+                        None,
+                    )
+                break
+
             if on_progress:
                 on_progress(
-                    f"transient error, will retry {len(paths)} paths",
+                    f"SSH retry {state.ssh_retry_count} in {backoff_seconds}s",
                     state.scan_stats,
                     None,
                     None,
                 )
-            # Wait before retrying to avoid hammering a down connection
-            await asyncio.sleep(30.0)
+            await asyncio.sleep(backoff_seconds)
             continue
+
+        # SSH succeeded - reset retry counter
+        state.ssh_retry_count = 0
+        state.ssh_error_message = None
         state.scan_stats.last_batch_time = time.time() - start
 
         # Persist results (marks scanning → scanned)
@@ -500,10 +514,10 @@ async def score_worker(
     from imas_codex.discovery.scorer import DirectoryScorer
 
     scorer = DirectoryScorer(facility=state.facility)
-    # LLM batch size: 100 paths with 32k max_tokens for optimal throughput
-    # Sonnet 4.5 has 200k context, output is ~250 tokens/dir = 25k output tokens
-    batch_size = 100
-    loop = asyncio.get_event_loop()
+    # LLM batch size: 10 paths for faster completion and graceful shutdown
+    # Smaller batches mean less orphaned paths if worker is interrupted
+    batch_size = 10
+    loop = asyncio.get_running_loop()
 
     while not state.should_stop():
         # Check budget before claiming work
@@ -590,8 +604,7 @@ async def score_worker(
             on_progress(f"scoring {len(paths_to_score)} paths", state.score_stats, None)
 
         # Run scoring in thread pool (blocking LLM call)
-        # Capture variables for lambda to avoid late binding issue
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start = time.time()
         dirs_to_score, focus_val, thresh_val = (
             paths_to_score,
@@ -711,6 +724,43 @@ def _revert_listing_claim(facility: str, paths: list[str]) -> None:
 
 
 # ============================================================================
+# SSH Preflight Check
+# ============================================================================
+
+
+def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]:
+    """Check if SSH connection to facility is working.
+
+    Args:
+        facility: Facility ID
+        timeout: Timeout in seconds
+
+    Returns:
+        Tuple of (success, message)
+    """
+    from imas_codex.discovery.facility import get_facility
+    from imas_codex.remote.tools import run
+
+    try:
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except ValueError:
+        ssh_host = facility
+
+    try:
+        result = run("echo ok", facility=ssh_host, timeout=timeout)
+        if "ok" in result:
+            return True, f"SSH to {ssh_host} working"
+        return False, f"SSH to {ssh_host} returned unexpected output"
+    except subprocess.TimeoutExpired:
+        return False, f"SSH to {ssh_host} timed out after {timeout}s"
+    except subprocess.CalledProcessError as e:
+        return False, f"SSH to {ssh_host} failed: {e}"
+    except Exception as e:
+        return False, f"SSH check failed: {e}"
+
+
+# ============================================================================
 # Main Discovery Loop
 # ============================================================================
 
@@ -753,11 +803,14 @@ async def run_parallel_discovery(
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
-    # Note: SSH socket health is now checked automatically at the low level
-    # in run_command() on first access to each host per process lifetime.
+    # SSH preflight check - fail fast if facility is unreachable
+    ssh_ok, ssh_message = check_ssh_connectivity(facility, timeout=15)
+    if not ssh_ok:
+        logger.error(f"SSH preflight failed: {ssh_message}")
+        raise ConnectionError(f"Cannot connect to facility {facility}: {ssh_message}")
 
-    # Recover any orphaned paths from previous runs (crashed workers, timeouts)
-    recover_orphaned_paths(facility)
+    # Reset any transient paths from previous runs (single CLI per facility)
+    reset_transient_paths(facility)
 
     # Ensure we have paths to discover
     stats = get_discovery_stats(facility)
@@ -788,6 +841,14 @@ async def run_parallel_discovery(
         await asyncio.gather(*scan_tasks, *score_tasks)
     except asyncio.CancelledError:
         state.stop_requested = True
+    finally:
+        # Graceful shutdown: reset any in-progress paths for next run
+        reset_counts = reset_transient_paths(facility)
+        if reset_counts["listing_reset"] or reset_counts["scoring_reset"]:
+            logger.info(
+                f"Shutdown cleanup: {reset_counts['listing_reset']} listing, "
+                f"{reset_counts['scoring_reset']} scoring paths reset"
+            )
 
     elapsed = max(state.scan_stats.elapsed, state.score_stats.elapsed)
 

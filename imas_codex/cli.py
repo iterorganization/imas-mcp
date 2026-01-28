@@ -5522,6 +5522,12 @@ def discover():
     default=False,
     help="LLM scoring only, no SSH scanning (offline, graph-only)",
 )
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    default=False,
+    help="Use logging output instead of rich progress display",
+)
 def discover_paths(
     facility: str,
     cost_limit: float,
@@ -5532,6 +5538,7 @@ def discover_paths(
     score_workers: int,
     scan_only: bool,
     score_only: bool,
+    no_rich: bool,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -5575,6 +5582,7 @@ def discover_paths(
         num_score_workers=score_workers,
         scan_only=scan_only,
         score_only=score_only,
+        no_rich=no_rich,
     )
 
 
@@ -5588,6 +5596,7 @@ def _run_iterative_discovery(
     num_score_workers: int = 4,
     scan_only: bool = False,
     score_only: bool = False,
+    no_rich: bool = False,
 ) -> None:
     """Run parallel scan/score discovery.
 
@@ -5601,38 +5610,66 @@ def _run_iterative_discovery(
         num_score_workers: Number of parallel score workers
         scan_only: If True, only run SSH scanning (no LLM scoring)
         score_only: If True, only run LLM scoring (no SSH scanning)
+        no_rich: If True, use logging output instead of rich progress
     """
     import asyncio
-
-    from rich.console import Console
+    import sys
 
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
-    console = Console()
+    # Auto-detect if rich can run (TTY check) or use no_rich flag
+    use_rich = not no_rich and sys.stdout.isatty()
+
+    if use_rich:
+        from rich.console import Console
+
+        console = Console()
+    else:
+        console = None  # Will use logging instead
+        # Configure logging output for non-rich mode
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+    # Setup logger for non-rich mode
+    disc_logger = logging.getLogger("imas_codex.discovery")
+    if not use_rich:
+        disc_logger.setLevel(logging.INFO)
+
+    def log_print(msg: str, style: str = "") -> None:
+        """Print to console or log, stripping rich markup."""
+        import re
+
+        # Strip rich markup for logging: [bold], [red], etc
+        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
+        if console:
+            console.print(msg)
+        else:
+            disc_logger.info(clean_msg)
 
     # Check if we have any paths, seed if not
     stats = get_discovery_stats(facility)
     if stats["total"] == 0:
         if score_only:
-            console.print(
+            log_print(
                 "[red]Error: --score-only requires existing paths in the graph.[/red]"
             )
-            console.print(
+            log_print(
                 f"[yellow]Run 'imas-codex discover paths {facility}' or "
                 "'--scan-only' first to populate the graph.[/yellow]"
             )
             raise SystemExit(1)
-        console.print(f"[cyan]Seeding root paths for {facility}...[/cyan]")
+        log_print(f"[cyan]Seeding root paths for {facility}...[/cyan]")
         seed_facility_roots(facility)
         stats = get_discovery_stats(facility)
 
     # For score_only, check we have listed (scannable) paths
     if score_only and stats.get("listed", 0) == 0:
-        console.print(
-            "[yellow]Warning: No 'listed' paths available for scoring.[/yellow]"
-        )
-        console.print(
+        log_print("[yellow]Warning: No 'listed' paths available for scoring.[/yellow]")
+        log_print(
             "Paths must be scanned before they can be scored. "
             "Checking for already-scored paths to expand..."
         )
@@ -5653,20 +5690,20 @@ def _run_iterative_discovery(
     elif score_only:
         mode_str = " [bold green](SCORE ONLY)[/bold green]"
 
-    console.print(
+    log_print(
         f"[bold]Starting parallel discovery for {facility.upper()}[/bold]{mode_str}"
     )
     if not scan_only:
-        console.print(f"Cost limit: ${budget:.2f}")
+        log_print(f"Cost limit: ${budget:.2f}")
     if limit:
-        console.print(f"Path limit: {limit}")
+        log_print(f"Path limit: {limit}")
     if not scan_only:
-        console.print(f"Model: {model_name}")
-    console.print(
+        log_print(f"Model: {model_name}")
+    log_print(
         f"Workers: {effective_scan_workers} scan, {effective_score_workers} score"
     )
     if focus and not scan_only:
-        console.print(f"Focus: {focus}")
+        log_print(f"Focus: {focus}")
 
     # Run the async discovery loop
     try:
@@ -5682,6 +5719,7 @@ def _run_iterative_discovery(
                 num_score_workers=effective_score_workers,
                 scan_only=scan_only,
                 score_only=score_only,
+                use_rich=use_rich,
             )
         )
 
@@ -5691,10 +5729,10 @@ def _run_iterative_discovery(
         )
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]Discovery interrupted by user[/yellow]")
+        log_print("\n[yellow]Discovery interrupted by user[/yellow]")
         raise SystemExit(130) from None
     except Exception as e:
-        console.print(f"\n[red]Error: {e}[/red]", highlight=False)
+        log_print(f"\n[red]Error: {e}[/red]")
         raise SystemExit(1) from e
 
 
@@ -5708,19 +5746,16 @@ def _print_discovery_summary(
     """Print detailed discovery summary with statistics.
 
     Args:
-        console: Rich console
+        console: Rich console (or None for logging mode)
         facility: Facility ID
         result: Discovery result dict
         scored_this_run: Set of paths scored in this discovery run
         scan_only: If True, show scan-focused summary
     """
-    from rich.panel import Panel
-    from rich.text import Text
-
     from imas_codex.discovery import get_discovery_stats
     from imas_codex.discovery.frontier import get_high_value_paths
 
-    console.print()
+    disc_logger = logging.getLogger("imas_codex.discovery")
 
     # Get final graph stats
     stats = get_discovery_stats(facility)
@@ -5738,6 +5773,25 @@ def _print_discovery_summary(
         elapsed_str = f"{int(elapsed)}s"
     scan_rate = result.get("scan_rate")
     score_rate = result.get("score_rate")
+
+    # Non-rich mode: log simple summary
+    if console is None:
+        disc_logger.info(
+            f"Discovery complete: scanned={result['scanned']}, "
+            f"scored={result['scored']}, cost=${result['cost']:.3f}, "
+            f"elapsed={elapsed_str}"
+        )
+        disc_logger.info(
+            f"Graph state: total={stats['total']}, scored={stats['scored']} "
+            f"({coverage:.1f}%), pending={stats.get('pending', 0)}"
+        )
+        return
+
+    # Rich mode: use panels
+    from rich.panel import Panel
+    from rich.text import Text
+
+    console.print()
 
     # Build compact summary - width=100 to match progress display
     facility_upper = facility.upper()
@@ -5846,6 +5900,7 @@ async def _async_discovery_loop(
     num_score_workers: int = 4,
     scan_only: bool = False,
     score_only: bool = False,
+    use_rich: bool = True,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers.
 
@@ -5855,95 +5910,127 @@ async def _async_discovery_loop(
         limit: Maximum paths to process
         focus: Natural language focus for scoring
         threshold: Minimum score to expand paths
-        console: Rich console for output
+        console: Rich console for output (None for logging mode)
         num_scan_workers: Number of parallel scan workers
         num_score_workers: Number of parallel score workers
         scan_only: If True, skip scoring (scan workers only)
         score_only: If True, skip scanning (score workers only)
+        use_rich: If True, use rich display; otherwise use logging
 
     Returns:
         Tuple of (result dict, set of paths scored in this run)
     """
-    from imas_codex.agentic.agents import get_model_for_task
+    import logging
+
     from imas_codex.discovery.parallel import run_parallel_discovery
-    from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
 
-    model_name = get_model_for_task("score")
+    disc_logger = logging.getLogger("imas_codex.discovery")
 
-    with ParallelProgressDisplay(
-        facility=facility,
-        cost_limit=budget,
-        model=model_name,
-        console=console,
-        focus=focus or "",
-        scan_only=scan_only,
-        score_only=score_only,
-    ) as display:
-        # Periodic graph state refresh
-        async def refresh_graph_state():
-            """Background task to refresh graph state periodically."""
+    disc_logger = logging.getLogger("imas_codex.discovery")
+    scored_this_run: set[str] = set()
+
+    if use_rich:
+        # Rich-based visual progress display
+        from imas_codex.agentic.agents import get_model_for_task
+        from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
+
+        model_name = get_model_for_task("score")
+
+        with ParallelProgressDisplay(
+            facility=facility,
+            cost_limit=budget,
+            model=model_name,
+            console=console,
+            focus=focus or "",
+            scan_only=scan_only,
+            score_only=score_only,
+        ) as display:
+            # Periodic graph state refresh
+            async def refresh_graph_state():
+                while True:
+                    display.refresh_from_graph(facility)
+                    await asyncio.sleep(0.5)
+
+            async def queue_ticker():
+                while True:
+                    display.tick()
+                    await asyncio.sleep(0.15)
+
             import asyncio
 
-            while True:
-                display.refresh_from_graph(facility)
-                await asyncio.sleep(2.0)
+            refresh_task = asyncio.create_task(refresh_graph_state())
+            ticker_task = asyncio.create_task(queue_ticker())
 
-        # Streaming queue ticker - drains queues for smooth display
-        async def queue_ticker():
-            """Background task to drain streaming queues for smooth display."""
-            import asyncio
+            def on_scan(msg, stats, paths=None, scan_results=None):
+                display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
 
-            while True:
-                display.tick()
-                await asyncio.sleep(0.15)  # ~7 ticks/second for smooth streaming
+            def on_score(msg, stats, results=None):
+                display.update_score(msg, stats, results=results)
 
-        # Start background tasks
-        import asyncio
-
-        refresh_task = asyncio.create_task(refresh_graph_state())
-        ticker_task = asyncio.create_task(queue_ticker())
-
-        # Wrap display callbacks to match new signature with paths/results
-        def on_scan(
-            msg: str,
-            stats,
-            paths: list[str] | None = None,
-            scan_results: list[dict] | None = None,
-        ):
-            display.update_scan(msg, stats, paths=paths, scan_results=scan_results)
-
-        def on_score(msg: str, stats, results: list[dict] | None = None):
-            display.update_score(msg, stats, results=results)
-
-        try:
-            result = await run_parallel_discovery(
-                facility=facility,
-                cost_limit=budget,
-                path_limit=limit,
-                focus=focus,
-                threshold=threshold,
-                num_scan_workers=num_scan_workers,
-                num_score_workers=num_score_workers,
-                on_scan_progress=on_scan,
-                on_score_progress=on_score,
-            )
-        finally:
-            refresh_task.cancel()
-            ticker_task.cancel()
             try:
-                await refresh_task
-            except asyncio.CancelledError:
-                pass
-            try:
-                await ticker_task
-            except asyncio.CancelledError:
-                pass
+                result = await run_parallel_discovery(
+                    facility=facility,
+                    cost_limit=budget,
+                    path_limit=limit,
+                    focus=focus,
+                    threshold=threshold,
+                    num_scan_workers=num_scan_workers,
+                    num_score_workers=num_score_workers,
+                    on_scan_progress=on_scan,
+                    on_score_progress=on_score,
+                )
+            finally:
+                refresh_task.cancel()
+                ticker_task.cancel()
+                try:
+                    await refresh_task
+                except asyncio.CancelledError:
+                    pass
+                try:
+                    await ticker_task
+                except asyncio.CancelledError:
+                    pass
 
-        # Final refresh
-        display.refresh_from_graph(facility)
+            display.refresh_from_graph(facility)
+            scored_this_run = display.get_paths_scored_this_run()
 
-        # Get paths scored in this run for filtering high-value display
-        scored_this_run = display.get_paths_scored_this_run()
+    else:
+        # Logging-based progress - report only on batch completions
+        def on_scan_log(msg: str, stats, paths=None, scan_results=None):
+            """Log scan progress only on significant batches."""
+            # Only log when batch completed (not idle/waiting messages)
+            # Debug: always log to confirm callback is working
+            disc_logger.debug(f"scan callback: msg={msg}, results={len(scan_results) if scan_results else 0}")
+            if scan_results and len(scan_results) > 0:
+                disc_logger.info(
+                    f"SCAN batch: {len(scan_results)} paths, "
+                    f"total: {stats.processed}, rate: {stats.rate:.1f}/s"
+                )
+
+        def on_score_log(msg: str, stats, results=None):
+            """Log score progress only on batch completion."""
+            if results and len(results) > 0:
+                # Track scored paths
+                for r in results:
+                    if r.get("path"):
+                        scored_this_run.add(r["path"])
+
+                disc_logger.info(
+                    f"SCORE batch: {len(results)} paths, "
+                    f"total: {stats.processed}, cost: ${stats.cost:.3f}"
+                )
+
+        result = await run_parallel_discovery(
+            facility=facility,
+            cost_limit=budget,
+            path_limit=limit,
+            focus=focus,
+            threshold=threshold,
+            num_scan_workers=num_scan_workers,
+            num_score_workers=num_score_workers,
+            on_scan_progress=on_scan_log,
+            on_score_progress=on_score_log,
+        )
 
     # Return result for summary (box printed by caller, no duplicate text)
     return (
