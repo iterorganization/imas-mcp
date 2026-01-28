@@ -588,6 +588,39 @@ def _create_software_repo_link(
     )
 
 
+def _normalize_name(given_name: str | None, family_name: str | None) -> str | None:
+    """Normalize full name for cross-facility matching.
+
+    Converts to lowercase, strips extra whitespace, removes common suffixes.
+    Used to match same person across facilities despite name variations.
+
+    Args:
+        given_name: First/given name
+        family_name: Last/family name
+
+    Returns:
+        Normalized full name (e.g., "john smith") or None
+    """
+    if not given_name or not family_name:
+        return None
+
+    # Convert to lowercase and strip
+    given = given_name.lower().strip()
+    family = family_name.lower().strip()
+
+    # Remove common suffixes/prefixes
+    suffixes_to_remove = ["ext", "jr", "sr", "ii", "iii", "phd", "dr", "prof"]
+    for suffix in suffixes_to_remove:
+        family = family.replace(f" {suffix}", "").replace(f"-{suffix}", "")
+        given = given.replace(f" {suffix}", "").replace(f"-{suffix}", "")
+
+    # Normalize whitespace
+    full_name = f"{given} {family}".strip()
+    full_name = " ".join(full_name.split())  # Collapse multiple spaces
+
+    return full_name if full_name else None
+
+
 def _create_person_link(
     gc: Any,
     facility_user_id: str,
@@ -601,9 +634,14 @@ def _create_person_link(
     """Create Person node and IS_PERSON relationship.
 
     Identity priority:
-    1. email (best - unique identifier across facilities)
-    2. username (if same username exists on multiple facilities with similar names)
-    3. facility-specific (fallback - one Person per FacilityUser)
+    1. ORCID (when available - gold standard)
+    2. Normalized full name (given + family) - best for cross-facility
+    3. Email (secondary - can vary between facilities)
+    4. Username-based (fallback)
+
+    Full name matching handles variations like:
+    - "Agata Czarnecka" vs "czarneka" → matched via name normalization
+    - "Alessandro Casati" vs "acasati" → matched via name normalization
 
     Args:
         gc: GraphClient instance
@@ -614,21 +652,39 @@ def _create_person_link(
         family_name: Parsed family name
         email: Email address if available
         now: ISO timestamp
-    """
-    # Determine Person identity
-    if email:
-        # Best case - use email as identity
-        person_id = f"email:{email.lower()}"
-        person_name = name or email
-    else:
-        # Check if this username exists on other facilities with similar names
-        # Use username-based identity for cross-facility matching
-        person_id = f"user:{username}"
-        person_name = name or username
 
-    # Normalize name for consistent display
-    if not person_name and given_name and family_name:
-        person_name = f"{given_name} {family_name}"
+    Note:
+        ORCID lookup is async. Use `imas-codex enrich orcid` CLI command
+        for batch enrichment after initial discovery.
+    """
+    # ORCID lookup must be done separately via async enrichment
+    # See: imas-codex enrich orcid
+    orcid = None
+
+    # Determine Person identity
+    if orcid:
+        # Best case - use ORCID as identity
+        person_id = f"orcid:{orcid}"
+        person_name = (
+            name or f"{given_name} {family_name}"
+            if given_name and family_name
+            else username
+        )
+    else:
+        # Use normalized full name for cross-facility matching
+        normalized_name = _normalize_name(given_name, family_name)
+        if normalized_name:
+            # Primary: full name (handles "Agata Czarnecka" vs "czarneka")
+            person_id = f"name:{normalized_name}"
+            person_name = name or f"{given_name} {family_name}"
+        elif email:
+            # Secondary: email (but can vary between facilities)
+            person_id = f"email:{email.lower()}"
+            person_name = name or email
+        else:
+            # Fallback: username-based
+            person_id = f"user:{username}"
+            person_name = name or username
 
     # MERGE Person node (deduplicates across facilities)
     gc.query(
@@ -639,6 +695,7 @@ def _create_person_link(
             p.given_name = $given_name,
             p.family_name = $family_name,
             p.email = $email,
+            p.orcid = $orcid,
             p.discovered_at = $now,
             p.account_count = 1
         ON MATCH SET
@@ -646,13 +703,15 @@ def _create_person_link(
             p.name = COALESCE($person_name, p.name),
             p.given_name = COALESCE($given_name, p.given_name),
             p.family_name = COALESCE($family_name, p.family_name),
-            p.email = COALESCE($email, p.email)
+            p.email = COALESCE($email, p.email),
+            p.orcid = COALESCE($orcid, p.orcid)
         """,
         person_id=person_id,
         person_name=person_name,
         given_name=given_name,
         family_name=family_name,
         email=email,
+        orcid=orcid,
         now=now,
     )
 

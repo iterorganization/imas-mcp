@@ -1325,6 +1325,7 @@ async def run_parallel_discovery(
     | None = None,
     on_rescore_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
+    graceful_shutdown_timeout: float = 5.0,
 ) -> dict[str, Any]:
     """Run parallel discovery with all worker types.
 
@@ -1358,6 +1359,8 @@ async def run_parallel_discovery(
         on_score_progress: Callback for score progress
         on_enrich_progress: Callback for enrich progress
         on_rescore_progress: Callback for rescore progress
+        graceful_shutdown_timeout: Seconds to wait for workers to finish after
+            limit reached before cancelling (default: 5.0)
 
     Terminates when:
     - Cost limit reached
@@ -1420,14 +1423,38 @@ async def run_parallel_discovery(
         for _ in range(num_rescore_workers)
     ]
 
-    all_tasks = scan_tasks + expand_tasks + score_tasks + enrich_tasks + rescore_tasks
+    all_tasks = [
+        asyncio.create_task(t)
+        for t in scan_tasks + expand_tasks + score_tasks + enrich_tasks + rescore_tasks
+    ]
 
-    # Run all workers concurrently
+    # Monitor for limit reached and cancel workers gracefully
+    async def limit_monitor():
+        """Monitor for budget/path limits and cancel workers when reached."""
+        while not state.should_stop():
+            await asyncio.sleep(0.25)
+        # Limit reached - give workers a moment to finish current batch
+        logger.info("Limit reached, initiating graceful shutdown...")
+        await asyncio.sleep(graceful_shutdown_timeout)
+        # Cancel any still-running tasks
+        for task in all_tasks:
+            if not task.done():
+                task.cancel()
+
+    monitor_task = asyncio.create_task(limit_monitor())
+
+    # Run all workers concurrently with cancellation support
     try:
-        await asyncio.gather(*all_tasks)
+        await asyncio.gather(*all_tasks, return_exceptions=True)
     except asyncio.CancelledError:
         state.stop_requested = True
     finally:
+        # Ensure monitor is stopped
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except asyncio.CancelledError:
+            pass
         # Graceful shutdown: reset any in-progress paths for next run
         reset_counts = reset_transient_paths(facility)
         if reset_counts["listing_reset"] or reset_counts["scoring_reset"]:

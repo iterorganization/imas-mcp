@@ -269,6 +269,28 @@ class ProgressState:
         return self.pending_scan + self.pending_score + self.pending_expand
 
     @property
+    def cost_limit_reached(self) -> bool:
+        """Check if cost limit has been reached."""
+        return self.run_cost >= self.cost_limit if self.cost_limit > 0 else False
+
+    @property
+    def path_limit_reached(self) -> bool:
+        """Check if path limit has been reached."""
+        if self.path_limit is None or self.path_limit <= 0:
+            return False
+        total_processed = self.run_scanned + self.run_scored
+        return total_processed >= self.path_limit
+
+    @property
+    def limit_reason(self) -> str | None:
+        """Return which limit was reached, or None if no limit reached."""
+        if self.cost_limit_reached:
+            return "cost"
+        if self.path_limit_reached:
+            return "path"
+        return None
+
+    @property
     def eta_seconds(self) -> float | None:
         """Estimated time to termination based on limits.
 
@@ -539,8 +561,14 @@ class ParallelProgressDisplay:
 
         if eta is not None:
             if eta <= 0:
-                # Budget or path limit reached - workers finishing in-flight work
-                section.append("  limit reached", style="yellow dim")
+                # Show which limit was reached - budget, path, or complete
+                limit_reason = self.state.limit_reason
+                if limit_reason == "cost":
+                    section.append("  cost limit reached", style="yellow dim")
+                elif limit_reason == "path":
+                    section.append("  path limit reached", style="yellow dim")
+                else:
+                    section.append("  complete", style="green dim")
             else:
                 section.append(f"  ETA {format_time(eta)}", style="dim")
         section.append("\n")
