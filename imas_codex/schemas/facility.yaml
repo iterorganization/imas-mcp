@@ -706,6 +706,11 @@ classes:
         description: HEAD commit hash at time of discovery
       git_branch:
         description: Current git branch name
+      git_root_commit:
+        description: >-
+          First commit hash in repository history (root/birth commit).
+          Used to identify forks/clones even without remote URL.
+          Computed via: git rev-list --max-parents=0 HEAD
       software_repo_id:
         description: Link to SoftwareRepo node if this is a git clone
         range: SoftwareRepo
@@ -771,13 +776,14 @@ classes:
 
   SoftwareRepo:
     description: >-
-      A software repository discovered at a facility. Tracks git/svn
-      repositories found during path discovery. For public repos, ingestion
-      can happen via GitHub API instead of facility SSH.
+      A software repository representing an abstract project/codebase.
+      Identity determined by remote_url (if available) or git_root_commit.
+      Multiple FacilityPaths across facilities can link to same SoftwareRepo.
+      Ingestion happens from remote_url (GitHub/GitLab API), not facility paths.
       
       Relationships:
-      - (FacilityPath)-[:CLONE_OF]->(SoftwareRepo) for local clones
-      - (SoftwareRepo)-[:FACILITY_ID]->(Facility) for discovery context
+      - (FacilityPath)-[:INSTANCE_OF {head_commit, branch}]->(SoftwareRepo)
+      - Multiple facilities can discover same SoftwareRepo independently
       
       Schema.org alignment: Based on schema:SoftwareSourceCode vocabulary.
     class_uri: facility:SoftwareRepo
@@ -785,16 +791,27 @@ classes:
       id:
         identifier: true
         description: >-
-          Unique identifier. Format: github:owner/repo, gitlab:host/owner/repo,
-          svn:url, or local:facility:/path for non-remote repos.
+          Unique identifier. Format priorities:
+          1. github:owner/repo (if on GitHub)
+          2. gitlab:host/owner/repo (if on GitLab)
+          3. internal:host/owner/repo (if on internal git server)
+          4. root:{git_root_commit} (fallback for repos without remote)
         required: true
       source_type:
         description: Repository hosting type
         range: RepoSourceType
         required: true
       remote_url:
-        description: Full URL to repository (e.g., https://github.com/owner/repo)
+        description: >-
+          Full URL to repository (e.g., https://github.com/owner/repo).
+          Used for ingestion priority - repos with remote_url can be
+          ingested via API without facility SSH access.
         slot_uri: schema:codeRepository
+      root_commit:
+        description: >-
+          First commit in repository history (git root commit).
+          Used to identify forks/clones across facilities when remote_url
+          is unavailable. All instances with same root_commit are clones.
       is_public:
         description: Whether repository is publicly accessible (for GitHub API ingest)
         range: boolean

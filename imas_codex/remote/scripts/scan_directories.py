@@ -189,6 +189,7 @@ def scan_directory(
     git_remote_url: str | None = None
     git_head_commit: str | None = None
     git_branch: str | None = None
+    git_root_commit: str | None = None
 
     if has_git:
         git_dir = os.path.join(path, ".git")
@@ -232,6 +233,20 @@ def scan_directory(
             except (subprocess.TimeoutExpired, Exception):
                 pass
 
+            # Extract root commit (first commit in history)
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", path, "rev-list", "--max-parents=0", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    # May return multiple root commits (rare), take first
+                    git_root_commit = sanitize_str(proc.stdout.strip().split("\n")[0])
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+
     result["stats"] = {
         "total_files": len(files),
         "total_dirs": len(dirs),
@@ -241,6 +256,7 @@ def scan_directory(
         "git_remote_url": git_remote_url,
         "git_head_commit": git_head_commit,
         "git_branch": git_branch,
+        "git_root_commit": git_root_commit,
         "size_bytes": size_bytes,
         "file_type_counts": ext_counts,
         "rg_matches": rg_matches,

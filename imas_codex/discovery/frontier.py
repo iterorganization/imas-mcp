@@ -492,73 +492,99 @@ def _create_software_repo_link(
     gc: Any,
     facility: str,
     path_id: str,
-    remote_url: str,
+    remote_url: str | None,
+    root_commit: str | None,
     head_commit: str | None,
     branch: str | None,
     now: str,
 ) -> None:
-    """Create SoftwareRepo node and CLONE_OF relationship.
+    """Create SoftwareRepo node and INSTANCE_OF relationship.
+
+    Identity priority:
+    1. remote_url (github:owner/repo, gitlab:host/owner/repo, etc.)
+    2. root_commit (root:{commit_hash} for repos without remote)
+    3. path-based (local:{facility}:{path} as fallback)
 
     Args:
         gc: GraphClient instance
         facility: Facility ID
         path_id: FacilityPath ID
-        remote_url: Git remote origin URL
+        remote_url: Git remote origin URL (if available)
+        root_commit: First commit hash in repo history
         head_commit: Current HEAD commit hash
         branch: Current branch name
         now: ISO timestamp
     """
-    source_type, owner, repo_name = _parse_git_remote_url(remote_url)
+    # Determine SoftwareRepo identity and metadata
+    if remote_url:
+        source_type, owner, repo_name = _parse_git_remote_url(remote_url)
+        if source_type != "local" and owner and repo_name:
+            # Use remote URL as identity
+            repo_id = f"{source_type}:{owner}/{repo_name}"
+            name = repo_name
+        else:
+            # Can't parse remote URL, fall back to root commit
+            remote_url = None  # Ignore unparseable URL
 
-    if source_type == "local" or not owner or not repo_name:
-        # Local repo or can't parse - create with path-based ID
-        repo_id = f"local:{facility}:{path_id.split(':', 1)[1]}"
-        name = path_id.split("/")[-1] if "/" in path_id else path_id
-    else:
-        # Remote repo - create with normalized ID
-        repo_id = f"{source_type}:{owner}/{repo_name}"
-        name = repo_name
+    if not remote_url:
+        # No remote or unparseable - use root commit as identity
+        if root_commit:
+            repo_id = f"root:{root_commit}"
+            # Extract name from path
+            name = path_id.split("/")[-1] if "/" in path_id else path_id
+            source_type = "local"
+        else:
+            # No remote and no root commit - rare case, use path-based ID
+            repo_id = f"local:{facility}:{path_id.split(':', 1)[1]}"
+            name = path_id.split("/")[-1] if "/" in path_id else path_id
+            source_type = "local"
 
-    # MERGE SoftwareRepo (deduplicates across clones)
+    # MERGE SoftwareRepo (deduplicates across facilities and clones)
     gc.query(
         """
         MERGE (r:SoftwareRepo {id: $repo_id})
         ON CREATE SET
             r.source_type = $source_type,
             r.remote_url = $remote_url,
+            r.root_commit = $root_commit,
             r.name = $name,
-            r.head_commit = $head_commit,
-            r.default_branch = $branch,
             r.discovered_at = $now,
-            r.discovered_via = $facility,
             r.clone_count = 1
         ON MATCH SET
             r.clone_count = coalesce(r.clone_count, 0) + 1,
-            r.head_commit = CASE
-                WHEN $head_commit IS NOT NULL THEN $head_commit
-                ELSE r.head_commit
+            r.root_commit = CASE
+                WHEN $root_commit IS NOT NULL THEN $root_commit
+                ELSE r.root_commit
             END
         """,
         repo_id=repo_id,
         source_type=source_type,
         remote_url=remote_url,
+        root_commit=root_commit,
         name=name,
-        head_commit=head_commit,
-        branch=branch,
         now=now,
-        facility=facility,
     )
 
-    # Link FacilityPath to SoftwareRepo
+    # Link FacilityPath to SoftwareRepo with instance metadata
     gc.query(
         """
         MATCH (p:FacilityPath {id: $path_id})
         MATCH (r:SoftwareRepo {id: $repo_id})
-        MERGE (p)-[:CLONE_OF]->(r)
+        MERGE (p)-[rel:INSTANCE_OF]->(r)
+        ON CREATE SET
+            rel.head_commit = $head_commit,
+            rel.branch = $branch,
+            rel.discovered_at = $now
+        ON MATCH SET
+            rel.head_commit = $head_commit,
+            rel.branch = $branch
         SET p.software_repo_id = $repo_id
         """,
         path_id=path_id,
         repo_id=repo_id,
+        head_commit=head_commit,
+        branch=branch,
+        now=now,
     )
 
 
@@ -884,6 +910,7 @@ def persist_scan_results(
                 "git_remote_url": stats.get("git_remote_url"),
                 "git_head_commit": stats.get("git_head_commit"),
                 "git_branch": stats.get("git_branch"),
+                "git_root_commit": stats.get("git_root_commit"),
             }
             # Store file_type_counts if available
             file_type_counts = stats.get("file_type_counts")
@@ -992,6 +1019,7 @@ def persist_scan_results(
                     p.git_remote_url = item.git_remote_url,
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
+                    p.git_root_commit = item.git_root_commit,
                     p.child_names = item.child_names
                 """,
                 items=first_scan_updates,
@@ -1014,6 +1042,7 @@ def persist_scan_results(
                     p.git_remote_url = item.git_remote_url,
                     p.git_head_commit = item.git_head_commit,
                     p.git_branch = item.git_branch,
+                    p.git_root_commit = item.git_root_commit,
                     p.child_names = item.child_names
                 """,
                 items=expansion_updates,
@@ -1151,22 +1180,31 @@ def persist_scan_results(
             # User enrichment is non-critical; don't fail scan
             logger.warning(f"User enrichment failed: {e}")
 
-        # Create SoftwareRepo nodes for git repos with remote URLs
+        # Create SoftwareRepo nodes for git repos (with remote URL or root commit)
         all_updates = first_scan_updates + expansion_updates
         git_repos = [
             (
                 item["id"],
-                item["git_remote_url"],
+                item.get("git_remote_url"),
+                item.get("git_root_commit"),
                 item.get("git_head_commit"),
                 item.get("git_branch"),
             )
             for item in all_updates
-            if item.get("has_git") and item.get("git_remote_url")
+            if item.get("has_git")
+            and (item.get("git_remote_url") or item.get("git_root_commit"))
         ]
-        for path_id, remote_url, head_commit, branch in git_repos:
+        for path_id, remote_url, root_commit, head_commit, branch in git_repos:
             try:
                 _create_software_repo_link(
-                    gc, facility, path_id, remote_url, head_commit, branch, now
+                    gc,
+                    facility,
+                    path_id,
+                    remote_url,
+                    root_commit,
+                    head_commit,
+                    branch,
+                    now,
                 )
             except Exception as e:
                 logger.debug(f"Failed to create SoftwareRepo for {path_id}: {e}")

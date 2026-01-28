@@ -72,6 +72,7 @@ class DirStats:
     git_remote_url: str | None = None  # Git remote origin URL
     git_head_commit: str | None = None  # Git HEAD commit hash
     git_branch: str | None = None  # Current branch name
+    git_root_commit: str | None = None  # First commit in history (for fork detection)
     child_names: list[str] | None = None  # First 30 child file/dir names
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
@@ -93,6 +94,8 @@ class DirStats:
             result["git_head_commit"] = self.git_head_commit
         if self.git_branch:
             result["git_branch"] = self.git_branch
+        if self.git_root_commit:
+            result["git_root_commit"] = self.git_root_commit
         if self.child_names:
             result["child_names"] = self.child_names
         if self.file_type_counts:
@@ -252,6 +255,7 @@ def scan_paths(
             git_remote_url=stats_data.get("git_remote_url"),
             git_head_commit=stats_data.get("git_head_commit"),
             git_branch=stats_data.get("git_branch"),
+            git_root_commit=stats_data.get("git_root_commit"),
             child_names=data.get("child_names", []),
             file_type_counts=stats_data.get("file_type_counts", {}),
             size_bytes=size_bytes,
