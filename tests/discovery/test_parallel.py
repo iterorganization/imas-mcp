@@ -60,11 +60,14 @@ class TestDiscoveryState:
         state.score_stats.cost = 5.5
         assert state.should_stop()
 
-    def test_should_stop_when_both_idle(self):
-        """Test should_stop returns True when both workers idle."""
+    @patch("imas_codex.discovery.parallel.has_pending_work", return_value=False)
+    def test_should_stop_when_both_idle(self, mock_has_pending):
+        """Test should_stop returns True when all workers idle."""
         state = DiscoveryState(facility="test", cost_limit=10.0)
         state.scan_idle_count = 3
         state.score_idle_count = 3
+        state.enrich_idle_count = 3
+        state.rescore_idle_count = 3
         assert state.should_stop()
 
     def test_should_not_stop_when_one_active(self):

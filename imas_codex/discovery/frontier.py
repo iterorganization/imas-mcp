@@ -636,10 +636,12 @@ def mark_paths_scored(
                     p.path_purpose = $path_purpose,
                     p.evidence_id = $evidence_id,
                     p.should_expand = $should_expand,
+                    p.should_enrich = $should_enrich,
                     p.keywords = $keywords,
                     p.physics_domain = $physics_domain,
                     p.expansion_reason = $expansion_reason,
                     p.skip_reason = $skip_reason,
+                    p.enrich_skip_reason = $enrich_skip_reason,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost
                 WITH p
                 OPTIONAL MATCH (e:Evidence {id: $evidence_id})
@@ -658,10 +660,12 @@ def mark_paths_scored(
                 path_purpose=score_data.get("path_purpose"),
                 evidence_id=evidence_id,
                 should_expand=score_data.get("should_expand"),
+                should_enrich=score_data.get("should_enrich", True),
                 keywords=score_data.get("keywords"),
                 physics_domain=score_data.get("physics_domain"),
                 expansion_reason=score_data.get("expansion_reason"),
                 skip_reason=score_data.get("skip_reason"),
+                enrich_skip_reason=score_data.get("enrich_skip_reason"),
                 score_cost=score_data.get("score_cost", 0.0),
                 scored=PathStatus.scored.value,
             )
@@ -1338,3 +1342,241 @@ def get_accumulated_cost(facility: str) -> dict[str, Any]:
             "paths_with_cost": 0,
             "scored_paths": 0,
         }
+
+
+# ============================================================================
+# Enrichment Frontier Functions
+# ============================================================================
+
+
+def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, Any]]:
+    """Claim paths ready for enrichment (deep analysis: dust, tokei, patterns).
+
+    Paths ready for enrichment:
+    - status = 'scored' (already valued by LLM)
+    - should_enrich = true (LLM decided it's worth deep analysis)
+    - is_enriched IS NULL OR is_enriched = false (not yet enriched)
+
+    Uses claimed_at timestamp to prevent concurrent workers from claiming
+    the same paths. Paths are claimed for 5 minutes - if not completed,
+    they become claimable again (orphan recovery).
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim (default 25, SSH batch size)
+
+    Returns:
+        List of dicts with path info for enrichment
+    """
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC)
+    cutoff = (now - __import__("datetime").timedelta(minutes=5)).isoformat()
+    now_iso = now.isoformat()
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.should_enrich = true
+              AND (p.is_enriched IS NULL OR p.is_enriched = false)
+              AND (p.claimed_at IS NULL OR p.claimed_at < $cutoff)
+            WITH p
+            ORDER BY p.score DESC, p.depth ASC
+            LIMIT $limit
+            SET p.claimed_at = $now
+            RETURN p.id AS id, p.path AS path, p.score AS score,
+                   p.total_files AS total_files, p.total_dirs AS total_dirs
+            """,
+            facility=facility,
+            scored=PathStatus.scored.value,
+            cutoff=cutoff,
+            now=now_iso,
+            limit=limit,
+        )
+
+        return list(result)
+
+
+def mark_enrichment_complete(
+    facility: str,
+    results: list[dict[str, Any]],
+) -> int:
+    """Mark paths as enriched with deep analysis results.
+
+    Updates paths with:
+    - is_enriched = true
+    - enriched_at = current timestamp
+    - total_bytes, total_lines, language_breakdown from dust/tokei
+    - is_multiformat from pattern analysis
+    - Clears claimed_at
+
+    Args:
+        facility: Facility ID
+        results: List of dicts with enrichment data:
+            - path: Path string
+            - total_bytes: Size from dust (optional)
+            - total_lines: Lines from tokei (optional)
+            - language_breakdown: Language stats from tokei (optional, dict or JSON)
+            - is_multiformat: Multi-format detection (optional)
+            - error: Error message if enrichment failed (optional)
+
+    Returns:
+        Number of paths updated
+    """
+    import json
+
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC).isoformat()
+    updated = 0
+
+    with GraphClient() as gc:
+        for result in results:
+            path = result["path"]
+            path_id = f"{facility}:{path}"
+
+            if result.get("error"):
+                # Mark as unenrichable
+                gc.query(
+                    """
+                    MATCH (p:FacilityPath {id: $id})
+                    SET p.claimed_at = null,
+                        p.should_enrich = false,
+                        p.enrich_skip_reason = $reason
+                    """,
+                    id=path_id,
+                    reason=result["error"],
+                )
+                continue
+
+            # Prepare language breakdown as JSON string
+            lang_breakdown = result.get("language_breakdown")
+            if lang_breakdown and isinstance(lang_breakdown, dict):
+                lang_breakdown = json.dumps(lang_breakdown)
+
+            gc.query(
+                """
+                MATCH (p:FacilityPath {id: $id})
+                SET p.is_enriched = true,
+                    p.enriched_at = $now,
+                    p.claimed_at = null,
+                    p.total_bytes = $total_bytes,
+                    p.total_lines = $total_lines,
+                    p.language_breakdown = $language_breakdown,
+                    p.is_multiformat = $is_multiformat
+                """,
+                id=path_id,
+                now=now,
+                total_bytes=result.get("total_bytes"),
+                total_lines=result.get("total_lines"),
+                language_breakdown=lang_breakdown,
+                is_multiformat=result.get("is_multiformat"),
+            )
+            updated += 1
+
+    return updated
+
+
+def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Claim enriched paths ready for rescoring with full context.
+
+    Paths ready for rescoring:
+    - status = 'scored' (base scoring complete)
+    - is_enriched = true (deep analysis done)
+    - score >= 0.5 (only bother rescoring potentially valuable paths)
+    - rescored_at IS NULL (not yet rescored)
+
+    Uses claimed_at for worker coordination.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim (default 10, LLM batch size)
+
+    Returns:
+        List of dicts with path info and enrichment data for rescoring
+    """
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC)
+    cutoff = (now - __import__("datetime").timedelta(minutes=5)).isoformat()
+    now_iso = now.isoformat()
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.is_enriched = true
+              AND p.score >= 0.5
+              AND p.rescored_at IS NULL
+              AND (p.claimed_at IS NULL OR p.claimed_at < $cutoff)
+            WITH p
+            ORDER BY p.score DESC
+            LIMIT $limit
+            SET p.claimed_at = $now
+            RETURN p.id AS id, p.path AS path, p.score AS score,
+                   p.total_bytes AS total_bytes, p.total_lines AS total_lines,
+                   p.language_breakdown AS language_breakdown,
+                   p.is_multiformat AS is_multiformat,
+                   p.description AS description, p.path_purpose AS path_purpose
+            """,
+            facility=facility,
+            scored=PathStatus.scored.value,
+            cutoff=cutoff,
+            now=now_iso,
+            limit=limit,
+        )
+
+        return list(result)
+
+
+def mark_rescore_complete(
+    facility: str,
+    results: list[dict[str, Any]],
+) -> int:
+    """Mark paths as rescored with refined scores.
+
+    Updates paths with:
+    - New score (refined based on enrichment data)
+    - rescored_at = current timestamp
+    - Augments score_cost (doesn't replace)
+    - Clears claimed_at
+
+    Args:
+        facility: Facility ID
+        results: List of dicts with:
+            - path: Path string
+            - score: New refined score
+            - score_cost: LLM cost for rescoring (added to existing)
+
+    Returns:
+        Number of paths updated
+    """
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC).isoformat()
+    updated = 0
+
+    with GraphClient() as gc:
+        for result in results:
+            path = result["path"]
+            path_id = f"{facility}:{path}"
+
+            gc.query(
+                """
+                MATCH (p:FacilityPath {id: $id})
+                SET p.score = $score,
+                    p.rescored_at = $now,
+                    p.claimed_at = null,
+                    p.score_cost = coalesce(p.score_cost, 0) + $cost
+                """,
+                id=path_id,
+                now=now,
+                score=result.get("score"),
+                cost=result.get("score_cost", 0.0),
+            )
+            updated += 1
+
+    return updated

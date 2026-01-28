@@ -546,9 +546,15 @@ classes:
       - tokei: Lines of code by language (parallel, very fast)
       - scc: SLOC + complexity metrics for prioritization
       
-      TWO-PHASE DISCOVERY PIPELINE:
+      PARALLEL DISCOVERY PIPELINE:
       1. Scan: discovered -> listing -> listed (enumerate files, set counts)
-      2. Score: listed -> scoring -> scored (LLM evaluates, sets score/score_*)
+      2. Score: listed -> scoring -> scored (LLM evaluates, sets score/expand/enrich)
+      3. Expand: scored + should_expand -> children created as discovered
+      4. Enrich: scored + should_enrich -> enriched (dust/tokei/patterns)
+      5. Rescore: enriched -> rescored (optional refinement with enrichment data)
+      
+      Expand and Enrich run in PARALLEL as independent workers.
+      Rescore runs after enrichment for high-value paths.
       
       Terminal states:
       - scored: Has LLM score, ready for ingestion if high-value
@@ -558,6 +564,8 @@ classes:
       
       Query paths by status to find work for each phase.
       Use score field to prioritize paths for code ingestion.
+    mixins:
+      - LLMOperation
     class_uri: facility:FacilityPath
     attributes:
       id:
@@ -643,6 +651,14 @@ classes:
         range: boolean
       expansion_reason:
         description: Why this directory should be expanded
+      should_enrich:
+        description: >-
+          Whether to run deep analysis (dust, tokei, patterns) on this path.
+          Decided by LLM during scoring based on path depth, size estimate,
+          and purpose. False for huge dirs like /work, /home that would hang.
+        range: boolean
+      enrich_skip_reason:
+        description: Why enrichment was skipped (e.g., "too large", "no code files")
       keywords:
         description: Searchable keywords for this directory
         multivalued: true
@@ -674,6 +690,9 @@ classes:
         range: datetime
       scored_at:
         description: When this path was scored
+        range: datetime
+      rescored_at:
+        description: When this path was rescored with enrichment data (null if not rescored)
         range: datetime
       session_id:
         description: Scout session that discovered/processed this path
@@ -1023,6 +1042,7 @@ classes:
       as a single node with a variants array, each linked to its source code.
     mixins:
       - LLMProvenance
+      - LLMOperation
     class_uri: facility:TreeNode
     attributes:
       path:
@@ -1323,6 +1343,7 @@ classes:
       Data flow is one-way (facility->IMAS) but searchable from either direction.
     mixins:
       - LLMProvenance
+      - LLMOperation
     class_uri: facility:IMASMapping
     attributes:
       id:
@@ -1723,6 +1744,7 @@ classes:
       - HAS_CHUNK -> WikiChunk (created during ingest)
     mixins:
       - LLMProvenance
+      - LLMOperation
     class_uri: facility:WikiPage
     attributes:
       id:

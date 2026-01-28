@@ -218,6 +218,32 @@ classes:
           Enables time-based re-enrichment policies.
         range: datetime
 
+  LLMOperation:
+    description: >-
+      Mixin for atomic LLM cost tracking on graph nodes.
+      Any node that passes through an LLM (scoring, enrichment, mapping, etc.)
+      can compose this mixin to track cost at the individual node level.
+      For batch operations, cost is distributed as cost_per_node = batch_cost / batch_size.
+      Enables cost aggregation queries with Cypher MATCH n WHERE n.llm_cost IS NOT NULL
+      RETURN type, sum(n.llm_cost) AS cost ORDER BY cost DESC.
+    mixin: true
+    class_uri: common:LLMOperation
+    attributes:
+      llm_model:
+        description: "Model identifier (e.g., openrouter/anthropic/claude-sonnet-4.5)"
+      llm_cost:
+        description: "Cost in USD for this operation (for batches: batch_cost / batch_size)"
+        range: float
+      llm_tokens_in:
+        description: "Input tokens consumed (for batches: batch_tokens / batch_size)"
+        range: integer
+      llm_tokens_out:
+        description: "Output tokens generated (for batches: batch_tokens / batch_size)"
+        range: integer
+      llm_at:
+        description: When LLM operation was performed
+        range: datetime
+
   COCOSMixin:
     description: >-
       Mixin providing COCOS-related attributes for entities that handle

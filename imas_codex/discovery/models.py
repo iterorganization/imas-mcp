@@ -144,6 +144,12 @@ class DirectoryScoringResult(BaseModel):
 
     should_expand: bool = Field(description="Whether to explore child directories")
 
+    should_enrich: bool = Field(
+        default=True,
+        description="Whether to run deep analysis (dust, tokei, patterns). "
+        "False for huge dirs like /work, /home, or paths with no code files.",
+    )
+
     keywords: list[str] = Field(
         default_factory=list,
         description="Searchable keywords (max 5)",
@@ -160,6 +166,12 @@ class DirectoryScoringResult(BaseModel):
 
     skip_reason: str | None = Field(
         default=None, description="Why not to expand (if should_expand=false)"
+    )
+
+    enrich_skip_reason: str | None = Field(
+        default=None,
+        description="Why not to enrich (if should_enrich=false). "
+        "E.g., 'too large', 'no code files', 'container only'",
     )
 
 
@@ -274,6 +286,9 @@ class ScoredDirectory:
     should_expand: bool = False
     """Whether to explore children of this directory."""
 
+    should_enrich: bool = True
+    """Whether to run deep analysis (dust, tokei, patterns) on this path."""
+
     keywords: list[str] = field(default_factory=list)
     """Searchable keywords for this directory (max 5)."""
 
@@ -285,6 +300,9 @@ class ScoredDirectory:
 
     skip_reason: str | None = None
     """Why this directory should not be expanded."""
+
+    enrich_skip_reason: str | None = None
+    """Why enrichment was skipped (e.g., 'too large', 'no code files')."""
 
     score_cost: float = 0.0
     """LLM cost in USD for scoring this path (batch cost / batch size)."""
@@ -304,10 +322,12 @@ class ScoredDirectory:
             "score_imas": self.score_imas,
             "score": self.score,
             "should_expand": self.should_expand,
+            "should_enrich": self.should_enrich,
             "keywords": self.keywords,
             "physics_domain": self.physics_domain,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
+            "enrich_skip_reason": self.enrich_skip_reason,
             "score_cost": self.score_cost,
         }
 

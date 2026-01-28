@@ -70,11 +70,15 @@ class DiscoveryState:
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
+    enrich_stats: WorkerStats = field(default_factory=WorkerStats)
+    rescore_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
     scan_idle_count: int = 0
     score_idle_count: int = 0
+    enrich_idle_count: int = 0
+    rescore_idle_count: int = 0
 
     # SSH retry tracking for exponential backoff
     ssh_retry_count: int = 0
@@ -83,7 +87,7 @@ class DiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost
+        return self.score_stats.cost + self.rescore_stats.cost
 
     @property
     def total_processed(self) -> int:
@@ -107,14 +111,21 @@ class DiscoveryState:
             return True
         if self.path_limit_reached:
             return True
-        # Stop if both workers idle for 3+ iterations AND no pending work
-        if self.scan_idle_count >= 3 and self.score_idle_count >= 3:
+        # Stop if all workers idle for 3+ iterations AND no pending work
+        all_idle = (
+            self.scan_idle_count >= 3
+            and self.score_idle_count >= 3
+            and self.enrich_idle_count >= 3
+            and self.rescore_idle_count >= 3
+        )
+        if all_idle:
             # Check for pending expansion work before terminating
             if has_pending_work(self.facility):
                 # Reset idle counts to force workers to re-poll for new work
-                # (e.g., expansion paths that became available after scoring)
                 self.scan_idle_count = 0
                 self.score_idle_count = 0
+                self.enrich_idle_count = 0
+                self.rescore_idle_count = 0
                 return False
             return True
         return False
@@ -128,6 +139,8 @@ def has_pending_work(facility: str) -> bool:
     - Paths currently being scanned (listing) or scored (scoring)
     - Listed paths awaiting scoring
     - Scored paths with should_expand=true that haven't been expanded yet
+    - Scored paths with should_enrich=true that haven't been enriched yet
+    - Enriched paths that haven't been rescored yet
     """
     from imas_codex.graph import GraphClient
 
@@ -141,6 +154,9 @@ def has_pending_work(facility: str) -> bool:
                OR (p.status = $listed AND p.score IS NULL)
                OR (p.status = $scored AND p.should_expand = true
                    AND p.expanded_at IS NULL)
+               OR (p.status = $scored AND p.should_enrich = true
+                   AND (p.is_enriched IS NULL OR p.is_enriched = false))
+               OR (p.is_enriched = true AND p.rescored_at IS NULL)
             RETURN count(p) AS pending
             """,
             facility=facility,
@@ -340,6 +356,163 @@ def mark_score_complete(
     return mark_paths_scored(facility, score_data)
 
 
+def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, Any]]:
+    """Atomically claim scored paths for enrichment.
+
+    Claims paths where:
+    - status = 'scored'
+    - should_enrich = true
+    - is_enriched is null or false
+
+    Uses claimed_at timestamp for orphan recovery.
+    Returns paths that this worker now owns.
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = $scored
+              AND p.should_enrich = true
+              AND (p.is_enriched IS NULL OR p.is_enriched = false)
+            WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
+            SET p.claimed_at = datetime()
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.score AS score
+            """,
+            facility=facility,
+            limit=limit,
+            scored=PathStatus.scored.value,
+        )
+        return list(result)
+
+
+def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Atomically claim enriched paths for rescoring.
+
+    Claims paths where:
+    - is_enriched = true
+    - rescored_at is null
+
+    Rescoring uses enrichment data (total_bytes, total_lines, language_breakdown)
+    to refine the score.
+
+    Returns paths that this worker now owns.
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.is_enriched = true
+              AND p.rescored_at IS NULL
+            WITH p ORDER BY p.score DESC LIMIT $limit
+            SET p.claimed_at = datetime()
+            RETURN p.id AS id, p.path AS path, p.depth AS depth,
+                   p.score AS score, p.score_code AS score_code,
+                   p.score_data AS score_data, p.score_imas AS score_imas,
+                   p.total_bytes AS total_bytes, p.total_lines AS total_lines,
+                   p.language_breakdown AS language_breakdown,
+                   p.is_multiformat AS is_multiformat,
+                   p.path_purpose AS path_purpose
+            """,
+            facility=facility,
+            limit=limit,
+        )
+        return list(result)
+
+
+def mark_enrichment_complete(
+    facility: str,
+    enrichment_results: list[dict[str, Any]],
+) -> int:
+    """Mark paths as enriched with deep scan data.
+
+    Args:
+        facility: Facility ID
+        enrichment_results: List of dicts with path and enrichment data
+
+    Returns:
+        Number of paths updated
+    """
+    from datetime import UTC, datetime
+
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC).isoformat()
+    updated = 0
+
+    with GraphClient() as gc:
+        for result in enrichment_results:
+            if result.get("error"):
+                continue
+
+            path_id = f"{facility}:{result['path']}"
+            gc.query(
+                """
+                MATCH (p:FacilityPath {id: $id})
+                SET p.is_enriched = true,
+                    p.enriched_at = $now,
+                    p.total_bytes = $total_bytes,
+                    p.total_lines = $total_lines,
+                    p.language_breakdown = $language_breakdown,
+                    p.is_multiformat = $is_multiformat,
+                    p.claimed_at = null
+                """,
+                id=path_id,
+                now=now,
+                total_bytes=result.get("total_bytes"),
+                total_lines=result.get("total_lines"),
+                language_breakdown=result.get("language_breakdown"),
+                is_multiformat=result.get("is_multiformat", False),
+            )
+            updated += 1
+
+    return updated
+
+
+def mark_rescore_complete(
+    facility: str,
+    rescore_results: list[dict[str, Any]],
+) -> int:
+    """Mark paths with refined scores after rescoring.
+
+    Args:
+        facility: Facility ID
+        rescore_results: List of dicts with path and new score data
+
+    Returns:
+        Number of paths updated
+    """
+    from datetime import UTC, datetime
+
+    from imas_codex.graph import GraphClient
+
+    now = datetime.now(UTC).isoformat()
+    updated = 0
+
+    with GraphClient() as gc:
+        for result in rescore_results:
+            path_id = f"{facility}:{result['path']}"
+            gc.query(
+                """
+                MATCH (p:FacilityPath {id: $id})
+                SET p.rescored_at = $now,
+                    p.score = $score,
+                    p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
+                    p.claimed_at = null
+                """,
+                id=path_id,
+                now=now,
+                score=result.get("score"),
+                score_cost=result.get("score_cost", 0.0),
+            )
+            updated += 1
+
+    return updated
+
+
 # ============================================================================
 # Async Workers
 # ============================================================================
@@ -349,15 +522,19 @@ async def scan_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[str] | None, list[dict] | None], None]
     | None = None,
+    batch_size: int = 50,
 ) -> None:
     """Async scanner worker.
 
     Continuously claims pending paths, scans via SSH, marks complete.
     Runs until stop_requested or no more pending paths.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Paths per SSH call (default 50)
     """
     from imas_codex.discovery.scanner import scan_paths
-
-    batch_size = 50  # Paths per SSH call (balanced for throughput + graceful exit)
 
     while not state.should_stop():
         # Claim work from graph
@@ -502,6 +679,7 @@ async def scan_worker(
 async def score_worker(
     state: DiscoveryState,
     on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
+    batch_size: int = 25,
 ) -> None:
     """Async scorer worker.
 
@@ -510,13 +688,15 @@ async def score_worker(
 
     Optimization: Empty directories (total_files=0 AND total_dirs=0) are
     auto-skipped without LLM call since they have no content to evaluate.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Paths per LLM call (default 25)
     """
     from imas_codex.discovery.scorer import DirectoryScorer
 
     scorer = DirectoryScorer(facility=state.facility)
-    # LLM batch size: 10 paths for faster completion and graceful shutdown
-    # Smaller batches mean less orphaned paths if worker is interrupted
-    batch_size = 10
     loop = asyncio.get_running_loop()
 
     while not state.should_stop():
@@ -723,6 +903,232 @@ def _revert_listing_claim(facility: str, paths: list[str]) -> None:
         )
 
 
+def _revert_enrich_claim(facility: str, paths: list[str]) -> None:
+    """Revert paths from enriching back to unenriched state on error."""
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.path IN $paths
+            SET p.claimed_at = null
+            """,
+            facility=facility,
+            paths=paths,
+        )
+
+
+async def enrich_worker(
+    state: DiscoveryState,
+    on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
+    batch_size: int = 25,
+) -> None:
+    """Async enrichment worker.
+
+    Continuously claims scored paths with should_enrich=true, runs deep
+    analysis (dust, tokei, patterns) via SSH, marks complete.
+    Runs in PARALLEL with scan/score/expand workers.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Paths per SSH call (default 25)
+    """
+    from imas_codex.discovery.frontier import (
+        claim_paths_for_enriching,
+        mark_enrichment_complete,
+    )
+    from imas_codex.discovery.path_enrichment import enrich_paths
+
+    loop = asyncio.get_running_loop()
+
+    while not state.should_stop():
+        # Claim work from graph
+        paths = claim_paths_for_enriching(state.facility, limit=batch_size)
+
+        if not paths:
+            state.enrich_idle_count += 1
+            if on_progress:
+                on_progress("waiting for enrichable paths", state.enrich_stats, None)
+            # Wait before polling again
+            await asyncio.sleep(2.0)
+            continue
+
+        state.enrich_idle_count = 0
+        path_strs = [p["path"] for p in paths]
+
+        if on_progress:
+            on_progress(f"enriching {len(paths)} paths", state.enrich_stats, None)
+
+        # Run enrichment in thread pool (blocking SSH call)
+        start = time.time()
+        try:
+            results = await loop.run_in_executor(
+                None,
+                lambda fac=state.facility, pts=path_strs: enrich_paths(fac, pts),
+            )
+            state.enrich_stats.last_batch_time = time.time() - start
+
+            # Convert EnrichmentResult to dict for persistence
+            result_dicts = [
+                {
+                    "path": r.path,
+                    "total_bytes": r.total_bytes,
+                    "total_lines": r.total_lines,
+                    "language_breakdown": r.language_breakdown,
+                    "is_multiformat": r.is_multiformat,
+                    "error": r.error,
+                }
+                for r in results
+            ]
+
+            # Persist results
+            enriched = await loop.run_in_executor(
+                None,
+                lambda rd=result_dicts: mark_enrichment_complete(state.facility, rd),
+            )
+
+            state.enrich_stats.processed += enriched
+            state.enrich_stats.errors += len([r for r in results if r.error])
+
+            if on_progress:
+                on_progress(f"enriched {enriched}", state.enrich_stats, result_dicts)
+
+        except Exception as e:
+            logger.exception(f"Enrich error: {e}")
+            state.enrich_stats.errors += len(paths)
+            _revert_enrich_claim(state.facility, path_strs)
+
+        # Brief yield
+        await asyncio.sleep(0.1)
+
+
+async def rescore_worker(
+    state: DiscoveryState,
+    on_progress: Callable[[str, WorkerStats, list[dict] | None], None] | None = None,
+    batch_size: int = 10,
+) -> None:
+    """Async rescore worker.
+
+    Continuously claims enriched paths, rescores using enrichment data
+    (total_bytes, total_lines, language_breakdown) for refined scoring.
+    Cheaper LLM call since we use a simpler prompt with concrete metrics.
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback
+        batch_size: Paths per rescore operation (default 10)
+    """
+    from imas_codex.discovery.frontier import (
+        claim_paths_for_rescoring,
+        mark_rescore_complete,
+    )
+
+    loop = asyncio.get_running_loop()
+
+    while not state.should_stop():
+        # Check budget before claiming work
+        if state.budget_exhausted:
+            if on_progress:
+                on_progress("budget exhausted", state.rescore_stats, None)
+            break
+
+        # Claim work from graph
+        paths = claim_paths_for_rescoring(state.facility, limit=batch_size)
+
+        if not paths:
+            state.rescore_idle_count += 1
+            if on_progress:
+                on_progress("waiting for enriched paths", state.rescore_stats, None)
+            # Wait before polling again
+            await asyncio.sleep(2.0)
+            continue
+
+        state.rescore_idle_count = 0
+
+        if on_progress:
+            on_progress(f"rescoring {len(paths)} paths", state.rescore_stats, None)
+
+        # Run rescoring in thread pool
+        start = time.time()
+        try:
+            # Simple rescoring: adjust score based on enrichment metrics
+            # This is a lightweight heuristic, not a full LLM call
+            rescore_results = []
+            for p in paths:
+                new_score = _compute_rescore(p)
+                rescore_results.append(
+                    {
+                        "path": p["path"],
+                        "score": new_score,
+                        "score_cost": 0.0,  # Heuristic rescore has no LLM cost
+                    }
+                )
+
+            state.rescore_stats.last_batch_time = time.time() - start
+
+            # Persist results
+            rescored = await loop.run_in_executor(
+                None,
+                lambda rr=rescore_results: mark_rescore_complete(state.facility, rr),
+            )
+
+            state.rescore_stats.processed += rescored
+
+            if on_progress:
+                on_progress(
+                    f"rescored {rescored}", state.rescore_stats, rescore_results
+                )
+
+        except Exception as e:
+            logger.exception(f"Rescore error: {e}")
+            state.rescore_stats.errors += len(paths)
+
+        # Brief yield
+        await asyncio.sleep(0.1)
+
+
+def _compute_rescore(path_data: dict) -> float:
+    """Compute refined score using enrichment data.
+
+    Applies heuristic adjustments based on:
+    - total_lines: More lines of code = higher score
+    - is_multiformat: Format conversion code = higher IMAS value
+    - language_breakdown: Python/Fortran = higher value
+    """
+    import json
+
+    base_score = path_data.get("score", 0.5)
+
+    # Boost for lines of code (max +0.15)
+    total_lines = path_data.get("total_lines", 0) or 0
+    if total_lines > 10000:
+        base_score += 0.15
+    elif total_lines > 1000:
+        base_score += 0.10
+    elif total_lines > 100:
+        base_score += 0.05
+
+    # Boost for multiformat (indicates data conversion/mapping)
+    if path_data.get("is_multiformat"):
+        base_score += 0.10
+
+    # Boost for Python/Fortran presence
+    lang_breakdown = path_data.get("language_breakdown")
+    if lang_breakdown:
+        if isinstance(lang_breakdown, str):
+            try:
+                lang_breakdown = json.loads(lang_breakdown)
+            except json.JSONDecodeError:
+                lang_breakdown = {}
+        if lang_breakdown:
+            if "Python" in lang_breakdown or "Fortran" in lang_breakdown:
+                base_score += 0.05
+
+    return min(1.5, max(0.0, base_score))
+
+
 # ============================================================================
 # SSH Preflight Check
 # ============================================================================
@@ -773,14 +1179,32 @@ async def run_parallel_discovery(
     threshold: float = 0.7,
     num_scan_workers: int = 1,
     num_score_workers: int = 4,
+    num_enrich_workers: int = 1,
+    num_rescore_workers: int = 0,
+    scan_batch_size: int = 50,
+    score_batch_size: int = 25,
+    enrich_batch_size: int = 25,
+    rescore_batch_size: int = 10,
     on_scan_progress: Callable[
         [str, WorkerStats, list[str] | None, list[dict] | None], None
     ]
     | None = None,
     on_score_progress: Callable[[str, WorkerStats, list[dict] | None], None]
     | None = None,
+    on_enrich_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    | None = None,
+    on_rescore_progress: Callable[[str, WorkerStats, list[dict] | None], None]
+    | None = None,
 ) -> dict[str, Any]:
-    """Run parallel scan and score workers.
+    """Run parallel discovery with all worker types.
+
+    Workers:
+    - scan: Lists directories, discovers child paths (SSH-bound)
+    - score: LLM-based scoring with should_expand/should_enrich decisions
+    - enrich: Deep analysis (dust/tokei/patterns) for should_enrich=true paths
+    - rescore: Refines scores using enrichment data (optional)
+
+    All workers run in PARALLEL - enrich does not wait for expand.
 
     Args:
         facility: Facility ID to discover
@@ -790,8 +1214,16 @@ async def run_parallel_discovery(
         threshold: Score threshold for expansion
         num_scan_workers: Number of concurrent scan workers (default: 1)
         num_score_workers: Number of concurrent score workers (default: 4)
+        num_enrich_workers: Number of concurrent enrich workers (default: 1)
+        num_rescore_workers: Number of concurrent rescore workers (default: 0)
+        scan_batch_size: Paths per SSH call (default: 50)
+        score_batch_size: Paths per LLM call (default: 25)
+        enrich_batch_size: Paths per SSH call (default: 25)
+        rescore_batch_size: Paths per rescore (default: 10)
         on_scan_progress: Callback for scan progress
         on_score_progress: Callback for score progress
+        on_enrich_progress: Callback for enrich progress
+        on_rescore_progress: Callback for rescore progress
 
     Terminates when:
     - Cost limit reached
@@ -799,7 +1231,7 @@ async def run_parallel_discovery(
     - All workers idle (no more work)
 
     Returns:
-        Summary dict with scanned, scored, cost, elapsed, rates
+        Summary dict with scanned, scored, enriched, rescored, cost, elapsed, rates
     """
     from imas_codex.discovery import get_discovery_stats, seed_facility_roots
 
@@ -828,17 +1260,31 @@ async def run_parallel_discovery(
 
     # Create worker tasks
     scan_tasks = [
-        scan_worker(state, on_progress=on_scan_progress)
+        scan_worker(state, on_progress=on_scan_progress, batch_size=scan_batch_size)
         for _ in range(num_scan_workers)
     ]
     score_tasks = [
-        score_worker(state, on_progress=on_score_progress)
+        score_worker(state, on_progress=on_score_progress, batch_size=score_batch_size)
         for _ in range(num_score_workers)
     ]
+    enrich_tasks = [
+        enrich_worker(
+            state, on_progress=on_enrich_progress, batch_size=enrich_batch_size
+        )
+        for _ in range(num_enrich_workers)
+    ]
+    rescore_tasks = [
+        rescore_worker(
+            state, on_progress=on_rescore_progress, batch_size=rescore_batch_size
+        )
+        for _ in range(num_rescore_workers)
+    ]
+
+    all_tasks = scan_tasks + score_tasks + enrich_tasks + rescore_tasks
 
     # Run all workers concurrently
     try:
-        await asyncio.gather(*scan_tasks, *score_tasks)
+        await asyncio.gather(*all_tasks)
     except asyncio.CancelledError:
         state.stop_requested = True
     finally:
@@ -850,22 +1296,32 @@ async def run_parallel_discovery(
                 f"{reset_counts['scoring_reset']} scoring paths reset"
             )
 
-    elapsed = max(state.scan_stats.elapsed, state.score_stats.elapsed)
-
     # Auto-normalize scores after scoring completes
     if state.score_stats.processed > 0:
         from imas_codex.discovery.frontier import normalize_scores
 
         normalize_scores(facility)
 
+    elapsed = max(
+        state.scan_stats.elapsed,
+        state.score_stats.elapsed,
+        state.enrich_stats.elapsed,
+        state.rescore_stats.elapsed,
+    )
+
     return {
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
-        "expanded": 0,  # TODO: track expansions
+        "enriched": state.enrich_stats.processed,
+        "rescored": state.rescore_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,
         "score_rate": state.score_stats.rate,
+        "enrich_rate": state.enrich_stats.rate,
+        "rescore_rate": state.rescore_stats.rate,
         "scan_errors": state.scan_stats.errors,
         "score_errors": state.score_stats.errors,
+        "enrich_errors": state.enrich_stats.errors,
+        "rescore_errors": state.rescore_stats.errors,
     }

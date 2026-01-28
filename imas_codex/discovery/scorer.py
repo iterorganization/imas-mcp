@@ -496,7 +496,9 @@ class DirectoryScorer:
                     score_imas=0.0,
                     score=0.0,
                     should_expand=False,
+                    should_enrich=False,
                     skip_reason=f"LLM response parse failed: {e}",
+                    enrich_skip_reason="parse error",
                     score_cost=cost_per_path,
                 )
                 for d in directories
@@ -556,6 +558,17 @@ class DirectoryScorer:
             if purpose in data_purposes:
                 should_expand = False
 
+            # Enrichment decision - LLM decides, but override for known-large paths
+            should_enrich = getattr(result, "should_enrich", True)
+            enrich_skip_reason = getattr(result, "enrich_skip_reason", None)
+
+            # Override: never enrich data containers (too many files)
+            if purpose in data_purposes:
+                should_enrich = False
+                enrich_skip_reason = (
+                    enrich_skip_reason or "data container - too many files"
+                )
+
             scored_dir = ScoredDirectory(
                 path=path,
                 path_purpose=purpose,
@@ -567,10 +580,12 @@ class DirectoryScorer:
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
+                should_enrich=should_enrich,
                 keywords=result.keywords[:5] if result.keywords else [],
                 physics_domain=result.physics_domain,
                 expansion_reason=result.expansion_reason,
                 skip_reason=result.skip_reason,
+                enrich_skip_reason=enrich_skip_reason,
                 score_cost=cost_per_path,
             )
 
@@ -671,10 +686,12 @@ class DirectoryScorer:
                 score_imas=score_imas,
                 score=combined,
                 should_expand=should_expand,
+                should_enrich=result.get("should_enrich", True),
                 keywords=result.get("keywords", [])[:5],  # Cap at 5
                 physics_domain=result.get("physics_domain"),
                 expansion_reason=result.get("expansion_reason"),
                 skip_reason=result.get("skip_reason"),
+                enrich_skip_reason=result.get("enrich_skip_reason"),
             )
 
             scored.append(scored_dir)

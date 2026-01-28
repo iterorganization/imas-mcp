@@ -153,6 +153,30 @@ For each directory, collect evidence in these categories:
 - **physics_indicators**: Physics domains (equilibrium, transport, MHD)
 - **quality_indicators**: Project quality signals (has_readme, has_makefile, has_git)
 
+## Enrichment Decision (should_enrich)
+
+Enrichment runs deep analysis: `dust` (file sizes), `tokei` (LOC), pattern matching.
+This can be SLOW or HANG for very large directories.
+
+**NEVER enrich** (should_enrich=false, CRITICAL):
+- **Root containers**: `/work`, `/home`, `/opt`, `/common` - too large, would hang
+- **Depth ≤ 1 containers**: `/work/*`, `/home/*` - still potentially huge
+- **Data containers with many files**: simulation_data, diagnostic_data with total_files > 1000
+- **Archive/system directories**: No value in deep analysis
+- **Directories with no code indicators**: Nothing to count with tokei
+
+**Enrich** (should_enrich=true) when:
+- **Code directories**: Modeling code, diagnostic code, data interfaces
+- **Total files < 5000**: Reasonable size for analysis
+- **Depth >= 2**: Not a top-level container
+- **Has code indicators**: Python, Fortran, C, etc.
+
+When setting **should_enrich=false**, set **enrich_skip_reason** to explain:
+- "root container - too large"
+- "data container - too many files"
+- "no code files detected"
+- "archive - no value"
+
 {% if focus %}
 ## Focus Area
 
