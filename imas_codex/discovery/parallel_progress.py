@@ -324,8 +324,8 @@ class ParallelProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 120
-    BAR_WIDTH = 60
+    WIDTH = 130
+    BAR_WIDTH = 65
     GAUGE_WIDTH = 25
 
     def __init__(
@@ -374,48 +374,36 @@ class ParallelProgressDisplay:
     def _build_progress_section(self) -> Text:
         """Build the main progress bars for scan and score.
 
-        SCAN is an ensemble metric: scan + expand + enrich (all SSH operations)
-        SCORE is an ensemble metric: score + rescore (all LLM operations)
+        SCAN shows full exploration status: (listed + scored + skipped) / total
+        SCORE shows scoring status: (scored + skipped) / (listed + scored + skipped)
         """
         section = Text()
 
-        # Calculate ensemble totals
-        # SCAN ensemble: initial scan + expansion + enrichment (SSH-bound operations)
-        scan_processed = (
-            self.state.run_scanned + self.state.run_expanded + self.state.run_enriched
-        )
-        scan_pending = (
-            self.state.pending_scan
-            + self.state.pending_expand
-            + self.state.pending_enrich
-        )
-        scan_total = (
-            scan_processed + scan_pending if (scan_processed + scan_pending) > 0 else 1
-        )
-        scan_pct = (scan_processed / scan_total * 100) if scan_total > 0 else 0
+        # SCAN progress: paths that have been scanned (listed, scored, skipped)
+        # vs total known paths in exploration
+        scanned_paths = self.state.listed + self.state.scored + self.state.skipped
+        scan_total = self.state.total if self.state.total > 0 else 1
+        scan_pct = (scanned_paths / scan_total * 100) if scan_total > 0 else 0
 
-        # SCORE ensemble: scoring + rescoring (LLM operations)
-        score_processed = self.state.run_scored + self.state.run_rescored
-        score_pending = self.state.pending_score + self.state.pending_rescore
-        score_total = (
-            score_processed + score_pending
-            if (score_processed + score_pending) > 0
-            else 1
-        )
-        score_pct = (score_processed / score_total * 100) if score_total > 0 else 0
+        # SCORE progress: paths that have been scored vs scorable paths
+        # Scorable = listed (waiting) + scored (done) + skipped (auto-handled)
+        scorable_paths = self.state.listed + self.state.scored + self.state.skipped
+        scored_paths = self.state.scored + self.state.skipped
+        score_total = scorable_paths if scorable_paths > 0 else 1
+        score_pct = (scored_paths / score_total * 100) if score_total > 0 else 0
 
         bar_width = self.BAR_WIDTH
 
-        # SCAN row: ensemble of scan + expand + enrich
+        # SCAN row: shows full exploration scanning progress
         if self.state.score_only:
             section.append("  SCAN  ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCAN  ", style="bold blue")
-            scan_ratio = min(scan_processed / scan_total, 1.0) if scan_total > 0 else 0
+            scan_ratio = min(scanned_paths / scan_total, 1.0) if scan_total > 0 else 0
             section.append(make_bar(scan_ratio, bar_width), style="blue")
-            section.append(f" {scan_processed:>6,}", style="bold")
+            section.append(f" {scanned_paths:>6,}", style="bold")
             section.append(f" {scan_pct:>3.0f}%", style="cyan")
             # Show combined rate (scan + expand + enrich)
             combined_rate = sum(
@@ -431,18 +419,16 @@ class ParallelProgressDisplay:
                 section.append(f" {combined_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # SCORE row: ensemble of score + rescore
+        # SCORE row: shows full exploration scoring progress
         if self.state.scan_only:
             section.append("  SCORE ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCORE ", style="bold green")
-            score_ratio = (
-                min(score_processed / score_total, 1.0) if score_total > 0 else 0
-            )
+            score_ratio = min(scored_paths / score_total, 1.0) if score_total > 0 else 0
             section.append(make_bar(score_ratio, bar_width), style="green")
-            section.append(f" {score_processed:>6,}", style="bold")
+            section.append(f" {scored_paths:>6,}", style="bold")
             section.append(f" {score_pct:>3.0f}%", style="cyan")
             # Show combined rate (score + rescore)
             combined_rate = sum(
@@ -567,34 +553,48 @@ class ParallelProgressDisplay:
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
             section.append("\n")
 
-            # TOTAL row - accumulated facility cost (across all runs)
-            if self.state.accumulated_cost > 0:
-                total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+            # TOTAL row - progress toward estimated total cost (ETC)
+            # Always show if we have any cost data (accumulated or current run)
+            total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+            if total_facility_cost > 0 or self.state.pending_score > 0:
                 section.append("  TOTAL ", style="bold white")
-                # Estimate total based on remaining paths
+                # Dynamic ETC based on cost per path and remaining work
                 paths_remaining = self.state.pending_scan + self.state.pending_score
                 cpp = self.state.cost_per_path
-                projected_total = total_facility_cost
-                if cpp and paths_remaining > 0:
-                    projected_total = total_facility_cost + (paths_remaining * cpp)
-                section.append_text(
-                    make_resource_gauge(
-                        total_facility_cost, projected_total, self.GAUGE_WIDTH
+                etc = total_facility_cost  # Estimated Total Cost
+                if cpp and cpp > 0 and paths_remaining > 0:
+                    etc = total_facility_cost + (paths_remaining * cpp)
+                elif self.state.listed > 0 and self.state.run_scored > 0:
+                    # Fallback: estimate from listed paths ratio
+                    etc = (
+                        total_facility_cost
+                        * (self.state.listed + self.state.scored)
+                        / max(self.state.scored, 1)
                     )
-                )
+
+                # Progress bar shows current cost toward ETC
+                if etc > 0:
+                    section.append_text(
+                        make_resource_gauge(total_facility_cost, etc, self.GAUGE_WIDTH)
+                    )
+                else:
+                    section.append("│", style="dim")
+                    section.append("━" * self.GAUGE_WIDTH, style="white")
+                    section.append("│", style="dim")
+
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
-                # Est marker only on TOTAL row
-                if projected_total > total_facility_cost:
-                    section.append(f"  Est ${projected_total:.2f}", style="dim")
+                # Show ETC (dynamic estimate)
+                if etc > total_facility_cost:
+                    section.append(f"  ETC ${etc:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - all on one line
+        # STATS row - all on one line with full labels
         section.append("  STATS ", style="bold magenta")
         section.append(f"pending={self.state.pending_work}", style="cyan")
-        section.append(f"  exp={self.state.run_expanded}", style="cyan")
-        section.append(f"  enr={self.state.run_enriched}", style="cyan")
-        section.append(f"  skip={self.state.skipped}", style="yellow")
-        section.append(f"  excl={self.state.excluded}", style="dim")
+        section.append(f"  expanded={self.state.run_expanded}", style="cyan")
+        section.append(f"  enriched={self.state.run_enriched}", style="cyan")
+        section.append(f"  skipped={self.state.skipped}", style="yellow")
+        section.append(f"  excluded={self.state.excluded}", style="dim")
         section.append(f"  depth={self.state.max_depth}", style="cyan")
 
         return section
@@ -656,14 +656,17 @@ class ParallelProgressDisplay:
         self.state.scan_rate = stats.rate
 
         # Track processing state for display
+        # "idle" = no work, "scanning" = processing SSH batch
         if message == "idle":
             self.state.current_scan = None
             self.state.scan_processing = False
             self._refresh()
             return
-        elif "processing" in message.lower() or "batch" in message.lower():
+        elif "scanning" in message.lower():
+            # About to run SSH scan - mark as processing
             self.state.scan_processing = True
         else:
+            # Got results back ("scanned N paths")
             self.state.scan_processing = False
 
         # Queue scan results for streaming
@@ -700,14 +703,17 @@ class ParallelProgressDisplay:
         self.state.run_cost = stats.cost
 
         # Track processing state for display
-        if message == "idle":
+        # "waiting" = idle, "scoring" = processing LLM, "skipped" = just finished
+        if "waiting" in message.lower():
             self.state.current_score = None
             self.state.score_processing = False
             self._refresh()
             return
-        elif "processing" in message.lower() or "batch" in message.lower():
+        elif "scoring" in message.lower():
+            # About to call LLM - mark as processing
             self.state.score_processing = True
         else:
+            # Got results back
             self.state.score_processing = False
 
         # Queue score results for streaming

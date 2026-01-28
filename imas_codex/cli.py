@@ -5793,7 +5793,7 @@ def _print_discovery_summary(
 
     console.print()
 
-    # Build compact summary - width=120 to match progress display
+    # Build compact summary - width=130 to match progress display
     # Order: Rates, This Run, Overall, Graph (as requested)
     facility_upper = facility.upper()
     summary = Text()
@@ -5884,7 +5884,7 @@ def _print_discovery_summary(
             summary,
             title=title,
             border_style=border,
-            width=120,  # Match progress display width
+            width=130,  # Match progress display width
         )
     )
 
