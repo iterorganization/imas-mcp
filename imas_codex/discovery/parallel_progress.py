@@ -539,7 +539,8 @@ class ParallelProgressDisplay:
 
         if eta is not None:
             if eta <= 0:
-                section.append("  done", style="green dim")
+                # Budget or path limit reached - workers finishing in-flight work
+                section.append("  limit reached", style="yellow dim")
             else:
                 section.append(f"  ETA {format_time(eta)}", style="dim")
         section.append("\n")

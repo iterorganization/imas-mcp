@@ -1454,10 +1454,10 @@ def mark_enrichment_complete(
                 )
                 continue
 
-            # Prepare language breakdown as JSON string
+            # Prepare language breakdown as JSON string (Neo4j rejects empty dicts)
             lang_breakdown = result.get("language_breakdown")
-            if lang_breakdown and isinstance(lang_breakdown, dict):
-                lang_breakdown = json.dumps(lang_breakdown)
+            if isinstance(lang_breakdown, dict):
+                lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
 
             gc.query(
                 """
