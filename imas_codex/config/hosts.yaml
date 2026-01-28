@@ -1,0 +1,46 @@
+# Facility hostname to IP mappings for VPN environments
+#
+# When working with VPNs that block external DNS, these static mappings
+# allow SSH access to work correctly.
+#
+# Structure:
+#   facility_name:
+#     - hostname: the FQDN that needs resolution
+#       ip: the static IP address
+#       comment: optional description
+#
+# Usage:
+#   imas-codex hosts resolve epfl        # Show entries for EPFL
+#   imas-codex hosts sync                # Update /etc/hosts with all entries
+#   imas-codex hosts check               # Verify DNS resolution
+
+epfl:
+  # TCV gateway (lac911 may be down, lac912 is backup)
+  - hostname: lac912.epfl.ch
+    ip: 128.179.42.22
+    comment: TCV bastion (primary)
+  - hostname: lac911.epfl.ch
+    ip: 128.179.42.23
+    comment: TCV bastion (backup)
+  - hostname: lac5.epfl.ch
+    ip: 128.178.128.220
+    comment: TCV compute node
+
+jt60sa:
+  - hostname: nakasvr23.iferc.org
+    ip: 157.111.10.188
+    comment: JT-60SA login node
+
+# iter and jet use ITER network, which typically resolves internally
+# Only add entries here if VPN blocks ITER DNS too
+
+iter:
+  # Add if ITER DNS is blocked
+  # - hostname: sdcc-login.iter.org
+  #   ip: x.x.x.x
+  #   comment: ITER SDCC gateway
+  []
+
+jet:
+  # JET is accessed via ITER reverse tunnel, no direct DNS needed
+  []

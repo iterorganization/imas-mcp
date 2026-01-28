@@ -6875,6 +6875,264 @@ def sources_disable(source_id: str) -> None:
 
 
 # ============================================================================
+# Hosts Command Group - VPN DNS Workarounds
+# ============================================================================
+
+
+@main.group()
+def hosts() -> None:
+    """Manage /etc/hosts entries for facilities.
+
+    When working with VPNs that block external DNS, static IP mappings
+    are needed for SSH to work correctly.
+
+    \b
+      imas-codex hosts list              List all configured host entries
+      imas-codex hosts resolve <facility> Show entries for a facility
+      imas-codex hosts sync              Update /etc/hosts with all entries
+      imas-codex hosts check             Verify DNS resolution
+
+    Host mappings are defined in imas_codex/config/hosts.yaml
+    """
+    pass
+
+
+def _load_hosts_config() -> dict:
+    """Load hosts configuration from YAML."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).parent / "config" / "hosts.yaml"
+    if not config_path.exists():
+        return {}
+
+    with open(config_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+@hosts.command("list")
+def hosts_list() -> None:
+    """List all configured host entries.
+
+    Examples:
+        imas-codex hosts list
+    """
+    config = _load_hosts_config()
+
+    if not config:
+        click.echo("No host entries configured.")
+        click.echo("Add entries to: imas_codex/config/hosts.yaml")
+        return
+
+    for facility, entries in config.items():
+        if not entries:
+            continue
+        click.echo(f"\n{facility}:")
+        for entry in entries:
+            comment = f"  # {entry.get('comment', '')}" if entry.get("comment") else ""
+            click.echo(f"  {entry['ip']:20} {entry['hostname']}{comment}")
+
+
+@hosts.command("resolve")
+@click.argument("facility")
+@click.option(
+    "--format", "-f", "fmt", default="hosts", type=click.Choice(["hosts", "json"])
+)
+def hosts_resolve(facility: str, fmt: str) -> None:
+    """Show hosts entries for a specific facility.
+
+    Output can be directly appended to /etc/hosts.
+
+    Examples:
+        imas-codex hosts resolve epfl
+        imas-codex hosts resolve jt60sa >> /etc/hosts
+    """
+    import json
+
+    config = _load_hosts_config()
+
+    if facility not in config:
+        click.echo(f"No host entries for facility: {facility}", err=True)
+        click.echo(f"Available: {', '.join(config.keys())}")
+        raise SystemExit(1)
+
+    entries = config[facility]
+    if not entries:
+        click.echo(f"No host entries configured for {facility}")
+        return
+
+    if fmt == "json":
+        click.echo(json.dumps(entries, indent=2))
+    else:
+        click.echo(f"# {facility} facility hosts")
+        for entry in entries:
+            comment = f"  # {entry.get('comment', '')}" if entry.get("comment") else ""
+            click.echo(f"{entry['ip']:20} {entry['hostname']}{comment}")
+
+
+@hosts.command("sync")
+@click.option("--dry-run", is_flag=True, help="Show what would be added")
+@click.option("--wsl", is_flag=True, help="Target WSL /etc/hosts (requires sudo)")
+def hosts_sync(dry_run: bool, wsl: bool) -> None:
+    """Sync all host entries to /etc/hosts.
+
+    On Linux/WSL, requires sudo. On Windows, requires admin privileges.
+
+    Examples:
+        imas-codex hosts sync --dry-run   # Preview changes
+        imas-codex hosts sync --wsl       # Update WSL hosts
+    """
+    import platform
+    import subprocess
+    from pathlib import Path
+
+    config = _load_hosts_config()
+
+    # Collect all entries
+    all_entries = []
+    for _facility, entries in config.items():
+        if entries:
+            all_entries.extend(entries)
+
+    if not all_entries:
+        click.echo("No host entries configured.")
+        return
+
+    # Determine target file
+    if wsl:
+        hosts_path = "/etc/hosts"
+    elif platform.system() == "Windows":
+        hosts_path = r"C:\Windows\System32\drivers\etc\hosts"
+    else:
+        hosts_path = "/etc/hosts"
+
+    # Read current hosts file
+    try:
+        if wsl:
+            result = subprocess.run(
+                ["wsl", "cat", hosts_path],
+                capture_output=True,
+                text=True,
+            )
+            current_content = result.stdout
+        else:
+            current_content = Path(hosts_path).read_text()
+    except Exception as e:
+        click.echo(f"Error reading {hosts_path}: {e}", err=True)
+        raise SystemExit(1) from None
+
+    # Find entries that need to be added
+    new_entries = []
+    for entry in all_entries:
+        hostname = entry["hostname"]
+        if hostname not in current_content:
+            new_entries.append(entry)
+
+    if not new_entries:
+        click.echo("All entries already present in hosts file.")
+        return
+
+    # Generate content to add
+    additions = ["\n# imas-codex facility hosts"]
+    for entry in new_entries:
+        comment = f"  # {entry.get('comment', '')}" if entry.get("comment") else ""
+        additions.append(f"{entry['ip']:20} {entry['hostname']}{comment}")
+    additions_text = "\n".join(additions) + "\n"
+
+    if dry_run:
+        click.echo(f"Would add to {hosts_path}:")
+        click.echo(additions_text)
+        return
+
+    # Add entries
+    try:
+        if wsl:
+            subprocess.run(
+                [
+                    "wsl",
+                    "bash",
+                    "-c",
+                    f"echo '{additions_text}' | sudo tee -a {hosts_path}",
+                ],
+                check=True,
+            )
+        elif platform.system() == "Windows":
+            # Requires admin
+            with open(hosts_path, "a") as f:
+                f.write(additions_text)
+        else:
+            subprocess.run(
+                ["sudo", "bash", "-c", f"echo '{additions_text}' >> {hosts_path}"],
+                check=True,
+            )
+        click.echo(f"Added {len(new_entries)} entries to {hosts_path}")
+    except PermissionError:
+        click.echo(f"Error: Need admin/sudo privileges to write {hosts_path}", err=True)
+        raise SystemExit(1) from None
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from None
+
+
+@hosts.command("check")
+@click.option("--wsl", is_flag=True, help="Check from WSL perspective")
+def hosts_check(wsl: bool) -> None:
+    """Verify DNS resolution for all configured hosts.
+
+    Examples:
+        imas-codex hosts check       # Check from current environment
+        imas-codex hosts check --wsl # Check from WSL
+    """
+    import subprocess
+
+    config = _load_hosts_config()
+
+    if not config:
+        click.echo("No host entries configured.")
+        return
+
+    click.echo("Checking DNS resolution...\n")
+
+    for facility, entries in config.items():
+        if not entries:
+            continue
+
+        click.echo(f"{facility}:")
+        for entry in entries:
+            hostname = entry["hostname"]
+            expected_ip = entry["ip"]
+
+            try:
+                if wsl:
+                    result = subprocess.run(
+                        ["wsl", "getent", "hosts", hostname],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        resolved_ip = result.stdout.split()[0]
+                    else:
+                        resolved_ip = None
+                else:
+                    import socket
+
+                    resolved_ip = socket.gethostbyname(hostname)
+
+                if resolved_ip == expected_ip:
+                    click.echo(f"  ✓ {hostname} -> {resolved_ip}")
+                elif resolved_ip:
+                    click.echo(
+                        f"  ⚠ {hostname} -> {resolved_ip} (expected {expected_ip})"
+                    )
+                else:
+                    click.echo(f"  ✗ {hostname} (unresolved, need: {expected_ip})")
+            except Exception:
+                click.echo(f"  ✗ {hostname} (resolution failed, need: {expected_ip})")
+
+
+# ============================================================================
 # Dynamic Facility Commands
 # ============================================================================
 
