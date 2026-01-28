@@ -87,6 +87,9 @@ class DiscoveryState:
     max_ssh_retries: int = 5
     ssh_error_message: str | None = None
 
+    # Session tracking for --limit
+    initial_terminal_count: int | None = None
+
     @property
     def total_cost(self) -> float:
         return self.score_stats.cost + self.rescore_stats.cost
@@ -119,19 +122,26 @@ class DiscoveryState:
             return result[0]["terminal_count"] if result else 0
 
     @property
+    def session_terminal_count(self) -> int:
+        """Count of terminal paths created in this session."""
+        if self.initial_terminal_count is None:
+            return 0
+        return max(0, self.terminal_count - self.initial_terminal_count)
+
+    @property
     def budget_exhausted(self) -> bool:
         return self.total_cost >= self.cost_limit
 
     @property
     def path_limit_reached(self) -> bool:
-        """Check if path limit reached using terminal state count.
+        """Check if path limit reached using session terminal count.
 
-        Uses scored paths count (terminal states) rather than scan + score
-        since scanning is just the start of the pipeline.
+        Uses paths completed in THIS SESSION, not cumulative graph total.
+        E.g., with 28 existing paths and --limit 30, we process 30 more.
         """
         if self.path_limit is None:
             return False
-        return self.terminal_count >= self.path_limit
+        return self.session_terminal_count >= self.path_limit
 
     def should_stop(self) -> bool:
         """Check if discovery should terminate."""
@@ -367,7 +377,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
 
 async def mark_scan_complete(
     facility: str,
-    scan_results: list[tuple[str, dict, list[str], str | None, bool]],
+    scan_results: list[tuple[str, dict, list[dict], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, int]:
     """Mark scanned paths complete and conditionally create children.
@@ -376,7 +386,8 @@ async def mark_scan_complete(
 
     Args:
         facility: Facility ID
-        scan_results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples
+        scan_results: List of (path, stats_dict, child_dirs, error, is_expanding) tuples.
+                      child_dirs is list of {path, is_symlink, realpath} dicts.
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
     """
     from imas_codex.discovery.frontier import persist_scan_results
@@ -658,11 +669,15 @@ async def scan_worker(
         # Persist results (marks scanning → scanned)
         # Run in executor to avoid blocking event loop
         # is_expanding=False since scan_worker only handles initial scans
+        # Convert ChildDirInfo objects to dicts for serialization
         batch_data = [
             (
                 r.path,
                 r.stats.to_dict(),
-                r.child_dirs,
+                [
+                    {"path": c.path, "is_symlink": c.is_symlink, "realpath": c.realpath}
+                    for c in r.child_dirs
+                ],
                 r.error,
                 False,  # Not expanding - that's handled by expand_worker
             )
@@ -773,11 +788,15 @@ async def expand_worker(
         state.expand_stats.last_batch_time = time.time() - start
 
         # Persist results with is_expanding=True to create child paths
+        # Convert ChildDirInfo objects to dicts for serialization
         batch_data = [
             (
                 r.path,
                 r.stats.to_dict(),
-                r.child_dirs,
+                [
+                    {"path": c.path, "is_symlink": c.is_symlink, "realpath": c.realpath}
+                    for c in r.child_dirs
+                ],
                 r.error,
                 True,  # is_expanding - creates child paths
             )
@@ -1429,6 +1448,9 @@ async def run_parallel_discovery(
         focus=focus,
         threshold=threshold,
     )
+
+    # Capture initial terminal count for session-based --limit tracking
+    state.initial_terminal_count = state.terminal_count
 
     # Create worker tasks
     scan_tasks = [
