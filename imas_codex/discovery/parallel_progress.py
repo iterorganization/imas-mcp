@@ -452,7 +452,7 @@ class ParallelProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
 
-        # SCAN section - show path, processing, or idle
+        # SCAN section - always 2 lines for consistent height
         section.append("  SCAN ", style="bold blue")
         if scan:
             section.append(clip_path(scan.path, self.WIDTH - 10), style="white")
@@ -467,11 +467,13 @@ class ParallelProgressDisplay:
                 section.append("code project", style="green dim")
         elif self.state.scan_processing:
             section.append("processing batch...", style="cyan italic")
+            section.append("\n    ", style="dim")  # Empty second line
         else:
             section.append("idle", style="dim italic")
+            section.append("\n    ", style="dim")  # Empty second line
         section.append("\n")
 
-        # SCORE section - show path, processing, or idle (skip in scan_only mode)
+        # SCORE section - always 2 lines for consistent height (skip in scan_only mode)
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
@@ -503,8 +505,10 @@ class ParallelProgressDisplay:
                         section.append(f"  {score.purpose}", style="italic dim")
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
+                section.append("\n    ", style="dim")  # Empty second line
             else:
                 section.append("idle", style="dim italic")
+                section.append("\n    ", style="dim")  # Empty second line
 
         return section
 
@@ -588,14 +592,16 @@ class ParallelProgressDisplay:
                     section.append(f"  ETC ${etc:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - all on one line with full labels
+        # STATS row - depth first, then work counts
         section.append("  STATS ", style="bold magenta")
-        section.append(f"pending={self.state.pending_work}", style="cyan")
+        section.append(f"depth={self.state.max_depth}", style="cyan")
+        section.append(f"  pending={self.state.pending_work}", style="cyan")
         section.append(f"  expanded={self.state.run_expanded}", style="cyan")
         section.append(f"  enriched={self.state.run_enriched}", style="cyan")
+        if self.state.pending_enrich > 0:
+            section.append(f" ({self.state.pending_enrich} queued)", style="dim")
         section.append(f"  skipped={self.state.skipped}", style="yellow")
         section.append(f"  excluded={self.state.excluded}", style="dim")
-        section.append(f"  depth={self.state.max_depth}", style="cyan")
 
         return section
 
@@ -824,6 +830,7 @@ class ParallelProgressDisplay:
         self.state.pending_scan = stats.get("discovered", 0) + listing
         self.state.pending_score = stats.get("listed", 0) + scoring
         self.state.pending_expand = stats.get("expansion_ready", 0)
+        self.state.pending_enrich = stats.get("enrichment_ready", 0)
 
     def _refresh(self) -> None:
         """Refresh the live display."""

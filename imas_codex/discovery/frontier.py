@@ -93,6 +93,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                 sum(CASE WHEN p.status = $excluded THEN 1 ELSE 0 END) AS excluded,
                 sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
+                sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
             """,
             facility=facility,
@@ -116,6 +117,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 "skipped": result[0]["skipped"],
                 "excluded": result[0]["excluded"],
                 "expansion_ready": result[0]["expansion_ready"],
+                "enrichment_ready": result[0]["enrichment_ready"],
                 "max_depth": result[0]["max_depth"] or 0,
             }
 
@@ -129,6 +131,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             "skipped": 0,
             "excluded": 0,
             "expansion_ready": 0,
+            "enrichment_ready": 0,
             "max_depth": 0,
         }
 
