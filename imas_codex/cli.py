@@ -5447,7 +5447,13 @@ def enrich_mark_stale(
     help="Preview matches without updating graph",
 )
 def enrich_orcid(limit: int | None, dry_run: bool) -> None:
-    """Enrich Person nodes with ORCID identifiers.
+    """Re-enrich Person nodes with ORCID identifiers.
+
+    NOTE: ORCID lookup happens automatically during discovery when Person
+    nodes are created. This command is for:
+    - Re-enriching existing Person nodes created before ORCID integration
+    - Retrying failed ORCID lookups
+    - Batch processing with custom rate limiting
 
     Queries ORCID public API using email and name data from Person nodes.
     ORCID provides persistent researcher identifiers that work across
@@ -5455,13 +5461,13 @@ def enrich_orcid(limit: int | None, dry_run: bool) -> None:
 
     \b
     EXAMPLES:
-        # Enrich all Person nodes without ORCID
+        # Re-enrich existing Person nodes without ORCID
         imas-codex enrich orcid
 
         # Preview first 10 matches without updating
         imas-codex enrich orcid --limit 10 --dry-run
 
-        # Enrich top 50 Person nodes by account_count
+        # Re-enrich top 50 Person nodes by account_count
         imas-codex enrich orcid --limit 50
 
     \b

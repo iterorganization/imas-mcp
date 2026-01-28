@@ -333,7 +333,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
         return list(result)
 
 
-def mark_scan_complete(
+async def mark_scan_complete(
     facility: str,
     scan_results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
@@ -349,7 +349,7 @@ def mark_scan_complete(
     """
     from imas_codex.discovery.frontier import persist_scan_results
 
-    return persist_scan_results(facility, scan_results, excluded=excluded)
+    return await persist_scan_results(facility, scan_results, excluded=excluded)
 
 
 def mark_score_complete(
@@ -643,13 +643,10 @@ async def scan_worker(
             for excluded_path, reason in r.excluded_dirs:
                 excluded_data.append((excluded_path, r.path, reason))
 
-        stats = await loop.run_in_executor(
-            None,
-            lambda bd=batch_data, ed=excluded_data: mark_scan_complete(
-                state.facility,
-                bd,
-                excluded=ed if ed else None,
-            ),
+        stats = await mark_scan_complete(
+            state.facility,
+            batch_data,
+            excluded=excluded_data if excluded_data else None,
         )
 
         state.scan_stats.processed += stats["scanned"]
@@ -761,13 +758,10 @@ async def expand_worker(
             for excluded_path, reason in r.excluded_dirs:
                 excluded_data.append((excluded_path, r.path, reason))
 
-        stats = await loop.run_in_executor(
-            None,
-            lambda bd=batch_data, ed=excluded_data: mark_scan_complete(
-                state.facility,
-                bd,
-                excluded=ed if ed else None,
-            ),
+        stats = await mark_scan_complete(
+            state.facility,
+            batch_data,
+            excluded=excluded_data if excluded_data else None,
         )
 
         state.expand_stats.processed += stats["scanned"]

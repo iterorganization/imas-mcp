@@ -621,7 +621,7 @@ def _normalize_name(given_name: str | None, family_name: str | None) -> str | No
     return full_name if full_name else None
 
 
-def _create_person_link(
+async def _create_person_link(
     gc: Any,
     facility_user_id: str,
     username: str,
@@ -631,7 +631,7 @@ def _create_person_link(
     email: str | None,
     now: str,
 ) -> None:
-    """Create Person node and IS_PERSON relationship.
+    """Create Person node and IS_PERSON relationship with ORCID lookup.
 
     Identity priority:
     1. ORCID (when available - gold standard)
@@ -643,6 +643,10 @@ def _create_person_link(
     - "Agata Czarnecka" vs "czarneka" → matched via name normalization
     - "Alessandro Casati" vs "acasati" → matched via name normalization
 
+    ORCID lookup is performed automatically during discovery using the
+    ORCID public API. Lookups are cached in Person nodes to avoid
+    redundant API calls.
+
     Args:
         gc: GraphClient instance
         facility_user_id: FacilityUser ID (facility:username)
@@ -652,14 +656,23 @@ def _create_person_link(
         family_name: Parsed family name
         email: Email address if available
         now: ISO timestamp
-
-    Note:
-        ORCID lookup is async. Use `imas-codex enrich orcid` CLI command
-        for batch enrichment after initial discovery.
     """
-    # ORCID lookup must be done separately via async enrichment
-    # See: imas-codex enrich orcid
+    from loguru import logger
+
+    from imas_codex.discovery.orcid import enrich_person_with_orcid
+
+    # Try ORCID lookup (cached if already done)
     orcid = None
+    try:
+        orcid = await enrich_person_with_orcid(
+            email=email,
+            given_name=given_name,
+            family_name=family_name,
+        )
+        if orcid:
+            logger.debug(f"Found ORCID {orcid} for {name or username}")
+    except Exception as e:
+        logger.debug(f"ORCID lookup failed for {name or username}: {e}")
 
     # Determine Person identity
     if orcid:
@@ -985,7 +998,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
     return total_deleted
 
 
-def persist_scan_results(
+async def persist_scan_results(
     facility: str,
     results: list[tuple[str, dict, list[str], str | None, bool]],
     excluded: list[tuple[str, str, str]] | None = None,
@@ -1320,9 +1333,10 @@ def persist_scan_results(
                 )
 
                 # Create Person nodes for cross-facility identity
+                # ORCID lookup happens asynchronously here
                 for user in facility_users:
                     try:
-                        _create_person_link(
+                        await _create_person_link(
                             gc,
                             facility_user_id=user["id"],
                             username=user["username"],
