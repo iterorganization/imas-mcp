@@ -271,9 +271,6 @@ class DirectoryScorer:
             # All retries exhausted
             raise last_error  # type: ignore[misc]
 
-        # Parse response using structured output
-        scored_dirs = self._parse_structured_response(response, directories, threshold)
-
         # Calculate cost from LiteLLM response
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
@@ -288,6 +285,14 @@ class DirectoryScorer:
         else:
             # Fallback: Claude Sonnet 4.5 via OpenRouter: $3/$15 per 1M tokens
             cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+        # Calculate cost per path for tracking
+        cost_per_path = cost / len(directories) if directories else 0.0
+
+        # Parse response using structured output
+        scored_dirs = self._parse_structured_response(
+            response, directories, threshold, cost_per_path
+        )
 
         return ScoredBatch(
             scored_dirs=scored_dirs,
@@ -447,11 +452,21 @@ class DirectoryScorer:
         response,
         directories: list[dict[str, Any]],
         threshold: float,
+        cost_per_path: float = 0.0,
     ) -> list[ScoredDirectory]:
         """Parse structured LLM response into ScoredDirectory objects.
 
         Uses LiteLLM's structured output - the response is already validated
         against the DirectoryScoringBatch Pydantic model.
+
+        Args:
+            response: LiteLLM response object
+            directories: Input directory info dicts
+            threshold: Minimum score to expand
+            cost_per_path: LLM cost per path (batch_cost / batch_size)
+
+        Returns:
+            List of ScoredDirectory objects with scores and cost_per_path set
         """
         import re
 
@@ -482,6 +497,7 @@ class DirectoryScorer:
                     score=0.0,
                     should_expand=False,
                     skip_reason=f"LLM response parse failed: {e}",
+                    score_cost=cost_per_path,
                 )
                 for d in directories
             ]
@@ -523,11 +539,22 @@ class DirectoryScorer:
             effective_threshold = (
                 CONTAINER_THRESHOLD if purpose in CONTAINER_PURPOSES else threshold
             )
+
+            # Base expansion decision
             should_expand = (
                 combined >= effective_threshold
                 and result.should_expand
                 and purpose not in SUPPRESSED_PURPOSES
             )
+
+            # CRITICAL: Never expand git repos (code is available via git clone)
+            if directories[i].get("has_git", False):
+                should_expand = False
+
+            # CRITICAL: Never expand data containers (too many files)
+            data_purposes = {PathPurpose.simulation_data, PathPurpose.diagnostic_data}
+            if purpose in data_purposes:
+                should_expand = False
 
             scored_dir = ScoredDirectory(
                 path=path,
@@ -544,6 +571,7 @@ class DirectoryScorer:
                 physics_domain=result.physics_domain,
                 expansion_reason=result.expansion_reason,
                 skip_reason=result.skip_reason,
+                score_cost=cost_per_path,
             )
 
             scored.append(scored_dir)

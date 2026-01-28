@@ -690,6 +690,28 @@ classes:
       software_repo_id:
         description: Link to SoftwareRepo node if this is a git clone
         range: SoftwareRepo
+      # Scan statistics (set during listing)
+      total_files:
+        description: Total files in directory (set during listing)
+        range: integer
+      total_dirs:
+        description: Total subdirectories (set during listing)
+        range: integer
+      file_type_counts:
+        description: JSON-encoded file type counts from scan
+      child_names:
+        description: JSON-encoded list of child file/dir names for LLM context
+      listed_at:
+        description: When this path completed listing
+        range: datetime
+      # Expansion tracking
+      expanded_at:
+        description: When children were created for this path (null if not expanded)
+        range: datetime
+      # Cost tracking
+      score_cost:
+        description: LLM cost in USD for scoring this path
+        range: float
 
 # =============================================================================
 # Evidence Class (Linked semantic indicators, reusable across node types)

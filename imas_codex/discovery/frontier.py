@@ -639,7 +639,8 @@ def mark_paths_scored(
                     p.keywords = $keywords,
                     p.physics_domain = $physics_domain,
                     p.expansion_reason = $expansion_reason,
-                    p.skip_reason = $skip_reason
+                    p.skip_reason = $skip_reason,
+                    p.score_cost = coalesce(p.score_cost, 0) + $score_cost
                 WITH p
                 OPTIONAL MATCH (e:Evidence {id: $evidence_id})
                 FOREACH (_ IN CASE WHEN e IS NOT NULL THEN [1] ELSE [] END |
@@ -661,6 +662,7 @@ def mark_paths_scored(
                 physics_domain=score_data.get("physics_domain"),
                 expansion_reason=score_data.get("expansion_reason"),
                 skip_reason=score_data.get("skip_reason"),
+                score_cost=score_data.get("score_cost", 0.0),
                 scored=PathStatus.scored.value,
             )
             updated += 1
@@ -1295,3 +1297,44 @@ def sample_scored_paths(
             ]
 
     return samples
+
+
+def get_accumulated_cost(facility: str) -> dict[str, Any]:
+    """Get accumulated LLM cost for a facility from score_cost fields.
+
+    Sums all score_cost values across scored paths. This represents the
+    total historical cost of scoring this facility across all runs.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Dict with: total_cost, paths_with_cost, scored_paths
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility})
+            WHERE p.status = 'scored' OR p.status = 'skipped'
+            RETURN
+                sum(coalesce(p.score_cost, 0)) AS total_cost,
+                sum(CASE WHEN p.score_cost IS NOT NULL AND p.score_cost > 0 THEN 1 ELSE 0 END) AS paths_with_cost,
+                count(p) AS scored_paths
+            """,
+            facility=facility,
+        )
+
+        if result:
+            return {
+                "total_cost": result[0]["total_cost"] or 0.0,
+                "paths_with_cost": result[0]["paths_with_cost"] or 0,
+                "scored_paths": result[0]["scored_paths"] or 0,
+            }
+
+        return {
+            "total_cost": 0.0,
+            "paths_with_cost": 0,
+            "scored_paths": 0,
+        }

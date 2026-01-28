@@ -286,6 +286,9 @@ class ScoredDirectory:
     skip_reason: str | None = None
     """Why this directory should not be expanded."""
 
+    score_cost: float = 0.0
+    """LLM cost in USD for scoring this path (batch cost / batch size)."""
+
     def to_graph_dict(self) -> dict[str, Any]:
         """Convert to dictionary for graph persistence."""
         import json
@@ -305,6 +308,7 @@ class ScoredDirectory:
             "physics_domain": self.physics_domain,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
+            "score_cost": self.score_cost,
         }
 
 

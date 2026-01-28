@@ -206,6 +206,9 @@ class ProgressState:
     scan_rate: float | None = None
     score_rate: float | None = None
 
+    # Accumulated facility cost (from graph)
+    accumulated_cost: float = 0.0
+
     # Current items
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
@@ -484,6 +487,27 @@ class ParallelProgressDisplay:
                 section.append(f"  Est ${est_cost:.2f}", style="dim")
             section.append("\n")
 
+            # Accumulated facility cost (across all runs) - only show if we have historical cost
+            if self.state.accumulated_cost > 0:
+                total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+                section.append("  TOTAL ", style="bold white")
+                # Progress bar shows accumulated cost vs projected total for this facility
+                # Estimate total based on remaining paths
+                paths_remaining = self.state.pending_scan + self.state.pending_score
+                cpp = self.state.cost_per_path
+                projected_total = total_facility_cost
+                if cpp and paths_remaining > 0:
+                    projected_total = total_facility_cost + (paths_remaining * cpp)
+                section.append_text(
+                    make_resource_gauge(
+                        total_facility_cost, projected_total, self.GAUGE_WIDTH
+                    )
+                )
+                section.append(f"  ${total_facility_cost:.2f}", style="bold")
+                if projected_total > total_facility_cost:
+                    section.append(f"  Est ${projected_total:.2f}", style="dim")
+                section.append("\n")
+
         # Time with ETA
         section.append("  TIME  ", style="bold cyan")
 
@@ -646,7 +670,10 @@ class ParallelProgressDisplay:
 
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
-        from imas_codex.discovery.frontier import get_discovery_stats
+        from imas_codex.discovery.frontier import (
+            get_accumulated_cost,
+            get_discovery_stats,
+        )
 
         stats = get_discovery_stats(facility)
         self.state.total = stats["total"]
@@ -656,14 +683,12 @@ class ParallelProgressDisplay:
         self.state.skipped = stats["skipped"]
         self.state.excluded = stats["excluded"]
         self.state.max_depth = stats["max_depth"]
+        # Calculate pending work counts including expansion_ready
         self._calculate_pending_from_stats(stats)
 
-        # Update pending work counts
-        self.state.pending_scan = stats["discovered"]
-        self.state.pending_score = stats["listed"]
-        # For expansion, we need a separate query - approximate with 0 for now
-        # Full expansion count requires checking should_expand flag
-        self.state.pending_expand = 0
+        # Get accumulated facility cost from graph
+        cost_data = get_accumulated_cost(facility)
+        self.state.accumulated_cost = cost_data["total_cost"]
 
         self._refresh()
 

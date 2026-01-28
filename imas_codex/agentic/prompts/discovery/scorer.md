@@ -116,15 +116,32 @@ For each directory, analyze the path and available metadata to provide structure
 
 ## Expansion Decision
 
-**Expand** (should_expand=true) when:
-- Purpose is `container` AND combined score >= 0.4
-- Purpose is code/data category AND combined score >= 0.5 AND has subdirectories
-- Is a project root (has .git, Makefile, setup.py)
+**NEVER expand** (should_expand=false, CRITICAL):
+- **Git repositories** (has .git): The code can be fetched from the remote instead
+  - Even if highly scored, do NOT expand
+  - We want to know the repo exists at this location, but we don't need to scan every file
+- **Data repositories/containers** (simulation_data, diagnostic_data): Too many files
+  - Simulation output directories (HDF5, NetCDF files) should NOT be expanded
+  - Experimental data runs should NOT be expanded
+  - We only need to know high-value data exists here
+- **Purpose is: `system`, `build_artifact`, `archive`**
+- **Combined score < 0.3 for any purpose**
+- **Leaf directory with only files (no subdirectories)**
 
-**Don't expand** (should_expand=false) when:
-- Purpose is: `system`, `build_artifact`, `archive`
-- Combined score < 0.3 for any purpose
-- Leaf directory with only files
+**Expand** (should_expand=true) when:
+- Purpose is `container` AND combined score >= 0.4 AND NOT a git repo
+- Purpose is code category (modeling_code, diagnostic_code, etc.) AND NO .git folder
+- Purpose is documentation AND has subdirectories to explore
+
+**Git repo handling**:
+- If has_git=true: Score the directory based on its content quality
+- Set should_expand=false regardless of score (code is available via git clone)
+- High scores (0.7+) are still valuable - they indicate important code repos
+
+**Data container handling**:
+- Score data directories based on their scientific value
+- Set should_expand=false for simulation_data and diagnostic_data
+- We want to catalog where data exists, not enumerate every file
 
 ## Evidence Collection
 
