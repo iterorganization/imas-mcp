@@ -61,7 +61,7 @@ enums:
   PathStatus:
     description: >-
       Lifecycle status for facility path discovery.
-      Transient states (listing, scoring) have fallback states for orphan recovery.
+      Transient states (listing, scoring, expanding) have fallback states for orphan recovery.
       Progress is graph-derived: check file_count, dir_count, interest_score.
     permissible_values:
       discovered:
@@ -74,6 +74,8 @@ enums:
         description: Scorer worker active (fallback to listed on timeout)
       scored:
         description: LLM scored (may have been rescored if high-value)
+      expanding:
+        description: Expander worker active (fallback to scored on timeout)
       skipped:
         description: Low value (score < 0.2) or dead-end
       excluded:
