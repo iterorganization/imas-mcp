@@ -931,6 +931,12 @@ classes:
         description: Known institutional affiliations
         multivalued: true
         slot_uri: schema:affiliation
+      account_count:
+        description: Number of facility accounts linked to this person
+        range: integer
+      discovered_at:
+        description: When this person was first discovered
+        range: datetime
       # Linked accounts populated via IS_PERSON relationship
       # (FacilityUser)-[:IS_PERSON]->(Person)
 

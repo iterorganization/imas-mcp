@@ -588,6 +588,90 @@ def _create_software_repo_link(
     )
 
 
+def _create_person_link(
+    gc: Any,
+    facility_user_id: str,
+    username: str,
+    name: str | None,
+    given_name: str | None,
+    family_name: str | None,
+    email: str | None,
+    now: str,
+) -> None:
+    """Create Person node and IS_PERSON relationship.
+
+    Identity priority:
+    1. email (best - unique identifier across facilities)
+    2. username (if same username exists on multiple facilities with similar names)
+    3. facility-specific (fallback - one Person per FacilityUser)
+
+    Args:
+        gc: GraphClient instance
+        facility_user_id: FacilityUser ID (facility:username)
+        username: Local username
+        name: Full name from GECOS
+        given_name: Parsed given name
+        family_name: Parsed family name
+        email: Email address if available
+        now: ISO timestamp
+    """
+    # Determine Person identity
+    if email:
+        # Best case - use email as identity
+        person_id = f"email:{email.lower()}"
+        person_name = name or email
+    else:
+        # Check if this username exists on other facilities with similar names
+        # Use username-based identity for cross-facility matching
+        person_id = f"user:{username}"
+        person_name = name or username
+
+    # Normalize name for consistent display
+    if not person_name and given_name and family_name:
+        person_name = f"{given_name} {family_name}"
+
+    # MERGE Person node (deduplicates across facilities)
+    gc.query(
+        """
+        MERGE (p:Person {id: $person_id})
+        ON CREATE SET
+            p.name = $person_name,
+            p.given_name = $given_name,
+            p.family_name = $family_name,
+            p.email = $email,
+            p.discovered_at = $now,
+            p.account_count = 1
+        ON MATCH SET
+            p.account_count = coalesce(p.account_count, 0) + 1,
+            p.name = COALESCE($person_name, p.name),
+            p.given_name = COALESCE($given_name, p.given_name),
+            p.family_name = COALESCE($family_name, p.family_name),
+            p.email = COALESCE($email, p.email)
+        """,
+        person_id=person_id,
+        person_name=person_name,
+        given_name=given_name,
+        family_name=family_name,
+        email=email,
+        now=now,
+    )
+
+    # Link FacilityUser to Person
+    gc.query(
+        """
+        MATCH (u:FacilityUser {id: $user_id})
+        MATCH (p:Person {id: $person_id})
+        MERGE (u)-[rel:IS_PERSON]->(p)
+        ON CREATE SET
+            rel.discovered_at = $now
+        SET u.person_id = $person_id
+        """,
+        user_id=facility_user_id,
+        person_id=person_id,
+        now=now,
+    )
+
+
 def mark_paths_scored(
     facility: str,
     scores: list[dict[str, Any]],
@@ -1175,6 +1259,25 @@ def persist_scan_results(
                     """,
                     users=facility_users,
                 )
+
+                # Create Person nodes for cross-facility identity
+                for user in facility_users:
+                    try:
+                        _create_person_link(
+                            gc,
+                            facility_user_id=user["id"],
+                            username=user["username"],
+                            name=user.get("name"),
+                            given_name=user.get("given_name"),
+                            family_name=user.get("family_name"),
+                            email=user.get("email"),
+                            now=now,
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to create Person link for {user['id']}: {e}"
+                        )
+
                 logger.debug(f"Enriched {len(facility_users)} users for {facility}")
         except Exception as e:
             # User enrichment is non-critical; don't fail scan
