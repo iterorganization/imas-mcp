@@ -96,14 +96,42 @@ class DiscoveryState:
         return self.scan_stats.processed + self.score_stats.processed
 
     @property
+    def terminal_count(self) -> int:
+        """Count of paths in terminal states (scored, not pending expand/enrich).
+
+        For --limit purposes, we only count paths that have completed their
+        pipeline: scored and not awaiting expansion or enrichment.
+        """
+        from imas_codex.graph import GraphClient
+
+        with GraphClient() as gc:
+            result = gc.query(
+                """
+                MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                WHERE p.status = $scored
+                  AND (p.should_expand = false OR p.expanded_at IS NOT NULL)
+                  AND (p.should_enrich = false OR p.is_enriched = true)
+                RETURN count(p) AS terminal_count
+                """,
+                facility=self.facility,
+                scored=PathStatus.scored.value,
+            )
+            return result[0]["terminal_count"] if result else 0
+
+    @property
     def budget_exhausted(self) -> bool:
         return self.total_cost >= self.cost_limit
 
     @property
     def path_limit_reached(self) -> bool:
+        """Check if path limit reached using terminal state count.
+
+        Uses scored paths count (terminal states) rather than scan + score
+        since scanning is just the start of the pipeline.
+        """
         if self.path_limit is None:
             return False
-        return self.total_processed >= self.path_limit
+        return self.terminal_count >= self.path_limit
 
     def should_stop(self) -> bool:
         """Check if discovery should terminate."""
@@ -958,10 +986,19 @@ async def score_worker(
                     all_results,
                 )
 
+        except ValueError:
+            # LLM validation error - revert paths to 'listed' status for retry
+            # DO NOT increment error count - this will be retried automatically
+            logger.warning(
+                f"LLM validation error for batch of {len(paths_to_score)} paths. "
+                "Reverting to listed status for retry."
+            )
+            _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
+            # Don't show validation errors in progress display
         except Exception as e:
+            # Other errors - increment error count and revert
             logger.exception(f"Score error: {e}")
             state.score_stats.errors += len(paths_to_score)
-            # Revert claimed paths to scanned status
             _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
 
         # Brief yield

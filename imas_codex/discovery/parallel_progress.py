@@ -275,11 +275,14 @@ class ProgressState:
 
     @property
     def path_limit_reached(self) -> bool:
-        """Check if path limit has been reached."""
+        """Check if path limit has been reached.
+
+        Uses scored count (terminal state) rather than scan + score
+        since scanning is just the start of the pipeline.
+        """
         if self.path_limit is None or self.path_limit <= 0:
             return False
-        total_processed = self.run_scanned + self.run_scored
-        return total_processed >= self.path_limit
+        return self.run_scored >= self.path_limit
 
     @property
     def limit_reason(self) -> str | None:
@@ -308,10 +311,10 @@ class ProgressState:
 
         # Try path-limit-based ETA (if -l flag set)
         if self.path_limit is not None and self.path_limit > 0:
-            total_processed = self.run_scanned + self.run_scored
-            if total_processed > 0 and self.elapsed > 0:
-                rate = total_processed / self.elapsed
-                remaining = self.path_limit - total_processed
+            # Use scored count (terminal state) for path limit ETA
+            if self.run_scored > 0 and self.elapsed > 0:
+                rate = self.run_scored / self.elapsed
+                remaining = self.path_limit - self.run_scored
                 return max(0, remaining / rate) if rate > 0 else None
 
         # Fall back to work-based ETA
@@ -621,7 +624,7 @@ class ParallelProgressDisplay:
                     section.append(f"  ETC ${etc:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - depth first, then work counts
+        # STATS row - depth first, then work counts (this run only)
         section.append("  STATS ", style="bold magenta")
         section.append(f"depth={self.state.max_depth}", style="cyan")
         section.append(f"  pending={self.state.pending_work}", style="cyan")

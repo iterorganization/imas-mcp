@@ -238,6 +238,7 @@ class DirectoryScorer:
             try:
                 # max_tokens=32000 supports batches of 50+ directories
                 # Sonnet 4.5 has 200k context, output is ~250 tokens/dir
+                # response_format ensures schema is enforced by LLM provider
                 response = litellm.completion(
                     model=model_id,
                     api_key=api_key,
@@ -482,27 +483,15 @@ class DirectoryScorer:
             batch = DirectoryScoringBatch.model_validate_json(content)
             results = batch.results
         except Exception as e:
-            logger.warning(f"Failed to parse structured LLM response: {e}")
-            # Fallback: return empty scores for all (use container as neutral purpose)
-            return [
-                ScoredDirectory(
-                    path=d["path"],
-                    path_purpose=PathPurpose.container,
-                    description="Parse error",
-                    evidence=DirectoryEvidence(),
-                    score_code=0.0,
-                    score_data=0.0,
-                    score_docs=0.0,
-                    score_imas=0.0,
-                    score=0.0,
-                    should_expand=False,
-                    should_enrich=False,
-                    skip_reason=f"LLM response parse failed: {e}",
-                    enrich_skip_reason="parse error",
-                    score_cost=cost_per_path,
-                )
-                for d in directories
-            ]
+            # CRITICAL: Validation error means LLM response was malformed.
+            # DO NOT create ScoredDirectory objects that will be persisted.
+            # Instead, raise the error so score_worker can revert paths to 'listed'
+            # status for retry in the next batch.
+            logger.error(
+                f"LLM validation error for batch of {len(directories)} paths: {e}. "
+                "Paths will be reverted to listed status."
+            )
+            raise ValueError(f"LLM response validation failed: {e}") from e
 
         scored = []
         for i, result in enumerate(results[: len(directories)]):
@@ -550,8 +539,19 @@ class DirectoryScorer:
             )
 
             # CRITICAL: Never expand git repos (code is available via git clone)
-            if directories[i].get("has_git", False):
+            has_git = directories[i].get("has_git", False)
+            if has_git:
                 should_expand = False
+                # Apply score penalty for software repos (available elsewhere)
+                # Heavier penalty for repos with remotes (forks/clones)
+                git_remote = directories[i].get("git_remote_url")
+                if git_remote:
+                    # Public repo or internal clone - heavily penalize
+                    # These are lowest priority since code is available via git
+                    combined = min(combined * 0.3, 0.4)
+                else:
+                    # Local repo without remote - moderate penalty
+                    combined = min(combined * 0.5, 0.6)
 
             # CRITICAL: Never expand data containers (too many files)
             data_purposes = {PathPurpose.simulation_data, PathPurpose.diagnostic_data}
