@@ -1373,7 +1373,7 @@ async def run_parallel_discovery(
     num_expand_workers: int = 1,
     num_score_workers: int = 2,  # Reduced: less rate limit contention
     num_enrich_workers: int = 1,
-    num_rescore_workers: int = 0,
+    num_rescore_workers: int = 1,  # Enabled by default for score refinement
     scan_batch_size: int = 50,
     expand_batch_size: int = 50,
     score_batch_size: int = 50,  # Increased: more work per API call
@@ -1416,7 +1416,7 @@ async def run_parallel_discovery(
         num_expand_workers: Number of concurrent expand workers (default: 1)
         num_score_workers: Number of concurrent score workers (default: 2)
         num_enrich_workers: Number of concurrent enrich workers (default: 1)
-        num_rescore_workers: Number of concurrent rescore workers (default: 0)
+        num_rescore_workers: Number of concurrent rescore workers (default: 1)
         scan_batch_size: Paths per SSH call (default: 50)
         expand_batch_size: Paths per expand SSH call (default: 50)
         score_batch_size: Paths per LLM call (default: 50)
