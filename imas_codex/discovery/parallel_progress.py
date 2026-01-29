@@ -150,16 +150,24 @@ class ScoreItem:
 
 @dataclass
 class StreamQueue:
-    """Rate-limited queue for smooth display updates."""
+    """Rate-limited queue for smooth display updates.
+
+    Has a max size to prevent unbounded backlog - when full, oldest items
+    are dropped to ensure the queue never blocks termination.
+    """
 
     items: deque = field(default_factory=deque)
     last_pop: float = field(default_factory=time.time)
     rate: float = 2.0  # items per second
+    max_size: int = 100  # Prevent unbounded backlog
 
     def add(self, items: list, rate: float | None = None) -> None:
         self.items.extend(items)
         if rate and rate > 0:
             self.rate = rate
+        # Drop oldest items if queue exceeds max size
+        while len(self.items) > self.max_size:
+            self.items.popleft()
 
     def pop(self) -> Any | None:
         if not self.items:
@@ -170,6 +178,10 @@ class StreamQueue:
             self.last_pop = now
             return self.items.popleft()
         return None
+
+    def clear(self) -> None:
+        """Clear the queue. Use on termination to prevent hanging."""
+        self.items.clear()
 
     def __len__(self) -> int:
         return len(self.items)
@@ -545,29 +557,39 @@ class ParallelProgressDisplay:
                     else:
                         style = "red"
                     section.append(f"{score.score:.2f}", style=style)
-                    if score.purpose:
-                        section.append(
-                            f"  {clean_text(score.purpose)}", style="italic dim"
-                        )
-                    # Show terminal_reason after purpose if terminal
+
+                    # Calculate available width for description
+                    # Layout: "    0.85  " = 10 chars, leave 2 for padding
+                    desc_width = self.WIDTH - 12
+
+                    # Build description: "category: purpose" or just "purpose"
                     if not score.should_expand and score.terminal_reason:
-                        # Use terminal_reason enum value for consistent categorization
-                        reason = score.terminal_reason.replace("_", " ")[:30]
-                        section.append(f"  [{clean_text(reason)}]", style="magenta dim")
+                        category = score.terminal_reason.replace("_", " ")
+                        if score.purpose:
+                            desc = f"{category}: {clean_text(score.purpose)}"
+                        else:
+                            desc = category
                     elif not score.should_expand and score.skip_reason:
-                        # Fallback to skip_reason if no terminal_reason
-                        reason = score.skip_reason[:30]
-                        if len(score.skip_reason) > 30:
-                            reason += "..."
-                        section.append(f"  [{clean_text(reason)}]", style="dim")
+                        desc = f"skipped: {clean_text(score.skip_reason)}"
+                    elif score.purpose:
+                        desc = clean_text(score.purpose)
+                    else:
+                        desc = ""
+
+                    if desc:
+                        # Truncate to available width
+                        if len(desc) > desc_width:
+                            desc = desc[: desc_width - 3] + "..."
+                        section.append(f"  {desc}", style="italic dim")
                 elif score.skipped:
                     # No score available, just show skipped status
+                    desc_width = self.WIDTH - 16  # "    skipped  " = ~12 chars
                     section.append("skipped", style="yellow")
                     if score.skip_reason:
-                        reason = score.skip_reason[:40]
-                        if len(score.skip_reason) > 40:
-                            reason += "..."
-                        section.append(f" {clean_text(reason)}", style="dim")
+                        reason = clean_text(score.skip_reason)
+                        if len(reason) > desc_width:
+                            reason = reason[: desc_width - 3] + "..."
+                        section.append(f"  {reason}", style="dim")
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
