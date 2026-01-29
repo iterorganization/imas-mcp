@@ -217,6 +217,20 @@ Never end a session after step 1. Check for un-merged commits:
 git log --oneline --all --not main | head -20
 ```
 
+## Session Completion
+
+**Before ending any conversation or task:**
+
+1. Run `git status --short` to check for uncommitted changes
+2. If changes exist: lint, commit, and push
+3. Confirm completion in chat with format:
+
+```
+✓ Committed: `<commit-hash>` - <one-sentence summary>
+```
+
+This ensures no work is lost when a session is assumed complete. Never leave uncommitted changes at the end of a task.
+
 ## Code Style
 
 ### Python Version

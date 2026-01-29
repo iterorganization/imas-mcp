@@ -1069,7 +1069,7 @@ def get_high_value_paths(
             RETURN p.id AS id, p.path AS path, p.score AS score,
                    p.description AS description, p.path_purpose AS path_purpose,
                    p.score_code AS score_code, p.score_data AS score_data,
-                   p.score_imas AS score_imas
+                   p.score_docs AS score_docs, p.score_imas AS score_imas
             ORDER BY p.score DESC
             LIMIT $limit
             """,

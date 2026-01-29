@@ -398,14 +398,21 @@ class DirectoryScorer:
         """
         import json as json_module
 
-        lines = ["Score these directories:\n"]
+        lines = [
+            "Score these directories.",
+            "(In Contents below, entries ending with / are subdirectories, "
+            "others are files.)\n",
+        ]
 
         for i, d in enumerate(directories, 1):
-            lines.append(f"\n## Directory {i}: {d['path']}")
+            # Full path is critical context - shown prominently
+            lines.append(f"\n## Directory {i}")
+            lines.append(f"Path: {d['path']}")
 
             # Add DirStats
-            lines.append(f"Total files: {d.get('total_files', 0)}")
-            lines.append(f"Total dirs: {d.get('total_dirs', 0)}")
+            lines.append(
+                f"Files: {d.get('total_files', 0)}, Dirs: {d.get('total_dirs', 0)}"
+            )
 
             file_types = d.get("file_type_counts")
             if file_types:
@@ -416,18 +423,23 @@ class DirectoryScorer:
                         file_types = {}
                 lines.append(f"File types: {file_types}")
 
+            # Quality indicators on one line
+            quality = []
             if d.get("has_readme"):
-                lines.append("Has README")
+                quality.append("README")
             if d.get("has_makefile"):
-                lines.append("Has Makefile")
+                quality.append("Makefile")
             if d.get("has_git"):
-                lines.append("Has .git")
+                quality.append(".git")
+            if quality:
+                lines.append(f"Quality: {', '.join(quality)}")
 
             patterns = d.get("patterns_detected", [])
             if patterns:
                 lines.append(f"Patterns: {', '.join(patterns)}")
 
             # Add child names for context (critical for LLM to infer purpose)
+            # Names end with / for directories, no suffix for files
             child_names = d.get("child_names")
             if child_names:
                 # Parse JSON if stored as string

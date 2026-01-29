@@ -41,13 +41,17 @@ For each directory, analyze the path and available metadata to provide structure
   - Low score (0.0-0.3): Skip subtree (e.g., `/home/user/Downloads`)
 
 ### Skip Categories (always low score, skip subtree)
-- `archive`: Old/backup content (backup/, old_projects/, deprecated/, 2019/, archive/)
+- `archive`: Old, backup, or deprecated content (use judgment based on path naming)
 - `build_artifact`: Generated/cached files (__pycache__, .venv, node_modules, .o, .pyc)
 - `system`: OS/infrastructure directories (/var, /tmp, /opt/modules, /usr, /lib)
 
 ## Path-Based Scoring Heuristics
 
-**Use path names to infer purpose and score:**
+**Use the FULL PATH to infer context.**
+
+The full path reveals the directory's place in the filesystem hierarchy. Consider where in the tree this directory sits and what the path components suggest about its purpose and current relevance.
+
+Contents are shown sorted by modification time (most recent first), so you can infer activity level from the ordering.
 
 ### High exploration potential containers (container + high score):
 - `/work/imas`, `/imas`, `*imas*` → container, score_imas ≥ 0.8, expand=true
@@ -71,9 +75,9 @@ For each directory, analyze the path and available metadata to provide structure
 - `*reader*`, `*writer*`, `*interface*` → data_interface
 
 ### Skip patterns (classify as archive/build_artifact/system):
-- `backup`, `old_*`, `deprecated`, `archive`, `2019`, `2020` → archive
 - `__pycache__`, `.venv`, `venv`, `node_modules`, `build`, `dist` → build_artifact
 - `/var/*`, `/tmp/*`, `/opt/modules/*`, `/usr/*`, `/lib/*` → system
+- Use your judgment for archive classification based on path naming and context
 
 ## Scoring Guidelines
 

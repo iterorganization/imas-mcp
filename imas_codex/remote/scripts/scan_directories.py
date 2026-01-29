@@ -169,8 +169,23 @@ def scan_directory(
             }
         )
 
-    # First 30 names for context (for LLM scoring) - sanitize for JSON encoding
-    child_names = [sanitize_str(entry.name) for entry in entries[:30]]
+    # Collect file and directory names separately for LLM scoring context
+    # Using terminal names only (not full paths) to save tokens
+    # Directories get trailing "/" to distinguish from files
+    # Sort by mtime (most recently modified first) to show active content
+    def get_mtime(entry: os.DirEntry) -> float:
+        try:
+            return entry.stat(follow_symlinks=False).st_mtime
+        except OSError:
+            return 0.0
+
+    files_sorted = sorted(files, key=get_mtime, reverse=True)
+    dirs_sorted = sorted(dirs, key=get_mtime, reverse=True)
+
+    file_names = [sanitize_str(f.name) for f in files_sorted[:20]]
+    dir_names = [sanitize_str(d.name) + "/" for d in dirs_sorted[:20]]
+    # Combine for legacy child_names field (first 30 total with trailing / on dirs)
+    child_names = dir_names[:15] + file_names[:15]
 
     # Quality indicators (case-insensitive check)
     names_lower: set[str] = set()

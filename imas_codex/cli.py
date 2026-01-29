@@ -5745,6 +5745,8 @@ def _print_discovery_summary(
 ) -> None:
     """Print detailed discovery summary with statistics.
 
+    Aligns with the parallel progress display format for consistency.
+
     Args:
         console: Rich console (or None for logging mode)
         facility: Facility ID
@@ -5787,89 +5789,50 @@ def _print_discovery_summary(
         )
         return
 
-    # Rich mode: use panels
+    # Rich mode: use panels matching progress display format
     from rich.panel import Panel
     from rich.text import Text
 
     console.print()
 
-    # Build compact summary - width=130 to match progress display
-    # Order: Rates, This Run, Overall, Graph (as requested)
+    # Build summary panel aligned with progress display
     facility_upper = facility.upper()
     summary = Text()
+    panel_width = 100  # Match progress display width
 
-    # Row 1: Rates (most actionable info first)
-    summary.append("Rates     ", style="bold blue")
+    # Row 1: SCAN stats - SSH operations (scanned, expanded, enriched)
+    scanned = result["scanned"]
+    expanded = result.get("expanded", 0)
+    enriched = result.get("enriched", 0)
+    summary.append("  SCAN  ", style="bold blue")
+    summary.append(f"scanned={scanned:,}", style="white")
+    summary.append(f"  expanded={expanded:,}", style="white")
+    summary.append(f"  enriched={enriched:,}", style="white")
     if scan_rate:
-        summary.append(f"scan {scan_rate:.1f}/s", style="white")
-    else:
-        summary.append("scan -", style="dim")
-    if not scan_only:
-        # Add expand rate if available
-        expand_rate = result.get("expand_rate")
-        if expand_rate:
-            summary.append(" · ", style="dim")
-            summary.append(f"expand {expand_rate:.1f}/s", style="white")
-        summary.append(" · ", style="dim")
-        if score_rate:
-            summary.append(f"score {score_rate:.1f}/s", style="white")
-        else:
-            summary.append("score -", style="dim")
-        # Add enrich/rescore rates if available
-        enrich_rate = result.get("enrich_rate")
-        rescore_rate = result.get("rescore_rate")
-        if enrich_rate:
-            summary.append(" · ", style="dim")
-            summary.append(f"enrich {enrich_rate:.1f}/s", style="white")
-        if rescore_rate:
-            summary.append(" · ", style="dim")
-            summary.append(f"rescore {rescore_rate:.1f}/s", style="white")
+        summary.append(f"  {scan_rate:.1f}/s", style="dim")
     summary.append("\n")
 
-    # Row 2: This Run stats
-    summary.append("This Run  ", style="bold cyan")
-    summary.append(f"scanned {result['scanned']:,}", style="white")
+    # Row 2: SCORE stats - LLM operations (scored, rescored, cost)
     if not scan_only:
-        # Add expanded if present
-        expanded = result.get("expanded", 0)
-        if expanded > 0:
-            summary.append(" · ", style="dim")
-            summary.append(f"expanded {expanded:,}", style="white")
-        summary.append(" · ", style="dim")
-        summary.append(f"scored {result['scored']:,}", style="white")
-        # Add enriched/rescored if present
-        enriched = result.get("enriched", 0)
+        scored = result["scored"]
+        cost = result.get("cost", 0.0)
         rescored = result.get("rescored", 0)
-        if enriched > 0:
-            summary.append(" · ", style="dim")
-            summary.append(f"enriched {enriched:,}", style="white")
-        if rescored > 0:
-            summary.append(" · ", style="dim")
-            summary.append(f"rescored {rescored:,}", style="white")
-        summary.append(" · ", style="dim")
-        summary.append(f"cost ${result['cost']:.3f}", style="yellow")
-    summary.append(" · ", style="dim")
-    summary.append(f"{elapsed_str}", style="cyan")
-    summary.append("\n")
+        summary.append("  SCORE ", style="bold green")
+        summary.append(f"scored={scored:,}", style="white")
+        summary.append(f"  rescored={rescored:,}", style="white")
+        summary.append(f"  cost=${cost:.3f}", style="yellow")
+        if score_rate:
+            summary.append(f"  {score_rate:.1f}/s", style="dim")
+        summary.append("\n")
 
-    # Row 3: Total (merged graph stats + overall)
-    summary.append("Total     ", style="bold green")
-    summary.append(f"paths {stats['total']:,}", style="white")
-    summary.append(" · ", style="dim")
+    # Row 3: USAGE - time and total cost
+    summary.append("  USAGE ", style="bold cyan")
+    summary.append(f"time={elapsed_str}", style="white")
     if not scan_only:
-        summary.append(
-            f"coverage {coverage:.1f}%", style="green" if coverage > 50 else "yellow"
-        )
-        summary.append(" · ", style="dim")
         # Get accumulated cost from graph
         cost_data = get_accumulated_cost(facility)
         total_cost = cost_data.get("total_cost", 0.0)
-        summary.append(f"cost ${total_cost:.2f}", style="yellow")
-        summary.append(" · ", style="dim")
-    frontier = stats.get("discovered", 0) + stats.get("listed", 0)
-    summary.append(f"frontier {frontier:,}", style="cyan")
-    summary.append(" · ", style="dim")
-    summary.append(f"depth {stats.get('max_depth', 0)}", style="cyan")
+        summary.append(f"  total_cost=${total_cost:.2f}", style="yellow")
 
     # Title based on mode
     if scan_only:
@@ -5884,7 +5847,7 @@ def _print_discovery_summary(
             summary,
             title=title,
             border_style=border,
-            width=130,  # Match progress display width
+            width=panel_width,
         )
     )
 
@@ -5898,7 +5861,7 @@ def _print_discovery_summary(
         )
         return
 
-    all_high_value = get_high_value_paths(facility, min_score=0.7, limit=50)
+    all_high_value = get_high_value_paths(facility, min_score=0.7, limit=200)
 
     # Filter to paths scored in this run
     if scored_this_run:
@@ -5906,21 +5869,88 @@ def _print_discovery_summary(
     else:
         high_value = all_high_value
 
-    if high_value:
-        console.print()
-        console.print(
-            f"[bold]High-value paths discovered this run ({len(high_value)}):[/bold]"
-        )
-        for p in high_value[:5]:
-            purpose = p.get("path_purpose", "unknown")
-            desc = p.get("description", "")[:55]
-            if len(p.get("description", "")) > 55:
-                desc += "..."
-            console.print(f"  [{p['score']:.2f}] [cyan]{p['path']}[/cyan]")
-            if desc:
-                console.print(f"         {purpose}: {desc}")
-        if len(high_value) > 5:
-            console.print(f"  ... and {len(high_value) - 5} more high-value paths")
+    if not high_value:
+        return
+
+    # Score categories: group by which category has the highest score
+    # Categories: score_code, score_data, score_docs, score_imas
+    score_categories = {
+        "score_code": "Code",
+        "score_data": "Data",
+        "score_docs": "Documentation",
+        "score_imas": "IMAS",
+    }
+    category_order = ["score_code", "score_data", "score_docs", "score_imas"]
+
+    # Group by highest-scoring category
+    by_category: dict[str, list] = {cat: [] for cat in category_order}
+
+    for p in high_value:
+        # Find the category with the highest score
+        max_cat = None
+        max_score = -1.0
+        for cat in category_order:
+            cat_score = p.get(cat) or 0.0
+            if cat_score > max_score:
+                max_score = cat_score
+                max_cat = cat
+        if max_cat:
+            by_category[max_cat].append(p)
+
+    console.print()
+    console.print(f"[bold]High-value paths this run ({len(high_value)}):[/bold]")
+
+    def clip_path_inner(path: str, max_len: int) -> str:
+        """Clip path with inner /.../ to show start and end."""
+        if len(path) <= max_len:
+            return path
+        # Find a good split point near 1/3 of max_len
+        keep_start = max_len // 3
+        keep_end = max_len - keep_start - 5  # 5 for "/.../"
+        return f"{path[:keep_start]}/.../{path[-keep_end:]}"
+
+    # Display top 5 from each non-empty category
+    for cat_key in category_order:
+        paths = by_category.get(cat_key, [])
+        if not paths:
+            continue
+
+        # Sort by that category's score descending
+        sorted_paths = sorted(paths, key=lambda p: p.get(cat_key) or 0.0, reverse=True)
+
+        # Category header with friendly name
+        cat_name = score_categories[cat_key]
+        console.print(f"  [bold cyan]{cat_name}[/bold cyan] ({len(sorted_paths)})")
+
+        for p in sorted_paths[:5]:
+            cat_score = p.get(cat_key) or 0.0
+            path = p.get("path", "")
+            description = p.get("description", "")
+
+            # Clip path with inner /.../ pattern
+            clipped_path = clip_path_inner(path, 60)
+
+            # Color score
+            if cat_score >= 1.0:
+                score_style = "bold green"
+            elif cat_score >= 0.8:
+                score_style = "green"
+            else:
+                score_style = "yellow"
+
+            # Score reason from description (clip to 40 chars)
+            reason = description[:40] + "..." if len(description) > 40 else description
+
+            console.print(
+                f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clipped_path}"
+            )
+            if reason:
+                console.print(f"         [dim]{reason}[/dim]")
+
+        # Show count of remaining in category
+        remaining = len(sorted_paths) - 5
+        if remaining > 0:
+            console.print(f"    [dim]... +{remaining} more[/dim]")
 
 
 async def _async_discovery_loop(
