@@ -5937,9 +5937,12 @@ def _print_discovery_summary(
             cat_score = p.get(cat_key) or 0.0
             path = p.get("path", "")
             description = p.get("description", "")
+            should_expand = p.get("should_expand", True)
 
             # Clip path with inner /.../ pattern (panel is 100 wide, "    0.95 " = 9 chars)
-            clipped_path = clip_path_inner(path, 88)
+            # Leave room for terminal indicator if needed
+            max_path_len = 75 if not should_expand else 88
+            clipped_path = clip_path_inner(path, max_path_len)
 
             # Color score
             if cat_score >= 1.0:
@@ -5949,14 +5952,19 @@ def _print_discovery_summary(
             else:
                 score_style = "yellow"
 
+            # Build path line with terminal indicator
+            path_line = f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clean_text(clipped_path)}"
+            if not should_expand:
+                path_line += " [magenta]terminal[/magenta]"
+
             # Score reason from description (9 char indent, panel 100 wide)
             reason = description[:88] + "..." if len(description) > 88 else description
 
-            console.print(
-                f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clean_text(clipped_path)}"
-            )
+            console.print(path_line, highlight=False)
             if reason:
-                console.print(f"         [dim]{clean_text(reason)}[/dim]")
+                console.print(
+                    f"         [dim]{clean_text(reason)}[/dim]", highlight=False
+                )
 
         # Show count of remaining in category
         remaining = len(sorted_paths) - 5
