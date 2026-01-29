@@ -1371,7 +1371,7 @@ async def run_parallel_discovery(
     threshold: float = 0.7,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
-    num_score_workers: int = 4,
+    num_score_workers: int = 2,  # Reduced: less rate limit contention
     num_enrich_workers: int = 1,
     num_rescore_workers: int = 0,
     scan_batch_size: int = 50,
@@ -1414,7 +1414,7 @@ async def run_parallel_discovery(
         threshold: Score threshold for expansion
         num_scan_workers: Number of concurrent scan workers (default: 1)
         num_expand_workers: Number of concurrent expand workers (default: 1)
-        num_score_workers: Number of concurrent score workers (default: 4)
+        num_score_workers: Number of concurrent score workers (default: 2)
         num_enrich_workers: Number of concurrent enrich workers (default: 1)
         num_rescore_workers: Number of concurrent rescore workers (default: 0)
         scan_batch_size: Paths per SSH call (default: 50)

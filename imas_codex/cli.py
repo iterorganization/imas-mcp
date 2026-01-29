@@ -5734,9 +5734,9 @@ def discover():
 )
 @click.option(
     "--score-workers",
-    default=4,
+    default=2,
     type=int,
-    help="Number of score workers (default: 4, parallel LLM calls)",
+    help="Number of score workers (default: 2, parallel LLM calls)",
 )
 @click.option(
     "--scan-only",
@@ -5821,7 +5821,7 @@ def _run_iterative_discovery(
     focus: str | None,
     threshold: float,
     num_scan_workers: int = 1,
-    num_score_workers: int = 4,
+    num_score_workers: int = 2,
     scan_only: bool = False,
     score_only: bool = False,
     no_rich: bool = False,
@@ -6214,7 +6214,7 @@ async def _async_discovery_loop(
     threshold: float,
     console,
     num_scan_workers: int = 2,
-    num_score_workers: int = 4,
+    num_score_workers: int = 2,
     scan_only: bool = False,
     score_only: bool = False,
     use_rich: bool = True,
