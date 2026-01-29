@@ -32,7 +32,6 @@ from imas_codex.discovery.models import (
     PathPurpose,
     ScoredBatch,
     ScoredDirectory,
-    TerminalReason,
     parse_path_purpose,
 )
 
@@ -619,28 +618,9 @@ class DirectoryScorer:
                     enrich_skip_reason or "data container - too many files"
                 )
 
-            # Compute terminal_reason when should_expand=false
-            terminal_reason = None
-            if not should_expand:
-                # Determine reason in priority order
-                if has_git:
-                    terminal_reason = TerminalReason.software_repo
-                elif purpose in data_purposes:
-                    terminal_reason = TerminalReason.data_container
-                elif combined < 0.2:
-                    terminal_reason = TerminalReason.low_value
-                elif purpose in {
-                    PathPurpose.modeling_code,
-                    PathPurpose.diagnostic_code,
-                    PathPurpose.data_interface,
-                    PathPurpose.workflow,
-                    PathPurpose.visualization,
-                }:
-                    terminal_reason = TerminalReason.leaf_code
-                elif purpose == PathPurpose.container:
-                    terminal_reason = TerminalReason.container_low
-                else:
-                    terminal_reason = TerminalReason.low_value  # fallback
+            # terminal_reason is NULL for LLM-scored paths - reason is derivable
+            # from has_git, path_purpose, score. Only set for non-derivable cases
+            # (access_denied, empty, parent_terminal, etc.)
 
             scored_dir = ScoredDirectory(
                 path=path,
@@ -658,7 +638,6 @@ class DirectoryScorer:
                 physics_domain=result.physics_domain,
                 expansion_reason=result.expansion_reason,
                 skip_reason=result.skip_reason,
-                terminal_reason=terminal_reason,
                 enrich_skip_reason=enrich_skip_reason,
                 score_cost=cost_per_path,
             )

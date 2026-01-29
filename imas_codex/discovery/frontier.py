@@ -1042,6 +1042,9 @@ def mark_paths_scored(
                 )
 
             # Update FacilityPath with scores and link to Evidence
+            # terminal_reason is only set when provided (e.g., empty directories)
+            # For LLM-scored paths it stays NULL - reason is derivable from
+            # has_git, path_purpose, score.
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -1113,7 +1116,7 @@ def mark_paths_scored(
                     """,
                     id=path_id,
                     now=now,
-                    terminal_reason=TerminalReason.parent_skipped.value,
+                    terminal_reason=TerminalReason.parent_terminal.value,
                     reason=f"parent_{path_purpose}",
                     skipped=PathStatus.skipped.value,
                 )

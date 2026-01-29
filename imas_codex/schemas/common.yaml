@@ -85,35 +85,24 @@ enums:
 
   TerminalReason:
     description: >-
-      Why path exploration terminated. Distinguishes scan-time failures
-      (never reached LLM) from LLM decisions. Required when path is terminal
-      (status=skipped OR should_expand=false). Enables analytics like
-      "show all permission-denied paths" vs "show LLM low-value paths".
+      Why path exploration terminated. Only captures reasons NOT derivable
+      from other node properties (score, has_git, path_purpose). For LLM-scored
+      terminal paths, leave NULL - reason is derivable from existing fields.
+      Used for analytics: "show all access-denied paths", "count empty dirs".
     permissible_values:
-      # === SCAN-TIME FAILURES (status=skipped, never hit LLM) ===
+      # === SCAN-TIME FAILURES (status=skipped, reason not in other fields) ===
       access_denied:
         description: PermissionError during directory listing
       listing_error:
         description: Other error during directory enumeration
       alias:
         description: Bind mount or symlink duplicate of another path
-      # === AUTO-SKIP (status=scored, no LLM cost) ===
+      # === AUTO-SKIP (status=scored, 0 LLM cost, not obvious from properties) ===
       empty:
         description: Empty directory (0 files, 0 dirs)
-      # === LLM DECISIONS (status=scored, should_expand=false) ===
-      low_value:
-        description: LLM scored < 0.2, not worth ingesting
-      software_repo:
-        description: Contains .git/.svn - ingest via API instead
-      data_container:
-        description: Data repository (imasdb, simdb) - terminal subtree
-      leaf_code:
-        description: Leaf directory with source files - no expansion needed
-      container_low:
-        description: Container directory with low exploration potential
-      # === PROPAGATION (status=skipped from parent) ===
-      parent_skipped:
-        description: Parent directory was skipped (archive, system, etc.)
+      # === PROPAGATION (child of terminal parent) ===
+      parent_terminal:
+        description: Parent path was terminal (skipped or not expanded)
       # === LIMITS ===
       depth_limit:
         description: Maximum exploration depth reached

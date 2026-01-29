@@ -308,11 +308,13 @@ class ScoredDirectory:
     score_cost: float = 0.0
     """LLM cost in USD for scoring this path (batch cost / batch size)."""
 
-    terminal_reason: TerminalReason | None = None
-    """Why this path is terminal (set when should_expand=false)."""
-
     def to_graph_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for graph persistence."""
+        """Convert to dictionary for graph persistence.
+
+        Note: terminal_reason is NOT set here - it's only for non-derivable
+        cases (access_denied, empty, parent_terminal). For LLM-scored paths,
+        the reason is derivable from has_git, path_purpose, score.
+        """
         import json
 
         return {
@@ -331,9 +333,6 @@ class ScoredDirectory:
             "physics_domain": self.physics_domain,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
-            "terminal_reason": self.terminal_reason.value
-            if self.terminal_reason
-            else None,
             "enrich_skip_reason": self.enrich_skip_reason,
             "score_cost": self.score_cost,
         }
