@@ -399,23 +399,29 @@ class ParallelProgressDisplay:
     def _build_progress_section(self) -> Text:
         """Build the main progress bars for scan and score.
 
-        SCAN shows full exploration status: (listed + scored + skipped) / total
-        SCORE shows scoring status: (scored + skipped) / (listed + scored + skipped)
+        SCAN shows: paths scanned / total non-excluded paths
+        SCORE shows: paths scored / total non-excluded paths
+
+        Both bars use the same denominator (all paths that need processing)
+        so they show cumulative progress toward complete discovery.
         """
         section = Text()
 
-        # SCAN progress: paths that have been scanned (listed, scored, skipped)
-        # vs total known paths in exploration
-        scanned_paths = self.state.listed + self.state.scored + self.state.skipped
-        scan_total = self.state.total if self.state.total > 0 else 1
-        scan_pct = (scanned_paths / scan_total * 100) if scan_total > 0 else 0
+        # Non-excluded paths are the work universe
+        # (total - excluded = discovered + listing + listed + scoring + scored + skipped)
+        work_total = self.state.total - self.state.excluded
+        if work_total <= 0:
+            work_total = 1  # Avoid division by zero
 
-        # SCORE progress: paths that have been scored vs scorable paths
-        # Scorable = listed (waiting) + scored (done) + skipped (auto-handled)
-        scorable_paths = self.state.listed + self.state.scored + self.state.skipped
+        # SCAN progress: paths that have finished scanning
+        # (listed + scoring + scored + skipped - all states after scan completes)
+        scanned_paths = self.state.listed + self.state.scored + self.state.skipped
+        scan_pct = (scanned_paths / work_total * 100) if work_total > 0 else 0
+
+        # SCORE progress: paths that have reached a terminal state
+        # (scored + skipped - no longer need processing)
         scored_paths = self.state.scored + self.state.skipped
-        score_total = scorable_paths if scorable_paths > 0 else 1
-        score_pct = (scored_paths / score_total * 100) if score_total > 0 else 0
+        score_pct = (scored_paths / work_total * 100) if work_total > 0 else 0
 
         bar_width = self.BAR_WIDTH
 
@@ -426,7 +432,7 @@ class ParallelProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCAN  ", style="bold blue")
-            scan_ratio = min(scanned_paths / scan_total, 1.0) if scan_total > 0 else 0
+            scan_ratio = min(scanned_paths / work_total, 1.0) if work_total > 0 else 0
             section.append(make_bar(scan_ratio, bar_width), style="blue")
             section.append(f" {scanned_paths:>6,}", style="bold")
             section.append(f" {scan_pct:>3.0f}%", style="cyan")
@@ -451,7 +457,7 @@ class ParallelProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCORE ", style="bold green")
-            score_ratio = min(scored_paths / score_total, 1.0) if score_total > 0 else 0
+            score_ratio = min(scored_paths / work_total, 1.0) if work_total > 0 else 0
             section.append(make_bar(score_ratio, bar_width), style="green")
             section.append(f" {scored_paths:>6,}", style="bold")
             section.append(f" {score_pct:>3.0f}%", style="cyan")
@@ -624,16 +630,25 @@ class ParallelProgressDisplay:
                     section.append(f"  ETC ${etc:.2f}", style="dim")
                 section.append("\n")
 
-        # STATS row - depth first, then work counts (this run only)
+        # STATS row - terminal state counts from graph (not session-based)
+        # Shows actual graph state, not just this run's processed counts
         section.append("  STATS ", style="bold magenta")
         section.append(f"depth={self.state.max_depth}", style="cyan")
-        section.append(f"  pending={self.state.pending_work}", style="cyan")
-        section.append(f"  expanded={self.state.run_expanded}", style="cyan")
-        section.append(f"  enriched={self.state.run_enriched}", style="cyan")
-        if self.state.pending_enrich > 0:
-            section.append(f" ({self.state.pending_enrich} queued)", style="dim")
+
+        # Terminal states (paths that have reached end of pipeline)
+        section.append(f"  scored={self.state.scored}", style="green")
         section.append(f"  skipped={self.state.skipped}", style="yellow")
         section.append(f"  excluded={self.state.excluded}", style="dim")
+
+        # In-progress states (work remaining)
+        listing_count = self.state.pending_scan - self.state.discovered
+        scoring_count = self.state.pending_score - self.state.listed
+        in_flight = max(0, listing_count) + max(0, scoring_count)
+        awaiting = self.state.discovered + self.state.listed
+        if awaiting > 0 or in_flight > 0:
+            section.append(f"  awaiting={awaiting}", style="cyan dim")
+            if in_flight > 0:
+                section.append(f" ({in_flight} in-flight)", style="dim")
 
         return section
 
