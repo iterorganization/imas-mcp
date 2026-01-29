@@ -756,7 +756,7 @@ class ParallelProgressDisplay:
             # Got results back ("scanned N paths")
             self.state.scan_processing = False
 
-        # Queue scan results for streaming
+        # Queue scan results for streaming (tick() handles rate-limited popping)
         if scan_results:
             items = [
                 ScanItem(
@@ -770,11 +770,6 @@ class ParallelProgressDisplay:
                 for r in scan_results
             ]
             self.state.scan_queue.add(items, stats.rate)
-
-        # Pop next item
-        next_item = self.state.scan_queue.pop()
-        if next_item:
-            self.state.current_scan = next_item
 
         self._refresh()
 
@@ -803,7 +798,7 @@ class ParallelProgressDisplay:
             # Got results back
             self.state.score_processing = False
 
-        # Queue score results for streaming
+        # Queue score results for streaming (tick() handles rate-limited popping)
         if results:
             items = []
             for r in results:
@@ -821,11 +816,6 @@ class ParallelProgressDisplay:
                     )
                 )
             self.state.score_queue.add(items, stats.rate)
-
-        # Pop next item
-        next_item = self.state.score_queue.pop()
-        if next_item:
-            self.state.current_score = next_item
 
         self._refresh()
 
