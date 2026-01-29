@@ -32,6 +32,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _path_canonicality_score(path: str) -> int:
+    """Score a path's canonicality - higher is more canonical.
+
+    Prefers paths that users actually use vs. internal mount points.
+    Order of preference (highest first):
+    - /home (user directories)
+    - /work, /common, /opt (standard locations)
+    - /mnt, /scratch, /gpfs, /lustre (mount points / HPC infrastructure)
+
+    Args:
+        path: Absolute path string
+
+    Returns:
+        Integer score - higher means more canonical
+    """
+    # Order matters - first match wins
+    preferences = [
+        ("/home/", 100),  # User directories - most canonical
+        ("/work/", 80),  # Work directories
+        ("/common/", 70),
+        ("/opt/", 60),
+        ("/usr/", 50),
+        ("/mnt/", 10),  # Mount points - least canonical
+        ("/scratch/", 10),
+        ("/gpfs/", 10),
+        ("/lustre/", 10),
+        ("/HPC/", 10),
+    ]
+
+    for prefix, score in preferences:
+        if prefix in path:
+            return score
+
+    # Default score for unknown paths
+    return 50
+
+
 @dataclass
 class DiscoveryStats:
     """Statistics about discovery progress for a facility."""
@@ -1260,9 +1297,16 @@ async def persist_scan_results(
                     regular_children.append(child)
 
             # Create regular child nodes with device_inode-based deduplication
-            # If a node with same device_inode already exists, create ALIAS_OF instead
+            # If a node with same device_inode already exists, create ALIAS_OF
+            # Use path canonicality to decide which becomes canonical vs alias
+            # (e.g., /home is more canonical than /mnt)
             if regular_children:
+                # Add canonicality scores to children for Cypher comparison
+                for child in regular_children:
+                    child["canonicality"] = _path_canonicality_score(child["path"])
+
                 # First pass: create nodes that don't have device_inode conflicts
+                # or where the new path is MORE canonical than existing (swap)
                 gc.query(
                     """
                     UNWIND $children AS child
@@ -1276,7 +1320,7 @@ async def persist_scan_results(
                       AND existing.id <> child.id
                       AND existing.facility_id = child.facility_id
 
-                    // Only create new node if no device_inode conflict
+                    // No conflict - create normally
                     FOREACH (_ IN CASE WHEN existing IS NULL THEN [1] ELSE [] END |
                         MERGE (c:FacilityPath {id: child.id})
                         ON CREATE SET c.facility_id = child.facility_id,
@@ -1291,8 +1335,11 @@ async def persist_scan_results(
                         MERGE (c)-[:PARENT]->(parent)
                     )
 
-                    // If device_inode conflict exists (bind mount), create as alias
-                    FOREACH (_ IN CASE WHEN existing IS NOT NULL THEN [1] ELSE [] END |
+                    // Conflict exists AND new path is LESS canonical - new becomes alias
+                    FOREACH (_ IN CASE
+                        WHEN existing IS NOT NULL
+                         AND child.canonicality <= coalesce(existing.canonicality, 50)
+                        THEN [1] ELSE [] END |
                         MERGE (alias:FacilityPath {id: child.id})
                         ON CREATE SET alias.facility_id = child.facility_id,
                                       alias.path = child.path,
@@ -1303,11 +1350,57 @@ async def persist_scan_results(
                                       alias.parent_path_id = child.parent_id,
                                       alias.discovered_at = child.discovered_at,
                                       alias.device_inode = child.device_inode,
+                                      alias.canonicality = child.canonicality,
                                       alias.alias_of_id = existing.id
                         MERGE (alias)-[:FACILITY_ID]->(f)
                         MERGE (alias)-[:PARENT]->(parent)
                         MERGE (alias)-[:ALIAS_OF]->(existing)
                     )
+
+                    // Conflict exists AND new path is MORE canonical - swap!
+                    // Existing becomes alias, new becomes canonical
+                    FOREACH (_ IN CASE
+                        WHEN existing IS NOT NULL
+                         AND child.canonicality > coalesce(existing.canonicality, 50)
+                        THEN [1] ELSE [] END |
+                        // Create new path as canonical (normal status)
+                        MERGE (c:FacilityPath {id: child.id})
+                        ON CREATE SET c.facility_id = child.facility_id,
+                                      c.path = child.path,
+                                      c.path_type = child.path_type,
+                                      c.status = child.status,
+                                      c.depth = child.depth,
+                                      c.parent_path_id = child.parent_id,
+                                      c.discovered_at = child.discovered_at,
+                                      c.device_inode = child.device_inode,
+                                      c.canonicality = child.canonicality
+                        MERGE (c)-[:FACILITY_ID]->(f)
+                        MERGE (c)-[:PARENT]->(parent)
+                    )
+                    """,
+                    children=regular_children,
+                )
+
+                # Second pass: demote existing nodes that lost to more canonical paths
+                gc.query(
+                    """
+                    UNWIND $children AS child
+                    MATCH (existing:FacilityPath)
+                    WHERE existing.device_inode = child.device_inode
+                      AND existing.device_inode IS NOT NULL
+                      AND existing.id <> child.id
+                      AND existing.facility_id = child.facility_id
+                      AND child.canonicality > coalesce(existing.canonicality, 50)
+
+                    MATCH (newCanonical:FacilityPath {id: child.id})
+
+                    // Demote existing to alias
+                    SET existing.status = 'excluded',
+                        existing.skip_reason = 'bind_mount_duplicate',
+                        existing.alias_of_id = child.id
+
+                    // Create ALIAS_OF from old to new canonical
+                    MERGE (existing)-[:ALIAS_OF]->(newCanonical)
                     """,
                     children=regular_children,
                 )

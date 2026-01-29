@@ -604,6 +604,13 @@ classes:
           MATCH (alias)-[:ALIAS_OF]->(real) WHERE alias.path = $search_path
           RETURN real  -- gets the actual content node
         range: FacilityPath
+      canonicality:
+        description: >-
+          Path preference score (higher = more canonical). Used to decide which
+          of multiple bind-mount paths is canonical vs alias. /home = 100,
+          /work = 80, /mnt = 10. Ensures user-facing paths like /home are
+          preferred over infrastructure paths like /mnt/HPC/home.
+        range: integer
       path_type:
         description: Type of path
         range: PathType
