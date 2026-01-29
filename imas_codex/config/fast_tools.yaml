@@ -97,7 +97,8 @@ optional:
     fallback: "wc -l"
     releases:
       repo: XAMPPRocky/tokei
-      version: "14.0.0"
+      # tokei v13+ removed binary releases, use 12.1.2
+      version: "12.1.2"
       asset_pattern: "tokei-{arch}.tar.gz"
       strip_components: 0
       binary_path: "tokei"
