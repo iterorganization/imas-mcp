@@ -29,7 +29,7 @@ wiki_sites:
 
 # User info discovery configuration
 user_info:
-  name_format: first_last
+  name_format: last_first  # Japanese order: family name first (e.g., マッキントッシュ サイモン)
   lookup_tools:
     - getent
     - passwd
