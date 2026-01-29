@@ -32,6 +32,68 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _dedupe_paths_by_inode(facility: str, paths: list[str]) -> list[str]:
+    """Deduplicate paths by device:inode, keeping shallowest.
+
+    Uses a single SSH call to stat all paths and group by inode.
+    Paths with the same device:inode are bind mounts to the same location.
+
+    Args:
+        facility: Facility ID for SSH execution
+        paths: List of paths to deduplicate
+
+    Returns:
+        Deduplicated list, preferring shallower paths
+    """
+    from imas_codex.remote.tools import run
+
+    if not paths:
+        return paths
+
+    # Build stat command for all paths
+    # Output: "device:inode path" per line
+    path_args = " ".join(f'"{p}"' for p in paths)
+    cmd = f'stat --format="%d:%i %n" {path_args} 2>/dev/null || true'
+
+    try:
+        result = run(cmd, facility=facility, timeout=30)
+    except Exception as e:
+        logger.warning(f"Failed to stat paths for dedup: {e}")
+        return paths  # Fall back to no dedup
+
+    # Parse output: group paths by inode
+    inode_to_paths: dict[str, list[str]] = {}
+    for line in result.strip().split("\n"):
+        if not line or " " not in line:
+            continue
+        inode, path = line.split(" ", 1)
+        if inode not in inode_to_paths:
+            inode_to_paths[inode] = []
+        inode_to_paths[inode].append(path)
+
+    # Keep shallowest path per inode group
+    deduped = []
+    seen_inodes: set[str] = set()
+    for inode, group in inode_to_paths.items():
+        if inode in seen_inodes:
+            continue
+        seen_inodes.add(inode)
+        # Sort by depth (shallowest first)
+        best = min(group, key=lambda p: p.count("/"))
+        deduped.append(best)
+        if len(group) > 1:
+            others = [p for p in group if p != best]
+            logger.info(f"Dedup: {best} (canonical) <- {others} (same inode {inode})")
+
+    # Preserve order for paths that couldn't be stat'd
+    stat_found = {p for ps in inode_to_paths.values() for p in ps}
+    for p in paths:
+        if p not in stat_found and p not in deduped:
+            deduped.append(p)
+
+    return deduped
+
+
 def _path_canonicality_score(path: str) -> int:
     """Score a path's canonicality - higher is more canonical.
 
@@ -277,7 +339,6 @@ def seed_facility_roots(
                 ]
             else:
                 # Use path values from config, excluding personal/user paths
-                # and infrastructure docs (categories that shouldn't be seeded)
                 excluded_categories = {"user", "actionable_paths"}
                 for key, value in paths_config.items():
                     if key in excluded_categories:
@@ -321,6 +382,10 @@ def seed_facility_roots(
         )
 
     root_paths = filtered_paths
+
+    # Deduplicate by device_inode via single SSH call
+    # This detects bind mounts (e.g., /home and /mnt/HPC/home same inode)
+    root_paths = _dedupe_paths_by_inode(facility, root_paths)
 
     now = datetime.now(UTC).isoformat()
     items = []
@@ -1414,12 +1479,46 @@ async def persist_scan_results(
                     children=symlink_children,
                 )
 
-                # Note: We do NOT auto-create target nodes for symlinks.
-                # Symlinks are marked excluded to avoid duplicate scanning.
-                # If the target is reachable via a canonical path (e.g., /home
-                # instead of /mnt/HPC/home), it will be discovered naturally
-                # through breadth-first traversal. Creating targets here would
-                # queue deep infrastructure paths for scanning.
+                # Create target nodes for symlinks with ALIAS_OF relationships
+                # Target depth is based on actual path components (not parent+1)
+                # This ensures deep targets (e.g., /mnt/HPC/.../target) are scanned
+                # after shallower canonical paths (e.g., /home/user), allowing
+                # device_inode deduplication to exclude them as duplicates.
+                symlinks_with_targets = [
+                    c
+                    for c in symlink_children
+                    if c.get("realpath") and c["realpath"].startswith("/")
+                ]
+                if symlinks_with_targets:
+                    # Add target_depth based on path component count
+                    for c in symlinks_with_targets:
+                        c["target_depth"] = c["realpath"].rstrip("/").count("/")
+
+                    gc.query(
+                        """
+                        UNWIND $children AS child
+                        MATCH (f:Facility {id: child.facility_id})
+                        MATCH (symlink:FacilityPath {id: child.id})
+
+                        // Create or match the target (realpath) node
+                        // Depth based on path components ensures proper scan ordering
+                        MERGE (target:FacilityPath {id: child.facility_id + ':' + child.realpath})
+                        ON CREATE SET target.facility_id = child.facility_id,
+                                      target.path = child.realpath,
+                                      target.path_type = 'code_directory',
+                                      target.status = $discovered,
+                                      target.depth = child.target_depth,
+                                      target.discovered_at = child.discovered_at,
+                                      target.is_symlink = false,
+                                      target.device_inode = child.device_inode
+                        MERGE (target)-[:FACILITY_ID]->(f)
+
+                        // Create ALIAS_OF relationship from symlink to target
+                        MERGE (symlink)-[:ALIAS_OF]->(target)
+                        """,
+                        children=symlinks_with_targets,
+                        discovered=PathStatus.discovered.value,
+                    )
 
             children_created = len(all_children)
 
