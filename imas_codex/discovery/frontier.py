@@ -35,24 +35,21 @@ logger = logging.getLogger(__name__)
 def _path_canonicality_score(path: str) -> int:
     """Score a path's canonicality - higher is more canonical.
 
-    Uses path depth (component count) as the sole metric. Shallower paths
-    are preferred because bind mounts typically expose deep infrastructure
-    paths at shallow user-facing locations.
+    Uses negative path depth so shallower paths have higher scores.
+    Bind mounts typically expose deep infrastructure paths at shallow
+    user-facing locations.
 
-    Example: /home/user (depth 2) → score 998
-             /mnt/HPC/ITER/home/user (depth 5) → score 995
+    Example: /home/user (depth 2) → -2 (wins)
+             /mnt/HPC/ITER/home/user (depth 5) → -5
 
     Args:
         path: Absolute path string
 
     Returns:
-        Integer score - higher means more canonical (shallower)
+        Negative depth - higher (less negative) means shallower/more canonical
     """
-    # Count path components: /home/user = 2, /mnt/HPC/home/user = 4
     depth = path.rstrip("/").count("/")
-
-    # Invert so shallower = higher score (max realistic depth ~20)
-    return 1000 - depth
+    return -depth
 
 
 @dataclass
