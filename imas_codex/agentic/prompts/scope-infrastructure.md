@@ -182,6 +182,32 @@ cat ~/.bash_profile 2>/dev/null | grep -E 'module load|PATH|export' | head -10
 ls -la ~/.bash* ~/.profile 2>/dev/null
 ```
 
+### Phase 6.5: User Home Directory Pattern (1 min)
+
+Discover the home directory structure for user identification. This is critical
+for linking FacilityPath nodes to FacilityUser nodes via OWNS relationships.
+
+```bash
+# Check home directory structure
+ls -d /home/*/ 2>/dev/null | head -10
+
+# Some facilities use nested structure like /home/ITER/username
+# Check for nested patterns:
+ls -d /home/*/*/ 2>/dev/null | head -5
+
+# Standard pattern: /home/username         → "^/home/([a-z0-9_-]+)(?:/|$)"
+# ITER pattern:     /home/ITER/username    → "^/home/ITER/([a-z0-9_-]+)(?:/|$)"
+# EPFL pattern:     /home/username         → standard
+# Some use:         /users/username        → "^/users/([a-z0-9_-]+)(?:/|$)"
+
+# Verify by checking a known home directory
+echo ~  # Current user's home path
+ls -d ~/../*/ 2>/dev/null | head -5  # Peer directories
+```
+
+**Important**: If `/home/<facility>/username` is used instead of `/home/username`,
+you must configure `user_info.home_path_pattern` in the facility YAML. See Phase 10.
+
 ### Phase 7: Internal Git Servers (1 min)
 
 Discover internal git servers (GitLab, GitHub Enterprise). Code on these servers
@@ -348,7 +374,43 @@ update_facility_infrastructure("FACILITY", {
 })
 ```
 
-### 9. Update Tools
+### 8. Update User Info (Home Directory Pattern)
+**CRITICAL** for user identification and OWNS relationships. If the facility uses
+a non-standard home directory structure, you must configure the pattern:
+
+```python
+# Standard: /home/username (no config needed - this is the default)
+# Non-standard examples requiring config:
+
+# ITER uses /home/ITER/username:
+update_facility_infrastructure("ITER", {
+    "user_info": {
+        "name_format": "last_first",  # GECOS format: "Last First [EXT]"
+        "gecos_suffix_pattern": "\\s+EXT$",  # Strip " EXT" from names
+        "home_path_pattern": "^/home/ITER/([a-z0-9_-]+)(?:/|$)"
+    }
+})
+
+# If /users/username instead of /home/username:
+update_facility_infrastructure("FACILITY", {
+    "user_info": {
+        "home_path_pattern": "^/users/([a-z0-9_-]+)(?:/|$)"
+    }
+})
+```
+
+The pattern must:
+- Match the full path from start (`^`)
+- Capture the username in group 1 `([a-z0-9_-]+)`
+- End with optional `/` or end-of-string `(?:/|$)`
+
+**Default patterns (no config needed):**
+- `/home/username`
+- `/users/username`
+- `/u/username`
+- `/work/username`
+
+### 10. Update Tools
 ```python
 update_facility_tools("FACILITY", {
     "rg": {"version": "14.1.1", "path": "/usr/bin/rg"},
@@ -357,7 +419,7 @@ update_facility_tools("FACILITY", {
 })
 ```
 
-### 10. Add Exploration Notes
+### 11. Add Exploration Notes
 ```python
 add_exploration_note("FACILITY", "Initial infrastructure scoping complete")
 add_exploration_note("FACILITY", "Found legacy PPF data at /common/ppf")
