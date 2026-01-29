@@ -368,52 +368,118 @@ def tools_check(facility: str | None, as_json: bool) -> None:
       imas-codex tools check tcv      # Check on TCV (via SSH)
     """
     import json as json_mod
+    from typing import Any
 
-    from imas_codex.remote.tools import check_all_tools, is_local_facility
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
 
+    from imas_codex.remote.tools import (
+        check_tool,
+        is_local_facility,
+        load_fast_tools,
+    )
+
+    console = Console()
     is_local = is_local_facility(facility)
     location = "locally" if is_local else f"via SSH to {facility}"
-    click.echo(f"Checking tools {location}...")
 
-    result = check_all_tools(facility=facility)
+    config = load_fast_tools()
+    all_tools = list(config.all_tools.keys())
+
+    # Build results with live progress
+    results: dict[str, Any] = {
+        "facility": facility or "local",
+        "tools": {},
+        "required_ok": True,
+        "missing_required": [],
+        "missing_optional": [],
+        "version_too_old": [],
+    }
+
+    def build_table(checked: dict[str, Any], current: str | None = None) -> Table:
+        """Build progress table."""
+        table = Table(title=f"Checking tools {location}", show_header=False)
+        table.add_column("Status", width=3)
+        table.add_column("Tool", width=8)
+        table.add_column("Details", width=40)
+
+        for tool_key in all_tools:
+            if tool_key in checked:
+                status = checked[tool_key]
+                available = status.get("available", False)
+                version = status.get("version", "")
+                meets_min = status.get("meets_min_version", True)
+                min_version = status.get("min_version")
+                required = "required" if status.get("required") else "optional"
+
+                if available and meets_min:
+                    icon = "[green]✓[/green]"
+                    details = f"v{version}" if version else "ok"
+                elif available and not meets_min:
+                    icon = "[yellow]⚠[/yellow]"
+                    details = f"v{version} < min v{min_version}"
+                else:
+                    icon = "[red]✗[/red]"
+                    details = f"[dim]{required}[/dim]"
+
+                table.add_row(icon, tool_key, details)
+            elif tool_key == current:
+                table.add_row("[cyan]⋯[/cyan]", tool_key, "[dim]checking...[/dim]")
+            else:
+                table.add_row("[dim]○[/dim]", f"[dim]{tool_key}[/dim]", "")
+
+        return table
+
+    with Live(build_table({}), console=console, refresh_per_second=4) as live:
+        for tool_key in all_tools:
+            live.update(build_table(results["tools"], current=tool_key))
+            status = check_tool(tool_key, facility=facility)
+            results["tools"][tool_key] = status
+
+            # Update summary
+            if not status.get("available"):
+                if status.get("required"):
+                    results["required_ok"] = False
+                    results["missing_required"].append(tool_key)
+                else:
+                    results["missing_optional"].append(tool_key)
+            elif not status.get("meets_min_version", True):
+                results["version_too_old"].append(
+                    {
+                        "tool": tool_key,
+                        "version": status.get("version"),
+                        "min_version": status.get("min_version"),
+                    }
+                )
+                if status.get("required"):
+                    results["required_ok"] = False
+
+            live.update(build_table(results["tools"]))
 
     if as_json:
-        click.echo(json_mod.dumps(result, indent=2))
+        console.print(json_mod.dumps(results, indent=2))
         return
 
-    # Pretty print
-    click.echo(f"\nFacility: {result['facility']}")
-    click.echo(f"Required tools OK: {'✓' if result['required_ok'] else '✗'}")
-    click.echo("\nTools:")
+    # Summary
+    console.print()
+    if results["required_ok"]:
+        console.print("[green]✓ All required tools OK[/green]")
+    else:
+        console.print("[red]✗ Required tools missing or outdated[/red]")
 
-    for name, status in result["tools"].items():
-        available = status.get("available", False)
-        version = status.get("version", "")
-        required = "required" if status.get("required") else "optional"
-        meets_min = status.get("meets_min_version", True)
-        min_version = status.get("min_version")
-
-        if available and meets_min:
-            icon = "✓"
-        elif available and not meets_min:
-            icon = "⚠"  # Available but too old
-        else:
-            icon = "✗"
-
-        version_str = f" ({version})" if version else ""
-        min_str = f" [min: {min_version}]" if min_version and not meets_min else ""
-        click.echo(f"  {icon} {name}{version_str}{min_str} [{required}]")
-
-    if result.get("version_too_old"):
-        click.echo("\n⚠ Version too old:")
-        for item in result["version_too_old"]:
-            click.echo(
+    if results.get("version_too_old"):
+        console.print("\n[yellow]⚠ Version too old:[/yellow]")
+        for item in results["version_too_old"]:
+            console.print(
                 f"  - {item['tool']}: v{item['version']} < min v{item['min_version']}"
             )
 
-    if result.get("missing_required"):
-        click.echo(f"\n⚠ Missing required: {', '.join(result['missing_required'])}")
-        click.echo("  Run: imas-codex tools install " + (facility or ""))
+    if results.get("missing_required"):
+        console.print(
+            f"\n[yellow]⚠ Missing required: {', '.join(results['missing_required'])}[/yellow]"
+        )
+        console.print(f"  Run: imas-codex tools install {facility or ''}")
 
 
 @tools.command("install")
@@ -442,84 +508,147 @@ def tools_install(
       imas-codex tools install iter --tool gh  # Install gh on ITER
       imas-codex tools install --dry-run    # Show what would be installed
     """
+    from typing import Any
+
+    from rich.console import Console
+    from rich.live import Live
+    from rich.table import Table
+
     from imas_codex.remote.tools import (
-        check_all_tools,
+        check_tool,
         detect_architecture,
-        install_all_tools,
         install_tool,
         is_local_facility,
         load_fast_tools,
     )
 
+    console = Console()
     is_local = is_local_facility(facility)
     location = "locally" if is_local else f"via SSH to {facility}"
+    config = load_fast_tools()
 
     # Single tool installation
     if tool_name:
-        config = load_fast_tools()
         if tool_name not in config.all_tools:
-            click.echo(f"Unknown tool: {tool_name}")
-            click.echo(f"Available: {', '.join(config.all_tools.keys())}")
+            console.print(f"[red]Unknown tool: {tool_name}[/red]")
+            console.print(f"Available: {', '.join(config.all_tools.keys())}")
             raise SystemExit(1)
 
         if dry_run:
             tool = config.get_tool(tool_name)
             cmd = tool.get_install_command(detect_architecture(facility=facility))
-            click.echo(f"Dry run - would install {tool_name} {location}:")
-            click.echo(f"  {cmd}")
+            console.print(f"Dry run - would install {tool_name} {location}:")
+            console.print(f"  {cmd}")
             return
 
-        click.echo(f"Installing {tool_name} {location}...")
-        result = install_tool(tool_name, facility=facility, force=force)
+        with console.status(f"[cyan]Installing {tool_name} {location}...[/cyan]"):
+            result = install_tool(tool_name, facility=facility, force=force)
 
         if result.get("success"):
-            if result.get("action") == "already_installed":
-                click.echo(
-                    f"• {tool_name} already installed (v{result.get('version')})"
+            action = result.get("action", "installed")
+            if action == "system_sufficient":
+                console.print(
+                    f"[green]✓[/green] {tool_name} system version OK (v{result.get('version')})"
+                )
+            elif action == "already_installed":
+                console.print(
+                    f"[dim]•[/dim] {tool_name} already installed (v{result.get('version')})"
                 )
             else:
-                click.echo(f"✓ Installed {tool_name} (v{result.get('version')})")
+                console.print(
+                    f"[green]✓[/green] Installed {tool_name} (v{result.get('version')})"
+                )
         else:
-            click.echo(f"✗ Failed: {result.get('error')}")
+            console.print(f"[red]✗ Failed:[/red] {result.get('error')}")
             raise SystemExit(1)
         return
 
     if dry_run:
-        click.echo(f"Dry run - would install tools {location}:")
-        click.echo(f"Architecture: {detect_architecture(facility=facility)}")
-
-        # Check what's missing
-        status = check_all_tools(facility=facility)
-        config = load_fast_tools()
+        console.print(f"Dry run - would install tools {location}:")
+        console.print(f"Architecture: {detect_architecture(facility=facility)}")
 
         tools_to_check = config.required if required_only else config.all_tools
         for key, tool in tools_to_check.items():
-            tool_status = status["tools"].get(key, {})
-            if force or not tool_status.get("available"):
+            status = check_tool(key, facility=facility)
+            if (
+                force
+                or not status.get("available")
+                or not status.get("meets_min_version", True)
+            ):
                 cmd = tool.get_install_command(detect_architecture(facility=facility))
-                click.echo(f"\n{key}:")
-                click.echo(f"  {cmd}")
+                console.print(f"\n{key}:")
+                console.print(f"  {cmd}")
         return
 
-    click.echo(f"Installing tools {location}...")
-    result = install_all_tools(
-        facility=facility, required_only=required_only, force=force
+    # Install all tools with progress
+    tools_to_install = list(
+        config.required.keys() if required_only else config.all_tools.keys()
     )
+    results: dict[str, dict[str, Any]] = {}
 
-    if result.get("installed"):
-        click.echo(f"✓ Installed: {', '.join(result['installed'])}")
-    if result.get("already_present"):
-        click.echo(f"• Already present: {', '.join(result['already_present'])}")
-    if result.get("failed"):
-        click.echo("✗ Failed:")
-        for fail in result["failed"]:
-            click.echo(f"  - {fail['tool']}: {fail['error']}")
+    def build_table(current: str | None = None) -> Table:
+        """Build progress table."""
+        table = Table(title=f"Installing tools {location}", show_header=False)
+        table.add_column("Status", width=3)
+        table.add_column("Tool", width=8)
+        table.add_column("Details", width=50)
 
-    if result.get("success"):
-        click.echo("\n✓ All tools ready")
-    else:
-        click.echo("\n⚠ Some tools failed to install")
+        for tool_key in tools_to_install:
+            if tool_key in results:
+                result = results[tool_key]
+                if result.get("success"):
+                    action = result.get("action", "installed")
+                    version = result.get("version", "")
+                    if action == "system_sufficient":
+                        icon = "[green]✓[/green]"
+                        details = f"system v{version} OK"
+                    elif action in ("already_installed", "already_present"):
+                        icon = "[dim]•[/dim]"
+                        details = f"already installed v{version}"
+                    else:
+                        icon = "[green]✓[/green]"
+                        details = f"installed v{version}"
+                else:
+                    icon = "[red]✗[/red]"
+                    error = result.get("error", "unknown error")
+                    # Truncate long errors
+                    if len(error) > 45:
+                        error = error[:42] + "..."
+                    details = error
+                table.add_row(icon, tool_key, details)
+            elif tool_key == current:
+                table.add_row("[cyan]⋯[/cyan]", tool_key, "[dim]installing...[/dim]")
+            else:
+                table.add_row("[dim]○[/dim]", f"[dim]{tool_key}[/dim]", "")
+
+        return table
+
+    with Live(build_table(), console=console, refresh_per_second=4) as live:
+        for tool_key in tools_to_install:
+            live.update(build_table(current=tool_key))
+            result = install_tool(tool_key, facility=facility, force=force)
+            results[tool_key] = result
+            live.update(build_table())
+
+    # Summary
+    console.print()
+    installed = [k for k, v in results.items() if v.get("action") == "installed"]
+    already = [
+        k
+        for k, v in results.items()
+        if v.get("action") in ("already_installed", "system_sufficient")
+    ]
+    failed = [k for k, v in results.items() if not v.get("success")]
+
+    if installed:
+        console.print(f"[green]✓ Installed:[/green] {', '.join(installed)}")
+    if already:
+        console.print(f"[dim]• Already OK:[/dim] {', '.join(already)}")
+    if failed:
+        console.print(f"[red]✗ Failed:[/red] {', '.join(failed)}")
         raise SystemExit(1)
+    else:
+        console.print("\n[green]✓ All tools ready[/green]")
 
 
 @tools.command("list")
