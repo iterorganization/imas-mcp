@@ -26,7 +26,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from imas_codex.discovery.facility import get_facility
-from imas_codex.remote.executor import run_script_via_stdin as run_remote
+from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
 
@@ -95,99 +95,16 @@ class EnrichmentResult:
         }
 
 
-def _build_enrichment_script(paths: list[str]) -> str:
-    """Build a bash script for enrichment data collection.
-
-    Collects:
-    - rg pattern matches for format conversion detection (simplified patterns)
-    - dust for storage (faster than du on large dirs), falls back to du
-    - tokei for lines of code
-
-    Returns JSON array with results per path.
-    """
-    # Simplified patterns - shorter to avoid arg length issues
-    read_patterns = [
-        "read_eqdsk|load_eqdsk|from_eqdsk",
-        "mdsconnect|mdsopen|MDSplus",
-        "h5py\\.File|hdf5|netCDF4",
-        "xr\\.open|xarray\\.open",
-        "json\\.load|pickle\\.load",
-        "imas\\.database|get_ids|get_slice",
-        "ppf\\.read|ppfget",
-    ]
-    write_patterns = [
-        "put_slice|ids\\.put|imas\\.create",
-        "to_hdf|hdf5\\.write",
-        "to_netcdf|netcdf\\.create",
-        "json\\.dump|pickle\\.dump",
-        "write_eqdsk|to_eqdsk",
-    ]
-
-    read_pattern = "|".join(read_patterns)
-    write_pattern = "|".join(write_patterns)
-
-    # Generate path list as bash array entries
-    path_entries = "\n".join(f'  "{p}"' for p in paths)
-
-    script = f"""#!/bin/bash
-
-PATHS=(
-{path_entries}
-)
-
-echo "["
-first=true
-
-for path in "${{PATHS[@]}}"; do
-    if [ ! -d "$path" ]; then
-        continue
-    fi
-
-    if [ "$first" = true ]; then
-        first=false
-    else
-        echo ","
-    fi
-
-    # Initialize counts
-    read_count=0
-    write_count=0
-    total_bytes=0
-    total_lines=0
-
-    # Pattern search with rg (if available)
-    if command -v rg &> /dev/null; then
-        read_count=$(rg -c --no-messages --max-depth 3 -e '{read_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
-        write_count=$(rg -c --no-messages --max-depth 3 -e '{write_pattern}' "$path" 2>/dev/null | awk -F: '{{sum+=$2}} END {{print sum+0}}' || echo 0)
-    fi
-
-    # Storage - prefer dust (faster on large dirs), fallback to du
-    if command -v dust &> /dev/null; then
-        total_bytes=$(dust -sb "$path" 2>/dev/null | awk '{{print $1}}' | head -1 || echo 0)
-    else
-        total_bytes=$(du -sb "$path" 2>/dev/null | cut -f1 || echo 0)
-    fi
-
-    # Lines of code with tokei (if available)
-    if command -v tokei &> /dev/null; then
-        total_lines=$(tokei "$path" -o json 2>/dev/null | grep -o '"code":[0-9]*' | head -1 | grep -o '[0-9]*' || echo 0)
-    fi
-
-    # Output JSON (no jq required)
-    echo "{{\\"path\\":\\"$path\\",\\"read_matches\\":$read_count,\\"write_matches\\":$write_count,\\"total_bytes\\":$total_bytes,\\"total_lines\\":$total_lines}}"
-done
-
-echo "]"
-"""
-    return script
-
-
 def enrich_paths(
     facility: str,
     paths: list[str],
     timeout: int = 300,
 ) -> list[EnrichmentResult]:
     """Enrich multiple paths with deep analysis.
+
+    Uses enrich_directories.py Python script via run_python_script() for
+    reliable JSON parsing. Paths are passed as JSON input, avoiding shell
+    quoting issues.
 
     Args:
         facility: Facility identifier
@@ -207,11 +124,13 @@ def enrich_paths(
     except ValueError:
         ssh_host = facility
 
-    script = _build_enrichment_script(paths)
+    # Build input data for the remote script
+    input_data = {"paths": paths}
 
     try:
-        output = run_remote(
-            script,
+        output = run_python_script(
+            "enrich_directories.py",
+            input_data=input_data,
             ssh_host=ssh_host,
             timeout=timeout,
         )
@@ -222,8 +141,10 @@ def enrich_paths(
         logger.warning(f"Enrichment failed for {facility}: {e}")
         return [EnrichmentResult(path=p, error=str(e)[:100]) for p in paths]
 
-    # Parse results
+    # Parse results - handle stderr mixed in
     try:
+        if "[stderr]:" in output:
+            output = output.split("[stderr]:")[0].strip()
         results_data = json.loads(output)
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse enrichment output: {e}")
@@ -233,6 +154,11 @@ def enrich_paths(
     for data in results_data:
         path = data.get("path", "")
         result = EnrichmentResult(path=path)
+
+        if data.get("error"):
+            result.error = data.get("error")
+            results.append(result)
+            continue
 
         # Extract pattern matches
         read_matches = data.get("read_matches", 0)
@@ -246,14 +172,9 @@ def enrich_paths(
 
         # Lines of code
         result.total_lines = data.get("total_lines")
-        tokei = data.get("tokei", {})
-        if tokei:
-            # Extract language breakdown
-            for lang, stats in tokei.items():
-                if lang != "Total" and isinstance(stats, dict):
-                    code = stats.get("code", 0)
-                    if code > 0:
-                        result.language_breakdown[lang] = code
+        lang_breakdown = data.get("language_breakdown", {})
+        if lang_breakdown:
+            result.language_breakdown = lang_breakdown
 
         results.append(result)
 
