@@ -734,25 +734,45 @@ def tools_list() -> None:
 
 
 # ============================================================================
-# Neo4j Command Group
+# Data Command Group (imported from data_cli.py)
+# ============================================================================
+
+from imas_codex.data_cli import data  # noqa: E402
+
+main.add_command(data)
+
+
+# ============================================================================
+# Neo4j Command Group (DEPRECATED - use `imas-codex data db` instead)
 # ============================================================================
 
 
-@main.group()
+@main.group(deprecated=True)
 def neo4j() -> None:
-    """Manage Neo4j graph database for knowledge graph.
+    """[DEPRECATED] Use 'imas-codex data db' instead.
+
+    This command group is deprecated and will be removed in a future version.
+    The new commands are:
 
     \b
-      imas-codex neo4j start   Start Neo4j server via Apptainer
-      imas-codex neo4j stop    Stop Neo4j server
-      imas-codex neo4j status  Check Neo4j server status
-      imas-codex neo4j shell   Open Cypher shell
-      imas-codex neo4j dump    Export graph to dump file
-      imas-codex neo4j push    Push graph artifact to GHCR
-      imas-codex neo4j pull    Pull graph artifact from GHCR
-      imas-codex neo4j load    Load graph dump into database
-      imas-codex neo4j service Manage as systemd user service
+      imas-codex data db start    Start Neo4j server
+      imas-codex data db stop     Stop Neo4j server
+      imas-codex data db status   Check server status
+      imas-codex data db shell    Open Cypher shell
+      imas-codex data db service  Manage systemd service
+
+    For dump/push/pull/load, use:
+
+    \b
+      imas-codex data dump        Export graph + private YAML
+      imas-codex data push        Push to GHCR
+      imas-codex data pull        Pull from GHCR
+      imas-codex data load        Load archive
     """
+    click.echo(
+        "Warning: 'neo4j' command is deprecated. Use 'imas-codex data db' instead.",
+        err=True,
+    )
     pass
 
 
@@ -7463,6 +7483,82 @@ def _register_facility_commands() -> None:
 
 # Register facility commands at import time
 _register_facility_commands()
+
+
+# ============================================================================
+# Age Key Setup Command
+# ============================================================================
+
+
+@main.command("setup-age")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Output path (default: ~/.config/imas-codex/age-key.txt)",
+)
+def setup_age(output: str | None) -> None:
+    """Generate an age encryption key for private data.
+
+    Creates a new age key pair for encrypting private facility YAML files.
+    Store this key securely - you'll need it to decrypt your data.
+
+    Examples:
+        imas-codex setup-age
+        imas-codex setup-age -o ~/my-age-key.txt
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if not shutil.which("age-keygen"):
+        click.echo("Error: age-keygen not found in PATH", err=True)
+        click.echo("Install age:")
+        click.echo("  brew install age     # macOS")
+        click.echo("  apt install age      # Debian/Ubuntu")
+        click.echo("  cargo install rage   # Rust alternative")
+        raise SystemExit(1)
+
+    output_path = (
+        Path(output)
+        if output
+        else Path.home() / ".config" / "imas-codex" / "age-key.txt"
+    )
+
+    if output_path.exists():
+        click.echo(f"Key already exists: {output_path}")
+        click.echo("Delete it first if you want to regenerate.")
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        ["age-keygen", "-o", str(output_path)],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        click.echo(f"Error generating key: {result.stderr}", err=True)
+        raise SystemExit(1)
+
+    # Extract and display public key
+    content = output_path.read_text()
+    public_key = None
+    for line in content.splitlines():
+        if line.startswith("# public key:"):
+            public_key = line.split(":")[-1].strip()
+            break
+
+    click.echo(f"Age key generated: {output_path}")
+    click.echo(f"Public key: {public_key}")
+    click.echo()
+    click.echo("IMPORTANT: Back up this key to a password manager.")
+    click.echo("You need it to decrypt your private data on other machines.")
+    click.echo()
+    click.echo("To use, add to your .env:")
+    click.echo(f"  IMAS_AGE_KEY_FILE={output_path}")
 
 
 if __name__ == "__main__":
