@@ -1414,38 +1414,12 @@ async def persist_scan_results(
                     children=symlink_children,
                 )
 
-                # Create target nodes for symlinks and ALIAS_OF relationships
-                # Only for children with valid realpath within the facility
-                symlinks_with_targets = [
-                    c
-                    for c in symlink_children
-                    if c.get("realpath") and c["realpath"].startswith("/")
-                ]
-                if symlinks_with_targets:
-                    gc.query(
-                        """
-                        UNWIND $children AS child
-                        MATCH (f:Facility {id: child.facility_id})
-                        MATCH (symlink:FacilityPath {id: child.id})
-
-                        // Create or match the target (realpath) node
-                        // Device_inode is inherited from the symlink (they point to same inode)
-                        MERGE (target:FacilityPath {id: child.facility_id + ':' + child.realpath})
-                        ON CREATE SET target.facility_id = child.facility_id,
-                                      target.path = child.realpath,
-                                      target.path_type = 'code_directory',
-                                      target.status = $discovered,
-                                      target.discovered_at = child.discovered_at,
-                                      target.is_symlink = false,
-                                      target.device_inode = child.device_inode
-                        MERGE (target)-[:FACILITY_ID]->(f)
-
-                        // Create ALIAS_OF relationship from symlink to target
-                        MERGE (symlink)-[:ALIAS_OF]->(target)
-                        """,
-                        children=symlinks_with_targets,
-                        discovered=PathStatus.discovered.value,
-                    )
+                # Note: We do NOT auto-create target nodes for symlinks.
+                # Symlinks are marked excluded to avoid duplicate scanning.
+                # If the target is reachable via a canonical path (e.g., /home
+                # instead of /mnt/HPC/home), it will be discovered naturally
+                # through breadth-first traversal. Creating targets here would
+                # queue deep infrastructure paths for scanning.
 
             children_created = len(all_children)
 
