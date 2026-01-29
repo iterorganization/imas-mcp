@@ -168,6 +168,7 @@ class ToolRelease:
     binary_path: str = ""
     is_binary: bool = False
     arch_map: dict[str, str] = field(default_factory=dict)
+    tag_prefix: str = "v"  # Most repos use 'v', set to '' for repos like ripgrep
 
 
 @dataclass
@@ -207,7 +208,7 @@ class FastTool:
             arch_simple=arch_mapped,
         )
 
-        return f"https://github.com/{self.releases.repo}/releases/download/v{self.releases.version}/{asset}"
+        return f"https://github.com/{self.releases.repo}/releases/download/{self.releases.tag_prefix}{self.releases.version}/{asset}"
 
     def _get_musl_arch(self, arch: str) -> str:
         """Get musl architecture string."""
@@ -293,6 +294,7 @@ def load_fast_tools() -> FastToolsConfig:
                 binary_path=releases_data.get("binary_path", ""),
                 is_binary=releases_data.get("is_binary", False),
                 arch_map=releases_data.get("arch_map", {}),
+                tag_prefix=releases_data.get("tag_prefix", "v"),
             ),
             examples=tool_data.get("examples", {}),
             required=required,

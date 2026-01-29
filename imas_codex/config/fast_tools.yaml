@@ -26,7 +26,8 @@ required:
     fallback: "grep -r"
     releases:
       repo: BurntSushi/ripgrep
-      version: "14.1.1"
+      version: "15.1.0"
+      tag_prefix: ""  # ripgrep uses no v prefix
       asset_pattern: "ripgrep-{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "ripgrep-{version}-{arch}/rg"
@@ -41,7 +42,7 @@ required:
     fallback: "find . -name"
     releases:
       repo: sharkdp/fd
-      version: "10.2.0"
+      version: "10.3.0"
       asset_pattern: "fd-v{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "fd-v{version}-{arch}/fd"
@@ -75,7 +76,7 @@ required:
     fallback: null
     releases:
       repo: cli/cli
-      version: "2.67.0"
+      version: "2.86.0"
       # gh tarball structure: gh_2.67.0_linux_amd64/bin/gh - need strip 2 to get just 'gh'
       asset_pattern: "gh_{version}_linux_{arch_simple}.tar.gz"
       strip_components: 2
@@ -96,7 +97,7 @@ optional:
     fallback: "wc -l"
     releases:
       repo: XAMPPRocky/tokei
-      version: "12.1.2"
+      version: "14.0.0"
       asset_pattern: "tokei-{arch}.tar.gz"
       strip_components: 0
       binary_path: "tokei"
@@ -111,7 +112,7 @@ optional:
     fallback: null
     releases:
       repo: boyter/scc
-      version: "3.4.0"
+      version: "3.6.0"
       # scc uses different naming convention
       asset_pattern: "scc_Linux_{arch_simple}.tar.gz"
       strip_components: 0
@@ -130,7 +131,7 @@ optional:
     fallback: "du -h --max-depth=2"
     releases:
       repo: bootandy/dust
-      version: "1.1.1"
+      version: "1.2.4"
       asset_pattern: "dust-v{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "dust-v{version}-{arch}/dust"
@@ -145,7 +146,7 @@ optional:
     fallback: "ls -la"
     releases:
       repo: eza-community/eza
-      version: "0.20.14"
+      version: "0.23.4"
       asset_pattern: "eza_{arch}.tar.gz"
       strip_components: 0
       binary_path: "eza"
@@ -160,7 +161,7 @@ optional:
     fallback: "cat"
     releases:
       repo: sharkdp/bat
-      version: "0.24.0"
+      version: "0.26.1"
       asset_pattern: "bat-v{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "bat-v{version}-{arch}/bat"
@@ -176,6 +177,7 @@ optional:
     releases:
       repo: dandavison/delta
       version: "0.18.2"
+      tag_prefix: ""  # delta uses no v prefix
       asset_pattern: "delta-{version}-{arch}.tar.gz"
       strip_components: 1
       binary_path: "delta-{version}-{arch}/delta"
@@ -190,7 +192,7 @@ optional:
     fallback: null
     releases:
       repo: junegunn/fzf
-      version: "0.57.0"
+      version: "0.67.0"
       # fzf uses different naming
       asset_pattern: "fzf-{version}-linux_{arch_simple}.tar.gz"
       strip_components: 0
@@ -209,7 +211,7 @@ optional:
     fallback: null
     releases:
       repo: mikefarah/yq
-      version: "4.44.6"
+      version: "4.50.1"
       # yq is a single binary, not tarball
       asset_pattern: "yq_linux_{arch_simple}"
       is_binary: true
@@ -227,7 +229,8 @@ optional:
     fallback: null
     releases:
       repo: jqlang/jq
-      version: "1.7.1"
+      version: "1.8.1"
+      tag_prefix: "jq-"  # jq uses jq- prefix instead of v
       asset_pattern: "jq-linux-{arch_simple}"
       is_binary: true
       arch_map:
