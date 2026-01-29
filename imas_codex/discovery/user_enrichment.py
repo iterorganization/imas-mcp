@@ -35,7 +35,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Patterns for extracting username from home directory paths
+# Priority order: more specific patterns first
 HOME_PATH_PATTERNS = [
+    re.compile(
+        r"^/home/ITER/([a-z0-9_-]+)(?:/|$)", re.IGNORECASE
+    ),  # /home/ITER/username
     re.compile(r"^/home/([a-z0-9_-]+)(?:/|$)", re.IGNORECASE),  # /home/username
     re.compile(r"^/users/([a-z0-9_-]+)(?:/|$)", re.IGNORECASE),  # /users/username
     re.compile(r"^/u/([a-z0-9_-]+)(?:/|$)", re.IGNORECASE),  # /u/username
@@ -55,15 +59,34 @@ class UserInfo:
     source: str = "getent"  # getent, passwd, id
 
 
-def extract_username_from_path(path: str) -> str | None:
+def extract_username_from_path(path: str, facility_id: str | None = None) -> str | None:
     """Extract username from a home directory path.
 
+    Checks facility-specific pattern first (from config), then falls back
+    to standard patterns.
+
     Args:
-        path: Directory path (e.g., /home/dubrovm/codes)
+        path: Directory path (e.g., /home/ITER/dubrovm/codes)
+        facility_id: Optional facility ID to check for custom home_path_pattern
 
     Returns:
         Username if pattern matches, None otherwise
     """
+    # Check facility-specific pattern first
+    if facility_id:
+        try:
+            config = get_facility(facility_id)
+            user_info = config.get("user_info", {})
+            custom_pattern = user_info.get("home_path_pattern")
+            if custom_pattern:
+                compiled = re.compile(custom_pattern, re.IGNORECASE)
+                match = compiled.match(path)
+                if match:
+                    return match.group(1)
+        except (ValueError, KeyError):
+            pass
+
+    # Fall back to standard patterns
     for pattern in HOME_PATH_PATTERNS:
         match = pattern.match(path)
         if match:
@@ -224,7 +247,7 @@ def enrich_users_from_paths(
     username_to_paths: dict[str, list[str]] = {}
 
     for path in paths:
-        username = extract_username_from_path(path)
+        username = extract_username_from_path(path, facility)
         if username:
             usernames.add(username)
             if username not in username_to_paths:
@@ -272,7 +295,6 @@ def enrich_users_from_paths(
             user_dict["name"] = info.name
             user_dict["given_name"] = info.given_name
             user_dict["family_name"] = info.family_name
-            user_dict["home_path"] = info.home_path
             # home_path_id for OWNS relationship (facility:path format)
             if info.home_path:
                 user_dict["home_path_id"] = f"{facility}:{info.home_path}"

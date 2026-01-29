@@ -32,6 +32,7 @@ wiki_sites:
 user_info:
   name_format: last_first  # ITER uses "Last First [EXT]" format
   gecos_suffix_pattern: "\\s+EXT$"  # Strip trailing " EXT" from names
+  home_path_pattern: "^/home/ITER/([a-z0-9_-]+)(?:/|$)"  # /home/ITER/username
   lookup_tools:  # Ordered fallback list
     - getent   # POSIX standard, includes LDAP/NIS/SSSD
     - passwd   # /etc/passwd fallback
