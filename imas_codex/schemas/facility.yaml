@@ -901,6 +901,10 @@ classes:
       A user account at a facility. Discovered from home directories and
       enriched with GECOS info via getent passwd. Links paths to users
       and enables cross-facility user identification.
+
+      Relationships:
+      - (FacilityUser)-[:OWNS]->(FacilityPath) - paths owned by this user
+      - (FacilityUser)-[:IS_PERSON]->(Person) - cross-facility identity link
     class_uri: facility:FacilityUser
     attributes:
       id:
@@ -927,9 +931,6 @@ classes:
       email:
         description: Email address if discoverable
         slot_uri: schema:email
-      home_path:
-        description: User home directory path
-        range: FacilityPath
       discovered_at:
         description: When this user was discovered
         range: datetime
@@ -978,7 +979,7 @@ classes:
       discovered_at:
         description: When this person was first discovered
         range: datetime
-      # Linked accounts populated via IS_PERSON relationship
+      # Linked accounts populated via IS_PERSON relationship:
       # (FacilityUser)-[:IS_PERSON]->(Person)
 
 # =============================================================================

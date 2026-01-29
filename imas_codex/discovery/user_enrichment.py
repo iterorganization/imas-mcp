@@ -273,6 +273,9 @@ def enrich_users_from_paths(
             user_dict["given_name"] = info.given_name
             user_dict["family_name"] = info.family_name
             user_dict["home_path"] = info.home_path
+            # home_path_id for OWNS relationship (facility:path format)
+            if info.home_path:
+                user_dict["home_path_id"] = f"{facility}:{info.home_path}"
             user_dict["enriched_at"] = now
 
         facility_users.append(user_dict)

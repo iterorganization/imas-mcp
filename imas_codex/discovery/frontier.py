@@ -1748,7 +1748,7 @@ async def persist_scan_results(
 
             facility_users = enrich_users_from_paths(facility, all_paths, gc=gc)
             if facility_users:
-                # Create FacilityUser nodes
+                # Create FacilityUser nodes with OWNS relationship to home path
                 gc.query(
                     """
                     UNWIND $users AS user
@@ -1759,7 +1759,6 @@ async def persist_scan_results(
                                   u.name = user.name,
                                   u.given_name = user.given_name,
                                   u.family_name = user.family_name,
-                                  u.home_path = user.home_path,
                                   u.discovered_at = user.discovered_at,
                                   u.enriched_at = user.enriched_at
                     ON MATCH SET u.name = COALESCE(user.name, u.name),
@@ -1767,12 +1766,15 @@ async def persist_scan_results(
                                  u.family_name = COALESCE(user.family_name, u.family_name),
                                  u.enriched_at = COALESCE(user.enriched_at, u.enriched_at)
                     MERGE (u)-[:FACILITY_ID]->(f)
+                    WITH u, user
+                    WHERE user.home_path_id IS NOT NULL
+                    MATCH (home:FacilityPath {id: user.home_path_id})
+                    MERGE (u)-[:OWNS]->(home)
                     """,
                     users=facility_users,
                 )
 
-                # Create Person nodes for cross-facility identity
-                # ORCID lookup happens asynchronously here
+                # Create Person nodes for cross-facility identity (with ORCID lookup)
                 for user in facility_users:
                     try:
                         await _create_person_link(
