@@ -32,31 +32,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _dedupe_paths_by_inode(facility: str, paths: list[str]) -> list[str]:
-    """Deduplicate paths by device:inode, preferring canonical shorter paths.
+def _dedupe_paths_by_inode(
+    facility: str, paths: list[str]
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Deduplicate paths, preferring canonical shorter paths.
 
-    For each path, checks if a canonical base (extracted from path components)
-    shares the same inode. E.g., /mnt/HPC/home → checks /home for same inode.
-
-    Uses a single SSH call to stat all paths and their potential canonical bases.
+    Detection methods (in order):
+    1. Inode match - same device:inode means bind mount
+    2. Realpath resolution - symlinks resolve to canonical path
+    3. Content similarity - 80%+ shared children detects NFS re-mounts
 
     Args:
         facility: Facility ID for SSH execution
         paths: List of paths to deduplicate
 
     Returns:
-        Deduplicated list, preferring canonical shorter paths
+        Tuple of (canonical_paths, alias_pairs) where alias_pairs is
+        list of (alias_path, canonical_path) for creating ALIAS_OF links
     """
     from imas_codex.remote.tools import run
 
     if not paths:
-        return paths
+        return paths, []
 
-    # Common base directory names that might be bind-mounted
+    # Common base directory names that might be mounted elsewhere
     canonical_bases = {"home", "work", "opt", "common", "scratch", "data", "shared"}
 
-    # Build set of paths to stat: original paths + potential canonical bases
-    paths_to_stat = set(paths)
+    # Build set of paths to check: original paths + potential canonical bases
+    paths_to_check = set(paths)
     path_to_candidates: dict[str, list[str]] = {}
 
     for path in paths:
@@ -67,57 +70,128 @@ def _dedupe_paths_by_inode(facility: str, paths: list[str]) -> list[str]:
             if comp.lower() in canonical_bases:
                 canonical = f"/{comp}"
                 candidates.append(canonical)
-                paths_to_stat.add(canonical)
+                paths_to_check.add(canonical)
         path_to_candidates[path] = candidates
 
-    # Single SSH call to stat all paths
-    path_args = " ".join(f'"{p}"' for p in sorted(paths_to_stat))
-    cmd = f'stat --format="%d:%i %n" {path_args} 2>/dev/null || true'
+    # Single SSH call to get inode, realpath, and child names for all paths
+    path_args = " ".join(f'"{p}"' for p in sorted(paths_to_check))
+    script = f"""
+for p in {path_args}; do
+    if [ -d "$p" ]; then
+        inode=$(stat --format="%d:%i" "$p" 2>/dev/null || echo "")
+        rp=$(realpath "$p" 2>/dev/null || echo "$p")
+        # Get first 30 children names (comma-separated)
+        children=$(ls -1 "$p" 2>/dev/null | head -30 | tr '\\n' ',' | sed 's/,$//')
+        echo "$inode|$rp|$children|$p"
+    fi
+done
+"""
 
     try:
-        result = run(cmd, facility=facility, timeout=30)
+        result = run(script, facility=facility, timeout=60)
     except Exception as e:
         logger.warning(f"Failed to stat paths for dedup: {e}")
-        return paths
+        return paths, []
 
-    # Parse output: path → inode mapping
-    path_to_inode: dict[str, str] = {}
+    # Parse output: path → (inode, realpath, children_set)
+    path_info: dict[str, tuple[str, str, set[str]]] = {}
     for line in result.strip().split("\n"):
-        if not line or " " not in line:
+        if not line or "|" not in line:
             continue
-        inode, path = line.split(" ", 1)
-        path_to_inode[path] = inode
+        parts = line.split("|")
+        if len(parts) >= 4:
+            inode, realpath, children_str, path = (
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+            )
+            children = set(children_str.split(",")) if children_str else set()
+            path_info[path] = (inode, realpath, children)
 
-    # For each original path, check if a canonical base has same inode
-    deduped = []
-    seen_inodes: set[str] = set()
+    def paths_are_same(p1: str, p2: str) -> bool:
+        """Check if two paths point to the same content."""
+        info1 = path_info.get(p1)
+        info2 = path_info.get(p2)
+        if not info1 or not info2:
+            return False
 
-    for path in paths:
-        inode = path_to_inode.get(path)
-        if not inode:
-            # Path doesn't exist or couldn't stat - include anyway
-            deduped.append(path)
+        inode1, realpath1, children1 = info1
+        inode2, realpath2, children2 = info2
+
+        # Method 1: Same inode (bind mount)
+        if inode1 and inode2 and inode1 == inode2:
+            return True
+
+        # Method 2: Realpath resolves to same location
+        if realpath1 and realpath2 and realpath1 == realpath2:
+            return True
+
+        # Method 3: Content similarity (NFS re-mount with minor differences)
+        # Require 80%+ children overlap AND matching base names
+        if children1 and children2:
+            # Extra check: last component should match to avoid false positives
+            base1 = p1.rstrip("/").split("/")[-1]
+            base2 = p2.rstrip("/").split("/")[-1]
+            if base1 != base2:
+                return False
+
+            # Compute Jaccard similarity
+            intersection = len(children1 & children2)
+            union = len(children1 | children2)
+            if union > 0:
+                similarity = intersection / union
+                if similarity >= 0.8:  # 80% overlap threshold
+                    logger.debug(f"Content similarity {p1} <-> {p2}: {similarity:.0%}")
+                    return True
+
+        return False
+
+    # Deduplicate: prefer shorter canonical paths
+    canonical: list[str] = []
+    aliases: list[tuple[str, str]] = []  # (alias, canonical)
+    processed: set[str] = set()
+
+    # Sort by depth (shallower first) so we pick canonical paths first
+    sorted_paths = sorted(paths, key=lambda p: p.count("/"))
+
+    for path in sorted_paths:
+        if path in processed:
             continue
 
-        if inode in seen_inodes:
-            # Already have a path with this inode
-            continue
-
-        # Check if any canonical candidate has same inode
-        best_path = path
+        # Check if any candidate canonical base is equivalent
+        found_canonical = None
         for candidate in path_to_candidates.get(path, []):
-            candidate_inode = path_to_inode.get(candidate)
-            if candidate_inode == inode:
-                # Canonical base has same inode - use it instead
-                best_path = candidate
-                logger.info(f"Dedup: {candidate} (canonical) <- {path} (same inode)")
+            if candidate in path_info and paths_are_same(path, candidate):
+                found_canonical = candidate
+                logger.info(f"Dedup: {candidate} (canonical) <- {path} (same content)")
                 break
 
-        if best_path not in deduped:
-            deduped.append(best_path)
-        seen_inodes.add(inode)
+        if found_canonical:
+            # Use the canonical path instead
+            if found_canonical not in processed:
+                canonical.append(found_canonical)
+                processed.add(found_canonical)
+            aliases.append((path, found_canonical))
+            processed.add(path)
+        else:
+            # Check if matches any already-selected canonical path
+            matched_existing = None
+            for existing in canonical:
+                if paths_are_same(path, existing):
+                    matched_existing = existing
+                    break
 
-    return deduped
+            if matched_existing:
+                aliases.append((path, matched_existing))
+                logger.info(
+                    f"Dedup: {matched_existing} (canonical) <- {path} (same content)"
+                )
+            else:
+                canonical.append(path)
+            processed.add(path)
+
+    return canonical, aliases
 
 
 def _path_canonicality_score(path: str) -> int:
@@ -403,22 +477,40 @@ def seed_facility_roots(
 
     root_paths = filtered_paths
 
-    # Deduplicate by device_inode via single SSH call
-    # This detects bind mounts (e.g., /home and /mnt/HPC/home same inode)
-    root_paths = _dedupe_paths_by_inode(facility, root_paths)
+    # Deduplicate by inode/realpath/content-hash via single SSH call
+    # Returns canonical paths to scan + alias pairs for ALIAS_OF links
+    canonical_paths, alias_pairs = _dedupe_paths_by_inode(facility, root_paths)
 
     now = datetime.now(UTC).isoformat()
     items = []
 
-    for path in root_paths:
+    # Create nodes for canonical paths (status=discovered)
+    for path in canonical_paths:
         path_id = f"{facility}:{path}"
         items.append(
             {
                 "id": path_id,
                 "facility_id": facility,
                 "path": path,
-                "path_type": "code_directory",  # Default, will be updated during scan
+                "path_type": "code_directory",
                 "status": PathStatus.discovered.value,
+                "depth": 0,
+                "discovered_at": now,
+            }
+        )
+
+    # Create nodes for alias paths (status=skipped with reason)
+    alias_items = []
+    for alias_path, canonical_path in alias_pairs:
+        alias_id = f"{facility}:{alias_path}"
+        alias_items.append(
+            {
+                "id": alias_id,
+                "facility_id": facility,
+                "path": alias_path,
+                "path_type": "code_directory",
+                "status": PathStatus.skipped.value,
+                "skip_reason": f"Alias of {canonical_path}",
                 "depth": 0,
                 "discovered_at": now,
             }
@@ -432,6 +524,25 @@ def seed_facility_roots(
             gc.create_facility(facility, name=facility)
 
         result = gc.create_nodes("FacilityPath", items)
+
+        # Create alias nodes and ALIAS_OF relationships
+        if alias_items:
+            gc.create_nodes("FacilityPath", alias_items)
+            for alias_path, canonical_path in alias_pairs:
+                alias_id = f"{facility}:{alias_path}"
+                canonical_id = f"{facility}:{canonical_path}"
+                gc.query(
+                    """
+                    MATCH (alias:FacilityPath {id: $alias_id})
+                    MATCH (canonical:FacilityPath {id: $canonical_id})
+                    MERGE (alias)-[:ALIAS_OF]->(canonical)
+                    """,
+                    alias_id=alias_id,
+                    canonical_id=canonical_id,
+                )
+            logger.info(
+                f"Created {len(alias_pairs)} ALIAS_OF links for duplicate mount points"
+            )
 
     logger.info(f"Seeded {result['processed']} root paths for {facility}")
     return result["processed"]
