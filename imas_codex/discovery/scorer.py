@@ -556,18 +556,9 @@ class DirectoryScorer:
                         server in git_remote_url.lower() for server in internal_servers
                     )
 
-            # Score penalty for git repos based on accessibility
-            # Only penalize repos that are accessible elsewhere
-            # Private repos may contain unique work we want to discover
-            if has_git:
-                if repo_accessible_elsewhere:
-                    # Large penalty: code is available via git clone elsewhere
-                    combined *= 0.3
-                elif git_remote_url:
-                    # Moderate penalty: has remote but we can't access it
-                    # May be private or on unknown server - still less unique
-                    combined *= 0.6
-                # Local repos without remotes: no penalty (unique local work)
+            # Note: No score penalty for git repos. SoftwareRepo deduplication
+            # handles clones/forks via root_commit or remote_url matching. Repos
+            # are scored on their own merit; expansion is blocked for all git repos.
 
             # Expansion decision - containers use lower threshold
             effective_threshold = (
@@ -711,14 +702,10 @@ class DirectoryScorer:
                 purpose,
             )
 
-            # Extract git metadata for penalty (legacy path - simplified check)
+            # Git metadata for expansion/enrichment decisions (no score penalty)
             has_git = directories[i].get("has_git", False)
             git_remote_url = directories[i].get("git_remote_url")
-            if has_git:
-                if git_remote_url:
-                    # Has remote - apply moderate penalty (can't check accessibility here)
-                    combined *= 0.4
-                # Local repos without remotes: no penalty
+            # Note: No score penalty - SoftwareRepo dedup handles clone/fork detection
 
             # Expansion decision - containers use lower threshold
             effective_threshold = (

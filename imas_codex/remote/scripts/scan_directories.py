@@ -242,10 +242,13 @@ def scan_directory(
     if has_git:
         git_dir = os.path.join(path, ".git")
         if os.path.isdir(git_dir):
+            # Common git args to bypass ownership checks (scanning other users' repos)
+            git_base = ["git", "-c", "safe.directory=*", "-C", path]
+
             # Extract remote origin URL
             try:
                 proc = subprocess.run(
-                    ["git", "-C", path, "config", "--get", "remote.origin.url"],
+                    git_base + ["config", "--get", "remote.origin.url"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -258,7 +261,7 @@ def scan_directory(
             # Extract HEAD commit hash
             try:
                 proc = subprocess.run(
-                    ["git", "-C", path, "rev-parse", "HEAD"],
+                    git_base + ["rev-parse", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -271,7 +274,7 @@ def scan_directory(
             # Extract current branch name
             try:
                 proc = subprocess.run(
-                    ["git", "-C", path, "symbolic-ref", "--short", "HEAD"],
+                    git_base + ["symbolic-ref", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
@@ -284,7 +287,7 @@ def scan_directory(
             # Extract root commit (first commit in history)
             try:
                 proc = subprocess.run(
-                    ["git", "-C", path, "rev-list", "--max-parents=0", "HEAD"],
+                    git_base + ["rev-list", "--max-parents=0", "HEAD"],
                     capture_output=True,
                     text=True,
                     timeout=5,
