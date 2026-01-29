@@ -558,7 +558,7 @@ def _parse_git_remote_url(url: str) -> tuple[str, str | None, str | None]:
     """Parse git remote URL to extract source type and normalized repo ID.
 
     Args:
-        url: Git remote URL (https, git@, or local path)
+        url: Git remote URL (https, ssh://, git@, or local path)
 
     Returns:
         Tuple of (source_type, owner, repo_name) or (source_type, None, None) for local
@@ -576,6 +576,24 @@ def _parse_git_remote_url(url: str) -> tuple[str, str | None, str | None]:
         elif "bitbucket" in host.lower():
             return "bitbucket", owner, repo
         return "gitlab", owner, repo  # Default to gitlab for other hosts
+
+    # SSH URL format: ssh://git@host/owner/repo.git or ssh://git@host/path/repo.git
+    ssh_url_match = re.match(r"ssh://[^@]+@([^/]+)/(.+?)(?:\.git)?$", url)
+    if ssh_url_match:
+        host, path = ssh_url_match.groups()
+        # Split path into owner/repo (may be multi-level like eq/finesse)
+        parts = path.rsplit("/", 1)
+        if len(parts) == 2:
+            owner, repo = parts
+        else:
+            owner, repo = None, parts[0]
+        if "github" in host.lower():
+            return "github", owner, repo
+        elif "gitlab" in host.lower():
+            return "gitlab", owner, repo
+        elif "bitbucket" in host.lower():
+            return "bitbucket", owner, repo
+        return "gitlab", owner, repo
 
     # HTTPS format: https://github.com/owner/repo.git
     https_match = re.match(r"https?://([^/]+)/([^/]+)/(.+?)(?:\.git)?$", url)
