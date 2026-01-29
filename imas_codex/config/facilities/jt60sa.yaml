@@ -1,0 +1,36 @@
+# JT-60SA - Japan Torus 60 Super Advanced
+#
+# Public facility configuration for graph and mappings.
+# Infrastructure data is in jt60sa_private.yaml (gitignored).
+
+facility: jt60sa
+name: JT-60SA
+machine: JT60SA
+description: Japan Torus 60 Super Advanced - Satellite tokamak facility
+location: Naka, Japan
+
+# SSH connection (user configures ~/.ssh/config with this alias)
+ssh_host: jt60sa
+
+# Data systems available at this facility
+data_systems:
+  - edas     # JT-60SA Experiment Data Access System (primary)
+  - imas     # IMAS available via modules
+  - mdsplus  # MDSplus available via modules
+  - uda      # UDA available via modules
+
+# Wiki/documentation sites
+wiki_sites:
+  - url: http://nakasvr23.iferc.org/twiki
+    portal_page: Main/WebHome
+    site_type: twiki
+    auth_type: none
+    requires_ssh: true  # Access via SSH tunnel
+
+# User info discovery configuration
+user_info:
+  name_format: first_last
+  lookup_tools:
+    - getent
+    - passwd
+    - id
