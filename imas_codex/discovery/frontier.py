@@ -33,63 +33,89 @@ logger = logging.getLogger(__name__)
 
 
 def _dedupe_paths_by_inode(facility: str, paths: list[str]) -> list[str]:
-    """Deduplicate paths by device:inode, keeping shallowest.
+    """Deduplicate paths by device:inode, preferring canonical shorter paths.
 
-    Uses a single SSH call to stat all paths and group by inode.
-    Paths with the same device:inode are bind mounts to the same location.
+    For each path, checks if a canonical base (extracted from path components)
+    shares the same inode. E.g., /mnt/HPC/home → checks /home for same inode.
+
+    Uses a single SSH call to stat all paths and their potential canonical bases.
 
     Args:
         facility: Facility ID for SSH execution
         paths: List of paths to deduplicate
 
     Returns:
-        Deduplicated list, preferring shallower paths
+        Deduplicated list, preferring canonical shorter paths
     """
     from imas_codex.remote.tools import run
 
     if not paths:
         return paths
 
-    # Build stat command for all paths
-    # Output: "device:inode path" per line
-    path_args = " ".join(f'"{p}"' for p in paths)
+    # Common base directory names that might be bind-mounted
+    canonical_bases = {"home", "work", "opt", "common", "scratch", "data", "shared"}
+
+    # Build set of paths to stat: original paths + potential canonical bases
+    paths_to_stat = set(paths)
+    path_to_candidates: dict[str, list[str]] = {}
+
+    for path in paths:
+        # Extract potential canonical bases from path components
+        components = path.strip("/").split("/")
+        candidates = []
+        for comp in components:
+            if comp.lower() in canonical_bases:
+                canonical = f"/{comp}"
+                candidates.append(canonical)
+                paths_to_stat.add(canonical)
+        path_to_candidates[path] = candidates
+
+    # Single SSH call to stat all paths
+    path_args = " ".join(f'"{p}"' for p in sorted(paths_to_stat))
     cmd = f'stat --format="%d:%i %n" {path_args} 2>/dev/null || true'
 
     try:
         result = run(cmd, facility=facility, timeout=30)
     except Exception as e:
         logger.warning(f"Failed to stat paths for dedup: {e}")
-        return paths  # Fall back to no dedup
+        return paths
 
-    # Parse output: group paths by inode
-    inode_to_paths: dict[str, list[str]] = {}
+    # Parse output: path → inode mapping
+    path_to_inode: dict[str, str] = {}
     for line in result.strip().split("\n"):
         if not line or " " not in line:
             continue
         inode, path = line.split(" ", 1)
-        if inode not in inode_to_paths:
-            inode_to_paths[inode] = []
-        inode_to_paths[inode].append(path)
+        path_to_inode[path] = inode
 
-    # Keep shallowest path per inode group
+    # For each original path, check if a canonical base has same inode
     deduped = []
     seen_inodes: set[str] = set()
-    for inode, group in inode_to_paths.items():
-        if inode in seen_inodes:
-            continue
-        seen_inodes.add(inode)
-        # Sort by depth (shallowest first)
-        best = min(group, key=lambda p: p.count("/"))
-        deduped.append(best)
-        if len(group) > 1:
-            others = [p for p in group if p != best]
-            logger.info(f"Dedup: {best} (canonical) <- {others} (same inode {inode})")
 
-    # Preserve order for paths that couldn't be stat'd
-    stat_found = {p for ps in inode_to_paths.values() for p in ps}
-    for p in paths:
-        if p not in stat_found and p not in deduped:
-            deduped.append(p)
+    for path in paths:
+        inode = path_to_inode.get(path)
+        if not inode:
+            # Path doesn't exist or couldn't stat - include anyway
+            deduped.append(path)
+            continue
+
+        if inode in seen_inodes:
+            # Already have a path with this inode
+            continue
+
+        # Check if any canonical candidate has same inode
+        best_path = path
+        for candidate in path_to_candidates.get(path, []):
+            candidate_inode = path_to_inode.get(candidate)
+            if candidate_inode == inode:
+                # Canonical base has same inode - use it instead
+                best_path = candidate
+                logger.info(f"Dedup: {candidate} (canonical) <- {path} (same inode)")
+                break
+
+        if best_path not in deduped:
+            deduped.append(best_path)
+        seen_inodes.add(inode)
 
     return deduped
 
@@ -325,16 +351,13 @@ def seed_facility_roots(
         config = get_facility(facility)
         paths_config = config.get("paths", {})
 
-        # Standard root paths for breadth-first discovery (always included)
-        standard_roots = ["/home", "/work", "/opt", "/common", "/usr/local"]
-
-        # Facility-specific paths from config (targeted discovery)
-        config_paths = []
+        # Extract paths from facility config
+        root_paths = []
         if isinstance(paths_config, dict):
             # First check for explicit actionable_paths list
             actionable = paths_config.get("actionable_paths", [])
             if isinstance(actionable, list) and actionable:
-                config_paths = [
+                root_paths = [
                     p.get("path") if isinstance(p, dict) else p for p in actionable
                 ]
             else:
@@ -344,17 +367,14 @@ def seed_facility_roots(
                     if key in excluded_categories:
                         continue
                     if isinstance(value, str) and value.startswith("/"):
-                        config_paths.append(value)
+                        root_paths.append(value)
                     elif isinstance(value, dict):
                         # Nested paths like {root: "/work/imas", core: "/work/imas/core"}
                         for subvalue in value.values():
                             if isinstance(subvalue, str) and subvalue.startswith("/"):
-                                config_paths.append(subvalue)
+                                root_paths.append(subvalue)
 
-        # Combine: standard roots first (breadth-first base), then config paths (targeted)
-        root_paths = standard_roots + config_paths
-
-        # Deduplicate while preserving order (standard roots take priority)
+        # Deduplicate while preserving order
         seen = set()
         unique_paths = []
         for p in root_paths:
