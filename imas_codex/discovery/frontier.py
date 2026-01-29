@@ -892,8 +892,6 @@ async def _create_person_link(
         email: Email address if available
         now: ISO timestamp
     """
-    from loguru import logger
-
     from imas_codex.discovery.orcid import enrich_person_with_orcid
 
     # Try ORCID lookup (cached if already done)

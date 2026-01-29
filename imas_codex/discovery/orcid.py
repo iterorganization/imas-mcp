@@ -9,8 +9,11 @@ API Documentation: https://info.orcid.org/documentation/api-tutorials/
 
 from __future__ import annotations
 
+import logging
+
 import httpx
-from loguru import logger
+
+logger = logging.getLogger(__name__)
 
 
 class ORCIDClient:
