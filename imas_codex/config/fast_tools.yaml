@@ -53,6 +53,21 @@ required:
       remote: "ssh facility 'fd -e py /path/to/search'"
       pattern: "fd 'pattern' /path"  # pattern first, then path
 
+  git:
+    name: git
+    purpose: Version control for git metadata extraction in discovery scans
+    binary: git
+    fallback: null
+    # Minimum version for safe.directory=* support (added in 2.35.2)
+    min_version: "2.35.2"
+    # System-only: no prebuilt binaries available, requires package manager
+    # Install via: apt install git, yum install git, or module load git
+    system_only: true
+    releases: {}
+    examples:
+      local: "git -C /path rev-parse HEAD"
+      remote: "ssh facility 'git -C /path config --get remote.origin.url'"
+
   gh:
     name: GitHub CLI
     purpose: GitHub API access for repo visibility checking and git operations

@@ -40,6 +40,44 @@ from imas_codex.remote.executor import (
 logger = logging.getLogger(__name__)
 
 
+def compare_versions(v1: str, v2: str) -> int:
+    """Compare two version strings.
+
+    Args:
+        v1: First version string (e.g., '2.35.2')
+        v2: Second version string (e.g., '2.30.0')
+
+    Returns:
+        -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2
+    """
+
+    # Parse versions into numeric tuples
+    def parse(v: str) -> tuple[int, ...]:
+        parts = []
+        for part in v.split("."):
+            # Extract leading digits only (handle versions like '2.35.2-ubuntu')
+            digits = ""
+            for c in part:
+                if c.isdigit():
+                    digits += c
+                else:
+                    break
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts)
+
+    p1, p2 = parse(v1), parse(v2)
+    # Pad shorter tuple with zeros
+    max_len = max(len(p1), len(p2))
+    p1 = p1 + (0,) * (max_len - len(p1))
+    p2 = p2 + (0,) * (max_len - len(p2))
+
+    if p1 < p2:
+        return -1
+    elif p1 > p2:
+        return 1
+    return 0
+
+
 def _resolve_ssh_host(facility: str | None) -> str | None:
     """Resolve facility ID to SSH host.
 
@@ -142,6 +180,11 @@ class FastTool:
     releases: ToolRelease
     examples: dict[str, str | None]
     required: bool = False
+    min_version: str | None = None  # Minimum acceptable system version
+    version_command: str | None = None  # Custom version command (default: --version)
+    system_only: bool = (
+        False  # True if tool requires system package manager (no auto-install)
+    )
 
     @property
     def github_url(self) -> str:
@@ -251,6 +294,9 @@ def load_fast_tools() -> FastToolsConfig:
             ),
             examples=tool_data.get("examples", {}),
             required=required,
+            min_version=tool_data.get("min_version"),
+            version_command=tool_data.get("version_command"),
+            system_only=tool_data.get("system_only", False),
         )
 
     required = {
@@ -301,23 +347,27 @@ def check_tool(
     tool_key: str,
     facility: str | None = None,
 ) -> dict[str, Any]:
-    """Check if a specific tool is available.
+    """Check if a specific tool is available and meets version requirements.
 
     Args:
-        tool_key: Tool key (e.g., 'rg', 'fd')
+        tool_key: Tool key (e.g., 'rg', 'fd', 'git')
         facility: Facility ID (None = local)
 
     Returns:
-        Dict with available, version, path
+        Dict with available, version, path, meets_min_version
     """
+    import re
+
     config = load_fast_tools()
     tool = config.get_tool(tool_key)
 
     if not tool:
         return {"error": f"Unknown tool: {tool_key}"}
 
-    # Check ~/bin first, then PATH
-    check_cmd = f"~/bin/{tool.binary} --version 2>/dev/null || {tool.binary} --version 2>/dev/null"
+    # Build version check command
+    # Use custom version_command if specified, otherwise default to --version
+    version_arg = tool.version_command or "--version"
+    check_cmd = f"~/bin/{tool.binary} {version_arg} 2>/dev/null || {tool.binary} {version_arg} 2>/dev/null"
 
     try:
         output = run(check_cmd, facility=facility, timeout=10)
@@ -328,8 +378,6 @@ def check_tool(
             and "[stderr]" not in output.lower()
         ):
             # Extract version number - must be a real version
-            import re
-
             version_match = re.search(r"(\d+\.\d+\.?\d*)", output)
             if not version_match:
                 # No valid version found
@@ -346,12 +394,19 @@ def check_tool(
                 else None
             )
 
+            # Check if version meets minimum requirement
+            meets_min_version = True
+            if tool.min_version:
+                meets_min_version = compare_versions(version, tool.min_version) >= 0
+
             return {
                 "available": True,
                 "version": version,
                 "path": path,
                 "required": tool.required,
                 "purpose": tool.purpose,
+                "min_version": tool.min_version,
+                "meets_min_version": meets_min_version,
             }
     except Exception as e:
         logger.debug(f"Tool check failed for {tool_key}: {e}")
@@ -363,6 +418,8 @@ def check_tool(
         "required": tool.required,
         "purpose": tool.purpose,
         "fallback": tool.fallback,
+        "min_version": tool.min_version,
+        "meets_min_version": False,
     }
 
 
@@ -382,6 +439,7 @@ def check_all_tools(facility: str | None = None) -> dict[str, Any]:
         "required_ok": True,
         "missing_required": [],
         "missing_optional": [],
+        "version_too_old": [],  # Tools present but below min_version
     }
 
     for key in config.all_tools:
@@ -394,6 +452,17 @@ def check_all_tools(facility: str | None = None) -> dict[str, Any]:
                 results["missing_required"].append(key)
             else:
                 results["missing_optional"].append(key)
+        elif not status.get("meets_min_version", True):
+            # Tool is available but version is too old
+            results["version_too_old"].append(
+                {
+                    "tool": key,
+                    "version": status.get("version"),
+                    "min_version": status.get("min_version"),
+                }
+            )
+            if status.get("required"):
+                results["required_ok"] = False
 
     return results
 
@@ -437,10 +506,15 @@ def install_tool(
 ) -> dict[str, Any]:
     """Install a specific tool.
 
+    Only installs if:
+    - Tool is not available, OR
+    - Tool is available but below min_version, OR
+    - force=True
+
     Args:
-        tool_key: Tool key (e.g., 'rg', 'fd')
+        tool_key: Tool key (e.g., 'rg', 'fd', 'git')
         facility: Facility ID (None = local)
-        force: Reinstall even if already present
+        force: Reinstall even if already present and meets requirements
 
     Returns:
         Dict with success status and details
@@ -451,14 +525,46 @@ def install_tool(
     if not tool:
         return {"success": False, "error": f"Unknown tool: {tool_key}"}
 
-    # Check if already installed
+    # Check if already installed and meets requirements
     if not force:
         status = check_tool(tool_key, facility=facility)
         if status.get("available"):
+            if status.get("meets_min_version", True):
+                # System version is good enough
+                return {
+                    "success": True,
+                    "action": "system_sufficient",
+                    "version": status.get("version"),
+                    "path": status.get("path"),
+                    "min_version": tool.min_version,
+                }
+            else:
+                # Version too old
+                if tool.system_only:
+                    # Cannot auto-install system-only tools
+                    return {
+                        "success": False,
+                        "action": "version_too_old",
+                        "error": f"{tool_key} v{status.get('version')} < min v{tool.min_version}. "
+                        f"Requires system package manager upgrade (apt/yum/module load).",
+                        "version": status.get("version"),
+                        "min_version": tool.min_version,
+                        "system_only": True,
+                    }
+                # Can auto-install, proceed
+                logger.info(
+                    f"{tool_key} v{status.get('version')} < min v{tool.min_version}, installing newer"
+                )
+        elif tool.system_only:
+            # Tool not available and cannot be auto-installed
             return {
-                "success": True,
-                "action": "already_installed",
-                "version": status.get("version"),
+                "success": False,
+                "action": "not_available",
+                "error": f"{tool_key} not found. Requires system package manager "
+                f"installation (apt install {tool.binary}, yum install {tool.binary}, "
+                f"or module load {tool.binary}).",
+                "min_version": tool.min_version,
+                "system_only": True,
             }
 
     # Detect architecture

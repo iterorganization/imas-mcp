@@ -390,9 +390,26 @@ def tools_check(facility: str | None, as_json: bool) -> None:
         available = status.get("available", False)
         version = status.get("version", "")
         required = "required" if status.get("required") else "optional"
-        icon = "✓" if available else "✗"
+        meets_min = status.get("meets_min_version", True)
+        min_version = status.get("min_version")
+
+        if available and meets_min:
+            icon = "✓"
+        elif available and not meets_min:
+            icon = "⚠"  # Available but too old
+        else:
+            icon = "✗"
+
         version_str = f" ({version})" if version else ""
-        click.echo(f"  {icon} {name}{version_str} [{required}]")
+        min_str = f" [min: {min_version}]" if min_version and not meets_min else ""
+        click.echo(f"  {icon} {name}{version_str}{min_str} [{required}]")
+
+    if result.get("version_too_old"):
+        click.echo("\n⚠ Version too old:")
+        for item in result["version_too_old"]:
+            click.echo(
+                f"  - {item['tool']}: v{item['version']} < min v{item['min_version']}"
+            )
 
     if result.get("missing_required"):
         click.echo(f"\n⚠ Missing required: {', '.join(result['missing_required'])}")
