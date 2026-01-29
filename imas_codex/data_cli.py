@@ -29,6 +29,7 @@ RECOVERY_DIR = Path.home() / ".local" / "share" / "imas-codex" / "recovery"
 DATA_DIR = Path.home() / ".local" / "share" / "imas-codex" / "neo4j"
 NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
 GIST_ID_FILE = Path.home() / ".config" / "imas-codex" / "private-gist-id"
+LOCAL_GRAPH_MANIFEST = Path.home() / ".config" / "imas-codex" / "graph-manifest.json"
 
 
 def get_git_info() -> dict:
@@ -197,6 +198,60 @@ def save_gist_id(gist_id: str) -> None:
     """Save gist ID to config file."""
     GIST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
     GIST_ID_FILE.write_text(gist_id)
+
+
+def get_file_hash(path: Path) -> str:
+    """Get SHA256 hash of file contents."""
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def get_local_graph_manifest() -> dict | None:
+    """Get manifest of currently loaded graph."""
+    if LOCAL_GRAPH_MANIFEST.exists():
+        return json.loads(LOCAL_GRAPH_MANIFEST.read_text())
+    return None
+
+
+def save_local_graph_manifest(manifest: dict) -> None:
+    """Save manifest for currently loaded graph."""
+    LOCAL_GRAPH_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    manifest["loaded_at"] = datetime.now(UTC).isoformat()
+    LOCAL_GRAPH_MANIFEST.write_text(json.dumps(manifest, indent=2))
+
+
+def show_file_diff(local_path: Path, remote_path: Path) -> bool:
+    """Show diff between local and remote file, return True if different."""
+    if not local_path.exists():
+        click.echo(f"  + {local_path.name} (new file)")
+        return True
+    if not remote_path.exists():
+        click.echo(f"  - {local_path.name} (would be removed)")
+        return True
+
+    local_hash = get_file_hash(local_path)
+    remote_hash = get_file_hash(remote_path)
+
+    if local_hash == remote_hash:
+        click.echo(f"  = {local_path.name} (unchanged)")
+        return False
+
+    # Show line count diff
+    local_lines = len(local_path.read_text().splitlines())
+    remote_lines = len(remote_path.read_text().splitlines())
+    diff = remote_lines - local_lines
+    diff_str = f"+{diff}" if diff > 0 else str(diff)
+    click.echo(
+        f"  ~ {local_path.name} ({diff_str} lines, {local_hash} → {remote_hash})"
+    )
+    return True
+
+
+def check_graph_exists() -> bool:
+    """Check if Neo4j data directory has graph data."""
+    data_path = DATA_DIR / "data" / "databases" / "neo4j"
+    return data_path.exists() and any(data_path.iterdir())
 
 
 # ============================================================================
@@ -530,17 +585,49 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
         return
 
     if effective_gist_id:
-        # Update existing gist
+        # Update existing gist by cloning, replacing files, and pushing
         click.echo(f"\nUpdating gist {effective_gist_id}...")
-        cmd = ["gh", "gist", "edit", effective_gist_id]
-        for f in private_files:
-            cmd.extend(["-a", str(f)])
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            # Gist might not exist anymore, create new one
-            click.echo("Gist not found, creating new one...")
-            effective_gist_id = None
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gist_dir = Path(tmpdir) / "gist"
+
+            # Clone the gist
+            result = subprocess.run(
+                ["gh", "gist", "clone", effective_gist_id, str(gist_dir)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                click.echo("Gist not found, creating new one...")
+                effective_gist_id = None
+            else:
+                # Copy local files over (replaces existing)
+                for f in private_files:
+                    shutil.copy(f, gist_dir / f.name)
+
+                # Commit and push
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=gist_dir,
+                    capture_output=True,
+                )
+                result = subprocess.run(
+                    ["git", "commit", "-m", "Update from imas-codex"],
+                    cwd=gist_dir,
+                    capture_output=True,
+                    text=True,
+                )
+                if "nothing to commit" in result.stdout + result.stderr:
+                    click.echo("  No changes to push")
+                else:
+                    result = subprocess.run(
+                        ["git", "push"],
+                        cwd=gist_dir,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if result.returncode != 0:
+                        raise click.ClickException(f"Push failed: {result.stderr}")
 
     if not effective_gist_id:
         # Create new secret gist
@@ -572,16 +659,17 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
 
 @data_private.command("pull")
 @click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Gist ID to pull from")
-@click.option("--force", is_flag=True, help="Overwrite existing files without backup")
-def private_pull(gist_id: str | None, force: bool) -> None:
+@click.option("--force", is_flag=True, help="Overwrite without diff/prompt")
+@click.option("--no-backup", is_flag=True, help="Skip backup of existing files")
+def private_pull(gist_id: str | None, force: bool, no_backup: bool) -> None:
     """Pull private YAML files from GitHub Gist.
 
-    Downloads files from the gist and places them in the facilities config directory.
-    Existing files are backed up to the recovery directory first.
+    Shows diff and prompts for confirmation before overwriting.
+    Use --force to skip prompt, --no-backup to skip backup.
 
     Examples:
         imas-codex data private pull
-        imas-codex data private pull --gist-id abc123def456
+        imas-codex data private pull --force
     """
     require_gh()
 
@@ -596,21 +684,12 @@ def private_pull(gist_id: str | None, force: bool) -> None:
 
     click.echo(f"Pulling from gist: {effective_gist_id}")
 
-    # Backup existing files
     existing_files = get_private_files()
-    if existing_files and not force:
-        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        backup_dir = RECOVERY_DIR / f"{timestamp}-private-pull"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        for f in existing_files:
-            shutil.copy(f, backup_dir / f.name)
-        click.echo(f"Backed up {len(existing_files)} files to: {backup_dir}")
 
-    # Get gist files
+    # Clone gist to temp dir for comparison
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
-        # Clone the gist
         result = subprocess.run(
             ["gh", "gist", "clone", effective_gist_id, str(tmp / "gist")],
             capture_output=True,
@@ -625,6 +704,39 @@ def private_pull(gist_id: str | None, force: bool) -> None:
         if not yaml_files:
             click.echo("No *_private.yaml files found in gist")
             return
+
+        # Show diff if not forcing
+        if existing_files and not force:
+            click.echo("\nChanges:")
+            has_changes = False
+            for gist_file in yaml_files:
+                local_file = PRIVATE_YAML_DIR / gist_file.name
+                if show_file_diff(local_file, gist_file):
+                    has_changes = True
+
+            # Check for files in local but not in gist
+            gist_names = {f.name for f in yaml_files}
+            for local_file in existing_files:
+                if local_file.name not in gist_names:
+                    click.echo(f"  ? {local_file.name} (local only, not in gist)")
+
+            if has_changes:
+                click.echo("")
+                if not click.confirm("Apply these changes?"):
+                    click.echo("Aborted.")
+                    return
+            else:
+                click.echo("\nNo changes to apply.")
+                return
+
+        # Backup existing files
+        if existing_files and not no_backup:
+            timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            backup_dir = RECOVERY_DIR / f"{timestamp}-private-pull"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            for f in existing_files:
+                shutil.copy(f, backup_dir / f.name)
+            click.echo(f"Backed up {len(existing_files)} files to: {backup_dir}")
 
         # Copy files to target directory
         PRIVATE_YAML_DIR.mkdir(parents=True, exist_ok=True)
@@ -826,6 +938,13 @@ def data_load(archive: str, force: bool) -> None:
             if result.returncode != 0:
                 raise click.ClickException(f"Graph load failed: {result.stderr}")
 
+        # Save manifest for loaded graph (not pushed until explicitly pushed)
+        if manifest_file.exists():
+            manifest = json.loads(manifest_file.read_text())
+            manifest["pushed"] = False  # Local load = needs push to backup
+            manifest["loaded_from"] = str(archive_path)
+            save_local_graph_manifest(manifest)
+
     click.echo("✓ Load complete. Start Neo4j: imas-codex data db start")
 
 
@@ -905,6 +1024,14 @@ def data_push(
 
         click.echo(f"✓ Pushed: {artifact_ref}")
 
+        # Update manifest to mark as pushed
+        manifest = get_local_graph_manifest() or {}
+        manifest["pushed"] = True
+        manifest["pushed_version"] = version_tag
+        manifest["pushed_to"] = artifact_ref
+        manifest["pushed_at"] = datetime.now(UTC).isoformat()
+        save_local_graph_manifest(manifest)
+
         if not dev:
             subprocess.run(
                 [
@@ -932,13 +1059,21 @@ def data_push(
 @click.option("-v", "--version", "version", default="latest")
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option("--token", envvar="GHCR_TOKEN")
-def data_pull(version: str, registry: str | None, token: str | None) -> None:
+@click.option("--force", is_flag=True, help="Overwrite existing graph without checks")
+@click.option("--no-backup", is_flag=True, help="Skip backup marker")
+def data_pull(
+    version: str, registry: str | None, token: str | None, force: bool, no_backup: bool
+) -> None:
     """Pull graph archive from GHCR and load.
+
+    Safety: Refuses to overwrite existing graph unless:
+    - Graph was previously pushed (tracked in manifest), or
+    - --force is specified
 
     Examples:
         imas-codex data pull                 # Pull latest
         imas-codex data pull -v v1.0.0       # Pull specific version
-        imas-codex data pull -v dev-abc1234  # Pull dev version
+        imas-codex data pull --force         # Overwrite without checks
     """
     require_oras()
 
@@ -951,9 +1086,34 @@ def data_pull(version: str, registry: str | None, token: str | None) -> None:
     target_registry = get_registry(git_info, registry)
     artifact_ref = f"{target_registry}/imas-codex-graph:{version}"
 
+    # Safety check: if graph exists, verify it's been pushed or require --force
+    if check_graph_exists() and not force:
+        manifest = get_local_graph_manifest()
+        if manifest is None:
+            # Graph exists but no manifest - unsafe to overwrite
+            raise click.ClickException(
+                "Local graph exists but has no manifest (unknown origin).\n"
+                "Either:\n"
+                "  1. Push current graph first: imas-codex data push --dev\n"
+                "  2. Use --force to overwrite (data will be lost)"
+            )
+        elif not manifest.get("pushed"):
+            raise click.ClickException(
+                f"Local graph (loaded {manifest.get('loaded_at', 'unknown')}) "
+                "has not been pushed.\n"
+                "Either:\n"
+                "  1. Push current graph: imas-codex data push --dev\n"
+                "  2. Use --force to overwrite (data will be lost)"
+            )
+        else:
+            pushed_version = manifest.get("pushed_version", "unknown")
+            click.echo(f"Local graph was pushed as: {pushed_version}")
+
     click.echo(f"Pulling: {artifact_ref}")
 
-    backup_existing_data("pre-pull")
+    if not no_backup:
+        backup_existing_data("pre-pull")
+
     login_to_ghcr(token)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -977,6 +1137,20 @@ def data_pull(version: str, registry: str | None, token: str | None) -> None:
         result = runner.invoke(data_load, [str(archives[0]), "--force"])
         if result.exit_code != 0:
             raise click.ClickException(f"Load failed: {result.output}")
+
+        # Extract manifest from archive and save
+        with tarfile.open(archives[0], "r:gz") as tar:
+            tar.extractall(tmp / "extracted")
+        extracted_dirs = list((tmp / "extracted").iterdir())
+        if extracted_dirs:
+            manifest_file = extracted_dirs[0] / "manifest.json"
+            if manifest_file.exists():
+                manifest = json.loads(manifest_file.read_text())
+                manifest["pulled_from"] = artifact_ref
+                manifest["pulled_version"] = version
+                manifest["pushed"] = True  # Pulled = already in registry
+                manifest["pushed_version"] = version
+                save_local_graph_manifest(manifest)
 
     click.echo("✓ Pull complete. Start Neo4j: imas-codex data db start")
 
