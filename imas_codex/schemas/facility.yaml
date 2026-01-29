@@ -716,7 +716,16 @@ classes:
         description: JSON-encoded language breakdown from tokei/scc
       # Scout session tracking
       skip_reason:
-        description: Why this path was skipped or not expanded
+        description: >-
+          Free-text details for terminal_reason. Contains extra context like
+          "Alias of /path/to/canonical" or specific error messages.
+          For filtering, use terminal_reason enum instead.
+      terminal_reason:
+        description: >-
+          Why this path terminated exploration. Required when terminal
+          (status=skipped OR should_expand=false). Enables filtering by
+          termination cause: access_denied vs low_value vs software_repo.
+        range: TerminalReason
       skipped_at:
         description: When this path was marked as skipped
         range: datetime

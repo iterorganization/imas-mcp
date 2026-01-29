@@ -145,6 +145,7 @@ class ScoreItem:
     skipped: bool = False
     skip_reason: str = ""
     should_expand: bool = True  # False = terminal (won't explore children)
+    terminal_reason: str = ""  # TerminalReason enum value when terminal
 
 
 @dataclass
@@ -548,8 +549,13 @@ class ParallelProgressDisplay:
                         section.append(
                             f"  {clean_text(score.purpose)}", style="italic dim"
                         )
-                    # Show skip reason after purpose if terminal
-                    if not score.should_expand and score.skip_reason:
+                    # Show terminal_reason after purpose if terminal
+                    if not score.should_expand and score.terminal_reason:
+                        # Use terminal_reason enum value for consistent categorization
+                        reason = score.terminal_reason.replace("_", " ")[:30]
+                        section.append(f"  [{clean_text(reason)}]", style="magenta dim")
+                    elif not score.should_expand and score.skip_reason:
+                        # Fallback to skip_reason if no terminal_reason
                         reason = score.skip_reason[:30]
                         if len(score.skip_reason) > 30:
                             reason += "..."
@@ -811,6 +817,7 @@ class ParallelProgressDisplay:
                         skipped=bool(r.get("skip_reason")),
                         skip_reason=r.get("skip_reason", ""),
                         should_expand=r.get("should_expand", True),
+                        terminal_reason=r.get("terminal_reason", ""),
                     )
                 )
             self.state.score_queue.add(items, stats.rate)

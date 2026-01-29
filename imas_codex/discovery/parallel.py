@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.graph.models import PathStatus
+from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -923,6 +923,7 @@ async def score_worker(
                     "score_imas": 0.0,
                     "should_expand": False,
                     "skip_reason": "empty",
+                    "terminal_reason": TerminalReason.empty.value,
                 }
                 for p in empty_paths
             ]

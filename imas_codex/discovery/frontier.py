@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.graph.models import PathStatus
+from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
     pass
@@ -510,6 +510,7 @@ def seed_facility_roots(
                 "path": alias_path,
                 "path_type": "code_directory",
                 "status": PathStatus.skipped.value,
+                "terminal_reason": TerminalReason.alias.value,
                 "skip_reason": f"Alias of {canonical_path}",
                 "depth": 0,
                 "discovered_at": now,
@@ -1060,6 +1061,7 @@ def mark_paths_scored(
                     p.physics_domain = $physics_domain,
                     p.expansion_reason = $expansion_reason,
                     p.skip_reason = $skip_reason,
+                    p.terminal_reason = $terminal_reason,
                     p.enrich_skip_reason = $enrich_skip_reason,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost
                 WITH p
@@ -1084,6 +1086,7 @@ def mark_paths_scored(
                 physics_domain=score_data.get("physics_domain"),
                 expansion_reason=score_data.get("expansion_reason"),
                 skip_reason=score_data.get("skip_reason"),
+                terminal_reason=score_data.get("terminal_reason"),
                 enrich_skip_reason=score_data.get("enrich_skip_reason"),
                 score_cost=score_data.get("score_cost", 0.0),
                 scored=PathStatus.scored.value,
@@ -1104,11 +1107,13 @@ def mark_paths_scored(
                     WHERE child.status = 'discovered'
                     SET child.status = $skipped,
                         child.skipped_at = $now,
+                        child.terminal_reason = $terminal_reason,
                         child.skip_reason = $reason
                     RETURN count(child) AS skipped_count
                     """,
                     id=path_id,
                     now=now,
+                    terminal_reason=TerminalReason.parent_skipped.value,
                     reason=f"parent_{path_purpose}",
                     skipped=PathStatus.skipped.value,
                 )
@@ -1284,11 +1289,17 @@ async def persist_scan_results(
         path_id = f"{facility}:{path}"
         if error:
             errors += 1
+            # Determine terminal reason from error type
+            if "permission" in error.lower():
+                terminal_reason = TerminalReason.access_denied.value
+            else:
+                terminal_reason = TerminalReason.listing_error.value
             # Mark as skipped
             first_scan_updates.append(
                 {
                     "id": path_id,
                     "status": PathStatus.skipped.value,
+                    "terminal_reason": terminal_reason,
                     "skip_reason": error,
                     "listed_at": now,
                 }

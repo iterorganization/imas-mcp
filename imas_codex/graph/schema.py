@@ -408,7 +408,10 @@ class GraphSchema:
             # Default indexes based on common query patterns
             indexes = {
                 "Facility": ["ssh_host"],
-                "FacilityPath": ["id", "device_inode"],  # device_inode for bind mount dedup
+                "FacilityPath": [
+                    "id",
+                    "device_inode",
+                ],  # device_inode for bind mount dedup
                 "MDSplusServer": ["role"],
                 "TreeNode": ["node_type"],
                 "Diagnostic": ["category"],

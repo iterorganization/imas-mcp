@@ -22,11 +22,12 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
-from imas_codex.graph.models import DiscoveryStatus, PathPurpose
+from imas_codex.graph.models import DiscoveryStatus, PathPurpose, TerminalReason
 
 __all__ = [
     "PathPurpose",
     "DiscoveryStatus",
+    "TerminalReason",
     "DirectoryEvidence",
     "ScoredDirectory",
     "ScoredBatch",
@@ -307,6 +308,9 @@ class ScoredDirectory:
     score_cost: float = 0.0
     """LLM cost in USD for scoring this path (batch cost / batch size)."""
 
+    terminal_reason: TerminalReason | None = None
+    """Why this path is terminal (set when should_expand=false)."""
+
     def to_graph_dict(self) -> dict[str, Any]:
         """Convert to dictionary for graph persistence."""
         import json
@@ -327,6 +331,9 @@ class ScoredDirectory:
             "physics_domain": self.physics_domain,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
+            "terminal_reason": self.terminal_reason.value
+            if self.terminal_reason
+            else None,
             "enrich_skip_reason": self.enrich_skip_reason,
             "score_cost": self.score_cost,
         }

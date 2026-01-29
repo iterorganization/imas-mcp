@@ -5938,10 +5938,11 @@ def _print_discovery_summary(
             path = p.get("path", "")
             description = p.get("description", "")
             should_expand = p.get("should_expand", True)
+            terminal_reason = p.get("terminal_reason", "")
 
             # Clip path with inner /.../ pattern (panel is 100 wide, "    0.95 " = 9 chars)
             # Leave room for terminal indicator if needed
-            max_path_len = 75 if not should_expand else 88
+            max_path_len = 70 if terminal_reason else 88
             clipped_path = clip_path_inner(path, max_path_len)
 
             # Color score
@@ -5952,9 +5953,14 @@ def _print_discovery_summary(
             else:
                 score_style = "yellow"
 
-            # Build path line with terminal indicator
+            # Build path line with terminal indicator showing reason
             path_line = f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clean_text(clipped_path)}"
-            if not should_expand:
+            if terminal_reason:
+                # Show terminal reason (e.g., "software_repo", "data_container")
+                reason_display = terminal_reason.replace("_", " ")
+                path_line += f" [magenta]{reason_display}[/magenta]"
+            elif not should_expand:
+                # Fallback for paths without terminal_reason
                 path_line += " [magenta]terminal[/magenta]"
 
             # Score reason from description (9 char indent, panel 100 wide)
