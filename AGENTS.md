@@ -1,6 +1,6 @@
 # Agent Guidelines
 
-Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. See [agents/](agents/) for domain-specific deep-dives.
+Use terminal for direct operations (`rg`, `fd`, `git`), MCP `python()` for chained processing and graph queries, `uv run` for git/tests/CLI. Conventional commits. **CRITICAL: Commit and push all changes before ending every response that modifies files.**
 
 ## Project Philosophy
 
@@ -219,17 +219,22 @@ git log --oneline --all --not main | head -20
 
 ## Session Completion
 
-**Before ending any conversation or task:**
+**CRITICAL - MANDATORY FOR EVERY RESPONSE THAT MODIFIES FILES:**
 
-1. Run `git status --short` to check for uncommitted changes
-2. If changes exist: lint, commit, and push
-3. Confirm completion in chat with format:
+After completing any file modifications, you MUST commit before responding to the user:
+
+1. `git status --short` - check for uncommitted changes
+2. If changes exist: `uv run ruff check --fix . && uv run ruff format .`
+3. `git add <files>` - stage specific files (never `git add -A`)
+4. `uv run git commit -m "type: description"` - commit with conventional format
+5. `git push origin main` - push immediately
+6. End your response with:
 
 ```
 ✓ Committed: `<commit-hash>` - <one-sentence summary>
 ```
 
-This ensures no work is lost when a session is assumed complete. Never leave uncommitted changes at the end of a task.
+**Why this is mandatory:** Uncommitted changes are lost when sessions end. The user cannot see your work until it's committed. Never describe changes without committing them first.
 
 ## Code Style
 
