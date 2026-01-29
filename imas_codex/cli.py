@@ -355,6 +355,31 @@ def tools() -> None:
     pass
 
 
+def _save_tools_to_facility_config(facility: str, tools_status: dict) -> None:
+    """Save tool availability and versions to facility private config.
+
+    Converts the check results into a clean format and updates the
+    facility's private YAML file.
+    """
+    from imas_codex.discovery.facility import update_infrastructure
+
+    # Convert to clean format for storage
+    tools_data = {}
+    for tool_key, status in tools_status.items():
+        if status.get("available"):
+            tools_data[tool_key] = {
+                "available": True,
+                "version": status.get("version", "unknown"),
+            }
+            if status.get("path"):
+                tools_data[tool_key]["path"] = status["path"]
+        else:
+            tools_data[tool_key] = {"available": False}
+
+    # Update the facility's private config
+    update_infrastructure(facility, {"tools": tools_data})
+
+
 @tools.command("check")
 @click.argument("facility", required=False)
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
@@ -468,6 +493,10 @@ def tools_check(facility: str | None, as_json: bool) -> None:
                     results["required_ok"] = False
 
             live.update(build_table(results["tools"]))
+
+    # Save tool status to facility private config
+    if facility:
+        _save_tools_to_facility_config(facility, results["tools"])
 
     if as_json:
         console.print(json_mod.dumps(results, indent=2))
@@ -674,6 +703,14 @@ def tools_install(
         raise SystemExit(1)
     else:
         console.print("\n[green]✓ All tools ready[/green]")
+
+    # Save updated tool status to facility config
+    if facility:
+        # Re-check all tools to get accurate status post-install
+        all_tool_status = {}
+        for tool_key in config.all_tools.keys():
+            all_tool_status[tool_key] = check_tool(tool_key, facility=facility)
+        _save_tools_to_facility_config(facility, all_tool_status)
 
 
 @tools.command("list")
