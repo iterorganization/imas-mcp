@@ -5927,8 +5927,8 @@ def _print_discovery_summary(
             path = p.get("path", "")
             description = p.get("description", "")
 
-            # Clip path with inner /.../ pattern
-            clipped_path = clip_path_inner(path, 60)
+            # Clip path with inner /.../ pattern (panel is 100 wide, "    0.95 " = 9 chars)
+            clipped_path = clip_path_inner(path, 88)
 
             # Color score
             if cat_score >= 1.0:
@@ -5938,8 +5938,8 @@ def _print_discovery_summary(
             else:
                 score_style = "yellow"
 
-            # Score reason from description (clip to 40 chars)
-            reason = description[:40] + "..." if len(description) > 40 else description
+            # Score reason from description (9 char indent, panel 100 wide)
+            reason = description[:88] + "..." if len(description) > 88 else description
 
             console.print(
                 f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clipped_path}"
