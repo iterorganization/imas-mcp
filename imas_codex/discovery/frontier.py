@@ -35,47 +35,24 @@ logger = logging.getLogger(__name__)
 def _path_canonicality_score(path: str) -> int:
     """Score a path's canonicality - higher is more canonical.
 
-    Prefers paths that users actually use vs. internal mount points.
-    Score is composed of:
-    1. Prefix score (primary): /home > /work > /mnt
-    2. Depth penalty (tiebreaker): shallower paths preferred
+    Uses path depth (component count) as the sole metric. Shallower paths
+    are preferred because bind mounts typically expose deep infrastructure
+    paths at shallow user-facing locations.
 
-    Bind mounts typically expose deep infrastructure paths at shallow
-    user-facing locations (e.g., /mnt/HPC/home → /home). Preferring
-    shallower paths captures this intent.
+    Example: /home/user (depth 2) → score 998
+             /mnt/HPC/ITER/home/user (depth 5) → score 995
 
     Args:
         path: Absolute path string
 
     Returns:
-        Integer score - higher means more canonical
+        Integer score - higher means more canonical (shallower)
     """
-    # Prefix scores (primary factor) - order matters, first match wins
-    prefix_scores = [
-        ("/home/", 100),  # User directories - most canonical
-        ("/work/", 80),  # Work directories
-        ("/common/", 70),
-        ("/opt/", 60),
-        ("/usr/", 50),
-        ("/mnt/", 10),  # Mount points - least canonical
-        ("/scratch/", 10),
-        ("/gpfs/", 10),
-        ("/lustre/", 10),
-        ("/HPC/", 10),
-    ]
-
-    prefix_score = 50  # Default for unknown paths
-    for prefix, score in prefix_scores:
-        if prefix in path:
-            prefix_score = score
-            break
-
-    # Depth penalty: subtract points per path component (max 10 penalty)
-    # /home/user = 2 components, /mnt/HPC/ITER/home/user = 5 components
+    # Count path components: /home/user = 2, /mnt/HPC/home/user = 4
     depth = path.rstrip("/").count("/")
-    depth_penalty = min(depth, 10)
 
-    return prefix_score * 10 - depth_penalty  # Scale prefix to dominate
+    # Invert so shallower = higher score (max realistic depth ~20)
+    return 1000 - depth
 
 
 @dataclass
