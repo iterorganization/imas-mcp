@@ -27,6 +27,141 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# SSH Connection Errors
+# ============================================================================
+
+
+class SSHConnectionError(Exception):
+    """Raised when SSH connection to a facility fails.
+
+    This indicates network-level issues like:
+    - VPN not connected
+    - Host unreachable
+    - Connection refused
+    - DNS resolution failure
+    """
+
+    def __init__(self, ssh_host: str, message: str, suggestion: str | None = None):
+        self.ssh_host = ssh_host
+        self.suggestion = suggestion
+        super().__init__(message)
+
+
+def check_ssh_connection(ssh_host: str, timeout: int = 10) -> dict:
+    """Test SSH connectivity to a host.
+
+    This performs a quick connection test WITHOUT executing any commands.
+    Use this to provide clear error messages when network issues occur.
+
+    Args:
+        ssh_host: SSH host alias (e.g., 'tcv', 'jt60sa')
+        timeout: Connection timeout in seconds
+
+    Returns:
+        Dict with 'connected' (bool), 'error' (str or None), 'suggestion' (str or None)
+    """
+    if is_local_host(ssh_host):
+        return {"connected": True, "error": None, "suggestion": None}
+
+    try:
+        # Use `ssh -o ConnectTimeout=X -o BatchMode=yes host true`
+        # This tests connection without prompts and exits quickly
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                f"ConnectTimeout={timeout}",
+                "-o",
+                "BatchMode=yes",
+                ssh_host,
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,  # Allow a bit more than ConnectTimeout
+        )
+
+        if result.returncode == 0:
+            return {"connected": True, "error": None, "suggestion": None}
+
+        # Parse common SSH errors
+        stderr = result.stderr.lower()
+        if "connection timed out" in stderr or "operation timed out" in stderr:
+            return {
+                "connected": False,
+                "error": f"Connection to {ssh_host} timed out",
+                "suggestion": "Check VPN connection or network access",
+            }
+        elif "connection refused" in stderr:
+            return {
+                "connected": False,
+                "error": f"Connection to {ssh_host} refused",
+                "suggestion": "SSH service may not be running on remote host",
+            }
+        elif "no route to host" in stderr or "network is unreachable" in stderr:
+            return {
+                "connected": False,
+                "error": f"Cannot reach {ssh_host} - network unreachable",
+                "suggestion": "Check VPN connection",
+            }
+        elif "could not resolve hostname" in stderr:
+            return {
+                "connected": False,
+                "error": f"Cannot resolve hostname for {ssh_host}",
+                "suggestion": "Check DNS or VPN connection",
+            }
+        elif "permission denied" in stderr:
+            return {
+                "connected": False,
+                "error": f"Permission denied for {ssh_host}",
+                "suggestion": "Check SSH key or credentials",
+            }
+        else:
+            return {
+                "connected": False,
+                "error": f"SSH connection failed: {result.stderr.strip()}",
+                "suggestion": None,
+            }
+
+    except subprocess.TimeoutExpired:
+        return {
+            "connected": False,
+            "error": f"Connection to {ssh_host} timed out (>{timeout}s)",
+            "suggestion": "Check VPN connection or network access",
+        }
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": f"SSH error: {e}",
+            "suggestion": None,
+        }
+
+
+def require_ssh_connection(ssh_host: str, timeout: int = 10) -> None:
+    """Verify SSH connection is possible, raising SSHConnectionError if not.
+
+    Call this at the start of operations that require SSH to provide
+    clear, actionable error messages instead of generic timeouts.
+
+    Args:
+        ssh_host: SSH host alias
+
+    Raises:
+        SSHConnectionError: If connection is not possible
+    """
+    if is_local_host(ssh_host):
+        return
+
+    result = check_ssh_connection(ssh_host, timeout=timeout)
+    if not result["connected"]:
+        raise SSHConnectionError(
+            ssh_host=ssh_host,
+            message=result["error"],
+            suggestion=result["suggestion"],
+        )
+
+
+# ============================================================================
 # SSH Socket Health Management
 # ============================================================================
 

@@ -374,6 +374,7 @@ def tools_check(facility: str | None, as_json: bool) -> None:
     from rich.live import Live
     from rich.table import Table
 
+    from imas_codex.remote.executor import SSHConnectionError, require_ssh_connection
     from imas_codex.remote.tools import (
         check_tool,
         is_local_facility,
@@ -383,6 +384,17 @@ def tools_check(facility: str | None, as_json: bool) -> None:
     console = Console()
     is_local = is_local_facility(facility)
     location = "locally" if is_local else f"via SSH to {facility}"
+
+    # Check SSH connectivity before starting
+    if not is_local:
+        try:
+            require_ssh_connection(facility)
+        except SSHConnectionError as e:
+            console.print(f"[red]✗ Cannot connect to {facility}[/red]")
+            console.print(f"  {e}")
+            if e.suggestion:
+                console.print(f"  [yellow]→ {e.suggestion}[/yellow]")
+            raise SystemExit(1) from None
 
     config = load_fast_tools()
     all_tools = list(config.all_tools.keys())
@@ -514,6 +526,7 @@ def tools_install(
     from rich.live import Live
     from rich.table import Table
 
+    from imas_codex.remote.executor import SSHConnectionError, require_ssh_connection
     from imas_codex.remote.tools import (
         check_tool,
         detect_architecture,
@@ -525,6 +538,18 @@ def tools_install(
     console = Console()
     is_local = is_local_facility(facility)
     location = "locally" if is_local else f"via SSH to {facility}"
+
+    # Check SSH connectivity before starting
+    if not is_local:
+        try:
+            require_ssh_connection(facility)
+        except SSHConnectionError as e:
+            console.print(f"[red]✗ Cannot connect to {facility}[/red]")
+            console.print(f"  {e}")
+            if e.suggestion:
+                console.print(f"  [yellow]→ {e.suggestion}[/yellow]")
+            raise SystemExit(1) from None
+
     config = load_fast_tools()
 
     # Single tool installation
