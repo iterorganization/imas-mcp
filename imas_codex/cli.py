@@ -5754,6 +5754,8 @@ def _print_discovery_summary(
         scored_this_run: Set of paths scored in this discovery run
         scan_only: If True, show scan-focused summary
     """
+    from rich.markup import escape
+
     from imas_codex.discovery import get_discovery_stats
     from imas_codex.discovery.frontier import get_accumulated_cost, get_high_value_paths
 
@@ -5942,10 +5944,10 @@ def _print_discovery_summary(
             reason = description[:88] + "..." if len(description) > 88 else description
 
             console.print(
-                f"    [{score_style}]{cat_score:.2f}[/{score_style}] {clipped_path}"
+                f"    [{score_style}]{cat_score:.2f}[/{score_style}] {escape(clipped_path)}"
             )
             if reason:
-                console.print(f"         [dim]{reason}[/dim]")
+                console.print(f"         [dim]{escape(reason)}[/dim]")
 
         # Show count of remaining in category
         remaining = len(sorted_paths) - 5

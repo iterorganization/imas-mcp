@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
@@ -133,6 +134,7 @@ class ScoreItem:
     purpose: str = ""
     skipped: bool = False
     skip_reason: str = ""
+    should_expand: bool = True  # False = terminal (won't explore children)
 
 
 @dataclass
@@ -512,7 +514,12 @@ class ParallelProgressDisplay:
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
-                section.append(clip_path(score.path, self.WIDTH - 10), style="white")
+                # Show path with expansion status indicator
+                path_display = clip_path(score.path, self.WIDTH - 20)
+                section.append(path_display, style="white")
+                # Show expansion status: -terminal for paths that won't expand
+                if not score.should_expand:
+                    section.append(" -terminal", style="magenta dim")
                 section.append("\n")
                 # Score details indented below (matching SCAN layout)
                 section.append("    ", style="dim")
@@ -520,13 +527,11 @@ class ParallelProgressDisplay:
                 if score.skipped:
                     section.append("skipped", style="yellow")
                     if score.skip_reason:
-                        # Clip reason to fit display
-                        reason = (
-                            score.skip_reason[:40] + "..."
-                            if len(score.skip_reason) > 40
-                            else score.skip_reason
-                        )
-                        section.append(f" ({reason})", style="dim")
+                        # Clip and escape reason to fit display
+                        reason = score.skip_reason[:40]
+                        if len(score.skip_reason) > 40:
+                            reason += "..."
+                        section.append(f" {escape(reason)}", style="dim")
                 elif score.score is not None:
                     # Color code the score
                     if score.score >= 0.7:
@@ -537,7 +542,7 @@ class ParallelProgressDisplay:
                         style = "red"
                     section.append(f"{score.score:.2f}", style=style)
                     if score.purpose:
-                        section.append(f"  {score.purpose}", style="italic dim")
+                        section.append(f"  {escape(score.purpose)}", style="italic dim")
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
@@ -786,6 +791,7 @@ class ParallelProgressDisplay:
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
                         skipped=bool(r.get("skip_reason")),
                         skip_reason=r.get("skip_reason", ""),
+                        should_expand=r.get("should_expand", True),
                     )
                 )
             self.state.score_queue.add(items, stats.rate)
@@ -866,6 +872,7 @@ class ParallelProgressDisplay:
                         purpose="rescored",
                         skipped=False,
                         skip_reason="",
+                        should_expand=r.get("should_expand", True),
                     )
                 )
             self.state.score_queue.add(items, stats.rate if stats.rate else 1.0)

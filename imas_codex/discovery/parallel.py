@@ -942,6 +942,7 @@ async def score_worker(
                     "score_data": 0.0,
                     "score_imas": 0.0,
                     "skip_reason": "empty",
+                    "should_expand": False,
                     "total_files": 0,
                 }
                 for p in empty_paths
@@ -1003,6 +1004,7 @@ async def score_worker(
                     "score_data": d.score_data,
                     "score_imas": d.score_imas,
                     "skip_reason": d.skip_reason or "",
+                    "should_expand": d.should_expand,
                     "total_files": 0,  # Not available at score time
                 }
                 for d in result.scored_dirs
@@ -1251,6 +1253,7 @@ async def rescore_worker(
                         "path": p["path"],
                         "score": new_score,
                         "score_cost": 0.0,  # Heuristic rescore has no LLM cost
+                        "should_expand": p.get("should_expand", True),
                     }
                 )
 
