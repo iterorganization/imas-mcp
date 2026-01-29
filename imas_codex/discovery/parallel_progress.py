@@ -11,6 +11,7 @@ Design principles:
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -24,6 +25,15 @@ from rich.text import Text
 
 if TYPE_CHECKING:
     from imas_codex.discovery.parallel import WorkerStats
+
+
+# Strip ANSI escape codes from text (in case LLM output contains them)
+_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def clean_text(text: str) -> str:
+    """Remove ANSI codes and escape Rich markup."""
+    return escape(_ANSI_PATTERN.sub("", text))
 
 
 # ============================================================================
@@ -427,12 +437,13 @@ class ParallelProgressDisplay:
             scan_total = 1
         scan_pct = (scanned_paths / scan_total * 100) if scan_total > 0 else 0
 
-        # SCORE progress: paths that have finished scoring vs all paths that will be scored
-        # Completed score = scored + skipped (terminal states)
-        # Total needing score = pending_score + scored + skipped
-        #                     = listed + scoring + scored + skipped
-        scored_paths = self.state.scored + self.state.skipped
-        score_total = self.state.pending_score + self.state.scored + self.state.skipped
+        # SCORE progress: paths that completed LLM scoring vs all needing scoring
+        # Excludes 'skipped' since those include bulk-skipped paths that never
+        # entered the scorer queue (e.g., data container children)
+        # Completed = scored only (paths that went through LLM)
+        # Total = pending_score + scored
+        scored_paths = self.state.scored
+        score_total = self.state.pending_score + self.state.scored
         if score_total <= 0:
             score_total = 1
         score_pct = (scored_paths / score_total * 100) if score_total > 0 else 0
@@ -514,25 +525,17 @@ class ParallelProgressDisplay:
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
-                # Show path with expansion status indicator
+                # Show path with terminal indicator (for paths that won't expand)
                 path_display = clip_path(score.path, self.WIDTH - 20)
                 section.append(path_display, style="white")
-                # Show expansion status: -terminal for paths that won't expand
                 if not score.should_expand:
-                    section.append(" -terminal", style="magenta dim")
+                    section.append(" terminal", style="magenta")
                 section.append("\n")
                 # Score details indented below (matching SCAN layout)
                 section.append("    ", style="dim")
 
-                if score.skipped:
-                    section.append("skipped", style="yellow")
-                    if score.skip_reason:
-                        # Clip and escape reason to fit display
-                        reason = score.skip_reason[:40]
-                        if len(score.skip_reason) > 40:
-                            reason += "..."
-                        section.append(f" {escape(reason)}", style="dim")
-                elif score.score is not None:
+                # Always show score if available
+                if score.score is not None:
                     # Color code the score
                     if score.score >= 0.7:
                         style = "bold green"
@@ -542,7 +545,23 @@ class ParallelProgressDisplay:
                         style = "red"
                     section.append(f"{score.score:.2f}", style=style)
                     if score.purpose:
-                        section.append(f"  {escape(score.purpose)}", style="italic dim")
+                        section.append(
+                            f"  {clean_text(score.purpose)}", style="italic dim"
+                        )
+                    # Show skip reason after purpose if terminal
+                    if not score.should_expand and score.skip_reason:
+                        reason = score.skip_reason[:30]
+                        if len(score.skip_reason) > 30:
+                            reason += "..."
+                        section.append(f"  [{clean_text(reason)}]", style="dim")
+                elif score.skipped:
+                    # No score available, just show skipped status
+                    section.append("skipped", style="yellow")
+                    if score.skip_reason:
+                        reason = score.skip_reason[:40]
+                        if len(score.skip_reason) > 40:
+                            reason += "..."
+                        section.append(f" {clean_text(reason)}", style="dim")
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
