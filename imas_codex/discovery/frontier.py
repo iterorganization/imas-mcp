@@ -36,10 +36,13 @@ def _path_canonicality_score(path: str) -> int:
     """Score a path's canonicality - higher is more canonical.
 
     Prefers paths that users actually use vs. internal mount points.
-    Order of preference (highest first):
-    - /home (user directories)
-    - /work, /common, /opt (standard locations)
-    - /mnt, /scratch, /gpfs, /lustre (mount points / HPC infrastructure)
+    Score is composed of:
+    1. Prefix score (primary): /home > /work > /mnt
+    2. Depth penalty (tiebreaker): shallower paths preferred
+
+    Bind mounts typically expose deep infrastructure paths at shallow
+    user-facing locations (e.g., /mnt/HPC/home → /home). Preferring
+    shallower paths captures this intent.
 
     Args:
         path: Absolute path string
@@ -47,8 +50,8 @@ def _path_canonicality_score(path: str) -> int:
     Returns:
         Integer score - higher means more canonical
     """
-    # Order matters - first match wins
-    preferences = [
+    # Prefix scores (primary factor) - order matters, first match wins
+    prefix_scores = [
         ("/home/", 100),  # User directories - most canonical
         ("/work/", 80),  # Work directories
         ("/common/", 70),
@@ -61,12 +64,18 @@ def _path_canonicality_score(path: str) -> int:
         ("/HPC/", 10),
     ]
 
-    for prefix, score in preferences:
+    prefix_score = 50  # Default for unknown paths
+    for prefix, score in prefix_scores:
         if prefix in path:
-            return score
+            prefix_score = score
+            break
 
-    # Default score for unknown paths
-    return 50
+    # Depth penalty: subtract points per path component (max 10 penalty)
+    # /home/user = 2 components, /mnt/HPC/ITER/home/user = 5 components
+    depth = path.rstrip("/").count("/")
+    depth_penalty = min(depth, 10)
+
+    return prefix_score * 10 - depth_penalty  # Scale prefix to dominate
 
 
 @dataclass
