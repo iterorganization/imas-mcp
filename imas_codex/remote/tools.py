@@ -23,6 +23,8 @@ Module Structure:
 """
 
 import logging
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -499,6 +501,176 @@ def ensure_path(facility: str | None = None) -> str:
     return "Added ~/bin to PATH in .bashrc (reload shell to activate)"
 
 
+def check_internet_access(facility: str | None = None, timeout: int = 5) -> bool:
+    """Check if facility has outbound internet access to GitHub.
+
+    Args:
+        facility: Facility ID (None = local)
+        timeout: Connection timeout in seconds
+
+    Returns:
+        True if GitHub is reachable, False otherwise
+    """
+    # Use curl with connect timeout to check GitHub reachability
+    check_cmd = f"curl -sI --connect-timeout {timeout} https://github.com >/dev/null 2>&1 && echo 'ok' || echo 'fail'"
+    try:
+        result = run(check_cmd, facility=facility, timeout=timeout + 5)
+        return result.strip() == "ok"
+    except Exception as e:
+        logger.debug(f"Internet access check failed: {e}")
+        return False
+
+
+def _download_locally(url: str, dest_path: Path) -> None:
+    """Download a file locally using curl.
+
+    Args:
+        url: URL to download
+        dest_path: Local destination path
+
+    Raises:
+        RuntimeError: If download fails
+    """
+    result = subprocess.run(
+        ["curl", "-sL", "-o", str(dest_path), url],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Download failed: {result.stderr}")
+    if not dest_path.exists() or dest_path.stat().st_size == 0:
+        raise RuntimeError("Download produced empty file")
+
+
+def _scp_to_remote(local_path: Path, remote_path: str, facility: str) -> None:
+    """SCP a file to a remote facility.
+
+    Args:
+        local_path: Local file path
+        remote_path: Remote destination path (e.g., ~/bin/rg)
+        facility: Facility ID (used as SSH host)
+
+    Raises:
+        RuntimeError: If SCP fails
+    """
+    ssh_host = _resolve_ssh_host(facility)
+    result = subprocess.run(
+        ["scp", "-q", str(local_path), f"{ssh_host}:{remote_path}"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"SCP failed: {result.stderr}")
+
+
+def install_tool_via_scp(
+    tool: "FastTool",
+    arch: str,
+    facility: str,
+) -> dict[str, Any]:
+    """Install a tool by downloading locally and SCPing to remote.
+
+    This is used when the remote facility has no internet access.
+    Downloads to a temp file, extracts if needed, SCPs binary to ~/bin,
+    and cleans up local temp files.
+
+    Args:
+        tool: FastTool configuration
+        arch: Target architecture (x86_64 or aarch64)
+        facility: Remote facility ID
+
+    Returns:
+        Dict with success status and details
+    """
+    url = tool.get_download_url(arch)
+    binary_name = tool.binary
+
+    # Map architecture for simplified naming
+    arch_simple = (
+        tool.releases.arch_map.get(arch, arch) if tool.releases.arch_map else arch
+    )
+
+    with tempfile.TemporaryDirectory(prefix="imas_codex_tool_") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        try:
+            if tool.releases.is_binary:
+                # Direct binary download
+                local_binary = tmpdir_path / binary_name
+                logger.debug(f"Downloading binary: {url}")
+                _download_locally(url, local_binary)
+                local_binary.chmod(0o755)
+            else:
+                # Tarball download and extraction
+                tarball = tmpdir_path / "download.tar.gz"
+                logger.debug(f"Downloading tarball: {url}")
+                _download_locally(url, tarball)
+
+                # Extract tarball locally
+                extract_dir = tmpdir_path / "extracted"
+                extract_dir.mkdir()
+
+                strip = tool.releases.strip_components
+                result = subprocess.run(
+                    ["tar", "xzf", str(tarball), "-C", str(extract_dir)]
+                    + ([f"--strip-components={strip}"] if strip > 0 else []),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"Extraction failed: {result.stderr}")
+
+                # Find the binary
+                if tool.releases.binary_path:
+                    # Use configured binary path
+                    binary_rel_path = tool.releases.binary_path.format(
+                        version=tool.releases.version,
+                        arch=tool._get_musl_arch(arch),
+                        arch_simple=arch_simple,
+                    )
+                    # After strip, the binary should be at root level or close
+                    if strip > 0:
+                        # With strip, binary is at top level
+                        local_binary = extract_dir / binary_name
+                    else:
+                        local_binary = extract_dir / binary_rel_path
+                else:
+                    local_binary = extract_dir / binary_name
+
+                if not local_binary.exists():
+                    # Search for binary in extracted files
+                    found = list(extract_dir.rglob(binary_name))
+                    if found:
+                        local_binary = found[0]
+                    else:
+                        raise RuntimeError(
+                            f"Binary {binary_name} not found in extracted archive"
+                        )
+
+                local_binary.chmod(0o755)
+
+            # Ensure ~/bin exists on remote
+            run("mkdir -p ~/bin", facility=facility)
+
+            # SCP binary to remote
+            remote_path = f"~/bin/{binary_name}"
+            logger.debug(f"SCPing {local_binary} to {facility}:{remote_path}")
+            _scp_to_remote(local_binary, remote_path, facility)
+
+            # Make executable on remote (in case permissions weren't preserved)
+            run(f"chmod +x ~/bin/{binary_name}", facility=facility)
+
+            return {"success": True, "method": "scp"}
+
+        except Exception as e:
+            logger.error(f"SCP install failed for {tool.key}: {e}")
+            return {"success": False, "error": str(e), "method": "scp"}
+        # Temp directory auto-cleaned by context manager
+
+
 def install_tool(
     tool_key: str,
     facility: str | None = None,
@@ -577,17 +749,76 @@ def install_tool(
     # Ensure PATH is configured
     ensure_path(facility=facility)
 
-    # Get install command
+    # For remote facilities, check internet access and use SCP fallback if needed
+    is_local = is_local_facility(facility)
+    use_scp = False
+
+    if not is_local:
+        # Check if remote has internet access
+        has_internet = check_internet_access(facility=facility, timeout=5)
+        if not has_internet:
+            logger.info(
+                f"No internet access from {facility}, using local download + SCP"
+            )
+            use_scp = True
+
+    if use_scp:
+        # Use SCP fallback: download locally, then SCP to remote
+        result = install_tool_via_scp(tool, arch, facility)
+        if result.get("success"):
+            # Verify installation
+            status = check_tool(tool_key, facility=facility)
+            if status.get("available"):
+                return {
+                    "success": True,
+                    "action": "installed",
+                    "method": "scp",
+                    "version": status.get("version"),
+                    "path": status.get("path"),
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "SCP completed but tool not found",
+                    "method": "scp",
+                }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error", "SCP installation failed"),
+                "method": "scp",
+            }
+
+    # Direct installation (local or remote with internet)
     try:
         install_cmd = tool.get_install_command(arch)
     except Exception as e:
         return {"success": False, "error": f"Failed to generate install command: {e}"}
 
-    # Execute installation
+    # Execute installation with shorter timeout for remote
+    install_timeout = 30 if not is_local else 120
     try:
-        output = run(install_cmd, facility=facility, timeout=120)
+        output = run(install_cmd, facility=facility, timeout=install_timeout)
         logger.debug(f"Install output: {output}")
     except Exception as e:
+        # If direct install fails on remote, try SCP fallback
+        if not is_local:
+            logger.info(f"Direct install failed, trying SCP fallback: {e}")
+            result = install_tool_via_scp(tool, arch, facility)
+            if result.get("success"):
+                status = check_tool(tool_key, facility=facility)
+                if status.get("available"):
+                    return {
+                        "success": True,
+                        "action": "installed",
+                        "method": "scp",
+                        "version": status.get("version"),
+                        "path": status.get("path"),
+                    }
+            return {
+                "success": False,
+                "error": f"Both direct and SCP installation failed: {e}",
+            }
         return {"success": False, "error": f"Installation failed: {e}"}
 
     # Verify installation
