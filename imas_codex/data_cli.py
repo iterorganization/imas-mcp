@@ -1,11 +1,9 @@
 """Data management CLI for graph database and private facility data.
 
 This module provides the `imas-codex data` command group for:
-- Unified dump/load of graph database + private YAML files
-- Push/pull to GHCR with automatic fork detection
+- Graph database dump/load/push/pull to GHCR
 - Neo4j database server management (under `data db`)
-
-Private data is encrypted using age before pushing to GHCR.
+- Private YAML file management via GitHub Gist (under `data private`)
 """
 
 import json
@@ -26,9 +24,11 @@ from imas_codex import __version__
 # ============================================================================
 
 PRIVATE_YAML_GLOB = "imas_codex/config/facilities/*_private.yaml"
+PRIVATE_YAML_DIR = Path("imas_codex/config/facilities")
 RECOVERY_DIR = Path.home() / ".local" / "share" / "imas-codex" / "recovery"
 DATA_DIR = Path.home() / ".local" / "share" / "imas-codex" / "neo4j"
 NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
+GIST_ID_FILE = Path.home() / ".config" / "imas-codex" / "private-gist-id"
 
 
 def get_git_info() -> dict:
@@ -74,18 +74,14 @@ def get_git_info() -> dict:
         url = result.stdout.strip()
         info["remote_url"] = url
         # Extract owner from GitHub URL
-        # Formats: git@github.com:owner/repo.git or https://github.com/owner/repo.git
         if "github.com" in url:
             if url.startswith("git@"):
-                # git@github.com:owner/repo.git
                 parts = url.split(":")[-1].replace(".git", "").split("/")
             else:
-                # https://github.com/owner/repo.git
                 parts = url.replace(".git", "").split("/")
             if len(parts) >= 2:
                 info["remote_owner"] = parts[-2]
 
-        # Check if this is a fork (not iterorganization)
         info["is_fork"] = (
             info["remote_owner"] is not None
             and info["remote_owner"].lower() != "iterorganization"
@@ -138,55 +134,12 @@ def require_apptainer() -> None:
         raise click.ClickException("apptainer not found in PATH")
 
 
-def get_age_key_path() -> Path | None:
-    """Get age key file path from environment."""
-    key_file = os.environ.get("IMAS_AGE_KEY_FILE")
-    if key_file:
-        path = Path(key_file).expanduser()
-        if path.exists():
-            return path
-    # Default location
-    default = Path.home() / ".config" / "imas-codex" / "age-key.txt"
-    if default.exists():
-        return default
-    return None
-
-
-def get_age_public_key(key_path: Path) -> str:
-    """Extract public key from age key file."""
-    content = key_path.read_text()
-    for line in content.splitlines():
-        if line.startswith("# public key:"):
-            return line.split(":")[-1].strip()
-    raise click.ClickException(f"Could not find public key in {key_path}")
-
-
-def encrypt_file(source: Path, dest: Path, public_key: str) -> None:
-    """Encrypt a file using age."""
-    if not shutil.which("age"):
+def require_gh() -> None:
+    """Raise error if gh CLI is not installed."""
+    if not shutil.which("gh"):
         raise click.ClickException(
-            "age not found in PATH. Install with: brew install age"
+            "gh CLI not found. Install from: https://cli.github.com/"
         )
-    result = subprocess.run(
-        ["age", "-r", public_key, "-o", str(dest), str(source)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"age encryption failed: {result.stderr}")
-
-
-def decrypt_file(source: Path, dest: Path, key_path: Path) -> None:
-    """Decrypt a file using age."""
-    if not shutil.which("age"):
-        raise click.ClickException("age not found in PATH")
-    result = subprocess.run(
-        ["age", "-d", "-i", str(key_path), "-o", str(dest), str(source)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise click.ClickException(f"age decryption failed: {result.stderr}")
 
 
 def is_neo4j_running() -> bool:
@@ -201,35 +154,16 @@ def is_neo4j_running() -> bool:
 
 
 def backup_existing_data(reason: str) -> Path | None:
-    """Backup current graph dump and private YAML to recovery directory.
-
-    Returns path to recovery directory, or None if nothing to backup.
-    """
+    """Backup current graph state marker to recovery directory."""
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     recovery_path = RECOVERY_DIR / f"{timestamp}-{reason}"
 
-    has_content = False
-
-    # Check if there's anything to backup
-    private_files = list(Path(".").glob(PRIVATE_YAML_GLOB))
-
-    if private_files or DATA_DIR.exists():
+    if DATA_DIR.exists():
         recovery_path.mkdir(parents=True, exist_ok=True)
+        (recovery_path / "graph_data_existed.marker").touch()
+        return recovery_path
 
-        # Backup private YAML files
-        if private_files:
-            private_dir = recovery_path / "private"
-            private_dir.mkdir(exist_ok=True)
-            for f in private_files:
-                shutil.copy(f, private_dir / f.name)
-            has_content = True
-
-        # Note about graph - we don't copy 300MB each time, just record state
-        if DATA_DIR.exists():
-            (recovery_path / "graph_data_existed.marker").touch()
-            has_content = True
-
-    return recovery_path if has_content else None
+    return None
 
 
 def login_to_ghcr(token: str | None) -> None:
@@ -247,6 +181,24 @@ def login_to_ghcr(token: str | None) -> None:
         raise click.ClickException(f"GHCR login failed: {result.stderr}")
 
 
+def get_private_files() -> list[Path]:
+    """Get list of private YAML files."""
+    return list(Path(".").glob(PRIVATE_YAML_GLOB))
+
+
+def get_saved_gist_id() -> str | None:
+    """Get saved gist ID from config file."""
+    if GIST_ID_FILE.exists():
+        return GIST_ID_FILE.read_text().strip()
+    return os.environ.get("IMAS_PRIVATE_GIST_ID")
+
+
+def save_gist_id(gist_id: str) -> None:
+    """Save gist ID to config file."""
+    GIST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    GIST_ID_FILE.write_text(gist_id)
+
+
 # ============================================================================
 # Main Command Group
 # ============================================================================
@@ -257,19 +209,22 @@ def data() -> None:
     """Manage graph database and private facility data.
 
     \b
-      imas-codex data dump         Export graph + private YAML to archive
-      imas-codex data load <file>  Load archive (backs up existing first)
-      imas-codex data push         Push to GHCR (auto-detects fork)
-      imas-codex data pull         Pull from GHCR (backs up existing first)
-      imas-codex data list         List available versions in registry
-      imas-codex data status       Compare local vs registry
+      imas-codex data dump         Export graph to archive
+      imas-codex data load <file>  Load graph archive
+      imas-codex data push         Push graph to GHCR
+      imas-codex data pull         Pull graph from GHCR
+      imas-codex data list         List available versions
+      imas-codex data status       Show local status
 
     \b
       imas-codex data db start     Start Neo4j server
       imas-codex data db stop      Stop Neo4j server
       imas-codex data db status    Check Neo4j status
-      imas-codex data db shell     Open Cypher shell
-      imas-codex data db service   Manage systemd service
+
+    \b
+      imas-codex data private push   Push private YAML to GitHub Gist
+      imas-codex data private pull   Pull private YAML from Gist
+      imas-codex data private status Show Gist status
     """
     pass
 
@@ -294,30 +249,12 @@ def data_db() -> None:
 
 
 @data_db.command("start")
-@click.option(
-    "--image",
-    envvar="NEO4J_IMAGE",
-    default=None,
-    help="Path to Neo4j SIF image (env: NEO4J_IMAGE)",
-)
-@click.option(
-    "--data-dir",
-    envvar="NEO4J_DATA",
-    default=None,
-    help="Data directory (env: NEO4J_DATA)",
-)
-@click.option(
-    "--password",
-    envvar="NEO4J_PASSWORD",
-    default="imas-codex",
-    help="Neo4j password (env: NEO4J_PASSWORD)",
-)
+@click.option("--image", envvar="NEO4J_IMAGE", default=None)
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
+@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
 @click.option("--foreground", "-f", is_flag=True, help="Run in foreground")
 def db_start(
-    image: str | None,
-    data_dir: str | None,
-    password: str,
-    foreground: bool,
+    image: str | None, data_dir: str | None, password: str, foreground: bool
 ) -> None:
     """Start Neo4j server via Apptainer."""
     import platform
@@ -341,7 +278,6 @@ def db_start(
         click.echo("Neo4j is already running on port 7474")
         return
 
-    # Create directories
     for subdir in ["data", "logs", "conf", "import"]:
         (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -363,7 +299,6 @@ def db_start(
     ]
 
     click.echo(f"Starting Neo4j from {image_path}")
-    click.echo(f"Data directory: {data_path}")
 
     if foreground:
         subprocess.run(cmd)
@@ -378,30 +313,20 @@ def db_start(
         pid_file.write_text(str(proc.pid))
 
         click.echo(f"Neo4j starting in background (PID: {proc.pid})")
-        click.echo("Waiting for server...")
 
         import time
 
         for _ in range(30):
             if is_neo4j_running():
                 click.echo("Neo4j ready at http://localhost:7474")
-                click.echo("Bolt: bolt://localhost:7687")
-                click.echo(f"Credentials: neo4j / {password}")
                 return
             time.sleep(1)
 
-        click.echo(
-            "Warning: Neo4j may still be starting. Check with: imas-codex data db status"
-        )
+        click.echo("Warning: Neo4j may still be starting")
 
 
 @data_db.command("stop")
-@click.option(
-    "--data-dir",
-    envvar="NEO4J_DATA",
-    default=None,
-    help="Data directory (env: NEO4J_DATA)",
-)
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
 def db_stop(data_dir: str | None) -> None:
     """Stop Neo4j server."""
     import signal
@@ -419,14 +344,8 @@ def db_stop(data_dir: str | None) -> None:
             click.echo("Neo4j process not found (stale PID file)")
             pid_file.unlink()
     else:
-        result = subprocess.run(
-            ["pkill", "-f", "neo4j.*console"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            click.echo("Neo4j stopped")
-        else:
-            click.echo("Neo4j not running")
+        result = subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
+        click.echo("Neo4j stopped" if result.returncode == 0 else "Neo4j not running")
 
 
 @data_db.command("status")
@@ -440,24 +359,13 @@ def db_status() -> None:
             click.echo("Neo4j is running")
             click.echo(f"  Version: {data.get('neo4j_version', 'unknown')}")
             click.echo(f"  Edition: {data.get('neo4j_edition', 'unknown')}")
-            click.echo(f"  Bolt: {data.get('bolt_direct', 'unknown')}")
     except Exception:
         click.echo("Neo4j is not responding on port 7474")
 
 
 @data_db.command("shell")
-@click.option(
-    "--image",
-    envvar="NEO4J_IMAGE",
-    default=None,
-    help="Path to Neo4j SIF image (env: NEO4J_IMAGE)",
-)
-@click.option(
-    "--password",
-    envvar="NEO4J_PASSWORD",
-    default="imas-codex",
-    help="Neo4j password (env: NEO4J_PASSWORD)",
-)
+@click.option("--image", envvar="NEO4J_IMAGE", default=None)
+@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
 def db_shell(image: str | None, password: str) -> None:
     """Open Cypher shell to Neo4j."""
     image_path = Path(image) if image else NEO4J_IMAGE
@@ -465,18 +373,19 @@ def db_shell(image: str | None, password: str) -> None:
     if not image_path.exists():
         raise click.ClickException(f"Neo4j image not found: {image_path}")
 
-    cmd = [
-        "apptainer",
-        "exec",
-        "--writable-tmpfs",
-        str(image_path),
-        "cypher-shell",
-        "-u",
-        "neo4j",
-        "-p",
-        password,
-    ]
-    subprocess.run(cmd)
+    subprocess.run(
+        [
+            "apptainer",
+            "exec",
+            "--writable-tmpfs",
+            str(image_path),
+            "cypher-shell",
+            "-u",
+            "neo4j",
+            "-p",
+            password,
+        ]
+    )
 
 
 @data_db.command("service")
@@ -537,9 +446,7 @@ WantedBy=default.target
         subprocess.run(
             ["systemctl", "--user", "enable", "imas-codex-neo4j"], check=True
         )
-        click.echo(
-            "Service installed. Control with: systemctl --user start/stop imas-codex-neo4j"
-        )
+        click.echo("Service installed")
 
     elif action == "uninstall":
         if not service_file.exists():
@@ -568,7 +475,194 @@ WantedBy=default.target
 
 
 # ============================================================================
-# Data Operations
+# Private Data Subgroup (GitHub Gist)
+# ============================================================================
+
+
+@data.group("private")
+def data_private() -> None:
+    """Manage private facility YAML via GitHub Gist.
+
+    Uses the `gh` CLI to create and manage a secret gist containing
+    your private facility configuration files.
+
+    \b
+      imas-codex data private push    Create/update secret gist
+      imas-codex data private pull    Download and restore files
+      imas-codex data private status  Show gist URL and file status
+    """
+    pass
+
+
+@data_private.command("push")
+@click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Existing gist ID")
+@click.option("--dry-run", is_flag=True, help="Show what would be pushed")
+def private_push(gist_id: str | None, dry_run: bool) -> None:
+    """Push private YAML files to a secret GitHub Gist.
+
+    Creates a new secret gist on first run, updates existing on subsequent runs.
+    The gist ID is saved to ~/.config/imas-codex/private-gist-id
+
+    Examples:
+        imas-codex data private push
+        imas-codex data private push --dry-run
+    """
+    require_gh()
+
+    private_files = get_private_files()
+    if not private_files:
+        click.echo("No private YAML files found")
+        click.echo(f"  Expected pattern: {PRIVATE_YAML_GLOB}")
+        return
+
+    # Use saved gist ID if not provided
+    effective_gist_id = gist_id or get_saved_gist_id()
+
+    click.echo(f"Private files to push: {len(private_files)}")
+    for f in private_files:
+        click.echo(f"  - {f.name}")
+
+    if dry_run:
+        if effective_gist_id:
+            click.echo(f"\n[DRY RUN] Would update gist: {effective_gist_id}")
+        else:
+            click.echo("\n[DRY RUN] Would create new secret gist")
+        return
+
+    if effective_gist_id:
+        # Update existing gist
+        click.echo(f"\nUpdating gist {effective_gist_id}...")
+        cmd = ["gh", "gist", "edit", effective_gist_id]
+        for f in private_files:
+            cmd.extend(["-a", str(f)])
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            # Gist might not exist anymore, create new one
+            click.echo("Gist not found, creating new one...")
+            effective_gist_id = None
+
+    if not effective_gist_id:
+        # Create new secret gist
+        click.echo("\nCreating secret gist...")
+        cmd = [
+            "gh",
+            "gist",
+            "create",
+            "--desc",
+            "imas-codex private facility configs",
+            *[str(f) for f in private_files],
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise click.ClickException(f"Failed to create gist: {result.stderr}")
+
+        # Extract gist URL/ID from output
+        gist_url = result.stdout.strip()
+        effective_gist_id = gist_url.split("/")[-1]
+
+        # Save gist ID for future use
+        save_gist_id(effective_gist_id)
+        click.echo(f"Gist ID saved to: {GIST_ID_FILE}")
+
+    click.echo(f"\n✓ Pushed to: https://gist.github.com/{effective_gist_id}")
+    click.echo("  (This is a secret gist - only accessible with the URL)")
+
+
+@data_private.command("pull")
+@click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Gist ID to pull from")
+@click.option("--force", is_flag=True, help="Overwrite existing files without backup")
+def private_pull(gist_id: str | None, force: bool) -> None:
+    """Pull private YAML files from GitHub Gist.
+
+    Downloads files from the gist and places them in the facilities config directory.
+    Existing files are backed up to the recovery directory first.
+
+    Examples:
+        imas-codex data private pull
+        imas-codex data private pull --gist-id abc123def456
+    """
+    require_gh()
+
+    effective_gist_id = gist_id or get_saved_gist_id()
+    if not effective_gist_id:
+        raise click.ClickException(
+            "No gist ID configured. Either:\n"
+            "  1. Run 'imas-codex data private push' first, or\n"
+            "  2. Provide --gist-id, or\n"
+            "  3. Set IMAS_PRIVATE_GIST_ID environment variable"
+        )
+
+    click.echo(f"Pulling from gist: {effective_gist_id}")
+
+    # Backup existing files
+    existing_files = get_private_files()
+    if existing_files and not force:
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        backup_dir = RECOVERY_DIR / f"{timestamp}-private-pull"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for f in existing_files:
+            shutil.copy(f, backup_dir / f.name)
+        click.echo(f"Backed up {len(existing_files)} files to: {backup_dir}")
+
+    # Get gist files
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+
+        # Clone the gist
+        result = subprocess.run(
+            ["gh", "gist", "clone", effective_gist_id, str(tmp / "gist")],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise click.ClickException(f"Failed to clone gist: {result.stderr}")
+
+        gist_dir = tmp / "gist"
+        yaml_files = list(gist_dir.glob("*_private.yaml"))
+
+        if not yaml_files:
+            click.echo("No *_private.yaml files found in gist")
+            return
+
+        # Copy files to target directory
+        PRIVATE_YAML_DIR.mkdir(parents=True, exist_ok=True)
+        for f in yaml_files:
+            target = PRIVATE_YAML_DIR / f.name
+            shutil.copy(f, target)
+            click.echo(f"  ✓ {f.name}")
+
+    # Save gist ID if we didn't have it
+    if not get_saved_gist_id():
+        save_gist_id(effective_gist_id)
+
+    click.echo(f"\n✓ Pulled {len(yaml_files)} files")
+
+
+@data_private.command("status")
+def private_status() -> None:
+    """Show private YAML file status and gist configuration."""
+    private_files = get_private_files()
+    gist_id = get_saved_gist_id()
+
+    click.echo("Private YAML files:")
+    if private_files:
+        for f in private_files:
+            size = f.stat().st_size
+            click.echo(f"  - {f.name} ({size} bytes)")
+    else:
+        click.echo("  (none found)")
+        click.echo(f"  Expected pattern: {PRIVATE_YAML_GLOB}")
+
+    click.echo(f"\nGist ID: {gist_id or '(not configured)'}")
+    if gist_id:
+        click.echo(f"  URL: https://gist.github.com/{gist_id}")
+        click.echo(f"  Config: {GIST_ID_FILE}")
+
+
+# ============================================================================
+# Graph Data Operations
 # ============================================================================
 
 
@@ -577,27 +671,17 @@ WantedBy=default.target
     "--output",
     "-o",
     type=click.Path(),
-    help="Output archive path (default: imas-codex-data-{version}.tar.gz)",
+    help="Output archive path (default: imas-codex-graph-{version}.tar.gz)",
 )
-@click.option(
-    "--no-private",
-    is_flag=True,
-    help="Exclude private YAML files from archive",
-)
-def data_dump(output: str | None, no_private: bool) -> None:
-    """Export graph database and private YAML to archive.
+def data_dump(output: str | None) -> None:
+    """Export graph database to archive.
 
-    Creates a tarball containing:
-    - graph.dump: Neo4j database dump
-    - manifest.json: Git commit, timestamp, schema version
-    - private/*.yaml: Encrypted private facility files (unless --no-private)
-
+    Creates a tarball containing the Neo4j database dump.
     Neo4j must be stopped before dumping.
 
     Examples:
         imas-codex data dump
         imas-codex data dump -o backup.tar.gz
-        imas-codex data dump --no-private
     """
     if is_neo4j_running():
         raise click.ClickException(
@@ -609,20 +693,19 @@ def data_dump(output: str | None, no_private: bool) -> None:
     git_info = get_git_info()
     version_label = git_info["tag"] or f"dev-{git_info['commit_short']}"
 
-    # Determine output path
     if output:
         output_path = Path(output)
     else:
-        output_path = Path(f"imas-codex-data-{version_label}.tar.gz")
+        output_path = Path(f"imas-codex-graph-{version_label}.tar.gz")
 
     click.echo(f"Creating archive: {output_path}")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
-        archive_dir = tmp / f"imas-codex-data-{version_label}"
+        archive_dir = tmp / f"imas-codex-graph-{version_label}"
         archive_dir.mkdir()
 
-        # Step 1: Dump graph
+        # Dump graph
         click.echo("  Dumping graph database...")
         dumps_dir = DATA_DIR / "dumps"
         dumps_dir.mkdir(parents=True, exist_ok=True)
@@ -650,69 +733,39 @@ def data_dump(output: str | None, no_private: bool) -> None:
         graph_dump = dumps_dir / "neo4j.dump"
         if graph_dump.exists():
             shutil.move(str(graph_dump), str(archive_dir / "graph.dump"))
-            click.echo(
-                f"    Graph: {(archive_dir / 'graph.dump').stat().st_size / 1024 / 1024:.1f} MB"
-            )
+            size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
+            click.echo(f"    Graph: {size_mb:.1f} MB")
         else:
             raise click.ClickException("Graph dump file not created")
 
-        # Step 2: Include private YAML (encrypted if key available)
-        if not no_private:
-            private_files = list(Path(".").glob(PRIVATE_YAML_GLOB))
-            if private_files:
-                private_dir = archive_dir / "private"
-                private_dir.mkdir()
-
-                age_key = get_age_key_path()
-                if age_key:
-                    public_key = get_age_public_key(age_key)
-                    click.echo(f"  Encrypting {len(private_files)} private files...")
-                    for f in private_files:
-                        encrypted = private_dir / f"{f.name}.age"
-                        encrypt_file(f, encrypted, public_key)
-                    click.echo("    Private files encrypted with age")
-                else:
-                    click.echo(
-                        "  Including private files (unencrypted - no age key found)"
-                    )
-                    click.echo("    Warning: Set IMAS_AGE_KEY_FILE for encryption")
-                    for f in private_files:
-                        shutil.copy(f, private_dir / f.name)
-
-        # Step 3: Write manifest
+        # Write manifest
         manifest = {
             "version": __version__,
             "git_commit": git_info["commit"],
             "git_tag": git_info["tag"],
             "timestamp": datetime.now(UTC).isoformat(),
-            "has_private": not no_private
-            and bool(list(Path(".").glob(PRIVATE_YAML_GLOB))),
-            "private_encrypted": get_age_key_path() is not None,
         }
         (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-        # Step 4: Create tarball
+        # Create tarball
         click.echo("  Creating archive...")
         with tarfile.open(output_path, "w:gz") as tar:
             tar.add(archive_dir, arcname=archive_dir.name)
 
-    click.echo(
-        f"Archive created: {output_path} ({output_path.stat().st_size / 1024 / 1024:.1f} MB)"
-    )
+    size_mb = output_path.stat().st_size / 1024 / 1024
+    click.echo(f"Archive created: {output_path} ({size_mb:.1f} MB)")
 
 
 @data.command("load")
 @click.argument("archive", type=click.Path(exists=True))
-@click.option("--force", is_flag=True, help="Overwrite existing data without prompt")
+@click.option("--force", is_flag=True, help="Overwrite existing data")
 def data_load(archive: str, force: bool) -> None:
-    """Load graph and private YAML from archive.
+    """Load graph database from archive.
 
-    Backs up existing data to ~/.local/share/imas-codex/recovery/ first.
     Neo4j must be stopped before loading.
 
     Examples:
-        imas-codex data load imas-codex-data-v1.0.0.tar.gz
-        imas-codex data load backup.tar.gz --force
+        imas-codex data load imas-codex-graph-v1.0.0.tar.gz
     """
     if is_neo4j_running():
         raise click.ClickException(
@@ -724,20 +777,15 @@ def data_load(archive: str, force: bool) -> None:
     archive_path = Path(archive)
     click.echo(f"Loading archive: {archive_path}")
 
-    # Backup existing data
-    recovery_path = backup_existing_data("pre-load")
-    if recovery_path:
-        click.echo(f"  Backed up existing data to: {recovery_path}")
+    backup_existing_data("pre-load")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
-        # Extract archive
         click.echo("  Extracting archive...")
         with tarfile.open(archive_path, "r:gz") as tar:
             tar.extractall(tmp)
 
-        # Find extracted directory
         extracted_dirs = list(tmp.iterdir())
         if not extracted_dirs:
             raise click.ClickException("Empty archive")
@@ -747,9 +795,8 @@ def data_load(archive: str, force: bool) -> None:
         manifest_file = archive_dir / "manifest.json"
         if manifest_file.exists():
             manifest = json.loads(manifest_file.read_text())
-            click.echo(f"  Archive version: {manifest.get('version')}")
-            click.echo(f"  Git commit: {manifest.get('git_commit', 'unknown')[:7]}")
-            click.echo(f"  Created: {manifest.get('timestamp', 'unknown')}")
+            click.echo(f"  Version: {manifest.get('version')}")
+            click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
 
         # Load graph
         graph_dump = archive_dir / "graph.dump"
@@ -778,100 +825,58 @@ def data_load(archive: str, force: bool) -> None:
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
                 raise click.ClickException(f"Graph load failed: {result.stderr}")
-            click.echo("    Graph loaded successfully")
 
-        # Load private files
-        private_dir = archive_dir / "private"
-        if private_dir.exists():
-            age_key = get_age_key_path()
-            target_dir = Path("imas_codex/config/facilities")
-            target_dir.mkdir(parents=True, exist_ok=True)
-
-            for f in private_dir.iterdir():
-                if f.suffix == ".age":
-                    if not age_key:
-                        click.echo(f"    Skipping encrypted {f.stem} (no age key)")
-                        continue
-                    # Decrypt
-                    target = target_dir / f.stem  # Remove .age suffix
-                    click.echo(f"    Decrypting {f.stem}...")
-                    decrypt_file(f, target, age_key)
-                else:
-                    # Plain copy
-                    shutil.copy(f, target_dir / f.name)
-                    click.echo(f"    Copied {f.name}")
-
-    click.echo("Load complete. Start Neo4j: imas-codex data db start")
+    click.echo("✓ Load complete. Start Neo4j: imas-codex data db start")
 
 
 @data.command("push")
 @click.option("--dev", is_flag=True, help="Push as dev-{commit} tag")
-@click.option(
-    "--registry",
-    envvar="IMAS_DATA_REGISTRY",
-    default=None,
-    help="Override registry (default: auto-detect from git remote)",
-)
-@click.option("--token", envvar="GHCR_TOKEN", help="GHCR token (env: GHCR_TOKEN)")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
 def data_push(
     dev: bool, registry: str | None, token: str | None, dry_run: bool
 ) -> None:
-    """Push data archive to GHCR.
+    """Push graph archive to GHCR.
 
-    Automatically:
-    - Detects fork and pushes to your GHCR (not iterorganization)
-    - Requires clean git working tree (unless --dev)
-    - Uses git tag as version, or --dev for dev-{commit}
+    Auto-detects fork and pushes to your GHCR registry.
+    Requires clean git state for release pushes.
 
     Examples:
         imas-codex data push              # Push release (requires git tag)
         imas-codex data push --dev        # Push dev version
-        imas-codex data push --dry-run    # Preview what would happen
     """
     require_oras()
 
     git_info = get_git_info()
 
-    # Enforce clean git for non-dev pushes
     if not dev:
         require_clean_git(git_info)
 
     target_registry = get_registry(git_info, registry)
     version_tag = get_version_tag(git_info, dev)
 
-    click.echo(f"Push target: {target_registry}/imas-codex-data:{version_tag}")
+    click.echo(f"Push target: {target_registry}/imas-codex-graph:{version_tag}")
     if git_info["is_fork"]:
         click.echo(f"  Detected fork: {git_info['remote_owner']}")
-    click.echo(f"  Git commit: {git_info['commit_short']}")
-    click.echo(f"  Git dirty: {git_info['is_dirty']}")
 
     if dry_run:
-        click.echo("\n[DRY RUN] Would perform:")
-        click.echo("  1. Stop Neo4j")
-        click.echo("  2. Create data archive")
-        click.echo(f"  3. Push to {target_registry}/imas-codex-data:{version_tag}")
-        if not dev:
-            click.echo(f"  4. Tag as {target_registry}/imas-codex-data:latest")
+        click.echo("\n[DRY RUN] Would:")
+        click.echo("  1. Stop Neo4j, dump graph")
+        click.echo(f"  2. Push to {target_registry}/imas-codex-graph:{version_tag}")
         return
 
-    # Create archive
-    archive_path = Path(f"imas-codex-data-{version_tag}.tar.gz")
+    archive_path = Path(f"imas-codex-graph-{version_tag}.tar.gz")
 
-    # Check if Neo4j needs stopping
     neo4j_was_running = is_neo4j_running()
     if neo4j_was_running:
-        click.echo("Stopping Neo4j for dump...")
-        subprocess.run(
-            ["pkill", "-f", "neo4j.*console"],
-            capture_output=True,
-        )
+        click.echo("Stopping Neo4j...")
+        subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
         import time
 
         time.sleep(2)
 
     try:
-        # Use dump command logic (invoke directly)
         from click.testing import CliRunner
 
         runner = CliRunner()
@@ -879,10 +884,9 @@ def data_push(
         if result.exit_code != 0:
             raise click.ClickException(f"Dump failed: {result.output}")
 
-        # Login and push
         login_to_ghcr(token)
 
-        artifact_ref = f"{target_registry}/imas-codex-data:{version_tag}"
+        artifact_ref = f"{target_registry}/imas-codex-graph:{version_tag}"
         push_cmd = [
             "oras",
             "push",
@@ -892,8 +896,6 @@ def data_push(
             f"org.opencontainers.image.version={version_tag}",
             "--annotation",
             f"io.imas-codex.git-commit={git_info['commit']}",
-            "--annotation",
-            f"io.imas-codex.schema-version={__version__}",
         ]
 
         click.echo(f"Pushing to {artifact_ref}...")
@@ -901,54 +903,42 @@ def data_push(
         if result.returncode != 0:
             raise click.ClickException(f"Push failed: {result.stderr}")
 
-        click.echo(f"Successfully pushed: {artifact_ref}")
+        click.echo(f"✓ Pushed: {artifact_ref}")
 
-        # Tag as latest for releases
         if not dev:
-            tag_cmd = [
-                "oras",
-                "tag",
-                artifact_ref,
-                f"{target_registry}/imas-codex-data:latest",
-            ]
-            subprocess.run(tag_cmd, capture_output=True)
-            click.echo(f"Tagged as: {target_registry}/imas-codex-data:latest")
+            subprocess.run(
+                [
+                    "oras",
+                    "tag",
+                    artifact_ref,
+                    f"{target_registry}/imas-codex-graph:latest",
+                ],
+                capture_output=True,
+            )
+            click.echo("✓ Tagged as latest")
 
     finally:
-        # Restart Neo4j if it was running
         if neo4j_was_running:
-            click.echo("Restarting Neo4j...")
             from click.testing import CliRunner
 
             runner = CliRunner()
             runner.invoke(db_start, [])
 
-        # Clean up archive
         if archive_path.exists():
             archive_path.unlink()
 
 
 @data.command("pull")
-@click.option("-v", "--version", "version", default="latest", help="Version to pull")
-@click.option(
-    "--registry",
-    envvar="IMAS_DATA_REGISTRY",
-    default=None,
-    help="Override registry (default: auto-detect)",
-)
-@click.option("--token", envvar="GHCR_TOKEN", help="GHCR token")
-@click.option("--graph-only", is_flag=True, help="Only pull graph, skip private files")
-def data_pull(
-    version: str, registry: str | None, token: str | None, graph_only: bool
-) -> None:
-    """Pull data archive from GHCR and load.
-
-    Backs up existing data to ~/.local/share/imas-codex/recovery/ first.
+@click.option("-v", "--version", "version", default="latest")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
+def data_pull(version: str, registry: str | None, token: str | None) -> None:
+    """Pull graph archive from GHCR and load.
 
     Examples:
-        imas-codex data pull                   # Pull latest
-        imas-codex data pull -v v1.0.0         # Pull specific version
-        imas-codex data pull -v dev-abc1234    # Pull dev version
+        imas-codex data pull                 # Pull latest
+        imas-codex data pull -v v1.0.0       # Pull specific version
+        imas-codex data pull -v dev-abc1234  # Pull dev version
     """
     require_oras()
 
@@ -959,65 +949,48 @@ def data_pull(
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    artifact_ref = f"{target_registry}/imas-codex-data:{version}"
+    artifact_ref = f"{target_registry}/imas-codex-graph:{version}"
 
     click.echo(f"Pulling: {artifact_ref}")
 
-    # Backup existing data
-    recovery_path = backup_existing_data("pre-pull")
-    if recovery_path:
-        click.echo(f"Backed up existing data to: {recovery_path}")
-
+    backup_existing_data("pre-pull")
     login_to_ghcr(token)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
-        # Pull artifact
-        pull_cmd = ["oras", "pull", artifact_ref, "-o", str(tmp)]
-        result = subprocess.run(pull_cmd, capture_output=True, text=True)
+        result = subprocess.run(
+            ["oras", "pull", artifact_ref, "-o", str(tmp)],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             raise click.ClickException(f"Pull failed: {result.stderr}")
 
-        # Find downloaded file
         archives = list(tmp.glob("*.tar.gz"))
         if not archives:
-            raise click.ClickException("No archive found in pulled artifact")
+            raise click.ClickException("No archive found")
 
-        archive_path = archives[0]
-        click.echo(f"Downloaded: {archive_path.name}")
-
-        # Load using load command
         from click.testing import CliRunner
 
         runner = CliRunner()
-        args = [str(archive_path), "--force"]
-        result = runner.invoke(data_load, args)
+        result = runner.invoke(data_load, [str(archives[0]), "--force"])
         if result.exit_code != 0:
             raise click.ClickException(f"Load failed: {result.output}")
 
-    click.echo("Pull complete. Start Neo4j: imas-codex data db start")
+    click.echo("✓ Pull complete. Start Neo4j: imas-codex data db start")
 
 
 @data.command("list")
-@click.option(
-    "--registry",
-    envvar="IMAS_DATA_REGISTRY",
-    default=None,
-    help="Override registry",
-)
-@click.option("--token", envvar="GHCR_TOKEN", help="GHCR token")
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
+@click.option("--token", envvar="GHCR_TOKEN")
 def data_list(registry: str | None, token: str | None) -> None:
-    """List available versions in GHCR.
-
-    Examples:
-        imas-codex data list
-    """
+    """List available graph versions in GHCR."""
     require_oras()
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
-    repo_ref = f"{target_registry}/imas-codex-data"
+    repo_ref = f"{target_registry}/imas-codex-graph"
 
     login_to_ghcr(token)
 
@@ -1030,50 +1003,34 @@ def data_list(registry: str | None, token: str | None) -> None:
     )
 
     if result.returncode != 0:
-        if "not found" in result.stderr.lower() or "NAME_UNKNOWN" in result.stderr:
+        if "not found" in result.stderr.lower():
             click.echo("  (no versions published yet)")
         else:
-            raise click.ClickException(f"Failed to list: {result.stderr}")
+            raise click.ClickException(f"Failed: {result.stderr}")
     else:
-        tags = result.stdout.strip().split("\n")
-        for tag in sorted(tags, reverse=True):
+        for tag in sorted(result.stdout.strip().split("\n"), reverse=True):
             if tag:
-                prefix = "→" if tag == "latest" else " "
-                click.echo(f"  {prefix} {tag}")
+                click.echo(f"  {'→' if tag == 'latest' else ' '} {tag}")
 
 
 @data.command("status")
-@click.option(
-    "--registry",
-    envvar="IMAS_DATA_REGISTRY",
-    default=None,
-    help="Override registry",
-)
+@click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 def data_status(registry: str | None) -> None:
-    """Show local vs registry status.
-
-    Examples:
-        imas-codex data status
-    """
+    """Show local and registry status."""
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
+    gist_id = get_saved_gist_id()
+    private_files = get_private_files()
 
     click.echo("Local status:")
     click.echo(f"  Git commit: {git_info['commit_short']}")
     click.echo(f"  Git tag: {git_info['tag'] or '(none)'}")
-    click.echo(f"  Dirty: {git_info['is_dirty']}")
     click.echo(f"  Is fork: {git_info['is_fork']}")
     click.echo(f"  Target registry: {target_registry}")
 
-    # Check Neo4j
     click.echo(f"\nNeo4j: {'running' if is_neo4j_running() else 'stopped'}")
 
-    # Check private files
-    private_files = list(Path(".").glob(PRIVATE_YAML_GLOB))
-    click.echo(f"Private YAML files: {len(private_files)}")
-
-    # Check age key
-    age_key = get_age_key_path()
-    click.echo(f"Age encryption: {'configured' if age_key else 'not configured'}")
-    if not age_key:
-        click.echo("  Set IMAS_AGE_KEY_FILE or create ~/.config/imas-codex/age-key.txt")
+    click.echo(f"\nPrivate YAML: {len(private_files)} files")
+    click.echo(f"  Gist: {gist_id or '(not configured)'}")
+    if not gist_id and private_files:
+        click.echo("  → Run 'imas-codex data private push' to backup")
