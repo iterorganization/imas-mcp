@@ -695,13 +695,20 @@ class ParallelProgressDisplay:
         section.append(f"  scored={self.state.scored}", style="green")
         section.append(f"  skipped={self.state.skipped}", style="yellow")
 
-        # In-progress states (work remaining) - always show
-        listing_count = self.state.pending_scan - self.state.discovered
-        scoring_count = self.state.pending_score - self.state.listed
-        in_flight = max(0, listing_count) + max(0, scoring_count)
-        awaiting = self.state.discovered + self.state.listed
-        section.append(f"  awaiting={awaiting}", style="cyan dim")
-        section.append(f"  in-flight={in_flight}", style="dim")
+        # Pending work by worker type - show what each worker is waiting for
+        # Format: scan:5 expand:12 enrich:3 rescore:0
+        pending_parts = []
+        if self.state.pending_scan > 0:
+            pending_parts.append(f"scan:{self.state.pending_scan}")
+        if self.state.pending_expand > 0:
+            pending_parts.append(f"expand:{self.state.pending_expand}")
+        if self.state.pending_enrich > 0:
+            pending_parts.append(f"enrich:{self.state.pending_enrich}")
+        if self.state.pending_rescore > 0:
+            pending_parts.append(f"rescore:{self.state.pending_rescore}")
+
+        if pending_parts:
+            section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
         # Excluded last
         section.append(f"  excluded={self.state.excluded}", style="dim")

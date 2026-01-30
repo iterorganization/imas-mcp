@@ -355,7 +355,30 @@ update_facility_paths("FACILITY", {
 })
 ```
 
-### 6. Update Exclusions
+### 6. Update Discovery Roots
+Explicit list of root paths that seed the discovery frontier. When set, these
+paths are used directly instead of extracting roots from the nested `paths:` structure.
+This gives you precise control over where automated discovery starts.
+
+```python
+update_facility_infrastructure("FACILITY", {
+    "discovery_roots": [
+        "/home/codes",           # Primary code repository
+        "/usr/local/CRPP/tdi",   # TDI function libraries
+        "/common/imas/shared"    # Shared IMAS workflows
+    ]
+})
+```
+
+**When to use discovery_roots:**
+- To limit discovery to specific high-value directories
+- When the nested `paths:` structure doesn't reflect actual discovery priorities
+- To add roots not captured in other path categories
+
+If `discovery_roots` is empty or unset, seeding falls back to extracting paths
+from the `paths:` structure (codes.root, tdi.root, etc.).
+
+### 7. Update Exclusions
 ```python
 update_facility_infrastructure("FACILITY", {
     "excludes": {
@@ -365,7 +388,7 @@ update_facility_infrastructure("FACILITY", {
 })
 ```
 
-### 7. Update Internal Git Servers
+### 9. Update Internal Git Servers
 If the facility has internal GitLab/GitHub servers that we can access, add them
 so code discovery skips walking their children (content is version-controlled):
 ```python
@@ -374,7 +397,7 @@ update_facility_infrastructure("FACILITY", {
 })
 ```
 
-### 8. Update User Info (Home Directory Pattern)
+### 10. Update User Info (Home Directory Pattern)
 **CRITICAL** for user identification and OWNS relationships. If the facility uses
 a non-standard home directory structure, you must configure the pattern:
 

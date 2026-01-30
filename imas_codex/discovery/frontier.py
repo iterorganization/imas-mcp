@@ -423,30 +423,41 @@ def seed_facility_roots(
     # Get root paths from config if not provided
     if root_paths is None:
         config = get_facility(facility)
-        paths_config = config.get("paths", {})
 
-        # Extract paths from facility config
-        root_paths = []
-        if isinstance(paths_config, dict):
-            # First check for explicit actionable_paths list
-            actionable = paths_config.get("actionable_paths", [])
-            if isinstance(actionable, list) and actionable:
-                root_paths = [
-                    p.get("path") if isinstance(p, dict) else p for p in actionable
-                ]
-            else:
-                # Use path values from config, excluding personal/user paths
-                excluded_categories = {"user", "actionable_paths"}
-                for key, value in paths_config.items():
-                    if key in excluded_categories:
-                        continue
-                    if isinstance(value, str) and value.startswith("/"):
-                        root_paths.append(value)
-                    elif isinstance(value, dict):
-                        # Nested paths like {root: "/work/imas", core: "/work/imas/core"}
-                        for subvalue in value.values():
-                            if isinstance(subvalue, str) and subvalue.startswith("/"):
-                                root_paths.append(subvalue)
+        # Priority 1: Explicit discovery_roots list (preferred)
+        # This is the standard key for seeding the discovery pipeline
+        discovery_roots = config.get("discovery_roots", [])
+        if isinstance(discovery_roots, list) and discovery_roots:
+            root_paths = [
+                p.get("path") if isinstance(p, dict) else p for p in discovery_roots
+            ]
+            logger.info(f"Using {len(root_paths)} discovery_roots from config")
+        else:
+            # Priority 2: Legacy paths.actionable_paths or paths dict
+            paths_config = config.get("paths", {})
+            root_paths = []
+            if isinstance(paths_config, dict):
+                # Check for explicit actionable_paths list
+                actionable = paths_config.get("actionable_paths", [])
+                if isinstance(actionable, list) and actionable:
+                    root_paths = [
+                        p.get("path") if isinstance(p, dict) else p for p in actionable
+                    ]
+                else:
+                    # Use path values from config, excluding personal/user paths
+                    excluded_categories = {"user", "actionable_paths"}
+                    for key, value in paths_config.items():
+                        if key in excluded_categories:
+                            continue
+                        if isinstance(value, str) and value.startswith("/"):
+                            root_paths.append(value)
+                        elif isinstance(value, dict):
+                            # Nested paths like {root: "/work/imas", core: "/work/imas/core"}
+                            for subvalue in value.values():
+                                if isinstance(subvalue, str) and subvalue.startswith(
+                                    "/"
+                                ):
+                                    root_paths.append(subvalue)
 
         # Deduplicate while preserving order
         seen = set()
