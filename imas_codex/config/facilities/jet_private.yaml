@@ -68,6 +68,9 @@ exploration_notes:
 - '2026-01-30: Discovery roots expanded to 31 entries. Added /home container for FacilityUser discovery. Addressed experimental_data
   gap (+2 paths: chain1/reprocess, ITM/itmdb trees). Added workflow roots (ETS/users, ITM/users, /work). Added modeling_code
   (ETS/swimas, ITM/switm). Added data_access (jetdsp, mdsplus tdi).'
+- '2026-01-30: Discovery roots updated to 32 entries (added /solhome container for SOLhome operations accounts). Home directories
+  discovered: /home for primary JAChome (2853 dirs), /solhome for SOLhome operations (481 dirs). Both are NFS automounted
+  from kfs6-1 and kfs6-3.'
 hostname: heimdall136
 
 python:
@@ -113,6 +116,11 @@ file_systems:
 - mount_point: /home
   type: nfs
   server: kfs6-1:/export/JAChome
+  notes: Primary user homes (2853 dirs, automounted per-user)
+- mount_point: /solhome
+  type: nfs
+  server: kfs6-3:/export/SOLhome
+  notes: Operations/system accounts (481 dirs, automounted per-user)
 - mount_point: /common
   type: nfs
   notes: 176 subdirectories
@@ -163,12 +171,17 @@ file_formats:
   - jpfget
   - imas.DBEntry
 discovery_roots:
-# === USER DISCOVERY CONTAINER ===
+# === USER DISCOVERY CONTAINERS ===
 - category: container
-  description: User home directories - discover facility users and their code
+  description: User home directories - primary JAChome accounts (2853 dirs)
   path: /home
   expand_depth: 1
   priority: high
+- category: container
+  description: Operations/system home directories - SOLhome accounts (481 dirs)
+  path: /solhome
+  expand_depth: 1
+  priority: medium
 
 # === FORWARD MODELING (Prediction) ===
 - category: modeling_code
