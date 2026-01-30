@@ -359,24 +359,24 @@ class ParallelProgressDisplay:
     """Clean progress display for parallel discovery.
 
     Layout (88 chars wide):
-    ┌──────────────────────────────────────────────────────────────────────────────────────┐
-    │                         ITER Discovery                                               │
-    │                     Focus: equilibrium codes                                         │
-    ├──────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────────  1,234  42%  77.1/s   │
-    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━─────────────────────────────────    892  28%   3.2/s   │
-    ├──────────────────────────────────────────────────────────────────────────────────────┤
-    │  /gss/work/imas/codes/chease/src                                                     │
-    │    Scan:  45 files, 3 dirs, code project                                             │
-    │    Score: 0.85 simulation_code                                                       │
-    ├──────────────────────────────────────────────────────────────────────────────────────┤
-    │  COST   ▐████████░░░░░░░░░░░▌  $4.50 / $10.00                                        │
-    │  TIME   ▐██████████████░░░░░▌  12m 30s  ETA 8m                                       │
-    └──────────────────────────────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────────────────────────┐
+    │                         ITER Discovery                                             │
+    │                     Focus: equilibrium codes                                       │
+    ├────────────────────────────────────────────────────────────────────────────────────┤
+    │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────  1,234  42%  77.1/s        │
+    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━─────────────────────────     892  28%   3.2/s        │
+    ├────────────────────────────────────────────────────────────────────────────────────┤
+    │  /gss/work/imas/codes/chease/src                                                   │
+    │    Scan:  45 files, 3 dirs, code project                                           │
+    │    Score: 0.85 simulation_code                                                     │
+    ├────────────────────────────────────────────────────────────────────────────────────┤
+    │  COST   ▐████████░░░░░░░░░░░▌  $4.50 / $10.00                                      │
+    │  TIME   ▐██████████████░░░░░▌  12m 30s  ETA 8m                                     │
+    └────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 100
-    BAR_WIDTH = 45
+    WIDTH = 88
+    BAR_WIDTH = 40
     GAUGE_WIDTH = 20
 
     def __init__(
@@ -785,6 +785,7 @@ class ParallelProgressDisplay:
             self.state.scan_processing = False
 
         # Queue scan results for streaming (tick() handles rate-limited popping)
+        # Apply 0.8 factor to reduce path/idle flickering
         if scan_results:
             items = [
                 ScanItem(
@@ -797,7 +798,8 @@ class ParallelProgressDisplay:
                 )
                 for r in scan_results
             ]
-            self.state.scan_queue.add(items, stats.rate)
+            display_rate = stats.rate * 0.8 if stats.rate else None
+            self.state.scan_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -827,6 +829,7 @@ class ParallelProgressDisplay:
             self.state.score_processing = False
 
         # Queue score results for streaming (tick() handles rate-limited popping)
+        # Apply 0.8 factor to reduce path/idle flickering
         if results:
             items = []
             for r in results:
@@ -844,7 +847,8 @@ class ParallelProgressDisplay:
                         terminal_reason=r.get("terminal_reason", ""),
                     )
                 )
-            self.state.score_queue.add(items, stats.rate)
+            display_rate = stats.rate * 0.8 if stats.rate else None
+            self.state.score_queue.add(items, display_rate)
 
         self._refresh()
 
