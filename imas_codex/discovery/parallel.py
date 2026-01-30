@@ -1212,10 +1212,8 @@ async def enrich_worker(
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 25)
     """
-    from imas_codex.discovery.frontier import (
-        claim_paths_for_enriching,
-        mark_enrichment_complete,
-    )
+    # Use local claim_paths_for_enriching and mark_enrichment_complete
+    # (defined above in this module with root_filter support)
     from imas_codex.discovery.path_enrichment import enrich_paths
 
     loop = asyncio.get_running_loop()
@@ -1299,10 +1297,8 @@ async def rescore_worker(
         on_progress: Progress callback
         batch_size: Paths per rescore operation (default 10)
     """
-    from imas_codex.discovery.frontier import (
-        claim_paths_for_rescoring,
-        mark_rescore_complete,
-    )
+    # Use local claim_paths_for_rescoring and mark_rescore_complete
+    # (defined above in this module with root_filter support)
 
     loop = asyncio.get_running_loop()
 

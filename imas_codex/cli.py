@@ -5942,9 +5942,20 @@ def _run_iterative_discovery(
         log_print(f"Path limit: {limit}")
     if not scan_only:
         log_print(f"Model: {model_name}")
-    log_print(
-        f"Workers: {effective_scan_workers} scan, {effective_score_workers} score"
-    )
+
+    # Build worker count display - show all active workers
+    # Default counts from run_parallel_discovery: expand=1, enrich=1, rescore=1
+    worker_parts = []
+    if not score_only and effective_scan_workers > 0:
+        worker_parts.append(f"{effective_scan_workers} scan")
+    if not score_only:
+        worker_parts.append("1 expand")  # Default from run_parallel_discovery
+    if not scan_only and effective_score_workers > 0:
+        worker_parts.append(f"{effective_score_workers} score")
+    if not scan_only:
+        worker_parts.append("1 enrich")  # Default from run_parallel_discovery
+        worker_parts.append("1 rescore")  # Default from run_parallel_discovery
+    log_print(f"Workers: {', '.join(worker_parts)}")
     if focus and not scan_only:
         log_print(f"Focus: {focus}")
 
