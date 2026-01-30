@@ -1445,28 +1445,38 @@ classes:
   FacilitySignal:
     description: >-
       A native data accessor at a facility. Minimal node containing only
-      the information needed to fetch data.
+      the information needed to fetch data. Facility-agnostic design supports
+      MDSplus, IMAS, HDF5, CSV, REST APIs, and other data systems.
       
       ID format: facility:category/signal_name[:variant]
       Examples:
         - tcv:equilibrium/plasma_current (primary via tcv_eq)
         - tcv:equilibrium/plasma_current:liuqe (explicit source)
-        - tcv:bolometry/radiated_power
         - jet:ppf/magn/ipla
+        - iter:imas/core_profiles/profiles_1d/0/electrons/density_thermal
       
       Required relationships:
         - FACILITY_ID -> Facility
-        - HAS_UNIT -> Unit (units of the returned data)
-        - USES_ACCESS_METHOD -> AccessMethod (code generation template)
+        - ACCESS_METHOD -> AccessMethod (code generation template)
       
       Optional relationships:
+        - HAS_UNIT -> Unit (units of the returned data)
         - MEASURES -> StandardName (cross-facility semantic linking)
         - VALID_FOR -> ShotRange (shot validity range)
+        - DISCOVERED_IN -> FacilityPath (where this signal was found)
       
       Code generation pattern:
         1. Query FacilitySignal by id or aliases
-        2. Get AccessMethod via USES_ACCESS_METHOD
-        3. Substitute {shot}, {tree}, {accessor} in templates
+        2. Get AccessMethod via ACCESS_METHOD relationship
+        3. Substitute placeholders in templates using signal's accessor
+      
+      Signal discovery automation:
+        Signals can be discovered through multiple channels:
+        - MDSplus: tree traversal, TDI introspection, wiki scraping
+        - IMAS: IDS structure introspection, mapping files
+        - Documentation: parsing facility wiki/docs for signal references
+        - Code analysis: extracting accessor calls from ingested source files
+        The discovery_source field tracks provenance for each signal.
     class_uri: facility:FacilitySignal
     attributes:
       id:
@@ -1480,33 +1490,69 @@ classes:
         description: Parent facility
         required: true
         range: Facility
+      name:
+        description: >-
+          Human-readable signal name for display.
+          E.g., "Plasma Current", "Electron Temperature Profile"
       aliases:
         description: >-
           Alternative names for fuzzy search. Include common abbreviations,
-          parameter names from TDI functions, and legacy names.
+          parameter names, accessor function args, and legacy names.
           E.g., ["i_p", "ip", "Ip", "I_PL", "plasma current"]
         multivalued: true
-      full_path:
-        description: >-
-          Resolved MDSplus node path for direct tree access.
-          E.g., "\RESULTS::TOP.EQUIL_1.RESULTS:I_PL"
       accessor:
         description: >-
-          TDI expression or accessor call. Preferred over full_path when
-          the TDI function handles source selection.
-          Examples: "tcv_eq('i_p')", "ppf::signal('MAGN','IPLA')"
+          Native accessor expression for this facility's data system.
+          For MDSplus: TDI expression like "tcv_eq('i_p')"
+          For IMAS: IDS path like "core_profiles/profiles_1d/0/electrons/density_thermal"
+          For HDF5: path like "/diagnostics/magnetics/ip"
+          For REST: endpoint like "/api/v1/signals/plasma_current"
         required: true
-      tree:
-        description: MDSplus tree name (e.g., "tcv_shot", "ppf")
+      access_method:
+        description: >-
+          AccessMethod that provides code generation templates for this signal.
+          Required relationship - every signal must link to an access method.
+        required: true
+        range: AccessMethod
+      # Data system specific fields (optional, populated based on facility)
+      data_source:
+        description: >-
+          Data source identifier within the access system.
+          For MDSplus: tree name (e.g., "tcv_shot", "ppf", "results")
+          For IMAS: machine name or database
+          For HDF5: filename pattern
+      native_path:
+        description: >-
+          Full native path for direct access (optional).
+          For MDSplus: node path like "\\RESULTS::TOP.EQUIL_1.RESULTS:I_PL"
+          For HDF5: full path in file
       description:
         description: Human-readable description of what this signal measures
+      category:
+        description: >-
+          Physics/diagnostic category for organization.
+          E.g., "equilibrium", "magnetics", "bolometry", "thomson_scattering"
       is_primary:
         description: True if this is the default accessor for this quantity at this facility
         range: boolean
         ifabsent: "true"
+      # Discovery and validation
       example_shot:
-        description: Known-good shot for testing
+        description: Known-good shot/pulse for testing
         range: integer
+      discovery_source:
+        description: >-
+          How this signal was discovered.
+          E.g., "tree_traversal", "wiki_scrape", "code_analysis", "manual", "imas_dd"
+      discovered_at:
+        description: When this signal was discovered
+        range: datetime
+      validated:
+        description: Whether this signal has been tested with example_shot
+        range: boolean
+        ifabsent: "false"
+      validation_error:
+        description: Error message if validation failed
 
   AccessMethod:
     description: >-
@@ -1516,52 +1562,93 @@ classes:
       An agent discovering how to access data should:
         1. Query FacilitySignal nodes for the desired quantity
         2. Follow USES_ACCESS_METHOD to get the code template
-        3. Substitute {shot}, {tree}, {accessor} placeholders
+        3. Substitute placeholders in templates using signal's accessor
       
-      Supports both local (Tree) and remote (Connection) access patterns.
+      Supports multiple access patterns:
+        - MDSplus local: Tree() on same machine
+        - MDSplus remote: Connection() for cross-network
+        - IMAS: imas.DBEntry for IDS access
+        - HDF5: h5py file access
+        - REST: HTTP API calls
     class_uri: facility:AccessMethod
     attributes:
       id:
         identifier: true
         description: >-
-          Unique method ID: facility:library:pattern
-          E.g., tcv:mdsplus:tree_tdi, jet:ppf:getdata
+          Unique method ID: facility:system:pattern
+          E.g., tcv:mdsplus:tree_tdi, iter:imas:ids_get, jet:rest:sal_api
         required: true
       facility_id:
         description: Parent facility
         required: true
         range: Facility
+      name:
+        description: Human-readable name (e.g., "MDSplus TDI Local", "IMAS IDS Access")
+      method_type:
+        description: >-
+          Data system type. Used for discovery automation.
+          E.g., "mdsplus", "imas", "hdf5", "rest", "sql", "csv"
+        required: true
       library:
         description: >-
           Python module/package name to import.
-          E.g., "MDSplus", "ppf", "sal", "imas"
+          E.g., "MDSplus", "imas", "h5py", "requests"
         required: true
       access_type:
         description: >-
-          "local" = Tree() for same-machine access
-          "remote" = Connection() for cross-network access
+          "local" = on-machine access (e.g., Tree())
+          "remote" = network access (e.g., Connection(), HTTP)
+          "ssh" = access via SSH tunnel
         required: true
+      # Code generation templates with placeholders
+      imports_template:
+        description: >-
+          Python import statements.
+          Example: "import MDSplus\nimport numpy as np"
       connection_template:
         description: >-
-          Python code to establish connection/open tree.
-          Placeholders: {server}, {tree}, {shot}
-          Example: "tree = MDSplus.Tree('{tree}', {shot}, 'readonly')"
+          Python code to establish connection/open data source.
+          Placeholders: {server}, {data_source}, {shot}, {user}, {database}
+          MDSplus: "tree = MDSplus.Tree('{data_source}', {shot}, 'readonly')"
+          IMAS: "entry = imas.DBEntry(imas.imasdef.MDSPLUS_BACKEND, '{database}', {shot}, 1)"
+          HDF5: "f = h5py.File('{data_source}'.format(shot={shot}), 'r')"
         required: true
       data_template:
         description: >-
-          Python code to retrieve data.
-          Placeholder: {accessor}
-          Example: "data = tree.tdiExecute('data({accessor})')"
+          Python code to retrieve data array.
+          Placeholder: {accessor}, {data_source}
+          MDSplus: "data = tree.tdiExecute('data({accessor})').data()"
+          IMAS: "data = entry.get('{accessor}')"
+          HDF5: "data = f['{accessor}'][:]"
         required: true
       time_template:
         description: >-
-          Python code to retrieve time axis.
+          Python code to retrieve time axis. Optional for static data.
           Placeholder: {accessor}
-          Example: "time = tree.tdiExecute('dim_of({accessor})')"
+          MDSplus: "time = tree.tdiExecute('dim_of({accessor})').data()"
+          IMAS: "time = entry.get('{accessor}/../time')"
+      cleanup_template:
+        description: >-
+          Python code to close connections/files.
+          MDSplus: "tree.close()"
+          HDF5: "f.close()"
+      output_format:
+        description: >-
+          How to serialize output for remote execution.
+          "json" = json.dumps(...) for small arrays
+          "numpy" = binary numpy format for large arrays
+          "raw" = return as-is (local only)
+        ifabsent: "json"
+      decimation_template:
+        description: >-
+          Python code for decimation. Applied before serialization.
+          Placeholder: {max_points}
+          Example: "step = max(1, len(data) // {max_points}); data = data[::step]; time = time[::step]"
       full_example:
         description: >-
           Complete working Python code example using this method.
           Should be copy-pasteable with only {shot} substitution.
+          Useful for agent prompts and documentation.
 
   AnalysisCode:
     description: >-
