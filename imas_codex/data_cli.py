@@ -25,13 +25,13 @@ from imas_codex import __version__
 
 PRIVATE_YAML_GLOB = "imas_codex/config/facilities/*_private.yaml"
 PRIVATE_YAML_DIR = Path("imas_codex/config/facilities")
+SERVICES_DIR = Path("imas_codex/config/services")
 RECOVERY_DIR = Path.home() / ".local" / "share" / "imas-codex" / "recovery"
 DATA_DIR = Path.home() / ".local" / "share" / "imas-codex" / "neo4j"
 NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
 GIST_ID_FILE = Path.home() / ".config" / "imas-codex" / "private-gist-id"
 LOCAL_GRAPH_MANIFEST = Path.home() / ".config" / "imas-codex" / "graph-manifest.json"
 NEO4J_LOCK_FILE = Path.home() / ".config" / "imas-codex" / "neo4j-operation.lock"
-LOCAL_CONFIG_FILE = Path("imas_codex/config/local.yaml")
 
 
 # ============================================================================
@@ -323,10 +323,11 @@ def login_to_ghcr(token: str | None) -> None:
 
 
 def get_private_files() -> list[Path]:
-    """Get list of private YAML files including local.yaml."""
+    """Get list of private YAML files and service configs."""
     files = list(Path(".").glob(PRIVATE_YAML_GLOB))
-    if LOCAL_CONFIG_FILE.exists():
-        files.append(LOCAL_CONFIG_FILE)
+    # Add service configs (systemd, launchd, etc.)
+    if SERVICES_DIR.exists():
+        files.extend(SERVICES_DIR.glob("*"))
     return files
 
 
@@ -1106,10 +1107,10 @@ def data_push(
     dry_run: bool,
     skip_private: bool,
 ) -> None:
-    """Push graph archive to GHCR and private YAML to Gist.
+    """Push graph archive to GHCR and private configs to Gist.
 
     Auto-detects fork and pushes to your GHCR registry.
-    Also syncs private YAML files (local.yaml, *_private.yaml) to GitHub Gist.
+    Also syncs private files (*_private.yaml, services/*) to GitHub Gist.
     Requires clean git state for release pushes.
 
     Examples:
@@ -1225,10 +1226,10 @@ def data_pull(
     no_backup: bool,
     skip_private: bool,
 ) -> None:
-    """Pull graph archive from GHCR and private YAML from Gist.
+    """Pull graph archive from GHCR and private configs from Gist.
 
     Neo4j is automatically stopped/restarted during load.
-    Also pulls private YAML files from GitHub Gist (with diff preview).
+    Also pulls private files (*_private.yaml, services/*) from Gist.
 
     Safety: Refuses to overwrite existing graph unless:
     - Graph was previously pushed (tracked in manifest), or
