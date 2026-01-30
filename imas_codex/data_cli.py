@@ -30,6 +30,146 @@ DATA_DIR = Path.home() / ".local" / "share" / "imas-codex" / "neo4j"
 NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
 GIST_ID_FILE = Path.home() / ".config" / "imas-codex" / "private-gist-id"
 LOCAL_GRAPH_MANIFEST = Path.home() / ".config" / "imas-codex" / "graph-manifest.json"
+NEO4J_LOCK_FILE = Path.home() / ".config" / "imas-codex" / "neo4j-operation.lock"
+LOCAL_CONFIG_FILE = Path("imas_codex/config/local.yaml")
+
+
+# ============================================================================
+# Neo4j Operation Context Manager
+# ============================================================================
+
+
+class Neo4jOperation:
+    """Context manager for Neo4j operations requiring stop/start.
+
+    Handles:
+    - Checking for concurrent operations (via lock file)
+    - Stopping Neo4j if running
+    - Performing the operation
+    - Restarting Neo4j if it was running
+
+    Usage:
+        with Neo4jOperation("dump graph") as op:
+            if op.acquired:
+                # Do operation...
+                pass
+    """
+
+    def __init__(self, operation_name: str, require_stopped: bool = True):
+        self.operation_name = operation_name
+        self.require_stopped = require_stopped
+        self.acquired = False
+        self.was_running = False
+        self._lock_file: Path = NEO4J_LOCK_FILE
+
+    def __enter__(self) -> "Neo4jOperation":
+        # Check for existing lock
+        if self._lock_file.exists():
+            lock_info = json.loads(self._lock_file.read_text())
+            pid = lock_info.get("pid")
+            operation = lock_info.get("operation", "unknown")
+            started = lock_info.get("started", "unknown")
+
+            # Check if process is still running
+            if pid and self._process_exists(pid):
+                raise click.ClickException(
+                    f"Another operation is in progress:\n"
+                    f"  Operation: {operation}\n"
+                    f"  Started: {started}\n"
+                    f"  PID: {pid}\n\n"
+                    f"If the process crashed, remove lock: rm {self._lock_file}"
+                )
+            else:
+                # Stale lock, remove it
+                self._lock_file.unlink()
+
+        # Acquire lock
+        self._lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_info = {
+            "operation": self.operation_name,
+            "pid": os.getpid(),
+            "started": datetime.now(UTC).isoformat(),
+        }
+        self._lock_file.write_text(json.dumps(lock_info))
+        self.acquired = True
+
+        # Stop Neo4j if needed
+        if self.require_stopped and is_neo4j_running():
+            self.was_running = True
+            click.echo(f"Stopping Neo4j for {self.operation_name}...")
+            self._stop_neo4j()
+
+            # Wait for stop
+            import time
+
+            for _ in range(30):
+                if not is_neo4j_running():
+                    break
+                time.sleep(1)
+            else:
+                self._release_lock()
+                raise click.ClickException("Failed to stop Neo4j within 30 seconds")
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        try:
+            # Restart Neo4j if it was running
+            if self.was_running:
+                click.echo("Restarting Neo4j...")
+                self._start_neo4j()
+        finally:
+            self._release_lock()
+        return False
+
+    def _process_exists(self, pid: int) -> bool:
+        """Check if a process with given PID exists."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    def _stop_neo4j(self) -> None:
+        """Stop Neo4j via systemd or pkill."""
+        # Try systemd first
+        result = subprocess.run(
+            ["systemctl", "--user", "stop", "imas-codex-neo4j"],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            return
+
+        # Fallback to pkill
+        subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
+
+    def _start_neo4j(self) -> None:
+        """Start Neo4j via systemd or direct command."""
+        # Try systemd first
+        result = subprocess.run(
+            ["systemctl", "--user", "start", "imas-codex-neo4j"],
+            capture_output=True,
+        )
+        if result.returncode == 0:
+            # Wait for startup
+            import time
+
+            for _ in range(30):
+                if is_neo4j_running():
+                    click.echo("Neo4j ready")
+                    return
+                time.sleep(1)
+            click.echo("Warning: Neo4j may still be starting")
+            return
+
+        # Fallback to direct start (would need to invoke db_start)
+        click.echo("Note: Restart Neo4j manually: imas-codex data db start")
+
+    def _release_lock(self) -> None:
+        """Release the lock file."""
+        if self._lock_file.exists():
+            self._lock_file.unlink()
+        self.acquired = False
 
 
 def get_git_info() -> dict:
@@ -785,21 +925,18 @@ def private_status() -> None:
     type=click.Path(),
     help="Output archive path (default: imas-codex-graph-{version}.tar.gz)",
 )
-def data_dump(output: str | None) -> None:
+@click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after dump")
+def data_dump(output: str | None, no_restart: bool) -> None:
     """Export graph database to archive.
 
     Creates a tarball containing the Neo4j database dump.
-    Neo4j must be stopped before dumping.
+    Automatically stops Neo4j, dumps, and restarts.
 
     Examples:
         imas-codex data dump
         imas-codex data dump -o backup.tar.gz
+        imas-codex data dump --no-restart
     """
-    if is_neo4j_running():
-        raise click.ClickException(
-            "Neo4j is running. Stop it first: imas-codex data db stop"
-        )
-
     require_apptainer()
 
     git_info = get_git_info()
@@ -810,34 +947,38 @@ def data_dump(output: str | None) -> None:
     else:
         output_path = Path(f"imas-codex-graph-{version_label}.tar.gz")
 
-    click.echo(f"Creating archive: {output_path}")
+    with Neo4jOperation("graph dump", require_stopped=True) as op:
+        if no_restart:
+            op.was_running = False  # Don't restart
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        archive_dir = tmp / f"imas-codex-graph-{version_label}"
-        archive_dir.mkdir()
+        click.echo(f"Creating archive: {output_path}")
 
-        # Dump graph
-        click.echo("  Dumping graph database...")
-        dumps_dir = DATA_DIR / "dumps"
-        dumps_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            archive_dir = tmp / f"imas-codex-graph-{version_label}"
+            archive_dir.mkdir()
 
-        cmd = [
-            "apptainer",
-            "exec",
-            "--bind",
-            f"{DATA_DIR}/data:/data",
-            "--bind",
-            f"{dumps_dir}:/dumps",
-            "--writable-tmpfs",
-            str(NEO4J_IMAGE),
-            "neo4j-admin",
-            "database",
-            "dump",
-            "neo4j",
-            "--to-path=/dumps",
-            "--overwrite-destination=true",
-        ]
+            # Dump graph
+            click.echo("  Dumping graph database...")
+            dumps_dir = DATA_DIR / "dumps"
+            dumps_dir.mkdir(parents=True, exist_ok=True)
+
+            cmd = [
+                "apptainer",
+                "exec",
+                "--bind",
+                f"{DATA_DIR}/data:/data",
+                "--bind",
+                f"{dumps_dir}:/dumps",
+                "--writable-tmpfs",
+                str(NEO4J_IMAGE),
+                "neo4j-admin",
+                "database",
+                "dump",
+                "neo4j",
+                "--to-path=/dumps",
+                "--overwrite-destination=true",
+            ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise click.ClickException(f"Graph dump failed: {result.stderr}")
@@ -871,81 +1012,82 @@ def data_dump(output: str | None) -> None:
 @data.command("load")
 @click.argument("archive", type=click.Path(exists=True))
 @click.option("--force", is_flag=True, help="Overwrite existing data")
-def data_load(archive: str, force: bool) -> None:
+@click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
+def data_load(archive: str, force: bool, no_restart: bool) -> None:
     """Load graph database from archive.
 
-    Neo4j must be stopped before loading.
+    Automatically stops Neo4j, loads, and restarts.
 
     Examples:
         imas-codex data load imas-codex-graph-v1.0.0.tar.gz
+        imas-codex data load backup.tar.gz --no-restart
     """
-    if is_neo4j_running():
-        raise click.ClickException(
-            "Neo4j is running. Stop it first: imas-codex data db stop"
-        )
-
     require_apptainer()
 
     archive_path = Path(archive)
     click.echo(f"Loading archive: {archive_path}")
 
-    backup_existing_data("pre-load")
+    with Neo4jOperation("graph load", require_stopped=True) as op:
+        if no_restart:
+            op.was_running = False
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
+        backup_existing_data("pre-load")
 
-        click.echo("  Extracting archive...")
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmp)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
 
-        extracted_dirs = list(tmp.iterdir())
-        if not extracted_dirs:
-            raise click.ClickException("Empty archive")
-        archive_dir = extracted_dirs[0]
+            click.echo("  Extracting archive...")
+            with tarfile.open(archive_path, "r:gz") as tar:
+                tar.extractall(tmp)
 
-        # Read manifest
-        manifest_file = archive_dir / "manifest.json"
-        if manifest_file.exists():
-            manifest = json.loads(manifest_file.read_text())
-            click.echo(f"  Version: {manifest.get('version')}")
-            click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
+            extracted_dirs = list(tmp.iterdir())
+            if not extracted_dirs:
+                raise click.ClickException("Empty archive")
+            archive_dir = extracted_dirs[0]
 
-        # Load graph
-        graph_dump = archive_dir / "graph.dump"
-        if graph_dump.exists():
-            click.echo("  Loading graph database...")
-            dumps_dir = DATA_DIR / "dumps"
-            dumps_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy(graph_dump, dumps_dir / "neo4j.dump")
+            # Read manifest
+            manifest_file = archive_dir / "manifest.json"
+            if manifest_file.exists():
+                manifest = json.loads(manifest_file.read_text())
+                click.echo(f"  Version: {manifest.get('version')}")
+                click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
 
-            cmd = [
-                "apptainer",
-                "exec",
-                "--bind",
-                f"{DATA_DIR}/data:/data",
-                "--bind",
-                f"{dumps_dir}:/dumps",
-                "--writable-tmpfs",
-                str(NEO4J_IMAGE),
-                "neo4j-admin",
-                "database",
-                "load",
-                "neo4j",
-                "--from-path=/dumps",
-                "--overwrite-destination=true",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise click.ClickException(f"Graph load failed: {result.stderr}")
+            # Load graph
+            graph_dump = archive_dir / "graph.dump"
+            if graph_dump.exists():
+                click.echo("  Loading graph database...")
+                dumps_dir = DATA_DIR / "dumps"
+                dumps_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(graph_dump, dumps_dir / "neo4j.dump")
 
-        # Save manifest for loaded graph (not pushed until explicitly pushed)
-        if manifest_file.exists():
-            manifest = json.loads(manifest_file.read_text())
-            manifest["pushed"] = False  # Local load = needs push to backup
-            manifest["loaded_from"] = str(archive_path)
-            save_local_graph_manifest(manifest)
+                cmd = [
+                    "apptainer",
+                    "exec",
+                    "--bind",
+                    f"{DATA_DIR}/data:/data",
+                    "--bind",
+                    f"{dumps_dir}:/dumps",
+                    "--writable-tmpfs",
+                    str(NEO4J_IMAGE),
+                    "neo4j-admin",
+                    "database",
+                    "load",
+                    "neo4j",
+                    "--from-path=/dumps",
+                    "--overwrite-destination=true",
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise click.ClickException(f"Graph load failed: {result.stderr}")
 
-    click.echo("✓ Load complete. Start Neo4j: imas-codex data db start")
+            # Save manifest for loaded graph (not pushed until explicitly pushed)
+            if manifest_file.exists():
+                manifest = json.loads(manifest_file.read_text())
+                manifest["pushed"] = False  # Local load = needs push to backup
+                manifest["loaded_from"] = str(archive_path)
+                save_local_graph_manifest(manifest)
+
+    click.echo("✓ Load complete")
 
 
 @data.command("push")
@@ -981,21 +1123,14 @@ def data_push(
 
     if dry_run:
         click.echo("\n[DRY RUN] Would:")
-        click.echo("  1. Stop Neo4j, dump graph")
+        click.echo("  1. Dump graph (auto stop/start Neo4j)")
         click.echo(f"  2. Push to {target_registry}/imas-codex-graph:{version_tag}")
         return
 
     archive_path = Path(f"imas-codex-graph-{version_tag}.tar.gz")
 
-    neo4j_was_running = is_neo4j_running()
-    if neo4j_was_running:
-        click.echo("Stopping Neo4j...")
-        subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
-        import time
-
-        time.sleep(2)
-
     try:
+        # data_dump uses Neo4jOperation internally for stop/start
         from click.testing import CliRunner
 
         runner = CliRunner()
@@ -1045,12 +1180,6 @@ def data_push(
             click.echo("✓ Tagged as latest")
 
     finally:
-        if neo4j_was_running:
-            from click.testing import CliRunner
-
-            runner = CliRunner()
-            runner.invoke(db_start, [])
-
         if archive_path.exists():
             archive_path.unlink()
 
@@ -1066,6 +1195,8 @@ def data_pull(
 ) -> None:
     """Pull graph archive from GHCR and load.
 
+    Neo4j is automatically stopped/restarted during load.
+
     Safety: Refuses to overwrite existing graph unless:
     - Graph was previously pushed (tracked in manifest), or
     - --force is specified
@@ -1076,11 +1207,6 @@ def data_pull(
         imas-codex data pull --force         # Overwrite without checks
     """
     require_oras()
-
-    if is_neo4j_running():
-        raise click.ClickException(
-            "Neo4j is running. Stop it first: imas-codex data db stop"
-        )
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)

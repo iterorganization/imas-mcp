@@ -2306,7 +2306,7 @@ def release(
                 raise
             except Exception as e:
                 click.echo(f"Warning: Could not validate graph: {e}", err=True)
-                click.echo("  Is Neo4j running? Check with: imas-codex neo4j status")
+                click.echo("  Is Neo4j running? Check with: imas-codex data db status")
         else:
             click.echo("  [would validate no private fields in graph]")
 
@@ -2345,57 +2345,36 @@ def release(
                         f"Warning: Could not update graph metadata: {e}", err=True
                     )
                     click.echo(
-                        "  Is Neo4j running? Check with: imas-codex neo4j status"
+                        "  Is Neo4j running? Check with: imas-codex data db status"
                     )
             else:
                 click.echo("  [would update _GraphMeta node in graph]")
 
-            # Step 3: Dump graph
-            click.echo("\nStep 3: Dumping graph...")
+            # Step 3: Dump and push graph (unified via data CLI)
+            click.echo("\nStep 3: Dumping and pushing graph...")
             if not dry_run:
-                click.echo("  Stopping Neo4j for dump...")
-                subprocess.run(
-                    ["uv", "run", "imas-codex", "neo4j", "stop"],
-                    capture_output=True,
-                )
-                dump_file = f"imas-codex-graph-{version_number}.dump"
+                # data push handles dump + push with auto stop/start
                 result = subprocess.run(
-                    ["uv", "run", "imas-codex", "neo4j", "dump", "-o", dump_file],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode != 0:
-                    click.echo(f"Error dumping graph: {result.stderr}", err=True)
-                    raise SystemExit(1)
-                click.echo(f"  Dumped to: {dump_file}")
-            else:
-                click.echo(f"  [would dump to: imas-codex-graph-{version_number}.dump]")
-
-            # Step 4: Push to GHCR
-            click.echo("\nStep 4: Pushing graph to GHCR...")
-            if not dry_run:
-                result = subprocess.run(
-                    ["uv", "run", "imas-codex", "neo4j", "push", version],
+                    ["uv", "run", "imas-codex", "data", "push"],
                     capture_output=True,
                     text=True,
                 )
                 if result.returncode != 0:
                     click.echo(f"Error pushing graph: {result.stderr}", err=True)
-                    click.echo("  You may need to set GHCR_TOKEN")
+                    click.echo(result.stdout)
+                    click.echo("\n  Check: GHCR_TOKEN set, Neo4j running")
                     raise SystemExit(1)
-                click.echo(
-                    f"  Pushed to ghcr.io/iterorganization/imas-codex-graph:{version}"
-                )
+                click.echo(f"  Pushed to GHCR (version: {version})")
+                click.echo("  (Neo4j was auto-stopped/restarted)")
             else:
-                click.echo(
-                    f"  [would push to ghcr.io/iterorganization/imas-codex-graph:{version}]"
-                )
+                click.echo("  [would dump and push graph to GHCR]")
+                click.echo("  [Neo4j would be auto-stopped/restarted]")
         else:
-            click.echo("\nStep 2-4: Skipped (--skip-graph)")
+            click.echo("\nStep 2-3: Skipped (--skip-graph)")
 
-        # Step 5: Git tag
+        # Step 4: Git tag
         if not skip_git:
-            click.echo("\nStep 5: Create and push git tag...")
+            click.echo("\nStep 4: Create and push git tag...")
             if not dry_run:
                 result = subprocess.run(
                     ["git", "tag", "-a", version, "-m", message],
@@ -2424,7 +2403,7 @@ def release(
                 click.echo(f"  [would create tag: {version}]")
                 click.echo("  [would push tag to: upstream]")
         else:
-            click.echo("\nStep 5: Skipped (--skip-git)")
+            click.echo("\nStep 4: Skipped (--skip-git)")
 
         click.echo()
         if dry_run:
