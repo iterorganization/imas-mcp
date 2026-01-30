@@ -54,6 +54,38 @@ DATA_PURPOSES = {"experimental_data", "modeling_data"}
 SKIP_PATTERNS_PURPOSES = {"container", "system", "build_artifact", "archive"}
 
 
+# ============================================================================
+# Categorized Data Access Patterns
+# ============================================================================
+# Goal: Discover how data is accessed NATIVELY at each facility.
+# We intentionally weight all data systems equally - IMAS is just one option.
+# Understanding native patterns helps design better integration strategies.
+
+# Pattern categories for data access detection
+# Each category is searched independently to provide a breakdown
+PATTERN_CATEGORIES = {
+    # Native/facility-specific data access (highest priority - this is what we want to discover)
+    "mdsplus": r"mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree",
+    "ppf": r"ppf\.read|ppfget|jet\.ppf|ppfgo|ppfuid",  # JET PPF system
+    "ufile": r"ufile\.read|read_ufile|ufiles|rdufile",  # UFILE format
+    # Standard scientific formats
+    "hdf5": r"h5py\.File|hdf5|create_dataset|to_hdf|\.h5",
+    "netcdf": r"netCDF4|xr\.open|xarray\.open|to_netcdf|\.nc",
+    # Equilibrium formats
+    "eqdsk": r"read_eqdsk|load_eqdsk|from_eqdsk|write_eqdsk|to_eqdsk|geqdsk",
+    # Standard formats
+    "pickle": r"pickle\.load|pickle\.dump|\.pkl",
+    "csv": r"\.csv|read_csv|to_csv|csv\.reader|csv\.writer",
+    "mat": r"scipy\.io\.loadmat|savemat|sio\.loadmat|\.mat",
+    # IMAS (one of many options, not privileged)
+    "imas": r"imas\.database|get_ids|put_slice|ids\.put|imas\.create|get_slice",
+}
+
+# Read vs Write pattern suffixes (for determining data flow direction)
+READ_SUFFIXES = r"read|load|open|get|from|import|fetch"
+WRITE_SUFFIXES = r"write|save|put|create|to|export|dump"
+
+
 def sanitize_str(s: str) -> str:
     """Remove surrogate characters that cannot be encoded as JSON."""
     return s.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
@@ -68,24 +100,36 @@ def has_command(cmd: str) -> bool:
     return False
 
 
-# Simplified patterns for format detection (kept short to avoid arg length issues)
-READ_PATTERN = (
-    r"read_eqdsk|load_eqdsk|from_eqdsk|"
-    r"mdsconnect|mdsopen|MDSplus|TdiExecute|"
-    r"h5py\.File|netCDF4|hdf5|"
-    r"xr\.open|xarray\.open|"
-    r"json\.load|pickle\.load|"
-    r"imas\.database|get_ids|get_slice|"
-    r"ppf\.read|ppfget"
-)
+def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
+    """Count matches for a pattern using rg.
 
-WRITE_PATTERN = (
-    r"put_slice|ids\.put|imas\.create|"
-    r"to_hdf|hdf5\.write|create_dataset|"
-    r"to_netcdf|netcdf\.create|"
-    r"json\.dump|pickle\.dump|"
-    r"write_eqdsk|to_eqdsk"
-)
+    Args:
+        path: Directory to search
+        pattern: Regex pattern to search for
+        timeout: Command timeout in seconds
+
+    Returns:
+        Total match count across all files
+    """
+    try:
+        proc = subprocess.run(
+            ["rg", "-c", "--no-messages", "--max-depth", "3", "-e", pattern, path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            total = 0
+            for line in proc.stdout.strip().split("\n"):
+                if ":" in line:
+                    try:
+                        total += int(line.rsplit(":", 1)[-1])
+                    except ValueError:
+                        pass
+            return total
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+    return 0
 
 
 def enrich_directory(
@@ -103,6 +147,9 @@ def enrich_directory(
     - Container/system: Minimal enrichment (size only)
     - Code: Full analysis
 
+    Returns pattern_categories dict with per-category match counts,
+    allowing discovery of native data access patterns at each facility.
+
     Args:
         path: Directory path to enrich
         has_rg: Whether rg command is available
@@ -111,7 +158,7 @@ def enrich_directory(
         purpose: Path purpose category (e.g., "modeling_code", "documentation")
 
     Returns:
-        Dict with path, pattern matches, size, and lines of code
+        Dict with path, pattern_categories, size, and lines of code
     """
     result: dict[str, Any] = {"path": sanitize_str(path)}
 
@@ -128,65 +175,31 @@ def enrich_directory(
     skip_code_patterns = purpose in DOC_PURPOSES
     skip_loc = purpose in DATA_PURPOSES
 
-    # Pattern matching with rg (skip for docs/containers)
+    # Categorized pattern matching with rg (skip for docs/containers)
+    pattern_categories: dict[str, int] = {}
     read_matches = 0
     write_matches = 0
 
     if has_rg and not skip_patterns and not skip_code_patterns:
-        # Count read pattern matches
-        try:
-            proc = subprocess.run(
-                [
-                    "rg",
-                    "-c",
-                    "--no-messages",
-                    "--max-depth",
-                    "3",
-                    "-e",
-                    READ_PATTERN,
-                    path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                for line in proc.stdout.strip().split("\n"):
-                    if ":" in line:
-                        try:
-                            read_matches += int(line.rsplit(":", 1)[-1])
-                        except ValueError:
-                            pass
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+        # Search each pattern category independently
+        for category, pattern in PATTERN_CATEGORIES.items():
+            matches = count_pattern_matches(path, pattern)
+            if matches > 0:
+                pattern_categories[category] = matches
+                # Classify as read or write based on pattern content
+                # This is approximate but helps understand data flow
+                if any(
+                    r in pattern.lower()
+                    for r in ["read", "load", "open", "get", "from"]
+                ):
+                    read_matches += matches
+                if any(
+                    w in pattern.lower()
+                    for w in ["write", "save", "put", "create", "to"]
+                ):
+                    write_matches += matches
 
-        # Count write pattern matches
-        try:
-            proc = subprocess.run(
-                [
-                    "rg",
-                    "-c",
-                    "--no-messages",
-                    "--max-depth",
-                    "3",
-                    "-e",
-                    WRITE_PATTERN,
-                    path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                for line in proc.stdout.strip().split("\n"):
-                    if ":" in line:
-                        try:
-                            write_matches += int(line.rsplit(":", 1)[-1])
-                        except ValueError:
-                            pass
-        except (subprocess.TimeoutExpired, Exception):
-            pass
-
+    result["pattern_categories"] = pattern_categories
     result["read_matches"] = read_matches
     result["write_matches"] = write_matches
 

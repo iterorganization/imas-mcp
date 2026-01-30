@@ -1688,8 +1688,8 @@ async def run_parallel_discovery(
     root_filter: list[str] | None = None,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
-    num_score_workers: int = 2,  # Reduced: less rate limit contention
-    num_enrich_workers: int = 1,
+    num_score_workers: int = 1,  # Single scorer: rescore also uses LLM (total=2)
+    num_enrich_workers: int = 2,  # Two enrichment workers for parallel SSH
     num_rescore_workers: int = 1,  # Enabled by default for score refinement
     scan_batch_size: int = 50,
     expand_batch_size: int = 50,

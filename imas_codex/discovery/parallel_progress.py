@@ -160,6 +160,9 @@ class EnrichItem:
     write_matches: int = 0  # Format write pattern matches
     languages: list[str] = field(default_factory=list)  # Top languages found
     is_multiformat: bool = False  # True if read+write patterns found
+    pattern_categories: dict[str, int] = field(
+        default_factory=dict
+    )  # Per-category matches (mdsplus, hdf5, imas, etc.)
     error: str | None = None
 
 
@@ -276,6 +279,9 @@ class ProgressState:
     total_read_matches: int = 0
     total_write_matches: int = 0
     multiformat_count: int = 0  # Count of paths with both read+write patterns
+    pattern_category_totals: dict[str, int] = field(
+        default_factory=dict
+    )  # Aggregate per-category pattern counts (mdsplus, hdf5, imas, etc.)
 
     @property
     def elapsed(self) -> float:

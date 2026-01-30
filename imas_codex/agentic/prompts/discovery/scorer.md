@@ -51,10 +51,15 @@ Contents are shown sorted by modification time (most recent first), so you can i
 - `*controller*`, `*feedback*`, `*actuator*` → operations_code
 - `*daq*`, `*acquisition*`, `*pxi*`, `*fpga*` → operations_code
 
-### Data access indicators:
-- `*mdsplus*`, `*mds_*`, `*tdi*` → data_access
-- `*imas_*`, `*ids_*`, `*eqdsk*` → data_access
-- `*reader*`, `*writer*`, `*interface*` → data_access
+### Data access indicators (NATIVE facility data - NOT IMAS):
+- `*mdsplus*`, `*mds_*`, `*tdi*` → data_access (score_data_access HIGH)
+- `*eqdsk*`, `*gfile*`, `*aeqdsk*` → data_access (format-specific)
+- `*reader*`, `*writer*`, `*interface*` → data_access (general I/O)
+- `*shotfile*`, `*pulse*`, `*shot_*` → data_access (shot data handling)
+
+### IMAS-specific indicators (score_imas, NOT score_data_access):
+- `*imas_*`, `*ids_*`, `*imas2*` → score_imas HIGH, path_purpose varies
+- `*put_slice*`, `*get_slice*` → score_imas HIGH (API usage)
 
 ### Skip patterns (classify as archive/build_artifact/system):
 - `__pycache__`, `.venv`, `venv`, `node_modules`, `build`, `dist` → build_artifact
@@ -101,11 +106,12 @@ Each directory is scored on 10 per-purpose dimensions (0.0-1.0 each), aligned wi
 
 ### Infrastructure Dimensions
 
-**score_data_access (0.0-1.0)** - Data access tools
-- **0.9-0.95**: IMAS wrappers, MDSplus readers, format converters
-- **0.7-0.8**: EQDSK readers, TDI expressions, data loaders
-- **0.4-0.6**: Helper utilities for data I/O
+**score_data_access (0.0-1.0)** - Native facility data access (MDSplus, TDI, shotfiles)
+- **0.9-0.95**: Core MDSplus/TDI libraries, native data readers for the facility
+- **0.7-0.8**: EQDSK/gfile converters, format-specific loaders
+- **0.4-0.6**: Helper utilities for data I/O, generic readers
 - **0.0**: No data access code
+- **NOTE**: IMAS wrappers score on score_imas, NOT here
 
 **score_workflow (0.0-1.0)** - Orchestration tools
 - **0.9-0.95**: Shot review pipelines, batch processing frameworks
@@ -130,11 +136,17 @@ Each directory is scored on 10 per-purpose dimensions (0.0-1.0 each), aligned wi
 
 ### Cross-Cutting Dimension
 
-**score_imas (0.0-1.0)** - IMAS relevance (applies to ANY purpose)
+**score_imas (0.0-1.0)** - IMAS relevance (orthogonal to other dimensions)
 - **0.9-0.95**: Direct IMAS integration (put_slice, get_slice, IDS names)
-- **0.7-0.8**: Path contains "imas" or known physics code names
-- **0.4-0.6**: Fusion physics content but no direct IMAS use
+- **0.7-0.8**: Path contains "imas" or known IMAS-related code
+- **0.4-0.6**: Fusion physics content that could map to IMAS
 - **0.0**: No IMAS relevance
+
+**IMPORTANT**: score_imas is INDEPENDENT of score_data_access. A directory with IMAS wrappers should have:
+- HIGH score_imas (0.8+) because it uses IMAS
+- LOW score_data_access (0.0-0.3) unless it ALSO handles native formats (MDSplus, TDI)
+
+This prevents IMAS infrastructure from dominating over native facility data access code, which is our primary discovery target.
 
 ### Purpose-to-Score Mapping
 
