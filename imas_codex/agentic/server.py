@@ -1460,7 +1460,7 @@ class AgentsServer:
                 from imas_codex.discovery import (
                     get_facility_infrastructure as _get_infra,
                 )
-                from imas_codex.graph import get_driver
+                from imas_codex.graph import GraphClient
 
                 # Get configured roots from infrastructure
                 infra = _get_infra(facility) or {}
@@ -1469,56 +1469,53 @@ class AgentsServer:
                 # Get schema context for valid category values
                 schema_ctx = get_schema_context()
 
-                # Get driver for graph queries
-                driver = get_driver()
-
-                # Query coverage by category
-                coverage_query = """
-                    MATCH (p:FacilityPath {facility_id: $facility})
-                    WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
-                    RETURN p.path_purpose AS purpose, count(*) AS count
-                    ORDER BY count DESC
-                """
-                with driver.session() as session:
-                    result = session.run(coverage_query, facility=facility)
+                # Use GraphClient for graph queries
+                with GraphClient() as client:
+                    # Query coverage by category
+                    coverage_query = """
+                        MATCH (p:FacilityPath {facility_id: $facility})
+                        WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
+                        RETURN p.path_purpose AS purpose, count(*) AS count
+                        ORDER BY count DESC
+                    """
+                    coverage_results = client.query(coverage_query, facility=facility)
                     coverage_by_category = {
-                        record["purpose"]: record["count"] for record in result
+                        record["purpose"]: record["count"]
+                        for record in coverage_results
                     }
 
-                # Query high-value paths
-                high_value_query = """
-                    MATCH (p:FacilityPath {facility_id: $facility})
-                    WHERE p.score > 0.7
-                    RETURN p.path AS path, p.path_purpose AS purpose,
-                           p.score AS score, p.description AS description
-                    ORDER BY p.score DESC LIMIT 15
-                """
-                with driver.session() as session:
-                    result = session.run(high_value_query, facility=facility)
-                    high_value_paths = [dict(record) for record in result]
+                    # Query high-value paths
+                    high_value_query = """
+                        MATCH (p:FacilityPath {facility_id: $facility})
+                        WHERE p.score > 0.7
+                        RETURN p.path AS path, p.path_purpose AS purpose,
+                               p.score AS score, p.description AS description
+                        ORDER BY p.score DESC LIMIT 15
+                    """
+                    high_value_paths = client.query(high_value_query, facility=facility)
 
-                # Determine missing categories (expected but not found)
-                expected_categories = [
-                    c["value"] for c in schema_ctx["discovery_categories"]
-                ]
-                found_categories = set(coverage_by_category.keys())
-                missing_categories = [
-                    c for c in expected_categories if c not in found_categories
-                ]
+                    # Determine missing categories (expected but not found)
+                    expected_categories = [
+                        c["value"] for c in schema_ctx["discovery_categories"]
+                    ]
+                    found_categories = set(coverage_by_category.keys())
+                    missing_categories = [
+                        c for c in expected_categories if c not in found_categories
+                    ]
 
-                # Query containers not yet expanded (potential new roots)
-                unexplored_query = """
-                    MATCH (p:FacilityPath {facility_id: $facility})
-                    WHERE p.path_purpose = 'container'
-                          AND p.score > 0.4
-                          AND p.should_expand = false
-                          AND p.terminal_reason IS NULL
-                    RETURN p.path AS path, p.score AS score, p.description AS description
-                    ORDER BY p.score DESC LIMIT 10
-                """
-                with driver.session() as session:
-                    result = session.run(unexplored_query, facility=facility)
-                    unexplored_containers = [dict(record) for record in result]
+                    # Query containers not yet expanded (potential new roots)
+                    unexplored_query = """
+                        MATCH (p:FacilityPath {facility_id: $facility})
+                        WHERE p.path_purpose = 'container'
+                              AND p.score > 0.4
+                              AND p.should_expand = false
+                              AND p.terminal_reason IS NULL
+                        RETURN p.path AS path, p.score AS score, p.description AS description
+                        ORDER BY p.score DESC LIMIT 10
+                    """
+                    unexplored_containers = client.query(
+                        unexplored_query, facility=facility
+                    )
 
                 return {
                     "facility": facility,
