@@ -97,6 +97,18 @@ pwd
 - Single infrastructure updates (use dedicated MCP tools)
 - Simple string operations
 
+### CLI in Chat Sessions
+
+When running CLI commands in chat/agent sessions, **always use `--no-rich`** if available:
+
+```bash
+# Correct - no-rich prevents animation loops in non-TTY contexts
+uv run imas-codex discover paths tcv --no-rich --seed
+
+# Wrong - rich progress bars cause output loops in chat
+uv run imas-codex discover paths tcv --seed
+```
+
 ### Graph Backup
 
 Before ANY operation that modifies or deletes graph nodes:
