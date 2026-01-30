@@ -218,22 +218,24 @@ enums:
       LLM-classified purpose of a directory. Used during discovery scoring
       to determine expansion priority (for containers) or ingestion priority
       (for leaf directories). Score semantics vary by purpose type.
+      
+      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
     permissible_values:
-      # === SIMULATION/MODELING CODE (predictive, offline) ===
+      # === FORWARD MODELING CODE (predictive, offline simulation) ===
       modeling_code:
         description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
-      # === EXPERIMENTAL CODE (facility operations, real-time, diagnostics) ===
-      experimental_code:
-        description: Shot processing, real-time analysis, intershot tools (RAPTOR, real-time MSE)
-      acquisition_code:
-        description: Data acquisition, hardware interfaces, timing systems, DAQ
-      control_code:
-        description: Plasma control systems, real-time controllers, feedback algorithms
-      diagnostic_code:
-        description: Diagnostic analysis pipelines (Thomson, bolometry, interferometry)
-      # === GENERAL CODE CATEGORIES ===
-      data_interface:
-        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK)
+      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
+      analysis_code:
+        description: >-
+          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
+          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
+      operations_code:
+        description: >-
+          Real-time facility operations: control systems, DAQ, hardware interfaces,
+          timing systems, feedback algorithms, actuator commands
+      # === SHARED INFRASTRUCTURE CODE ===
+      data_access:
+        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
       workflow:
         description: Orchestration and batch processing scripts
       visualization:
@@ -241,10 +243,8 @@ enums:
       # === DATA CATEGORIES ===
       experimental_data:
         description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
-      simulation_data:
-        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs)
-      diagnostic_data:
-        description: Raw/calibrated diagnostic measurements (time series, profiles)
+      modeling_data:
+        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
       # === SUPPORT CATEGORIES ===
       documentation:
         description: Docs, papers, tutorials, READMEs

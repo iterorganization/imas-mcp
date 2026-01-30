@@ -1106,10 +1106,10 @@ def mark_paths_scored(
             updated += 1
 
             # Data container child-skip: mark children as skipped if parent is
-            # a data container that shouldn't expand (simulation_data, diagnostic_data)
+            # a data container that shouldn't expand (modeling_data, experimental_data)
             path_purpose = score_data.get("path_purpose")
             should_expand = score_data.get("should_expand", True)
-            data_purposes = {"simulation_data", "diagnostic_data"}
+            data_purposes = {"modeling_data", "experimental_data"}
 
             if path_purpose in data_purposes and not should_expand:
                 # Mark all discovered children as skipped

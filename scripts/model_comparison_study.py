@@ -260,7 +260,7 @@ TEST_DIRECTORIES = [
         "reason": "JOREK MHD stability code",
     },
     # =========================================================================
-    # DIAGNOSTIC CODE (5 cases) - Should score >= 0.5
+    # ANALYSIS CODE (5 cases) - Should score >= 0.5
     # =========================================================================
     {
         "path": "/home/diagnostics/thomson",
@@ -280,7 +280,7 @@ TEST_DIRECTORIES = [
             "data/",
         ],
         "expected_score_min": 0.5,
-        "expected_purpose": "diagnostic_code",
+        "expected_purpose": "analysis_code",
         "reason": "Thomson scattering diagnostic code",
     },
     {
@@ -301,7 +301,7 @@ TEST_DIRECTORIES = [
             "data/",
         ],
         "expected_score_min": 0.5,
-        "expected_purpose": "diagnostic_code",
+        "expected_purpose": "analysis_code",
         "reason": "Bolometry diagnostic analysis",
     },
     {
@@ -322,7 +322,7 @@ TEST_DIRECTORIES = [
             "geometry/",
         ],
         "expected_score_min": 0.5,
-        "expected_purpose": "diagnostic_code",
+        "expected_purpose": "analysis_code",
         "reason": "Soft X-ray diagnostic code",
     },
     {
@@ -343,7 +343,7 @@ TEST_DIRECTORIES = [
             "data/",
         ],
         "expected_score_min": 0.5,
-        "expected_purpose": "diagnostic_code",
+        "expected_purpose": "analysis_code",
         "reason": "Interferometry diagnostic code",
     },
     {
@@ -364,11 +364,11 @@ TEST_DIRECTORIES = [
             "config/",
         ],
         "expected_score_min": 0.5,
-        "expected_purpose": "diagnostic_code",
+        "expected_purpose": "analysis_code",
         "reason": "ECE diagnostic for electron temperature",
     },
     # =========================================================================
-    # DATA INTERFACE (5 cases) - Should score >= 0.6
+    # DATA ACCESS (5 cases) - Should score >= 0.6
     # =========================================================================
     {
         "path": "/home/codes/mdsplus_tools",
@@ -389,7 +389,7 @@ TEST_DIRECTORIES = [
             "examples/",
         ],
         "expected_score_min": 0.7,
-        "expected_purpose": "data_interface",
+        "expected_purpose": "data_access",
         "reason": "MDSplus data access utilities",
     },
     {
@@ -410,7 +410,7 @@ TEST_DIRECTORIES = [
             "tests/",
         ],
         "expected_score_min": 0.7,
-        "expected_purpose": "data_interface",
+        "expected_purpose": "data_access",
         "reason": "EQDSK file format tools for equilibrium",
     },
     {
@@ -432,7 +432,7 @@ TEST_DIRECTORIES = [
             "examples/",
         ],
         "expected_score_min": 0.8,
-        "expected_purpose": "data_interface",
+        "expected_purpose": "data_access",
         "reason": "IDS manipulation tools for IMAS",
     },
     {
@@ -453,7 +453,7 @@ TEST_DIRECTORIES = [
             "tests/",
         ],
         "expected_score_min": 0.8,
-        "expected_purpose": "data_interface",
+        "expected_purpose": "data_access",
         "reason": "Python IMAS interface library",
     },
     {
@@ -473,7 +473,7 @@ TEST_DIRECTORIES = [
             "tests/",
         ],
         "expected_score_min": 0.6,
-        "expected_purpose": "data_interface",
+        "expected_purpose": "data_access",
         "reason": "HDF5 data access utilities",
     },
     # =========================================================================
@@ -586,7 +586,7 @@ TEST_DIRECTORIES = [
         "reason": "Equilibrium and profile visualization tools",
     },
     # =========================================================================
-    # SIMULATION DATA (2 cases) - Should score 0.3-0.5
+    # MODELING DATA (2 cases) - Should score 0.3-0.5
     # =========================================================================
     {
         "path": "/scratch/user/simulations/run_archive",
@@ -605,7 +605,7 @@ TEST_DIRECTORIES = [
             "old/",
         ],
         "expected_score_min": 0.0,
-        "expected_purpose": "simulation_data",
+        "expected_purpose": "modeling_data",
         "reason": "Simulation output archive - data not code",
     },
     {
@@ -624,7 +624,7 @@ TEST_DIRECTORIES = [
             "archive/",
         ],
         "expected_score_min": 0.0,
-        "expected_purpose": "simulation_data",
+        "expected_purpose": "modeling_data",
         "reason": "JINTRAC simulation outputs - data files",
     },
     # =========================================================================

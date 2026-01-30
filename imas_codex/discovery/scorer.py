@@ -590,7 +590,7 @@ class DirectoryScorer:
                 should_expand = False
 
             # CRITICAL: Never expand data containers (too many files)
-            data_purposes = {PathPurpose.simulation_data, PathPurpose.diagnostic_data}
+            data_purposes = {PathPurpose.modeling_data, PathPurpose.experimental_data}
             if purpose in data_purposes:
                 should_expand = False
 

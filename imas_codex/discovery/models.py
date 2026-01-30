@@ -46,17 +46,22 @@ class PathPurposeEnum(str, Enum):
     - Code/data categories: score = ingestion priority
     - Container: score = exploration potential of children
     - Skip categories: always low score, skip subtree
+
+    Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
     """
 
-    # Code categories (ingest based on score)
+    # Forward modeling code (predictive, offline simulation)
     modeling_code = "modeling_code"
-    diagnostic_code = "diagnostic_code"
-    data_interface = "data_interface"
+    # Experimental analysis code (shot processing, diagnostics)
+    analysis_code = "analysis_code"
+    operations_code = "operations_code"
+    # Shared infrastructure code
+    data_access = "data_access"
     workflow = "workflow"
     visualization = "visualization"
     # Data categories
-    simulation_data = "simulation_data"
-    diagnostic_data = "diagnostic_data"
+    experimental_data = "experimental_data"
+    modeling_data = "modeling_data"
     # Support categories
     documentation = "documentation"
     configuration = "configuration"
@@ -121,9 +126,9 @@ class DirectoryScoringResult(BaseModel):
     path: str = Field(description="The directory path (echo from input)")
 
     path_purpose: PathPurposeEnum = Field(
-        description="Classification: modeling_code, diagnostic_code, data_interface, "
-        "workflow, visualization, simulation_data, diagnostic_data, documentation, "
-        "configuration, test_suite, container, archive, build_artifact, system"
+        description="Classification: modeling_code, analysis_code, operations_code, "
+        "data_access, workflow, visualization, experimental_data, modeling_data, "
+        "documentation, configuration, test_suite, container, archive, build_artifact, system"
     )
 
     description: str = Field(
