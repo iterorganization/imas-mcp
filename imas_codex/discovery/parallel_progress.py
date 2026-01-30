@@ -141,7 +141,8 @@ class ScoreItem:
 
     path: str
     score: float | None = None
-    purpose: str = ""
+    purpose: str = ""  # Category: experimental_data, modeling_code, etc.
+    description: str = ""  # LLM reasoning about why this path is valuable
     skipped: bool = False
     skip_reason: str = ""
     should_expand: bool = True  # False = terminal (won't explore children)
@@ -538,14 +539,11 @@ class ParallelProgressDisplay:
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
-                # Show path with category tag for terminal paths (more useful than "terminal")
+                # Show path with terminal indicator
                 path_display = clip_path(score.path, self.WIDTH - 20)
                 section.append(path_display, style="white")
-                if not score.should_expand and score.purpose:
-                    # Show purpose category instead of generic "terminal"
-                    section.append(f" {score.purpose}", style="magenta")
-                elif not score.should_expand:
-                    section.append(" terminal", style="magenta dim")
+                if not score.should_expand:
+                    section.append(" terminal", style="magenta")
                 section.append("\n")
                 # Score details indented below (matching SCAN layout)
                 section.append("    ", style="dim")
@@ -566,17 +564,12 @@ class ParallelProgressDisplay:
                     desc_width = self.WIDTH - 12
 
                     # Build description for line 2
-                    # Terminal paths: show skip_reason (why it won't expand)
-                    # Non-terminal: show purpose/label
-                    if not score.should_expand:
-                        if score.terminal_reason:
-                            # Programmatic terminal reason (empty, access_denied)
-                            desc = score.terminal_reason.replace("_", " ")
-                        elif score.skip_reason:
-                            # LLM-provided skip reason (more descriptive)
-                            desc = clean_text(score.skip_reason)
-                        else:
-                            desc = ""
+                    # Priority: description (LLM reasoning) > purpose (category)
+                    # For terminal paths with terminal_reason (empty, access_denied), show that
+                    if score.terminal_reason:
+                        desc = score.terminal_reason.replace("_", " ")
+                    elif score.description:
+                        desc = clean_text(score.description)
                     elif score.purpose:
                         desc = clean_text(score.purpose)
                     else:
@@ -844,6 +837,7 @@ class ParallelProgressDisplay:
                         path=path,
                         score=r.get("score"),
                         purpose=r.get("label", "") or r.get("path_purpose", ""),
+                        description=r.get("description", ""),
                         skipped=bool(r.get("skip_reason")),
                         skip_reason=r.get("skip_reason", ""),
                         should_expand=r.get("should_expand", True),
@@ -922,9 +916,8 @@ class ParallelProgressDisplay:
                     ScoreItem(
                         path=path,
                         score=r.get("score"),
-                        purpose=f"rescored: {reason}"
-                        if reason != "rescored"
-                        else "rescored",
+                        purpose="rescored",
+                        description=reason if reason != "rescored" else "",
                         skipped=False,
                         skip_reason="",
                         should_expand=r.get("should_expand", True),
