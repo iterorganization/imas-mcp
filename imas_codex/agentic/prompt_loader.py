@@ -5,26 +5,37 @@ Prompts are markdown files with YAML frontmatter:
 - description: Short description
 - task: Task type for model selection (optional)
 
-Prompts support includes via Jinja-style syntax:
-    {% include "safety.md" %}
+Prompts support Jinja2 templating:
+- Includes: {% include "safety.md" %} (resolved from shared/)
+- Variables: {{ facility }} (from render context)
+- Schema loops: {% for cat in discovery_categories %}...{% endfor %}
 
-Includes are resolved relative to the `shared/` subdirectory.
+Rendering modes:
+1. Static: parse_prompt_file() - includes only, for MCP registration
+2. Dynamic: render_prompt() - full Jinja2 with schema context
 
 Directory structure:
     prompts/
     ├── shared/           # Reusable includes
-    │   └── safety.md
+    │   ├── safety.md
+    │   └── schema/       # Schema-derived templates
     ├── discovery/        # Discovery pipeline prompts
     │   └── scorer.md
-    ├── wiki/             # Wiki processing prompts (future)
     └── enrich-system.md  # Root-level prompts
 """
 
+from __future__ import annotations
+
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from jinja2 import Environment
 
 # Pattern for include directives: {% include "filename.md" %}
 INCLUDE_PATTERN = re.compile(r'\{%\s*include\s+"([^"]+)"\s*%\}')
@@ -158,3 +169,131 @@ def list_prompts_summary(prompts_dir: Path | None = None) -> list[dict[str, str]
         {"name": p.name, "description": p.description, "task": p.task}
         for p in prompts.values()
     ]
+
+
+# =============================================================================
+# Schema Context for Dynamic Rendering
+# =============================================================================
+
+
+def get_schema_context() -> dict[str, Any]:
+    """Get schema-derived context for prompt rendering.
+
+    Uses LinkML schema introspection to get enum values with their descriptions.
+    This is the single source of truth - descriptions come from the schema YAML,
+    not from generated Python code.
+
+    Returns a dict with:
+    - discovery_categories: List of DiscoveryRootCategory enum values
+    - path_purposes: List of PathPurpose enum values
+    - Each with 'value' and 'description' keys
+
+    This allows prompts to loop over schema-defined enums without hardcoding.
+    """
+    from imas_codex.graph.schema import get_schema
+
+    schema = get_schema()
+
+    # Get enum values with descriptions directly from LinkML schema
+    discovery_categories = (
+        schema.get_enum_with_descriptions("DiscoveryRootCategory") or []
+    )
+    path_purposes = schema.get_enum_with_descriptions("PathPurpose") or []
+
+    return {
+        "discovery_categories": discovery_categories,
+        "path_purposes": path_purposes,
+        # Grouped for convenience in templates
+        "discovery_categories_modeling": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("modeling_code", "modeling_data")
+        ],
+        "discovery_categories_experimental": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("analysis_code", "experimental_data")
+        ],
+        "discovery_categories_shared": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("data_access", "workflow", "documentation")
+        ],
+    }
+
+
+def _get_jinja_env(prompts_dir: Path) -> Environment:
+    """Create Jinja2 environment with custom loader for includes."""
+    from jinja2 import BaseLoader, Environment, TemplateNotFound
+
+    class PromptsLoader(BaseLoader):
+        """Loader that resolves includes from shared/ directory."""
+
+        def get_source(
+            self, environment: Environment, template: str
+        ) -> tuple[str, str, Any]:
+            # Try shared/ first, then root
+            for base in [prompts_dir / "shared", prompts_dir]:
+                path = base / template
+                if path.exists():
+                    source = path.read_text()
+                    return source, str(path), lambda: True
+            raise TemplateNotFound(template)
+
+    return Environment(loader=PromptsLoader())
+
+
+def render_prompt(
+    name: str,
+    context: dict[str, Any] | None = None,
+    prompts_dir: Path | None = None,
+) -> str:
+    """Render a prompt with full Jinja2 templating and schema context.
+
+    This is the dynamic rendering mode that injects schema-derived values
+    and custom context variables into the prompt template.
+
+    Args:
+        name: Prompt name (e.g., "discover-roots", "discovery/scorer")
+        context: Additional context variables (e.g., {"facility": "tcv"})
+        prompts_dir: Base directory for prompts
+
+    Returns:
+        Fully rendered prompt content
+
+    Example:
+        >>> render_prompt("discover-roots", {"facility": "tcv"})
+        # Returns prompt with {{ facility }} replaced and schema loops expanded
+    """
+    if prompts_dir is None:
+        prompts_dir = Path(__file__).parent / "prompts"
+
+    # Load the raw prompt (with frontmatter)
+    prompts = load_prompts(prompts_dir)
+    if name not in prompts:
+        raise KeyError(f"Prompt '{name}' not found. Available: {list(prompts.keys())}")
+
+    prompt_def = prompts[name]
+
+    # Build full context: schema + user-provided
+    full_context = get_schema_context()
+    if context:
+        full_context.update(context)
+
+    # Render with Jinja2
+    env = _get_jinja_env(prompts_dir)
+    template = env.from_string(prompt_def.content)
+    return template.render(full_context)
+
+
+def get_prompt_content_hash(name: str, prompts_dir: Path | None = None) -> str:
+    """Get a hash of prompt content for cache invalidation."""
+    if prompts_dir is None:
+        prompts_dir = Path(__file__).parent / "prompts"
+
+    prompts = load_prompts(prompts_dir)
+    if name not in prompts:
+        raise KeyError(f"Prompt '{name}' not found")
+
+    content = prompts[name].content
+    return hashlib.sha256(content.encode()).hexdigest()[:16]

@@ -1,4 +1,10 @@
-# Discover Root Paths for {facility}
+---
+name: discover-roots
+description: Identify high-value root directories for seeding the discovery pipeline
+dynamic: true
+---
+
+# Discover Root Paths for {{ facility | default("the target facility") }}
 
 ## Objective
 
@@ -6,61 +12,64 @@ Identify high-value root directories for seeding the discovery pipeline. Good ro
 ensure balanced coverage across **simulation** (forward modeling) and **experimental**
 (measurement analysis) domains.
 
-## Discovery Root Categories
+{% include "schema/discovery-categories.md" %}
 
-The taxonomy maintains duality between forward modeling (prediction) and experimental
-analysis (measurement). Categories are generic and apply across all facilities.
+## Step 1: Check Current Discovery State
 
-### Forward Modeling Domain (Prediction)
+**Before exploring, query the graph to see what's already been discovered:**
 
-| Category | Purpose | Examples |
-|----------|---------|----------|
-| `modeling_code` | Physics simulation source code | ASTRA, JOREK, DREAM, JINTRAC, TRANSP, GENE |
-| `modeling_data` | Simulation outputs and results | Parameter scans, scenario DBs, turbulence data |
+```python
+# Check configured discovery roots
+print(get_facility_infrastructure("{{ facility | default('FACILITY') }}").get("discovery_roots", []))
 
-### Experimental Analysis Domain (Measurement)
+# See coverage by category
+print(query("""
+    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
+    WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
+    RETURN p.path_purpose AS purpose, count(*) AS count
+    ORDER BY count DESC
+"""))
 
-| Category | Purpose | Examples |
-|----------|---------|----------|
-| `analysis_code` | Shot/pulse processing code | LIUQE, EFIT, Thomson processing, profile fitting |
-| `experimental_data` | Measurement data from shots | MDSplus trees, PPF databases, EDAS, shot archives |
+# Find high-value paths already discovered (for reference)
+print(query("""
+    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
+    WHERE p.score > 0.7
+    RETURN p.path AS path, p.path_purpose AS purpose, p.score AS score
+    ORDER BY p.score DESC LIMIT 10
+"""))
+```
 
-### Shared Infrastructure
+Use this information to identify **gaps** in coverage. If experimental_data is
+underrepresented, prioritize finding shot data locations.
 
-| Category | Purpose | Examples |
-|----------|---------|----------|
-| `data_access` | Data access layers | TDI functions, IDL SAL, IMAS wrappers |
-| `workflow` | User analysis environments | Jupyter notebooks, batch scripts, user workspaces |
-| `documentation` | Reference materials | Manuals, papers, tutorials, READMEs |
-
-## Exploration Commands
+## Step 2: Exploration Commands
 
 Use these commands to discover candidate roots:
 
 ```bash
 # Find top-level code directories
-ssh {ssh_host} "ls -la /home/codes /work/codes 2>/dev/null | head -50"
+ssh {{ ssh_host | default('{ssh_host}') }} "ls -la /home/codes /work/codes 2>/dev/null | head -50"
 
 # Find shot data locations (MDSplus, PPF, EDAS, etc.)
-ssh {ssh_host} "df -h | grep -E 'data|shots|mds|ppf'"
-ssh {ssh_host} "ls -la /tcvssd /data /work 2>/dev/null | head -30"
+ssh {{ ssh_host | default('{ssh_host}') }} "df -h | grep -E 'data|shots|mds|ppf'"
+ssh {{ ssh_host | default('{ssh_host}') }} "ls -la /tcvssd /data /work 2>/dev/null | head -30"
 
 # Find data access layer (TDI, IDL, SAL)
-ssh {ssh_host} "ls -la /usr/local/*/tdi /usr/local/idl 2>/dev/null"
+ssh {{ ssh_host | default('{ssh_host}') }} "ls -la /usr/local/*/tdi /usr/local/idl 2>/dev/null"
 
 # Find user workspaces
-ssh {ssh_host} "ls -la /home/users /work/analysis 2>/dev/null | head -20"
+ssh {{ ssh_host | default('{ssh_host}') }} "ls -la /home/users /work/analysis 2>/dev/null | head -20"
 
 # Find documentation directories
-ssh {ssh_host} "fd -t d -d 2 'Docs|docs|doc|manual' /home/codes 2>/dev/null | head -20"
+ssh {{ ssh_host | default('{ssh_host}') }} "fd -t d -d 2 'Docs|docs|doc|manual' /home/codes 2>/dev/null | head -20"
 ```
 
-## Output Format
+## Step 3: Persist Discovered Roots
 
 After exploration, update the facility's private YAML with discovered roots:
 
 ```python
-update_facility_infrastructure("{facility}", {
+update_facility_infrastructure("{{ facility | default('FACILITY') }}", {
     "discovery_roots": [
         # === FORWARD MODELING (Prediction) ===
         {"path": "/home/codes/jorek", "category": "modeling_code", "description": "JOREK MHD modeling"},
@@ -78,33 +87,65 @@ update_facility_infrastructure("{facility}", {
 })
 ```
 
+### Valid Category Values
+
+Use ONLY these category values (from schema):
+
+{% for cat in discovery_categories %}
+- `{{ cat.value }}`: {{ cat.description }}
+{% endfor %}
+
 ## Prioritization Guidelines
 
 1. **Maintain duality**: Ensure roots in BOTH simulation AND experimental domains
-2. **Avoid overlap**: Don't add `/home/codes` AND `/home/codes/astra` (parent covers child)
-3. **Experimental data first**: Common blind spot - actively seek shot/pulse data stores
-4. **Include data access**: Critical for understanding semantic mappings
-5. **User workspaces**: Where active analysis happens (often missed)
+2. **Check gaps**: Use graph queries to find underrepresented categories
+3. **Avoid overlap**: Don't add `/home/codes` AND `/home/codes/astra` (parent covers child)
+4. **Experimental data first**: Common blind spot - actively seek shot/pulse data stores
+5. **Include data access**: Critical for understanding semantic mappings
+6. **User workspaces**: Where active analysis happens (often missed)
 
-## After Discovery
+## Step 4: Trigger Deep Dives
 
-Run targeted deep dives on newly discovered roots:
+After adding roots, run targeted discovery:
 
 ```bash
 # Deep dive into experimental data
-imas-codex discover paths {facility} -r /tcvssd/trees -c 5.0
+uv run imas-codex discover paths {{ facility | default('FACILITY') }} -r /tcvssd/trees -c 5.0
 
 # Deep dive with multiple roots (mixing domains)
-imas-codex discover paths {facility} -r /home/codes/liuqe -r /home/codes/jorek -c 10.0
+uv run imas-codex discover paths {{ facility | default('FACILITY') }} -r /home/codes/liuqe -r /home/codes/jorek -c 10.0
 
 # Explore user workspaces
-imas-codex discover paths {facility} -r /home/users -c 5.0
+uv run imas-codex discover paths {{ facility | default('FACILITY') }} -r /home/users -c 5.0
 ```
 
-## Current Discovery Roots
+## Horizontal Breakout: Finding New Areas
 
-Check existing configuration:
+If discovery has stalled, use graph queries to identify opportunities:
 
 ```python
-print(get_facility_infrastructure("{facility}").get("discovery_roots", []))
+# Find scored containers that weren't expanded (potential new roots)
+print(query("""
+    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
+    WHERE p.path_purpose = 'container' 
+          AND p.score > 0.5 
+          AND p.should_expand = false
+          AND p.terminal_reason IS NULL
+    RETURN p.path AS path, p.score AS score, p.description AS description
+    ORDER BY p.score DESC LIMIT 10
+"""))
+
+# Find categories with no discoveries yet
+print(query("""
+    WITH ['modeling_code', 'modeling_data', 'analysis_code', 'experimental_data', 
+          'data_access', 'workflow', 'documentation'] AS expected_categories
+    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
+    WHERE p.status = 'scored'
+    WITH expected_categories, collect(DISTINCT p.path_purpose) AS found
+    UNWIND expected_categories AS cat
+    WITH cat WHERE NOT cat IN found
+    RETURN cat AS missing_category
+"""))
 ```
+
+{% include "safety.md" %}

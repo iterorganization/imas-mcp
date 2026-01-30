@@ -1426,6 +1426,117 @@ class AgentsServer:
                 raise RuntimeError(f"Failed to add exploration note: {e}") from e
 
         # =====================================================================
+        # Tool 7b: get_discovery_context - Graph-derived discovery state
+        # =====================================================================
+
+        @self.mcp.tool()
+        def get_discovery_context(facility: str) -> dict[str, Any]:
+            """
+            Get discovery context for a facility including graph-derived state.
+
+            Returns comprehensive discovery state to guide exploration:
+            - Configured roots and their categories
+            - Coverage by category (what's already been discovered)
+            - High-value paths found so far
+            - Gap analysis (underrepresented categories)
+            - Schema for valid category values
+
+            Use this before exploring to identify gaps and avoid duplication.
+
+            Args:
+                facility: Facility identifier (e.g., "tcv", "iter")
+
+            Returns:
+                Dict with discovery_roots, coverage_by_category, high_value_paths,
+                missing_categories, and schema with valid category values.
+
+            Example:
+                ctx = get_discovery_context("tcv")
+                print("Missing categories:", ctx["missing_categories"])
+                print("Coverage:", ctx["coverage_by_category"])
+            """
+            try:
+                from imas_codex.agentic.prompt_loader import get_schema_context
+                from imas_codex.discovery import (
+                    get_facility_infrastructure as _get_infra,
+                )
+                from imas_codex.graph import get_driver
+
+                # Get configured roots from infrastructure
+                infra = _get_infra(facility) or {}
+                discovery_roots = infra.get("discovery_roots", [])
+
+                # Get schema context for valid category values
+                schema_ctx = get_schema_context()
+
+                # Get driver for graph queries
+                driver = get_driver()
+
+                # Query coverage by category
+                coverage_query = """
+                    MATCH (p:FacilityPath {facility_id: $facility})
+                    WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
+                    RETURN p.path_purpose AS purpose, count(*) AS count
+                    ORDER BY count DESC
+                """
+                with driver.session() as session:
+                    result = session.run(coverage_query, facility=facility)
+                    coverage_by_category = {
+                        record["purpose"]: record["count"] for record in result
+                    }
+
+                # Query high-value paths
+                high_value_query = """
+                    MATCH (p:FacilityPath {facility_id: $facility})
+                    WHERE p.score > 0.7
+                    RETURN p.path AS path, p.path_purpose AS purpose,
+                           p.score AS score, p.description AS description
+                    ORDER BY p.score DESC LIMIT 15
+                """
+                with driver.session() as session:
+                    result = session.run(high_value_query, facility=facility)
+                    high_value_paths = [dict(record) for record in result]
+
+                # Determine missing categories (expected but not found)
+                expected_categories = [
+                    c["value"] for c in schema_ctx["discovery_categories"]
+                ]
+                found_categories = set(coverage_by_category.keys())
+                missing_categories = [
+                    c for c in expected_categories if c not in found_categories
+                ]
+
+                # Query containers not yet expanded (potential new roots)
+                unexplored_query = """
+                    MATCH (p:FacilityPath {facility_id: $facility})
+                    WHERE p.path_purpose = 'container'
+                          AND p.score > 0.4
+                          AND p.should_expand = false
+                          AND p.terminal_reason IS NULL
+                    RETURN p.path AS path, p.score AS score, p.description AS description
+                    ORDER BY p.score DESC LIMIT 10
+                """
+                with driver.session() as session:
+                    result = session.run(unexplored_query, facility=facility)
+                    unexplored_containers = [dict(record) for record in result]
+
+                return {
+                    "facility": facility,
+                    "discovery_roots": discovery_roots,
+                    "coverage_by_category": coverage_by_category,
+                    "total_scored_paths": sum(coverage_by_category.values()),
+                    "high_value_paths": high_value_paths,
+                    "missing_categories": missing_categories,
+                    "unexplored_containers": unexplored_containers,
+                    "schema": {
+                        "valid_categories": schema_ctx["discovery_categories"],
+                    },
+                }
+            except Exception as e:
+                logger.exception(f"Failed to get discovery context for {facility}")
+                raise RuntimeError(f"Failed to get discovery context: {e}") from e
+
+        # =====================================================================
         # Tool 8: update_facility_paths - Update facility path mappings
         # =====================================================================
 
@@ -1519,20 +1630,64 @@ class AgentsServer:
                 raise RuntimeError(f"Failed to update tools: {e}") from e
 
     def _register_prompts(self):
-        """Register MCP prompts from markdown files."""
+        """Register MCP prompts from markdown files.
+
+        Static prompts: Return content as-is with includes resolved.
+        Dynamic prompts (dynamic: true in frontmatter): Accept parameters
+        and render with Jinja2 + schema context.
+        """
+        from imas_codex.agentic.prompt_loader import render_prompt
+
         for name, prompt_def in self._prompts.items():
+            is_dynamic = prompt_def.metadata.get("dynamic", False)
 
-            def make_prompt_fn(pd: PromptDefinition):
-                def prompt_fn() -> str:
-                    return pd.content
+            if is_dynamic:
+                # Dynamic prompt: accept facility parameter, render with context
+                def make_dynamic_prompt_fn(prompt_name: str, pd: PromptDefinition):
+                    def prompt_fn(facility: str = "FACILITY") -> str:
+                        """Render prompt with facility context and schema values.
 
-                prompt_fn.__name__ = pd.name.replace("-", "_")
-                return prompt_fn
+                        Args:
+                            facility: Facility identifier (e.g., "tcv", "iter")
+                        """
+                        try:
+                            # Get facility infrastructure for ssh_host
+                            from imas_codex.discovery import (
+                                get_facility_infrastructure as _get_infra,
+                            )
 
-            self.mcp.prompt(name=name, description=prompt_def.description)(
-                make_prompt_fn(prompt_def)
-            )
-            logger.debug(f"Registered prompt: {name}")
+                            infra = _get_infra(facility) or {}
+                            ssh_host = infra.get("ssh_host", facility)
+
+                            context = {
+                                "facility": facility,
+                                "ssh_host": ssh_host,
+                            }
+                            return render_prompt(prompt_name, context)
+                        except Exception as e:
+                            logger.warning(f"Dynamic render failed: {e}, using static")
+                            return pd.content
+
+                    prompt_fn.__name__ = pd.name.replace("-", "_")
+                    return prompt_fn
+
+                self.mcp.prompt(name=name, description=prompt_def.description)(
+                    make_dynamic_prompt_fn(name, prompt_def)
+                )
+                logger.debug(f"Registered dynamic prompt: {name}")
+            else:
+                # Static prompt: return content as-is
+                def make_prompt_fn(pd: PromptDefinition):
+                    def prompt_fn() -> str:
+                        return pd.content
+
+                    prompt_fn.__name__ = pd.name.replace("-", "_")
+                    return prompt_fn
+
+                self.mcp.prompt(name=name, description=prompt_def.description)(
+                    make_prompt_fn(prompt_def)
+                )
+                logger.debug(f"Registered static prompt: {name}")
 
     def run(
         self,

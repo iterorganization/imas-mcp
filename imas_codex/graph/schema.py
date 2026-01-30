@@ -214,6 +214,25 @@ class GraphSchema:
                 enums[name] = list(enum_def.permissible_values.keys())
         return enums
 
+    def get_enum_with_descriptions(self, enum_name: str) -> list[dict[str, str]] | None:
+        """Get enum values with their descriptions.
+
+        Args:
+            enum_name: Name of the enum (e.g., "DiscoveryRootCategory")
+
+        Returns:
+            List of dicts with 'value' and 'description' keys, or None if not found.
+        """
+        enum_def = self._view.get_enum(enum_name)
+        if not enum_def or not enum_def.permissible_values:
+            return None
+
+        result = []
+        for value, pv in enum_def.permissible_values.items():
+            desc = str(pv.description) if pv.description else ""
+            result.append({"value": value, "description": desc})
+        return result
+
     def get_class_description(self, class_name: str) -> str | None:
         """Get the description of a class.
 
