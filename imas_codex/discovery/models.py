@@ -84,6 +84,13 @@ class DirectoryScoringResult(BaseModel):
     This Pydantic model is passed to LiteLLM's response_format parameter
     to ensure structured, parseable output from the LLM.
 
+    Per-purpose scores aligned with DiscoveryRootCategory taxonomy:
+    - Code: modeling_code, analysis_code, operations_code
+    - Data: modeling_data, experimental_data
+    - Infrastructure: data_access, workflow, visualization
+    - Support: documentation
+    - Cross-cutting: imas (for IMAS relevance)
+
     Note: ge/le constraints removed from float fields because Anthropic
     via OpenRouter doesn't support minimum/maximum JSON schema properties.
     Score clamping is done in the parser instead.
@@ -106,13 +113,47 @@ class DirectoryScoringResult(BaseModel):
         description="Structured evidence for scoring",
     )
 
-    score_code: float = Field(description="Code discovery value (0.0-1.0)")
-
-    score_data: float = Field(description="Data discovery value (0.0-1.0)")
-
-    score_docs: float = Field(description="Documentation discovery value (0.0-1.0)")
-
-    score_imas: float = Field(description="IMAS relevance (0.0-1.0)")
+    # Per-purpose scores (0.0-1.0 each)
+    score_modeling_code: float = Field(
+        default=0.0,
+        description="Forward modeling/simulation code value (0.0-1.0)",
+    )
+    score_analysis_code: float = Field(
+        default=0.0,
+        description="Experimental analysis code value (0.0-1.0)",
+    )
+    score_operations_code: float = Field(
+        default=0.0,
+        description="Real-time operations code value (0.0-1.0)",
+    )
+    score_modeling_data: float = Field(
+        default=0.0,
+        description="Modeling outputs value (0.0-1.0)",
+    )
+    score_experimental_data: float = Field(
+        default=0.0,
+        description="Experimental shot data value (0.0-1.0)",
+    )
+    score_data_access: float = Field(
+        default=0.0,
+        description="Data access tools value (0.0-1.0)",
+    )
+    score_workflow: float = Field(
+        default=0.0,
+        description="Workflow/orchestration value (0.0-1.0)",
+    )
+    score_visualization: float = Field(
+        default=0.0,
+        description="Visualization tools value (0.0-1.0)",
+    )
+    score_documentation: float = Field(
+        default=0.0,
+        description="Documentation value (0.0-1.0)",
+    )
+    score_imas: float = Field(
+        default=0.0,
+        description="IMAS relevance (0.0-1.0)",
+    )
 
     should_expand: bool = Field(description="Whether to explore child directories")
 
@@ -224,8 +265,10 @@ def parse_path_purpose(value: str) -> PathPurpose:
 class ScoredDirectory:
     """Result of LLM scoring for a single directory.
 
-    Contains all scores, evidence, and expansion decision.
+    Contains per-purpose scores, evidence, and expansion decision.
     Enriches the graph with metadata beyond just scores.
+
+    Per-purpose scores aligned with DiscoveryRootCategory taxonomy.
     """
 
     path: str
@@ -240,17 +283,36 @@ class ScoredDirectory:
     evidence: DirectoryEvidence
     """Collected evidence for grounded scoring."""
 
-    score_code: float
-    """Code interest dimension (0.0-1.0)."""
+    # Per-purpose scores (0.0-1.0 each)
+    score_modeling_code: float = 0.0
+    """Forward modeling/simulation code dimension."""
 
-    score_data: float
-    """Data interest dimension (0.0-1.0)."""
+    score_analysis_code: float = 0.0
+    """Experimental analysis code dimension."""
 
-    score_docs: float
-    """Documentation interest dimension (0.0-1.0)."""
+    score_operations_code: float = 0.0
+    """Real-time operations code dimension."""
 
-    score_imas: float
-    """IMAS relevance dimension (0.0-1.0)."""
+    score_modeling_data: float = 0.0
+    """Modeling outputs dimension."""
+
+    score_experimental_data: float = 0.0
+    """Experimental shot data dimension."""
+
+    score_data_access: float = 0.0
+    """Data access tools dimension."""
+
+    score_workflow: float = 0.0
+    """Workflow/orchestration dimension."""
+
+    score_visualization: float = 0.0
+    """Visualization tools dimension."""
+
+    score_documentation: float = 0.0
+    """Documentation dimension."""
+
+    score_imas: float = 0.0
+    """IMAS relevance dimension (cross-cutting)."""
 
     score: float = 0.0
     """Combined score computed by grounded scoring function."""
@@ -293,9 +355,15 @@ class ScoredDirectory:
             "path_purpose": self.path_purpose.value,
             "description": self.description,
             "evidence": json.dumps(self.evidence.to_dict()),
-            "score_code": self.score_code,
-            "score_data": self.score_data,
-            "score_docs": self.score_docs,
+            "score_modeling_code": self.score_modeling_code,
+            "score_analysis_code": self.score_analysis_code,
+            "score_operations_code": self.score_operations_code,
+            "score_modeling_data": self.score_modeling_data,
+            "score_experimental_data": self.score_experimental_data,
+            "score_data_access": self.score_data_access,
+            "score_workflow": self.score_workflow,
+            "score_visualization": self.score_visualization,
+            "score_documentation": self.score_documentation,
             "score_imas": self.score_imas,
             "score": self.score,
             "should_expand": self.should_expand,

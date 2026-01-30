@@ -72,8 +72,8 @@ Contents are shown sorted by modification time (most recent first), so you can i
 
 ### High exploration potential containers (container + high score):
 - `/work/imas`, `/imas`, `*imas*` → container, score_imas ≥ 0.8, expand=true
-- `/work/projects/*`, `/work/codes/*` → container, score_code ≥ 0.7, expand=true
-- `/home/codes/*` → container, score_code ≥ 0.6, expand=true
+- `/work/projects/*`, `/work/codes/*` → container, score_modeling_code ≥ 0.7, expand=true
+- `/home/codes/*` → container, score_modeling_code ≥ 0.6, expand=true
 
 ### Modeling code indicators:
 - `*equilibrium*`, `*efit*`, `*chease*`, `*helena*` → modeling_code, equilibrium domain
@@ -106,42 +106,97 @@ Contents are shown sorted by modification time (most recent first), so you can i
 
 ## Scoring Guidelines
 
-### For code/data categories (score = ingestion priority):
+Each directory is scored on 10 per-purpose dimensions (0.0-1.0 each), aligned with the DiscoveryRootCategory taxonomy. Score ONLY the dimensions relevant to the directory's content.
 
-**score_code (0.0-1.0)**
-- **0.9-1.0**: Core physics simulation code, IMAS actors, actively maintained
-- **0.7-0.8**: Analysis tools, data processing scripts, utilities
-- **0.4-0.6**: Mixed content, some code present
-- **0.1-0.3**: Primarily documentation or configuration
-- **0.0**: No code content
+### Code Dimensions
 
-**score_data (0.0-1.0)**
-- **0.9-1.0**: Scientific data archives, shot databases
-- **0.7-0.8**: Data directories with structured files
-- **0.4-0.6**: Mixed content, some data present
-- **0.0**: No data content
+**score_modeling_code (0.0-1.0)** - Forward modeling/simulation code
+- **0.9-0.95**: Core physics simulation (CHEASE, ASTRA, JOREK, MHD solvers)
+- **0.7-0.8**: Secondary modeling tools, scenario builders
+- **0.4-0.6**: Mixed code with some modeling components
+- **0.0**: No modeling code
 
-**score_docs (0.0-1.0)**
-- **0.9-1.0**: Dedicated documentation directories (docs/, tutorials/, papers/)
-- **0.7-0.8**: Contains README, guides, or scientific papers
-- **0.4-0.6**: Some documentation present alongside code
-- **0.1-0.3**: Minimal docs (just comments in code)
-- **0.0**: No documentation content
+**score_analysis_code (0.0-1.0)** - Experimental analysis code
+- **0.9-0.95**: Diagnostic processing (Thomson, ECE, interferometry)
+- **0.7-0.8**: Equilibrium reconstruction (LIUQE, EFIT processing)
+- **0.4-0.6**: Intershot tools, campaign analysis scripts
+- **0.0**: No analysis code
 
-**score_imas (0.0-1.0)**
-- **0.9-1.0**: Direct IMAS integration (put_slice, get_slice, IDS names)
+**score_operations_code (0.0-1.0)** - Real-time operations code
+- **0.9-0.95**: Control systems, feedback algorithms (RAPTOR-RT)
+- **0.7-0.8**: DAQ, FPGA/PXI code, hardware interfaces
+- **0.4-0.6**: Timing code, actuator wrappers
+- **0.0**: No operations code
+
+### Data Dimensions
+
+**score_modeling_data (0.0-1.0)** - Modeling outputs
+- **0.9-0.95**: Large parameter scan databases, scenario libraries
+- **0.7-0.8**: Simulation output directories (HDF5, NetCDF)
+- **0.4-0.6**: Mixed data with some modeling outputs
+- **0.0**: No modeling data
+
+**score_experimental_data (0.0-1.0)** - Experimental shot data
+- **0.9-0.95**: MDSplus shot trees, pulse file archives
+- **0.7-0.8**: Diagnostic data stores, raw measurements
+- **0.4-0.6**: Mixed data with some experimental content
+- **0.0**: No experimental data
+
+### Infrastructure Dimensions
+
+**score_data_access (0.0-1.0)** - Data access tools
+- **0.9-0.95**: IMAS wrappers, MDSplus readers, format converters
+- **0.7-0.8**: EQDSK readers, TDI expressions, data loaders
+- **0.4-0.6**: Helper utilities for data I/O
+- **0.0**: No data access code
+
+**score_workflow (0.0-1.0)** - Orchestration tools
+- **0.9-0.95**: Shot review pipelines, batch processing frameworks
+- **0.7-0.8**: Automation scripts, job schedulers
+- **0.4-0.6**: Utility scripts with workflow aspects
+- **0.0**: No workflow code
+
+**score_visualization (0.0-1.0)** - Plotting tools
+- **0.9-0.95**: Dedicated visualization packages, dashboards
+- **0.7-0.8**: Plotting utilities, rendering tools
+- **0.4-0.6**: Mixed code with some plotting
+- **0.0**: No visualization code
+
+### Support Dimensions
+
+**score_documentation (0.0-1.0)** - Documentation value
+- **0.9-0.95**: Comprehensive docs directories, tutorials, papers
+- **0.7-0.8**: Good READMEs, guides, API docs
+- **0.4-0.6**: Some documentation alongside code
+- **0.1-0.3**: Minimal docs (just comments)
+- **0.0**: No documentation
+
+### Cross-Cutting Dimension
+
+**score_imas (0.0-1.0)** - IMAS relevance (applies to ANY purpose)
+- **0.9-0.95**: Direct IMAS integration (put_slice, get_slice, IDS names)
 - **0.7-0.8**: Path contains "imas" or known physics code names
-- **0.4-0.6**: Fusion physics but no direct IMAS use
+- **0.4-0.6**: Fusion physics content but no direct IMAS use
 - **0.0**: No IMAS relevance
 
-### For container category (score = exploration potential):
+### Purpose-to-Score Mapping
 
-**Score based on how valuable children are likely to be:**
-- **0.9-1.0**: `/work/imas`, `/imas` - almost certainly valuable children
-- **0.7-0.8**: `/work/projects`, `/home/codes` - likely valuable
-- **0.4-0.6**: Generic `/work/*`, research directories
-- **0.1-0.3**: User home with no code indicators
-- **0.0**: Downloads, temp directories
+When classifying `path_purpose`, set the corresponding dimension HIGH:
+
+| path_purpose | Primary dimension to set high |
+|--------------|-------------------------------|
+| modeling_code | score_modeling_code |
+| analysis_code | score_analysis_code |
+| operations_code | score_operations_code |
+| modeling_data | score_modeling_data |
+| experimental_data | score_experimental_data |
+| data_access | score_data_access |
+| workflow | score_workflow |
+| visualization | score_visualization |
+| documentation | score_documentation |
+| container | Use max of expected child dimensions |
+| test_suite, configuration | Low across all (< 0.3) |
+| archive, build_artifact, system | Zero or near-zero across all |
 
 ## Expansion Decision
 
@@ -234,9 +289,9 @@ This is a RESCORE pass for paths with enrichment data. You have additional conte
 - Examples: load EQDSK + write IMAS, read MDSplus + save HDF5
 
 **Adjust scores based on enrichment**:
-- LOC > 10,000 lines in physics language (Fortran, Python) → boost score_code by 0.1
-- Total bytes > 1GB → boost score_data by 0.1
-- Has multiple format reads/writes → this is a data interface, boost score_imas by 0.2
+- LOC > 10,000 lines in physics language (Fortran, Python) → boost score_modeling_code by 0.1
+- Total bytes > 1GB → boost score_modeling_data by 0.1
+- Has multiple format reads/writes → this is a data interface, boost score_data_access by 0.2
 
 **Provided enrichment data**:
 {{ enrichment_data }}

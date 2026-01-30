@@ -38,21 +38,40 @@ See [facility.yaml](../../imas_codex/schemas/facility.yaml) for complete schema 
 
 ## Scoring
 
-LLM-based scoring assigns interest scores (0.0-1.0) across four dimensions:
+LLM-based scoring assigns interest scores (0.0-1.0) across per-purpose dimensions aligned with the DiscoveryRootCategory taxonomy:
 
+### Code Dimensions
 | Dimension | Description |
 |-----------|-------------|
-| `code`    | Source code presence (Python, Fortran, etc.) |
-| `data`    | Data files (HDF5, NetCDF, MDSplus) |
-| `docs`    | Documentation, readmes, wikis |
-| `imas`    | IMAS-related content |
+| `score_modeling_code` | Forward modeling/simulation code (CHEASE, ASTRA, JOREK) |
+| `score_analysis_code` | Experimental analysis code (diagnostics, reconstruction) |
+| `score_operations_code` | Real-time operations code (control systems, DAQ) |
+
+### Data Dimensions
+| Dimension | Description |
+|-----------|-------------|
+| `score_modeling_data` | Modeling outputs (HDF5 runs, parameter scans) |
+| `score_experimental_data` | Experimental shot data (MDSplus, pulse files) |
+
+### Infrastructure Dimensions
+| Dimension | Description |
+|-----------|-------------|
+| `score_data_access` | Data access tools (IMAS wrappers, MDSplus readers) |
+| `score_workflow` | Workflow and orchestration tools |
+| `score_visualization` | Plotting and rendering tools |
+
+### Support Dimensions
+| Dimension | Description |
+|-----------|-------------|
+| `score_documentation` | Documentation, readmes, tutorials |
+| `score_imas` | Cross-cutting IMAS relevance |
 
 **Final score formula:**
 ```
-score = max(score_code, score_data, score_docs, score_imas) + quality_boosts
+score = max(all per-purpose scores) + quality_boosts
 ```
 
-Using MAX (not weighted average) ensures paths excelling in a single dimension rank appropriately. A pure data directory with `score_data=0.9` should rank high, even if `score_code=0`.
+Using MAX (not weighted average) ensures paths excelling in a single dimension rank appropriately. A pure data directory with `score_modeling_data=0.9` should rank high, even if all code scores are 0.
 
 **Thresholds:**
 - `CONTAINER_THRESHOLD = 0.1` — Minimum score to expand directories

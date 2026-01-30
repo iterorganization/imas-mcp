@@ -48,16 +48,22 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry (5, 10, 20, 40, 80)
 
-# Dimension weights for grounded scoring
-SCORE_WEIGHTS = {
-    "code": 1.0,
-    "data": 0.8,
-    "docs": 0.6,
-    "imas": 1.2,
-}
-
 # Container expansion threshold (lower than default to explore containers)
 CONTAINER_THRESHOLD = 0.1
+
+# Per-purpose score names (for iteration)
+PURPOSE_SCORE_NAMES = [
+    "score_modeling_code",
+    "score_analysis_code",
+    "score_operations_code",
+    "score_modeling_data",
+    "score_experimental_data",
+    "score_data_access",
+    "score_workflow",
+    "score_visualization",
+    "score_documentation",
+    "score_imas",
+]
 
 # Purposes that should be suppressed (lower scores)
 # These get a 0.3 multiplier and should_expand=False
@@ -74,16 +80,13 @@ CONTAINER_PURPOSES = {
 
 
 def grounded_score(
-    score_code: float,
-    score_data: float,
-    score_docs: float,
-    score_imas: float,
+    scores: dict[str, float],
     evidence: DirectoryEvidence,
     purpose: PathPurpose,
 ) -> float:
-    """Compute combined score from dimension scores with evidence adjustments.
+    """Compute combined score from per-purpose scores with evidence adjustments.
 
-    Uses MAX of dimension scores (not weighted average) so that paths excelling
+    Uses MAX of per-purpose scores (not weighted average) so that paths excelling
     in a single dimension (e.g., pure data, pure docs) are not penalized.
 
     Grounded scoring with purpose-aware semantics:
@@ -98,19 +101,15 @@ def grounded_score(
         Score = always low (0.3 multiplier)
 
     Args:
-        score_code: Code interest dimension (0.0-1.0)
-        score_data: Data interest dimension (0.0-1.0)
-        score_docs: Documentation interest dimension (0.0-1.0)
-        score_imas: IMAS relevance dimension (0.0-1.0)
+        scores: Dict of per-purpose scores (score_modeling_code, score_imas, etc.)
         evidence: Collected evidence from LLM
         purpose: Classified purpose
 
     Returns:
         Combined score (0.0-1.0)
     """
-    # Use max dimension score - paths may excel in only one dimension
-    # (e.g., pure data directories should rank high if data score is high)
-    base_score = max(score_code, score_data, score_docs, score_imas)
+    # Use max of all per-purpose scores - paths may excel in only one dimension
+    base_score = max(scores.values()) if scores else 0.0
 
     # Quality boost
     quality_boost = 0.0
@@ -122,8 +121,8 @@ def grounded_score(
     if any("git" in q for q in quality_lower):
         quality_boost += 0.05
 
-    # IMAS boost
-    if len(evidence.imas_indicators) > 0:
+    # IMAS boost (from score_imas)
+    if scores.get("score_imas", 0.0) > 0.3:
         quality_boost += 0.10
 
     # Code diversity boost
@@ -509,11 +508,37 @@ class DirectoryScorer:
         for i, result in enumerate(results[: len(directories)]):
             path = directories[i]["path"]
 
-            # Clamp scores (should already be valid from schema)
-            score_code = max(0.0, min(1.0, result.score_code))
-            score_data = max(0.0, min(1.0, result.score_data))
-            score_docs = max(0.0, min(1.0, result.score_docs))
-            score_imas = max(0.0, min(1.0, result.score_imas))
+            # Clamp per-purpose scores (should already be valid from schema)
+            scores = {
+                "score_modeling_code": max(
+                    0.0, min(1.0, getattr(result, "score_modeling_code", 0.0))
+                ),
+                "score_analysis_code": max(
+                    0.0, min(1.0, getattr(result, "score_analysis_code", 0.0))
+                ),
+                "score_operations_code": max(
+                    0.0, min(1.0, getattr(result, "score_operations_code", 0.0))
+                ),
+                "score_modeling_data": max(
+                    0.0, min(1.0, getattr(result, "score_modeling_data", 0.0))
+                ),
+                "score_experimental_data": max(
+                    0.0, min(1.0, getattr(result, "score_experimental_data", 0.0))
+                ),
+                "score_data_access": max(
+                    0.0, min(1.0, getattr(result, "score_data_access", 0.0))
+                ),
+                "score_workflow": max(
+                    0.0, min(1.0, getattr(result, "score_workflow", 0.0))
+                ),
+                "score_visualization": max(
+                    0.0, min(1.0, getattr(result, "score_visualization", 0.0))
+                ),
+                "score_documentation": max(
+                    0.0, min(1.0, getattr(result, "score_documentation", 0.0))
+                ),
+                "score_imas": max(0.0, min(1.0, getattr(result, "score_imas", 0.0))),
+            }
 
             # Convert Pydantic enum to graph PathPurpose
             purpose = parse_path_purpose(result.path_purpose.value)
@@ -528,15 +553,8 @@ class DirectoryScorer:
                 quality_indicators=result.evidence.quality_indicators,
             )
 
-            # Compute grounded score
-            combined = grounded_score(
-                score_code,
-                score_data,
-                score_docs,
-                score_imas,
-                evidence,
-                purpose,
-            )
+            # Compute grounded score from per-purpose scores
+            combined = grounded_score(scores, evidence, purpose)
 
             # Extract git metadata for penalty and expansion decisions
             has_git = directories[i].get("has_git", False)
@@ -627,10 +645,16 @@ class DirectoryScorer:
                 path_purpose=purpose,
                 description=result.description,
                 evidence=evidence,
-                score_code=score_code,
-                score_data=score_data,
-                score_docs=score_docs,
-                score_imas=score_imas,
+                score_modeling_code=scores["score_modeling_code"],
+                score_analysis_code=scores["score_analysis_code"],
+                score_operations_code=scores["score_operations_code"],
+                score_modeling_data=scores["score_modeling_data"],
+                score_experimental_data=scores["score_experimental_data"],
+                score_data_access=scores["score_data_access"],
+                score_workflow=scores["score_workflow"],
+                score_visualization=scores["score_visualization"],
+                score_documentation=scores["score_documentation"],
+                score_imas=scores["score_imas"],
                 score=combined,
                 should_expand=should_expand,
                 should_enrich=should_enrich,
@@ -673,10 +697,6 @@ class DirectoryScorer:
                     path_purpose=PathPurpose.container,
                     description="Parse error",
                     evidence=DirectoryEvidence(),
-                    score_code=0.0,
-                    score_data=0.0,
-                    score_docs=0.0,
-                    score_imas=0.0,
                     score=0.0,
                     should_expand=False,
                     skip_reason=f"LLM response parse failed: {e}",
@@ -688,11 +708,37 @@ class DirectoryScorer:
         for i, result in enumerate(results[: len(directories)]):
             path = directories[i]["path"]
 
-            # Extract and clamp scores
-            score_code = max(0.0, min(1.0, float(result.get("score_code", 0.0))))
-            score_data = max(0.0, min(1.0, float(result.get("score_data", 0.0))))
-            score_docs = max(0.0, min(1.0, float(result.get("score_docs", 0.0))))
-            score_imas = max(0.0, min(1.0, float(result.get("score_imas", 0.0))))
+            # Extract and clamp per-purpose scores
+            scores = {
+                "score_modeling_code": max(
+                    0.0, min(1.0, float(result.get("score_modeling_code", 0.0)))
+                ),
+                "score_analysis_code": max(
+                    0.0, min(1.0, float(result.get("score_analysis_code", 0.0)))
+                ),
+                "score_operations_code": max(
+                    0.0, min(1.0, float(result.get("score_operations_code", 0.0)))
+                ),
+                "score_modeling_data": max(
+                    0.0, min(1.0, float(result.get("score_modeling_data", 0.0)))
+                ),
+                "score_experimental_data": max(
+                    0.0, min(1.0, float(result.get("score_experimental_data", 0.0)))
+                ),
+                "score_data_access": max(
+                    0.0, min(1.0, float(result.get("score_data_access", 0.0)))
+                ),
+                "score_workflow": max(
+                    0.0, min(1.0, float(result.get("score_workflow", 0.0)))
+                ),
+                "score_visualization": max(
+                    0.0, min(1.0, float(result.get("score_visualization", 0.0)))
+                ),
+                "score_documentation": max(
+                    0.0, min(1.0, float(result.get("score_documentation", 0.0)))
+                ),
+                "score_imas": max(0.0, min(1.0, float(result.get("score_imas", 0.0)))),
+            }
 
             # Parse purpose
             purpose = parse_path_purpose(result.get("path_purpose", "unknown"))
@@ -709,14 +755,7 @@ class DirectoryScorer:
             )
 
             # Compute grounded score
-            combined = grounded_score(
-                score_code,
-                score_data,
-                score_docs,
-                score_imas,
-                evidence,
-                purpose,
-            )
+            combined = grounded_score(scores, evidence, purpose)
 
             # Git metadata for expansion/enrichment decisions (no score penalty)
             has_git = directories[i].get("has_git", False)
@@ -752,10 +791,16 @@ class DirectoryScorer:
                 path_purpose=purpose,
                 description=result.get("description", ""),
                 evidence=evidence,
-                score_code=score_code,
-                score_data=score_data,
-                score_docs=score_docs,
-                score_imas=score_imas,
+                score_modeling_code=scores["score_modeling_code"],
+                score_analysis_code=scores["score_analysis_code"],
+                score_operations_code=scores["score_operations_code"],
+                score_modeling_data=scores["score_modeling_data"],
+                score_experimental_data=scores["score_experimental_data"],
+                score_data_access=scores["score_data_access"],
+                score_workflow=scores["score_workflow"],
+                score_visualization=scores["score_visualization"],
+                score_documentation=scores["score_documentation"],
+                score_imas=scores["score_imas"],
                 score=combined,
                 should_expand=should_expand,
                 should_enrich=should_enrich,

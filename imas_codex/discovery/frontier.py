@@ -1218,14 +1218,56 @@ def get_high_value_paths(
             WHERE p.score >= $min_score
             RETURN p.id AS id, p.path AS path, p.score AS score,
                    p.description AS description, p.path_purpose AS path_purpose,
-                   p.score_code AS score_code, p.score_data AS score_data,
-                   p.score_docs AS score_docs, p.score_imas AS score_imas,
+                   p.score_modeling_code AS score_modeling_code,
+                   p.score_analysis_code AS score_analysis_code,
+                   p.score_operations_code AS score_operations_code,
+                   p.score_modeling_data AS score_modeling_data,
+                   p.score_experimental_data AS score_experimental_data,
+                   p.score_data_access AS score_data_access,
+                   p.score_workflow AS score_workflow,
+                   p.score_visualization AS score_visualization,
+                   p.score_documentation AS score_documentation,
+                   p.score_imas AS score_imas,
                    p.should_expand AS should_expand, p.skip_reason AS skip_reason
             ORDER BY p.score DESC
             LIMIT $limit
             """,
             facility=facility,
             min_score=min_score,
+            limit=limit,
+        )
+
+        return list(result)
+
+
+def get_top_paths_by_purpose(
+    facility: str,
+    purpose: str,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Get top-scoring paths for a specific purpose.
+
+    Args:
+        facility: Facility ID
+        purpose: PathPurpose value (e.g., 'modeling_code', 'analysis_code')
+        limit: Maximum paths to return (default 3)
+
+    Returns:
+        List of dicts with path, score, and description
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.path_purpose = $purpose AND p.score > 0
+            RETURN p.path AS path, p.score AS score, p.description AS description
+            ORDER BY p.score DESC
+            LIMIT $limit
+            """,
+            facility=facility,
+            purpose=purpose,
             limit=limit,
         )
 

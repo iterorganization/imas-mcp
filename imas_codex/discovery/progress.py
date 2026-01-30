@@ -309,6 +309,7 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
         get_discovery_stats,
         get_high_value_paths,
         get_purpose_distribution,
+        get_top_paths_by_purpose,
     )
 
     console = console or Console()
@@ -333,43 +334,65 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
     console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
     console.print(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
 
-    # Purpose distribution
+    # Purpose distribution with top paths per category
     purpose_dist = get_purpose_distribution(facility)
     if purpose_dist:
-        console.print("\n[bold]By Purpose:[/bold]")
-        # Group into categories for cleaner display
-        modeling = sum(
-            purpose_dist.get(p, 0) for p in ["modeling_code", "modeling_data"]
-        )
-        analysis = sum(
-            purpose_dist.get(p, 0)
-            for p in ["analysis_code", "operations_code", "experimental_data"]
-        )
-        infrastructure = sum(
-            purpose_dist.get(p, 0) for p in ["data_access", "workflow", "visualization"]
-        )
-        support = sum(
-            purpose_dist.get(p, 0)
-            for p in ["documentation", "configuration", "test_suite"]
-        )
-        structural = sum(
-            purpose_dist.get(p, 0)
-            for p in ["container", "archive", "build_artifact", "system"]
-        )
+        console.print("\n[bold]By Purpose (top 3 per category):[/bold]")
 
-        console.print(f"├─ [cyan]Modeling[/cyan]:       {modeling:,} (code + data)")
-        console.print(
-            f"├─ [green]Analysis[/green]:       {analysis:,} (code + ops + data)"
-        )
-        console.print(f"├─ [yellow]Infrastructure[/yellow]: {infrastructure:,}")
-        console.print(f"├─ [blue]Support[/blue]:        {support:,}")
-        console.print(f"└─ [dim]Structural[/dim]:     {structural:,}")
+        # Define category groups with their purposes
+        categories = [
+            (
+                "Modeling Code",
+                "cyan",
+                ["modeling_code"],
+            ),
+            (
+                "Analysis Code",
+                "green",
+                ["analysis_code", "operations_code"],
+            ),
+            (
+                "Data",
+                "yellow",
+                ["modeling_data", "experimental_data"],
+            ),
+            (
+                "Infrastructure",
+                "blue",
+                ["data_access", "workflow", "visualization"],
+            ),
+            (
+                "Documentation",
+                "magenta",
+                ["documentation"],
+            ),
+        ]
 
-        # Detail breakdown if verbose
-        console.print("\n  [dim]Detail:[/dim]")
-        for purpose, count in purpose_dist.items():
-            pct = count / sum(purpose_dist.values()) * 100 if purpose_dist else 0
-            console.print(f"    {purpose}: {count} ({pct:.1f}%)")
+        for cat_name, color, purposes in categories:
+            purpose_count = sum(purpose_dist.get(p, 0) for p in purposes)
+            if purpose_count == 0:
+                continue
+
+            console.print(f"\n[{color}]{cat_name}[/{color}] ({purpose_count:,} paths)")
+
+            # Get top paths for each purpose in this category
+            for purpose in purposes:
+                if purpose_dist.get(purpose, 0) == 0:
+                    continue
+
+                top_paths = get_top_paths_by_purpose(facility, purpose, limit=3)
+                if top_paths:
+                    for p in top_paths:
+                        desc = p.get("description", "")
+                        if desc and len(desc) > 50:
+                            desc = desc[:47] + "..."
+                        console.print(f"  [{p['score']:.2f}] [dim]{p['path']}[/dim]")
+
+        # Structural/skip categories (just counts, no paths)
+        structural_purposes = ["container", "archive", "build_artifact", "system"]
+        structural = sum(purpose_dist.get(p, 0) for p in structural_purposes)
+        if structural > 0:
+            console.print(f"\n[dim]Structural[/dim] ({structural:,} paths)")
 
     # Summary
     frontier = discovered + listed
