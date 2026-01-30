@@ -228,13 +228,21 @@ After completing any file modifications, you MUST commit before responding to th
 3. `git add <files>` - stage specific files (never `git add -A`)
 4. `uv run git commit -m "type: description"` - commit with conventional format
 5. `git push origin main` - push immediately
-6. End your response with:
+6. End your response with the **full commit message** (not just the summary):
 
 ```
-✓ Committed: `<commit-hash>` - <one-sentence summary>
+✓ Committed: `<commit-hash>`
+
+type: concise summary
+
+Detailed explanation of what changed and why.
+- First significant change
+- Second change with rationale
 ```
 
-**Why this is mandatory:** Uncommitted changes are lost when sessions end. The user cannot see your work until it's committed. Never describe changes without committing them first.
+**Why show full message:** The commit message serves as the session's work record. Showing only a one-line summary loses context about what was done and why. The full message allows the user to track changes across sessions without checking git log.
+
+**Why commit is mandatory:** Uncommitted changes are lost when sessions end. The user cannot see your work until it's committed. Never describe changes without committing them first.
 
 ## Code Style
 
