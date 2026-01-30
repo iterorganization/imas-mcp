@@ -581,6 +581,14 @@ def mark_enrichment_complete(
                 continue
 
             path_id = f"{facility}:{result['path']}"
+
+            # Serialize language_breakdown dict to JSON (Neo4j rejects dicts)
+            lang_breakdown = result.get("language_breakdown")
+            if isinstance(lang_breakdown, dict):
+                import json
+
+                lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
+
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -596,7 +604,7 @@ def mark_enrichment_complete(
                 now=now,
                 total_bytes=result.get("total_bytes"),
                 total_lines=result.get("total_lines"),
-                language_breakdown=result.get("language_breakdown"),
+                language_breakdown=lang_breakdown,
                 is_multiformat=result.get("is_multiformat", False),
             )
             updated += 1
