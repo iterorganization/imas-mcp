@@ -1358,7 +1358,7 @@ class WikiDiscovery:
 
         # Load prompt
         prompts = load_prompts()
-        system_prompt = prompts.get("wiki-scorer")
+        system_prompt = prompts.get("wiki/scorer")
         system_prompt_text = (
             system_prompt.content
             if system_prompt

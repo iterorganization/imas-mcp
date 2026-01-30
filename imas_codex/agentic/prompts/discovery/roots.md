@@ -1,5 +1,5 @@
 ---
-name: discover-roots
+name: roots
 description: Identify high-value root directories for seeding the discovery pipeline
 dynamic: true
 ---

@@ -1,5 +1,5 @@
 ---
-name: scout-facility
+name: facility
 description: System prompt for facility exploration with completion criteria
 ---
 

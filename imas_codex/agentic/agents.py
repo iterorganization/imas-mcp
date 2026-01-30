@@ -303,7 +303,7 @@ def get_enrichment_agent(
 
     config = AgentConfig(
         name="enrich",
-        instructions=_get_prompt("enrich-system"),
+        instructions=_get_prompt("discovery/enricher"),
         tools=get_enrichment_tools(),
         model=model,
         task="enrichment",
@@ -342,7 +342,7 @@ def get_scout_agent(
     tools = get_exploration_tools(facility)
 
     # Add facility context to instructions
-    instructions = _get_prompt("scout-facility")
+    instructions = _get_prompt("exploration/facility")
     if not instructions:
         instructions = "You are an expert at exploring fusion facility codebases."
     instructions += f"\n\n## Current Session\nFacility: {facility}\n"

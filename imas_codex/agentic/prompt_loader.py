@@ -20,8 +20,15 @@ Directory structure:
     │   ├── safety.md
     │   └── schema/       # Schema-derived templates
     ├── discovery/        # Discovery pipeline prompts
-    │   └── scorer.md
-    └── enrich-system.md  # Root-level prompts
+    │   ├── roots.md      # Seed discovery frontier
+    │   ├── scorer.md     # Score directories
+    │   ├── rescorer.md   # Rescore with enrichment
+    │   └── enricher.md   # Extract metadata
+    ├── exploration/      # Interactive exploration
+    │   └── facility.md   # Facility exploration agent
+    └── wiki/             # Wiki operations
+        ├── scout.md      # Discover wiki pages
+        └── scorer.md     # Score wiki pages
 """
 
 from __future__ import annotations
@@ -252,7 +259,7 @@ def get_schema_context() -> dict[str, Any]:
         "path_purposes_infra": infra_purposes,
         "path_purposes_support": support_purposes,
         "path_purposes_structural": structural_purposes,
-        # Legacy groupings for discover-roots compatibility
+        # Grouped discovery categories for discovery/roots template
         "discovery_categories_modeling": [
             c
             for c in discovery_categories
@@ -303,7 +310,7 @@ def render_prompt(
     and custom context variables into the prompt template.
 
     Args:
-        name: Prompt name (e.g., "discover-roots", "discovery/scorer")
+        name: Prompt name (e.g., "discovery/roots", "discovery/scorer")
         context: Additional context variables (e.g., {"facility": "tcv"})
         prompts_dir: Base directory for prompts
 
@@ -311,7 +318,7 @@ def render_prompt(
         Fully rendered prompt content
 
     Example:
-        >>> render_prompt("discover-roots", {"facility": "tcv"})
+        >>> render_prompt("discovery/roots", {"facility": "tcv"})
         # Returns prompt with {{ facility }} replaced and schema loops expanded
     """
     if prompts_dir is None:

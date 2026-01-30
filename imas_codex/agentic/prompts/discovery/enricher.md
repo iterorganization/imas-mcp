@@ -1,5 +1,5 @@
 ---
-name: enrich-system
+name: enricher
 description: System prompt for TreeNode metadata enrichment agent
 ---
 

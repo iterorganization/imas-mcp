@@ -338,10 +338,10 @@ async def quick_task(
     # Get tools based on agent type
     if agent_type == "exploration":
         tools = get_exploration_tools()
-        system_prompt = _get_prompt("scout-facility")
+        system_prompt = _get_prompt("exploration/facility")
     else:
         tools = get_enrichment_tools()
-        system_prompt = _get_prompt("enrich-system")
+        system_prompt = _get_prompt("discovery/enricher")
 
     model = get_model_for_task(agent_type)
 

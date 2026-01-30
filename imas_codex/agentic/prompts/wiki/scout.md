@@ -1,5 +1,5 @@
 ---
-name: wiki-scout
+name: scout
 description: Discover and evaluate wiki pages for ingestion
 ---
 

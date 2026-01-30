@@ -798,10 +798,10 @@ def get_wiki_scout_agent(
         Configured CodeAgent
     """
     prompts = load_prompts()
-    system_prompt = prompts.get("wiki-scout")
+    system_prompt = prompts.get("wiki/scout")
 
     if system_prompt is None:
-        raise ValueError("wiki-scout prompt not found")
+        raise ValueError("wiki/scout prompt not found")
 
     llm = create_litellm_model(
         model=model or get_model_for_task("discovery"),

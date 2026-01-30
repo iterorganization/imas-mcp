@@ -1,5 +1,5 @@
 ---
-name: wiki-scorer
+name: scorer
 description: Score wiki pages based on graph metrics
 ---
 
