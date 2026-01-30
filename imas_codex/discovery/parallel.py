@@ -1487,22 +1487,33 @@ def _rescore_with_llm(
         lines.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
 
         # Initial per-dimension scores (what we're potentially adjusting)
+        # Use `or 0.0` since .get() returns None if key exists with None value
         lines.append("\nInitial scores:")
-        lines.append(f"  score_modeling_code: {p.get('score_modeling_code', 0.0):.2f}")
-        lines.append(f"  score_analysis_code: {p.get('score_analysis_code', 0.0):.2f}")
         lines.append(
-            f"  score_operations_code: {p.get('score_operations_code', 0.0):.2f}"
+            f"  score_modeling_code: {p.get('score_modeling_code') or 0.0:.2f}"
         )
-        lines.append(f"  score_modeling_data: {p.get('score_modeling_data', 0.0):.2f}")
         lines.append(
-            f"  score_experimental_data: {p.get('score_experimental_data', 0.0):.2f}"
+            f"  score_analysis_code: {p.get('score_analysis_code') or 0.0:.2f}"
         )
-        lines.append(f"  score_data_access: {p.get('score_data_access', 0.0):.2f}")
-        lines.append(f"  score_workflow: {p.get('score_workflow', 0.0):.2f}")
-        lines.append(f"  score_visualization: {p.get('score_visualization', 0.0):.2f}")
-        lines.append(f"  score_documentation: {p.get('score_documentation', 0.0):.2f}")
-        lines.append(f"  score_imas: {p.get('score_imas', 0.0):.2f}")
-        lines.append(f"  combined_score: {p.get('score', 0.0):.2f}")
+        lines.append(
+            f"  score_operations_code: {p.get('score_operations_code') or 0.0:.2f}"
+        )
+        lines.append(
+            f"  score_modeling_data: {p.get('score_modeling_data') or 0.0:.2f}"
+        )
+        lines.append(
+            f"  score_experimental_data: {p.get('score_experimental_data') or 0.0:.2f}"
+        )
+        lines.append(f"  score_data_access: {p.get('score_data_access') or 0.0:.2f}")
+        lines.append(f"  score_workflow: {p.get('score_workflow') or 0.0:.2f}")
+        lines.append(
+            f"  score_visualization: {p.get('score_visualization') or 0.0:.2f}"
+        )
+        lines.append(
+            f"  score_documentation: {p.get('score_documentation') or 0.0:.2f}"
+        )
+        lines.append(f"  score_imas: {p.get('score_imas') or 0.0:.2f}")
+        lines.append(f"  combined_score: {p.get('score') or 0.0:.2f}")
 
     user_prompt = "\n".join(lines)
 
