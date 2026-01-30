@@ -486,7 +486,8 @@ def claim_paths_for_enriching(
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
-            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.score AS score
+            RETURN p.id AS id, p.path AS path, p.depth AS depth, p.score AS score,
+                   p.path_purpose AS path_purpose
             """,
             facility=facility,
             limit=limit,
@@ -1245,6 +1246,8 @@ async def enrich_worker(
 
         state.enrich_idle_count = 0
         path_strs = [p["path"] for p in paths]
+        # Build path -> purpose mapping for targeted pattern selection
+        path_purposes = {p["path"]: p.get("path_purpose") for p in paths}
 
         if on_progress:
             on_progress(f"enriching {len(paths)} paths", state.enrich_stats, None)
@@ -1254,11 +1257,13 @@ async def enrich_worker(
         try:
             results = await loop.run_in_executor(
                 None,
-                lambda fac=state.facility, pts=path_strs: enrich_paths(fac, pts),
+                lambda fac=state.facility,
+                pts=path_strs,
+                pp=path_purposes: enrich_paths(fac, pts, path_purposes=pp),
             )
             state.enrich_stats.last_batch_time = time.time() - start
 
-            # Convert EnrichmentResult to dict for persistence
+            # Convert EnrichmentResult to dict for persistence and display
             result_dicts = [
                 {
                     "path": r.path,
@@ -1266,6 +1271,8 @@ async def enrich_worker(
                     "total_lines": r.total_lines,
                     "language_breakdown": r.language_breakdown,
                     "is_multiformat": r.is_multiformat,
+                    "read_matches": r.read_matches,
+                    "write_matches": r.write_matches,
                     "error": r.error,
                 }
                 for r in results

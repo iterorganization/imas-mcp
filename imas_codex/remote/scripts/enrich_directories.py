@@ -4,6 +4,11 @@
 This script is executed on remote facilities via SSH. It runs deep analysis
 on directories to collect enrichment data for high-value paths.
 
+Category-aware pattern selection:
+- Code paths (modeling_code, analysis_code, etc.): Full code + data patterns
+- Documentation paths: Skip code pattern matching (focus on size/structure)
+- Data paths (experimental_data, modeling_data): Focus on data format patterns
+
 Requirements:
 - Python 3.8+ (stdlib only, no external dependencies)
 - Optional: rg (ripgrep) for pattern matching
@@ -11,11 +16,12 @@ Requirements:
 - Optional: tokei for lines of code analysis
 
 Usage:
-    echo '{"paths": ["/home/codes/project"]}' | python3 enrich_directories.py
+    echo '{"paths": ["/home/codes/project"], "path_purposes": {"/home/codes/project": "modeling_code"}}' | python3 enrich_directories.py
 
 Input (JSON on stdin):
     {
-        "paths": ["/path/to/enrich", ...]
+        "paths": ["/path/to/enrich", ...],
+        "path_purposes": {"/path": "purpose", ...}  # Optional
     }
 
 Output (JSON on stdout):
@@ -37,6 +43,15 @@ import os
 import subprocess
 import sys
 from typing import Any
+
+# Purposes that are primarily documentation - skip code pattern matching
+DOC_PURPOSES = {"documentation"}
+
+# Purposes that are primarily data - focus on data patterns, skip code LOC
+DATA_PURPOSES = {"experimental_data", "modeling_data"}
+
+# Purposes that are containers/system - minimal enrichment
+SKIP_PATTERNS_PURPOSES = {"container", "system", "build_artifact", "archive"}
 
 
 def sanitize_str(s: str) -> str:
@@ -78,14 +93,22 @@ def enrich_directory(
     has_rg: bool,
     has_dust: bool,
     has_tokei: bool,
+    purpose: str | None = None,
 ) -> dict[str, Any]:
     """Enrich a single directory and return results dict.
+
+    Uses purpose to target pattern matching:
+    - Documentation: Skip code pattern matching (wastes time)
+    - Data: Skip LOC analysis (not code)
+    - Container/system: Minimal enrichment (size only)
+    - Code: Full analysis
 
     Args:
         path: Directory path to enrich
         has_rg: Whether rg command is available
         has_dust: Whether dust command is available
         has_tokei: Whether tokei command is available
+        purpose: Path purpose category (e.g., "modeling_code", "documentation")
 
     Returns:
         Dict with path, pattern matches, size, and lines of code
@@ -100,11 +123,16 @@ def enrich_directory(
         result["error"] = "permission denied"
         return result
 
-    # Pattern matching with rg
+    # Determine what to analyze based on purpose
+    skip_patterns = purpose in SKIP_PATTERNS_PURPOSES
+    skip_code_patterns = purpose in DOC_PURPOSES
+    skip_loc = purpose in DATA_PURPOSES
+
+    # Pattern matching with rg (skip for docs/containers)
     read_matches = 0
     write_matches = 0
 
-    if has_rg:
+    if has_rg and not skip_patterns and not skip_code_patterns:
         # Count read pattern matches
         try:
             proc = subprocess.run(
@@ -202,11 +230,11 @@ def enrich_directory(
 
     result["total_bytes"] = total_bytes
 
-    # Lines of code analysis with tokei
+    # Lines of code analysis with tokei (skip for data paths - not code)
     total_lines = 0
     language_breakdown: dict[str, int] = {}
 
-    if has_tokei:
+    if has_tokei and not skip_loc and not skip_patterns:
         try:
             proc = subprocess.run(
                 ["tokei", path, "-o", "json"],
@@ -247,14 +275,24 @@ def main() -> None:
         sys.exit(1)
 
     paths: list[str] = config.get("paths", [])
+    path_purposes: dict[str, str] = config.get("path_purposes", {})
 
     # Check for tools once
     has_rg = has_command("rg")
     has_dust = has_command("dust")
     has_tokei = has_command("tokei")
 
-    # Enrich all paths
-    results = [enrich_directory(p, has_rg, has_dust, has_tokei) for p in paths]
+    # Enrich all paths with their purpose (for targeted pattern selection)
+    results = [
+        enrich_directory(
+            p,
+            has_rg,
+            has_dust,
+            has_tokei,
+            purpose=path_purposes.get(p),
+        )
+        for p in paths
+    ]
 
     # Output JSON (handles all escaping correctly)
     print(json.dumps(results))

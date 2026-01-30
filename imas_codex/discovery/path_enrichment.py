@@ -67,6 +67,8 @@ class EnrichmentResult:
     # Pattern matches
     read_formats_found: list[str] = field(default_factory=list)
     write_formats_found: list[str] = field(default_factory=list)
+    read_matches: int = 0  # Total read pattern match count
+    write_matches: int = 0  # Total write pattern match count
     is_multiformat: bool = False
     conversion_pairs: list[str] = field(default_factory=list)  # e.g., ["eqdsk->imas"]
     # Storage analysis
@@ -99,6 +101,7 @@ def enrich_paths(
     facility: str,
     paths: list[str],
     timeout: int = 300,
+    path_purposes: dict[str, str | None] | None = None,
 ) -> list[EnrichmentResult]:
     """Enrich multiple paths with deep analysis.
 
@@ -110,6 +113,10 @@ def enrich_paths(
         facility: Facility identifier
         paths: List of paths to enrich
         timeout: SSH timeout in seconds
+        path_purposes: Optional mapping of path -> purpose category for
+            targeted pattern matching. If a path is classified as
+            documentation, skip code patterns. If classified as data,
+            focus on data format patterns.
 
     Returns:
         List of EnrichmentResult objects
@@ -125,7 +132,11 @@ def enrich_paths(
         ssh_host = facility
 
     # Build input data for the remote script
-    input_data = {"paths": paths}
+    # Include path_purposes so the remote script can select targeted patterns
+    input_data = {
+        "paths": paths,
+        "path_purposes": path_purposes or {},
+    }
 
     try:
         output = run_python_script(
@@ -163,6 +174,10 @@ def enrich_paths(
         # Extract pattern matches
         read_matches = data.get("read_matches", 0)
         write_matches = data.get("write_matches", 0)
+
+        # Store raw counts for display
+        result.read_matches = read_matches
+        result.write_matches = write_matches
 
         # Determine if multi-format (has both reads and writes)
         result.is_multiformat = read_matches > 0 and write_matches > 0

@@ -6161,20 +6161,26 @@ def _print_discovery_summary(
     if not high_value:
         return
 
-    # Score categories: group by which category has the highest score
-    # Use per-purpose dimensions from DiscoveryRootCategory taxonomy
+    # All 10 score dimensions from DiscoveryRootCategory taxonomy
+    # Grouped by category type for display
     score_categories = {
+        # Code
         "score_modeling_code": "Modeling Code",
         "score_analysis_code": "Analysis Code",
+        "score_operations_code": "Operations Code",
+        # Data
+        "score_modeling_data": "Modeling Data",
+        "score_experimental_data": "Experimental Data",
+        # Infrastructure
         "score_data_access": "Data Access",
+        "score_workflow": "Workflow",
+        "score_visualization": "Visualization",
+        # Support
+        "score_documentation": "Documentation",
+        # Cross-cutting
         "score_imas": "IMAS",
     }
-    category_order = [
-        "score_modeling_code",
-        "score_analysis_code",
-        "score_data_access",
-        "score_imas",
-    ]
+    category_order = list(score_categories.keys())
 
     # Group by highest-scoring category
     by_category: dict[str, list] = {cat: [] for cat in category_order}
@@ -6198,12 +6204,12 @@ def _print_discovery_summary(
         """Clip path with inner /.../ to show start and end."""
         if len(path) <= max_len:
             return path
-        # Find a good split point near 1/3 of max_len
+        # Keep more at the end (filename/dir name is more interesting)
         keep_start = max_len // 3
         keep_end = max_len - keep_start - 5  # 5 for "/.../"
         return f"{path[:keep_start]}/.../{path[-keep_end:]}"
 
-    # Display top 5 from each non-empty category
+    # Display top 3 from each non-empty category
     for cat_key in category_order:
         paths = by_category.get(cat_key, [])
         if not paths:
@@ -6216,7 +6222,7 @@ def _print_discovery_summary(
         cat_name = score_categories[cat_key]
         console.print(f"  [bold cyan]{cat_name}[/bold cyan] ({len(sorted_paths)})")
 
-        for p in sorted_paths[:5]:
+        for p in sorted_paths[:3]:
             cat_score = p.get(cat_key) or 0.0
             path = p.get("path", "")
             description = p.get("description", "")
@@ -6256,7 +6262,7 @@ def _print_discovery_summary(
                 )
 
         # Show count of remaining in category
-        remaining = len(sorted_paths) - 5
+        remaining = len(sorted_paths) - 3
         if remaining > 0:
             console.print(f"    [dim]... +{remaining} more[/dim]")
 
@@ -6348,7 +6354,7 @@ async def _async_discovery_loop(
                 display.update_score(msg, stats, results=results)
 
             def on_enrich(msg, stats, results=None):
-                display.update_enrich(msg, stats)
+                display.update_enrich(msg, stats, results=results)
 
             def on_rescore(msg, stats, results=None):
                 display.update_rescore(msg, stats, results=results)

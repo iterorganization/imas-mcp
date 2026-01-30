@@ -150,6 +150,20 @@ class ScoreItem:
 
 
 @dataclass
+class EnrichItem:
+    """Current enrich activity."""
+
+    path: str
+    total_bytes: int = 0
+    total_lines: int = 0
+    read_matches: int = 0  # Format read pattern matches
+    write_matches: int = 0  # Format write pattern matches
+    languages: list[str] = field(default_factory=list)  # Top languages found
+    is_multiformat: bool = False  # True if read+write patterns found
+    error: str | None = None
+
+
+@dataclass
 class StreamQueue:
     """Rate-limited queue for smooth display updates.
 
@@ -242,16 +256,26 @@ class ProgressState:
     # Current items (and their processing state)
     current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
+    current_enrich: EnrichItem | None = None
     scan_processing: bool = False  # True when awaiting SSH batch
     score_processing: bool = False  # True when awaiting LLM batch
+    enrich_processing: bool = False  # True when awaiting SSH enrichment batch
 
     # Streaming
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
     score_queue: StreamQueue = field(default_factory=StreamQueue)
+    enrich_queue: StreamQueue = field(default_factory=StreamQueue)
 
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
     start_time: float = field(default_factory=time.time)
+
+    # Enrichment aggregates for summary display
+    total_bytes_enriched: int = 0
+    total_lines_enriched: int = 0
+    total_read_matches: int = 0
+    total_write_matches: int = 0
+    multiformat_count: int = 0  # Count of paths with both read+write patterns
 
     @property
     def elapsed(self) -> float:
@@ -498,6 +522,30 @@ class ParallelProgressDisplay:
             )
             if combined_rate > 0:
                 section.append(f" {combined_rate:>5.1f}/s", style="dim")
+        section.append("\n")
+
+        # ENRICH row: shows deep analysis progress on high-value paths
+        # Enrichment runs on paths where should_enrich=true (scored by LLM)
+        if self.state.scan_only:
+            section.append("  ENRICH", style="dim")
+            section.append("─" * bar_width, style="dim")
+            section.append("    disabled", style="dim italic")
+        else:
+            section.append("  ENRICH", style="bold magenta")
+            # Completed enrichment = run_enriched
+            # Total = pending_enrich + run_enriched
+            enrich_total = self.state.pending_enrich + self.state.run_enriched
+            if enrich_total <= 0:
+                enrich_total = 1
+            enrich_ratio = min(self.state.run_enriched / enrich_total, 1.0)
+            enrich_pct = (
+                self.state.run_enriched / enrich_total * 100 if enrich_total > 0 else 0
+            )
+            section.append(make_bar(enrich_ratio, bar_width), style="magenta")
+            section.append(f" {self.state.run_enriched:>6,}", style="bold")
+            section.append(f" {enrich_pct:>3.0f}%", style="cyan")
+            if self.state.enrich_rate and self.state.enrich_rate > 0:
+                section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -594,6 +642,45 @@ class ParallelProgressDisplay:
                 section.append("\n    ", style="dim")  # Empty second line
             else:
                 section.append("idle", style="dim italic")
+                section.append("\n    ", style="dim")  # Empty second line
+            section.append("\n")
+
+        # ENRICH section - always 2 lines for consistent height (skip in scan_only mode)
+        if not self.state.scan_only:
+            enrich = self.state.current_enrich
+            section.append("  ENRICH", style="bold magenta")
+            if enrich:
+                section.append(clip_path(enrich.path, self.WIDTH - 11), style="white")
+                section.append("\n")
+                # Stats indented below
+                section.append("    ", style="dim")
+                # Format bytes nicely
+                if enrich.total_bytes >= 1_000_000:
+                    size_str = f"{enrich.total_bytes / 1_000_000:.1f}MB"
+                elif enrich.total_bytes >= 1_000:
+                    size_str = f"{enrich.total_bytes / 1_000:.1f}KB"
+                else:
+                    size_str = f"{enrich.total_bytes}B"
+                section.append(size_str, style="cyan")
+                if enrich.total_lines > 0:
+                    section.append(f"  {enrich.total_lines:,} LOC", style="cyan")
+                # Show top languages
+                if enrich.languages:
+                    langs = ", ".join(enrich.languages[:3])
+                    section.append(f"  [{langs}]", style="green dim")
+                # Show multiformat indicator
+                if enrich.is_multiformat:
+                    section.append("  multiformat", style="yellow")
+                elif enrich.read_matches > 0 or enrich.write_matches > 0:
+                    section.append(
+                        f"  r:{enrich.read_matches} w:{enrich.write_matches}",
+                        style="dim",
+                    )
+            elif self.state.enrich_processing:
+                section.append(" processing batch...", style="cyan italic")
+                section.append("\n    ", style="dim")  # Empty second line
+            else:
+                section.append(" idle", style="dim italic")
                 section.append("\n    ", style="dim")  # Empty second line
 
         return section
@@ -888,10 +975,77 @@ class ParallelProgressDisplay:
         self,
         message: str,
         stats: WorkerStats,
+        results: list[dict] | None = None,
     ) -> None:
-        """Update enrich worker state."""
+        """Update enrich worker state with enrichment results."""
         self.state.run_enriched = stats.processed
         self.state.enrich_rate = stats.rate
+
+        # Track processing state for display
+        if "waiting" in message.lower():
+            self.state.current_enrich = None
+            self.state.enrich_processing = False
+            self._refresh()
+            return
+        elif "enriching" in message.lower():
+            # About to run SSH enrichment - mark as processing
+            self.state.enrich_processing = True
+        else:
+            # Got results back
+            self.state.enrich_processing = False
+
+        # Queue enrich results for streaming display
+        if results:
+            items = []
+            for r in results:
+                # Parse language breakdown if present
+                lang_breakdown = r.get("language_breakdown", {})
+                if isinstance(lang_breakdown, str):
+                    import json
+
+                    try:
+                        lang_breakdown = json.loads(lang_breakdown)
+                    except json.JSONDecodeError:
+                        lang_breakdown = {}
+
+                # Get top languages by line count
+                top_langs = sorted(
+                    lang_breakdown.items(), key=lambda x: x[1], reverse=True
+                )[:3]
+                languages = [lang for lang, _ in top_langs]
+
+                read_matches = r.get("read_matches", 0) or 0
+                write_matches = r.get("write_matches", 0) or 0
+                is_multi = r.get("is_multiformat", False) or (
+                    read_matches > 0 and write_matches > 0
+                )
+
+                total_bytes = r.get("total_bytes", 0) or 0
+                total_lines = r.get("total_lines", 0) or 0
+
+                # Update aggregate statistics
+                self.state.total_bytes_enriched += total_bytes
+                self.state.total_lines_enriched += total_lines
+                self.state.total_read_matches += read_matches
+                self.state.total_write_matches += write_matches
+                if is_multi:
+                    self.state.multiformat_count += 1
+
+                items.append(
+                    EnrichItem(
+                        path=r.get("path", ""),
+                        total_bytes=total_bytes,
+                        total_lines=total_lines,
+                        read_matches=read_matches,
+                        write_matches=write_matches,
+                        languages=languages,
+                        is_multiformat=is_multi,
+                        error=r.get("error"),
+                    )
+                )
+            display_rate = stats.rate * 0.8 if stats.rate else None
+            self.state.enrich_queue.add(items, display_rate)
+
         self._refresh()
 
     def update_rescore(
@@ -967,6 +1121,11 @@ class ParallelProgressDisplay:
         next_score = self.state.score_queue.pop()
         if next_score:
             self.state.current_score = next_score
+            updated = True
+
+        next_enrich = self.state.enrich_queue.pop()
+        if next_enrich:
+            self.state.current_enrich = next_enrich
             updated = True
 
         if updated:
