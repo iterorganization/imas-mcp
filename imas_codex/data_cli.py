@@ -1264,31 +1264,31 @@ def data_dump(output: str | None, no_restart: bool) -> None:
                 "--to-path=/dumps",
                 "--overwrite-destination=true",
             ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise click.ClickException(f"Graph dump failed: {result.stderr}")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise click.ClickException(f"Graph dump failed: {result.stderr}")
 
-        graph_dump = dumps_dir / "neo4j.dump"
-        if graph_dump.exists():
-            shutil.move(str(graph_dump), str(archive_dir / "graph.dump"))
-            size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
-            click.echo(f"    Graph: {size_mb:.1f} MB")
-        else:
-            raise click.ClickException("Graph dump file not created")
+            graph_dump = dumps_dir / "neo4j.dump"
+            if graph_dump.exists():
+                shutil.move(str(graph_dump), str(archive_dir / "graph.dump"))
+                size_mb = (archive_dir / "graph.dump").stat().st_size / 1024 / 1024
+                click.echo(f"    Graph: {size_mb:.1f} MB")
+            else:
+                raise click.ClickException("Graph dump file not created")
 
-        # Write manifest
-        manifest = {
-            "version": __version__,
-            "git_commit": git_info["commit"],
-            "git_tag": git_info["tag"],
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+            # Write manifest
+            manifest = {
+                "version": __version__,
+                "git_commit": git_info["commit"],
+                "git_tag": git_info["tag"],
+                "timestamp": datetime.now(UTC).isoformat(),
+            }
+            (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-        # Create tarball
-        click.echo("  Creating archive...")
-        with tarfile.open(output_path, "w:gz") as tar:
-            tar.add(archive_dir, arcname=archive_dir.name)
+            # Create tarball
+            click.echo("  Creating archive...")
+            with tarfile.open(output_path, "w:gz") as tar:
+                tar.add(archive_dir, arcname=archive_dir.name)
 
     size_mb = output_path.stat().st_size / 1024 / 1024
     click.echo(f"Archive created: {output_path} ({size_mb:.1f} MB)")
