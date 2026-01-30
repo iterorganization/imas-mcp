@@ -1552,6 +1552,19 @@ async def run_parallel_discovery(
         root_filter=root_filter,
     )
 
+    # Pre-set idle counts for disabled workers so should_stop() works correctly
+    # When num_*_workers=0, those workers never run and never increment idle count
+    if num_scan_workers == 0:
+        state.scan_idle_count = 3
+    if num_expand_workers == 0:
+        state.expand_idle_count = 3
+    if num_score_workers == 0:
+        state.score_idle_count = 3
+    if num_enrich_workers == 0:
+        state.enrich_idle_count = 3
+    if num_rescore_workers == 0:
+        state.rescore_idle_count = 3
+
     # Capture initial terminal count for session-based --limit tracking
     state.initial_terminal_count = state.terminal_count
 
