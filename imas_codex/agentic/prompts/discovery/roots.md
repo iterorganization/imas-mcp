@@ -14,13 +14,51 @@ ensure balanced coverage across **simulation** (forward modeling) and **experime
 
 {% include "schema/discovery-categories.md" %}
 
+## CRITICAL: Workflow for Modifying Discovery Roots
+
+**IMPORTANT**: Discovery roots are stored in private YAML files (`{facility}_private.yaml`).
+When you update `discovery_roots` via MCP, these changes are NOT automatically version-controlled.
+
+**After modifying discovery_roots, you MUST:**
+
+1. **Update the private YAML file directly** (using file edit tools, not just MCP):
+   ```yaml
+   # In imas_codex/config/facilities/{facility}_private.yaml
+   discovery_roots:
+   - path: /home
+     category: container
+     description: User home directories - discover facility users
+     expand_depth: 1
+   - path: /home/codes
+     category: modeling_code
+     description: 'Physics codes: ASTRA, CHEASE, JOREK...'
+   ```
+
+2. **Commit the changes** to preserve them across sessions:
+   ```bash
+   git add imas_codex/config/facilities/{facility}_private.yaml
+   uv run git commit -m "feat: update {facility} discovery_roots"
+   git push origin main
+   ```
+
+Note: Private YAML files are gitignored by default, but discovery_roots should be committed
+to ensure reproducible scans.
+
 ## Step 1: Check Current Discovery State
 
 **Before exploring, query the graph to see what's already been discovered:**
 
 ```python
-# Check configured discovery roots
+# Check configured discovery roots (what WILL be seeded)
 print(get_facility_infrastructure("{{ facility | default('FACILITY') }}").get("discovery_roots", []))
+
+# Check what's CURRENTLY in the graph
+print(query("""
+    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
+    WHERE p.depth = 0
+    RETURN p.path AS root, p.status AS status, p.path_purpose AS purpose
+    ORDER BY p.path
+"""))
 
 # See coverage by category
 print(query("""
@@ -29,18 +67,9 @@ print(query("""
     RETURN p.path_purpose AS purpose, count(*) AS count
     ORDER BY count DESC
 """))
-
-# Find high-value paths already discovered (for reference)
-print(query("""
-    MATCH (p:FacilityPath {facility_id: '{{ facility | default('FACILITY') }}'})
-    WHERE p.score > 0.7
-    RETURN p.path AS path, p.path_purpose AS purpose, p.score AS score
-    ORDER BY p.score DESC LIMIT 10
-"""))
 ```
 
-Use this information to identify **gaps** in coverage. If experimental_data is
-underrepresented, prioritize finding shot data locations.
+Use this information to identify **gaps** in coverage.
 
 ## Step 2: Exploration Commands
 
@@ -104,9 +133,62 @@ Use ONLY these category values (from schema):
 5. **Include data access**: Critical for understanding semantic mappings
 6. **User workspaces**: Where active analysis happens (often missed)
 
-## Step 4: Trigger Deep Dives
+## User Discovery
 
-After adding roots, run targeted discovery:
+**To discover FacilityUser nodes from home directories:**
+
+Add `/home` as a container root with `expand_depth: 1`:
+
+```yaml
+discovery_roots:
+- path: /home
+  category: container
+  description: User home directories - discover facility users and their code
+  expand_depth: 1
+  priority: high
+```
+
+This will:
+1. List all directories in `/home` (e.g., `/home/duval`, `/home/sauter`)
+2. Extract usernames from paths matching `/home/{username}`
+3. Query `getent passwd` to get full names (GECOS field)
+4. Create `FacilityUser` nodes linked to `Person` nodes
+5. Create `OWNS` relationships to home directory paths
+
+**Check existing user coverage:**
+```python
+print(query("""
+    MATCH (u:FacilityUser)-[:FACILITY_ID]->(f:Facility {id: '{{ facility | default('FACILITY') }}'})
+    RETURN count(u) AS users
+"""))
+```
+
+## Step 4: Trigger Discovery
+
+**CLI Flags Explained:**
+
+| Flag | Purpose |
+|------|---------|
+| `--seed` | Adds discovery_roots from config that are NOT already in graph (additive, idempotent) |
+| `-r/--root` | Restricts discovery to specific paths AND adds them to graph if missing |
+| `--scan-only` | SSH enumeration only, no LLM scoring (fast, requires SSH) |
+| `--score-only` | Score existing paths in graph (offline, no SSH) |
+
+**Seeding workflow:**
+
+```bash
+# 1. First time: seed from config (creates FacilityPath nodes with status=discovered)
+uv run imas-codex discover paths {{ facility | default('FACILITY') }} --seed
+
+# 2. After modifying discovery_roots in private YAML:
+uv run imas-codex discover paths {{ facility | default('FACILITY') }} --seed
+# (Only adds NEW roots - existing paths are preserved)
+
+# 3. After the scan has run, re-run to continue (idempotent):
+uv run imas-codex discover paths {{ facility | default('FACILITY') }}
+```
+
+**Targeted deep dives (adds roots AND restricts scope):**
 
 ```bash
 # Deep dive into experimental data
