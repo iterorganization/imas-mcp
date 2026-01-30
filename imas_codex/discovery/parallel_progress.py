@@ -1029,6 +1029,16 @@ class ParallelProgressDisplay:
                 total_bytes = r.get("total_bytes", 0) or 0
                 total_lines = r.get("total_lines", 0) or 0
 
+                # Extract pattern categories (mdsplus, hdf5, imas, etc.)
+                pattern_cats = r.get("pattern_categories", {}) or {}
+                if isinstance(pattern_cats, str):
+                    import json
+
+                    try:
+                        pattern_cats = json.loads(pattern_cats)
+                    except json.JSONDecodeError:
+                        pattern_cats = {}
+
                 # Update aggregate statistics
                 self.state.total_bytes_enriched += total_bytes
                 self.state.total_lines_enriched += total_lines
@@ -1037,6 +1047,12 @@ class ParallelProgressDisplay:
                 if is_multi:
                     self.state.multiformat_count += 1
 
+                # Aggregate pattern categories
+                for cat, count in pattern_cats.items():
+                    self.state.pattern_category_totals[cat] = (
+                        self.state.pattern_category_totals.get(cat, 0) + count
+                    )
+
                 items.append(
                     EnrichItem(
                         path=r.get("path", ""),
@@ -1044,6 +1060,7 @@ class ParallelProgressDisplay:
                         total_lines=total_lines,
                         read_matches=read_matches,
                         write_matches=write_matches,
+                        pattern_categories=pattern_cats,
                         languages=languages,
                         is_multiformat=is_multi,
                         error=r.get("error"),
@@ -1140,6 +1157,26 @@ class ParallelProgressDisplay:
     def get_paths_scored_this_run(self) -> set[str]:
         """Get paths scored during this run."""
         return self.state.scored_paths
+
+    def get_enrichment_aggregates(self) -> dict:
+        """Get aggregated enrichment statistics.
+
+        Returns dict with:
+            total_bytes: Total bytes across enriched paths
+            total_lines: Total lines of code across enriched paths
+            total_read_matches: Total format read pattern matches
+            total_write_matches: Total format write pattern matches
+            multiformat_count: Count of paths with both read+write patterns
+            pattern_categories: Dict of pattern category -> match count
+        """
+        return {
+            "total_bytes": self.state.total_bytes_enriched,
+            "total_lines": self.state.total_lines_enriched,
+            "total_read_matches": self.state.total_read_matches,
+            "total_write_matches": self.state.total_write_matches,
+            "multiformat_count": self.state.multiformat_count,
+            "pattern_categories": dict(self.state.pattern_category_totals),
+        }
 
     def _calculate_pending_from_stats(self, stats: dict) -> None:
         """Calculate pending work counts from graph stats."""

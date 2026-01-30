@@ -6114,7 +6114,48 @@ def _print_discovery_summary(
             summary.append(f"  {score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-    # Row 3: USAGE - time and total cost
+    # Row 3: ENRICH stats - enrichment aggregates (if any)
+    enrichment_aggs = result.get("enrichment_aggregates", {})
+    if enrichment_aggs and enrichment_aggs.get("total_bytes", 0) > 0:
+        total_bytes = enrichment_aggs.get("total_bytes", 0)
+        total_lines = enrichment_aggs.get("total_lines", 0)
+        multiformat = enrichment_aggs.get("multiformat_count", 0)
+        pattern_cats = enrichment_aggs.get("pattern_categories", {})
+
+        # Format bytes nicely
+        def fmt_bytes(b: int) -> str:
+            if b >= 1_000_000_000:
+                return f"{b / 1_000_000_000:.1f}GB"
+            if b >= 1_000_000:
+                return f"{b / 1_000_000:.1f}MB"
+            if b >= 1_000:
+                return f"{b / 1_000:.1f}KB"
+            return f"{b}B"
+
+        # Format lines nicely
+        def fmt_lines(ln: int) -> str:
+            if ln >= 1_000_000:
+                return f"{ln / 1_000_000:.1f}M"
+            if ln >= 1_000:
+                return f"{ln / 1_000:.1f}K"
+            return str(ln)
+
+        summary.append("  ENRICH", style="bold magenta")
+        summary.append(f"  size={fmt_bytes(total_bytes)}", style="white")
+        summary.append(f"  LOC={fmt_lines(total_lines)}", style="white")
+        if multiformat:
+            summary.append(f"  multiformat={multiformat}", style="cyan")
+
+        # Show top pattern categories (sorted by count)
+        if pattern_cats:
+            top_cats = sorted(pattern_cats.items(), key=lambda x: x[1], reverse=True)[
+                :4
+            ]
+            cat_strs = [f"{cat}={count}" for cat, count in top_cats]
+            summary.append(f"  patterns: {', '.join(cat_strs)}", style="dim")
+        summary.append("\n")
+
+    # Row 4: USAGE - time and total cost
     summary.append("  USAGE ", style="bold cyan")
     summary.append(f"time={elapsed_str}", style="white")
     if not scan_only:
@@ -6389,6 +6430,7 @@ async def _async_discovery_loop(
 
             display.refresh_from_graph(facility)
             scored_this_run = display.get_paths_scored_this_run()
+            enrichment_aggregates = display.get_enrichment_aggregates()
 
     else:
         # Logging-based progress - report only on batch completions
@@ -6430,6 +6472,8 @@ async def _async_discovery_loop(
             on_scan_progress=on_scan_log,
             on_score_progress=on_score_log,
         )
+        # Non-rich mode: empty enrichment aggregates
+        enrichment_aggregates = {}
 
     # Return result for summary (box printed by caller, no duplicate text)
     return (
@@ -6438,10 +6482,13 @@ async def _async_discovery_loop(
             "scanned": result["scanned"],
             "scored": result["scored"],
             "expanded": result.get("expanded", 0),
+            "enriched": result.get("enriched", 0),
+            "rescored": result.get("rescored", 0),
             "cost": result["cost"],
             "elapsed_seconds": result["elapsed_seconds"],
             "scan_rate": result.get("scan_rate"),
             "score_rate": result.get("score_rate"),
+            "enrichment_aggregates": enrichment_aggregates,
         },
         scored_this_run,
     )

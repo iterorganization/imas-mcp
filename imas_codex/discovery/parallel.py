@@ -1270,6 +1270,7 @@ async def enrich_worker(
                     "total_bytes": r.total_bytes,
                     "total_lines": r.total_lines,
                     "language_breakdown": r.language_breakdown,
+                    "pattern_categories": r.pattern_categories,
                     "is_multiformat": r.is_multiformat,
                     "read_matches": r.read_matches,
                     "write_matches": r.write_matches,

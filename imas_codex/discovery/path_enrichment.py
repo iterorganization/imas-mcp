@@ -71,6 +71,8 @@ class EnrichmentResult:
     write_matches: int = 0  # Total write pattern match count
     is_multiformat: bool = False
     conversion_pairs: list[str] = field(default_factory=list)  # e.g., ["eqdsk->imas"]
+    # Pattern categories (mdsplus, hdf5, imas, etc.) with per-category match counts
+    pattern_categories: dict[str, int] = field(default_factory=dict)
     # Storage analysis
     total_bytes: int | None = None
     largest_dirs: dict[str, int] = field(default_factory=dict)
@@ -190,6 +192,11 @@ def enrich_paths(
         lang_breakdown = data.get("language_breakdown", {})
         if lang_breakdown:
             result.language_breakdown = lang_breakdown
+
+        # Pattern categories (mdsplus, hdf5, imas, etc.)
+        pattern_cats = data.get("pattern_categories", {})
+        if pattern_cats:
+            result.pattern_categories = pattern_cats
 
         results.append(result)
 
