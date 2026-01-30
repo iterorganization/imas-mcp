@@ -6162,14 +6162,19 @@ def _print_discovery_summary(
         return
 
     # Score categories: group by which category has the highest score
-    # Categories: score_code, score_data, score_docs, score_imas
+    # Use per-purpose dimensions from DiscoveryRootCategory taxonomy
     score_categories = {
-        "score_code": "Code",
-        "score_data": "Data",
-        "score_docs": "Documentation",
+        "score_modeling_code": "Modeling Code",
+        "score_analysis_code": "Analysis Code",
+        "score_data_access": "Data Access",
         "score_imas": "IMAS",
     }
-    category_order = ["score_code", "score_data", "score_docs", "score_imas"]
+    category_order = [
+        "score_modeling_code",
+        "score_analysis_code",
+        "score_data_access",
+        "score_imas",
+    ]
 
     # Group by highest-scoring category
     by_category: dict[str, list] = {cat: [] for cat in category_order}
@@ -6546,7 +6551,8 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
                 MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
                 WHERE p.status = 'scored' AND p.score IS NOT NULL
                 RETURN p.path AS path, p.score AS score,
-                       p.score_code AS score_code, p.score_data AS score_data,
+                       p.score_modeling_code AS score_modeling_code,
+                       p.score_analysis_code AS score_analysis_code,
                        p.score_imas AS score_imas, p.path_purpose AS path_purpose,
                        p.description AS description, p.total_files AS total_files,
                        p.scored_at AS scored_at
@@ -6601,8 +6607,8 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
             score_table = Table(show_header=True, header_style="bold")
             score_table.add_column("Path", style="cyan", no_wrap=True, max_width=35)
             score_table.add_column("Score", justify="right", style="bold")
-            score_table.add_column("Code", justify="right")
-            score_table.add_column("Data", justify="right")
+            score_table.add_column("Model", justify="right")
+            score_table.add_column("Anlys", justify="right")
             score_table.add_column("IMAS", justify="right")
             score_table.add_column("Purpose", max_width=15)
             score_table.add_column("Description", max_width=30)
@@ -6628,8 +6634,8 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
                 score_table.add_row(
                     path_display,
                     score_str,
-                    f"{p.get('score_code', 0) or 0:.2f}",
-                    f"{p.get('score_data', 0) or 0:.2f}",
+                    f"{p.get('score_modeling_code', 0) or 0:.2f}",
+                    f"{p.get('score_analysis_code', 0) or 0:.2f}",
                     f"{p.get('score_imas', 0) or 0:.2f}",
                     p.get("path_purpose", "") or "",
                     desc,

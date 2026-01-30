@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from imas_codex.agentic.agents import get_model_for_task
-from imas_codex.agentic.prompt_loader import load_prompts
 from imas_codex.discovery.models import (
     DirectoryEvidence,
     DirectoryScoringBatch,
@@ -304,90 +303,33 @@ class DirectoryScorer:
     def _build_system_prompt(self, focus: str | None = None) -> str:
         """Build system prompt for directory scoring.
 
-        Loads prompt from prompts/discovery/scorer.md file.
-        Raises error if prompt not found - no fallback.
+        Uses render_prompt() for proper Jinja2 rendering with schema context.
+        The scorer.md prompt is dynamic=true, so schema-derived values
+        (path_purposes, score_dimensions) are injected automatically.
 
         Injects:
         - focus: optional natural language focus
         - example_paths: calibration examples from previously scored paths
         """
-        import re
-
+        from imas_codex.agentic.prompt_loader import render_prompt
         from imas_codex.discovery.frontier import sample_scored_paths
 
-        prompts = load_prompts()
-        prompt_def = prompts.get("discovery/scorer")
-        if prompt_def is None:
-            raise ValueError(
-                "Required prompt 'discovery/scorer' not found. "
-                "Ensure prompts/discovery/scorer.md exists."
-            )
+        # Build context for template rendering
+        context: dict[str, Any] = {}
 
-        prompt = prompt_def.content
-
-        # Handle focus section
+        # Add focus if provided
         if focus:
-            prompt = prompt.replace("{{ focus }}", focus)
-            prompt = prompt.replace("{% if focus %}", "")
-            prompt = prompt.replace("{% endif %}", "")
-        else:
-            # Remove focus section
-            prompt = re.sub(
-                r"{%\s*if focus\s*%}.*?{%\s*endif\s*%}",
-                "",
-                prompt,
-                flags=re.DOTALL,
-            )
+            context["focus"] = focus
 
-        # Handle example_paths section for LLM calibration
+        # Add example_paths for calibration
         if self.facility:
             example_paths = sample_scored_paths(self.facility, per_quartile=3)
-            # Check if we have any examples
             has_examples = any(example_paths.get(q) for q in example_paths)
             if has_examples:
-                # Render the examples section
-                examples_text = []
-                for quartile in ["low", "medium", "high", "very_high"]:
-                    paths = example_paths.get(quartile, [])
-                    for p in paths:
-                        examples_text.append(
-                            f"- `{p['path']}` → {p['score']} ({p['purpose']})"
-                        )
+                context["example_paths"] = example_paths
 
-                # Replace the template markers
-                prompt = prompt.replace("{% if example_paths %}", "")
-                # Replace individual quartile loops with actual content
-                for quartile in ["low", "medium", "high", "very_high"]:
-                    q_paths = example_paths.get(quartile, [])
-                    q_lines = "\n".join(
-                        f"- `{p['path']}` → {p['score']} ({p['purpose']})"
-                        for p in q_paths
-                    )
-                    # Remove the for loop markers and replace with content
-                    pattern = (
-                        rf"{{% for p in example_paths\.{quartile} %}}\s*"
-                        rf"-.*?\{{{{ p\.\w+ }}}}.*?\s*"
-                        rf"{{% endfor %}}"
-                    )
-                    prompt = re.sub(pattern, q_lines, prompt, flags=re.DOTALL)
-            else:
-                # Remove the entire example_paths section
-                prompt = re.sub(
-                    r"{%\s*if example_paths\s*%}.*?{%\s*endif\s*%}",
-                    "",
-                    prompt,
-                    flags=re.DOTALL,
-                )
-        else:
-            # No facility, remove example section
-            prompt = re.sub(
-                r"{%\s*if example_paths\s*%}.*?{%\s*endif\s*%}",
-                "",
-                prompt,
-                flags=re.DOTALL,
-            )
-
-        return prompt
+        # Use render_prompt for proper Jinja2 rendering with schema context
+        return render_prompt("discovery/scorer", context)
 
     def _build_user_prompt(self, directories: list[dict[str, Any]]) -> str:
         """Build user prompt with directories to score.

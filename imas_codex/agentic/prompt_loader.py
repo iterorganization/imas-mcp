@@ -186,6 +186,7 @@ def get_schema_context() -> dict[str, Any]:
     Returns a dict with:
     - discovery_categories: List of DiscoveryRootCategory enum values
     - path_purposes: List of PathPurpose enum values
+    - score_dimensions: List of per-purpose score field names with descriptions
     - Each with 'value' and 'description' keys
 
     This allows prompts to loop over schema-defined enums without hardcoding.
@@ -200,10 +201,58 @@ def get_schema_context() -> dict[str, Any]:
     )
     path_purposes = schema.get_enum_with_descriptions("PathPurpose") or []
 
+    # Get score dimensions from FacilityPath schema
+    # These are the score_* fields that map to DiscoveryRootCategory taxonomy
+    facility_path_slots = schema.get_all_slots("FacilityPath")
+    score_dimensions = []
+    for slot_name, slot_info in facility_path_slots.items():
+        if slot_name.startswith("score_") and slot_info.get("type") == "float":
+            # Extract description and build dimension info
+            desc = slot_info.get("description", "")
+            score_dimensions.append(
+                {
+                    "field": slot_name,
+                    "label": slot_name.replace("score_", "").replace("_", " ").title(),
+                    "description": desc,
+                }
+            )
+
+    # Group path purposes for convenience in templates
+    code_purposes = [
+        p
+        for p in path_purposes
+        if p["value"] in ("modeling_code", "analysis_code", "operations_code")
+    ]
+    data_purposes = [
+        p for p in path_purposes if p["value"] in ("modeling_data", "experimental_data")
+    ]
+    infra_purposes = [
+        p
+        for p in path_purposes
+        if p["value"] in ("data_access", "workflow", "visualization")
+    ]
+    support_purposes = [
+        p
+        for p in path_purposes
+        if p["value"] in ("documentation", "configuration", "test_suite")
+    ]
+    structural_purposes = [
+        p
+        for p in path_purposes
+        if p["value"] in ("container", "archive", "build_artifact", "system")
+    ]
+
     return {
         "discovery_categories": discovery_categories,
         "path_purposes": path_purposes,
-        # Grouped for convenience in templates
+        "score_dimensions": score_dimensions,
+        # Grouped path purposes for cleaner template organization
+        "path_purposes_code": code_purposes,
+        "path_purposes_data": data_purposes,
+        "path_purposes_infra": infra_purposes,
+        "path_purposes_support": support_purposes,
+        "path_purposes_structural": structural_purposes,
+        # Legacy groupings for discover-roots compatibility
         "discovery_categories_modeling": [
             c
             for c in discovery_categories

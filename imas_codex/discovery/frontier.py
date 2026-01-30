@@ -1075,8 +1075,8 @@ def mark_paths_scored(
     Args:
         facility: Facility ID
         scores: List of dicts from ScoredDirectory.to_graph_dict() with:
-                path, path_purpose, description, evidence, score_code,
-                score_data, score_docs, score_imas, score, should_expand,
+                path, path_purpose, description, evidence, per-purpose scores
+                (score_modeling_code, score_analysis_code, etc.), score, should_expand,
                 keywords, physics_domain, expansion_reason, skip_reason
 
     Returns:
@@ -1138,9 +1138,15 @@ def mark_paths_scored(
                 SET p.status = $scored,
                     p.scored_at = $now,
                     p.score = $score,
-                    p.score_code = $score_code,
-                    p.score_data = $score_data,
-                    p.score_docs = $score_docs,
+                    p.score_modeling_code = $score_modeling_code,
+                    p.score_analysis_code = $score_analysis_code,
+                    p.score_operations_code = $score_operations_code,
+                    p.score_modeling_data = $score_modeling_data,
+                    p.score_experimental_data = $score_experimental_data,
+                    p.score_data_access = $score_data_access,
+                    p.score_workflow = $score_workflow,
+                    p.score_visualization = $score_visualization,
+                    p.score_documentation = $score_documentation,
                     p.score_imas = $score_imas,
                     p.description = $description,
                     p.path_purpose = $path_purpose,
@@ -1163,9 +1169,15 @@ def mark_paths_scored(
                 id=path_id,
                 now=now,
                 score=score_data.get("score"),
-                score_code=score_data.get("score_code"),
-                score_data=score_data.get("score_data"),
-                score_docs=score_data.get("score_docs"),
+                score_modeling_code=score_data.get("score_modeling_code"),
+                score_analysis_code=score_data.get("score_analysis_code"),
+                score_operations_code=score_data.get("score_operations_code"),
+                score_modeling_data=score_data.get("score_modeling_data"),
+                score_experimental_data=score_data.get("score_experimental_data"),
+                score_data_access=score_data.get("score_data_access"),
+                score_workflow=score_data.get("score_workflow"),
+                score_visualization=score_data.get("score_visualization"),
+                score_documentation=score_data.get("score_documentation"),
                 score_imas=score_data.get("score_imas"),
                 description=score_data.get("description"),
                 path_purpose=score_data.get("path_purpose"),
