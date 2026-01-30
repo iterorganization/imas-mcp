@@ -76,23 +76,14 @@ def _deep_merge(base: dict, updates: dict) -> dict:
 def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> CommentedMap:
     """Deep merge updates into ruamel CommentedMap, preserving comments.
 
-    For nested dicts (like tools), replaces entire sub-dict to avoid
-    comment-induced indentation issues. For lists, extends without duplicates.
+    Recursively merges nested dicts, extends lists without duplicates.
+    New keys are added, existing keys are updated additively.
     """
     for key, value in updates.items():
         if key in base:
             if isinstance(base[key], CommentedMap) and isinstance(value, dict):
-                # For nested dicts, replace entirely if the incoming value
-                # is a plain dict (not CommentedMap) to avoid YAML formatting issues
-                # when comments exist between keys
-                if not isinstance(value, CommentedMap):
-                    # Convert to CommentedMap and replace
-                    new_map = CommentedMap()
-                    for k, v in value.items():
-                        new_map[k] = v
-                    base[key] = new_map
-                else:
-                    _deep_merge_ruamel(base[key], value)
+                # Recursively merge nested dicts (additive, not replacement)
+                _deep_merge_ruamel(base[key], value)
             elif isinstance(base[key], list | CommentedSeq) and isinstance(value, list):
                 # Extend lists, avoiding duplicates
                 for item in value:
@@ -101,7 +92,14 @@ def _deep_merge_ruamel(base: CommentedMap, updates: dict[str, Any]) -> Commented
             else:
                 base[key] = value
         else:
-            base[key] = value
+            # New key - add it, converting dicts to CommentedMap for consistency
+            if isinstance(value, dict) and not isinstance(value, CommentedMap):
+                new_map = CommentedMap()
+                for k, v in value.items():
+                    new_map[k] = v
+                base[key] = new_map
+            else:
+                base[key] = value
     return base
 
 
