@@ -113,9 +113,8 @@ uv run imas-codex discover paths tcv --seed
 
 Before ANY operation that modifies or deletes graph nodes:
 
-1. Always dump first: `uv run imas-codex neo4j dump`
-2. Never use `DETACH DELETE` on production data without user confirmation
-3. For re-embedding: update nodes in place, don't delete and recreate
+- Never use `DETACH DELETE` on production data without user confirmation
+- For re-embedding: update nodes in place, don't delete and recreate
 
 ### Token Cost Optimization
 
