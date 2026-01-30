@@ -1496,17 +1496,8 @@ classes:
         required: true
         range: Facility
       physics_domain:
-        description: >-
-          Physics domain for categorizing this signal. Values must match
-          PhysicsDomain enum values from imas_codex.core.physics_domain:
-          equilibrium, transport, magnetohydrodynamics, turbulence,
-          auxiliary_heating, current_drive, plasma_wall_interactions,
-          divertor_physics, edge_plasma_physics, particle_measurement_diagnostics,
-          electromagnetic_wave_diagnostics, radiation_measurement_diagnostics,
-          magnetic_field_diagnostics, mechanical_measurement_diagnostics,
-          plasma_control, machine_operations, magnetic_field_systems,
-          structural_components, plant_systems, data_management,
-          computational_workflow, general
+        description: Physics domain for categorizing this signal
+        range: PhysicsDomain
         required: true
       name:
         description: >-

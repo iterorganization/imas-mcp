@@ -25,6 +25,7 @@ default_range: string
 
 imports:
   - linkml:types
+  - physics_domains
 
 # =============================================================================
 # Status Enums - Unified Lifecycle Terminology
@@ -358,20 +359,9 @@ classes:
           Higher when validated against physics quantities.
         range: float
 
-  PhysicsDomain:
-    description: >-
-      Physics domain for categorizing fusion data and documentation.
-      Used to link WikiPages, TreeNodes, and IMASPaths by physics topic.
-      
-      Examples: equilibrium, transport, mhd, heating, diagnostics
-    class_uri: common:PhysicsDomain
-    attributes:
-      name:
-        identifier: true
-        description: Domain name (e.g., "equilibrium", "transport", "mhd")
-        required: true
-      description:
-        description: Human-readable description of the domain
+  # NOTE: PhysicsDomain is now an ENUM imported from physics_domains.yaml
+  # The class was removed to avoid conflict with the enum. Use the enum
+  # for categorizing FacilitySignal, IMASPath, TreeNode, etc.
 
   Unit:
     description: >-

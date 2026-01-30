@@ -301,7 +301,7 @@ After completing any file modifications, you MUST commit before responding to th
 3. `git add <files>` - stage specific files (never `git add -A`)
 4. `uv run git commit -m "type: description"` - commit with conventional format
 5. `git push origin main` - push immediately
-6. End your response with the **full commit message** (not just the summary):
+6. End your response with the **full commit message** followed by a **rich summary**:
 
 ```
 ✓ Committed: `<commit-hash>`
@@ -312,6 +312,16 @@ Detailed explanation of what changed and why.
 - First significant change
 - Second change with rationale
 ```
+
+**Rich Summary** (after commit message):
+Provide a brief, user-friendly summary highlighting:
+- What capability was added or changed
+- Key files affected
+- Any breaking changes or migration notes
+- Next steps if applicable
+
+Example:
+> FacilitySignal now enforces PhysicsDomain enum for categorization. The schema imports `physics_domains.yaml` directly, eliminating the redundant string description. Graph nodes updated with proper domain values.
 
 **Why show full message:** The commit message serves as the session's work record. Showing only a one-line summary loses context about what was done and why. The full message allows the user to track changes across sessions without checking git log.
 
