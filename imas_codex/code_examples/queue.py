@@ -25,7 +25,7 @@ class QueuedFile:
     language: str
     interest_score: float = 0.5
     patterns_matched: list[str] | None = None
-    parent_path_id: str | None = None
+    in_directory: str | None = None
     discovered_by: str | None = None
 
 
@@ -45,7 +45,7 @@ def queue_source_files(
     file_paths: list[str],
     interest_score: float = 0.5,
     patterns_matched: list[str] | None = None,
-    parent_path_id: str | None = None,
+    in_directory: str | None = None,
     discovered_by: str | None = None,
 ) -> dict[str, int]:
     """Discover source files for ingestion.
@@ -58,7 +58,7 @@ def queue_source_files(
         file_paths: List of remote file paths to discover
         interest_score: Priority score (0.0-1.0, higher = sooner)
         patterns_matched: Patterns that matched (e.g., ["IMAS", "equilibrium"])
-        parent_path_id: FacilityPath that contains these files
+        in_directory: FacilityPath that contains these files
         discovered_by: Scout session identifier
 
     Returns:
@@ -79,7 +79,7 @@ def queue_source_files(
                 "status": "discovered",
                 "interest_score": interest_score,
                 "patterns_matched": patterns_matched or [],
-                "parent_path_id": parent_path_id,
+                "in_directory": in_directory,
                 "discovered_by": discovered_by,
                 "discovered_at": now,
             }
@@ -128,15 +128,15 @@ def queue_source_files(
             )
 
             # Link to parent FacilityPath if provided
-            if parent_path_id:
+            if in_directory:
                 client.query(
                     """
                     MATCH (sf:SourceFile)
-                    WHERE sf.parent_path_id = $parent_id
+                    WHERE sf.in_directory = $parent_id
                     MATCH (p:FacilityPath {id: $parent_id})
                     MERGE (p)-[:CONTAINS]->(sf)
                     """,
-                    parent_id=parent_path_id,
+                    parent_id=in_directory,
                 )
 
             logger.info(

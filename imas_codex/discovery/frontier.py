@@ -358,7 +358,7 @@ def get_frontier(
         include_rescore: Include paths marked for rescore
 
     Returns:
-        List of dicts with path info: id, path, depth, status, parent_path_id
+        List of dicts with path info: id, path, depth, status, in_directory
     """
     from imas_codex.graph import GraphClient
 
@@ -377,7 +377,7 @@ def get_frontier(
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE {where_clause}
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
-                   p.status AS status, p.parent_path_id AS parent_path_id
+                   p.status AS status, p.in_directory AS in_directory
             ORDER BY p.depth ASC, p.path ASC
             LIMIT $limit
             """,
@@ -680,7 +680,7 @@ def create_child_paths(
                 "path_type": "code_directory",
                 "status": PathStatus.discovered.value,
                 "depth": parent_depth + 1,
-                "parent_path_id": parent_id,
+                "in_directory": parent_id,
                 "discovered_at": now,
             }
         )
@@ -690,17 +690,7 @@ def create_child_paths(
 
     with GraphClient() as gc:
         result = gc.create_nodes("FacilityPath", items)
-
-        # Create PARENT relationships
-        gc.query(
-            """
-            UNWIND $children AS child
-            MATCH (c:FacilityPath {id: child.id})
-            MATCH (p:FacilityPath {id: child.parent_path_id})
-            MERGE (c)-[:PARENT]->(p)
-            """,
-            children=items,
-        )
+        # IN_DIRECTORY relationships now created automatically by create_nodes()
 
     return result["processed"]
 
@@ -1681,11 +1671,11 @@ async def persist_scan_results(
                                       c.path_type = child.path_type,
                                       c.status = child.status,
                                       c.depth = child.depth,
-                                      c.parent_path_id = child.parent_id,
+                                      c.in_directory = child.parent_id,
                                       c.discovered_at = child.discovered_at,
                                       c.device_inode = child.device_inode
                         MERGE (c)-[:FACILITY_ID]->(f)
-                        MERGE (c)-[:PARENT]->(parent)
+                        MERGE (c)-[:IN_DIRECTORY]->(parent)
                     )
 
                     // Conflict exists AND new path is LESS canonical - new becomes alias
@@ -1700,13 +1690,13 @@ async def persist_scan_results(
                                       alias.status = 'excluded',
                                       alias.skip_reason = 'bind_mount_duplicate',
                                       alias.depth = child.depth,
-                                      alias.parent_path_id = child.parent_id,
+                                      alias.in_directory = child.parent_id,
                                       alias.discovered_at = child.discovered_at,
                                       alias.device_inode = child.device_inode,
                                       alias.canonicality = child.canonicality,
                                       alias.alias_of_id = existing.id
                         MERGE (alias)-[:FACILITY_ID]->(f)
-                        MERGE (alias)-[:PARENT]->(parent)
+                        MERGE (alias)-[:IN_DIRECTORY]->(parent)
                         MERGE (alias)-[:ALIAS_OF]->(existing)
                     )
 
@@ -1723,12 +1713,12 @@ async def persist_scan_results(
                                       c.path_type = child.path_type,
                                       c.status = child.status,
                                       c.depth = child.depth,
-                                      c.parent_path_id = child.parent_id,
+                                      c.in_directory = child.parent_id,
                                       c.discovered_at = child.discovered_at,
                                       c.device_inode = child.device_inode,
                                       c.canonicality = child.canonicality
                         MERGE (c)-[:FACILITY_ID]->(f)
-                        MERGE (c)-[:PARENT]->(parent)
+                        MERGE (c)-[:IN_DIRECTORY]->(parent)
                     )
                     """,
                     children=regular_children,
@@ -1773,13 +1763,13 @@ async def persist_scan_results(
                                   c.status = child.status,
                                   c.skip_reason = child.skip_reason,
                                   c.depth = child.depth,
-                                  c.parent_path_id = child.parent_id,
+                                  c.in_directory = child.parent_id,
                                   c.discovered_at = child.discovered_at,
                                   c.is_symlink = true,
                                   c.realpath = child.realpath,
                                   c.device_inode = child.device_inode
                     MERGE (c)-[:FACILITY_ID]->(f)
-                    MERGE (c)-[:PARENT]->(parent)
+                    MERGE (c)-[:IN_DIRECTORY]->(parent)
                     """,
                     children=symlink_children,
                 )
@@ -1862,7 +1852,7 @@ async def persist_scan_results(
                                   p.status = node.status,
                                   p.skip_reason = node.skip_reason,
                                   p.depth = node.depth,
-                                  p.parent_path_id = node.parent_id,
+                                  p.in_directory = node.parent_id,
                                   p.discovered_at = node.discovered_at
                     """,
                     nodes=excluded_nodes,

@@ -665,8 +665,8 @@ classes:
         description: Exploration status
         range: PathStatus
         required: true
-      parent_path_id:
-        description: Parent directory path ID (null for root paths)
+      in_directory:
+        description: Parent directory containing this path (null for root paths)
         range: FacilityPath
       depth:
         description: Distance from root path (0 = root like /home/codes)
@@ -1749,8 +1749,8 @@ classes:
       artifact_type:
         description: Artifact type (for document files)
         range: ArtifactType
-      parent_path_id:
-        description: FacilityPath that contains this file (for tracking)
+      in_directory:
+        description: FacilityPath that contains this file
         range: FacilityPath
       discovered_by:
         description: Scout session or pattern that found this file
