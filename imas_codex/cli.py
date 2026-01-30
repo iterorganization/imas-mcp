@@ -5957,10 +5957,10 @@ def _run_iterative_discovery(
                 scan_only=scan_only,
                 score_only=score_only,
                 use_rich=use_rich,
+                root_filter=root_filter,
             )
         )
-    root_filter=root_filter,
-            
+
         # Print detailed summary with paths scored this run
         _print_discovery_summary(
             console, facility, result, scored_this_run, scan_only=scan_only
