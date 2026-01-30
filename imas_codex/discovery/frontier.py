@@ -318,6 +318,28 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
         }
 
 
+def get_purpose_distribution(facility: str) -> dict[str, int]:
+    """Get count of scored paths by path_purpose.
+
+    Returns:
+        Dict mapping purpose name to count, sorted by count descending.
+    """
+    from imas_codex.graph import GraphClient
+
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            WHERE p.status = 'scored' AND p.path_purpose IS NOT NULL
+            RETURN p.path_purpose AS purpose, count(*) AS count
+            ORDER BY count DESC
+            """,
+            facility=facility,
+        )
+
+        return {row["purpose"]: row["count"] for row in result}
+
+
 def get_frontier(
     facility: str,
     limit: int = 100,

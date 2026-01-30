@@ -41,6 +41,7 @@ from imas_codex.discovery.frontier import (
     get_discovery_stats,
     get_frontier,
     get_high_value_paths,
+    get_purpose_distribution,
     get_scorable_paths,
     seed_facility_roots,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "DirectoryScorer",
     "grounded_score",
     "get_discovery_stats",
+    "get_purpose_distribution",
     "get_frontier",
     "get_scorable_paths",
     "get_high_value_paths",

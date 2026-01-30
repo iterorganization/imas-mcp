@@ -305,7 +305,11 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
         facility: Facility ID
         console: Optional Rich console
     """
-    from imas_codex.discovery.frontier import get_discovery_stats, get_high_value_paths
+    from imas_codex.discovery.frontier import (
+        get_discovery_stats,
+        get_high_value_paths,
+        get_purpose_distribution,
+    )
 
     console = console or Console()
     stats = get_discovery_stats(facility)
@@ -328,6 +332,44 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
     console.print(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
     console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
     console.print(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
+
+    # Purpose distribution
+    purpose_dist = get_purpose_distribution(facility)
+    if purpose_dist:
+        console.print("\n[bold]By Purpose:[/bold]")
+        # Group into categories for cleaner display
+        modeling = sum(
+            purpose_dist.get(p, 0) for p in ["modeling_code", "modeling_data"]
+        )
+        analysis = sum(
+            purpose_dist.get(p, 0)
+            for p in ["analysis_code", "operations_code", "experimental_data"]
+        )
+        infrastructure = sum(
+            purpose_dist.get(p, 0) for p in ["data_access", "workflow", "visualization"]
+        )
+        support = sum(
+            purpose_dist.get(p, 0)
+            for p in ["documentation", "configuration", "test_suite"]
+        )
+        structural = sum(
+            purpose_dist.get(p, 0)
+            for p in ["container", "archive", "build_artifact", "system"]
+        )
+
+        console.print(f"├─ [cyan]Modeling[/cyan]:       {modeling:,} (code + data)")
+        console.print(
+            f"├─ [green]Analysis[/green]:       {analysis:,} (code + ops + data)"
+        )
+        console.print(f"├─ [yellow]Infrastructure[/yellow]: {infrastructure:,}")
+        console.print(f"├─ [blue]Support[/blue]:        {support:,}")
+        console.print(f"└─ [dim]Structural[/dim]:     {structural:,}")
+
+        # Detail breakdown if verbose
+        console.print("\n  [dim]Detail:[/dim]")
+        for purpose, count in purpose_dist.items():
+            pct = count / sum(purpose_dist.values()) * 100 if purpose_dist else 0
+            console.print(f"    {purpose}: {count} ({pct:.1f}%)")
 
     # Summary
     frontier = discovered + listed
