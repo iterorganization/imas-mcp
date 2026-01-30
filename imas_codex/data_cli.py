@@ -140,8 +140,19 @@ class Neo4jOperation:
         if result.returncode == 0:
             return
 
-        # Fallback to pkill
-        subprocess.run(["pkill", "-f", "neo4j.*console"], capture_output=True)
+        # Fallback to pkill - try multiple patterns that may match
+        # Pattern 1: Apptainer container with neo4j image
+        subprocess.run(
+            ["pkill", "-15", "-f", "neo4j_2025.*community.sif"],
+            capture_output=True,
+        )
+        # Pattern 2: Neo4j Java process
+        subprocess.run(
+            ["pkill", "-15", "-f", "Neo4jCommunity"],
+            capture_output=True,
+        )
+        # Pattern 3: Legacy pattern
+        subprocess.run(["pkill", "-15", "-f", "neo4j.*console"], capture_output=True)
 
     def _start_neo4j(self) -> None:
         """Start Neo4j via systemd or direct command."""
