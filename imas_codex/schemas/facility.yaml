@@ -1447,49 +1447,57 @@ classes:
       A native data accessor at a facility. Minimal node containing only
       the information needed to fetch data.
       
+      ID format: facility:category/signal_name[:variant]
+      Examples:
+        - tcv:equilibrium/plasma_current (primary via tcv_eq)
+        - tcv:equilibrium/plasma_current:liuqe (explicit source)
+        - tcv:bolometry/radiated_power
+        - jet:ppf/magn/ipla
+      
       Required relationships:
         - FACILITY_ID -> Facility
         - HAS_UNIT -> Unit (units of the returned data)
+        - USES_ACCESS_METHOD -> AccessMethod (code generation template)
       
       Optional relationships:
-        - MEASURES -> StandardName (cross-facility semantic linking, added later)
+        - MEASURES -> StandardName (cross-facility semantic linking)
         - VALID_FOR -> ShotRange (shot validity range)
       
-      Code generation pattern (standalone, no MEASURES required):
-        signal = graph.get("FacilitySignal", id)
-        unit = graph.traverse(signal, "HAS_UNIT")
-        
-        import MDSplus
-        conn = MDSplus.Connection(signal.connection)
-        conn.openTree(signal.tree, shot)
-        data = conn.get(signal.accessor)
-        time = conn.get(f"dim_of({signal.accessor})")
-        plt.plot(time, data)
-        plt.ylabel(f"[{unit.symbol}]")
+      Code generation pattern:
+        1. Query FacilitySignal by id or aliases
+        2. Get AccessMethod via USES_ACCESS_METHOD
+        3. Substitute {shot}, {tree}, {accessor} in templates
     class_uri: facility:FacilitySignal
     attributes:
       id:
         identifier: true
         description: >-
-          Composite key: facility:signal_name[:variant]
-          E.g., tcv:ip, jet:ipla:ppf, tcv:ip:liuqe
+          Hierarchical semantic path: facility:category/signal_name[:variant]
+          The category maps to physics/diagnostic domains.
+          Variant suffix for non-primary sources (e.g., :liuqe, :chease).
         required: true
       facility_id:
         description: Parent facility
         required: true
         range: Facility
-      connection:
+      aliases:
         description: >-
-          Server connection string.
-          MDSplus: "hostname::" (e.g., "tcvdata::")
-        required: true
-      tree:
-        description: MDSplus tree name (e.g., "results", "ppf")
+          Alternative names for fuzzy search. Include common abbreviations,
+          parameter names from TDI functions, and legacy names.
+          E.g., ["i_p", "ip", "Ip", "I_PL", "plasma current"]
+        multivalued: true
+      full_path:
+        description: >-
+          Resolved MDSplus node path for direct tree access.
+          E.g., "\RESULTS::TOP.EQUIL_1.RESULTS:I_PL"
       accessor:
         description: >-
-          Data accessor expression passed to conn.get().
-          Examples: "tcv_eq('i_p')", "\\results::i_p", "ppf::signal('MAGN','IPLA')"
+          TDI expression or accessor call. Preferred over full_path when
+          the TDI function handles source selection.
+          Examples: "tcv_eq('i_p')", "ppf::signal('MAGN','IPLA')"
         required: true
+      tree:
+        description: MDSplus tree name (e.g., "tcv_shot", "ppf")
       description:
         description: Human-readable description of what this signal measures
       is_primary:
