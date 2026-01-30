@@ -1418,6 +1418,82 @@ classes:
       description:
         description: Diagnostic description
 
+  StandardName:
+    description: >-
+      A canonical physics or geometric quantity name. Part of the standard_names
+      vocabulary used to unify signal semantics across facilities.
+      
+      Relationships:
+        - HAS_UNIT -> Unit (canonical units for this quantity)
+        - IN_DOMAIN -> PhysicsDomainNode (optional grouping)
+      
+      Example: plasma_current, electron_density_core, major_radius
+    class_uri: facility:StandardName
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          The standard name in snake_case.
+          E.g., plasma_current, electron_temperature, major_radius
+        required: true
+      description:
+        description: Human-readable definition of this quantity
+      canonical_units:
+        description: Expected SI units for this quantity
+        range: Unit
+
+  FacilitySignal:
+    description: >-
+      A native data accessor at a facility. Minimal node containing only
+      the information needed to fetch data. Semantics come from relationships.
+      
+      Relationships:
+        - FACILITY_ID -> Facility
+        - MEASURES -> StandardName (what physical quantity this signal represents)
+        - HAS_UNIT -> Unit (units of the returned data)
+        - VALID_FOR -> ShotRange (optional shot validity)
+      
+      Code generation pattern (from traversing relationships):
+        signal = graph.get("FacilitySignal", id)
+        name = signal.MEASURES.id  # e.g., "plasma_current"
+        units = signal.HAS_UNIT.symbol  # e.g., "A"
+        
+        conn = MDSplus.Connection(signal.connection)
+        conn.openTree(signal.tree, shot)
+        data = conn.get(signal.accessor)
+        time = conn.get(f"dim_of({signal.accessor})")
+    class_uri: facility:FacilitySignal
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Composite key: facility:standard_name[:variant]
+          E.g., tcv:plasma_current, jet:plasma_current:ppf
+        required: true
+      facility_id:
+        description: Parent facility
+        required: true
+        range: Facility
+      connection:
+        description: >-
+          Server connection string.
+          MDSplus: "hostname::" (e.g., "tcvdata::")
+        required: true
+      tree:
+        description: MDSplus tree name (e.g., "results", "ppf")
+      accessor:
+        description: >-
+          Data accessor expression passed to conn.get().
+          Examples: "tcv_eq('i_p')", "\\results::i_p", "ppf::signal('MAGN','IPLA')"
+        required: true
+      is_primary:
+        description: True if this is the default accessor for this quantity at this facility
+        range: boolean
+        ifabsent: "true"
+      example_shot:
+        description: Known-good shot for testing
+        range: integer
+
   AnalysisCode:
     description: >-
       A physics analysis or simulation code that writes data to trees.
