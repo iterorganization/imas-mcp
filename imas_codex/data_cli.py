@@ -323,8 +323,11 @@ def login_to_ghcr(token: str | None) -> None:
 
 
 def get_private_files() -> list[Path]:
-    """Get list of private YAML files."""
-    return list(Path(".").glob(PRIVATE_YAML_GLOB))
+    """Get list of private YAML files including local.yaml."""
+    files = list(Path(".").glob(PRIVATE_YAML_GLOB))
+    if LOCAL_CONFIG_FILE.exists():
+        files.append(LOCAL_CONFIG_FILE)
+    return files
 
 
 def get_saved_gist_id() -> str | None:
@@ -406,8 +409,8 @@ def data() -> None:
     \b
       imas-codex data dump         Export graph to archive
       imas-codex data load <file>  Load graph archive
-      imas-codex data push         Push graph to GHCR
-      imas-codex data pull         Pull graph from GHCR
+      imas-codex data push         Push graph + private YAML (full backup)
+      imas-codex data pull         Pull graph + private YAML (full restore)
       imas-codex data list         List available versions
       imas-codex data status       Show local status
 
@@ -1095,17 +1098,24 @@ def data_load(archive: str, force: bool, no_restart: bool) -> None:
 @click.option("--registry", envvar="IMAS_DATA_REGISTRY", default=None)
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
+@click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
 def data_push(
-    dev: bool, registry: str | None, token: str | None, dry_run: bool
+    dev: bool,
+    registry: str | None,
+    token: str | None,
+    dry_run: bool,
+    skip_private: bool,
 ) -> None:
-    """Push graph archive to GHCR.
+    """Push graph archive to GHCR and private YAML to Gist.
 
     Auto-detects fork and pushes to your GHCR registry.
+    Also syncs private YAML files (local.yaml, *_private.yaml) to GitHub Gist.
     Requires clean git state for release pushes.
 
     Examples:
         imas-codex data push              # Push release (requires git tag)
         imas-codex data push --dev        # Push dev version
+        imas-codex data push --skip-private  # Graph only, no gist sync
     """
     require_oras()
 
@@ -1183,6 +1193,22 @@ def data_push(
         if archive_path.exists():
             archive_path.unlink()
 
+    # Sync private YAML files to Gist
+    if not skip_private and not dry_run:
+        private_files = get_private_files()
+        if private_files:
+            click.echo("\nSyncing private YAML to Gist...")
+            from click.testing import CliRunner
+
+            runner = CliRunner()
+            result = runner.invoke(private_push, [])
+            if result.exit_code != 0:
+                click.echo(f"Warning: Private sync failed: {result.output}", err=True)
+            else:
+                click.echo("✓ Private YAML synced to Gist")
+    elif skip_private:
+        click.echo("\nSkipped private YAML sync (--skip-private)")
+
 
 @data.command("pull")
 @click.option("-v", "--version", "version", default="latest")
@@ -1190,12 +1216,19 @@ def data_push(
 @click.option("--token", envvar="GHCR_TOKEN")
 @click.option("--force", is_flag=True, help="Overwrite existing graph without checks")
 @click.option("--no-backup", is_flag=True, help="Skip backup marker")
+@click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
 def data_pull(
-    version: str, registry: str | None, token: str | None, force: bool, no_backup: bool
+    version: str,
+    registry: str | None,
+    token: str | None,
+    force: bool,
+    no_backup: bool,
+    skip_private: bool,
 ) -> None:
-    """Pull graph archive from GHCR and load.
+    """Pull graph archive from GHCR and private YAML from Gist.
 
     Neo4j is automatically stopped/restarted during load.
+    Also pulls private YAML files from GitHub Gist (with diff preview).
 
     Safety: Refuses to overwrite existing graph unless:
     - Graph was previously pushed (tracked in manifest), or
@@ -1278,7 +1311,27 @@ def data_pull(
                 manifest["pushed_version"] = version
                 save_local_graph_manifest(manifest)
 
-    click.echo("✓ Pull complete. Start Neo4j: imas-codex data db start")
+    click.echo("✓ Graph pull complete")
+
+    # Sync private YAML files from Gist
+    if not skip_private:
+        gist_id = get_saved_gist_id()
+        if gist_id:
+            click.echo("\nPulling private YAML from Gist...")
+            from click.testing import CliRunner
+
+            runner = CliRunner()
+            # Use --force since graph pull implies full restore
+            result = runner.invoke(private_pull, ["--force"] if force else [])
+            if result.exit_code != 0:
+                click.echo(f"Warning: Private sync failed: {result.output}", err=True)
+            else:
+                click.echo("✓ Private YAML restored from Gist")
+        else:
+            click.echo("\nNo Gist configured - skipping private YAML sync")
+            click.echo("  Configure with: imas-codex data private push")
+    else:
+        click.echo("\nSkipped private YAML sync (--skip-private)")
 
 
 @data.command("list")

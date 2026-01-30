@@ -67,6 +67,9 @@ poetry.lock
 # Pattern: <facility>_private.yaml (e.g., epfl_private.yaml)
 imas_codex/config/facilities/*_private.yaml
 
+# Machine-specific local config (synced via private gist)
+imas_codex/config/local.yaml
+
 # Log files
 *.log
 .env
