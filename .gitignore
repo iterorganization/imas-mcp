@@ -67,10 +67,6 @@ poetry.lock
 # Pattern: <facility>_private.yaml (e.g., epfl_private.yaml)
 imas_codex/config/facilities/*_private.yaml
 
-# Machine-specific service configs (systemd, launchd, etc.)
-# Synced via private gist - contains paths, resource limits, passwords
-imas_codex/config/services/
-
 # Log files
 *.log
 .env

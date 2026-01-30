@@ -323,12 +323,8 @@ def login_to_ghcr(token: str | None) -> None:
 
 
 def get_private_files() -> list[Path]:
-    """Get list of private YAML files and service configs."""
-    files = list(Path(".").glob(PRIVATE_YAML_GLOB))
-    # Add service configs (systemd, launchd, etc.)
-    if SERVICES_DIR.exists():
-        files.extend(SERVICES_DIR.glob("*"))
-    return files
+    """Get list of private facility YAML files."""
+    return list(Path(".").glob(PRIVATE_YAML_GLOB))
 
 
 def get_saved_gist_id() -> str | None:
@@ -589,13 +585,32 @@ def db_shell(image: str | None, password: str) -> None:
 
 @data_db.command("service")
 @click.argument("action", type=click.Choice(["install", "uninstall", "status"]))
-@click.option("--image", envvar="NEO4J_IMAGE", default=None)
-@click.option("--data-dir", envvar="NEO4J_DATA", default=None)
+@click.option("--image", envvar="NEO4J_IMAGE", default=None, help="Custom image path")
+@click.option("--data-dir", envvar="NEO4J_DATA", default=None, help="Custom data dir")
 @click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
+@click.option(
+    "--minimal", is_flag=True, help="Use minimal service (no resource limits)"
+)
 def db_service(
-    action: str, image: str | None, data_dir: str | None, password: str
+    action: str,
+    image: str | None,
+    data_dir: str | None,
+    password: str,
+    minimal: bool,
 ) -> None:
-    """Manage Neo4j as a systemd user service."""
+    """Manage Neo4j as a systemd user service.
+
+    Uses the template from imas_codex/config/services/imas-codex-db.service
+    which includes cleanup, graceful shutdown, and resource limits.
+
+    The template uses systemd %h specifier for home directory.
+
+    Examples:
+        imas-codex data db service install      # Install with defaults
+        imas-codex data db service install --minimal  # Basic service
+        imas-codex data db service status       # Check service status
+        imas-codex data db service uninstall    # Remove service
+    """
     import platform
 
     if platform.system() != "Linux":
@@ -608,19 +623,25 @@ def db_service(
 
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_file = service_dir / "imas-codex-neo4j.service"
+    template_file = SERVICES_DIR / "imas-codex-db.service"
     image_path = Path(image) if image else NEO4J_IMAGE
     data_path = Path(data_dir) if data_dir else DATA_DIR
     apptainer_path = shutil.which("apptainer")
 
     if action == "install":
         if not image_path.exists():
-            raise click.ClickException(f"Neo4j image not found: {image_path}")
+            raise click.ClickException(
+                f"Neo4j image not found: {image_path}\n"
+                "Pull: apptainer pull docker://neo4j:2025.11-community"
+            )
 
         service_dir.mkdir(parents=True, exist_ok=True)
         for subdir in ["data", "logs", "conf", "import"]:
             (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
-        service_content = f"""[Unit]
+        if minimal or not template_file.exists():
+            # Minimal service without resource limits
+            service_content = f"""[Unit]
 Description=Neo4j Graph Database (IMAS Codex)
 After=network.target
 
@@ -640,12 +661,22 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 """
-        service_file.write_text(service_content)
+            service_file.write_text(service_content)
+            click.echo("Installed minimal service")
+        else:
+            # Use production template with resource limits
+            # Template uses %h for home dir (systemd resolves this)
+            shutil.copy(template_file, service_file)
+            click.echo(f"Installed from template: {template_file}")
+            click.echo("  Includes: cleanup, graceful shutdown, resource limits")
+
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(
             ["systemctl", "--user", "enable", "imas-codex-neo4j"], check=True
         )
-        click.echo("Service installed")
+        click.echo("\n✓ Service installed and enabled")
+        click.echo("  Start: systemctl --user start imas-codex-neo4j")
+        click.echo("  Or:    imas-codex data db start")
 
     elif action == "uninstall":
         if not service_file.exists():
@@ -1107,10 +1138,10 @@ def data_push(
     dry_run: bool,
     skip_private: bool,
 ) -> None:
-    """Push graph archive to GHCR and private configs to Gist.
+    """Push graph archive to GHCR and private facility configs to Gist.
 
     Auto-detects fork and pushes to your GHCR registry.
-    Also syncs private files (*_private.yaml, services/*) to GitHub Gist.
+    Also syncs private facility files (*_private.yaml) to GitHub Gist.
     Requires clean git state for release pushes.
 
     Examples:
@@ -1226,10 +1257,10 @@ def data_pull(
     no_backup: bool,
     skip_private: bool,
 ) -> None:
-    """Pull graph archive from GHCR and private configs from Gist.
+    """Pull graph archive from GHCR and private facility configs from Gist.
 
     Neo4j is automatically stopped/restarted during load.
-    Also pulls private files (*_private.yaml, services/*) from Gist.
+    Also pulls private facility files (*_private.yaml) from Gist.
 
     Safety: Refuses to overwrite existing graph unless:
     - Graph was previously pushed (tracked in manifest), or

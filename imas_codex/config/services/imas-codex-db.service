@@ -1,0 +1,45 @@
+# Neo4j Graph Database service for IMAS Codex
+# Install: imas-codex data db service install
+# Uses systemd specifiers: %h = home directory
+#
+# This file is version-controlled as a reference template.
+# The actual installed service uses absolute paths resolved at install time.
+
+[Unit]
+Description=Neo4j Graph Database (IMAS Codex)
+After=network.target
+
+[Service]
+Type=simple
+
+# Cleanup stale locks and orphaned processes before starting
+ExecStartPre=-/bin/bash -c 'pkill -9 -f "neo4j_2025.*community.sif" 2>/dev/null || true'
+ExecStartPre=-/bin/bash -c 'rm -f %h/.local/share/imas-codex/neo4j/data/databases/store_lock %h/.local/share/imas-codex/neo4j/data/databases/*/database_lock 2>/dev/null || true'
+ExecStartPre=-/bin/bash -c 'sleep 2'
+
+ExecStart=/usr/bin/apptainer exec \
+    --bind %h/.local/share/imas-codex/neo4j/data:/data \
+    --bind %h/.local/share/imas-codex/neo4j/logs:/logs \
+    --bind %h/.local/share/imas-codex/neo4j/import:/import \
+    --bind %h/.local/share/imas-codex/neo4j/conf:/var/lib/neo4j/conf \
+    --writable-tmpfs \
+    --env NEO4J_AUTH=neo4j/imas-codex \
+    --env "NEO4J_server_jvm_additional=-Dfile.encoding=UTF-8 --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
+    %h/apptainer/neo4j_2025.11-community.sif \
+    neo4j console
+
+# Graceful shutdown with timeout
+ExecStop=-/bin/bash -c 'pkill -15 -f "neo4j_2025.*community.sif"; sleep 10; pkill -9 -f "neo4j_2025.*community.sif" || true'
+TimeoutStopSec=60
+
+Restart=on-failure
+RestartSec=30
+
+# Resource limits - adjust based on your machine
+CPUQuota=200%
+MemoryMax=4G
+MemoryHigh=3G
+Nice=10
+
+[Install]
+WantedBy=default.target
