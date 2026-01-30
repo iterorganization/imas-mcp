@@ -16,33 +16,37 @@ ensure balanced coverage across **simulation** (forward modeling) and **experime
 
 ## CRITICAL: Workflow for Modifying Discovery Roots
 
-**IMPORTANT**: Discovery roots are stored in private YAML files (`{facility}_private.yaml`).
-When you update `discovery_roots` via MCP, these changes are NOT automatically version-controlled.
+**IMPORTANT**: Always use the MCP `update_facility_infrastructure()` tool to modify discovery roots.
+This ensures schema validation and proper persistence.
 
-**After modifying discovery_roots, you MUST:**
+**DO NOT directly edit private YAML files** - the MCP tool handles persistence correctly.
 
-1. **Update the private YAML file directly** (using file edit tools, not just MCP):
-   ```yaml
-   # In imas_codex/config/facilities/{facility}_private.yaml
-   discovery_roots:
-   - path: /home
-     category: container
-     description: User home directories - discover facility users
-     expand_depth: 1
-   - path: /home/codes
-     category: modeling_code
-     description: 'Physics codes: ASTRA, CHEASE, JOREK...'
+**Workflow:**
+
+1. **Use MCP to update discovery_roots** (validates against schema):
+   ```python
+   update_facility_infrastructure("{{ facility | default('FACILITY') }}", {
+       "discovery_roots": [
+           {"path": "/path/to/codes", "category": "modeling_code", "description": "Physics codes"},
+           # ... more roots
+       ]
+   })
    ```
 
-2. **Commit the changes** to preserve them across sessions:
+2. **The MCP tool will**:
+   - Validate category values against the schema
+   - Persist to the private YAML file automatically
+   - Merge with existing infrastructure data
+
+3. **After updating via MCP**, commit the changes:
    ```bash
-   git add imas_codex/config/facilities/{facility}_private.yaml
-   uv run git commit -m "feat: update {facility} discovery_roots"
+   git add -f imas_codex/config/facilities/{{ facility | default('FACILITY') }}_private.yaml
+   uv run git commit -m "feat: update {{ facility | default('FACILITY') }} discovery_roots"
    git push origin main
    ```
 
-Note: Private YAML files are gitignored by default, but discovery_roots should be committed
-to ensure reproducible scans.
+Note: Private YAML files are gitignored by default. Use `git add -f` to force-add
+when discovery_roots need to be version-controlled.
 
 ## Step 1: Check Current Discovery State
 
@@ -135,22 +139,53 @@ Use ONLY these category values (from schema):
 
 ## User Discovery
 
-**To discover FacilityUser nodes from home directories:**
+**To discover FacilityUser nodes, first identify where user home directories are located.**
 
-Add `/home` as a container root with `expand_depth: 1`:
+User homes may be in multiple locations depending on the facility:
+- `/home` (common default)
+- `/users`, `/home/users`
+- NFS mounts like `/export/homes`, `/net/homes`
+- Facility-specific paths like `/solhome`, `/JAChome`
 
-```yaml
-discovery_roots:
-- path: /home
-  category: container
-  description: User home directories - discover facility users and their code
-  expand_depth: 1
-  priority: high
+### Step 1: Discover Home Directory Locations
+
+```bash
+# Check common locations and NFS mounts
+ssh {{ ssh_host | default('{ssh_host}') }} "df -h | grep -iE 'home|user|export'"
+ssh {{ ssh_host | default('{ssh_host}') }} "ls -la /home /users /export 2>/dev/null | head -30"
+
+# Check for automounted home directories
+ssh {{ ssh_host | default('{ssh_host}') }} "cat /etc/auto.master 2>/dev/null | grep -i home"
+
+# Sample user home to verify structure
+ssh {{ ssh_host | default('{ssh_host}') }} "getent passwd | head -5"
 ```
 
-This will:
-1. List all directories in `/home` (e.g., `/home/duval`, `/home/sauter`)
-2. Extract usernames from paths matching `/home/{username}`
+### Step 2: Add Discovered Home Locations as Container Roots
+
+For each discovered home location, add as a container root with `expand_depth: 1`:
+
+```python
+update_facility_infrastructure("{{ facility | default('FACILITY') }}", {
+    "discovery_roots": [
+        # ... existing roots ...
+        {
+            "path": "/home",  # Replace with discovered path
+            "category": "container",
+            "description": "User home directories - discover facility users",
+            "expand_depth": 1,
+            "priority": "high"
+        },
+        # Add additional home locations if facility uses multiple
+        # {"path": "/solhome", "category": "container", ...}
+    ]
+})
+```
+
+### What Happens During User Discovery
+
+1. List all directories in the home container (e.g., `/home/duval`, `/home/sauter`)
+2. Extract usernames from paths matching `{home_root}/{username}`
 3. Query `getent passwd` to get full names (GECOS field)
 4. Create `FacilityUser` nodes linked to `Person` nodes
 5. Create `OWNS` relationships to home directory paths
