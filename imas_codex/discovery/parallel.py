@@ -1445,7 +1445,7 @@ def _rescore_with_llm(
     # Render prompt with examples
     system_prompt = render_prompt("discovery/rescorer", context)
 
-    # Build user prompt with enrichment data AND initial per-dimension scores
+    # Build user prompt with FULL context: initial scoring + enrichment data
     lines = ["Rescore these directories using their enrichment metrics:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
@@ -1457,16 +1457,37 @@ def _rescore_with_llm(
                 lang = {}
 
         lines.append(f"\n## Path: {p['path']}")
+
+        # Initial scoring context (what the scorer saw and decided)
         lines.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+        if p.get("description"):
+            lines.append(f"Description: {p['description']}")
+        if p.get("keywords"):
+            keywords = p["keywords"]
+            if isinstance(keywords, list):
+                keywords = ", ".join(keywords)
+            lines.append(f"Keywords: {keywords}")
+        if p.get("expansion_reason"):
+            lines.append(f"Expansion reason: {p['expansion_reason']}")
 
-        # Enrichment metrics
-        lines.append(f"Total lines: {p.get('total_lines') or 0}")
-        lines.append(f"Total bytes: {p.get('total_bytes') or 0}")
-        lines.append(f"Language breakdown: {lang or {}}")
-        lines.append(f"Is multiformat: {p.get('is_multiformat', False)}")
+        # Child contents (truncated) - helps understand what's in the directory
+        child_names = p.get("child_names")
+        if child_names:
+            if isinstance(child_names, str):
+                # Truncate long child lists
+                if len(child_names) > 200:
+                    child_names = child_names[:200] + "..."
+            lines.append(f"Contents: {child_names}")
 
-        # Initial per-dimension scores
-        lines.append("Initial scores:")
+        # Enrichment metrics (new data from deep analysis)
+        lines.append("\nEnrichment data:")
+        lines.append(f"  Total lines: {p.get('total_lines') or 0}")
+        lines.append(f"  Total bytes: {p.get('total_bytes') or 0}")
+        lines.append(f"  Language breakdown: {lang or {}}")
+        lines.append(f"  Is multiformat: {p.get('is_multiformat', False)}")
+
+        # Initial per-dimension scores (what we're potentially adjusting)
+        lines.append("\nInitial scores:")
         lines.append(f"  score_modeling_code: {p.get('score_modeling_code', 0.0):.2f}")
         lines.append(f"  score_analysis_code: {p.get('score_analysis_code', 0.0):.2f}")
         lines.append(

@@ -145,6 +145,38 @@ Learn from these previously enriched directories how metrics correlate with scor
 - `{{ p.path }}` [{{ p.facility }}] - {{ p.language_breakdown }}, score={{ p.score }}
 {% endfor %}
 {% endif %}
+
+## Score Distribution Context
+
+These examples show how scores distribute across the graph. Use this to calibrate your adjustments and understand what score levels mean:
+
+{% if enriched_examples.score_high %}
+**High Scores (0.75+) - Exceptional value:**
+{% for p in enriched_examples.score_high %}
+- `{{ p.path }}` [{{ p.facility }}] - score={{ p.score }}, {{ p.total_lines }} LOC, {{ p.purpose }}
+{% endfor %}
+{% endif %}
+
+{% if enriched_examples.score_medium %}
+**Medium Scores (0.5-0.75) - Solid value:**
+{% for p in enriched_examples.score_medium %}
+- `{{ p.path }}` [{{ p.facility }}] - score={{ p.score }}, {{ p.total_lines }} LOC, {{ p.purpose }}
+{% endfor %}
+{% endif %}
+
+{% if enriched_examples.score_low %}
+**Lower Scores (0.25-0.5) - Limited value:**
+{% for p in enriched_examples.score_low %}
+- `{{ p.path }}` [{{ p.facility }}] - score={{ p.score }}, {{ p.total_lines }} LOC, {{ p.purpose }}
+{% endfor %}
+{% endif %}
+
+{% if enriched_examples.small_code %}
+**Small Codebases (under 500 LOC):**
+{% for p in enriched_examples.small_code %}
+- `{{ p.path }}` [{{ p.facility }}] - {{ p.total_lines }} LOC, score={{ p.score }}
+{% endfor %}
+{% endif %}
 {% endif %}
 
 ## Output Format

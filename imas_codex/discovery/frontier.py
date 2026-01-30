@@ -2212,8 +2212,8 @@ def sample_enriched_paths(
     """Sample paths with enrichment data for rescore calibration.
 
     Returns examples that show how enrichment data (LOC, languages,
-    multiformat) correlates with scores, helping the rescorer make
-    informed adjustments.
+    multiformat) correlates with scores, AND examples from different
+    score ranges to help the rescorer understand score distribution.
 
     Args:
         facility: Current facility (for preferring same-facility examples)
@@ -2222,10 +2222,11 @@ def sample_enriched_paths(
 
     Returns:
         Dict mapping category to list of enriched path examples.
-        Categories: high_loc, fortran_heavy, python_heavy, multiformat, small_code
+        Categories include both enrichment-based and score-distribution-based.
     """
     from imas_codex.graph import GraphClient
 
+    # Enrichment-based categories (what characteristics paths have)
     categories = {
         "high_loc": {
             "filter": "p.total_lines >= 5000",
@@ -2251,6 +2252,22 @@ def sample_enriched_paths(
             "filter": "p.total_lines > 0 AND p.total_lines < 500",
             "order": "p.score DESC",
             "desc": "Smaller codebases (under 500 LOC)",
+        },
+        # Score distribution categories (how scores distribute)
+        "score_high": {
+            "filter": "p.score >= 0.75",
+            "order": "p.score DESC",
+            "desc": "High-scoring enriched paths (0.75+)",
+        },
+        "score_medium": {
+            "filter": "p.score >= 0.5 AND p.score < 0.75",
+            "order": "rand()",
+            "desc": "Medium-scoring enriched paths (0.5-0.75)",
+        },
+        "score_low": {
+            "filter": "p.score >= 0.25 AND p.score < 0.5",
+            "order": "rand()",
+            "desc": "Lower-scoring enriched paths (0.25-0.5)",
         },
     }
 
@@ -2533,6 +2550,8 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
                    p.description AS description, p.path_purpose AS path_purpose,
+                   p.keywords AS keywords, p.child_names AS child_names,
+                   p.expansion_reason AS expansion_reason,
                    p.score_modeling_code AS score_modeling_code,
                    p.score_analysis_code AS score_analysis_code,
                    p.score_operations_code AS score_operations_code,
@@ -2562,6 +2581,7 @@ def mark_rescore_complete(
 
     Updates paths with:
     - Combined score and individual dimension scores (refined based on enrichment)
+    - rescore_reason: explanation of why scores changed
     - rescored_at = current timestamp
     - Augments score_cost (doesn't replace)
     - Clears claimed_at
@@ -2572,6 +2592,7 @@ def mark_rescore_complete(
             - path: Path string
             - score: New combined score
             - score_cost: LLM cost for rescoring (added to existing)
+            - adjustment_reason: Why scores changed (stored as rescore_reason)
             - score_modeling_code, score_analysis_code, etc. (optional per-dimension)
 
     Returns:
@@ -2614,6 +2635,11 @@ def mark_rescore_complete(
                 "score": result.get("score"),
                 "cost": result.get("score_cost", 0.0),
             }
+
+            # Store adjustment reason as rescore_reason
+            if result.get("adjustment_reason"):
+                set_parts.append("p.rescore_reason = $rescore_reason")
+                params["rescore_reason"] = result["adjustment_reason"][:200]
 
             # Add each dimension that has a value
             for dim in dimensions:
