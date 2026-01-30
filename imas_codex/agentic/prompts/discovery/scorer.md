@@ -271,9 +271,9 @@ Aim for a natural distribution across facilities:
 - **0.75-0.95 (Very High)**: ~10% of paths - core physics codes, IMAS integration
 
 {% if example_paths %}
-## Calibration Examples from This Facility
+## Calibration Examples by Score Range
 
-Use these previously scored paths to calibrate your decisions:
+Use these previously scored paths to calibrate your decisions (combined score):
 
 **Low (0.0-0.25):**
 {% for p in example_paths.low %}
@@ -294,4 +294,46 @@ Use these previously scored paths to calibrate your decisions:
 {% for p in example_paths.very_high %}
 - `{{ p.path }}` → {{ p.score }} ({{ p.purpose }})
 {% endfor %}
+{% endif %}
+
+{% if dimension_examples %}
+## Cross-Facility Dimension Calibration
+
+These examples from across facilities show what HIGH scores look like per dimension.
+Use them to calibrate your dimension-specific scoring:
+
+{% if dimension_examples.score_modeling_code %}
+**score_modeling_code (High 0.6+):**
+{% for p in dimension_examples.score_modeling_code %}
+- `{{ p.path }}` [{{ p.facility }}] → {{ p.dimension_score }} - {{ p.description }}
+{% endfor %}
+{% endif %}
+
+{% if dimension_examples.score_analysis_code %}
+**score_analysis_code (High 0.6+):**
+{% for p in dimension_examples.score_analysis_code %}
+- `{{ p.path }}` [{{ p.facility }}] → {{ p.dimension_score }} - {{ p.description }}
+{% endfor %}
+{% endif %}
+
+{% if dimension_examples.score_operations_code %}
+**score_operations_code (High 0.6+):**
+{% for p in dimension_examples.score_operations_code %}
+- `{{ p.path }}` [{{ p.facility }}] → {{ p.dimension_score }} - {{ p.description }}
+{% endfor %}
+{% endif %}
+
+{% if dimension_examples.score_data_access %}
+**score_data_access (High 0.6+):**
+{% for p in dimension_examples.score_data_access %}
+- `{{ p.path }}` [{{ p.facility }}] → {{ p.dimension_score }} - {{ p.description }}
+{% endfor %}
+{% endif %}
+
+{% if dimension_examples.score_imas %}
+**score_imas (High 0.6+):**
+{% for p in dimension_examples.score_imas %}
+- `{{ p.path }}` [{{ p.facility }}] → {{ p.dimension_score }} - {{ p.description }}
+{% endfor %}
+{% endif %}
 {% endif %}

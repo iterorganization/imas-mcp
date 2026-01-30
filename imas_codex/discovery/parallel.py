@@ -1342,9 +1342,10 @@ async def rescore_worker(
         start = time.time()
         try:
             # LLM rescoring uses enrichment data for intelligent score refinement
+            # Pass facility for cross-facility example injection
             llm_results, cost = await loop.run_in_executor(
                 None,
-                lambda p=paths: _rescore_with_llm(p),
+                lambda p=paths, f=state.facility: _rescore_with_llm(p, f),
             )
 
             # Add should_expand from original data and cost tracking
@@ -1353,15 +1354,29 @@ async def rescore_worker(
             for llm_r in llm_results:
                 # Find original path data for should_expand
                 orig = next((p for p in paths if p["path"] == llm_r["path"]), {})
-                rescore_results.append(
-                    {
-                        "path": llm_r["path"],
-                        "score": llm_r["score"],
-                        "score_cost": cost_per_path,
-                        "should_expand": orig.get("should_expand", True),
-                        "adjustment_reason": llm_r.get("adjustment_reason", ""),
-                    }
-                )
+                result: dict = {
+                    "path": llm_r["path"],
+                    "score": llm_r["score"],
+                    "score_cost": cost_per_path,
+                    "should_expand": orig.get("should_expand", True),
+                    "adjustment_reason": llm_r.get("adjustment_reason", ""),
+                }
+                # Copy per-dimension scores from LLM results
+                for dim in [
+                    "score_modeling_code",
+                    "score_analysis_code",
+                    "score_operations_code",
+                    "score_modeling_data",
+                    "score_experimental_data",
+                    "score_data_access",
+                    "score_workflow",
+                    "score_visualization",
+                    "score_documentation",
+                    "score_imas",
+                ]:
+                    if dim in llm_r:
+                        result[dim] = llm_r[dim]
+                rescore_results.append(result)
 
             state.rescore_stats.last_batch_time = time.time() - start
             state.rescore_stats.cost += cost
@@ -1389,11 +1404,16 @@ async def rescore_worker(
 
 def _rescore_with_llm(
     paths: list[dict],
+    facility: str | None = None,
 ) -> tuple[list[dict], float]:
     """Rescore paths using LLM with enrichment data.
 
+    Injects cross-facility enriched examples into the prompt for
+    consistent scoring calibration across facilities.
+
     Args:
         paths: List of path dicts with enrichment data
+        facility: Current facility for preferring same-facility examples
 
     Returns:
         Tuple of (rescore_results, cost)
@@ -1406,12 +1426,26 @@ def _rescore_with_llm(
 
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.frontier import sample_enriched_paths
     from imas_codex.discovery.models import RescoreBatch
 
-    # Load prompt template
-    system_prompt = render_prompt("discovery/rescorer")
+    # Build prompt context with enriched examples
+    context: dict = {}
 
-    # Build user prompt with enrichment data
+    # Sample enriched paths for calibration (cross-facility)
+    enriched_examples = sample_enriched_paths(
+        facility=facility,
+        per_category=2,
+        cross_facility=True,
+    )
+    has_examples = any(enriched_examples.get(cat) for cat in enriched_examples)
+    if has_examples:
+        context["enriched_examples"] = enriched_examples
+
+    # Render prompt with examples
+    system_prompt = render_prompt("discovery/rescorer", context)
+
+    # Build user prompt with enrichment data AND initial per-dimension scores
     lines = ["Rescore these directories using their enrichment metrics:\n"]
     for p in paths:
         # Parse language breakdown if it's a JSON string
@@ -1422,13 +1456,32 @@ def _rescore_with_llm(
             except json.JSONDecodeError:
                 lang = {}
 
-        lines.append(f"\nPath: {p['path']}")
-        lines.append(f"Initial score: {p.get('score', 0.0):.2f}")
+        lines.append(f"\n## Path: {p['path']}")
         lines.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+
+        # Enrichment metrics
         lines.append(f"Total lines: {p.get('total_lines') or 0}")
         lines.append(f"Total bytes: {p.get('total_bytes') or 0}")
         lines.append(f"Language breakdown: {lang or {}}")
         lines.append(f"Is multiformat: {p.get('is_multiformat', False)}")
+
+        # Initial per-dimension scores
+        lines.append("Initial scores:")
+        lines.append(f"  score_modeling_code: {p.get('score_modeling_code', 0.0):.2f}")
+        lines.append(f"  score_analysis_code: {p.get('score_analysis_code', 0.0):.2f}")
+        lines.append(
+            f"  score_operations_code: {p.get('score_operations_code', 0.0):.2f}"
+        )
+        lines.append(f"  score_modeling_data: {p.get('score_modeling_data', 0.0):.2f}")
+        lines.append(
+            f"  score_experimental_data: {p.get('score_experimental_data', 0.0):.2f}"
+        )
+        lines.append(f"  score_data_access: {p.get('score_data_access', 0.0):.2f}")
+        lines.append(f"  score_workflow: {p.get('score_workflow', 0.0):.2f}")
+        lines.append(f"  score_visualization: {p.get('score_visualization', 0.0):.2f}")
+        lines.append(f"  score_documentation: {p.get('score_documentation', 0.0):.2f}")
+        lines.append(f"  score_imas: {p.get('score_imas', 0.0):.2f}")
+        lines.append(f"  combined_score: {p.get('score', 0.0):.2f}")
 
     user_prompt = "\n".join(lines)
 
@@ -1498,21 +1551,40 @@ def _rescore_with_llm(
         ]
         return results, cost
 
-    # Build results dict
+    # Build results dict with per-dimension updates
     path_to_result = {r.path: r for r in batch.results}
     results = []
+
     for p in paths:
         if p["path"] in path_to_result:
             r = path_to_result[p["path"]]
-            results.append(
-                {
-                    "path": p["path"],
-                    "score": max(0.0, min(1.5, r.new_score)),
-                    "adjustment_reason": r.adjustment_reason[:50]
-                    if r.adjustment_reason
-                    else "",
-                }
-            )
+            result: dict = {
+                "path": p["path"],
+                "score": max(0.0, min(1.5, r.new_score)),
+                "adjustment_reason": (r.adjustment_reason[:80] or ""),
+            }
+
+            # Add per-dimension scores (use original if LLM returned None)
+            for dim in [
+                "score_modeling_code",
+                "score_analysis_code",
+                "score_operations_code",
+                "score_modeling_data",
+                "score_experimental_data",
+                "score_data_access",
+                "score_workflow",
+                "score_visualization",
+                "score_documentation",
+                "score_imas",
+            ]:
+                llm_value = getattr(r, dim, None)
+                if llm_value is not None:
+                    result[dim] = max(0.0, min(0.95, llm_value))
+                else:
+                    # Keep original value
+                    result[dim] = p.get(dim, 0.0)
+
+            results.append(result)
         else:
             # Path not in response, keep original
             results.append(

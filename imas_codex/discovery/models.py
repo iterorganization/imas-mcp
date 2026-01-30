@@ -33,6 +33,8 @@ __all__ = [
     "EvidenceSchema",
     "DirectoryScoringResult",
     "DirectoryScoringBatch",
+    "RescoreResult",
+    "RescoreBatch",
 ]
 
 
@@ -197,6 +199,73 @@ class DirectoryScoringBatch(BaseModel):
 
     results: list[DirectoryScoringResult] = Field(
         description="List of scoring results, one per input directory, in order"
+    )
+
+
+# ============================================================================
+# LLM Rescoring Models
+# ============================================================================
+
+
+class RescoreResult(BaseModel):
+    """LLM rescoring result for a single directory.
+
+    Used after enrichment to refine per-dimension scores with concrete
+    metrics (lines of code, language breakdown, multiformat detection).
+
+    Each dimension can be independently adjusted based on enrichment evidence.
+    """
+
+    path: str = Field(description="The directory path (echo from input)")
+
+    # Per-dimension rescored values (0.0-1.0, or None to keep original)
+    score_modeling_code: float | None = Field(
+        default=None, description="Adjusted modeling code score"
+    )
+    score_analysis_code: float | None = Field(
+        default=None, description="Adjusted analysis code score"
+    )
+    score_operations_code: float | None = Field(
+        default=None, description="Adjusted operations code score"
+    )
+    score_modeling_data: float | None = Field(
+        default=None, description="Adjusted modeling data score"
+    )
+    score_experimental_data: float | None = Field(
+        default=None, description="Adjusted experimental data score"
+    )
+    score_data_access: float | None = Field(
+        default=None, description="Adjusted data access score"
+    )
+    score_workflow: float | None = Field(
+        default=None, description="Adjusted workflow score"
+    )
+    score_visualization: float | None = Field(
+        default=None, description="Adjusted visualization score"
+    )
+    score_documentation: float | None = Field(
+        default=None, description="Adjusted documentation score"
+    )
+    score_imas: float | None = Field(
+        default=None, description="Adjusted IMAS relevance score"
+    )
+
+    # Combined score (computed from dimension scores)
+    new_score: float = Field(
+        description="Adjusted combined score (0.0-1.5, allows boosting)"
+    )
+
+    adjustment_reason: str = Field(
+        default="",
+        description="Brief explanation of main adjustment (max 80 chars)",
+    )
+
+
+class RescoreBatch(BaseModel):
+    """Batch of rescoring results from LLM."""
+
+    results: list[RescoreResult] = Field(
+        description="List of rescoring results, one per input directory"
     )
 
 

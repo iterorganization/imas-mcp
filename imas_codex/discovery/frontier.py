@@ -2102,6 +2102,219 @@ def sample_scored_paths(
     return samples
 
 
+# Score dimension names for per-category sampling
+SCORE_DIMENSIONS = [
+    "score_modeling_code",
+    "score_analysis_code",
+    "score_operations_code",
+    "score_modeling_data",
+    "score_experimental_data",
+    "score_data_access",
+    "score_workflow",
+    "score_visualization",
+    "score_documentation",
+    "score_imas",
+]
+
+
+def sample_paths_by_dimension(
+    facility: str | None = None,
+    per_dimension: int = 2,
+    cross_facility: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    """Sample high-scoring paths for each score dimension.
+
+    Returns exemplar paths that are strong in each dimension, allowing
+    the LLM to see what high scores look like across categories.
+
+    Args:
+        facility: Current facility (for preferring same-facility examples)
+        per_dimension: Paths to sample per dimension
+        cross_facility: If True, sample from ALL facilities for diversity
+
+    Returns:
+        Dict mapping dimension name to list of example paths.
+        Each path has: path, facility, dimension_score, purpose, description
+    """
+    from imas_codex.graph import GraphClient
+
+    samples: dict[str, list[dict[str, Any]]] = {}
+
+    with GraphClient() as gc:
+        for dim in SCORE_DIMENSIONS:
+            # Build query - optionally filter by facility
+            if cross_facility or not facility:
+                # Cross-facility: get best examples from all facilities
+                result = gc.query(
+                    f"""
+                    MATCH (p:FacilityPath)
+                    WHERE p.status = 'scored'
+                        AND p.{dim} >= 0.6
+                    RETURN p.path AS path,
+                           p.facility_id AS facility,
+                           p.{dim} AS dimension_score,
+                           p.path_purpose AS purpose,
+                           p.description AS description
+                    ORDER BY p.{dim} DESC
+                    LIMIT $limit
+                    """,
+                    limit=per_dimension * 2,  # Get extras for diversity
+                )
+            else:
+                # Single facility only
+                result = gc.query(
+                    f"""
+                    MATCH (p:FacilityPath {{facility_id: $facility}})
+                    WHERE p.status = 'scored'
+                        AND p.{dim} >= 0.6
+                    RETURN p.path AS path,
+                           p.facility_id AS facility,
+                           p.{dim} AS dimension_score,
+                           p.path_purpose AS purpose,
+                           p.description AS description
+                    ORDER BY p.{dim} DESC
+                    LIMIT $limit
+                    """,
+                    facility=facility,
+                    limit=per_dimension,
+                )
+
+            # Take per_dimension paths, preferring current facility if available
+            paths = []
+            current_facility_paths = [r for r in result if r["facility"] == facility]
+            other_paths = [r for r in result if r["facility"] != facility]
+
+            # Interleave: current facility first, then others
+            for r in current_facility_paths[:per_dimension]:
+                paths.append(r)
+            for r in other_paths[: per_dimension - len(paths)]:
+                paths.append(r)
+
+            samples[dim] = [
+                {
+                    "path": r["path"],
+                    "facility": r["facility"],
+                    "dimension_score": round(r["dimension_score"], 2),
+                    "purpose": r["purpose"] or "unknown",
+                    "description": (r["description"] or "")[:80],
+                }
+                for r in paths[:per_dimension]
+            ]
+
+    return samples
+
+
+def sample_enriched_paths(
+    facility: str | None = None,
+    per_category: int = 2,
+    cross_facility: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    """Sample paths with enrichment data for rescore calibration.
+
+    Returns examples that show how enrichment data (LOC, languages,
+    multiformat) correlates with scores, helping the rescorer make
+    informed adjustments.
+
+    Args:
+        facility: Current facility (for preferring same-facility examples)
+        per_category: Paths per category (high_loc, fortran, multiformat, etc.)
+        cross_facility: If True, sample from ALL facilities
+
+    Returns:
+        Dict mapping category to list of enriched path examples.
+        Categories: high_loc, fortran_heavy, python_heavy, multiformat, small_code
+    """
+    from imas_codex.graph import GraphClient
+
+    categories = {
+        "high_loc": {
+            "filter": "p.total_lines >= 5000",
+            "order": "p.total_lines DESC",
+            "desc": "High lines of code (5000+)",
+        },
+        "fortran_heavy": {
+            "filter": "p.language_breakdown CONTAINS 'Fortran'",
+            "order": "p.score_modeling_code DESC",
+            "desc": "Fortran-dominant directories",
+        },
+        "python_heavy": {
+            "filter": "p.language_breakdown CONTAINS 'Python' AND NOT p.language_breakdown CONTAINS 'Fortran'",
+            "order": "p.score_analysis_code DESC",
+            "desc": "Python-dominant directories",
+        },
+        "multiformat": {
+            "filter": "p.is_multiformat = true",
+            "order": "p.score_data_access DESC",
+            "desc": "Multi-format conversion code",
+        },
+        "small_code": {
+            "filter": "p.total_lines > 0 AND p.total_lines < 500",
+            "order": "p.score DESC",
+            "desc": "Smaller codebases (under 500 LOC)",
+        },
+    }
+
+    samples: dict[str, list[dict[str, Any]]] = {}
+
+    with GraphClient() as gc:
+        for cat_name, cat_def in categories.items():
+            # Build facility filter
+            facility_filter = (
+                "" if cross_facility else f"AND p.facility_id = '{facility}'"
+            )
+
+            try:
+                result = gc.query(
+                    f"""
+                    MATCH (p:FacilityPath)
+                    WHERE p.status = 'scored'
+                        AND p.total_lines IS NOT NULL
+                        AND {cat_def["filter"]}
+                        {facility_filter}
+                    RETURN p.path AS path,
+                           p.facility_id AS facility,
+                           p.score AS score,
+                           p.total_lines AS total_lines,
+                           p.language_breakdown AS language_breakdown,
+                           p.is_multiformat AS is_multiformat,
+                           p.path_purpose AS purpose,
+                           p.description AS description
+                    ORDER BY {cat_def["order"]}
+                    LIMIT $limit
+                    """,
+                    limit=per_category * 2,
+                )
+            except Exception:
+                # Query might fail if enrichment fields don't exist yet
+                result = []
+
+            # Prefer current facility, then others
+            paths = []
+            current_facility_paths = [r for r in result if r["facility"] == facility]
+            other_paths = [r for r in result if r["facility"] != facility]
+
+            for r in current_facility_paths[:per_category]:
+                paths.append(r)
+            for r in other_paths[: per_category - len(paths)]:
+                paths.append(r)
+
+            samples[cat_name] = [
+                {
+                    "path": r["path"],
+                    "facility": r["facility"],
+                    "score": round(r["score"], 2),
+                    "total_lines": r["total_lines"] or 0,
+                    "language_breakdown": r["language_breakdown"] or "{}",
+                    "is_multiformat": r["is_multiformat"] or False,
+                    "purpose": r["purpose"] or "unknown",
+                    "description": (r["description"] or "")[:60],
+                }
+                for r in paths[:per_category]
+            ]
+
+    return samples
+
+
 def get_accumulated_cost(facility: str) -> dict[str, Any]:
     """Get accumulated LLM cost for a facility from score_cost fields.
 
@@ -2294,7 +2507,7 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
         limit: Maximum paths to claim (default 10, LLM batch size)
 
     Returns:
-        List of dicts with path info and enrichment data for rescoring
+        List of dicts with path info, per-dimension scores, and enrichment data
     """
     from imas_codex.graph import GraphClient
 
@@ -2319,7 +2532,17 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
-                   p.description AS description, p.path_purpose AS path_purpose
+                   p.description AS description, p.path_purpose AS path_purpose,
+                   p.score_modeling_code AS score_modeling_code,
+                   p.score_analysis_code AS score_analysis_code,
+                   p.score_operations_code AS score_operations_code,
+                   p.score_modeling_data AS score_modeling_data,
+                   p.score_experimental_data AS score_experimental_data,
+                   p.score_data_access AS score_data_access,
+                   p.score_workflow AS score_workflow,
+                   p.score_visualization AS score_visualization,
+                   p.score_documentation AS score_documentation,
+                   p.score_imas AS score_imas
             """,
             facility=facility,
             scored=PathStatus.scored.value,
@@ -2335,10 +2558,10 @@ def mark_rescore_complete(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark paths as rescored with refined scores.
+    """Mark paths as rescored with refined per-dimension scores.
 
     Updates paths with:
-    - New score (refined based on enrichment data)
+    - Combined score and individual dimension scores (refined based on enrichment)
     - rescored_at = current timestamp
     - Augments score_cost (doesn't replace)
     - Clears claimed_at
@@ -2347,8 +2570,9 @@ def mark_rescore_complete(
         facility: Facility ID
         results: List of dicts with:
             - path: Path string
-            - score: New refined score
+            - score: New combined score
             - score_cost: LLM cost for rescoring (added to existing)
+            - score_modeling_code, score_analysis_code, etc. (optional per-dimension)
 
     Returns:
         Number of paths updated
@@ -2358,23 +2582,53 @@ def mark_rescore_complete(
     now = datetime.now(UTC).isoformat()
     updated = 0
 
+    # Dimension fields to update
+    dimensions = [
+        "score_modeling_code",
+        "score_analysis_code",
+        "score_operations_code",
+        "score_modeling_data",
+        "score_experimental_data",
+        "score_data_access",
+        "score_workflow",
+        "score_visualization",
+        "score_documentation",
+        "score_imas",
+    ]
+
     with GraphClient() as gc:
         for result in results:
             path = result["path"]
             path_id = f"{facility}:{path}"
 
+            # Build SET clause dynamically based on which dimensions are present
+            set_parts = [
+                "p.score = $score",
+                "p.rescored_at = $now",
+                "p.claimed_at = null",
+                "p.score_cost = coalesce(p.score_cost, 0) + $cost",
+            ]
+            params = {
+                "id": path_id,
+                "now": now,
+                "score": result.get("score"),
+                "cost": result.get("score_cost", 0.0),
+            }
+
+            # Add each dimension that has a value
+            for dim in dimensions:
+                if dim in result:
+                    set_parts.append(f"p.{dim} = ${dim}")
+                    params[dim] = result[dim]
+
+            # Build and execute query
+            set_clause = ", ".join(set_parts)
             gc.query(
-                """
-                MATCH (p:FacilityPath {id: $id})
-                SET p.score = $score,
-                    p.rescored_at = $now,
-                    p.claimed_at = null,
-                    p.score_cost = coalesce(p.score_cost, 0) + $cost
+                f"""
+                MATCH (p:FacilityPath {{id: $id}})
+                SET {set_clause}
                 """,
-                id=path_id,
-                now=now,
-                score=result.get("score"),
-                cost=result.get("score_cost", 0.0),
+                **params,
             )
             updated += 1
 

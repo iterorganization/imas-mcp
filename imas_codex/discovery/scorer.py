@@ -310,9 +310,13 @@ class DirectoryScorer:
         Injects:
         - focus: optional natural language focus
         - example_paths: calibration examples from previously scored paths
+        - dimension_examples: cross-facility examples per score dimension
         """
         from imas_codex.agentic.prompt_loader import render_prompt
-        from imas_codex.discovery.frontier import sample_scored_paths
+        from imas_codex.discovery.frontier import (
+            sample_paths_by_dimension,
+            sample_scored_paths,
+        )
 
         # Build context for template rendering
         context: dict[str, Any] = {}
@@ -321,12 +325,24 @@ class DirectoryScorer:
         if focus:
             context["focus"] = focus
 
-        # Add example_paths for calibration
+        # Add example_paths for calibration (by combined score quartile)
         if self.facility:
             example_paths = sample_scored_paths(self.facility, per_quartile=3)
             has_examples = any(example_paths.get(q) for q in example_paths)
             if has_examples:
                 context["example_paths"] = example_paths
+
+        # Add dimension_examples for per-category calibration (cross-facility)
+        dimension_examples = sample_paths_by_dimension(
+            facility=self.facility,
+            per_dimension=2,
+            cross_facility=True,
+        )
+        has_dimension_examples = any(
+            dimension_examples.get(d) for d in dimension_examples
+        )
+        if has_dimension_examples:
+            context["dimension_examples"] = dimension_examples
 
         # Use render_prompt for proper Jinja2 rendering with schema context
         return render_prompt("discovery/scorer", context)
