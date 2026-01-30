@@ -158,8 +158,8 @@ class StreamQueue:
 
     items: deque = field(default_factory=deque)
     last_pop: float = field(default_factory=time.time)
-    rate: float = 2.0  # items per second
-    max_size: int = 100  # Prevent unbounded backlog
+    rate: float = 1.6  # items per second (reduced for less flicker)
+    max_size: int = 150  # Prevent unbounded backlog, larger buffer for stability
 
     def add(self, items: list, rate: float | None = None) -> None:
         self.items.extend(items)

@@ -1338,24 +1338,33 @@ async def rescore_worker(
         if on_progress:
             on_progress(f"rescoring {len(paths)} paths", state.rescore_stats, None)
 
-        # Run rescoring in thread pool
+        # Run LLM-based rescoring in thread pool
         start = time.time()
         try:
-            # Simple rescoring: adjust score based on enrichment metrics
-            # This is a lightweight heuristic, not a full LLM call
+            # LLM rescoring uses enrichment data for intelligent score refinement
+            llm_results, cost = await loop.run_in_executor(
+                None,
+                lambda p=paths: _rescore_with_llm(p),
+            )
+
+            # Add should_expand from original data and cost tracking
             rescore_results = []
-            for p in paths:
-                new_score = _compute_rescore(p)
+            cost_per_path = cost / len(paths) if paths else 0.0
+            for llm_r in llm_results:
+                # Find original path data for should_expand
+                orig = next((p for p in paths if p["path"] == llm_r["path"]), {})
                 rescore_results.append(
                     {
-                        "path": p["path"],
-                        "score": new_score,
-                        "score_cost": 0.0,  # Heuristic rescore has no LLM cost
-                        "should_expand": p.get("should_expand", True),
+                        "path": llm_r["path"],
+                        "score": llm_r["score"],
+                        "score_cost": cost_per_path,
+                        "should_expand": orig.get("should_expand", True),
+                        "adjustment_reason": llm_r.get("adjustment_reason", ""),
                     }
                 )
 
             state.rescore_stats.last_batch_time = time.time() - start
+            state.rescore_stats.cost += cost
 
             # Persist results
             rescored = await loop.run_in_executor(
@@ -1378,44 +1387,143 @@ async def rescore_worker(
         await asyncio.sleep(0.1)
 
 
-def _compute_rescore(path_data: dict) -> float:
-    """Compute refined score using enrichment data.
+def _rescore_with_llm(
+    paths: list[dict],
+) -> tuple[list[dict], float]:
+    """Rescore paths using LLM with enrichment data.
 
-    Applies heuristic adjustments based on:
-    - total_lines: More lines of code = higher score
-    - is_multiformat: Format conversion code = higher IMAS value
-    - language_breakdown: Python/Fortran = higher value
+    Args:
+        paths: List of path dicts with enrichment data
+
+    Returns:
+        Tuple of (rescore_results, cost)
     """
     import json
+    import os
+    import time
 
-    base_score = path_data.get("score", 0.5)
+    import litellm
 
-    # Boost for lines of code (max +0.15)
-    total_lines = path_data.get("total_lines", 0) or 0
-    if total_lines > 10000:
-        base_score += 0.15
-    elif total_lines > 1000:
-        base_score += 0.10
-    elif total_lines > 100:
-        base_score += 0.05
+    from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.models import RescoreBatch
 
-    # Boost for multiformat (indicates data conversion/mapping)
-    if path_data.get("is_multiformat"):
-        base_score += 0.10
+    # Load prompt template
+    system_prompt = render_prompt("discovery/rescorer")
 
-    # Boost for Python/Fortran presence
-    lang_breakdown = path_data.get("language_breakdown")
-    if lang_breakdown:
-        if isinstance(lang_breakdown, str):
+    # Build user prompt with enrichment data
+    lines = ["Rescore these directories using their enrichment metrics:\n"]
+    for p in paths:
+        # Parse language breakdown if it's a JSON string
+        lang = p.get("language_breakdown")
+        if isinstance(lang, str):
             try:
-                lang_breakdown = json.loads(lang_breakdown)
+                lang = json.loads(lang)
             except json.JSONDecodeError:
-                lang_breakdown = {}
-        if lang_breakdown:
-            if "Python" in lang_breakdown or "Fortran" in lang_breakdown:
-                base_score += 0.05
+                lang = {}
 
-    return min(1.5, max(0.0, base_score))
+        lines.append(f"\nPath: {p['path']}")
+        lines.append(f"Initial score: {p.get('score', 0.0):.2f}")
+        lines.append(f"Purpose: {p.get('path_purpose', 'unknown')}")
+        lines.append(f"Total lines: {p.get('total_lines') or 0}")
+        lines.append(f"Total bytes: {p.get('total_bytes') or 0}")
+        lines.append(f"Language breakdown: {lang or {}}")
+        lines.append(f"Is multiformat: {p.get('is_multiformat', False)}")
+
+    user_prompt = "\n".join(lines)
+
+    # Get model and API key
+    model = get_model_for_task("score")  # Use same model as scorer
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY environment variable not set")
+
+    model_id = f"openrouter/{model}" if not model.startswith("openrouter/") else model
+
+    # Retry loop for rate limiting
+    max_retries = 5
+    retry_base_delay = 5.0
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            response = litellm.completion(
+                model=model_id,
+                api_key=api_key,
+                max_tokens=8000,
+                response_format=RescoreBatch,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            break
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+            if any(x in error_msg for x in ["overloaded", "rate", "429", "503"]):
+                delay = retry_base_delay * (2**attempt)
+                logger.debug(f"Rescore rate limited, waiting {delay:.1f}s...")
+                time.sleep(delay)
+            else:
+                raise
+    else:
+        raise last_error  # type: ignore[misc]
+
+    # Calculate cost
+    input_tokens = response.usage.prompt_tokens
+    output_tokens = response.usage.completion_tokens
+
+    if (
+        hasattr(response, "_hidden_params")
+        and "response_cost" in response._hidden_params
+    ):
+        cost = response._hidden_params["response_cost"]
+    else:
+        # Fallback: Claude Sonnet 4.5 rates
+        cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+    # Parse results
+    try:
+        batch = RescoreBatch.model_validate_json(response.choices[0].message.content)
+    except Exception:
+        # Fallback: return original scores
+        results = [
+            {
+                "path": p["path"],
+                "score": p.get("score", 0.5),
+                "adjustment_reason": "parse error",
+            }
+            for p in paths
+        ]
+        return results, cost
+
+    # Build results dict
+    path_to_result = {r.path: r for r in batch.results}
+    results = []
+    for p in paths:
+        if p["path"] in path_to_result:
+            r = path_to_result[p["path"]]
+            results.append(
+                {
+                    "path": p["path"],
+                    "score": max(0.0, min(1.5, r.new_score)),
+                    "adjustment_reason": r.adjustment_reason[:50]
+                    if r.adjustment_reason
+                    else "",
+                }
+            )
+        else:
+            # Path not in response, keep original
+            results.append(
+                {
+                    "path": p["path"],
+                    "score": p.get("score", 0.5),
+                    "adjustment_reason": "not in response",
+                }
+            )
+
+    return results, cost
 
 
 # ============================================================================
