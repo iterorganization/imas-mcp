@@ -1008,24 +1008,26 @@ def _save_secrets_host(host: str) -> None:
 
 
 @data_secrets.command("push")
-@click.option(
-    "--host", envvar="IMAS_SECRETS_HOST", help="Remote host (e.g., user@sdcc.iter.org)"
-)
+@click.argument("host", required=False, envvar="IMAS_SECRETS_HOST")
 @click.option("--dry-run", is_flag=True, help="Show what would be transferred")
 def secrets_push(host: str | None, dry_run: bool) -> None:
     """Push .env to a secure remote host.
 
-    Creates ~/.config/imas-codex/secrets/ on remote with 0700 permissions.
-    Files are stored with 0600 permissions (owner read/write only).
+    HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
+    If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
+
+    Stores in ~/.config/imas-codex/secrets/ on remote (not in project dir).
+    Creates directory with 0700, files with 0600 permissions.
 
     Examples:
-        imas-codex data secrets push --host user@sdcc.iter.org
+        imas-codex data secrets push iter
+        imas-codex data secrets push user@sdcc.iter.org
         imas-codex data secrets push --dry-run
     """
     effective_host = host or _get_secrets_host()
     if not effective_host:
         raise click.ClickException(
-            "No host configured. Provide --host or set IMAS_SECRETS_HOST"
+            "No host specified. Provide HOST argument or set IMAS_SECRETS_HOST"
         )
 
     env_file = Path(".env")
@@ -1084,21 +1086,25 @@ def secrets_push(host: str | None, dry_run: bool) -> None:
 
 
 @data_secrets.command("pull")
-@click.option("--host", envvar="IMAS_SECRETS_HOST", help="Remote host")
+@click.argument("host", required=False, envvar="IMAS_SECRETS_HOST")
 @click.option("--force", is_flag=True, help="Overwrite existing .env without prompt")
 def secrets_pull(host: str | None, force: bool) -> None:
     """Pull .env from a secure remote host.
 
-    Retrieved file is set to 0600 permissions locally.
+    HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
+    If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
+
+    Pulls from ~/.config/imas-codex/secrets/ on remote.
+    Sets local file to 0600 permissions.
 
     Examples:
-        imas-codex data secrets pull --host user@sdcc.iter.org
-        imas-codex data secrets pull
+        imas-codex data secrets pull iter
+        imas-codex data secrets pull user@sdcc.iter.org --force
     """
     effective_host = host or _get_secrets_host()
     if not effective_host:
         raise click.ClickException(
-            "No host configured. Provide --host or set IMAS_SECRETS_HOST"
+            "No host specified. Provide HOST argument or set IMAS_SECRETS_HOST"
         )
 
     env_file = Path(".env")
@@ -1164,8 +1170,8 @@ def secrets_status() -> None:
         click.echo("  (not found)")
 
     click.echo(f"\nSecrets host: {secrets_host or '(not configured)'}")
-    if secrets_host:
-        click.echo("  Configure with --host or IMAS_SECRETS_HOST")
+    if not secrets_host:
+        click.echo("  Set via: secrets push/pull HOST or IMAS_SECRETS_HOST")
 
 
 # ============================================================================
