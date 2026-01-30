@@ -562,7 +562,7 @@ class ParallelProgressDisplay:
                     # Layout: "    0.85  " = 10 chars, leave 2 for padding
                     desc_width = self.WIDTH - 12
 
-                    # Build description: "category: purpose" or just "purpose"
+                    # Build description: prioritize purpose for high-value paths
                     if not score.should_expand and score.terminal_reason:
                         category = score.terminal_reason.replace("_", " ")
                         if score.purpose:
@@ -570,7 +570,15 @@ class ParallelProgressDisplay:
                         else:
                             desc = category
                     elif not score.should_expand and score.skip_reason:
-                        desc = f"skipped: {clean_text(score.skip_reason)}"
+                        # For high-value terminal paths, show purpose + skip reason
+                        if (
+                            score.score is not None
+                            and score.score >= 0.5
+                            and score.purpose
+                        ):
+                            desc = f"{clean_text(score.purpose)} ({clean_text(score.skip_reason)})"
+                        else:
+                            desc = f"skipped: {clean_text(score.skip_reason)}"
                     elif score.purpose:
                         desc = clean_text(score.purpose)
                     else:
@@ -910,11 +918,15 @@ class ParallelProgressDisplay:
             items = []
             for r in results:
                 path = r.get("path", "")
+                # Use adjustment_reason for display, falling back to "rescored"
+                reason = r.get("adjustment_reason", "rescored")
                 items.append(
                     ScoreItem(
                         path=path,
                         score=r.get("score"),
-                        purpose="rescored",
+                        purpose=f"rescored: {reason}"
+                        if reason != "rescored"
+                        else "rescored",
                         skipped=False,
                         skip_reason="",
                         should_expand=r.get("should_expand", True),
