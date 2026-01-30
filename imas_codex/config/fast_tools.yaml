@@ -150,7 +150,7 @@ optional:
       version: "0.23.4"
       asset_pattern: "eza_{arch}.tar.gz"
       strip_components: 0
-      binary_path: "eza"
+      binary_path: "./eza"
     examples:
       local: "eza -la --git"
       remote: "ssh('eza -la --git /path')"

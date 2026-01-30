@@ -243,17 +243,21 @@ class FastTool:
             return f'curl -sL "{url}" -o {install_dir}/{self.binary} && chmod +x {install_dir}/{self.binary}'
 
         # Tarball extraction
-        if self.releases.strip_components > 0:
-            strip = f"--strip-components={self.releases.strip_components}"
-            # Format binary path with version and arch
+        # Format binary path with version and arch (use binary_path if set, else binary)
+        if self.releases.binary_path:
             binary_path = self.releases.binary_path.format(
                 version=self.releases.version,
                 arch=self._get_musl_arch(arch),
                 arch_simple=arch_simple,
             )
+        else:
+            binary_path = self.binary
+
+        if self.releases.strip_components > 0:
+            strip = f"--strip-components={self.releases.strip_components}"
             return f'curl -sL "{url}" | tar xz {strip} -C {install_dir} {binary_path}'
         else:
-            return f'curl -sL "{url}" | tar xz -C {install_dir} {self.binary}'
+            return f'curl -sL "{url}" | tar xz -C {install_dir} {binary_path}'
 
 
 @dataclass
