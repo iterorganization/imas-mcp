@@ -968,26 +968,22 @@ def private_status() -> None:
 # Secrets Subgroup (SSH-based transfer)
 # ============================================================================
 
-SECRETS_REMOTE_DIR = ".config/imas-codex/secrets"
-SECRETS_FILES = [".env"]  # Files to sync
+SECRETS_DEFAULT_PROJECT_PATH = "~/Code/imas-codex"
 
 
 @data.group("secrets")
 def data_secrets() -> None:
-    """Manage secrets via secure SSH transfer.
+    """Sync .env between project clones via SSH.
 
-    Transfer .env and other sensitive files to/from a trusted remote host.
+    Transfer .env directly into the imas-codex project directory on remote hosts.
     Uses SSH/SCP with strict file permissions (0600).
 
     \b
-      imas-codex data secrets push    Push .env to remote
-      imas-codex data secrets pull    Pull .env from remote
-      imas-codex data secrets status  Show status
+      imas-codex data secrets push iter    Push .env to iter:~/Code/imas-codex
+      imas-codex data secrets pull iter    Pull .env from iter:~/Code/imas-codex
+      imas-codex data secrets status       Show local .env status
 
-    ⚠ WARNING: This transfers secrets over SSH. Ensure:
-    - Remote host is trusted infrastructure
-    - SSH keys are properly secured
-    - No other users have access to remote directory
+    Default remote path: ~/Code/imas-codex (override with --path)
     """
     pass
 
@@ -1009,20 +1005,23 @@ def _save_secrets_host(host: str) -> None:
 
 @data_secrets.command("push")
 @click.argument("host", required=False, envvar="IMAS_SECRETS_HOST")
+@click.option(
+    "--path",
+    default=SECRETS_DEFAULT_PROJECT_PATH,
+    show_default=True,
+    help="Remote project path",
+)
 @click.option("--dry-run", is_flag=True, help="Show what would be transferred")
-def secrets_push(host: str | None, dry_run: bool) -> None:
-    """Push .env to a secure remote host.
+def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
+    """Push .env to remote project directory.
 
     HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
     If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
 
-    Stores in ~/.config/imas-codex/secrets/ on remote (not in project dir).
-    Creates directory with 0700, files with 0600 permissions.
-
     Examples:
         imas-codex data secrets push iter
-        imas-codex data secrets push user@sdcc.iter.org
-        imas-codex data secrets push --dry-run
+        imas-codex data secrets push iter --path ~/projects/imas-codex
+        imas-codex data secrets push iter --dry-run
     """
     effective_host = host or _get_secrets_host()
     if not effective_host:
@@ -1034,29 +1033,33 @@ def secrets_push(host: str | None, dry_run: bool) -> None:
     if not env_file.exists():
         raise click.ClickException(".env file not found in project root")
 
-    remote_dir = f"~/{SECRETS_REMOTE_DIR}"
-    remote_path = f"{effective_host}:{remote_dir}/.env"
+    remote_env = f"{path}/.env"
+    remote_path = f"{effective_host}:{remote_env}"
 
     click.echo(f"Push target: {effective_host}")
-    click.echo(f"  Remote dir: {remote_dir}")
+    click.echo(f"  Remote project: {path}")
     click.echo(f"  File: .env ({env_file.stat().st_size} bytes)")
 
     if dry_run:
         click.echo("\n[DRY RUN] Would:")
-        click.echo(f"  1. Create {remote_dir} with 0700 permissions")
+        click.echo(f"  1. Verify {path} exists on {effective_host}")
         click.echo(f"  2. Copy .env to {remote_path}")
         click.echo("  3. Set .env permissions to 0600")
         return
 
-    # Create remote directory with secure permissions
-    click.echo("\nCreating secure remote directory...")
+    # Verify remote project exists
+    click.echo("\nVerifying remote project...")
     result = subprocess.run(
-        ["ssh", effective_host, f"mkdir -p {remote_dir} && chmod 700 {remote_dir}"],
+        ["ssh", effective_host, f"test -d {path} && echo exists"],
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
-        raise click.ClickException(f"Failed to create remote dir: {result.stderr}")
+    if "exists" not in result.stdout:
+        raise click.ClickException(
+            f"Project not found on {effective_host}\n"
+            f"  Expected: {path}\n"
+            f"  Use --path to specify a different location"
+        )
 
     # Copy file
     click.echo("Transferring .env...")
@@ -1070,7 +1073,7 @@ def secrets_push(host: str | None, dry_run: bool) -> None:
 
     # Set strict permissions
     result = subprocess.run(
-        ["ssh", effective_host, f"chmod 600 {remote_dir}/.env"],
+        ["ssh", effective_host, f"chmod 600 {remote_env}"],
         capture_output=True,
         text=True,
     )
@@ -1081,25 +1084,28 @@ def secrets_push(host: str | None, dry_run: bool) -> None:
     if host:
         _save_secrets_host(host)
 
-    click.echo(f"\n✓ Pushed .env to {effective_host}")
-    click.echo("  Permissions: directory 0700, file 0600")
+    click.echo(f"\n✓ Pushed .env to {effective_host}:{path}")
 
 
 @data_secrets.command("pull")
 @click.argument("host", required=False, envvar="IMAS_SECRETS_HOST")
+@click.option(
+    "--path",
+    default=SECRETS_DEFAULT_PROJECT_PATH,
+    show_default=True,
+    help="Remote project path",
+)
 @click.option("--force", is_flag=True, help="Overwrite existing .env without prompt")
-def secrets_pull(host: str | None, force: bool) -> None:
-    """Pull .env from a secure remote host.
+def secrets_pull(host: str | None, path: str, force: bool) -> None:
+    """Pull .env from remote project directory.
 
     HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
     If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
 
-    Pulls from ~/.config/imas-codex/secrets/ on remote.
-    Sets local file to 0600 permissions.
-
     Examples:
         imas-codex data secrets pull iter
-        imas-codex data secrets pull user@sdcc.iter.org --force
+        imas-codex data secrets pull iter --path ~/projects/imas-codex
+        imas-codex data secrets pull iter --force
     """
     effective_host = host or _get_secrets_host()
     if not effective_host:
@@ -1108,8 +1114,8 @@ def secrets_pull(host: str | None, force: bool) -> None:
         )
 
     env_file = Path(".env")
-    remote_dir = f"~/{SECRETS_REMOTE_DIR}"
-    remote_path = f"{effective_host}:{remote_dir}/.env"
+    remote_env = f"{path}/.env"
+    remote_path = f"{effective_host}:{remote_env}"
 
     # Check if .env exists locally
     if env_file.exists() and not force:
@@ -1118,16 +1124,19 @@ def secrets_pull(host: str | None, force: bool) -> None:
             return
 
     click.echo(f"Pulling from: {effective_host}")
+    click.echo(f"  Remote project: {path}")
 
     # Check remote file exists
     result = subprocess.run(
-        ["ssh", effective_host, f"test -f {remote_dir}/.env && echo exists"],
+        ["ssh", effective_host, f"test -f {remote_env} && echo exists"],
         capture_output=True,
         text=True,
     )
     if "exists" not in result.stdout:
         raise click.ClickException(
-            f"No .env found on {effective_host}\n  Expected: {remote_dir}/.env"
+            f"No .env found on {effective_host}\n"
+            f"  Expected: {remote_env}\n"
+            f"  Use --path to specify a different location"
         )
 
     # Pull file
@@ -1147,14 +1156,13 @@ def secrets_pull(host: str | None, force: bool) -> None:
     if host:
         _save_secrets_host(host)
 
-    click.echo(f"\n✓ Pulled .env from {effective_host}")
+    click.echo(f"\n✓ Pulled .env from {effective_host}:{path}")
     click.echo(f"  Size: {env_file.stat().st_size} bytes")
-    click.echo("  Permissions: 0600 (owner read/write only)")
 
 
 @data_secrets.command("status")
 def secrets_status() -> None:
-    """Show secrets status."""
+    """Show local .env status."""
     env_file = Path(".env")
     secrets_host = _get_secrets_host()
 
@@ -1169,9 +1177,8 @@ def secrets_status() -> None:
     else:
         click.echo("  (not found)")
 
-    click.echo(f"\nSecrets host: {secrets_host or '(not configured)'}")
-    if not secrets_host:
-        click.echo("  Set via: secrets push/pull HOST or IMAS_SECRETS_HOST")
+    click.echo(f"\nDefault remote path: {SECRETS_DEFAULT_PROJECT_PATH}")
+    click.echo(f"Last used host: {secrets_host or '(none)'}")
 
 
 # ============================================================================
