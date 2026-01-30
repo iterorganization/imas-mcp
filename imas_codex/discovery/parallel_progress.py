@@ -538,11 +538,14 @@ class ParallelProgressDisplay:
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold green")
             if score:
-                # Show path with terminal indicator (for paths that won't expand)
+                # Show path with category tag for terminal paths (more useful than "terminal")
                 path_display = clip_path(score.path, self.WIDTH - 20)
                 section.append(path_display, style="white")
-                if not score.should_expand:
-                    section.append(" terminal", style="magenta")
+                if not score.should_expand and score.purpose:
+                    # Show purpose category instead of generic "terminal"
+                    section.append(f" {score.purpose}", style="magenta")
+                elif not score.should_expand:
+                    section.append(" terminal", style="magenta dim")
                 section.append("\n")
                 # Score details indented below (matching SCAN layout)
                 section.append("    ", style="dim")
@@ -562,23 +565,18 @@ class ParallelProgressDisplay:
                     # Layout: "    0.85  " = 10 chars, leave 2 for padding
                     desc_width = self.WIDTH - 12
 
-                    # Build description: prioritize purpose for high-value paths
-                    if not score.should_expand and score.terminal_reason:
-                        category = score.terminal_reason.replace("_", " ")
-                        if score.purpose:
-                            desc = f"{category}: {clean_text(score.purpose)}"
+                    # Build description for line 2
+                    # Terminal paths: show skip_reason (why it won't expand)
+                    # Non-terminal: show purpose/label
+                    if not score.should_expand:
+                        if score.terminal_reason:
+                            # Programmatic terminal reason (empty, access_denied)
+                            desc = score.terminal_reason.replace("_", " ")
+                        elif score.skip_reason:
+                            # LLM-provided skip reason (more descriptive)
+                            desc = clean_text(score.skip_reason)
                         else:
-                            desc = category
-                    elif not score.should_expand and score.skip_reason:
-                        # For high-value terminal paths, show purpose + skip reason
-                        if (
-                            score.score is not None
-                            and score.score >= 0.5
-                            and score.purpose
-                        ):
-                            desc = f"{clean_text(score.purpose)} ({clean_text(score.skip_reason)})"
-                        else:
-                            desc = f"skipped: {clean_text(score.skip_reason)}"
+                            desc = ""
                     elif score.purpose:
                         desc = clean_text(score.purpose)
                     else:
