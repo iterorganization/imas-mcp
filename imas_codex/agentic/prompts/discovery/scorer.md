@@ -34,9 +34,23 @@ Contents are shown sorted by modification time (most recent first), so you can i
 
 ### Modeling code indicators:
 - `*equilibrium*`, `*efit*`, `*chease*`, `*helena*` → modeling_code, equilibrium domain
-- `*transport*`, `*astra*`, `*jetto*`, `*jintrac*` → modeling_code, transport domain
+- `*transport*`, `*astra*` → modeling_code, transport domain
 - `*mhd*`, `*jorek*`, `*nimrod*` → modeling_code, MHD domain
 - `*stability*` → modeling_code, stability domain
+
+### Simulation run data (CRITICAL - NOT code):
+Simulation workflow tools like JETTO, JINTRAC, ETS produce run directories containing OUTPUT DATA, not code.
+- `*/jetto/runs`, `*/jintrac/runs`, `*/ets/runs` → modeling_data, expand=false
+- `*/jetto/runs/*`, `*/jintrac/runs/*` → modeling_data, expand=false (individual runs)
+- `*/run[0-9]*` (under simulation tool dirs) → modeling_data (numbered runs)
+- `*_scan*`, `*_sweep*`, `*_baseline*` (in run context) → modeling_data (parameter scans)
+
+**IMPORTANT**: These directories often contain helper scripts (plot.sh, analyze.m, startimes.py) for post-processing the simulation output. The presence of scripts does NOT make these code directories - they're data directories with convenience scripts. Score them HIGH on score_modeling_data but set path_purpose=modeling_data and should_expand=false.
+
+### Simulation code vs simulation runs:
+- `*/jetto` (no /runs suffix) → container, may expand if has code subdirs
+- `*/jetto/src`, `*/jetto/source` → modeling_code (actual source)
+- `*/jetto/runs`, `*/jintrac/runs` → modeling_data, NEVER expand (run outputs)
 
 ### Analysis code indicators:
 - `*thomson*`, `*ece*`, `*interferom*` → analysis_code, diagnostic processing
@@ -177,6 +191,10 @@ When classifying `path_purpose`, set the corresponding dimension HIGH:
   - Simulation output directories (HDF5, NetCDF files) should NOT be expanded
   - Experimental shot archives and MDSplus trees should NOT be expanded
   - We only need to know high-value data exists here
+- **High subdirectory count containers (>100 subdirs)**: These are almost always data containers
+  - If you see `Dirs: 500`, `Dirs: 1000+ ` with similarly-named children (run*, scan*, shot*), this is data
+  - Even with helper scripts mixed in, classify as modeling_data, expand=false
+  - The scripts are for post-processing the data, not standalone code
 - **Purpose is: `system`, `build_artifact`, `archive`**
 - **Combined score < 0.3 for any purpose**
 - **Leaf directory with only files (no subdirectories)**
