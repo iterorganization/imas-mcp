@@ -242,9 +242,15 @@ def get_registry(git_info: dict, force_registry: str | None = None) -> str:
 
 
 def get_version_tag(git_info: dict, dev: bool = False) -> str:
-    """Determine version tag for push."""
+    """Determine version tag for push.
+
+    For dev pushes, uses full package version (e.g., 3.2.1.dev588-g2d31208df.d20260129)
+    which includes base version, distance from tag, commit hash, and dirty date.
+    OCI tags don't allow '+', so we replace with '-'.
+    """
     if dev:
-        return f"dev-{git_info['commit_short']}"
+        # Use full PEP 440 version, replacing '+' with '-' for OCI compatibility
+        return __version__.replace("+", "-")
     if git_info["tag"]:
         return git_info["tag"]
     raise click.ClickException(
@@ -787,7 +793,7 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                     capture_output=True,
                 )
                 result = subprocess.run(
-                    ["git", "commit", "-m", "Update from imas-codex"],
+                    ["git", "commit", "-m", f"Update from imas-codex {__version__}"],
                     cwd=gist_dir,
                     capture_output=True,
                     text=True,
