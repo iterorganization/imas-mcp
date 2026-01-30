@@ -793,6 +793,19 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                 click.echo("Gist not found, creating new one...")
                 effective_gist_id = None
             else:
+                # Set SSH remote URL for push (gh clone uses HTTPS which fails for secret gists)
+                subprocess.run(
+                    [
+                        "git",
+                        "remote",
+                        "set-url",
+                        "origin",
+                        f"git@gist.github.com:{effective_gist_id}.git",
+                    ],
+                    cwd=gist_dir,
+                    capture_output=True,
+                )
+
                 # Copy local files over (replaces existing)
                 for f in private_files:
                     shutil.copy(f, gist_dir / f.name)
