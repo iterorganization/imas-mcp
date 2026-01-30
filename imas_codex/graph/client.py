@@ -217,63 +217,80 @@ class GraphClient:
         items: list[dict[str, Any]],
         id_field: str = "id",
         batch_size: int = 50,
-        facility_id_field: str | None = "facility_id",
+        create_relationships: bool = True,
     ) -> dict[str, int]:
         """Create or update multiple nodes using UNWIND for efficiency.
 
         Uses batched UNWIND queries for optimal Neo4j performance.
-        Optionally creates FACILITY_ID relationships in the same transaction.
+        Automatically creates relationships based on schema-defined slots
+        with class ranges (e.g., facility_id -> Facility creates FACILITY_ID edge).
 
         Args:
             label: Node label (class name from schema)
             items: List of property dicts, each must contain id_field
             id_field: Name of the identifier field (default: "id")
             batch_size: Number of nodes per UNWIND batch (default: 50)
-            facility_id_field: If set, create FACILITY_ID relationships
-                for items containing this field. Set to None to skip.
+            create_relationships: If True, create edges for all schema-defined
+                relationship fields found in items. Default True.
 
         Returns:
-            Dict with counts: {"processed": N}
+            Dict with counts: {"processed": N, "relationships": {rel_type: count}}
 
         Example:
             >>> client.create_nodes("FacilityPath", [
             ...     {"id": "tcv:/home/codes", "path": "/home/codes", "facility_id": "tcv"},
             ...     {"id": "tcv:/home/anasrv", "path": "/home/anasrv", "facility_id": "tcv"},
             ... ])
-            {"processed": 2}
+            {"processed": 2, "relationships": {"FACILITY_ID": 2}}
         """
         if not items:
-            return {"processed": 0}
+            return {"processed": 0, "relationships": {}}
 
         processed = 0
+        rel_counts: dict[str, int] = {}
 
-        # Build query with optional facility relationship
-        if facility_id_field and label != "Facility":
-            # Combined node + relationship creation
-            query = f"""
-                UNWIND $batch AS item
-                MERGE (n:{label} {{{id_field}: item.{id_field}}})
-                SET n += item
-                WITH n, item
-                WHERE item.{facility_id_field} IS NOT NULL
-                MATCH (f:Facility {{id: item.{facility_id_field}}})
-                MERGE (n)-[:FACILITY_ID]->(f)
-            """
-        else:
-            # Node creation only
-            query = f"""
-                UNWIND $batch AS item
-                MERGE (n:{label} {{{id_field}: item.{id_field}}})
-                SET n += item
-            """
+        # Node creation query (always runs first)
+        node_query = f"""
+            UNWIND $batch AS item
+            MERGE (n:{label} {{{id_field}: item.{id_field}}})
+            SET n += item
+        """
+
+        # Get schema-defined relationships for this class
+        relationships = (
+            self.schema.get_relationships_from(label) if create_relationships else []
+        )
 
         with self.session() as sess:
             for i in range(0, len(items), batch_size):
                 batch = items[i : i + batch_size]
-                sess.run(query, batch=batch)
+
+                # Create nodes
+                sess.run(node_query, batch=batch)
                 processed += len(batch)
 
-        return {"processed": processed}
+                # Create relationships based on schema
+                for rel in relationships:
+                    # Check if any items in batch have this relationship field
+                    rel_batch = [
+                        item for item in batch if item.get(rel.slot_name) is not None
+                    ]
+                    if not rel_batch:
+                        continue
+
+                    # Build relationship query
+                    rel_query = f"""
+                        UNWIND $batch AS item
+                        MATCH (n:{label} {{{id_field}: item.{id_field}}})
+                        MATCH (t:{rel.to_class} {{id: item.{rel.slot_name}}})
+                        MERGE (n)-[:{rel.cypher_type}]->(t)
+                    """
+                    sess.run(rel_query, batch=rel_batch)
+                    rel_counts[rel.cypher_type] = rel_counts.get(
+                        rel.cypher_type, 0
+                    ) + len(rel_batch)
+
+        return {"processed": processed, "relationships": rel_counts}
 
     def create_relationship(
         self,

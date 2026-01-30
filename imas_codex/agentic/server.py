@@ -1173,37 +1173,17 @@ class AgentsServer:
                                 "errors": errors,
                             }
 
-                    facility_field = (
-                        "facility_id" if create_facility_relationship else None
-                    )
                     result = client.create_nodes(
                         label=node_type,
                         items=valid_items,
                         id_field=id_field,
                         batch_size=batch_size,
-                        facility_id_field=facility_field,
+                        create_relationships=create_facility_relationship,
                     )
-
-                    # TreeNode relationship creation
-                    if node_type == "TreeNode":
-                        tree_names = {
-                            item["tree_name"]
-                            for item in valid_items
-                            if item.get("tree_name")
-                        }
-                        if tree_names:
-                            client.query(
-                                """
-                                UNWIND $names AS tn
-                                MATCH (n:TreeNode {tree_name: tn})
-                                MATCH (t:MDSplusTree {name: tn})
-                                MERGE (n)-[:TREE_NAME]->(t)
-                                """,
-                                names=list(tree_names),
-                            )
 
                     return {
                         "processed": result["processed"],
+                        "relationships": result.get("relationships", {}),
                         "skipped": len(errors) + skipped_dedup,
                         "errors": errors,
                     }
