@@ -582,6 +582,62 @@ def seed_facility_roots(
     return result["processed"]
 
 
+def seed_missing_roots(facility: str) -> int:
+    """Add discovery_roots from config that are not already in the graph.
+
+    This is an additive operation - existing paths are preserved.
+    Only paths from discovery_roots that don't exist in the graph are added.
+
+    Args:
+        facility: Facility ID
+
+    Returns:
+        Number of new paths created
+    """
+    from imas_codex.discovery import get_facility
+    from imas_codex.graph import GraphClient
+
+    config = get_facility(facility)
+    discovery_roots = config.get("discovery_roots", [])
+
+    if not discovery_roots:
+        logger.info(f"No discovery_roots configured for {facility}")
+        return 0
+
+    # Extract paths from config (may be dicts with 'path' key or plain strings)
+    config_paths = [
+        p.get("path") if isinstance(p, dict) else p for p in discovery_roots
+    ]
+
+    # Query which paths already exist in graph
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (p:FacilityPath {facility_id: $facility})
+            WHERE p.path IN $paths
+            RETURN p.path AS path
+            """,
+            facility=facility,
+            paths=config_paths,
+        )
+        existing_paths = {r["path"] for r in result}
+
+    # Find missing paths
+    missing_paths = [p for p in config_paths if p not in existing_paths]
+
+    if not missing_paths:
+        logger.info(f"All {len(config_paths)} discovery_roots already in graph")
+        return 0
+
+    logger.info(
+        f"Seeding {len(missing_paths)} missing roots "
+        f"(of {len(config_paths)} configured)"
+    )
+
+    # Use existing seed function with only the missing paths
+    return seed_facility_roots(facility, root_paths=missing_paths)
+
+
 def create_child_paths(
     facility: str,
     parent_path: str,

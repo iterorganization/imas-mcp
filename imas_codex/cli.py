@@ -5745,6 +5745,12 @@ def discover():
     default=False,
     help="Use logging output instead of rich progress display",
 )
+@click.option(
+    "--seed",
+    is_flag=True,
+    default=False,
+    help="Additive seed: add missing discovery_roots from config (no-op for existing paths)",
+)
 def discover_paths(
     facility: str,
     root: tuple[str, ...],
@@ -5757,6 +5763,7 @@ def discover_paths(
     scan_only: bool,
     score_only: bool,
     no_rich: bool,
+    seed: bool,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -5812,6 +5819,7 @@ def discover_paths(
         score_only=score_only,
         no_rich=no_rich,
         root_filter=root_filter,
+        seed=seed,
     )
 
 
@@ -5827,6 +5835,7 @@ def _run_iterative_discovery(
     score_only: bool = False,
     no_rich: bool = False,
     root_filter: list[str] | None = None,
+    seed: bool = False,
 ) -> None:
     """Run parallel scan/score discovery.
 
@@ -5847,7 +5856,11 @@ def _run_iterative_discovery(
     import sys
 
     from imas_codex.agentic.agents import get_model_for_task
-    from imas_codex.discovery import get_discovery_stats, seed_facility_roots
+    from imas_codex.discovery import (
+        get_discovery_stats,
+        seed_facility_roots,
+        seed_missing_roots,
+    )
 
     # Auto-detect if rich can run (TTY check) or use no_rich flag
     use_rich = not no_rich and sys.stdout.isatty()
@@ -5883,6 +5896,16 @@ def _run_iterative_discovery(
 
     # Get initial stats to determine next steps
     stats = get_discovery_stats(facility)
+
+    # Handle --seed flag: add missing discovery_roots from config
+    if seed:
+        log_print("[cyan]Checking for missing discovery_roots...[/cyan]")
+        seeded = seed_missing_roots(facility)
+        if seeded > 0:
+            log_print(f"[green]Seeded {seeded} new root path(s) from config[/green]")
+        else:
+            log_print("[dim]All discovery_roots already in graph[/dim]")
+        stats = get_discovery_stats(facility)
 
     # Handle targeted deep dive with --root
     if root_filter:

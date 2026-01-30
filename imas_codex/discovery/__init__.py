@@ -44,6 +44,7 @@ from imas_codex.discovery.frontier import (
     get_purpose_distribution,
     get_scorable_paths,
     seed_facility_roots,
+    seed_missing_roots,
 )
 from imas_codex.discovery.parallel import run_parallel_discovery
 from imas_codex.discovery.scorer import (
@@ -73,6 +74,7 @@ __all__ = [
     "get_scorable_paths",
     "get_high_value_paths",
     "seed_facility_roots",
+    "seed_missing_roots",
     "clear_facility_paths",
     # Parallel discovery
     "run_parallel_discovery",
