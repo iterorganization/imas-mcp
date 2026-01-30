@@ -136,23 +136,85 @@ query("""
 
 ## Fast Tools
 
-Rust-based CLI tools defined in `imas_codex/config/fast_tools.yaml`. Always prefer these:
+High-performance Rust-based CLI tools that **must be used instead of slower builtins**. Defined in `imas_codex/config/fast_tools.yaml`.
 
-| Fast Tool | Instead Of | Example |
-|-----------|------------|---------|
-| `rg` | `grep -r` | `rg 'IMAS' /work -g '*.py'` |
-| `fd` | `find` | `fd -e py /work/projects` |
-| `tokei` | `wc -l` | `tokei /path` |
-| `dust` | `du -h` | `dust -d 2 /work` |
-
-Critical: `fd` requires path as trailing argument. `fd -e py` without path will hang.
+### Installation
 
 ```bash
-# Local facility
-rg -l "IMAS" /path/to/search
-fd -e py /path/to/search
+# Check tool availability on local system
+uv run imas-codex tools check local
 
-# Remote facility
+# Install all tools locally (to ~/bin)
+uv run imas-codex tools install local
+
+# Install specific tool
+uv run imas-codex tools install local --tool rg
+
+# Install on remote facility
+uv run imas-codex tools install tcv
+```
+
+After installation, ensure `~/bin` is in your PATH (the installer adds this to `.bashrc` automatically).
+
+### Required Tools
+
+These are essential for effective exploration:
+
+| Tool | Purpose | Use Instead Of |
+|------|---------|----------------|
+| `rg` | Pattern search across files (10x faster than grep) | `grep -r` |
+| `fd` | Find files by name/extension (5x faster than find) | `find` |
+| `git` | Version control, metadata extraction | - |
+| `gh` | GitHub API access, repo visibility checking | curl to API |
+
+### Optional Tools
+
+Enhance exploration but not required:
+
+| Tool | Purpose | Use Instead Of |
+|------|---------|----------------|
+| `tokei` | Lines of code by language | `wc -l`, `cloc` |
+| `scc` | Code complexity and SLOC metrics | `cloc` |
+| `dust` | Visual disk usage analyzer | `du -h` |
+| `eza` | Modern ls with git status | `ls -la` |
+| `bat` | Syntax-highlighted file viewing | `cat`, `less` |
+| `delta` | Better git diff viewer | `diff` |
+| `fzf` | Fuzzy finder for interactive selection | - |
+| `yq` | YAML processor | Python yaml parsing |
+| `jq` | JSON processor | Python json parsing |
+
+### Usage Rules
+
+**Always prefer fast tools:**
+
+```bash
+# CORRECT - use rg
+rg 'IMAS' /path -g '*.py'
+
+# WRONG - never use grep for code search
+grep -r 'IMAS' /path --include='*.py'
+
+# CORRECT - use fd
+fd -e py /path
+
+# WRONG - never use find for file search
+find /path -name '*.py'
+```
+
+**Critical: `fd` requires path as trailing argument:**
+
+```bash
+# CORRECT - path specified
+fd -e py /work/projects
+
+# WRONG - will hang without path on large filesystems
+fd -e py
+```
+
+**Remote facility usage:**
+
+```bash
+# Single command via SSH
 ssh tcv "rg -l 'IMAS' /home/codes"
 ssh tcv "fd -e py /home/codes | head -20"
 ```
