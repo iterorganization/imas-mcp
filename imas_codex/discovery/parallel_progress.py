@@ -246,7 +246,9 @@ class ProgressState:
     run_expanded: int = 0
     run_enriched: int = 0
     run_rescored: int = 0
-    run_cost: float = 0.0
+    # Track score and rescore costs separately to avoid double-counting
+    _run_score_cost: float = 0.0
+    _run_rescore_cost: float = 0.0
     scan_rate: float | None = None
     score_rate: float | None = None
     expand_rate: float | None = None
@@ -313,6 +315,11 @@ class ProgressState:
             remaining = self.frontier_size
             return self.run_cost + (remaining * cpp)
         return None
+
+    @property
+    def run_cost(self) -> float:
+        """Total cost for this run (score + rescore)."""
+        return self._run_score_cost + self._run_rescore_cost
 
     @property
     def coverage(self) -> float:
@@ -905,7 +912,7 @@ class ParallelProgressDisplay:
         """Update scorer state."""
         self.state.run_scored = stats.processed
         self.state.score_rate = stats.rate
-        self.state.run_cost = stats.cost
+        self.state._run_score_cost = stats.cost
 
         # Track processing state for display
         # "waiting" = idle, "scoring" = processing LLM, "skipped" = just finished
@@ -1083,8 +1090,8 @@ class ParallelProgressDisplay:
         """
         self.state.run_rescored = stats.processed
         self.state.rescore_rate = stats.rate
-        # Add rescore cost to run cost
-        self.state.run_cost += stats.cost
+        # Track rescore cost separately (cumulative from rescore worker)
+        self.state._run_rescore_cost = stats.cost
 
         # Queue rescore results to score stream
         if results:
