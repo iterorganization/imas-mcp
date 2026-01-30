@@ -217,49 +217,54 @@ enums:
 
   DiscoveryRootCategory:
     description: >-
-      Category for discovery seeding roots. Clear distinction between
-      simulation (predictive modeling) and experimental (shot-based) domains.
-      Used to ensure balanced discovery across data types.
+      Broad category for discovery seeding roots. Used to ensure balanced
+      discovery across simulation and experimental domains. Categories are
+      intentionally general to apply across facilities (TCV, JET, ITER, etc.).
+      
+      The taxonomy maintains duality between:
+      - Forward modeling (simulation): Predicts plasma behavior
+      - Experimental analysis: Processes actual measurements
     permissible_values:
-      # === SIMULATION DOMAIN (predictive, offline) ===
-      simulation_code:
+      # === FORWARD MODELING (Prediction) ===
+      modeling_code:
         description: >-
-          Physics modeling/simulation codes (ASTRA, JOREK, DREAM, JINTRAC).
-          Outputs predictions, not shot data.
-      simulation_output:
+          Physics simulation and modeling source code. These codes PREDICT
+          plasma behavior through forward modeling.
+          Examples: ASTRA, JOREK, DREAM, JINTRAC, TRANSP, CORSICA, GENE
+      modeling_data:
         description: >-
-          Results from simulation runs (HDF5, NetCDF parameter scans).
-          Predictive data, not measurements.
-      # === EXPERIMENTAL DOMAIN (shot-based, measurements) ===
-      experimental_code:
+          Outputs from simulation/modeling runs. Predictive results, not
+          measurements. Often in HDF5, NetCDF, or custom formats.
+          Examples: Parameter scans, scenario databases, turbulence outputs
+      # === EXPERIMENTAL ANALYSIS (Measurement) ===
+      analysis_code:
         description: >-
-          Code that processes actual shots (real-time analysis, intershot tools).
-          Operates on measurement data.
-      shot_archive:
+          Experimental data processing source code. These codes ANALYZE
+          actual shot/pulse measurements through backward inference.
+          Examples: Equilibrium reconstruction (LIUQE, EFIT), diagnostic
+          processing (Thomson, ECE), profile fitting, real-time analysis
+      experimental_data:
         description: >-
-          Raw shot databases (MDSplus servers, HDF5 shot files).
-          Primary experimental data stores.
-      diagnostic_archive:
+          Shot/pulse measurement data. Primary experimental records from
+          actual plasma discharges, in any format (MDSplus, PPF, EDAS, etc.).
+          Examples: Shot databases, diagnostic time series, processed results
+      # === SHARED INFRASTRUCTURE ===
+      data_access:
         description: >-
-          Raw diagnostic file archives (Thomson, bolometry, interferometry).
-          Time series from physical hardware.
-      reconstruction:
+          Data access layers and common libraries. Cross-cutting tools that
+          provide abstraction over raw data storage.
+          Examples: MDSplus TDI functions, IDL SAL routines, IMAS wrappers,
+          physics function libraries, common analysis utilities
+      workflow:
         description: >-
-          Derived quantities from diagnostics (equilibrium fits, profile reconstructions).
-          LIUQE, CHEASE outputs, kinetic profiles.
-      # === CROSS-CUTTING ===
-      tdi_functions:
-        description: >-
-          TDI function libraries for MDSplus access.
-          Critical for understanding data mappings.
-      analysis_workflows:
-        description: >-
-          User analysis scripts, Jupyter notebooks, processing pipelines.
-          May use both simulation and experimental data.
+          User analysis scripts and working environments. Active workspaces
+          where researchers develop and run analysis.
+          Examples: Jupyter notebooks, batch scripts, processing pipelines,
+          user home directories with analysis code
       documentation:
         description: >-
-          Manuals, papers, READMEs.
-          Domain knowledge for IMAS mapping.
+          Reference materials for understanding codes and data.
+          Examples: Code manuals, papers, tutorials, READMEs, wiki exports
 
 # =============================================================================
 # Classes

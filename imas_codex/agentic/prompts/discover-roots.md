@@ -3,26 +3,35 @@
 ## Objective
 
 Identify high-value root directories for seeding the discovery pipeline. Good roots
-ensure balanced coverage across **simulation** and **experimental** domains.
+ensure balanced coverage across **simulation** (forward modeling) and **experimental**
+(measurement analysis) domains.
 
 ## Discovery Root Categories
 
-Each root should be classified into one of these categories:
+The taxonomy maintains duality between forward modeling (prediction) and experimental
+analysis (measurement). Categories are generic and apply across all facilities.
 
-### Simulation Domain (predictive, offline)
-- **simulation_code**: Physics modeling codes (ASTRA, JOREK, DREAM, JINTRAC)
-- **simulation_output**: Results from simulation runs (HDF5, NetCDF parameter scans)
+### Forward Modeling Domain (Prediction)
 
-### Experimental Domain (shot-based, measurements)
-- **experimental_code**: Code that processes actual shots (real-time analysis)
-- **shot_archive**: Raw shot databases (MDSplus servers, shot files)
-- **diagnostic_archive**: Raw diagnostic files (Thomson, bolometry, interferometry)
-- **reconstruction**: Derived quantities (equilibrium fits, profile reconstructions)
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| `modeling_code` | Physics simulation source code | ASTRA, JOREK, DREAM, JINTRAC, TRANSP, GENE |
+| `modeling_data` | Simulation outputs and results | Parameter scans, scenario DBs, turbulence data |
 
-### Cross-cutting
-- **tdi_functions**: TDI function libraries for MDSplus access
-- **analysis_workflows**: User analysis scripts, Jupyter notebooks
-- **documentation**: Manuals, papers, READMEs
+### Experimental Analysis Domain (Measurement)
+
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| `analysis_code` | Shot/pulse processing code | LIUQE, EFIT, Thomson processing, profile fitting |
+| `experimental_data` | Measurement data from shots | MDSplus trees, PPF databases, EDAS, shot archives |
+
+### Shared Infrastructure
+
+| Category | Purpose | Examples |
+|----------|---------|----------|
+| `data_access` | Data access layers | TDI functions, IDL SAL, IMAS wrappers |
+| `workflow` | User analysis environments | Jupyter notebooks, batch scripts, user workspaces |
+| `documentation` | Reference materials | Manuals, papers, tutorials, READMEs |
 
 ## Exploration Commands
 
@@ -32,15 +41,15 @@ Use these commands to discover candidate roots:
 # Find top-level code directories
 ssh {ssh_host} "ls -la /home/codes /work/codes 2>/dev/null | head -50"
 
-# Find MDSplus/shot data locations
-ssh {ssh_host} "locate -i mdsplus 2>/dev/null | head -20"
-ssh {ssh_host} "df -h | grep -E 'data|shots|mds'"
+# Find shot data locations (MDSplus, PPF, EDAS, etc.)
+ssh {ssh_host} "df -h | grep -E 'data|shots|mds|ppf'"
+ssh {ssh_host} "ls -la /tcvssd /data /work 2>/dev/null | head -30"
 
-# Find diagnostic data archives
-ssh {ssh_host} "fd -t d -d 3 'thomson|bolom|interferom|ece' /data 2>/dev/null"
+# Find data access layer (TDI, IDL, SAL)
+ssh {ssh_host} "ls -la /usr/local/*/tdi /usr/local/idl 2>/dev/null"
 
-# Find TDI function locations
-ssh {ssh_host} "ls -la /usr/local/*/tdi 2>/dev/null"
+# Find user workspaces
+ssh {ssh_host} "ls -la /home/users /work/analysis 2>/dev/null | head -20"
 
 # Find documentation directories
 ssh {ssh_host} "fd -t d -d 2 'Docs|docs|doc|manual' /home/codes 2>/dev/null | head -20"
@@ -53,17 +62,17 @@ After exploration, update the facility's private YAML with discovered roots:
 ```python
 update_facility_infrastructure("{facility}", {
     "discovery_roots": [
-        # === SIMULATION DOMAIN ===
-        {"path": "/home/codes", "category": "simulation_code", "description": "Central code repository"},
-        {"path": "/work/modeling/outputs", "category": "simulation_output", "description": "Simulation results"},
+        # === FORWARD MODELING (Prediction) ===
+        {"path": "/home/codes/jorek", "category": "modeling_code", "description": "JOREK MHD modeling"},
+        {"path": "/scratch/simulations", "category": "modeling_data", "description": "Simulation outputs"},
         
-        # === EXPERIMENTAL DOMAIN ===
-        {"path": "/data/shots", "category": "shot_archive", "description": "MDSplus shot database"},
-        {"path": "/diagnostic/raw", "category": "diagnostic_archive", "description": "Raw diagnostic data"},
-        {"path": "/work/equilibrium", "category": "reconstruction", "description": "LIUQE/CHEASE outputs"},
+        # === EXPERIMENTAL ANALYSIS (Measurement) ===
+        {"path": "/home/codes/liuqe", "category": "analysis_code", "description": "Equilibrium reconstruction"},
+        {"path": "/tcvssd/trees", "category": "experimental_data", "description": "MDSplus shot data"},
         
-        # === CROSS-CUTTING ===
-        {"path": "/usr/local/CRPP/tdi", "category": "tdi_functions", "description": "TDI function library"},
+        # === SHARED INFRASTRUCTURE ===
+        {"path": "/usr/local/CRPP/tdi", "category": "data_access", "description": "TDI data access functions"},
+        {"path": "/home/users", "category": "workflow", "description": "User analysis scripts"},
         {"path": "/home/codes/*/Docs", "category": "documentation", "description": "Code documentation"}
     ]
 })
@@ -71,22 +80,25 @@ update_facility_infrastructure("{facility}", {
 
 ## Prioritization Guidelines
 
-1. **Avoid overlap**: Don't add `/home/codes` AND `/home/codes/astra` (parent covers child)
-2. **Balance domains**: Ensure at least 1-2 roots per major category
-3. **Prefer specific over general**: `/data/shots/tcv` over `/data` if TCV-specific
-4. **Include experimental data**: Common blind spot - actively seek shot archives
-5. **Add TDI roots**: Critical for IMAS mapping, often in `/usr/local/*/tdi`
+1. **Maintain duality**: Ensure roots in BOTH simulation AND experimental domains
+2. **Avoid overlap**: Don't add `/home/codes` AND `/home/codes/astra` (parent covers child)
+3. **Experimental data first**: Common blind spot - actively seek shot/pulse data stores
+4. **Include data access**: Critical for understanding semantic mappings
+5. **User workspaces**: Where active analysis happens (often missed)
 
 ## After Discovery
 
 Run targeted deep dives on newly discovered roots:
 
 ```bash
-# Deep dive into specific experimental data area
-imas-codex discover paths {facility} -r /data/shots/tcv -c 5.0
+# Deep dive into experimental data
+imas-codex discover paths {facility} -r /tcvssd/trees -c 5.0
 
-# Deep dive with multiple roots
-imas-codex discover paths {facility} -r /diagnostic/raw -r /work/equilibrium -c 10.0
+# Deep dive with multiple roots (mixing domains)
+imas-codex discover paths {facility} -r /home/codes/liuqe -r /home/codes/jorek -c 10.0
+
+# Explore user workspaces
+imas-codex discover paths {facility} -r /home/users -c 5.0
 ```
 
 ## Current Discovery Roots
