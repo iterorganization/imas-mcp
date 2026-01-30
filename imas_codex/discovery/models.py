@@ -16,7 +16,6 @@ are used for LLM structured output - LiteLLM parses responses directly into thes
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -34,49 +33,16 @@ __all__ = [
     "EvidenceSchema",
     "DirectoryScoringResult",
     "DirectoryScoringBatch",
-    "PathPurposeEnum",
 ]
-
-
-# Pydantic enum for LLM output (must be a regular Enum for Pydantic/LiteLLM)
-class PathPurposeEnum(str, Enum):
-    """Path purpose classification for LLM output.
-
-    Score semantics vary by category:
-    - Code/data categories: score = ingestion priority
-    - Container: score = exploration potential of children
-    - Skip categories: always low score, skip subtree
-
-    Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
-    """
-
-    # Forward modeling code (predictive, offline simulation)
-    modeling_code = "modeling_code"
-    # Experimental analysis code (shot processing, diagnostics)
-    analysis_code = "analysis_code"
-    operations_code = "operations_code"
-    # Shared infrastructure code
-    data_access = "data_access"
-    workflow = "workflow"
-    visualization = "visualization"
-    # Data categories
-    experimental_data = "experimental_data"
-    modeling_data = "modeling_data"
-    # Support categories
-    documentation = "documentation"
-    configuration = "configuration"
-    test_suite = "test_suite"
-    # Structural categories
-    container = "container"
-    # Skip categories (low score forced)
-    archive = "archive"
-    build_artifact = "build_artifact"
-    system = "system"
 
 
 # ============================================================================
 # Pydantic Models for LLM Structured Output
 # ============================================================================
+#
+# Note: PathPurpose is imported from the generated LinkML models (graph/models.py).
+# The generated enum is used directly for LLM structured output - no duplicate needed.
+# LiteLLM/Pydantic correctly handle str-based enums from LinkML.
 
 
 class EvidenceSchema(BaseModel):
@@ -125,7 +91,7 @@ class DirectoryScoringResult(BaseModel):
 
     path: str = Field(description="The directory path (echo from input)")
 
-    path_purpose: PathPurposeEnum = Field(
+    path_purpose: PathPurpose = Field(
         description="Classification: modeling_code, analysis_code, operations_code, "
         "data_access, workflow, visualization, experimental_data, modeling_data, "
         "documentation, configuration, test_suite, container, archive, build_artifact, system"
