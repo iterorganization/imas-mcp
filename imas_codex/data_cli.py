@@ -834,27 +834,43 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
 
 @data_private.command("pull")
 @click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Gist ID to pull from")
+@click.option("--url", "gist_url", help="Gist URL (extracts ID and saves for future)")
 @click.option("--force", is_flag=True, help="Overwrite without diff/prompt")
 @click.option("--no-backup", is_flag=True, help="Skip backup of existing files")
-def private_pull(gist_id: str | None, force: bool, no_backup: bool) -> None:
+def private_pull(
+    gist_id: str | None, gist_url: str | None, force: bool, no_backup: bool
+) -> None:
     """Pull private YAML files from GitHub Gist.
 
     Shows diff and prompts for confirmation before overwriting.
     Use --force to skip prompt, --no-backup to skip backup.
 
+    For onboarding, use --url to specify a gist URL (ID will be saved):
+        imas-codex data private pull --url https://gist.github.com/abc123
+
     Examples:
         imas-codex data private pull
+        imas-codex data private pull --url https://gist.github.com/abc123
         imas-codex data private pull --force
     """
     require_gh()
+
+    # Extract gist ID from URL if provided
+    if gist_url:
+        # URL format: https://gist.github.com/[user/]<gist_id>
+        gist_id = gist_url.rstrip("/").split("/")[-1]
+        click.echo(f"Extracted gist ID: {gist_id}")
+        save_gist_id(gist_id)
+        click.echo(f"  Saved to: {GIST_ID_FILE}")
 
     effective_gist_id = gist_id or get_saved_gist_id()
     if not effective_gist_id:
         raise click.ClickException(
             "No gist ID configured. Either:\n"
             "  1. Run 'imas-codex data private push' first, or\n"
-            "  2. Provide --gist-id, or\n"
-            "  3. Set IMAS_PRIVATE_GIST_ID environment variable"
+            "  2. Provide --url https://gist.github.com/<id>, or\n"
+            "  3. Provide --gist-id, or\n"
+            "  4. Set IMAS_PRIVATE_GIST_ID environment variable"
         )
 
     click.echo(f"Pulling from gist: {effective_gist_id}")
@@ -946,6 +962,210 @@ def private_status() -> None:
     if gist_id:
         click.echo(f"  URL: https://gist.github.com/{gist_id}")
         click.echo(f"  Config: {GIST_ID_FILE}")
+
+
+# ============================================================================
+# Secrets Subgroup (SSH-based transfer)
+# ============================================================================
+
+SECRETS_REMOTE_DIR = ".config/imas-codex/secrets"
+SECRETS_FILES = [".env"]  # Files to sync
+
+
+@data.group("secrets")
+def data_secrets() -> None:
+    """Manage secrets via secure SSH transfer.
+
+    Transfer .env and other sensitive files to/from a trusted remote host.
+    Uses SSH/SCP with strict file permissions (0600).
+
+    \b
+      imas-codex data secrets push    Push .env to remote
+      imas-codex data secrets pull    Pull .env from remote
+      imas-codex data secrets status  Show status
+
+    ⚠ WARNING: This transfers secrets over SSH. Ensure:
+    - Remote host is trusted infrastructure
+    - SSH keys are properly secured
+    - No other users have access to remote directory
+    """
+    pass
+
+
+def _get_secrets_host() -> str | None:
+    """Get saved secrets host."""
+    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
+    if host_file.exists():
+        return host_file.read_text().strip()
+    return os.environ.get("IMAS_SECRETS_HOST")
+
+
+def _save_secrets_host(host: str) -> None:
+    """Save secrets host."""
+    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
+    host_file.parent.mkdir(parents=True, exist_ok=True)
+    host_file.write_text(host)
+
+
+@data_secrets.command("push")
+@click.option(
+    "--host", envvar="IMAS_SECRETS_HOST", help="Remote host (e.g., user@sdcc.iter.org)"
+)
+@click.option("--dry-run", is_flag=True, help="Show what would be transferred")
+def secrets_push(host: str | None, dry_run: bool) -> None:
+    """Push .env to a secure remote host.
+
+    Creates ~/.config/imas-codex/secrets/ on remote with 0700 permissions.
+    Files are stored with 0600 permissions (owner read/write only).
+
+    Examples:
+        imas-codex data secrets push --host user@sdcc.iter.org
+        imas-codex data secrets push --dry-run
+    """
+    effective_host = host or _get_secrets_host()
+    if not effective_host:
+        raise click.ClickException(
+            "No host configured. Provide --host or set IMAS_SECRETS_HOST"
+        )
+
+    env_file = Path(".env")
+    if not env_file.exists():
+        raise click.ClickException(".env file not found in project root")
+
+    remote_dir = f"~/{SECRETS_REMOTE_DIR}"
+    remote_path = f"{effective_host}:{remote_dir}/.env"
+
+    click.echo(f"Push target: {effective_host}")
+    click.echo(f"  Remote dir: {remote_dir}")
+    click.echo(f"  File: .env ({env_file.stat().st_size} bytes)")
+
+    if dry_run:
+        click.echo("\n[DRY RUN] Would:")
+        click.echo(f"  1. Create {remote_dir} with 0700 permissions")
+        click.echo(f"  2. Copy .env to {remote_path}")
+        click.echo("  3. Set .env permissions to 0600")
+        return
+
+    # Create remote directory with secure permissions
+    click.echo("\nCreating secure remote directory...")
+    result = subprocess.run(
+        ["ssh", effective_host, f"mkdir -p {remote_dir} && chmod 700 {remote_dir}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to create remote dir: {result.stderr}")
+
+    # Copy file
+    click.echo("Transferring .env...")
+    result = subprocess.run(
+        ["scp", "-q", str(env_file), remote_path],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Transfer failed: {result.stderr}")
+
+    # Set strict permissions
+    result = subprocess.run(
+        ["ssh", effective_host, f"chmod 600 {remote_dir}/.env"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        click.echo(f"Warning: Could not set permissions: {result.stderr}", err=True)
+
+    # Save host for future use
+    if host:
+        _save_secrets_host(host)
+
+    click.echo(f"\n✓ Pushed .env to {effective_host}")
+    click.echo("  Permissions: directory 0700, file 0600")
+
+
+@data_secrets.command("pull")
+@click.option("--host", envvar="IMAS_SECRETS_HOST", help="Remote host")
+@click.option("--force", is_flag=True, help="Overwrite existing .env without prompt")
+def secrets_pull(host: str | None, force: bool) -> None:
+    """Pull .env from a secure remote host.
+
+    Retrieved file is set to 0600 permissions locally.
+
+    Examples:
+        imas-codex data secrets pull --host user@sdcc.iter.org
+        imas-codex data secrets pull
+    """
+    effective_host = host or _get_secrets_host()
+    if not effective_host:
+        raise click.ClickException(
+            "No host configured. Provide --host or set IMAS_SECRETS_HOST"
+        )
+
+    env_file = Path(".env")
+    remote_dir = f"~/{SECRETS_REMOTE_DIR}"
+    remote_path = f"{effective_host}:{remote_dir}/.env"
+
+    # Check if .env exists locally
+    if env_file.exists() and not force:
+        click.echo("Local .env exists. Overwrite? (use --force to skip prompt)")
+        if not click.confirm("Continue?"):
+            return
+
+    click.echo(f"Pulling from: {effective_host}")
+
+    # Check remote file exists
+    result = subprocess.run(
+        ["ssh", effective_host, f"test -f {remote_dir}/.env && echo exists"],
+        capture_output=True,
+        text=True,
+    )
+    if "exists" not in result.stdout:
+        raise click.ClickException(
+            f"No .env found on {effective_host}\n  Expected: {remote_dir}/.env"
+        )
+
+    # Pull file
+    click.echo("Transferring .env...")
+    result = subprocess.run(
+        ["scp", "-q", remote_path, str(env_file)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(f"Transfer failed: {result.stderr}")
+
+    # Set strict local permissions
+    env_file.chmod(0o600)
+
+    # Save host for future use
+    if host:
+        _save_secrets_host(host)
+
+    click.echo(f"\n✓ Pulled .env from {effective_host}")
+    click.echo(f"  Size: {env_file.stat().st_size} bytes")
+    click.echo("  Permissions: 0600 (owner read/write only)")
+
+
+@data_secrets.command("status")
+def secrets_status() -> None:
+    """Show secrets status."""
+    env_file = Path(".env")
+    secrets_host = _get_secrets_host()
+
+    click.echo("Local .env:")
+    if env_file.exists():
+        stat = env_file.stat()
+        perms = oct(stat.st_mode)[-3:]
+        click.echo(f"  Size: {stat.st_size} bytes")
+        click.echo(f"  Permissions: {perms}")
+        if perms != "600":
+            click.echo("  ⚠ Permissions should be 600")
+    else:
+        click.echo("  (not found)")
+
+    click.echo(f"\nSecrets host: {secrets_host or '(not configured)'}")
+    if secrets_host:
+        click.echo("  Configure with --host or IMAS_SECRETS_HOST")
 
 
 # ============================================================================
@@ -1249,6 +1469,7 @@ def data_push(
 @click.option("--force", is_flag=True, help="Overwrite existing graph without checks")
 @click.option("--no-backup", is_flag=True, help="Skip backup marker")
 @click.option("--skip-private", is_flag=True, help="Skip private YAML gist sync")
+@click.option("--gist-url", help="Gist URL for private files (for onboarding)")
 def data_pull(
     version: str,
     registry: str | None,
@@ -1256,11 +1477,15 @@ def data_pull(
     force: bool,
     no_backup: bool,
     skip_private: bool,
+    gist_url: str | None,
 ) -> None:
     """Pull graph archive from GHCR and private facility configs from Gist.
 
     Neo4j is automatically stopped/restarted during load.
     Also pulls private facility files (*_private.yaml) from Gist.
+
+    For onboarding, use --gist-url to configure the private gist:
+        imas-codex data pull --gist-url https://gist.github.com/abc123
 
     Safety: Refuses to overwrite existing graph unless:
     - Graph was previously pushed (tracked in manifest), or
@@ -1269,6 +1494,7 @@ def data_pull(
     Examples:
         imas-codex data pull                 # Pull latest
         imas-codex data pull -v v1.0.0       # Pull specific version
+        imas-codex data pull --gist-url https://gist.github.com/abc123
         imas-codex data pull --force         # Overwrite without checks
     """
     require_oras()
@@ -1347,21 +1573,30 @@ def data_pull(
 
     # Sync private YAML files from Gist
     if not skip_private:
+        # If gist_url provided, extract and save ID first
+        if gist_url:
+            extracted_id = gist_url.rstrip("/").split("/")[-1]
+            save_gist_id(extracted_id)
+            click.echo(f"\nSaved gist ID: {extracted_id}")
+
         gist_id = get_saved_gist_id()
-        if gist_id:
+        if gist_id or gist_url:
             click.echo("\nPulling private YAML from Gist...")
             from click.testing import CliRunner
 
             runner = CliRunner()
-            # Use --force since graph pull implies full restore
-            result = runner.invoke(private_pull, ["--force"] if force else [])
+            args = ["--force"] if force else []
+            if gist_url:
+                args.extend(["--url", gist_url])
+            result = runner.invoke(private_pull, args)
             if result.exit_code != 0:
                 click.echo(f"Warning: Private sync failed: {result.output}", err=True)
             else:
                 click.echo("✓ Private YAML restored from Gist")
         else:
             click.echo("\nNo Gist configured - skipping private YAML sync")
-            click.echo("  Configure with: imas-codex data private push")
+            click.echo("  Configure with: --gist-url https://gist.github.com/<id>")
+            click.echo("  Or run: imas-codex data private push")
     else:
         click.echo("\nSkipped private YAML sync (--skip-private)")
 
