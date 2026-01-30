@@ -1,0 +1,267 @@
+# JET Private Infrastructure
+#
+# Sensitive infrastructure data - gitignored, never graphed.
+# Populated during exploration sessions.
+
+tools:
+  rg:
+    version: 14.1.1
+    path: ~/bin/rg
+    purpose: Fast pattern search
+  fd:
+    version: 10.2.0
+    path: ~/bin/fd
+    purpose: Fast file finder
+  bat:
+    version: 0.24.0
+    path: ~/bin/bat
+    purpose: Syntax-highlighted cat
+  dust:
+    version: 1.1.1
+    path: ~/bin/dust
+    purpose: Visual disk usage
+  fzf:
+    version: 0.57.0
+    path: ~/bin/fzf
+    purpose: Fuzzy finder
+  autossh:
+    version: 1.4g
+    path: ~/bin/autossh
+    purpose: Persistent SSH tunnels
+os:
+  name: Scientific Linux
+  version: 7.9 (Nitrogen)
+  kernel: 3.10.0-1160.118.1.el7.x86_64
+paths:
+  imas:
+    root: /common/IMAS
+    core: /common/IMAS/core
+    idstools: /common/IMAS/imas/idstools
+  mdsplus:
+    root: /usr/local/depot/mdsplus-6.1
+  codes:
+    efda_codes: /common/EFDA-CODES
+    jet_share: /jet/share
+    jet_src: /jet/share/src
+  data:
+    ppf_mount: /usr/local/depot/mountppf
+    common: /common
+  user:
+    home: /home/smcint
+    bin: /home/smcint/bin
+    work: /work
+exploration_notes:
+- '2026-01-23: Initial infrastructure scoping complete - Scientific Linux 7.7, Python 3.13.3, no module system, all fast tools
+  installed in ~/bin'
+
+- '2026-01-23: Data systems: IMAS (/common/IMAS), MDSplus 6.1 (/usr/local/depot/mdsplus-6.1), PPF/JPF/getdat commands available
+  for legacy JET data access'
+- '2026-01-23: Code directories identified: /common/EFDA-CODES (physics codes), /jet/share (JET shared tools), /jet/share/src
+  (source code)'
+- '2026-01-26: Infrastructure scoping complete: Scientific Linux 7.9, Python 3.8.18, 318 modules. Data systems: IMAS 3.40-3.42,
+  MDSplus 7.153, PPF via getdat. Legacy GCC 4.8.5. Fast tools (rg, fd, bat, dust, fzf) installed.'
+- '2026-01-26: Data storage documented: PPF/JPF access via ppfhost.jetdata.eu server using getdat command. MATLAB libs at
+  /jet/share32/matlab/{ppf,jpf}, IDL libs at /jet/share/idl/{ppf,jpf,getdat}. IMAS at /common/IMAS with modules 3.40-3.42.'
+- '2026-01-30: Discovery roots configured with 21 entries across all 7 categories: modeling_code (TRANSP, ASCOT, SELFO, SOLPS-ITER),
+  modeling_data (transp_shared/Data), experimental_data (chain1/pulses, cmg), analysis_code (efitpp, c1modeller, diagnostics),
+  data_access (PPF, JPF, GETDAT libraries), workflow (OMFIT users), documentation (PPF guide, TRANSP docs, EFIT docs).'
+- '2026-01-30: Discovery roots expanded to 31 entries. Added /home container for FacilityUser discovery. Addressed experimental_data
+  gap (+2 paths: chain1/reprocess, ITM/itmdb trees). Added workflow roots (ETS/users, ITM/users, /work). Added modeling_code
+  (ETS/swimas, ITM/switm). Added data_access (jetdsp, mdsplus tdi).'
+hostname: heimdall136
+
+python:
+  version: 3.8.18
+  path: /usr/bin/python3
+shell: /bin/bash
+module_system: true
+module_count: 318
+module_root: /usr/local/modules/default
+home_in_path: true
+data_systems:
+  imas:
+    available: true
+    modules:
+    - imas/3.40.0-4.11.2
+    - imas/3.42.0-5.4.0
+    - imas_installer
+  mdsplus:
+    available: true
+    modules:
+    - mdsplus/7.153.3-1
+    - mdsplus/alpha-4056f22-1
+  uda:
+    available: false
+  ppf:
+    available: true
+    commands:
+    - /jet/share/bin/getdat
+compilers:
+  gcc:
+    version: 4.8.5
+    path: /usr/bin/gcc
+  gfortran:
+    version: 4.8.5
+    path: /usr/bin/gfortran
+  cmake:
+    version: 2.8.12.2
+    path: /usr/bin/cmake
+file_systems:
+- mount_point: /
+  type: xfs
+  size: 176G
+- mount_point: /home
+  type: nfs
+  server: kfs6-1:/export/JAChome
+- mount_point: /common
+  type: nfs
+  notes: 176 subdirectories
+- mount_point: /common/transp_shared
+  type: nfs
+  size: 10T
+  server: kfs6-1.jetdata.eu
+containers:
+  runtime: singularity
+  available: true
+excludes:
+  directories:
+  - /scratch
+  - /tmp
+  - /var/tmp
+  patterns:
+  - '*.dat.old'
+  - '*.backup'
+  - '*.bak'
+data_storage:
+  ppf_jpf:
+    server: ppfhost.jetdata.eu
+    matlab_libs:
+      ppf: /jet/share32/matlab/ppf
+      jpf: /jet/share32/matlab/jpf
+    idl_libs:
+      ppf: /jet/share/idl/ppf
+      jpf: /jet/share/idl/jpf
+      getdat: /jet/share/idl/getdat
+    access_command: /jet/share/bin/getdat
+    documentation: /common/EFDA-DATA-PPF-JPF/ppfuserguide
+  mdsplus:
+    path: /usr/local/depot/mdsplus-6.1
+    tdi_path: /usr/local/depot/mdsplus-6.1/tdi
+  imas:
+    root: /common/IMAS
+    modules:
+    - imas/3.40.0-4.11.2
+    - imas/3.42.0-5.4.0
+file_formats:
+  primary: PPF/JPF binary
+  secondary:
+  - HDF5
+  - MDSplus
+  access_methods:
+  - getdat
+  - ppfget
+  - jpfget
+  - imas.DBEntry
+discovery_roots:
+# === USER DISCOVERY CONTAINER ===
+- category: container
+  description: User home directories - discover facility users and their code
+  path: /home
+  expand_depth: 1
+  priority: high
+
+# === FORWARD MODELING (Prediction) ===
+- category: modeling_code
+  description: TRANSP transport modeling code
+  path: /common/transp_shared/Code/transp
+- category: modeling_code
+  description: ASCOT fast-particle orbit-following code
+  path: /common/ascot
+- category: modeling_code
+  description: SELFO ICRH/fast-ion modeling
+  path: /common/selfo/trunk
+- category: modeling_code
+  description: SOLPS-ITER edge plasma simulation
+  path: /common/SOLPS-ITER
+- category: modeling_code
+  description: SWIMAS integrated transport modeling
+  path: /common/ETS/swimas
+- category: modeling_code
+  description: ITM physics software modules (pre-IMAS)
+  path: /common/ITM/switm
+- category: modeling_data
+  description: TRANSP simulation outputs and parameter scans
+  path: /common/transp_shared/Data
+
+# === EXPERIMENTAL ANALYSIS (Measurement) ===
+- category: experimental_data
+  description: CHAIN1 processed pulse data
+  path: /common/chain1/pulses
+- category: experimental_data
+  description: CMG experimental data archive
+  path: /common/cmg
+- category: experimental_data
+  description: CHAIN1 reprocessed pulse data
+  path: /common/chain1/reprocess
+- category: experimental_data
+  description: ITM database trees (IMAS predecessor data)
+  path: /common/ITM/itmdb/itm_trees
+- category: analysis_code
+  description: EFIT++ equilibrium reconstruction
+  path: /common/chain1/efitpp
+- category: analysis_code
+  description: CHAIN1 modeler analysis tools
+  path: /common/chain1/c1modeller
+- category: analysis_code
+  description: Kinetics diagnostic analysis codes
+  path: /common/EFDA-EKINETICS/diagnostics
+
+# === SHARED INFRASTRUCTURE ===
+- category: data_access
+  description: PPF data access library
+  path: /jet/share/DEPOT/ppf
+- category: data_access
+  description: Python PPF data access
+  path: /jet/share/DEPOT/pyppf
+- category: data_access
+  description: IDL PPF data access
+  path: /jet/share/DEPOT/idlppf
+- category: data_access
+  description: IDL JPF data access
+  path: /jet/share/DEPOT/idljpf
+- category: data_access
+  description: IDL GETDAT data access
+  path: /jet/share/DEPOT/idlgetdat
+- category: data_access
+  description: JET MDSplus interface
+  path: /jet/share/DEPOT/jetmds
+- category: data_access
+  description: IMAS data access routines
+  path: /common/IMAS/imas
+- category: data_access
+  description: JET digital signal processing library
+  path: /jet/share/DEPOT/jetdsp
+- category: data_access
+  description: MDSplus TDI data access functions
+  path: /usr/local/depot/mdsplus-6.1/tdi
+- category: workflow
+  description: OMFIT user analysis workflows
+  path: /common/transp_shared/omfit/users
+- category: workflow
+  description: ETS user analysis workspaces
+  path: /common/ETS/users
+- category: workflow
+  description: ITM user analysis workspaces
+  path: /common/ITM/users
+- category: workflow
+  description: Active user work directories
+  path: /work
+- category: documentation
+  description: PPF user guide and reference
+  path: /common/EFDA-DATA-PPF-JPF/ppfuserguide
+- category: documentation
+  description: TRANSP user documentation
+  path: /common/EFDA-TRANSP/Documentation
+- category: documentation
+  description: EFIT algorithm and input documentation
+  path: /common/EFDA-EFIT
