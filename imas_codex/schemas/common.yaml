@@ -215,6 +215,52 @@ enums:
       asserted:
         description: User-provided, not verified
 
+  DiscoveryRootCategory:
+    description: >-
+      Category for discovery seeding roots. Clear distinction between
+      simulation (predictive modeling) and experimental (shot-based) domains.
+      Used to ensure balanced discovery across data types.
+    permissible_values:
+      # === SIMULATION DOMAIN (predictive, offline) ===
+      simulation_code:
+        description: >-
+          Physics modeling/simulation codes (ASTRA, JOREK, DREAM, JINTRAC).
+          Outputs predictions, not shot data.
+      simulation_output:
+        description: >-
+          Results from simulation runs (HDF5, NetCDF parameter scans).
+          Predictive data, not measurements.
+      # === EXPERIMENTAL DOMAIN (shot-based, measurements) ===
+      experimental_code:
+        description: >-
+          Code that processes actual shots (real-time analysis, intershot tools).
+          Operates on measurement data.
+      shot_archive:
+        description: >-
+          Raw shot databases (MDSplus servers, HDF5 shot files).
+          Primary experimental data stores.
+      diagnostic_archive:
+        description: >-
+          Raw diagnostic file archives (Thomson, bolometry, interferometry).
+          Time series from physical hardware.
+      reconstruction:
+        description: >-
+          Derived quantities from diagnostics (equilibrium fits, profile reconstructions).
+          LIUQE, CHEASE outputs, kinetic profiles.
+      # === CROSS-CUTTING ===
+      tdi_functions:
+        description: >-
+          TDI function libraries for MDSplus access.
+          Critical for understanding data mappings.
+      analysis_workflows:
+        description: >-
+          User analysis scripts, Jupyter notebooks, processing pipelines.
+          May use both simulation and experimental data.
+      documentation:
+        description: >-
+          Manuals, papers, READMEs.
+          Domain knowledge for IMAS mapping.
+
 # =============================================================================
 # Classes
 # =============================================================================

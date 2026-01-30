@@ -5679,6 +5679,13 @@ def discover():
 @discover.command("paths")
 @click.argument("facility")
 @click.option(
+    "--root",
+    "-r",
+    multiple=True,
+    type=str,
+    help="Restrict discovery to these root paths (can specify multiple)",
+)
+@click.option(
     "--cost-limit",
     "-c",
     type=float,
@@ -5737,6 +5744,7 @@ def discover():
 )
 def discover_paths(
     facility: str,
+    root: tuple[str, ...],
     cost_limit: float,
     limit: int | None,
     focus: str | None,
@@ -5756,6 +5764,13 @@ def discover_paths(
       imas-codex discover paths iter --focus "equilibrium codes"
       imas-codex discover paths iter --scan-only        # SSH only, no LLM
       imas-codex discover paths iter --score-only       # LLM only, no SSH
+      imas-codex discover paths tcv -r /home/codes/astra  # Deep dive into ASTRA
+
+    \b
+    Targeted deep dives:
+      --root, -r    Restrict discovery to specific roots. Roots are added to the
+                    graph and all work (scan/score/expand/enrich) is limited to
+                    paths under these roots. Use multiple -r flags for several roots.
 
     Parallel scan workers enumerate directories via SSH while score workers
     classify paths using LLM. Both run concurrently with the graph as
@@ -5779,6 +5794,9 @@ def discover_paths(
         )
         raise SystemExit(1)
 
+    # Convert root tuple to list or None
+    root_filter = list(root) if root else None
+
     _run_iterative_discovery(
         facility=facility,
         budget=cost_limit,
@@ -5790,6 +5808,7 @@ def discover_paths(
         scan_only=scan_only,
         score_only=score_only,
         no_rich=no_rich,
+        root_filter=root_filter,
     )
 
 
@@ -5804,6 +5823,7 @@ def _run_iterative_discovery(
     scan_only: bool = False,
     score_only: bool = False,
     no_rich: bool = False,
+    root_filter: list[str] | None = None,
 ) -> None:
     """Run parallel scan/score discovery.
 
@@ -5818,6 +5838,7 @@ def _run_iterative_discovery(
         scan_only: If True, only run SSH scanning (no LLM scoring)
         score_only: If True, only run LLM scoring (no SSH scanning)
         no_rich: If True, use logging output instead of rich progress
+        root_filter: If set, restrict all work to paths under these roots
     """
     import asyncio
     import sys
@@ -5857,9 +5878,18 @@ def _run_iterative_discovery(
         else:
             disc_logger.info(clean_msg)
 
-    # Check if we have any paths, seed if not
-    stats = get_discovery_stats(facility)
-    if stats["total"] == 0:
+    # Handle targeted deep dive with --root
+    if root_filter:
+        log_print(f"[cyan]Targeted discovery: {len(root_filter)} root(s)[/cyan]")
+        for r in root_filter:
+            log_print(f"  • {r}")
+        # Seed the specified roots (additive - won't remove existing paths)
+        seeded = seed_facility_roots(facility, root_paths=root_filter)
+        if seeded > 0:
+            log_print(f"[green]Seeded {seeded} new root path(s)[/green]")
+        stats = get_discovery_stats(facility)
+    # Otherwise, seed from config if empty
+    elif stats["total"] == 0:
         if score_only:
             log_print(
                 "[red]Error: --score-only requires existing paths in the graph.[/red]"
@@ -5929,7 +5959,8 @@ def _run_iterative_discovery(
                 use_rich=use_rich,
             )
         )
-
+    root_filter=root_filter,
+            
         # Print detailed summary with paths scored this run
         _print_discovery_summary(
             console, facility, result, scored_this_run, scan_only=scan_only
@@ -6197,6 +6228,7 @@ async def _async_discovery_loop(
     scan_only: bool = False,
     score_only: bool = False,
     use_rich: bool = True,
+    root_filter: list[str] | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers.
 
@@ -6212,6 +6244,7 @@ async def _async_discovery_loop(
         scan_only: If True, skip scoring (scan workers only)
         score_only: If True, skip scanning (score workers only)
         use_rich: If True, use rich display; otherwise use logging
+        root_filter: Restrict work to paths under these roots (optional)
 
     Returns:
         Tuple of (result dict, set of paths scored in this run)
@@ -6282,6 +6315,7 @@ async def _async_discovery_loop(
                     path_limit=limit,
                     focus=focus,
                     threshold=threshold,
+                    root_filter=root_filter,
                     num_scan_workers=num_scan_workers,
                     num_score_workers=num_score_workers,
                     on_scan_progress=on_scan,
@@ -6339,6 +6373,7 @@ async def _async_discovery_loop(
             path_limit=limit,
             focus=focus,
             threshold=threshold,
+            root_filter=root_filter,
             num_scan_workers=num_scan_workers,
             num_score_workers=num_score_workers,
             on_scan_progress=on_scan_log,

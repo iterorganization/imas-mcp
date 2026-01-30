@@ -66,6 +66,7 @@ class DiscoveryState:
     path_limit: int | None = None
     focus: str | None = None
     threshold: float = 0.7
+    root_filter: list[str] | None = None  # Restrict work to these roots
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -287,22 +288,35 @@ def reset_transient_paths(facility: str, *, silent: bool = False) -> dict[str, i
 # ============================================================================
 
 
-def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
+def claim_paths_for_scanning(
+    facility: str, limit: int = 50, root_filter: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Atomically claim discovered paths for initial scanning.
 
     Claims only unscored discovered paths (first scan, enumerate only).
     Expansion is handled by separate expand_worker.
 
     Uses atomic status transition: discovered → listing
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim
+        root_filter: If set, only claim paths under these roots
     """
     from imas_codex.graph import GraphClient
+
+    # Build root filter clause
+    root_clause = ""
+    if root_filter:
+        root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     with GraphClient() as gc:
         # Claim unscored discovered paths (breadth-first by depth)
         result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            f"""
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $discovered AND p.score IS NULL
+            {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
             SET p.status = $listing, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
@@ -311,28 +325,42 @@ def claim_paths_for_scanning(facility: str, limit: int = 50) -> list[dict[str, A
             limit=limit,
             discovered=PathStatus.discovered.value,
             listing=PathStatus.listing.value,
+            root_filter=root_filter or [],
         )
         return list(result)
 
 
-def claim_paths_for_expanding(facility: str, limit: int = 50) -> list[dict[str, Any]]:
+def claim_paths_for_expanding(
+    facility: str, limit: int = 50, root_filter: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Atomically claim scored paths for expansion scanning.
 
     Claims paths with should_expand=true that haven't been expanded yet.
     These are scored high-value directories that need child enumeration.
 
     Uses atomic status transition: scored → listing
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim
+        root_filter: If set, only claim paths under these roots
     """
     from imas_codex.graph import GraphClient
+
+    # Build root filter clause
+    root_clause = ""
+    if root_filter:
+        root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
     with GraphClient() as gc:
         # Claim expansion paths (score-descending for valuable first)
         result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            f"""
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
               AND p.should_expand = true
               AND p.expanded_at IS NULL
+            {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
             SET p.status = $listing, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
@@ -341,23 +369,37 @@ def claim_paths_for_expanding(facility: str, limit: int = 50) -> list[dict[str, 
             limit=limit,
             scored=PathStatus.scored.value,
             listing=PathStatus.listing.value,
+            root_filter=root_filter or [],
         )
         return list(result)
 
 
-def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, Any]]:
+def claim_paths_for_scoring(
+    facility: str, limit: int = 25, root_filter: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Atomically claim listed paths for scoring.
 
     Uses atomic status transition: listed → scoring
     Returns paths that this worker now owns.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim
+        root_filter: If set, only claim paths under these roots
     """
     from imas_codex.graph import GraphClient
 
+    # Build root filter clause
+    root_clause = ""
+    if root_filter:
+        root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
+
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            f"""
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $listed AND p.score IS NULL
+            {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
             SET p.status = $scoring, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
@@ -371,6 +413,7 @@ def claim_paths_for_scoring(facility: str, limit: int = 25) -> list[dict[str, An
             limit=limit,
             listed=PathStatus.listed.value,
             scoring=PathStatus.scoring.value,
+            root_filter=root_filter or [],
         )
         return list(result)
 
@@ -408,7 +451,9 @@ def mark_score_complete(
     return mark_paths_scored(facility, score_data)
 
 
-def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, Any]]:
+def claim_paths_for_enriching(
+    facility: str, limit: int = 25, root_filter: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Atomically claim scored paths for enrichment.
 
     Claims paths where:
@@ -418,16 +463,27 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
 
     Uses claimed_at timestamp for orphan recovery.
     Returns paths that this worker now owns.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim
+        root_filter: If set, only claim paths under these roots
     """
     from imas_codex.graph import GraphClient
 
+    # Build root filter clause
+    root_clause = ""
+    if root_filter:
+        root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
+
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            f"""
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
               AND p.should_enrich = true
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
+            {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, p.score AS score
@@ -435,11 +491,14 @@ def claim_paths_for_enriching(facility: str, limit: int = 25) -> list[dict[str, 
             facility=facility,
             limit=limit,
             scored=PathStatus.scored.value,
+            root_filter=root_filter or [],
         )
         return list(result)
 
 
-def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, Any]]:
+def claim_paths_for_rescoring(
+    facility: str, limit: int = 10, root_filter: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Atomically claim enriched paths for rescoring.
 
     Claims paths where:
@@ -450,15 +509,26 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
     to refine the score.
 
     Returns paths that this worker now owns.
+
+    Args:
+        facility: Facility ID
+        limit: Maximum paths to claim
+        root_filter: If set, only claim paths under these roots
     """
     from imas_codex.graph import GraphClient
 
+    # Build root filter clause
+    root_clause = ""
+    if root_filter:
+        root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
+
     with GraphClient() as gc:
         result = gc.query(
-            """
-            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
+            f"""
+            MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.is_enriched = true
               AND p.rescored_at IS NULL
+            {root_clause}
             WITH p ORDER BY p.score DESC LIMIT $limit
             SET p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
@@ -471,6 +541,7 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
             """,
             facility=facility,
             limit=limit,
+            root_filter=root_filter or [],
         )
         return list(result)
 
@@ -590,7 +661,9 @@ async def scan_worker(
 
     while not state.should_stop():
         # Claim work from graph
-        paths = claim_paths_for_scanning(state.facility, limit=batch_size)
+        paths = claim_paths_for_scanning(
+            state.facility, limit=batch_size, root_filter=state.root_filter
+        )
 
         if not paths:
             state.scan_idle_count += 1
@@ -754,7 +827,9 @@ async def expand_worker(
 
     while not state.should_stop():
         # Claim expansion work from graph - paths with should_expand=true
-        paths = claim_paths_for_expanding(state.facility, limit=batch_size)
+        paths = claim_paths_for_expanding(
+            state.facility, limit=batch_size, root_filter=state.root_filter
+        )
 
         if not paths:
             state.expand_idle_count += 1
@@ -886,7 +961,9 @@ async def score_worker(
             break
 
         # Claim work from graph
-        paths = claim_paths_for_scoring(state.facility, limit=batch_size)
+        paths = claim_paths_for_scoring(
+            state.facility, limit=batch_size, root_filter=state.root_filter
+        )
 
         if not paths:
             state.score_idle_count += 1
@@ -1136,7 +1213,9 @@ async def enrich_worker(
 
     while not state.should_stop():
         # Claim work from graph
-        paths = claim_paths_for_enriching(state.facility, limit=batch_size)
+        paths = claim_paths_for_enriching(
+            state.facility, limit=batch_size, root_filter=state.root_filter
+        )
 
         if not paths:
             state.enrich_idle_count += 1
@@ -1226,7 +1305,9 @@ async def rescore_worker(
             break
 
         # Claim work from graph
-        paths = claim_paths_for_rescoring(state.facility, limit=batch_size)
+        paths = claim_paths_for_rescoring(
+            state.facility, limit=batch_size, root_filter=state.root_filter
+        )
 
         if not paths:
             state.rescore_idle_count += 1
@@ -1369,6 +1450,7 @@ async def run_parallel_discovery(
     path_limit: int | None = None,
     focus: str | None = None,
     threshold: float = 0.7,
+    root_filter: list[str] | None = None,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
     num_score_workers: int = 2,  # Reduced: less rate limit contention
@@ -1412,6 +1494,7 @@ async def run_parallel_discovery(
         path_limit: Maximum paths to process (optional)
         focus: Focus string for scoring (optional)
         threshold: Score threshold for expansion
+        root_filter: Restrict work to paths under these roots (optional)
         num_scan_workers: Number of concurrent scan workers (default: 1)
         num_expand_workers: Number of concurrent expand workers (default: 1)
         num_score_workers: Number of concurrent score workers (default: 2)
@@ -1461,6 +1544,7 @@ async def run_parallel_discovery(
         path_limit=path_limit,
         focus=focus,
         threshold=threshold,
+        root_filter=root_filter,
     )
 
     # Capture initial terminal count for session-based --limit tracking

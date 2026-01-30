@@ -544,6 +544,42 @@ classes:
           credential_service is the keyring service name for credentials.
         annotations:
           is_private: true
+      discovery_roots:
+        description: >-
+          Explicit seeding paths for discovery pipeline (JSON-encoded list).
+          Each root: {path, category, priority, description}.
+          Overrides automatic path extraction from paths: structure.
+        annotations:
+          is_private: true
+
+  DiscoveryRoot:
+    description: >-
+      A configured root path for seeding the discovery frontier.
+      Stored in facility_private.yaml under discovery_roots.
+      
+      Use category to ensure balanced discovery across:
+      - Simulation: modeling codes and their outputs
+      - Experimental: shot archives, diagnostics, reconstructions
+      - Cross-cutting: TDI functions, analysis workflows, docs
+      
+      Higher priority roots are processed first during seeding.
+    class_uri: facility:DiscoveryRoot
+    attributes:
+      path:
+        identifier: true
+        description: Absolute filesystem path to seed
+        required: true
+      category:
+        description: Discovery root category for balanced seeding
+        range: DiscoveryRootCategory
+        required: true
+      priority:
+        description: >-
+          Seeding priority (higher = seed first). Default 1.
+          Use to front-load high-value areas.
+        range: integer
+      description:
+        description: Brief description of what this root contains
 
   FacilityPath:
     description: >-
