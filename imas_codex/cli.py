@@ -5881,6 +5881,9 @@ def _run_iterative_discovery(
         else:
             disc_logger.info(clean_msg)
 
+    # Get initial stats to determine next steps
+    stats = get_discovery_stats(facility)
+
     # Handle targeted deep dive with --root
     if root_filter:
         log_print(f"[cyan]Targeted discovery: {len(root_filter)} root(s)[/cyan]")
