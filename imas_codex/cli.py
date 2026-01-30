@@ -350,6 +350,7 @@ def tools() -> None:
       imas-codex tools list                List available tools
 
     Tools are defined in imas_codex/config/fast_tools.yaml.
+    Use 'local' as facility to explicitly target the local system.
     Auto-detects local vs remote execution based on hostname.
     """
     pass
@@ -388,9 +389,10 @@ def tools_check(facility: str | None, as_json: bool) -> None:
 
     \b
     Examples:
-      imas-codex tools check           # Check local tools
+      imas-codex tools check           # Check local tools (same as 'local')
+      imas-codex tools check local     # Explicitly check local tools
       imas-codex tools check iter      # Check on ITER (auto-detects local)
-      imas-codex tools check tcv      # Check on TCV (via SSH)
+      imas-codex tools check tcv       # Check on TCV (via SSH)
     """
     import json as json_mod
     from typing import Any
@@ -494,8 +496,8 @@ def tools_check(facility: str | None, as_json: bool) -> None:
 
             live.update(build_table(results["tools"]))
 
-    # Save tool status to facility private config
-    if facility:
+    # Save tool status to facility private config (skip for "local" pseudo-facility)
+    if facility and facility.lower() != "local":
         _save_tools_to_facility_config(facility, results["tools"])
 
     if as_json:
@@ -542,11 +544,12 @@ def tools_install(
 
     \b
     Examples:
-      imas-codex tools install              # Install locally
+      imas-codex tools install              # Install locally (same as 'local')
+      imas-codex tools install local        # Explicitly install locally
       imas-codex tools install iter         # Install on ITER (auto-detects local)
-      imas-codex tools install tcv         # Install on TCV (via SSH)
+      imas-codex tools install tcv          # Install on TCV (via SSH)
       imas-codex tools install --tool gh    # Install only gh
-      imas-codex tools install iter --tool gh  # Install gh on ITER
+      imas-codex tools install local --tool rg  # Install rg locally
       imas-codex tools install --dry-run    # Show what would be installed
     """
     from typing import Any

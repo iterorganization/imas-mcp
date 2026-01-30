@@ -84,12 +84,17 @@ def _resolve_ssh_host(facility: str | None) -> str | None:
     """Resolve facility ID to SSH host.
 
     Args:
-        facility: Facility ID or None
+        facility: Facility ID or None.
+            Special value "local" explicitly means local execution.
 
     Returns:
         SSH host string or None for local execution
     """
     if facility is None:
+        return None
+
+    # Explicit "local" pseudo-facility means run locally
+    if facility.lower() == "local":
         return None
 
     # Import here to avoid circular import at module load time
@@ -106,11 +111,16 @@ def is_local_facility(facility: str | None) -> bool:
     """Determine if a facility should be accessed locally (no SSH).
 
     Args:
-        facility: Facility ID or None
+        facility: Facility ID or None.
+            Special value "local" explicitly means local execution.
 
     Returns:
         True if commands should run locally, False if SSH needed
     """
+    # Explicit "local" pseudo-facility
+    if facility is not None and facility.lower() == "local":
+        return True
+
     ssh_host = _resolve_ssh_host(facility)
     return is_local_host(ssh_host)
 

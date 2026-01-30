@@ -425,12 +425,17 @@ def is_local_host(ssh_host: str | None) -> bool:
     For facility-aware locality detection, use is_local_facility() from tools.py.
 
     Args:
-        ssh_host: SSH host alias or hostname (None = local)
+        ssh_host: SSH host alias or hostname (None = local).
+            Special value "local" explicitly means local execution.
 
     Returns:
         True if ssh_host refers to local machine
     """
     if ssh_host is None:
+        return True
+
+    # Explicit "local" specifier means run locally
+    if ssh_host.lower() == "local":
         return True
 
     local_hostnames = _get_local_hostnames()
