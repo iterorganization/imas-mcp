@@ -1445,30 +1445,34 @@ classes:
   FacilitySignal:
     description: >-
       A native data accessor at a facility. Minimal node containing only
-      the information needed to fetch data. Semantics come from relationships.
+      the information needed to fetch data.
       
-      Relationships:
+      Required relationships:
         - FACILITY_ID -> Facility
-        - MEASURES -> StandardName (what physical quantity this signal represents)
         - HAS_UNIT -> Unit (units of the returned data)
-        - VALID_FOR -> ShotRange (optional shot validity)
       
-      Code generation pattern (from traversing relationships):
+      Optional relationships:
+        - MEASURES -> StandardName (cross-facility semantic linking, added later)
+        - VALID_FOR -> ShotRange (shot validity range)
+      
+      Code generation pattern (standalone, no MEASURES required):
         signal = graph.get("FacilitySignal", id)
-        name = signal.MEASURES.id  # e.g., "plasma_current"
-        units = signal.HAS_UNIT.symbol  # e.g., "A"
+        unit = graph.traverse(signal, "HAS_UNIT")
         
+        import MDSplus
         conn = MDSplus.Connection(signal.connection)
         conn.openTree(signal.tree, shot)
         data = conn.get(signal.accessor)
         time = conn.get(f"dim_of({signal.accessor})")
+        plt.plot(time, data)
+        plt.ylabel(f"[{unit.symbol}]")
     class_uri: facility:FacilitySignal
     attributes:
       id:
         identifier: true
         description: >-
-          Composite key: facility:standard_name[:variant]
-          E.g., tcv:plasma_current, jet:plasma_current:ppf
+          Composite key: facility:signal_name[:variant]
+          E.g., tcv:ip, jet:ipla:ppf, tcv:ip:liuqe
         required: true
       facility_id:
         description: Parent facility
@@ -1486,6 +1490,8 @@ classes:
           Data accessor expression passed to conn.get().
           Examples: "tcv_eq('i_p')", "\\results::i_p", "ppf::signal('MAGN','IPLA')"
         required: true
+      description:
+        description: Human-readable description of what this signal measures
       is_primary:
         description: True if this is the default accessor for this quantity at this facility
         range: boolean
