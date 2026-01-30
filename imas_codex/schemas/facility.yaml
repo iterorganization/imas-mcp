@@ -1500,6 +1500,61 @@ classes:
         description: Known-good shot for testing
         range: integer
 
+  AccessMethod:
+    description: >-
+      Code generation template for accessing data at a facility.
+      Provides the "how" to FacilitySignal's "what".
+      
+      An agent discovering how to access data should:
+        1. Query FacilitySignal nodes for the desired quantity
+        2. Follow USES_ACCESS_METHOD to get the code template
+        3. Substitute {shot}, {tree}, {accessor} placeholders
+      
+      Supports both local (Tree) and remote (Connection) access patterns.
+    class_uri: facility:AccessMethod
+    attributes:
+      id:
+        identifier: true
+        description: >-
+          Unique method ID: facility:library:pattern
+          E.g., tcv:mdsplus:tree_tdi, jet:ppf:getdata
+        required: true
+      facility_id:
+        description: Parent facility
+        required: true
+        range: Facility
+      library:
+        description: >-
+          Python module/package name to import.
+          E.g., "MDSplus", "ppf", "sal", "imas"
+        required: true
+      access_type:
+        description: >-
+          "local" = Tree() for same-machine access
+          "remote" = Connection() for cross-network access
+        required: true
+      connection_template:
+        description: >-
+          Python code to establish connection/open tree.
+          Placeholders: {server}, {tree}, {shot}
+          Example: "tree = MDSplus.Tree('{tree}', {shot}, 'readonly')"
+        required: true
+      data_template:
+        description: >-
+          Python code to retrieve data.
+          Placeholder: {accessor}
+          Example: "data = tree.tdiExecute('data({accessor})')"
+        required: true
+      time_template:
+        description: >-
+          Python code to retrieve time axis.
+          Placeholder: {accessor}
+          Example: "time = tree.tdiExecute('dim_of({accessor})')"
+      full_example:
+        description: >-
+          Complete working Python code example using this method.
+          Should be copy-pasteable with only {shot} substitution.
+
   AnalysisCode:
     description: >-
       A physics analysis or simulation code that writes data to trees.
