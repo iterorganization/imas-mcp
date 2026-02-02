@@ -512,7 +512,7 @@ Type=simple
 WorkingDirectory={Path.home()}
 Environment="PATH={Path.home()}/.local/bin:/usr/local/bin:/usr/bin"
 Environment="CUDA_VISIBLE_DEVICES={gpu}"
-ExecStart={uv_path} run --project {project_dir} imas-codex serve embed start --host 127.0.0.1 --port {port}
+ExecStart={uv_path} run --extra gpu --project {project_dir} imas-codex serve embed start --host 127.0.0.1 --port {port}
 ExecStop=/bin/kill -15 $MAINPID
 TimeoutStopSec=30
 Restart=on-failure
