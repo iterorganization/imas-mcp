@@ -62,7 +62,6 @@ dependencies = [
     "imas-python>=2.0.1",
     "requests>=2.25.0",
     "sentence-transformers>=5.0.0",
-    "torch>=2.9.1",
     "huggingface_hub[hf_xet]>=0.20.0",
     "rapidfuzz>=3.0.0",
     "linkml>=1.9.3",
@@ -108,6 +107,11 @@ test = [
     "coverage>=7.0.0",
 ]
 bench = ["asv>=0.6.0,<1.0.0"]
+# PyTorch backend selection - choose one:
+#   uv sync --extra cpu  (default, ~2GB, no CUDA)
+#   uv sync --extra gpu  (CUDA 12.1, ~6GB)
+cpu = ["torch"]
+gpu = ["torch"]
 
 [dependency-groups]
 dev = [
@@ -369,12 +373,29 @@ known-first-party = ["imas_codex"]
 force-single-line = false
 combine-as-imports = true
 
-# UV configuration: CPU-only PyTorch by default (~2GB, no nvidia deps)
-# GPU users: uv pip install torch --index-url https://download.pytorch.org/whl/cu121 --reinstall
+# UV configuration: PyTorch index selection by extra
+# Default sync uses cpu extra (see default-groups below)
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
+[[tool.uv.index]]
+name = "pytorch-gpu"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-gpu", extra = "gpu" },
+]
+
+[tool.uv]
+# cpu and gpu extras are mutually exclusive
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "gpu" },
+  ],
+]
