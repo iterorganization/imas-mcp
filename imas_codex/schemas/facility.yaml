@@ -213,59 +213,6 @@ enums:
       binary_directory:
         description: Directory containing executables
 
-  PathPurpose:
-    description: >-
-      LLM-classified purpose of a directory. Used during discovery scoring
-      to determine expansion priority (for containers) or ingestion priority
-      (for leaf directories). Score semantics vary by purpose type.
-      
-      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
-    permissible_values:
-      # === FORWARD MODELING CODE (predictive, offline simulation) ===
-      modeling_code:
-        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
-      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
-      analysis_code:
-        description: >-
-          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
-          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
-      operations_code:
-        description: >-
-          Real-time facility operations: control systems, DAQ, hardware interfaces,
-          timing systems, feedback algorithms, actuator commands
-      # === SHARED INFRASTRUCTURE CODE ===
-      data_access:
-        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
-      workflow:
-        description: Orchestration and batch processing scripts
-      visualization:
-        description: Plotting and rendering tools
-      # === DATA CATEGORIES ===
-      experimental_data:
-        description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
-      modeling_data:
-        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
-      # === SUPPORT CATEGORIES ===
-      documentation:
-        description: Docs, papers, tutorials, READMEs
-      configuration:
-        description: Config files, settings, module files
-      test_suite:
-        description: Unit/integration tests (pytest directories)
-      # === STRUCTURAL CATEGORIES ===
-      container:
-        description: >-
-          Organizational directory with varied content (/home, /work, /work/imas).
-          Score reflects exploration potential of children, not content value.
-          High score = explore children; low score = skip subtree.
-      # === SKIP CATEGORIES (low score forced) ===
-      archive:
-        description: Old/backup content (backup/, old_projects/, deprecated/)
-      build_artifact:
-        description: Generated/cached files (__pycache__, .venv, node_modules)
-      system:
-        description: OS/infrastructure directories (/var, /tmp, /opt/modules)
-
   DiscoveryStatus:
     description: >-
       Lifecycle status for graph-led discovery pipeline.
@@ -768,7 +715,7 @@ classes:
         description: Primary physics domain (equilibrium, transport, etc.)
       path_purpose:
         description: Classified purpose of the directory
-        range: PathPurpose
+        range: ResourcePurpose
       # Enrichment tracking (for high-value paths with dust/tokei/scc data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data

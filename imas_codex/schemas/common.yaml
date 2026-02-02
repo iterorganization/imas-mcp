@@ -153,10 +153,10 @@ enums:
   WikiPageStatus:
     description: >-
       Lifecycle status for wiki page discovery and ingestion.
-      Three-phase process: crawl (link extraction) -> score (agent evaluation) -> ingest (content).
+      Three-phase process: discover (link extraction) -> score (agent evaluation) -> ingest (content).
     permissible_values:
-      crawled:
-        description: Page discovered via link crawl, graph structure captured, not yet scored
+      discovered:
+        description: Page found via link extraction, graph structure captured, awaiting scoring
       scored:
         description: Agent has evaluated and assigned interest_score, ready for ingestion if score >= threshold
       skipped:
@@ -171,10 +171,10 @@ enums:
   WikiArtifactStatus:
     description: >-
       Lifecycle status for wiki-linked artifacts (PDFs, presentations, etc.).
-      Same phases as pages: crawl -> score -> ingest (PDF only, others deferred).
+      Same phases as pages: discover -> score -> ingest (PDF only, others deferred).
     permissible_values:
-      crawled:
-        description: Artifact found during crawl, awaiting scoring
+      discovered:
+        description: Artifact found during page discovery, awaiting scoring
       scored:
         description: Agent has evaluated filename/context and assigned interest_score
       ingested:
@@ -266,6 +266,59 @@ enums:
         description: >-
           Reference materials for understanding codes and data.
           Examples: Code manuals, papers, tutorials, READMEs, wiki exports
+
+  ResourcePurpose:
+    description: >-
+      LLM-classified purpose of a discoverable resource (path, page, file).
+      Used during discovery scoring to determine expansion/ingestion priority.
+      Score semantics vary by purpose type. Shared across discovery domains.
+      
+      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
+    permissible_values:
+      # === FORWARD MODELING CODE (predictive, offline simulation) ===
+      modeling_code:
+        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
+      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
+      analysis_code:
+        description: >-
+          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
+          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
+      operations_code:
+        description: >-
+          Real-time facility operations: control systems, DAQ, hardware interfaces,
+          timing systems, feedback algorithms, actuator commands
+      # === SHARED INFRASTRUCTURE CODE ===
+      data_access:
+        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
+      workflow:
+        description: Orchestration and batch processing scripts
+      visualization:
+        description: Plotting and rendering tools
+      # === DATA CATEGORIES ===
+      experimental_data:
+        description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
+      modeling_data:
+        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
+      # === SUPPORT CATEGORIES ===
+      documentation:
+        description: Docs, papers, tutorials, READMEs, wiki pages
+      configuration:
+        description: Config files, settings, module files
+      test_suite:
+        description: Unit/integration tests (pytest directories)
+      # === STRUCTURAL CATEGORIES ===
+      container:
+        description: >-
+          Organizational resource with varied content (/home, /work, portal pages).
+          Score reflects exploration potential of children, not content value.
+          High score = explore children; low score = skip subtree.
+      # === SKIP CATEGORIES (low score forced) ===
+      archive:
+        description: Old/backup content (backup/, old_projects/, deprecated/)
+      build_artifact:
+        description: Generated/cached files (__pycache__, .venv, node_modules)
+      system:
+        description: OS/infrastructure resources (/var, /tmp, /opt/modules)
 
 # =============================================================================
 # Classes

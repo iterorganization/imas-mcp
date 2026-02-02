@@ -1307,7 +1307,7 @@ def get_top_paths_by_purpose(
 
     Args:
         facility: Facility ID
-        purpose: PathPurpose value (e.g., 'modeling_code', 'analysis_code')
+        purpose: ResourcePurpose value (e.g., 'modeling_code', 'analysis_code')
         limit: Maximum paths to return (default 3)
 
     Returns:

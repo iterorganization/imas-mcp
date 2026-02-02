@@ -192,7 +192,7 @@ def get_schema_context() -> dict[str, Any]:
 
     Returns a dict with:
     - discovery_categories: List of DiscoveryRootCategory enum values
-    - path_purposes: List of PathPurpose enum values
+    - path_purposes: List of ResourcePurpose enum values
     - score_dimensions: List of per-purpose score field names with descriptions
     - Each with 'value' and 'description' keys
 
@@ -206,7 +206,7 @@ def get_schema_context() -> dict[str, Any]:
     discovery_categories = (
         schema.get_enum_with_descriptions("DiscoveryRootCategory") or []
     )
-    path_purposes = schema.get_enum_with_descriptions("PathPurpose") or []
+    path_purposes = schema.get_enum_with_descriptions("ResourcePurpose") or []
 
     # Get score dimensions from FacilityPath schema
     # These are the score_* fields that map to DiscoveryRootCategory taxonomy

@@ -2,7 +2,7 @@
 Data models for graph-led discovery pipeline.
 
 These models define runtime structures for the LLM-based scoring phase.
-Schema-derived types (PathPurpose, DiscoveryStatus) are imported from
+Schema-derived types (ResourcePurpose, DiscoveryStatus) are imported from
 the generated graph/models.py module.
 
 Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
@@ -21,10 +21,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
-from imas_codex.graph.models import DiscoveryStatus, PathPurpose, TerminalReason
+from imas_codex.graph.models import DiscoveryStatus, ResourcePurpose, TerminalReason
 
 __all__ = [
-    "PathPurpose",
+    "ResourcePurpose",
     "DiscoveryStatus",
     "TerminalReason",
     "DirectoryEvidence",
@@ -42,7 +42,7 @@ __all__ = [
 # Pydantic Models for LLM Structured Output
 # ============================================================================
 #
-# Note: PathPurpose is imported from the generated LinkML models (graph/models.py).
+# Note: ResourcePurpose is imported from the generated LinkML models (graph/models.py).
 # The generated enum is used directly for LLM structured output - no duplicate needed.
 # LiteLLM/Pydantic correctly handle str-based enums from LinkML.
 
@@ -100,7 +100,7 @@ class DirectoryScoringResult(BaseModel):
 
     path: str = Field(description="The directory path (echo from input)")
 
-    path_purpose: PathPurpose = Field(
+    path_purpose: ResourcePurpose = Field(
         description="Classification: modeling_code, analysis_code, operations_code, "
         "data_access, workflow, visualization, experimental_data, modeling_data, "
         "documentation, configuration, test_suite, container, archive, build_artifact, system"
@@ -322,12 +322,12 @@ class DirectoryEvidence:
         )
 
 
-def parse_path_purpose(value: str) -> PathPurpose:
-    """Parse string to PathPurpose, defaulting to container."""
+def parse_path_purpose(value: str) -> ResourcePurpose:
+    """Parse string to ResourcePurpose, defaulting to container."""
     try:
-        return PathPurpose(value.lower())
+        return ResourcePurpose(value.lower())
     except ValueError:
-        return PathPurpose.container
+        return ResourcePurpose.container
 
 
 @dataclass
@@ -343,7 +343,7 @@ class ScoredDirectory:
     path: str
     """Absolute path to the directory."""
 
-    path_purpose: PathPurpose
+    path_purpose: ResourcePurpose
     """Classified purpose of the directory."""
 
     description: str

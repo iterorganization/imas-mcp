@@ -13,6 +13,21 @@
 | `Qwen3-Embedding-4B` | 4B | 2560 | 32K | 68.82 | Good balance |
 | `Qwen3-Embedding-8B` | 8B | 4096 | 32K | 70.58 | #1 MTEB multilingual |
 
+### Benchmark Results (Feb 2026)
+
+Tested on IMAS DD retrieval corpus with English and multilingual queries:
+
+| Model | Dim | Load | Memory | EN Accuracy | Multilingual Accuracy |
+|-------|-----|------|--------|-------------|----------------------|
+| all-MiniLM-L6-v2 | 384 | 1.9s | 32 MB | 100% | 83% |
+| Qwen3-Embedding-0.6B | 1024 | 4.7s | 2.3 GB | 100% | **100%** |
+
+**Key Findings:**
+- Qwen3 achieves **100% multilingual accuracy** (Japanese, French) vs 83% for MiniLM
+- Japanese queries "電子温度プロファイル" → correctly retrieves `core_profiles/.../temperature`
+- Memory footprint ~70x larger but acceptable for server deployment
+- Encode time ~8x slower but still fast enough (1s for 20 texts)
+
 **Recommendation**: `Qwen3-Embedding-0.6B` for initial deployment
 - 0.6B parameters fits in 4GB VRAM (WSL compatible)
 - 119 language support including Japanese, Chinese, French, German

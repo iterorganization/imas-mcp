@@ -28,7 +28,7 @@ from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.discovery.models import (
     DirectoryEvidence,
     DirectoryScoringBatch,
-    PathPurpose,
+    ResourcePurpose,
     ScoredBatch,
     ScoredDirectory,
     parse_path_purpose,
@@ -67,21 +67,21 @@ PURPOSE_SCORE_NAMES = [
 # Purposes that should be suppressed (lower scores)
 # These get a 0.3 multiplier and should_expand=False
 SUPPRESSED_PURPOSES = {
-    PathPurpose.system,
-    PathPurpose.build_artifact,
-    PathPurpose.archive,
+    ResourcePurpose.system,
+    ResourcePurpose.build_artifact,
+    ResourcePurpose.archive,
 }
 
 # Purposes that are containers (score = exploration potential)
 CONTAINER_PURPOSES = {
-    PathPurpose.container,
+    ResourcePurpose.container,
 }
 
 
 def grounded_score(
     scores: dict[str, float],
     evidence: DirectoryEvidence,
-    purpose: PathPurpose,
+    purpose: ResourcePurpose,
 ) -> float:
     """Compute combined score from per-purpose scores with evidence adjustments.
 
@@ -136,7 +136,7 @@ def grounded_score(
     purpose_multiplier = 1.0
     if purpose in SUPPRESSED_PURPOSES:
         purpose_multiplier = 0.3
-    elif purpose == PathPurpose.test_suite:
+    elif purpose == ResourcePurpose.test_suite:
         purpose_multiplier = 0.6
 
     combined = (base_score + quality_boost) * purpose_multiplier
@@ -498,7 +498,7 @@ class DirectoryScorer:
                 "score_imas": max(0.0, min(1.0, getattr(result, "score_imas", 0.0))),
             }
 
-            # Convert Pydantic enum to graph PathPurpose
+            # Convert Pydantic enum to graph ResourcePurpose
             purpose = parse_path_purpose(result.path_purpose.value)
 
             # Build evidence from Pydantic model
@@ -566,7 +566,10 @@ class DirectoryScorer:
                 should_expand = False
 
             # CRITICAL: Never expand data containers (too many files)
-            data_purposes = {PathPurpose.modeling_data, PathPurpose.experimental_data}
+            data_purposes = {
+                ResourcePurpose.modeling_data,
+                ResourcePurpose.experimental_data,
+            }
             if purpose in data_purposes:
                 should_expand = False
 
@@ -574,7 +577,7 @@ class DirectoryScorer:
             # Even if LLM misclassifies as container, block expansion for dirs with
             # many subdirectories (typical of simulation run directories)
             total_dirs = directories[i].get("total_dirs", 0)
-            if total_dirs > 100 and purpose == PathPurpose.container:
+            if total_dirs > 100 and purpose == ResourcePurpose.container:
                 should_expand = False
                 # Log this override for debugging
                 logger.debug(
@@ -663,7 +666,7 @@ class DirectoryScorer:
             return [
                 ScoredDirectory(
                     path=d["path"],
-                    path_purpose=PathPurpose.container,
+                    path_purpose=ResourcePurpose.container,
                     description="Parse error",
                     evidence=DirectoryEvidence(),
                     score=0.0,
