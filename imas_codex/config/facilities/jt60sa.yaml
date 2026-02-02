@@ -32,7 +32,6 @@ wiki_sites:
       JT-60SA TWiki - primary internal documentation.
       Contains 6700+ topics in Japanese and English.
       Accessible via SSH to nakasvr23.
-    filesystem_mirror: /JT60SA_TWIKI/data
     languages:
       - ja
       - en

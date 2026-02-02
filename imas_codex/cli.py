@@ -2720,25 +2720,25 @@ def release(
 
 @main.group(deprecated=True)
 def wiki() -> None:
-    """[DEPRECATED] Wiki commands - use 'discover docs' instead.
+    """[DEPRECATED] Wiki commands - use 'discover wiki' instead.
 
     This command group is deprecated and will be removed in a future version.
     Please migrate to the new discovery pipeline:
 
     \b
     OLD                              NEW
-    imas-codex wiki discover         imas-codex discover docs
-    imas-codex wiki scan             imas-codex discover docs (integrated)
-    imas-codex wiki score            imas-codex discover docs (integrated)
-    imas-codex wiki ingest           imas-codex ingest docs
-    imas-codex wiki status           imas-codex discover status --domain docs
+    imas-codex wiki discover         imas-codex discover wiki
+    imas-codex wiki scan             imas-codex discover wiki (integrated)
+    imas-codex wiki score            imas-codex discover wiki (integrated)
+    imas-codex wiki ingest           imas-codex ingest wiki
+    imas-codex wiki status           imas-codex discover status --domain wiki
     imas-codex wiki sites            imas-codex discover sources list
     imas-codex wiki credentials      (credentials still stored in keyring)
     """
     import warnings
 
     warnings.warn(
-        "The 'wiki' command group is deprecated. Use 'discover docs' instead.",
+        "The 'wiki' command group is deprecated. Use 'discover wiki' instead.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -3859,7 +3859,7 @@ def scout() -> None:
     \b
     OLD                              NEW
     scout files <facility>           discover code <facility>
-    scout wiki <facility>            discover docs <facility>
+    scout wiki <facility>            discover wiki <facility>
     scout codes <facility>           discover code <facility>
     scout data <facility>            discover data <facility>
     scout paths <facility>           discover paths <facility>
@@ -5953,14 +5953,14 @@ def discover():
     Discovery Pipeline:
       1. discover paths → Directory structure + LLM scoring
       2. discover code  → Source files in scored paths
-         discover docs  → Wiki pages + filesystem artifacts
+         discover wiki  → Wiki pages
          discover data  → MDSplus trees, HDF5, IMAS DBs
 
     \b
     Commands:
       discover paths <facility>    Scan and score directory structure
       discover code <facility>     Find source files (placeholder)
-      discover docs <facility>     Find documentation (placeholder)
+      discover wiki <facility>     Find wiki documentation
       discover data <facility>     Find data sources (placeholder)
 
     \b
@@ -7124,7 +7124,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     raise SystemExit(1)
 
 
-@discover.command("docs")
+@discover.command("wiki")
 @click.argument("facility")
 @click.option(
     "--source",
@@ -7178,7 +7178,7 @@ def discover_code(facility: str, dry_run: bool) -> None:
     is_flag=True,
     help="Show detailed progress",
 )
-def discover_docs(
+def discover_wiki(
     facility: str,
     source: str | None,
     cost_limit: float,
@@ -7190,24 +7190,28 @@ def discover_docs(
     model: str | None,
     verbose: bool,
 ) -> None:
-    """Discover documentation: wiki pages and filesystem artifacts.
+    """Discover wiki pages and build documentation graph.
 
     Runs complete wiki discovery workflow:
+
+    \b
     1. SCAN: Fast link extraction, builds doc graph
     2. PREFETCH: Fetch page content and generate summaries
     3. SCORE: Content-aware LLM evaluation
     4. INGEST: Chunk and embed high-score pages
 
+    \b
     Supports multiple wiki types:
     - MediaWiki (e.g., SPCwiki, JET wikis)
     - Confluence (e.g., ITER)
     - TWiki (e.g., JT60SA)
 
+    \b
     Examples:
-        imas-codex discover docs jet
-        imas-codex discover docs jt60sa --max-pages 100
-        imas-codex discover docs iter --focus "JOREK disruptions"
-        imas-codex discover docs tcv --scan-only
+        imas-codex discover wiki jet
+        imas-codex discover wiki jt60sa --max-pages 100
+        imas-codex discover wiki iter --focus "JOREK disruptions"
+        imas-codex discover wiki tcv --scan-only
     """
     import asyncio
 

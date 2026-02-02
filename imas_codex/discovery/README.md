@@ -79,7 +79,7 @@ imas-codex discover
 
 Prerequisites:
 - `discover paths` must run first to identify high-value directories
-- `discover docs` can run in parallel with paths (for wiki sources)
+- `discover wiki` can run in parallel with paths (for wiki sources)
 
 ## Path Discovery State Machine
 
@@ -413,5 +413,5 @@ Key constants in `scorer.py`:
 
 The following command groups are deprecated and will be removed:
 
-- `imas-codex wiki` → Use `imas-codex discover docs` instead
+- `imas-codex wiki` → Use `imas-codex discover wiki` instead
 - `imas-codex scout` → Use `imas-codex discover` instead
