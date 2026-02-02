@@ -289,42 +289,39 @@ def get_access_methods_context() -> dict[str, Any]:
         Dict with 'existing_access_methods' list containing node properties.
     """
     try:
-        from imas_codex.graph.database import get_graph_store
+        from imas_codex.graph import GraphClient
 
-        store = get_graph_store()
-        if store is None:
-            return {"existing_access_methods": []}
+        with GraphClient() as client:
+            # Query existing methods with key fields for examples
+            result = client.query("""
+                MATCH (m:AccessMethod)-[:FACILITY_ID]->(f:Facility)
+                RETURN m.id AS id,
+                       m.name AS name,
+                       f.id AS facility,
+                       m.method_type AS method_type,
+                       m.library AS library,
+                       m.data_template AS data_template,
+                       m.setup_commands AS setup_commands,
+                       m.full_example AS full_example
+                ORDER BY f.id, m.method_type
+            """)
 
-        # Query existing methods with key fields for examples
-        result = store.query("""
-            MATCH (m:AccessMethod)-[:FACILITY_ID]->(f:Facility)
-            RETURN m.id AS id,
-                   m.name AS name,
-                   f.id AS facility,
-                   m.method_type AS method_type,
-                   m.library AS library,
-                   m.data_template AS data_template,
-                   m.setup_commands AS setup_commands,
-                   m.full_example AS full_example
-            ORDER BY f.id, m.method_type
-        """)
+            methods = []
+            for row in result:
+                methods.append(
+                    {
+                        "id": row["id"],
+                        "name": row["name"] or row["id"],
+                        "facility": row["facility"],
+                        "method_type": row["method_type"],
+                        "library": row["library"],
+                        "data_template": row["data_template"],
+                        "setup_commands": row["setup_commands"],
+                        "full_example": row["full_example"],
+                    }
+                )
 
-        methods = []
-        for row in result:
-            methods.append(
-                {
-                    "id": row["id"],
-                    "name": row["name"] or row["id"],
-                    "facility": row["facility"],
-                    "method_type": row["method_type"],
-                    "library": row["library"],
-                    "data_template": row["data_template"],
-                    "setup_commands": row["setup_commands"],
-                    "full_example": row["full_example"],
-                }
-            )
-
-        return {"existing_access_methods": methods}
+            return {"existing_access_methods": methods}
 
     except Exception:
         # Graph not available - return empty context
