@@ -7,7 +7,7 @@ from typing import Any
 # Load .env file for local development
 from dotenv import load_dotenv
 
-from imas_codex.settings import get_imas_embedding_model
+from imas_codex.settings import get_embed_remote_url, get_imas_embedding_model
 
 load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
@@ -23,6 +23,12 @@ class EncoderConfig:
     # Model configuration
     model_name: str | None = None
     device: str | None = None
+
+    # Remote embedding configuration
+    # When set, uses remote GPU server; falls back to local on failure
+    remote_url: str | None = None
+    # Whether to automatically try remote embedding
+    use_remote: bool = True
 
     # Generation settings
     batch_size: int = 250
@@ -46,6 +52,9 @@ class EncoderConfig:
             self.model_name = os.getenv(
                 "IMAS_CODEX_EMBEDDING_MODEL", IMAS_CODEX_EMBEDDING_MODEL
             )
+        # Load remote URL from settings if not explicitly set
+        if self.remote_url is None and self.use_remote:
+            self.remote_url = get_embed_remote_url()
 
     def generate_cache_key(self) -> str | None:
         """
@@ -71,6 +80,8 @@ class EncoderConfig:
         return {
             "model_name": self.model_name,
             "device": self.device,
+            "remote_url": self.remote_url,
+            "use_remote": self.use_remote,
             "batch_size": self.batch_size,
             "normalize_embeddings": self.normalize_embeddings,
             "use_half_precision": self.use_half_precision,

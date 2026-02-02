@@ -1,0 +1,219 @@
+"""FastAPI embedding server for GPU-accelerated remote embedding.
+
+This server runs on a GPU-equipped machine (e.g., ITER cluster) and provides
+an HTTP API for embedding text. Clients connect via SSH tunnel.
+
+Start server:
+    imas-codex serve embed --host 127.0.0.1 --port 18765
+
+Client access (via SSH tunnel):
+    ssh -L 18765:127.0.0.1:18765 iter
+    curl http://localhost:18765/health
+"""
+
+import logging
+import os
+import time
+from contextlib import asynccontextmanager
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+# Global encoder instance (loaded at startup)
+_encoder = None
+_startup_time: float = 0
+
+
+class EmbedRequest(BaseModel):
+    """Request body for embedding texts."""
+
+    texts: list[str] = Field(..., description="List of texts to embed", min_length=1)
+    normalize: bool = Field(True, description="Normalize embeddings to unit length")
+
+
+class EmbedResponse(BaseModel):
+    """Response containing embeddings."""
+
+    embeddings: list[list[float]] = Field(..., description="List of embedding vectors")
+    model: str = Field(..., description="Model name used for embedding")
+    dimension: int = Field(..., description="Embedding dimension")
+    count: int = Field(..., description="Number of texts embedded")
+    elapsed_ms: float = Field(..., description="Time taken in milliseconds")
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+
+    status: str = Field(..., description="Server status")
+    model: str = Field(..., description="Loaded model name")
+    device: str = Field(..., description="Compute device (cuda/cpu)")
+    gpu_name: str | None = Field(None, description="GPU name if available")
+    gpu_memory_mb: int | None = Field(None, description="GPU memory in MB")
+    uptime_seconds: float = Field(..., description="Server uptime in seconds")
+
+
+def _get_gpu_info() -> tuple[str | None, int | None]:
+    """Get GPU name and memory if available."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            device_id = torch.cuda.current_device()
+            name = torch.cuda.get_device_name(device_id)
+            memory = torch.cuda.get_device_properties(device_id).total_memory // (
+                1024 * 1024
+            )
+            return name, memory
+    except Exception:
+        pass
+    return None, None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load model at startup, cleanup at shutdown."""
+    global _encoder, _startup_time
+
+    logger.info("Loading embedding model...")
+    start = time.time()
+
+    # Import here to avoid circular imports
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import Encoder
+    from imas_codex.settings import get_imas_embedding_model
+
+    model_name = get_imas_embedding_model()
+    device = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    if device:
+        logger.info(f"Using CUDA device: {device}")
+
+    config = EncoderConfig(
+        model_name=model_name,
+        device="cuda" if _cuda_available() else "cpu",
+        normalize_embeddings=True,
+        use_rich=False,
+    )
+
+    _encoder = Encoder(config=config)
+    _startup_time = time.time()
+
+    load_time = time.time() - start
+    logger.info(
+        f"Model {model_name} loaded on {_encoder.get_model().device} in {load_time:.1f}s"
+    )
+
+    yield
+
+    logger.info("Shutting down embedding server")
+    _encoder = None
+
+
+def _cuda_available() -> bool:
+    """Check if CUDA is available."""
+    try:
+        import torch
+
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
+
+def create_app() -> FastAPI:
+    """Create FastAPI application."""
+    app = FastAPI(
+        title="IMAS Codex Embedding Server",
+        description="GPU-accelerated embedding service for IMAS Codex",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    @app.get("/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
+        """Health check endpoint."""
+        if _encoder is None:
+            raise HTTPException(status_code=503, detail="Model not loaded")
+
+        model = _encoder.get_model()
+        gpu_name, gpu_memory = _get_gpu_info()
+
+        return HealthResponse(
+            status="healthy",
+            model=_encoder.config.model_name,
+            device=str(model.device),
+            gpu_name=gpu_name,
+            gpu_memory_mb=gpu_memory,
+            uptime_seconds=time.time() - _startup_time,
+        )
+
+    @app.post("/embed", response_model=EmbedResponse)
+    async def embed(request: EmbedRequest) -> EmbedResponse:
+        """Embed texts and return vectors."""
+        if _encoder is None:
+            raise HTTPException(status_code=503, detail="Model not loaded")
+
+        start = time.time()
+
+        try:
+            # Update normalize setting if different from default
+            original_normalize = _encoder.config.normalize_embeddings
+            if request.normalize != original_normalize:
+                _encoder.config.normalize_embeddings = request.normalize
+
+            embeddings = _encoder.embed_texts(request.texts)
+
+            # Restore original setting
+            if request.normalize != original_normalize:
+                _encoder.config.normalize_embeddings = original_normalize
+
+            elapsed_ms = (time.time() - start) * 1000
+
+            return EmbedResponse(
+                embeddings=embeddings.tolist(),
+                model=_encoder.config.model_name,
+                dimension=embeddings.shape[1] if len(embeddings.shape) > 1 else 0,
+                count=len(request.texts),
+                elapsed_ms=elapsed_ms,
+            )
+
+        except Exception as e:
+            logger.error(f"Embedding error: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @app.get("/info")
+    async def info() -> dict[str, Any]:
+        """Detailed server information."""
+        if _encoder is None:
+            raise HTTPException(status_code=503, detail="Model not loaded")
+
+        gpu_name, gpu_memory = _get_gpu_info()
+        model = _encoder.get_model()
+
+        return {
+            "model": {
+                "name": _encoder.config.model_name,
+                "device": str(model.device),
+                "embedding_dimension": model.get_sentence_embedding_dimension(),
+            },
+            "gpu": {
+                "name": gpu_name,
+                "memory_mb": gpu_memory,
+                "cuda_available": _cuda_available(),
+            },
+            "config": {
+                "normalize_embeddings": _encoder.config.normalize_embeddings,
+                "batch_size": _encoder.config.batch_size,
+            },
+            "server": {
+                "uptime_seconds": time.time() - _startup_time,
+                "version": "1.0.0",
+            },
+        }
+
+    return app
+
+
+# Create app instance for uvicorn
+app = create_app()

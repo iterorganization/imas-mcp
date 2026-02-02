@@ -1,4 +1,11 @@
-"""Embedding encoder providing model loading, cached corpus build, and ad-hoc embedding."""
+"""Embedding encoder providing model loading, cached corpus build, and ad-hoc embedding.
+
+Supports both local and remote embedding:
+- Local: Uses SentenceTransformer with optional GPU acceleration
+- Remote: Connects to GPU server via HTTP (typically through SSH tunnel)
+
+Remote embedding is attempted first when configured, with automatic fallback to local.
+"""
 
 import hashlib
 import logging
@@ -16,11 +23,15 @@ from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.resource_path_accessor import ResourcePathAccessor
 
 from .cache import EmbeddingCache
+from .client import RemoteEmbeddingClient
 from .config import EncoderConfig
 
 
 class Encoder:
-    """Load a sentence transformer model and produce embeddings with optional caching."""
+    """Load a sentence transformer model and produce embeddings with optional caching.
+
+    Supports remote embedding via GPU server with automatic fallback to local.
+    """
 
     def __init__(self, config: EncoderConfig | None = None):
         self.config = config or EncoderConfig()
@@ -29,9 +40,18 @@ class Encoder:
         self._cache: EmbeddingCache | None = None
         self._cache_path: Path | None = None
         self._lock = threading.RLock()
+        self._remote_client: RemoteEmbeddingClient | None = None
+        self._remote_available: bool | None = None  # None = not checked yet
+        self._local_fallback_warned: bool = False
 
-        # Load model eagerly at initialization time
-        self._load_model()
+        # Try remote first if configured
+        if self.config.remote_url and self.config.use_remote:
+            self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
+            # Check availability lazily on first use
+
+        # Load local model only if remote not configured or as fallback
+        if not self._remote_client:
+            self._load_model()
 
     def build_document_embeddings(
         self,
@@ -66,7 +86,23 @@ class Encoder:
             return embeddings, identifiers, False
 
     def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
-        """Embed ad-hoc texts (no caching)."""
+        """Embed ad-hoc texts (no caching).
+
+        Tries remote embedding first if configured, falls back to local.
+        """
+        # Try remote embedding first
+        if self._remote_client and self._check_remote_available():
+            try:
+                return self._remote_client.embed(
+                    texts, normalize=self.config.normalize_embeddings
+                )
+            except ConnectionError as e:
+                self._handle_remote_failure(e)
+            except RuntimeError as e:
+                self.logger.warning(f"Remote embedding error: {e}")
+                self._handle_remote_failure(e)
+
+        # Fall back to local embedding
         model = self.get_model()
         encode_kwargs = {
             "convert_to_numpy": True,
@@ -76,6 +112,38 @@ class Encoder:
             **kwargs,
         }
         return model.encode(texts, **encode_kwargs)
+
+    def _check_remote_available(self) -> bool:
+        """Check if remote embedding server is available."""
+        if self._remote_available is None and self._remote_client:
+            self._remote_available = self._remote_client.is_available()
+            if self._remote_available:
+                info = self._remote_client.get_info()
+                if info:
+                    self.logger.info(
+                        f"Using remote embedder: {info.model} on {info.device}"
+                    )
+            else:
+                self.logger.debug("Remote embedder not available")
+        return bool(self._remote_available)
+
+    def _handle_remote_failure(self, error: Exception) -> None:
+        """Handle remote embedding failure by falling back to local."""
+        self._remote_available = False
+        if not self._local_fallback_warned:
+            self.logger.warning(
+                f"Remote embedder unavailable ({error}), falling back to local. "
+                "This may be slower without GPU."
+            )
+            self._local_fallback_warned = True
+        # Ensure local model is loaded
+        if self._model is None:
+            self._load_model()
+
+    @property
+    def is_using_remote(self) -> bool:
+        """Check if currently using remote embedding."""
+        return bool(self._remote_client and self._remote_available)
 
     def get_cache_info(self) -> dict[str, Any]:
         if not self._cache:
@@ -136,6 +204,9 @@ class Encoder:
             return removed
 
     def get_model(self) -> SentenceTransformer:
+        """Get the local SentenceTransformer model, loading if needed."""
+        if self._model is None:
+            self._load_model()
         return self._model  # type: ignore[return-value]
 
     def _load_model(self) -> None:
@@ -174,6 +245,26 @@ class Encoder:
             self.config.model_name = fallback
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
+        """Generate embeddings for texts, using remote if available."""
+        # Try remote embedding first for batch operations
+        if self._remote_client and self._check_remote_available():
+            try:
+                self.logger.debug(
+                    f"Generating embeddings remotely for {len(texts)} texts..."
+                )
+                embeddings = self._remote_client.embed(
+                    texts, normalize=self.config.normalize_embeddings
+                )
+                if self.config.use_half_precision:
+                    embeddings = embeddings.astype(np.float16)
+                self.logger.debug(
+                    f"Generated embeddings: shape={embeddings.shape}, dtype={embeddings.dtype}"
+                )
+                return embeddings
+            except (ConnectionError, RuntimeError) as e:
+                self._handle_remote_failure(e)
+
+        # Fall back to local embedding
         if not self._model:
             self._load_model()
         total_batches = (

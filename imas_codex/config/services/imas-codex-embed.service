@@ -1,0 +1,41 @@
+# IMAS Codex Embedding Service (GPU)
+# Provides GPU-accelerated embedding via HTTP API
+#
+# Install: imas-codex serve embed service install
+# Uses systemd specifiers: %h = home directory
+#
+# Access via SSH tunnel:
+#   ssh -L 18765:127.0.0.1:18765 iter
+#   curl http://localhost:18765/health
+
+[Unit]
+Description=IMAS Codex Embedding Service (GPU)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+
+# Environment setup
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin"
+Environment="CUDA_VISIBLE_DEVICES=1"
+
+# Use uv to run the embedding server
+# Binds only to localhost for security (access via SSH tunnel)
+ExecStart=%h/.local/bin/uv run --project %h/imas-codex imas-codex serve embed --host 127.0.0.1 --port 18765
+
+# Graceful shutdown
+ExecStop=/bin/kill -15 $MAINPID
+TimeoutStopSec=30
+
+Restart=on-failure
+RestartSec=10
+
+# Resource limits - embedding models need GPU memory
+CPUQuota=400%
+MemoryMax=8G
+MemoryHigh=6G
+Nice=5
+
+[Install]
+WantedBy=default.target

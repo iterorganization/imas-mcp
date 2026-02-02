@@ -170,9 +170,53 @@ def get_include_error_fields() -> bool:
     return False
 
 
+def get_embed_remote_url() -> str | None:
+    """Get the remote embedding server URL.
+
+    Priority:
+        1. IMAS_CODEX_EMBED_REMOTE_URL environment variable
+        2. pyproject.toml [tool.imas-codex] embed-remote-url
+        3. Fallback default: None (local embedding only)
+
+    Returns:
+        URL string or None if not configured.
+    """
+    if env_url := os.getenv("IMAS_CODEX_EMBED_REMOTE_URL"):
+        return env_url if env_url else None
+
+    settings = _load_pyproject_settings()
+    if url := settings.get("embed-remote-url"):
+        return url if url else None
+
+    return None
+
+
+def get_embed_server_port() -> int:
+    """Get the embedding server port.
+
+    Priority:
+        1. IMAS_CODEX_EMBED_PORT environment variable
+        2. pyproject.toml [tool.imas-codex] embed-server-port
+        3. Fallback default: 18765
+
+    Returns:
+        Port number.
+    """
+    if env_port := os.getenv("IMAS_CODEX_EMBED_PORT"):
+        return int(env_port)
+
+    settings = _load_pyproject_settings()
+    if (port := settings.get("embed-server-port")) is not None:
+        return int(port)
+
+    return 18765
+
+
 # Computed defaults (for use in module-level constants)
 IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
 IMAS_CODEX_LANGUAGE_MODEL = get_language_model()
 LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()
+EMBED_REMOTE_URL = get_embed_remote_url()
+EMBED_SERVER_PORT = get_embed_server_port()
