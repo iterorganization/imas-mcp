@@ -213,15 +213,12 @@ class WikiProgressDisplay(BaseProgressDisplay):
         table.add_column(width=15)  # Stats
 
         # Scan progress
-        scan_bar = make_bar(
-            self.state.pages_scanned,
-            self.state.pages_scanned + self.state.pending_scan,
-            width=28,
-            color="green",
-        )
+        scan_total = self.state.pages_scanned + self.state.pending_scan
+        scan_ratio = self.state.pages_scanned / scan_total if scan_total > 0 else 0
+        scan_bar = make_bar(scan_ratio, 28)
         table.add_row(
             Text("Scan", style="bold"),
-            scan_bar,
+            Text(scan_bar, style="green"),
             Text(
                 f"{self.state.pages_scanned:,} pages ({self.state.scan_rate:.1f}/s)",
                 style="dim",
@@ -232,7 +229,6 @@ class WikiProgressDisplay(BaseProgressDisplay):
         score_bar = make_gradient_bar(
             self.state.cost_fraction,
             width=28,
-            colors=["green", "yellow", "red"],
         )
         table.add_row(
             Text("Score", style="bold"),
@@ -246,12 +242,8 @@ class WikiProgressDisplay(BaseProgressDisplay):
         # Ingest progress
         high_value = self.state.pages_ingested + self.state.pending_ingest
         if high_value > 0:
-            ingest_bar = make_bar(
-                self.state.pages_ingested,
-                high_value,
-                width=28,
-                color="blue",
-            )
+            ingest_ratio = self.state.pages_ingested / high_value
+            ingest_bar = Text(make_bar(ingest_ratio, 28), style="blue")
         else:
             ingest_bar = Text("─" * 28, style="dim")
         table.add_row(
