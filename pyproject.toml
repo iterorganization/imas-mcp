@@ -109,9 +109,9 @@ test = [
 bench = ["asv>=0.6.0,<1.0.0"]
 # PyTorch backend selection - choose one:
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)
-#   uv sync --extra gpu  (CUDA 12.1, ~6GB)
+#   uv sync --extra gpu  (CUDA 12.1, ~6GB, torch 2.5.1 max due to iter driver)
 cpu = ["torch"]
-gpu = ["torch", "nvidia-cusparselt-cu12>=0.8", "nvidia-nvshmem-cu12>=3.1"]
+gpu = ["torch==2.5.1"]
 
 [dependency-groups]
 dev = [
