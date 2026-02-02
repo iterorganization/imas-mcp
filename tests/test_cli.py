@@ -215,7 +215,10 @@ class TestCLICommands:
 
         result = runner.invoke(main, ["setup-age", "--help"])
         assert result.exit_code == 0
-        assert "age encryption" in result.output.lower() or "age key" in result.output.lower()
+        assert (
+            "age encryption" in result.output.lower()
+            or "age key" in result.output.lower()
+        )
 
     def test_release_help(self, runner):
         """release command has help."""

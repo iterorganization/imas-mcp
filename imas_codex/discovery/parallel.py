@@ -25,36 +25,13 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from imas_codex.discovery.progress_common import WorkerStats
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
-
-# Orphan recovery timeout (10 minutes)
-ORPHAN_TIMEOUT_MINUTES = 10
-
-
-@dataclass
-class WorkerStats:
-    """Statistics for a single worker."""
-
-    processed: int = 0
-    errors: int = 0
-    start_time: float = field(default_factory=time.time)
-    last_batch_time: float = 0.0
-    cost: float = 0.0  # For scorer only
-
-    @property
-    def elapsed(self) -> float:
-        return time.time() - self.start_time
-
-    @property
-    def rate(self) -> float | None:
-        if self.processed == 0 or self.elapsed <= 0:
-            return None
-        return self.processed / self.elapsed
 
 
 @dataclass

@@ -37,9 +37,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Orphan recovery timeout (10 minutes)
-ORPHAN_TIMEOUT_MINUTES = 10
-
 
 # =============================================================================
 # Wiki Discovery State
@@ -95,12 +92,11 @@ class WikiDiscoveryState:
         return self.score_stats.processed >= self.page_limit
 
     def should_stop(self) -> bool:
-        """Check if discovery should terminate."""
+        """Check if ALL workers should terminate.
+
+        Used by the main loop to determine when discovery is complete.
+        """
         if self.stop_requested:
-            return True
-        if self.budget_exhausted:
-            return True
-        if self.page_limit_reached:
             return True
         # Stop if all workers idle for 3+ iterations AND no pending work
         all_idle = (
@@ -117,6 +113,33 @@ class WikiDiscoveryState:
                 self.score_idle_count = 0
                 self.ingest_idle_count = 0
                 return False
+            return True
+        return False
+
+    def should_stop_scanning(self) -> bool:
+        """Check if scan/prefetch workers should stop.
+
+        Scan workers continue even when budget is exhausted. They only stop
+        when explicitly requested or when no pending work remains.
+        """
+        if self.stop_requested:
+            return True
+        # Only stop scanning when both are idle with no work
+        scan_idle = self.scan_idle_count >= 3 and self.prefetch_idle_count >= 3
+        if scan_idle and not has_pending_scan_work(self.facility):
+            return True
+        return False
+
+    def should_stop_scoring(self) -> bool:
+        """Check if score/ingest workers should stop.
+
+        Score workers stop when budget exhausted or page limit reached.
+        """
+        if self.stop_requested:
+            return True
+        if self.budget_exhausted:
+            return True
+        if self.page_limit_reached:
             return True
         return False
 
@@ -143,6 +166,31 @@ def has_pending_work(facility: str) -> bool:
             scanned=WikiPageStatus.scanned.value,
             prefetched=WikiPageStatus.prefetched.value,
             scored=WikiPageStatus.scored.value,
+        )
+        return result[0]["pending"] > 0 if result else False
+
+
+def has_pending_scan_work(facility: str) -> bool:
+    """Check if there's pending scan/prefetch work in the graph.
+
+    Only checks for work that scan and prefetch workers handle.
+    Does not consider scoring/ingesting work.
+    """
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.status = $pending
+               OR wp.status = $scanning
+               OR wp.status = $scanned
+               OR wp.status = $prefetching
+            RETURN count(wp) AS pending
+            """,
+            facility=facility,
+            pending=WikiPageStatus.pending.value,
+            scanning=WikiPageStatus.scanning.value,
+            scanned=WikiPageStatus.scanned.value,
+            prefetching=WikiPageStatus.prefetching.value,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -697,7 +745,7 @@ async def scan_worker(
 
     Transitions: pending → scanning → scanned
     """
-    while not state.should_stop():
+    while not state.should_stop_scanning():
         pages = claim_pages_for_scanning(state.facility, limit=50)
 
         if not pages:
@@ -773,7 +821,7 @@ async def prefetch_worker(
 
     Transitions: scanned → prefetching → prefetched
     """
-    while not state.should_stop():
+    while not state.should_stop_scanning():
         pages = claim_pages_for_prefetching(state.facility, limit=20)
 
         if not pages:
@@ -834,13 +882,7 @@ async def score_worker(
     """
     from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
 
-    while not state.should_stop():
-        if state.budget_exhausted:
-            if on_progress:
-                on_progress("budget exhausted", state.score_stats)
-            await asyncio.sleep(2.0)
-            continue
-
+    while not state.should_stop_scoring():
         pages = claim_pages_for_scoring(state.facility, limit=50)
 
         if not pages:
@@ -887,7 +929,7 @@ async def ingest_worker(
 
     Transitions: scored → ingesting → ingested
     """
-    while not state.should_stop():
+    while not state.should_stop_scoring():
         pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
 
         if not pages:
