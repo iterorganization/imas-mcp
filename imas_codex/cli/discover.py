@@ -1021,9 +1021,21 @@ def discover_wiki(
     model: str | None,
     verbose: bool,
 ) -> None:
-    """Discover wiki pages and build documentation graph."""
+    """Discover wiki pages and build documentation graph.
+
+    Runs parallel wiki discovery workers:
+
+    \b
+    1. SCAN: Fast link extraction, builds doc graph (continues even at budget)
+    2. PREFETCH: Fetch page content and generate summaries
+    3. SCORE: Content-aware LLM evaluation (stops at budget limit)
+    4. INGEST: Chunk and embed high-score pages (stops at budget limit)
+    """
     from imas_codex.discovery.facility import get_facility
-    from imas_codex.wiki.discovery import run_wiki_discovery
+    from imas_codex.wiki.parallel import (
+        reset_transient_pages,
+        run_parallel_wiki_discovery,
+    )
 
     console = Console()
 
@@ -1075,34 +1087,194 @@ def discover_wiki(
     for site_idx in site_indices:
         site = wiki_sites[site_idx]
         site_type = site.get("site_type", "mediawiki")
-        console.print(f"\n[bold cyan]Processing: {site.get('url')}[/bold cyan]")
+        base_url = site.get("url", "")
+        portal_page = site.get("portal_page", "Main_Page")
+        ssh_host = (
+            site.get("ssh_host") if site.get("auth_type") == "ssh_proxy" else None
+        )
+
+        console.print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
         if site_type == "twiki":
             console.print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
+        elif ssh_host:
+            console.print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
+
+        # Reset any transient states from crashed previous runs
+        reset_counts = reset_transient_pages(facility, silent=True)
+        if any(reset_counts.values()):
+            total_reset = sum(reset_counts.values())
+            console.print(
+                f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]"
+            )
 
         try:
+
+            async def run_discovery_with_progress(
+                _facility: str,
+                _site_type: str,
+                _base_url: str,
+                _portal_page: str,
+                _ssh_host: str | None,
+                _cost_limit: float,
+                _max_pages: int | None,
+                _max_depth: int | None,
+                _focus: str | None,
+                _scan_only: bool,
+                _score_only: bool,
+            ):
+                from imas_codex.wiki.wiki_progress import WikiProgressDisplay
+
+                with WikiProgressDisplay(
+                    console=console,
+                    cost_limit=_cost_limit,
+                    page_limit=_max_pages,
+                ) as display:
+                    # Periodic graph state refresh
+                    async def refresh_graph_state():
+                        from imas_codex.wiki.parallel import get_wiki_discovery_stats
+
+                        while True:
+                            stats = get_wiki_discovery_stats(_facility)
+                            display.update_from_graph_stats(stats)
+                            await asyncio.sleep(0.5)
+
+                    async def queue_ticker():
+                        while True:
+                            display.tick()
+                            await asyncio.sleep(0.15)
+
+                    refresh_task = asyncio.create_task(refresh_graph_state())
+                    ticker_task = asyncio.create_task(queue_ticker())
+
+                    def on_scan(msg, stats, results=None):
+                        from imas_codex.wiki.wiki_progress import WikiScanItem
+
+                        recent = None
+                        if results:
+                            recent = [
+                                WikiScanItem(
+                                    title=r.get("title", "?")[:50],
+                                    out_links=r.get("out_degree", 0),
+                                    depth=r.get("depth", 0),
+                                )
+                                for r in results[:5]
+                            ]
+                        display.update_scan_progress(
+                            status=msg,
+                            pages_scanned=stats.processed,
+                            pending_scan=0,
+                            recent=recent,
+                        )
+
+                    def on_prefetch(msg, stats, results=None):
+                        display.update_prefetch_progress(
+                            status=msg,
+                            pages_prefetched=stats.processed,
+                            pending_prefetch=0,
+                        )
+
+                    def on_score(msg, stats, results=None):
+                        from imas_codex.wiki.wiki_progress import WikiScoreItem
+
+                        recent = None
+                        if results:
+                            recent = [
+                                WikiScoreItem(
+                                    title=r.get("title", "?")[:50],
+                                    score=r.get("score", 0.5),
+                                    is_physics=r.get("is_physics", False),
+                                )
+                                for r in results[:5]
+                            ]
+                        display.update_score_progress(
+                            status=msg,
+                            pages_scored=stats.processed,
+                            pending_score=0,
+                            pending_ingest=0,
+                            cost=stats.cost,
+                            recent=recent,
+                        )
+
+                    def on_ingest(msg, stats, results=None):
+                        from imas_codex.wiki.wiki_progress import WikiIngestItem
+
+                        recent = None
+                        if results:
+                            recent = [
+                                WikiIngestItem(
+                                    title=r.get("title", "?")[:50],
+                                    chunk_count=r.get("chunk_count", 0),
+                                )
+                                for r in results[:3]
+                            ]
+                        display.update_ingest_progress(
+                            status=msg,
+                            pages_ingested=stats.processed,
+                            cost=stats.cost,
+                            recent=recent,
+                        )
+
+                    try:
+                        result = await run_parallel_wiki_discovery(
+                            facility=_facility,
+                            site_type=_site_type,
+                            base_url=_base_url,
+                            portal_page=_portal_page,
+                            ssh_host=_ssh_host,
+                            cost_limit=_cost_limit,
+                            page_limit=_max_pages,
+                            max_depth=_max_depth,
+                            focus=_focus,
+                            num_scan_workers=1,
+                            num_score_workers=1,
+                            scan_only=_scan_only,
+                            score_only=_score_only,
+                            on_scan_progress=on_scan,
+                            on_prefetch_progress=on_prefetch,
+                            on_score_progress=on_score,
+                            on_ingest_progress=on_ingest,
+                        )
+                    finally:
+                        refresh_task.cancel()
+                        ticker_task.cancel()
+                        try:
+                            await refresh_task
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            await ticker_task
+                        except asyncio.CancelledError:
+                            pass
+
+                return result
+
             result = asyncio.run(
-                run_wiki_discovery(
-                    facility=facility,
-                    cost_limit_usd=cost_limit,
-                    max_pages=max_pages,
-                    max_depth=max_depth,
-                    verbose=verbose,
-                    model=model,
-                    focus=focus,
-                    site_index=site_idx,
-                    scan_only=scan_only,
-                    score_only=score_only,
+                run_discovery_with_progress(
+                    _facility=facility,
+                    _site_type=site_type,
+                    _base_url=base_url,
+                    _portal_page=portal_page,
+                    _ssh_host=ssh_host,
+                    _cost_limit=cost_limit,
+                    _max_pages=max_pages,
+                    _max_depth=max_depth,
+                    _focus=focus,
+                    _scan_only=scan_only,
+                    _score_only=score_only,
                 )
             )
-            if verbose or result.get("pages_scanned", 0) > 0:
-                console.print(
-                    f"  [green]{result.get('pages_scanned', 0)} pages scanned, "
-                    f"{result.get('links_found', 0)} links, "
-                    f"{result.get('artifacts_found', 0)} artifacts[/green]"
-                )
-                if result.get("elapsed_formatted"):
-                    console.print(f"  Elapsed: {result['elapsed_formatted']}")
+
+            # Display final results
+            console.print(
+                f"  [green]{result.get('scanned', 0)} pages scanned, "
+                f"{result.get('scored', 0)} scored, "
+                f"{result.get('ingested', 0)} ingested[/green]"
+            )
+            console.print(
+                f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
+                f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
+            )
         except Exception as e:
             console.print(f"[red]Error processing site: {e}[/red]")
             if verbose:
