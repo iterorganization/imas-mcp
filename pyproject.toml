@@ -93,6 +93,8 @@ dependencies = [
     "litellm>=1.81.0",
     "pykakasi>=2.3.0",
     "jellyfish>=1.2.1",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
 ]
 
 [project.optional-dependencies]
