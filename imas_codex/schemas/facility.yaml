@@ -1648,6 +1648,30 @@ classes:
           Python code for decimation. Applied before serialization.
           Placeholder: {max_points}
           Example: "step = max(1, len(data) // {max_points}); data = data[::step]; time = time[::step]"
+      # Environment setup - makes AccessMethod self-contained for imas-ambix
+      setup_commands:
+        description: >-
+          Shell commands to execute before Python (module loads, env setup).
+          These make the AccessMethod self-contained and executable.
+          E.g., ["source /etc/profile.d/modules.sh", "module load python/3.9"]
+        multivalued: true
+      environment_variables:
+        description: >-
+          Environment variables to set before execution.
+          E.g., {"MDSPLUS_SERVER": "mds.facility.edu", "IMAS_VERSION": "3.42.1"}
+          JSON object with string keys and values.
+      verified_date:
+        description: >-
+          Date this access method was last validated (ISO format: YYYY-MM-DD).
+          Updated when discovery_shot is successfully tested.
+      documentation_url:
+        description: >-
+          URL to external documentation (wiki, manual, API docs).
+          E.g., "https://wiki.jet.uk/display/SAL/Getting+Started"
+      documentation_local:
+        description: >-
+          Path to documentation on the facility filesystem.
+          E.g., "/common/share/docs/sal_manual.pdf"
       # Data source configuration
       data_source:
         description: >-
