@@ -111,7 +111,7 @@ bench = ["asv>=0.6.0,<1.0.0"]
 #   uv sync --extra cpu  (default, ~2GB, no CUDA)
 #   uv sync --extra gpu  (CUDA 12.1, ~6GB)
 cpu = ["torch"]
-gpu = ["torch"]
+gpu = ["torch", "nvidia-cusparselt-cu12>=0.8"]
 
 [dependency-groups]
 dev = [
