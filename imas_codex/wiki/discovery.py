@@ -819,8 +819,12 @@ class WikiDiscovery:
             if self.max_pages is not None and session_scanned >= self.max_pages:
                 break
 
-            # Get next batch from frontier
-            batch = list(frontier)[:50]
+            # Get next batch from frontier, respecting max_pages limit
+            remaining = (
+                self.max_pages - session_scanned if self.max_pages is not None else 50
+            )
+            batch_size = min(50, remaining, len(frontier))
+            batch = list(frontier)[:batch_size]
             frontier -= set(batch)
 
             # Scan batch - returns {page: (page_links, artifact_links)}

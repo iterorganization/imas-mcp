@@ -7276,20 +7276,12 @@ def discover_docs(
         console.print(f"\n[bold cyan]Processing: {site.get('url')}[/bold cyan]")
 
         if site_type == "twiki":
-            # TWiki requires special handling via filesystem
-            console.print("[yellow]TWiki support: using filesystem mirror[/yellow]")
-            fs_mirror = site.get("filesystem_mirror")
-            if fs_mirror:
-                console.print(f"  Filesystem mirror: {fs_mirror}")
-                # TODO: Implement TWiki filesystem discovery
-                console.print(
-                    "[yellow]TWiki filesystem discovery not yet implemented.[/yellow]"
-                )
-                console.print("Use HTTP scanner via SSH for now.")
+            # TWiki access via SSH proxy - curl requests through SSH tunnel
+            console.print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
 
         try:
             # Run wiki discovery for this site
-            asyncio.run(
+            result = asyncio.run(
                 run_wiki_discovery(
                     facility=facility,
                     cost_limit_usd=cost_limit,
@@ -7303,6 +7295,15 @@ def discover_docs(
                     score_only=score_only,
                 )
             )
+            # Display results
+            if verbose or result.get("pages_scanned", 0) > 0:
+                console.print(
+                    f"  [green]{result.get('pages_scanned', 0)} pages scanned, "
+                    f"{result.get('links_found', 0)} links, "
+                    f"{result.get('artifacts_found', 0)} artifacts[/green]"
+                )
+                if result.get("elapsed_formatted"):
+                    console.print(f"  Elapsed: {result['elapsed_formatted']}")
         except Exception as e:
             console.print(f"[red]Error processing site: {e}[/red]")
             if verbose:
