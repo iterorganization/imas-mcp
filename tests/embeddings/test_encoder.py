@@ -32,10 +32,16 @@ class TestEncoder:
         return Encoder(config=encoder_config)
 
     def test_initialization_default_config(self):
-        """Encoder initializes with default config and loads model eagerly."""
-        encoder = Encoder()
+        """Encoder initializes with default config.
+
+        When remote_url is configured (default from settings), model is loaded lazily.
+        When remote is disabled or unavailable, model loads on first use.
+        """
+        # Create encoder with remote explicitly disabled to test local path
+        config = EncoderConfig(use_remote=False)
+        encoder = Encoder(config=config)
         assert encoder.config is not None
-        # Model is now loaded eagerly in __init__
+        # Model loads eagerly when remote is disabled
         assert encoder._model is not None
         assert encoder._cache is None
 
