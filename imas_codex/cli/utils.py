@@ -73,15 +73,15 @@ def confirm_action(message: str, default: bool = False) -> bool:
 
 def get_facility_or_fail(name: str) -> Any:
     """Get facility config or raise ClickException."""
-    from imas_codex.remote.facilities import FacilityManager
+    from imas_codex.discovery.facility import get_facility, list_facilities
 
-    manager = FacilityManager()
-    config = manager.get_facility(name)
-
-    if config is None:
-        available = ", ".join(manager.list_facilities().keys())
-        raise click.ClickException(f"Unknown facility '{name}'. Available: {available}")
-    return config
+    try:
+        return get_facility(name)
+    except ValueError as e:
+        available = ", ".join(list_facilities())
+        raise click.ClickException(
+            f"Unknown facility '{name}'. Available: {available}"
+        ) from e
 
 
 def run_async(coro: Any) -> Any:

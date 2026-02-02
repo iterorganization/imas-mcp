@@ -21,23 +21,22 @@ def facilities() -> None:
 @facilities.command("list")
 def facilities_list() -> None:
     """List all registered facilities."""
-    from imas_codex.remote.facilities import FacilityManager
+    from imas_codex.discovery.facility import get_facility, list_facilities
 
-    manager = FacilityManager()
+    facility_names = list_facilities()
 
     table = Table(title="Registered Facilities")
     table.add_column("Name", style="cyan")
     table.add_column("SSH Target", style="green")
-    table.add_column("Status", style="yellow")
+    table.add_column("Machine", style="yellow")
 
-    for name, config in manager.list_facilities().items():
-        ssh_target = (
-            f"{config.ssh_user}@{config.ssh_host}"
-            if config.ssh_user
-            else config.ssh_host
-        )
-        status = "Active" if config.enabled else "Disabled"
-        table.add_row(name, ssh_target, status)
+    for name in facility_names:
+        config = get_facility(name)
+        ssh_host = config.get("ssh_host", "-")
+        ssh_user = config.get("ssh_user")
+        ssh_target = f"{ssh_user}@{ssh_host}" if ssh_user else ssh_host
+        machine = config.get("machine", "-")
+        table.add_row(name, ssh_target, machine)
 
     if table.row_count == 0:
         console.print("[dim]No facilities registered.[/dim]")
@@ -60,44 +59,33 @@ def facilities_show(name: str, as_json: bool) -> None:
     """
     import json as json_module
 
-    from imas_codex.remote.facilities import FacilityManager
+    from imas_codex.discovery.facility import get_facility, list_facilities
 
-    manager = FacilityManager()
-    config = manager.get_facility(name)
-
-    if config is None:
-        available = ", ".join(manager.list_facilities().keys())
+    try:
+        config = get_facility(name)
+    except ValueError as e:
+        available = ", ".join(list_facilities())
         raise click.ClickException(
             f"Facility '{name}' not found. Available: {available}"
-        )
+        ) from e
 
     if as_json:
         # Output as JSON for scripting
-        output = {
-            "name": name,
-            "ssh_host": config.ssh_host,
-            "ssh_user": config.ssh_user,
-            "enabled": config.enabled,
-            "paths": {k: str(v) for k, v in config.paths.items()}
-            if config.paths
-            else {},
-            "infrastructure": config.infrastructure
-            if hasattr(config, "infrastructure")
-            else {},
-        }
-        click.echo(json_module.dumps(output, indent=2))
+        click.echo(json_module.dumps(config, indent=2, default=str))
     else:
         # Rich table output
         table = Table(title=f"Facility: {name}", show_header=False)
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="white")
 
-        table.add_row("SSH Host", config.ssh_host or "-")
-        table.add_row("SSH User", config.ssh_user or "-")
-        table.add_row("Status", "Enabled" if config.enabled else "Disabled")
+        table.add_row("ID", config.get("id", name))
+        table.add_row("Machine", config.get("machine", "-"))
+        table.add_row("ssh_host", config.get("ssh_host", "-"))
+        table.add_row("ssh_user", config.get("ssh_user", "-"))
 
-        if config.paths:
-            for path_name, path_value in config.paths.items():
+        paths = config.get("paths", {})
+        if paths:
+            for path_name, path_value in paths.items():
                 table.add_row(f"Path: {path_name}", str(path_value))
 
         console.print(table)

@@ -70,30 +70,31 @@ def hosts_status(host: str | None, timeout: int) -> None:
 
     If HOST is provided, checks only that host. Otherwise checks all.
     """
-    from imas_codex.remote.facilities import FacilityManager
+    import time
 
-    manager = FacilityManager()
-    facilities = manager.list_facilities()
+    from imas_codex.discovery.facility import get_facility, list_facilities
+
+    facility_names = list_facilities()
 
     if host:
         # Check specific host
-        if host not in facilities:
+        if host not in facility_names:
             raise click.ClickException(f"Unknown facility: {host}")
-        facilities = {host: facilities[host]}
+        facility_names = [host]
 
     table = Table(title="SSH Connectivity")
     table.add_column("Facility", style="cyan")
     table.add_column("Status", style="white")
     table.add_column("Latency", style="dim")
 
-    for name, config in facilities.items():
-        if not config.ssh_host:
+    for name in facility_names:
+        config = get_facility(name)
+        ssh_host = config.get("ssh_host")
+        if not ssh_host:
             table.add_row(name, "[dim]No SSH host[/dim]", "-")
             continue
 
         # Try SSH connection
-        import time
-
         start = time.time()
         try:
             result = subprocess.run(
@@ -105,7 +106,7 @@ def hosts_status(host: str | None, timeout: int) -> None:
                     f"ConnectTimeout={timeout}",
                     "-o",
                     "StrictHostKeyChecking=accept-new",
-                    config.ssh_host,
+                    ssh_host,
                     "echo ok",
                 ],
                 capture_output=True,
