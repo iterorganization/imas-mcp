@@ -278,6 +278,59 @@ def get_schema_context() -> dict[str, Any]:
     }
 
 
+def get_access_methods_context() -> dict[str, Any]:
+    """Get existing AccessMethod nodes from the graph for prompt context.
+
+    Queries the graph for all AccessMethod nodes and returns them in a format
+    suitable for Jinja2 templates. Used by discovery/data_access prompt to
+    provide working examples from other facilities.
+
+    Returns:
+        Dict with 'existing_access_methods' list containing node properties.
+    """
+    try:
+        from imas_codex.graph.database import get_graph_store
+
+        store = get_graph_store()
+        if store is None:
+            return {"existing_access_methods": []}
+
+        # Query existing methods with key fields for examples
+        result = store.query("""
+            MATCH (m:AccessMethod)-[:FACILITY_ID]->(f:Facility)
+            RETURN m.id AS id,
+                   m.name AS name,
+                   f.id AS facility,
+                   m.method_type AS method_type,
+                   m.library AS library,
+                   m.data_template AS data_template,
+                   m.setup_commands AS setup_commands,
+                   m.full_example AS full_example
+            ORDER BY f.id, m.method_type
+        """)
+
+        methods = []
+        for row in result:
+            methods.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"] or row["id"],
+                    "facility": row["facility"],
+                    "method_type": row["method_type"],
+                    "library": row["library"],
+                    "data_template": row["data_template"],
+                    "setup_commands": row["setup_commands"],
+                    "full_example": row["full_example"],
+                }
+            )
+
+        return {"existing_access_methods": methods}
+
+    except Exception:
+        # Graph not available - return empty context
+        return {"existing_access_methods": []}
+
+
 def _get_jinja_env(prompts_dir: Path) -> Environment:
     """Create Jinja2 environment with custom loader for includes."""
     from jinja2 import BaseLoader, Environment, TemplateNotFound
@@ -331,8 +384,13 @@ def render_prompt(
 
     prompt_def = prompts[name]
 
-    # Build full context: schema + user-provided
+    # Build full context: schema + prompt-specific + user-provided
     full_context = get_schema_context()
+
+    # Add prompt-specific context
+    if name == "discovery/data_access":
+        full_context.update(get_access_methods_context())
+
     if context:
         full_context.update(context)
 

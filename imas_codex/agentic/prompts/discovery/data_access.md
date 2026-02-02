@@ -30,22 +30,34 @@ never for data access patterns that external tools need.
 {% if existing_access_methods %}
 ## Reference: Existing AccessMethod Nodes
 
-Use these as templates for new facilities:
+Use these verified examples as templates:
 
 {% for method in existing_access_methods %}
 ### {{ method.name }} ({{ method.facility }})
 
-```
-ID: {{ method.id }}
-Type: {{ method.method_type }}
-Library: {{ method.library }}
-```
+| Field | Value |
+|-------|-------|
+| ID | `{{ method.id }}` |
+| Type | `{{ method.method_type }}` |
+| Library | `{{ method.library }}` |
+{% if method.setup_commands %}| Setup | `{{ method.setup_commands | join('; ') }}` |{% endif %}
 
 {% if method.data_template %}
 **Data template:** `{{ method.data_template }}`
 {% endif %}
 
+{% if method.full_example %}
+```python
+{{ method.full_example }}
+```
+{% endif %}
+
 {% endfor %}
+{% else %}
+## No Existing Examples
+
+No AccessMethod nodes found in the graph. This will be the first documented
+facility - use the patterns in "Known Patterns by Data System" below as reference.
 {% endif %}
 
 ## Discovery Checklist
