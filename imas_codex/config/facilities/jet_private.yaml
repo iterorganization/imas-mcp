@@ -278,3 +278,141 @@ discovery_roots:
 - category: documentation
   description: EFIT algorithm and input documentation
   path: /common/EFDA-EFIT
+data_access_methods:
+  sal_ppf:
+    id: jet:sal:ppf
+    name: SAL PPF Access
+    description: Simple Access Layer (SAL) REST API for PPF data. Primary method for Python access to JET pulse data.
+    method_type: rest
+    library: jet.data.sal
+    access_type: local
+    server: https://sal.jetdata.eu
+    setup_commands:
+    - source /etc/profile.d/modules.sh
+    - module purge
+    - module load python/3.9
+    python_command: python3
+    imports_template: "from jet.data import sal\nimport numpy as np"
+    connection_template: '# SAL auto-connects to sal.jetdata.eu on import'
+    data_template: data = sal.get('/pulse/{shot}/ppf/signal/{owner}/{dda}/{dtype}')
+    time_template: time = data.dimensions[0].data
+    discovery_template: branches = sal.list('/pulse/{shot}/ppf/signal/jetppf').branches
+    probe_script: from jet.data import sal; r = sal.list('/pulse/95135/ppf/signal/jetppf'); print(type(r))
+    discovery_shot: 95135
+    data_source: jetppf
+    path_pattern: /pulse/{shot}/ppf/signal/{owner}/{dda}/{dtype}
+    documentation:
+      local: /common/EFDA-DATA-PPF-JPF/ppfuserguide
+      wiki: https://wiki.jetdata.eu (requires auth)
+    data_structure:
+      hierarchy:
+      - pulse
+      - ppf
+      - signal
+      - owner
+      - dda
+      - dtype
+      owner_default: jetppf
+      dda_description: Diagnostic Data Area - groups signals by diagnostic/system
+      dtype_description: DataType - individual signal within a DDA
+    return_object:
+      type: sal.dataclass.signal.signal.Signal
+      attributes:
+      - data
+      - dimensions
+      - units
+      - description
+      - error
+      - mask
+    status: verified
+    verified_date: '2026-02-02'
+  uda_ppf:
+    id: jet:uda:ppf
+    name: UDA PPF Access
+    description: Universal Data Access (UDA) client for PPF data. Alternative to SAL with similar capabilities.
+    method_type: uda
+    library: pyuda
+    access_type: local
+    setup_commands:
+    - source /etc/profile.d/modules.sh
+    - module purge
+    - module load python/3.9 uda/2.6.1
+    python_command: python3
+    imports_template: "import pyuda\nimport numpy as np"
+    connection_template: client = pyuda.Client()
+    data_template: data = client.get('{dda}/{dtype}', {shot})
+    probe_script: import pyuda; c = pyuda.Client(); print(type(c))
+    status: available
+    notes: Requires UDA server configuration. Less commonly used than SAL.
+  ppf_fortran:
+    id: jet:ppf:fortran
+    name: PPF Fortran API
+    description: Original Fortran-based PPF access via PPFGO/PPFGET. Legacy method.
+    method_type: ppf
+    library: ppf (Fortran bindings)
+    access_type: local
+    functions:
+    - PPFGO
+    - PPFUID
+    - PPFGET
+    - PPFGTS
+    - PPFDAT
+    - PPFINF
+    - DDAINF
+    documentation:
+      ppfget: /common/EFDA-DATA-PPF-JPF/ppfuserguide/routines/ppfget.shtml
+      reading: /common/EFDA-DATA-PPF-JPF/ppfuserguide/reading_data_from_the_ppf_system.shtml
+    status: legacy
+    notes: Use SAL for Python access. Fortran API still used by analysis codes.
+  getdat_cli:
+    id: jet:cli:getdat
+    name: getdat Command Line
+    description: Command-line tool for PPF data extraction.
+    method_type: cli
+    command: /jet/share/bin/getdat
+    access_type: local
+    status: available
+    notes: Useful for shell scripts. Prefer SAL for Python.
+  imas:
+    id: jet:imas:ids
+    name: IMAS IDS Access
+    description: IMAS data access for IDS format data at JET.
+    method_type: imas
+    library: imas
+    access_type: local
+    setup_commands:
+    - source /etc/profile.d/modules.sh
+    - module purge
+    - module load imas-modules/2.0
+    status: available
+    notes: Module available but requires correct Python version. Limited JET data in IMAS format.
+  mdsplus:
+    id: jet:mdsplus:tree
+    name: MDSplus Direct
+    description: Direct MDSplus tree access.
+    method_type: mdsplus
+    library: MDSplus
+    access_type: local
+    mdsplus_path: /usr/local/depot/mdsplus-6.1
+    status: available
+    notes: Available but SAL is preferred for PPF data.
+ppf_structure:
+  description: PPF (Processed Pulse File) is JET's primary data format
+  hierarchy:
+    shot: Pulse number
+    sequence: Version number (auto-incremented, higher = newer)
+    dda: Diagnostic Data Area - groups signals by diagnostic
+    dtype: DataType - individual signal/measurement
+  data_types:
+    scalar: Single value (e.g., GAS/MAJZ atomic number)
+    1d: Time series (e.g., MAGN/IPLA plasma current vs time)
+    2d: Profile vs time (e.g., ECM1/PRFL Te profile)
+  vectors:
+    t_vector: Time axis values
+    x_vector: Spatial/profile axis values
+  example_ddas:
+    MAGN: Magnetics diagnostic
+    EFIT: Equilibrium reconstruction
+    HRTS: High Resolution Thomson Scattering
+    BOLO: Bolometer
+    ECM1: Electron Cyclotron Emission
