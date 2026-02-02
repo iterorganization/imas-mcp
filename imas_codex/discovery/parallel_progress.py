@@ -104,15 +104,15 @@ class ProgressState:
     # Graph totals (aligned with new state machine)
     total: int = 0
     discovered: int = 0  # Awaiting scan
-    listed: int = 0  # Awaiting score
+    scanned: int = 0  # Awaiting score
     scored: int = 0  # Scored complete
     skipped: int = 0  # Low value or dead-end
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum tree depth
 
     # Pending work counts (for progress bars)
-    pending_scan: int = 0  # discovered + listing
-    pending_score: int = 0  # listed + scoring
+    pending_scan: int = 0  # discovered + scanning
+    pending_score: int = 0  # scanned + scoring
     pending_expand: int = 0  # scored + should_expand + not expanded
     pending_enrich: int = 0  # scored + should_enrich + not enriched
     pending_rescore: int = 0  # enriched + not rescored
@@ -339,7 +339,7 @@ class ParallelProgressDisplay:
     def _build_progress_section(self) -> Text:
         """Build the main progress bars for scan and score.
 
-        Pipeline: discovered → listing → listed → scoring → scored/skipped
+        Pipeline: discovered → scanning → scanned → scoring → scored/skipped
                                                             (excluded at any point)
 
         SCAN shows: paths that completed scanning / all paths needing to be scanned
@@ -354,8 +354,8 @@ class ParallelProgressDisplay:
         bar_width = self.BAR_WIDTH
 
         # SCAN progress: paths that have finished scanning vs all that need scanning
-        # Completed scan = listed + scoring + scored + skipped
-        #                = pending_score + scored + skipped (since pending_score = listed + scoring)
+        # Completed scan = scanned + scoring + scored + skipped
+        #                = pending_score + scored + skipped (since pending_score = scanned + scoring)
         # Total needing scan = total - excluded (everything except excluded needs scanning)
         scanned_paths = (
             self.state.pending_score + self.state.scored + self.state.skipped
@@ -638,11 +638,11 @@ class ParallelProgressDisplay:
                 etc = total_facility_cost  # Estimated Total Cost
                 if cpp and cpp > 0 and paths_remaining > 0:
                     etc = total_facility_cost + (paths_remaining * cpp)
-                elif self.state.listed > 0 and self.state.run_scored > 0:
-                    # Fallback: estimate from listed paths ratio
+                elif self.state.scanned > 0 and self.state.run_scored > 0:
+                    # Fallback: estimate from scanned paths ratio
                     etc = (
                         total_facility_cost
-                        * (self.state.listed + self.state.scored)
+                        * (self.state.scanned + self.state.scored)
                         / max(self.state.scored, 1)
                     )
 
@@ -1002,7 +1002,7 @@ class ParallelProgressDisplay:
         stats = get_discovery_stats(facility)
         self.state.total = stats["total"]
         self.state.discovered = stats["discovered"]
-        self.state.listed = stats["listed"]
+        self.state.scanned = stats["scanned"]
         self.state.scored = stats["scored"]
         self.state.skipped = stats["skipped"]
         self.state.excluded = stats["excluded"]
@@ -1064,10 +1064,10 @@ class ParallelProgressDisplay:
 
     def _calculate_pending_from_stats(self, stats: dict) -> None:
         """Calculate pending work counts from graph stats."""
-        listing = stats.get("listing", 0)
+        scanning = stats.get("scanning", 0)
         scoring = stats.get("scoring", 0)
-        self.state.pending_scan = stats.get("discovered", 0) + listing
-        self.state.pending_score = stats.get("listed", 0) + scoring
+        self.state.pending_scan = stats.get("discovered", 0) + scanning
+        self.state.pending_score = stats.get("scanned", 0) + scoring
         self.state.pending_expand = stats.get("expansion_ready", 0)
         self.state.pending_enrich = stats.get("enrichment_ready", 0)
 

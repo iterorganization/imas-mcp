@@ -405,11 +405,11 @@ enums:
       Transient states have fallback states for orphan recovery on timeout.
     permissible_values:
       # === Initial state ===
-      pending:
+      discovered:
         description: Page URL discovered but not yet scanned
       # === Scan phase (link extraction) ===
       scanning:
-        description: Scanner worker active (fallback to pending on timeout)
+        description: Scanner worker active (fallback to discovered on timeout)
       scanned:
         description: Links extracted, structure captured, awaiting prefetch
       # === Prefetch phase (content fetch + summary) ===
@@ -431,7 +431,7 @@ enums:
       skipped:
         description: Low interest_score or filtered, not worth processing
       failed:
-        description: Error during processing (check error property)
+        description: Error during processing (check terminal_reason)
       stale:
         description: Previously processed but content may have changed
 
@@ -459,11 +459,11 @@ enums:
       Uses same async worker pattern as WikiPageStatus.
     permissible_values:
       # === Initial state ===
-      pending:
+      discovered:
         description: Artifact link found but not yet processed
       # === Score phase (filename/context evaluation) ===
       scoring:
-        description: Scorer worker active (fallback to pending on timeout)
+        description: Scorer worker active (fallback to discovered on timeout)
       scored:
         description: Evaluated by scoring agent, interest_score set
       # === Ingest phase (download + parse high-value artifacts) ===
@@ -477,7 +477,7 @@ enums:
       skipped:
         description: Low-value artifact, not worth processing
       failed:
-        description: Error during processing (check error property)
+        description: Error during processing (check terminal_reason)
 
   RepoSourceType:
     description: Source hosting type for software repositories

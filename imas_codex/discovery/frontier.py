@@ -2,17 +2,17 @@
 Frontier management for graph-led discovery.
 
 The frontier is the set of FacilityPath nodes that are ready for scanning
-(status='discovered') or ready for scoring (status='listed'). This module
+(status='discovered') or ready for scoring (status='scanned'). This module
 provides queries and utilities for managing the frontier.
 
 State machine:
-    discovered → listing → listed → scoring → scored
+    discovered → scanning → scanned → scoring → scored
 
-    Transient states (listing, scoring) auto-recover to previous state on timeout.
+    Transient states (scanning, scoring) auto-recover to previous state on timeout.
     Paths with score >= 0.75 are rescored after enrichment (is_enriched=true).
 
 Key concepts:
-    - Frontier: Paths awaiting work (discovered → scan, listed → score)
+    - Frontier: Paths awaiting work (discovered → scan, scanned → score)
     - Coverage: Fraction of known paths that are scored
     - Seeding: Creating initial root paths for a facility
 """
@@ -221,18 +221,18 @@ class DiscoveryStats:
     facility: str
     total: int = 0
     discovered: int = 0  # Awaiting scan
-    listed: int = 0  # Awaiting score
+    scanned: int = 0  # Awaiting score
     scored: int = 0  # Scored (including rescored)
     skipped: int = 0  # Low value or dead-end
     excluded: int = 0  # Matched exclusion pattern
     max_depth: int = 0  # Maximum depth in tree
-    listing: int = 0  # In-progress scan (transient)
+    scanning: int = 0  # In-progress scan (transient)
     scoring: int = 0  # In-progress score (transient)
 
     @property
     def frontier_size(self) -> int:
         """Number of paths awaiting work (scan or score)."""
-        return self.discovered + self.listed
+        return self.discovered + self.scanned
 
     @property
     def scan_frontier(self) -> int:
@@ -242,7 +242,7 @@ class DiscoveryStats:
     @property
     def score_frontier(self) -> int:
         """Number of paths awaiting score."""
-        return self.listed
+        return self.scanned
 
     @property
     def coverage(self) -> float:
@@ -256,8 +256,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
     """Get discovery statistics for a facility.
 
     Returns:
-        Dict with counts: total, discovered, listed, scored, skipped, excluded,
-        max_depth, listing, scoring
+        Dict with counts: total, discovered, scanned, scored, skipped, excluded,
+        max_depth, scanning, scoring
     """
     from imas_codex.graph import GraphClient
 
@@ -268,8 +268,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             RETURN
                 count(p) AS total,
                 sum(CASE WHEN p.status = $discovered THEN 1 ELSE 0 END) AS discovered,
-                sum(CASE WHEN p.status = $listing THEN 1 ELSE 0 END) AS listing,
-                sum(CASE WHEN p.status = $listed THEN 1 ELSE 0 END) AS listed,
+                sum(CASE WHEN p.status = $scanning THEN 1 ELSE 0 END) AS scanning,
+                sum(CASE WHEN p.status = $scanned THEN 1 ELSE 0 END) AS scanned,
                 sum(CASE WHEN p.status = $scoring THEN 1 ELSE 0 END) AS scoring,
                 sum(CASE WHEN p.status = $scored THEN 1 ELSE 0 END) AS scored,
                 sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
@@ -280,20 +280,20 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
-            listing=PathStatus.listing.value,
-            listed=PathStatus.listed.value,
+            scanning=PathStatus.scanning.value,
+            scanned=PathStatus.scanned.value,
             scoring=PathStatus.scoring.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
-            excluded=PathStatus.excluded.value,
+            excluded=PathStatus.skipped.value,
         )
 
         if result:
             return {
                 "total": result[0]["total"],
                 "discovered": result[0]["discovered"],
-                "listing": result[0]["listing"],
-                "listed": result[0]["listed"],
+                "scanning": result[0]["scanning"],
+                "scanned": result[0]["scanned"],
                 "scoring": result[0]["scoring"],
                 "scored": result[0]["scored"],
                 "skipped": result[0]["skipped"],
@@ -306,8 +306,8 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
         return {
             "total": 0,
             "discovered": 0,
-            "listing": 0,
-            "listed": 0,
+            "scanning": 0,
+            "scanned": 0,
             "scoring": 0,
             "scored": 0,
             "skipped": 0,
@@ -400,7 +400,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
         result = gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.status = $listed AND p.score IS NULL
+            WHERE p.status = $scanned AND p.score IS NULL
             RETURN p.id AS id, p.path AS path, p.depth AS depth,
                    p.total_files AS total_files, p.total_dirs AS total_dirs,
                    p.file_type_counts AS file_type_counts,
@@ -412,7 +412,7 @@ def get_scorable_paths(facility: str, limit: int = 100) -> list[dict[str, Any]]:
             """,
             facility=facility,
             limit=limit,
-            listed=PathStatus.listed.value,
+            scanned=PathStatus.scanned.value,
         )
 
         return list(result)
@@ -1382,7 +1382,7 @@ async def persist_scan_results(
     Much faster than calling mark_path_scanned/create_child_paths per path.
 
     Two modes based on is_expanding flag:
-    1. First scan (is_expanding=False): Set status='listed', no children created
+    1. First scan (is_expanding=False): Set status='scanned', no children created
     2. Expansion scan (is_expanding=True): Keep status='scored', create children
 
     Symlink handling:
@@ -1427,7 +1427,7 @@ async def persist_scan_results(
             if "permission" in error.lower():
                 terminal_reason = TerminalReason.access_denied.value
             else:
-                terminal_reason = TerminalReason.listing_error.value
+                terminal_reason = TerminalReason.scan_error.value
             # Mark as skipped
             first_scan_updates.append(
                 {
@@ -1485,7 +1485,7 @@ async def persist_scan_results(
                 should_create_children = True
             else:
                 # First scan: set listed status, no children
-                update_dict["status"] = PathStatus.listed.value
+                update_dict["status"] = PathStatus.scanned.value
                 first_scan_updates.append(update_dict)
                 should_create_children = False
 
@@ -1632,7 +1632,7 @@ async def persist_scan_results(
 
                 if child.get("is_symlink"):
                     # Symlinks are excluded from scanning to avoid duplicates
-                    child["status"] = PathStatus.excluded.value
+                    child["status"] = PathStatus.skipped.value
                     child["skip_reason"] = "symlink"
                     symlink_children.append(child)
                 else:
@@ -1836,7 +1836,7 @@ async def persist_scan_results(
                         "path": path,
                         "parent_id": parent_id,
                         "depth": (parent_depth or 0) + 1,
-                        "status": PathStatus.excluded.value,
+                        "status": PathStatus.skipped.value,
                         "skip_reason": reason,
                         "discovered_at": now,
                     }

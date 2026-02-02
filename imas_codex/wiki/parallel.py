@@ -180,14 +180,14 @@ def has_pending_scan_work(facility: str) -> bool:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $pending
+            WHERE wp.status = $discovered
                OR wp.status = $scanning
                OR wp.status = $scanned
                OR wp.status = $prefetching
             RETURN count(wp) AS pending
             """,
             facility=facility,
-            pending=WikiPageStatus.pending.value,
+            discovered=WikiPageStatus.discovered.value,
             scanning=WikiPageStatus.scanning.value,
             scanned=WikiPageStatus.scanned.value,
             prefetching=WikiPageStatus.prefetching.value,
@@ -207,23 +207,23 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
     transient states are orphans from a previous crashed/killed process.
 
     Transient state fallbacks:
-    - scanning → pending
+    - scanning → discovered
     - prefetching → scanned
     - scoring → prefetched
     - ingesting → scored
     """
     with GraphClient() as gc:
-        # Reset scanning → pending
+        # Reset scanning → discovered
         scanning_result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scanning
-            SET wp.status = $pending, wp.claimed_at = null
+            SET wp.status = $discovered, wp.claimed_at = null
             RETURN count(wp) AS reset_count
             """,
             facility=facility,
             scanning=WikiPageStatus.scanning.value,
-            pending=WikiPageStatus.pending.value,
+            discovered=WikiPageStatus.discovered.value,
         )
         scanning_reset = scanning_result[0]["reset_count"] if scanning_result else 0
 
@@ -271,15 +271,23 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
         )
         ingesting_reset = ingesting_result[0]["reset_count"] if ingesting_result else 0
 
+        # No legacy migration needed - "discovered" is now the canonical first state
+        discovered_reset = 0
+
     if not silent:
         total_reset = (
-            scanning_reset + prefetching_reset + scoring_reset + ingesting_reset
+            scanning_reset
+            + prefetching_reset
+            + scoring_reset
+            + ingesting_reset
+            + discovered_reset
         )
         if total_reset > 0:
             logger.info(
-                "Reset transient wiki pages on startup: "
+                "Reset wiki pages on startup: "
                 f"{scanning_reset} scanning, {prefetching_reset} prefetching, "
-                f"{scoring_reset} scoring, {ingesting_reset} ingesting"
+                f"{scoring_reset} scoring, {ingesting_reset} ingesting, "
+                f"{discovered_reset} legacy discovered"
             )
 
     return {
@@ -287,6 +295,7 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
         "prefetching_reset": prefetching_reset,
         "scoring_reset": scoring_reset,
         "ingesting_reset": ingesting_reset,
+        "discovered_reset": discovered_reset,
     }
 
 
@@ -296,15 +305,15 @@ def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, i
 
 
 def claim_pages_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim pending pages for scanning.
+    """Atomically claim discovered pages for scanning.
 
-    Uses atomic status transition: pending → scanning
+    Uses atomic status transition: discovered → scanning
     """
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $pending
+            WHERE wp.status = $discovered
             WITH wp
             ORDER BY wp.link_depth ASC, wp.discovered_at ASC
             LIMIT $limit
@@ -313,7 +322,7 @@ def claim_pages_for_scanning(facility: str, limit: int = 50) -> list[dict[str, A
                    wp.link_depth AS depth
             """,
             facility=facility,
-            pending=WikiPageStatus.pending.value,
+            discovered=WikiPageStatus.discovered.value,
             scanning=WikiPageStatus.scanning.value,
             limit=limit,
         )
@@ -801,7 +810,7 @@ async def scan_worker(
 
             except Exception as e:
                 logger.warning("Error scanning %s: %s", page_id, e)
-                mark_page_failed(page_id, str(e), WikiPageStatus.pending.value)
+                mark_page_failed(page_id, str(e), WikiPageStatus.discovered.value)
 
         # Mark pages as scanned
         mark_pages_scanned(state.facility, results)
@@ -1001,7 +1010,7 @@ def _create_discovered_pages(
                 MERGE (wp:WikiPage {id: $id})
                 ON CREATE SET wp.title = $title,
                               wp.facility_id = $facility,
-                              wp.status = $pending,
+                              wp.status = $discovered,
                               wp.link_depth = $depth,
                               wp.discovered_at = datetime()
                 ON MATCH SET wp.link_depth = CASE
@@ -1012,10 +1021,10 @@ def _create_discovered_pages(
                 id=page_id,
                 title=name,
                 facility=facility,
-                pending=WikiPageStatus.pending.value,
+                discovered=WikiPageStatus.discovered.value,
                 depth=depth,
             )
-            if result and result[0]["status"] == WikiPageStatus.pending.value:
+            if result and result[0]["status"] == WikiPageStatus.discovered.value:
                 created += 1
 
     return created
@@ -1044,7 +1053,7 @@ def _create_discovered_artifacts(
                               wa.filename = $filename,
                               wa.url = $path,
                               wa.artifact_type = $artifact_type,
-                              wa.status = $pending,
+                              wa.status = $discovered,
                               wa.discovered_at = datetime()
                 """,
                 id=artifact_id,
@@ -1052,7 +1061,7 @@ def _create_discovered_artifacts(
                 filename=filename,
                 path=path,
                 artifact_type=artifact_type,
-                pending=WikiArtifactStatus.pending.value,
+                pending=WikiArtifactStatus.discovered.value,
             )
             created += 1
 
@@ -1254,7 +1263,7 @@ def _seed_portal_page(
             ON CREATE SET wp.title = $title,
                           wp.url = $url,
                           wp.facility_id = $facility,
-                          wp.status = $pending,
+                          wp.status = $discovered,
                           wp.link_depth = 0,
                           wp.discovered_at = datetime()
             """,
@@ -1262,7 +1271,7 @@ def _seed_portal_page(
             title=portal_page,
             url=url,
             facility=facility,
-            pending=WikiPageStatus.pending.value,
+            discovered=WikiPageStatus.discovered.value,
         )
 
 
@@ -1285,7 +1294,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int]:
 
         stats = {
             "total": 0,
-            "pending": 0,
+            "discovered": 0,
             "scanning": 0,
             "scanned": 0,
             "prefetching": 0,

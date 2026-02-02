@@ -454,11 +454,11 @@ class DirectoryScorer:
         except Exception as e:
             # CRITICAL: Validation error means LLM response was malformed.
             # DO NOT create ScoredDirectory objects that will be persisted.
-            # Instead, raise the error so score_worker can revert paths to 'listed'
+            # Instead, raise the error so score_worker can revert paths to 'scanned'
             # status for retry in the next batch.
             logger.error(
                 f"LLM validation error for batch of {len(directories)} paths: {e}. "
-                "Paths will be reverted to listed status."
+                "Paths will be reverted to scanned status."
             )
             raise ValueError(f"LLM response validation failed: {e}") from e
 

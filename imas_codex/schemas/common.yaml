@@ -62,51 +62,63 @@ enums:
   PathStatus:
     description: >-
       Lifecycle status for facility path discovery.
-      Transient states (listing, scoring, expanding) have fallback states for orphan recovery.
+      Transient states (scanning, scoring, expanding) have fallback states for orphan recovery.
       Progress is graph-derived: check file_count, dir_count, interest_score.
     permissible_values:
       discovered:
         description: Path found, awaiting enumeration
-      listing:
+      scanning:
         description: Scanner worker active (fallback to discovered on timeout)
-      listed:
+      scanned:
         description: Enumerated (file_count, dir_count set), awaiting LLM score
       scoring:
-        description: Scorer worker active (fallback to listed on timeout)
+        description: Scorer worker active (fallback to scanned on timeout)
       scored:
         description: LLM scored (may have been rescored if high-value)
       expanding:
         description: Expander worker active (fallback to scored on timeout)
       skipped:
-        description: Scan-time failure (access denied, alias, error)
-      excluded:
-        description: Matched exclusion pattern (not enumerated)
+        description: Intentionally not processed (low-score, excluded, empty)
+      failed:
+        description: Error during processing (check error, terminal_reason)
       stale:
         description: Path may have changed, needs re-discovery
 
   TerminalReason:
     description: >-
-      Why path exploration terminated. Only captures reasons NOT derivable
+      Why resource exploration terminated. Captures reasons NOT derivable
       from other node properties (score, has_git, path_purpose). For LLM-scored
-      terminal paths, leave NULL - reason is derivable from existing fields.
+      terminal resources, leave NULL - reason is derivable from existing fields.
       Used for analytics: "show all access-denied paths", "count empty dirs".
     permissible_values:
-      # === SCAN-TIME FAILURES (status=skipped, reason not in other fields) ===
+      # === SCAN-TIME FAILURES (status=failed) ===
       access_denied:
-        description: PermissionError during directory listing
-      listing_error:
-        description: Other error during directory enumeration
+        description: PermissionError during directory listing or page fetch
+      scan_error:
+        description: Other error during enumeration or link extraction
+      # === NETWORK/AUTH FAILURES (wiki) ===
+      fetch_error:
+        description: HTTP error fetching page content
+      auth_required:
+        description: Page requires authentication not available
+      # === DUPLICATES ===
       alias:
-        description: Bind mount or symlink duplicate of another path
-      # === AUTO-SKIP (status=scored, 0 LLM cost, not obvious from properties) ===
+        description: Bind mount, symlink, or redirect to another resource
+      # === AUTO-SKIP (status=skipped, 0 LLM cost) ===
       empty:
-        description: Empty directory (0 files, 0 dirs)
-      # === PROPAGATION (child of terminal parent) ===
+        description: Empty directory (0 files, 0 dirs) or empty page
+      low_score:
+        description: Interest score below threshold
+      excluded:
+        description: Matched exclusion pattern
+      # === PROPAGATION ===
       parent_terminal:
-        description: Parent path was terminal (skipped or not expanded)
+        description: Parent resource was terminal (skipped or not expanded)
       # === LIMITS ===
       depth_limit:
         description: Maximum exploration depth reached
+      budget_exhausted:
+        description: Cost or page limit reached
 
   SourceFileStatus:
     description: >-
@@ -157,10 +169,10 @@ enums:
       to transient states (scanning, prefetching, scoring, ingesting).
       Transient states have fallback states for orphan recovery on timeout.
     permissible_values:
-      pending:
+      discovered:
         description: Page URL discovered but not yet scanned
       scanning:
-        description: Scanner worker active (fallback to pending on timeout)
+        description: Scanner worker active (fallback to discovered on timeout)
       scanned:
         description: Links extracted, structure captured, awaiting prefetch
       prefetching:
@@ -187,10 +199,10 @@ enums:
       Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
       Uses same async worker pattern as WikiPageStatus.
     permissible_values:
-      pending:
+      discovered:
         description: Artifact link found but not yet processed
       scoring:
-        description: Scorer worker active (fallback to pending on timeout)
+        description: Scorer worker active (fallback to discovered on timeout)
       scored:
         description: Evaluated by scoring agent, interest_score set
       ingesting:

@@ -169,9 +169,9 @@ def has_pending_work(facility: str) -> bool:
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WHERE p.status = $discovered
-               OR p.status = $listing
+               OR p.status = $scanning
                OR p.status = $scoring
-               OR (p.status = $listed AND p.score IS NULL)
+               OR (p.status = $scanned AND p.score IS NULL)
                OR (p.status = $scored AND p.should_expand = true
                    AND p.expanded_at IS NULL)
                OR (p.status = $scored AND p.should_enrich = true
@@ -181,9 +181,9 @@ def has_pending_work(facility: str) -> bool:
             """,
             facility=facility,
             discovered=PathStatus.discovered.value,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             scoring=PathStatus.scoring.value,
-            listed=PathStatus.listed.value,
+            scanned=PathStatus.scanned.value,
             scored=PathStatus.scored.value,
         )
         return result[0]["pending"] > 0 if result else False
@@ -195,25 +195,25 @@ def has_pending_work(facility: str) -> bool:
 
 
 def reset_transient_paths(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset ALL paths in transient states (listing, scoring) on CLI startup.
+    """Reset ALL paths in transient states (scanning, scoring) on CLI startup.
 
     Since only one CLI process runs per facility at a time, any paths in
     transient states are orphans from a previous crashed/killed process.
     Reset them immediately without waiting for timeout.
 
-    For listing paths:
+    For scanning paths:
     - If score IS NULL (first scan): reset to 'discovered'
     - If score IS NOT NULL (expansion): reset to 'scored'
 
     For scoring paths:
-    - Reset to 'listed'
+    - Reset to 'scanned'
 
     Args:
         facility: Facility identifier
         silent: If True, suppress logging (caller will log)
 
     Returns:
-        Dict with counts: listing_reset, scoring_reset
+        Dict with counts: scanning_reset, scoring_reset
     """
     from imas_codex.graph import GraphClient
 
@@ -222,13 +222,13 @@ def reset_transient_paths(facility: str, *, silent: bool = False) -> dict[str, i
         listing_result = gc.query(
             """
             MATCH (p:FacilityPath {facility_id: $facility})
-            WHERE p.status = $listing
+            WHERE p.status = $scanning
             WITH p, CASE WHEN p.score IS NULL THEN $discovered ELSE $scored END AS new_status
             SET p.status = new_status, p.claimed_at = null
             RETURN count(p) AS reset_count
             """,
             facility=facility,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             discovered=PathStatus.discovered.value,
             scored=PathStatus.scored.value,
         )
@@ -239,12 +239,12 @@ def reset_transient_paths(facility: str, *, silent: bool = False) -> dict[str, i
             """
             MATCH (p:FacilityPath {facility_id: $facility})
             WHERE p.status = $scoring
-            SET p.status = $listed, p.claimed_at = null
+            SET p.status = $scanned, p.claimed_at = null
             RETURN count(p) AS reset_count
             """,
             facility=facility,
             scoring=PathStatus.scoring.value,
-            listed=PathStatus.listed.value,
+            scanned=PathStatus.scanned.value,
         )
         scoring_reset = scoring_result[0]["reset_count"] if scoring_result else 0
 
@@ -295,13 +295,13 @@ def claim_paths_for_scanning(
             WHERE p.status = $discovered AND p.score IS NULL
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
-            SET p.status = $listing, p.claimed_at = datetime()
+            SET p.status = $scanning, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, false AS is_expanding
             """,
             facility=facility,
             limit=limit,
             discovered=PathStatus.discovered.value,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -339,13 +339,13 @@ def claim_paths_for_expanding(
               AND p.expanded_at IS NULL
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
-            SET p.status = $listing, p.claimed_at = datetime()
+            SET p.status = $scanning, p.claimed_at = datetime()
             RETURN p.id AS id, p.path AS path, p.depth AS depth, true AS is_expanding
             """,
             facility=facility,
             limit=limit,
             scored=PathStatus.scored.value,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             root_filter=root_filter or [],
         )
         return list(result)
@@ -375,7 +375,7 @@ def claim_paths_for_scoring(
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
-            WHERE p.status = $listed AND p.score IS NULL
+            WHERE p.status = $scanned AND p.score IS NULL
             {root_clause}
             WITH p ORDER BY p.depth ASC, p.path ASC LIMIT $limit
             SET p.status = $scoring, p.claimed_at = datetime()
@@ -388,7 +388,7 @@ def claim_paths_for_scoring(
             """,
             facility=facility,
             limit=limit,
-            listed=PathStatus.listed.value,
+            scanned=PathStatus.scanned.value,
             scoring=PathStatus.scoring.value,
             root_filter=root_filter or [],
         )
@@ -1098,11 +1098,11 @@ async def score_worker(
                 )
 
         except ValueError:
-            # LLM validation error - revert paths to 'listed' status for retry
+            # LLM validation error - revert paths to 'scanned' status for retry
             # DO NOT increment error count - this will be retried automatically
             logger.warning(
                 f"LLM validation error for batch of {len(paths_to_score)} paths. "
-                "Reverting to listed status for retry."
+                "Reverting to scanned status for retry."
             )
             _revert_scoring_claim(state.facility, [p["path"] for p in paths_to_score])
             # Don't show validation errors in progress display
@@ -1117,7 +1117,7 @@ async def score_worker(
 
 
 def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
-    """Revert paths from scoring back to listed on error."""
+    """Revert paths from scoring back to scanned on error."""
     from imas_codex.graph import GraphClient
 
     with GraphClient() as gc:
@@ -1125,12 +1125,12 @@ def _revert_scoring_claim(facility: str, paths: list[str]) -> None:
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
             WHERE p.path IN $paths AND p.status = $scoring
-            SET p.status = $listed, p.claimed_at = null
+            SET p.status = $scanned, p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
             scoring=PathStatus.scoring.value,
-            listed=PathStatus.listed.value,
+            scanned=PathStatus.scanned.value,
         )
 
 
@@ -1147,24 +1147,24 @@ def _revert_listing_claim(facility: str, paths: list[str]) -> None:
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $listing AND p.score IS NULL
+            WHERE p.path IN $paths AND p.status = $scanning AND p.score IS NULL
             SET p.status = $discovered, p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             discovered=PathStatus.discovered.value,
         )
         # Revert expansion paths to scored
         gc.query(
             """
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {id: $facility})
-            WHERE p.path IN $paths AND p.status = $listing AND p.score IS NOT NULL
+            WHERE p.path IN $paths AND p.status = $scanning AND p.score IS NOT NULL
             SET p.status = $scored, p.claimed_at = null
             """,
             facility=facility,
             paths=paths,
-            listing=PathStatus.listing.value,
+            scanning=PathStatus.scanning.value,
             scored=PathStatus.scored.value,
         )
 

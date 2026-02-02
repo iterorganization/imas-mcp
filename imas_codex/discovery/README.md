@@ -88,7 +88,7 @@ All code imports `PathStatus` from generated models - no hardcoded strings.
 
 ```python
 from imas_codex.graph.models import PathStatus
-# Use: PathStatus.discovered.value, PathStatus.listed.value, etc.
+# Use: PathStatus.discovered.value, PathStatus.scanned.value, etc.
 ```
 
 ### Score-Gated Expansion
@@ -96,7 +96,7 @@ from imas_codex.graph.models import PathStatus
 Children are only created for paths that score highly. This prevents graph pollution
 from low-value directories:
 
-1. **First Scan**: Enumerate directory, set `status='listed'`, no children created
+1. **First Scan**: Enumerate directory, set `status='scanned'`, no children created
 2. **Score**: LLM evaluates path, sets `score` and `should_expand` flag
 3. **Expansion Scan**: If `should_expand=true`, scanner re-claims path, creates children
 
@@ -106,7 +106,7 @@ from low-value directories:
    [seed paths]                                 
         │                                        
         ▼                                        
-   discovered ─────SCAN────► listed ─────SCORE────► scored
+   discovered ─────SCAN────► scanned ─────SCORE────► scored
    (score=NULL)              (score=NULL)           (should_expand=T/F)
                                                          │
                                                          │
@@ -129,9 +129,9 @@ from low-value directories:
 | State | Type | Description |
 |-------|------|-------------|
 | `discovered` | Long-lived | Path found, awaiting enumeration |
-| `listing` | Transient | Scanner worker active (fallback → discovered/scored) |
-| `listed` | Long-lived | Enumerated with file/dir counts, awaiting score |
-| `scoring` | Transient | Scorer worker active (fallback → listed) |
+| `scanning` | Transient | Scanner worker active (fallback → discovered/scored) |
+| `scanned` | Long-lived | Enumerated with file/dir counts, awaiting score |
+| `scoring` | Transient | Scorer worker active (fallback → scanned) |
 | `scored` | Terminal | LLM scored, may be re-claimed for expansion |
 | `skipped` | Terminal | Low value (score < 0.2) |
 | `excluded` | Terminal | Matched exclusion pattern |
@@ -155,14 +155,14 @@ from low-value directories:
          │                     │                     │
     First Scan            Expansion              Error
          │                     │                     │
-      listed               scored                 skipped
+      scanned               scored                 skipped
    (no children)     (children created)
          │
          ▼
    ┌─────────────────────────────────────────────────────────────┐
    │                       SCORE WORKER                          │
    │                                                             │
-   │  Claims: status='listed' AND score IS NULL                  │
+   │  Claims: status='scanned' AND score IS NULL                 │
    │  Result: Sets score, should_expand → status='scored'        │
    │                                                             │
    │  If should_expand=true:                                     │
@@ -174,18 +174,18 @@ from low-value directories:
 
 ### Orphan Recovery
 
-Transient states (`listing`, `scoring`) have timeouts. When a worker crashes, orphaned
+Transient states (`scanning`, `scoring`) have timeouts. When a worker crashes, orphaned
 paths are recovered at next discovery run:
 
 ```cypher
 -- Reset orphaned first-scan paths (score IS NULL)
-MATCH (p:FacilityPath {status: 'listing'})
+MATCH (p:FacilityPath {status: 'scanning'})
 WHERE p.claimed_at < datetime() - duration('PT10M')
   AND p.score IS NULL
 SET p.status = 'discovered', p.claimed_at = null
 
 -- Reset orphaned expansion paths (score IS NOT NULL)
-MATCH (p:FacilityPath {status: 'listing'})
+MATCH (p:FacilityPath {status: 'scanning'})
 WHERE p.claimed_at < datetime() - duration('PT10M')
   AND p.score IS NOT NULL
 SET p.status = 'scored', p.claimed_at = null
@@ -193,7 +193,7 @@ SET p.status = 'scored', p.claimed_at = null
 -- Reset orphaned scoring states
 MATCH (p:FacilityPath {status: 'scoring'})  
 WHERE p.claimed_at < datetime() - duration('PT10M')
-SET p.status = 'listed', p.claimed_at = null
+SET p.status = 'scanned', p.claimed_at = null
 ```
 
 ## CLI Options

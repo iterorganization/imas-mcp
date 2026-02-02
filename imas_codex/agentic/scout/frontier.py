@@ -21,17 +21,16 @@ class FrontierStats:
     facility: str
     total_paths: int = 0
     discovered: int = 0
-    listed: int = 0
     scanned: int = 0
+    scored: int = 0
     skipped: int = 0
-    analyzed: int = 0
     queued_files: int = 0
     ingested_files: int = 0
 
     @property
     def explored(self) -> int:
         """Paths that have been explored (any status beyond discovered)."""
-        return self.listed + self.scanned + self.analyzed + self.skipped
+        return self.scanned + self.scored + self.skipped
 
     @property
     def remaining(self) -> int:
@@ -57,9 +56,8 @@ class FrontierStats:
 
 By status:
   discovered: {self.discovered}
-  listed: {self.listed}
   scanned: {self.scanned}
-  analyzed: {self.analyzed}
+  scored: {self.scored}
 """
 
 
@@ -92,21 +90,15 @@ class FrontierManager:
                     count = row["count"]
                     if status == "discovered":
                         stats.discovered = count
-                    elif status == "listed":
-                        stats.listed = count
                     elif status == "scanned":
                         stats.scanned = count
-                    elif status == "skipped":
+                    elif status == "scored":
+                        stats.scored = count
+                    elif status in ("skipped", "failed"):
                         stats.skipped = count
-                    elif status == "analyzed":
-                        stats.analyzed = count
 
                 stats.total_paths = (
-                    stats.discovered
-                    + stats.listed
-                    + stats.scanned
-                    + stats.skipped
-                    + stats.analyzed
+                    stats.discovered + stats.scanned + stats.scored + stats.skipped
                 )
 
                 # Count SourceFile nodes
@@ -199,7 +191,7 @@ class FrontierManager:
                     result = client.query(
                         """
                         MATCH (p:FacilityPath)-[:LOCATED_AT]->(f:Facility {id: $facility})
-                        WHERE p.status IN ['listed', 'scanned', 'analyzed']
+                        WHERE p.status IN ['scanned', 'scored']
                         RETURN p.id AS id,
                                p.path AS path,
                                p.status AS status,

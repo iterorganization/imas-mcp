@@ -37,7 +37,7 @@ class DiscoveryStats:
     # Counts (aligned with PathStatus enum)
     total_paths: int = 0
     discovered: int = 0  # Awaiting scan
-    listed: int = 0  # Awaiting score
+    scanned: int = 0  # Awaiting score
     scored: int = 0
     skipped: int = 0
     excluded: int = 0
@@ -66,7 +66,7 @@ class DiscoveryStats:
     @property
     def frontier_size(self) -> int:
         """Paths awaiting work (scan or score)."""
-        return self.discovered + self.listed
+        return self.discovered + self.scanned
 
     @property
     def completion_fraction(self) -> float:
@@ -147,8 +147,8 @@ class DiscoveryProgressDisplay:
 
         # Row 2: Status breakdown
         table.add_row(
-            "Listed:",
-            f"{self.stats.listed:,}",
+            "Scanned:",
+            f"{self.stats.scanned:,}",
             "Scored:",
             f"[green]{self.stats.scored:,}[/green]",
         )
@@ -287,7 +287,7 @@ class DiscoveryProgressDisplay:
         stats = get_discovery_stats(facility)
         self.stats.total_paths = stats["total"]
         self.stats.discovered = stats["discovered"]
-        self.stats.listed = stats["listed"]
+        self.stats.scanned = stats["scanned"]
         self.stats.scored = stats["scored"]
         self.stats.skipped = stats["skipped"]
         self.stats.excluded = stats["excluded"]
@@ -322,14 +322,14 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
     # Status breakdown
     total = stats["total"] or 1  # Avoid division by zero
     discovered = stats.get("discovered", 0)
-    listed = stats.get("listed", 0)
+    scanned = stats.get("scanned", 0)
     scored = stats.get("scored", 0)
     skipped = stats.get("skipped", 0)
     excluded = stats.get("excluded", 0)
     max_depth = stats.get("max_depth", 0)
 
     console.print(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
-    console.print(f"├─ Listed:     {listed:,} ({listed / total * 100:.1f}%)")
+    console.print(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
     console.print(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
     console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
     console.print(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
@@ -395,7 +395,7 @@ def print_discovery_status(facility: str, console: Console | None = None) -> Non
             console.print(f"\n[dim]Structural[/dim] ({structural:,} paths)")
 
     # Summary
-    frontier = discovered + listed
+    frontier = discovered + scanned
     console.print(f"\nFrontier: {frontier} paths awaiting work")
     console.print(f"Max depth: {max_depth}")
     coverage = scored / total * 100 if total > 0 else 0

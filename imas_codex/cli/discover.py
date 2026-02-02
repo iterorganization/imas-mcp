@@ -265,8 +265,8 @@ def _run_iterative_discovery(
         seed_facility_roots(facility)
         stats = get_discovery_stats(facility)
 
-    if score_only and stats.get("listed", 0) == 0:
-        log_print("[yellow]Warning: No 'listed' paths available for scoring.[/yellow]")
+    if score_only and stats.get("scanned", 0) == 0:
+        log_print("[yellow]Warning: No 'scanned' paths available for scoring.[/yellow]")
         log_print("Checking for already-scored paths to expand...")
 
     # Adjust worker counts based on mode flags

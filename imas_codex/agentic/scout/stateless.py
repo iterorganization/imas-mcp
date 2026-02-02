@@ -594,7 +594,7 @@ def get_exploration_summary(facility: str) -> dict[str, Any]:
             total = sum(status_counts.values())
             explored = sum(
                 status_counts.get(s, 0)
-                for s in ["listed", "scanned", "analyzed", "explored", "skipped"]
+                for s in ["scanned", "scored", "skipped", "failed"]
             )
 
             # File counts
@@ -698,7 +698,7 @@ subprocess.run(["ls", "/home"])  # DON'T DO THIS
 
 After exploring with `run()`, you MUST call tools to record what you found:
 - `skip_path(path, reason)` - For paths that don't exist or are dead-ends
-- `advance_status(path, new_status)` - After listing a directory (status="listed")
+- `advance_status(path, new_status)` - After listing a directory (status="scanned")
 - `discover_path(path, ...)` - For interesting child directories found
 - `queue_file(path, ...)` - For source files worth analyzing
 
@@ -720,7 +720,7 @@ After exploring with `run()`, you MUST call tools to record what you found:
 2. Explore it with `run("command")`
 3. CALL TOOLS to persist what you found:
    - If path doesn't exist → `skip_path(path, "does not exist")`
-   - If path is explored → `advance_status(path, "listed")` + `discover_path()` for children
+   - If path is explored → `advance_status(path, "scanned")` + `discover_path()` for children
    - If file is interesting → `queue_file(path, ...)`
 4. Done - next step will see updated frontier
 
