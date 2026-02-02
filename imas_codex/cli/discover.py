@@ -1126,9 +1126,13 @@ def discover_wiki(
                 from imas_codex.wiki.wiki_progress import WikiProgressDisplay
 
                 with WikiProgressDisplay(
-                    console=console,
+                    facility=_facility,
                     cost_limit=_cost_limit,
                     page_limit=_max_pages,
+                    focus=_focus or "",
+                    console=console,
+                    scan_only=_scan_only,
+                    score_only=_score_only,
                 ) as display:
                     # Periodic graph state refresh
                     async def refresh_graph_state():
@@ -1136,7 +1140,24 @@ def discover_wiki(
 
                         while True:
                             stats = get_wiki_discovery_stats(_facility)
-                            display.update_from_graph_stats(stats)
+                            display.update_from_graph(
+                                total_pages=stats.get("total", 0),
+                                pages_scanned=stats.get("scanned", 0)
+                                + stats.get("prefetched", 0)
+                                + stats.get("scored", 0)
+                                + stats.get("ingested", 0),
+                                pages_prefetched=stats.get("prefetched", 0)
+                                + stats.get("scored", 0)
+                                + stats.get("ingested", 0),
+                                pages_scored=stats.get("scored", 0)
+                                + stats.get("ingested", 0),
+                                pages_ingested=stats.get("ingested", 0),
+                                pages_skipped=stats.get("skipped", 0),
+                                pending_scan=stats.get("pending", 0),
+                                pending_prefetch=stats.get("scanned", 0),
+                                pending_score=stats.get("prefetched", 0),
+                                pending_ingest=stats.get("scored", 0),
+                            )
                             await asyncio.sleep(0.5)
 
                     async def queue_ticker():
@@ -1148,72 +1169,48 @@ def discover_wiki(
                     ticker_task = asyncio.create_task(queue_ticker())
 
                     def on_scan(msg, stats, results=None):
-                        from imas_codex.wiki.wiki_progress import WikiScanItem
-
-                        recent = None
+                        # Convert results to dicts for streaming queue
+                        result_dicts = None
                         if results:
-                            recent = [
-                                WikiScanItem(
-                                    title=r.get("title", "?")[:50],
-                                    out_links=r.get("out_degree", 0),
-                                    depth=r.get("depth", 0),
-                                )
+                            result_dicts = [
+                                {
+                                    "title": r.get("id", "?").split(":")[-1][:50],
+                                    "out_links": r.get("out_degree", 0),
+                                    "depth": r.get("depth", 0),
+                                }
                                 for r in results[:5]
                             ]
-                        display.update_scan_progress(
-                            status=msg,
-                            pages_scanned=stats.processed,
-                            pending_scan=0,
-                            recent=recent,
-                        )
+                        display.update_scan(msg, stats, result_dicts)
 
                     def on_prefetch(msg, stats, results=None):
-                        display.update_prefetch_progress(
-                            status=msg,
-                            pages_prefetched=stats.processed,
-                            pending_prefetch=0,
-                        )
+                        display.update_prefetch(msg, stats)
 
                     def on_score(msg, stats, results=None):
-                        from imas_codex.wiki.wiki_progress import WikiScoreItem
-
-                        recent = None
+                        result_dicts = None
                         if results:
-                            recent = [
-                                WikiScoreItem(
-                                    title=r.get("title", "?")[:50],
-                                    score=r.get("score", 0.5),
-                                    is_physics=r.get("is_physics", False),
-                                )
+                            result_dicts = [
+                                {
+                                    "title": r.get("id", "?").split(":")[-1][:50],
+                                    "score": r.get("score", 0.5),
+                                    "is_physics": r.get("is_physics", False),
+                                    "skipped": r.get("skipped", False),
+                                    "skip_reason": r.get("skip_reason", ""),
+                                }
                                 for r in results[:5]
                             ]
-                        display.update_score_progress(
-                            status=msg,
-                            pages_scored=stats.processed,
-                            pending_score=0,
-                            pending_ingest=0,
-                            cost=stats.cost,
-                            recent=recent,
-                        )
+                        display.update_score(msg, stats, result_dicts)
 
                     def on_ingest(msg, stats, results=None):
-                        from imas_codex.wiki.wiki_progress import WikiIngestItem
-
-                        recent = None
+                        result_dicts = None
                         if results:
-                            recent = [
-                                WikiIngestItem(
-                                    title=r.get("title", "?")[:50],
-                                    chunk_count=r.get("chunk_count", 0),
-                                )
+                            result_dicts = [
+                                {
+                                    "title": r.get("id", "?").split(":")[-1][:50],
+                                    "chunk_count": r.get("chunk_count", 0),
+                                }
                                 for r in results[:3]
                             ]
-                        display.update_ingest_progress(
-                            status=msg,
-                            pages_ingested=stats.processed,
-                            cost=stats.cost,
-                            recent=recent,
-                        )
+                        display.update_ingest(msg, stats, result_dicts)
 
                     try:
                         result = await run_parallel_wiki_discovery(
@@ -1246,6 +1243,9 @@ def discover_wiki(
                             await ticker_task
                         except asyncio.CancelledError:
                             pass
+
+                    # Print summary
+                    display.print_summary()
 
                 return result
 
