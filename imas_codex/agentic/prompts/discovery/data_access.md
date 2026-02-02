@@ -135,7 +135,31 @@ ssh {{ ssh_host | default('{facility}') }} "find /common /usr/local -name '*guid
 
 ### Create Graph Nodes (Self-Contained)
 
-{% include "schema/access-method.md" %}
+#### AccessMethod Schema (from LinkML)
+
+**Required Fields:**
+| Field | Description |
+|-------|-------------|
+{% for f in access_method_fields.required %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% endfor %}
+
+**Environment Setup (makes nodes self-contained):**
+| Field | Description |
+|-------|-------------|
+{% for f in access_method_fields.environment %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% endfor %}
+
+**Code Templates:**
+| Field | Description |
+|-------|-------------|
+{% for f in access_method_fields.templates %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% endfor %}
+
+**Validation:**
+| Field | Description |
+|-------|-------------|
+{% for f in access_method_fields.validation %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% endfor %}
 
 Each AccessMethod must contain **all information** needed to execute data retrieval:
 

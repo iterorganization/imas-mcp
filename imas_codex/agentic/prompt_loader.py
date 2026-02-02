@@ -249,10 +249,61 @@ def get_schema_context() -> dict[str, Any]:
         if p["value"] in ("container", "archive", "build_artifact", "system")
     ]
 
+    # Get AccessMethod slots grouped by purpose
+    access_method_slots = schema.get_all_slots("AccessMethod")
+    access_method_fields = {
+        "required": [],
+        "environment": [],
+        "templates": [],
+        "validation": [],
+        "documentation": [],
+    }
+
+    # Categorize fields by purpose
+    required_fields = {"id", "facility_id", "method_type", "library", "access_type"}
+    env_fields = {"setup_commands", "environment_variables"}
+    template_fields = {
+        "imports_template",
+        "connection_template",
+        "data_template",
+        "time_template",
+        "cleanup_template",
+        "decimation_template",
+    }
+    validation_fields = {
+        "data_source",
+        "data_source_pattern",
+        "discovery_shot",
+        "discovery_template",
+        "full_example",
+        "verified_date",
+    }
+    doc_fields = {"name", "documentation_url", "documentation_local", "output_format"}
+
+    for slot_name, slot_info in access_method_slots.items():
+        field_info = {
+            "name": slot_name,
+            "description": slot_info.get("description", ""),
+            "required": slot_info.get("required", False),
+            "type": slot_info.get("type", "string"),
+        }
+        if slot_name in required_fields:
+            access_method_fields["required"].append(field_info)
+        elif slot_name in env_fields:
+            access_method_fields["environment"].append(field_info)
+        elif slot_name in template_fields:
+            access_method_fields["templates"].append(field_info)
+        elif slot_name in validation_fields:
+            access_method_fields["validation"].append(field_info)
+        elif slot_name in doc_fields:
+            access_method_fields["documentation"].append(field_info)
+
     return {
         "discovery_categories": discovery_categories,
         "path_purposes": path_purposes,
         "score_dimensions": score_dimensions,
+        # AccessMethod schema for data_access prompt
+        "access_method_fields": access_method_fields,
         # Grouped path purposes for cleaner template organization
         "path_purposes_code": code_purposes,
         "path_purposes_data": data_purposes,
