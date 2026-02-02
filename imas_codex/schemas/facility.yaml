@@ -1445,7 +1445,7 @@ classes:
   FacilitySignal:
     description: >-
       A facility-specific data signal. Contains ONLY signal identity and semantics.
-      All access information (templates, data sources) lives in AccessMethod.
+      All access information (templates, data sources) lives in DataAccess.
       
       ID format: facility:physics_domain/signal_name[:variant]
       The physics_domain MUST be a valid PhysicsDomain enum value to ensure
@@ -1458,13 +1458,13 @@ classes:
         - tcv:radiation_measurement_diagnostics/radiated_power (was bolometry)
         - jet:equilibrium/plasma_current
       
-      Design principle: A signal is WHAT we measure, AccessMethod is HOW we fetch it.
+      Design principle: A signal is WHAT we measure, DataAccess is HOW we fetch it.
       The same physics quantity at different facilities links to facility-specific
-      AccessMethods but shares the same physics_domain categorization.
+      DataAccess nodes but shares the same physics_domain categorization.
       
       Required relationships:
         - FACILITY_ID -> Facility
-        - ACCESS_METHOD -> AccessMethod (code generation)
+        - USES_DATA_ACCESS -> DataAccess (code generation)
       
       Optional relationships:
         - HAS_UNIT -> Unit (data units)
@@ -1482,7 +1482,7 @@ classes:
         Discovery produces FacilitySignal nodes with:
         - physics_domain: classified via LLM or regex patterns
         - accessor: extracted from data system introspection
-        - ACCESS_METHOD edge: linked to facility's AccessMethod
+        - USES_DATA_ACCESS edge: linked to facility's DataAccess
     class_uri: facility:FacilitySignal
     attributes:
       id:
@@ -1517,17 +1517,17 @@ classes:
       accessor:
         description: >-
           Native accessor expression - the ONLY access-specific field on signals.
-          This is the expression passed to AccessMethod templates.
+          This is the expression passed to DataAccess templates.
           For MDSplus: TDI function call like "tcv_eq('i_p')"
           For IMAS: IDS path like "core_profiles.profiles_1d[0].electrons.density_thermal"
           For HDF5: dataset path like "/diagnostics/magnetics/ip"
         required: true
-      access_method:
+      data_access:
         description: >-
-          AccessMethod that provides code generation templates.
-          The signal's accessor is substituted into AccessMethod templates.
+          DataAccess node that provides code generation templates.
+          The signal's accessor is substituted into DataAccess templates.
         required: true
-        range: AccessMethod
+        range: DataAccess
       description:
         description: What this signal measures (physics description)
       is_primary:
@@ -1558,7 +1558,7 @@ classes:
       validation_error:
         description: Error message if validation failed
 
-  AccessMethod:
+  DataAccess:
     description: >-
       Code generation template for accessing data at a facility.
       Provides the "how" to FacilitySignal's "what".
@@ -1574,7 +1574,7 @@ classes:
         - IMAS: imas.DBEntry for IDS access
         - HDF5: h5py file access
         - REST: HTTP API calls
-    class_uri: facility:AccessMethod
+    class_uri: facility:DataAccess
     attributes:
       id:
         identifier: true
@@ -1648,11 +1648,11 @@ classes:
           Python code for decimation. Applied before serialization.
           Placeholder: {max_points}
           Example: "step = max(1, len(data) // {max_points}); data = data[::step]; time = time[::step]"
-      # Environment setup - makes AccessMethod self-contained for imas-ambix
+      # Environment setup - makes DataAccess self-contained for imas-ambix
       setup_commands:
         description: >-
           Shell commands to execute before Python (module loads, env setup).
-          These make the AccessMethod self-contained and executable.
+          These make the DataAccess node self-contained and executable.
           E.g., ["source /etc/profile.d/modules.sh", "module load python/3.9"]
         multivalued: true
       environment_variables:

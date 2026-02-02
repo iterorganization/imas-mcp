@@ -9,30 +9,24 @@ dynamic: true
 ## Objective
 
 Discover **all ways to programmatically access experimental data** at this facility.
-Create `AccessMethod` graph nodes for agent discoverability and update infrastructure
+Create `DataAccess` graph nodes for agent discoverability and update infrastructure
 with operational setup details.
 
 ## Design Principle: Graph as Single Source of Truth
 
-AccessMethod nodes in the graph contain **everything** needed to load data:
+DataAccess nodes in the graph contain **everything** needed to load data:
 - Import statements
 - Module/environment setup commands
 - Connection and data retrieval templates
 - Test shots for validation
 
-**Why?** The target architecture has `imas-ambix` serving deterministic mappings 
-from facility signals → IMAS. These mappings must be self-contained and executable
-from the graph alone, without reading infrastructure files.
 
-Infrastructure YAML is for internal operational config (SSH hosts, paths) - 
-never for data access patterns that external tools need.
-
-{% if existing_access_methods %}
-## Reference: Existing AccessMethod Nodes
+{% if existing_data_accesss %}
+## Reference: Existing DataAccess Nodes
 
 Use these verified examples as templates:
 
-{% for method in existing_access_methods %}
+{% for method in existing_data_accesss %}
 ### {{ method.name }} ({{ method.facility }})
 
 | Field | Value |
@@ -56,7 +50,7 @@ Use these verified examples as templates:
 {% else %}
 ## No Existing Examples
 
-No AccessMethod nodes found in the graph. This will be the first documented
+No DataAccess nodes found in the graph. This will be the first documented
 facility - use the patterns in "Known Patterns by Data System" below as reference.
 {% endif %}
 
@@ -135,36 +129,36 @@ ssh {{ ssh_host | default('{facility}') }} "find /common /usr/local -name '*guid
 
 ### Create Graph Nodes (Self-Contained)
 
-#### AccessMethod Schema (from LinkML)
+#### DataAccess Schema (from LinkML)
 
 **Required Fields:**
 | Field | Description |
 |-------|-------------|
-{% for f in access_method_fields.required %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% for f in data_access_fields.required %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
 {% endfor %}
 
 **Environment Setup (makes nodes self-contained):**
 | Field | Description |
 |-------|-------------|
-{% for f in access_method_fields.environment %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% for f in data_access_fields.environment %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
 {% endfor %}
 
 **Code Templates:**
 | Field | Description |
 |-------|-------------|
-{% for f in access_method_fields.templates %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% for f in data_access_fields.templates %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
 {% endfor %}
 
 **Validation:**
 | Field | Description |
 |-------|-------------|
-{% for f in access_method_fields.validation %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
+{% for f in data_access_fields.validation %}| `{{ f.name }}` | {{ f.description | truncate(80) }} |
 {% endfor %}
 
-Each AccessMethod must contain **all information** needed to execute data retrieval:
+Each DataAccess must contain **all information** needed to execute data retrieval:
 
 ```python
-mcp_codex_add_to_graph(node_type="AccessMethod", data=[
+mcp_codex_add_to_graph(node_type="DataAccess", data=[
     {
         "id": "{{ facility | default('{facility}') }}:{method_type}:{variant}",
         "facility_id": "{{ facility | default('{facility}') }}",
@@ -197,7 +191,7 @@ mcp_codex_add_to_graph(node_type="AccessMethod", data=[
 ```
 
 **Critical:** The `setup_commands` field must include module loads - this is what
-makes the AccessMethod self-contained and usable by imas-ambix mappings.
+makes the DataAccess self-contained and usable by imas-ambix mappings.
 
 ## Known Patterns by Data System
 
@@ -270,7 +264,7 @@ data = client.get('{signal}', {shot})
 | **Data Access Discovery** | Full method templates | Create self-contained graph nodes |
 
 **Important:** Infrastructure is for internal SSH/operational config only.
-All data access patterns go into AccessMethod graph nodes so that external tools
+All data access patterns go into DataAccess graph nodes so that external tools
 (like imas-ambix) can query and execute them without reading our config files.
 
 Add an exploration note after completion:
@@ -286,6 +280,6 @@ mcp_codex_add_exploration_note(
 
 - [ ] All language bindings discovered (Python, MATLAB, IDL, Fortran, CLI)
 - [ ] Each method tested with a valid shot
-- [ ] AccessMethod nodes created with **complete** setup_commands
+- [ ] DataAccess nodes created with **complete** setup_commands
 - [ ] Documentation URLs recorded in nodes
 - [ ] Exploration notes added

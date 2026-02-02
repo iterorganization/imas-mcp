@@ -249,9 +249,9 @@ def get_schema_context() -> dict[str, Any]:
         if p["value"] in ("container", "archive", "build_artifact", "system")
     ]
 
-    # Get AccessMethod slots grouped by purpose
-    access_method_slots = schema.get_all_slots("AccessMethod")
-    access_method_fields = {
+    # Get DataAccess slots grouped by purpose
+    data_access_slots = schema.get_all_slots("DataAccess")
+    data_access_fields = {
         "required": [],
         "environment": [],
         "templates": [],
@@ -280,7 +280,7 @@ def get_schema_context() -> dict[str, Any]:
     }
     doc_fields = {"name", "documentation_url", "documentation_local", "output_format"}
 
-    for slot_name, slot_info in access_method_slots.items():
+    for slot_name, slot_info in data_access_slots.items():
         field_info = {
             "name": slot_name,
             "description": slot_info.get("description", ""),
@@ -288,22 +288,22 @@ def get_schema_context() -> dict[str, Any]:
             "type": slot_info.get("type", "string"),
         }
         if slot_name in required_fields:
-            access_method_fields["required"].append(field_info)
+            data_access_fields["required"].append(field_info)
         elif slot_name in env_fields:
-            access_method_fields["environment"].append(field_info)
+            data_access_fields["environment"].append(field_info)
         elif slot_name in template_fields:
-            access_method_fields["templates"].append(field_info)
+            data_access_fields["templates"].append(field_info)
         elif slot_name in validation_fields:
-            access_method_fields["validation"].append(field_info)
+            data_access_fields["validation"].append(field_info)
         elif slot_name in doc_fields:
-            access_method_fields["documentation"].append(field_info)
+            data_access_fields["documentation"].append(field_info)
 
     return {
         "discovery_categories": discovery_categories,
         "path_purposes": path_purposes,
         "score_dimensions": score_dimensions,
-        # AccessMethod schema for data_access prompt
-        "access_method_fields": access_method_fields,
+        # DataAccess schema for data_access prompt
+        "data_access_fields": data_access_fields,
         # Grouped path purposes for cleaner template organization
         "path_purposes_code": code_purposes,
         "path_purposes_data": data_purposes,
@@ -329,15 +329,15 @@ def get_schema_context() -> dict[str, Any]:
     }
 
 
-def get_access_methods_context() -> dict[str, Any]:
-    """Get existing AccessMethod nodes from the graph for prompt context.
+def get_data_accesss_context() -> dict[str, Any]:
+    """Get existing DataAccess nodes from the graph for prompt context.
 
-    Queries the graph for all AccessMethod nodes and returns them in a format
+    Queries the graph for all DataAccess nodes and returns them in a format
     suitable for Jinja2 templates. Used by discovery/data_access prompt to
     provide working examples from other facilities.
 
     Returns:
-        Dict with 'existing_access_methods' list containing node properties.
+        Dict with 'existing_data_accesss' list containing node properties.
     """
     try:
         from imas_codex.graph import GraphClient
@@ -345,7 +345,7 @@ def get_access_methods_context() -> dict[str, Any]:
         with GraphClient() as client:
             # Query existing methods with key fields for examples
             result = client.query("""
-                MATCH (m:AccessMethod)-[:FACILITY_ID]->(f:Facility)
+                MATCH (m:DataAccess)-[:FACILITY_ID]->(f:Facility)
                 RETURN m.id AS id,
                        m.name AS name,
                        f.id AS facility,
@@ -372,11 +372,11 @@ def get_access_methods_context() -> dict[str, Any]:
                     }
                 )
 
-            return {"existing_access_methods": methods}
+            return {"existing_data_accesss": methods}
 
     except Exception:
         # Graph not available - return empty context
-        return {"existing_access_methods": []}
+        return {"existing_data_accesss": []}
 
 
 def _get_jinja_env(prompts_dir: Path) -> Environment:
@@ -437,7 +437,7 @@ def render_prompt(
 
     # Add prompt-specific context
     if name == "discovery/data_access":
-        full_context.update(get_access_methods_context())
+        full_context.update(get_data_accesss_context())
 
     if context:
         full_context.update(context)
