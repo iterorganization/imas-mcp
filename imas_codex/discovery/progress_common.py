@@ -265,6 +265,26 @@ class ProgressConfig:
 
 
 # =============================================================================
+# Base Progress State
+# =============================================================================
+
+
+@dataclass
+class BaseProgressState:
+    """Base class for domain-specific progress states.
+
+    Provides common timing functionality. Extend this for paths, wiki, etc.
+    """
+
+    start_time: float = field(default_factory=time.time)
+
+    @property
+    def elapsed(self) -> float:
+        """Seconds since start."""
+        return time.time() - self.start_time
+
+
+# =============================================================================
 # Worker Row Configuration
 # =============================================================================
 
