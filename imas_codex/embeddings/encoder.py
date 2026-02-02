@@ -114,12 +114,20 @@ class Encoder:
         return model.encode(texts, **encode_kwargs)
 
     def _check_remote_available(self) -> bool:
-        """Check if remote embedding server is available."""
+        """Check if remote embedding server is available and serves the expected model."""
         if self._remote_available is None and self._remote_client:
             self._remote_available = self._remote_client.is_available()
             if self._remote_available:
                 info = self._remote_client.get_info()
                 if info:
+                    # Validate that remote model matches expected model
+                    expected_model = self.config.model_name
+                    if expected_model and info.model != expected_model:
+                        self.logger.warning(
+                            f"Remote embedder model mismatch: "
+                            f"expected '{expected_model}', got '{info.model}'. "
+                            "Using remote anyway (dimension: remote may differ)."
+                        )
                     self.logger.info(
                         f"Using remote embedder: {info.model} on {info.device}"
                     )
