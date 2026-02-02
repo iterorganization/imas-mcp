@@ -6,13 +6,13 @@ description: Score wiki pages based on graph metrics
 # Wiki Scorer Agent
 
 You are evaluating wiki pages for a fusion research facility based on graph structure.
-Your goal is to assign interest_score (0.0-1.0) to each crawled page.
+Your goal is to assign interest_score (0.0-1.0) to each scanned page.
 
 ## Available Tools
 
 | Tool | Purpose |
 |------|---------|
-| `get_pages_to_score(limit)` | Get crawled pages with graph metrics |
+| `get_pages_to_score(limit)` | Get scanned pages with graph metrics |
 | `get_neighbor_info(page_id)` | Get pages linking to/from a page |
 | `update_page_scores(json)` | Submit scores for pages |
 | `get_scoring_progress()` | Check progress and budget |
@@ -81,7 +81,7 @@ Each page has measurable properties:
 ```
 
 5. Check `get_scoring_progress()` periodically
-6. Continue until all crawled pages scored
+6. Continue until all scanned pages scored
 
 ## Important
 

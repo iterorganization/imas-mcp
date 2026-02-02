@@ -1,10 +1,10 @@
 """Wiki scout agent for discovering and evaluating wiki pages.
 
-Uses a CodeAgent to intelligently crawl wiki pages, evaluate their value,
+Uses a CodeAgent to intelligently scan wiki pages, evaluate their value,
 and queue high-value pages for ingestion while skipping low-value content.
 
 The agent has tools to:
-- Crawl wiki links from a starting page
+- Scan wiki links from a starting page
 - Fetch lightweight previews with pattern extraction
 - Queue pages with graph relationships
 - Monitor discovery budget
@@ -169,21 +169,21 @@ def _get_budget() -> DiscoveryBudget:
 # =============================================================================
 
 
-def _crawl_wiki_links(
+def _scan_wiki_links(
     start_page: str,
     depth: int = 1,
     facility: str = "tcv",
     max_pages: int = 200,
 ) -> str:
     """
-    Crawl wiki links starting from a page.
+    Scan wiki links starting from a page.
 
     Discovers internal wiki page names by following links.
     Filters out special pages (File:, Category:, Special:, etc.)
 
     Args:
         start_page: Page name to start from (e.g., "Portal:TCV", "Diagnostics")
-        depth: How many levels deep to crawl (1 = direct links only)
+        depth: How many levels deep to scan (1 = direct links only)
         facility: SSH host alias
         max_pages: Maximum pages to discover (default: 200)
 
@@ -195,16 +195,16 @@ def _crawl_wiki_links(
     budget = _get_budget()
 
     discovered: set[str] = set()
-    to_crawl = [(start_page, 0)]
-    crawled: set[str] = set()
+    to_scan = [(start_page, 0)]
+    scanned: set[str] = set()
 
-    while to_crawl and len(discovered) < max_pages:
-        page, current_depth = to_crawl.pop(0)
+    while to_scan and len(discovered) < max_pages:
+        page, current_depth = to_scan.pop(0)
 
-        if page in crawled or current_depth > depth:
+        if page in scanned or current_depth > depth:
             continue
 
-        crawled.add(page)
+        scanned.add(page)
         budget.pages_explored += 1
 
         # Extract links via SSH curl + grep
@@ -234,14 +234,14 @@ def _crawl_wiki_links(
                     ):
                         discovered.add(link)
                         if current_depth < depth:
-                            to_crawl.append((link, current_depth + 1))
+                            to_scan.append((link, current_depth + 1))
 
         except subprocess.TimeoutExpired:
-            logger.warning("Timeout crawling %s", page)
+            logger.warning("Timeout scanning %s", page)
             continue
 
-    logger.info("Crawled %d pages, discovered %d links", len(crawled), len(discovered))
-    return json.dumps({"pages": sorted(discovered), "crawled": len(crawled)})
+    logger.info("Scanned %d pages, discovered %d links", len(scanned), len(discovered))
+    return json.dumps({"pages": sorted(discovered), "scanned": len(scanned)})
 
 
 def _fetch_single_preview(page_name: str, facility: str = "tcv") -> dict:
@@ -685,16 +685,16 @@ def get_wiki_scout_tools(facility: str = "tcv") -> list[Tool]:
         def forward(self) -> str:
             return _get_wiki_schema()
 
-    class CrawlWikiLinksTool(Tool):
-        """Discover wiki page names by crawling links."""
+    class ScanWikiLinksTool(Tool):
+        """Discover wiki page names by scanning links."""
 
-        name = "crawl_wiki_links"
-        description = "Discover wiki page names by crawling links from a starting page. Returns list of page names found."
+        name = "scan_wiki_links"
+        description = "Discover wiki page names by scanning links from a starting page. Returns list of page names found."
         inputs = {
             "start_page": {"type": "string", "description": "Page name to start from"},
             "depth": {
                 "type": "integer",
-                "description": "Crawl depth (default 1)",
+                "description": "Scan depth (default 1)",
                 "nullable": True,
             },
             "max_pages": {
@@ -706,7 +706,7 @@ def get_wiki_scout_tools(facility: str = "tcv") -> list[Tool]:
         output_type = "string"
 
         def forward(self, start_page: str, depth: int = 1, max_pages: int = 100) -> str:
-            return _crawl_wiki_links(start_page, depth, facility, max_pages)
+            return _scan_wiki_links(start_page, depth, facility, max_pages)
 
     class SearchWikiPatternsTool(Tool):
         """Search pages for patterns (regex)."""
@@ -773,7 +773,7 @@ def get_wiki_scout_tools(facility: str = "tcv") -> list[Tool]:
 
     return [
         GetWikiSchemaTool(),
-        CrawlWikiLinksTool(),
+        ScanWikiLinksTool(),
         SearchWikiPatternsTool(),
         FetchWikiPreviewsTool(),
         QueueWikiPagesTool(),
@@ -836,7 +836,7 @@ async def run_wiki_discovery(
 
     The agent will:
     1. Start from the given portal page
-    2. Discover wiki pages by crawling links
+    2. Discover wiki pages by scanning links
     3. Fetch previews and evaluate page value
     4. Queue high-value pages, skip low-value ones
     5. Continue until budget exhausted or no new pages
@@ -862,12 +862,12 @@ Start from: {start_page}
 Cost budget: ${cost_limit_usd:.2f}
 
 Instructions:
-1. Crawl links from {start_page} with depth=1 to get initial pages
+1. Scan links from {start_page} with depth=1 to get initial pages
 2. Fetch previews for all discovered pages (batch them efficiently)
 3. Evaluate each page based on preview data
 4. Queue high-value pages (diagnostics, signals, codes) with interest_score >= 0.5
 5. Skip low-value pages (events, meetings, stubs) with appropriate skip_reason
-6. If you find portal-like pages, crawl those too for more content
+6. If you find portal-like pages, scan those too for more content
 7. Check budget periodically and stop when exhausted
 8. Report final statistics when done
 

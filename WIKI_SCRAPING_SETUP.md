@@ -79,13 +79,13 @@ uv run imas-codex wiki sites tcv
 ### Discover Wiki Content
 
 ```bash
-# Full discovery pipeline (crawl + score)
+# Full discovery pipeline (scan + score)
 uv run imas-codex wiki discover iter
 
-# Crawl only (no LLM scoring)
-uv run imas-codex wiki crawl iter
+# Scan only (no LLM scoring)
+uv run imas-codex wiki scan iter
 
-# Score crawled pages
+# Score scanned pages
 uv run imas-codex wiki score iter --cost-limit 20.0
 
 # Ingest high-score pages

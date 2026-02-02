@@ -66,7 +66,7 @@ discovered → listing → listed → scoring → scored
 
 **WikiPageStatus** (wiki ingestion):
 ```
-crawled → scored → ingested
+scanned → scored → ingested
                 ↘ skipped
                 ↘ failed
 ```
@@ -117,7 +117,7 @@ All discovery pipelines share a common lifecycle with domain-specific completion
 | | skipped | skipped | ✓ Same |
 | | excluded | filtered | Rename: pattern-matched exclusion |
 | | stale | stale | ✓ Same |
-| **Wiki** | crawled | discovered | Rename: link found |
+| **Wiki** | scanned | discovered | Renamed: link found |
 | | scored | scored | ✓ Same |
 | | ingested | ingested | Domain-specific completion |
 | | skipped | skipped | ✓ Same |
@@ -134,12 +134,12 @@ After analysis, **keep separate enums** but with **shared terminology** where ph
 
 **Rationale**:
 1. Paths have multi-phase discovery (scan → score → expand) not in other domains
-2. Wiki has "crawled" phase that paths don't have
+2. Wiki has "scanned" phase that paths don't have
 3. Type safety: `WikiPage.status` should only accept wiki-valid states
 4. Single enum would have 20+ values, confusing which apply where
 
 **Action**: Align terminology, don't merge enums:
-- All use `discovered` for initial state (wiki changes `crawled` → `discovered`)
+- All use `discovered` for initial state (wiki changes `scanned` → `discovered`)
 - All use `skipped` (not `excluded`)
 - All use `failed` for errors
 - All use `stale` for refresh candidates
@@ -181,7 +181,7 @@ Current `DiscoveryStatus` is poorly named - it only applies to path scanning.
 
 This enum duplicates `PathStatus`. Recommend removal.
 
-### WikiPageStatus Rename: crawled → discovered
+### WikiPageStatus Rename: scanned → discovered
 
 Align with other domains:
 ```yaml
@@ -200,7 +200,7 @@ WikiPageStatus:
 |---------|----------|-------|
 | `PathPurpose` | `ResourcePurpose` | Move to common.yaml |
 | `DiscoveryStatus` | DELETE | Merge into PathStatus |
-| `WikiPageStatus.crawled` | `WikiPageStatus.discovered` | Rename value |
+| `WikiPageStatus.scanned` | `WikiPageStatus.discovered` | Rename value |
 | `WikiSiteType` | DELETE | Already deprecated, use DocSourceType |
 
 ---
@@ -218,7 +218,7 @@ imas_codex/
 │   └── parallel.py      # Async coordination
 │
 ├── wiki/               # Wiki discovery
-│   ├── discovery.py    # Crawl + score
+│   ├── discovery.py    # Scan + score
 │   ├── scraper.py      # HTML fetching
 │   ├── pipeline.py     # Chunking + embedding
 │   └── confluence.py   # REST API client
@@ -236,7 +236,7 @@ imas_codex/
 │   │   └── frontier.py
 │   │
 │   ├── docs/                # NEW: Unified docs discovery
-│   │   ├── crawler.py       # Abstract + MediaWiki/Confluence impls
+│   │   ├── scanner.py       # Abstract + MediaWiki/Confluence impls
 │   │   ├── scorer.py        # Shared scoring logic
 │   │   └── fetcher.py       # Content fetching
 │   │
@@ -322,7 +322,7 @@ class ArtifactProcessor(ABC):
 
 ```bash
 imas-codex wiki discover tcv        # Full pipeline
-imas-codex wiki crawl tcv           # Link extraction
+imas-codex wiki scan tcv           # Link extraction
 imas-codex wiki score tcv           # LLM evaluation
 imas-codex wiki ingest tcv          # Content processing
 imas-codex wiki status tcv          # Progress
@@ -335,8 +335,8 @@ imas-codex wiki credentials set ... # Auth management
 ```bash
 # Discovery
 imas-codex discover docs tcv                 # Full pipeline
-imas-codex discover docs tcv --crawl-only    # Link extraction
-imas-codex discover docs tcv --score-only    # LLM evaluation (no crawl)
+imas-codex discover docs tcv --scan-only    # Link extraction
+imas-codex discover docs tcv --score-only    # LLM evaluation (no scan)
 imas-codex discover docs tcv --source wiki   # Specific source type
 
 # Source management (moved from wiki sites)
@@ -364,7 +364,7 @@ imas-codex wiki credentials set iter-confluence
 | Phase | Task | Effort | Dependency |
 |-------|------|--------|------------|
 | 1a | Rename `PathPurpose` → `ResourcePurpose` in schema | S | None |
-| 1b | Rename `WikiPageStatus.crawled` → `discovered` | S | None |
+| 1b | Rename `WikiPageStatus.scanned` → `discovered` | S | None |
 | 1c | Delete `DiscoveryStatus`, `WikiSiteType` enums | S | None |
 | 2 | Create `discovery/base.py` with abstract classes | M | None |
 | 3 | Move `wiki/` → `discovery/docs/` | M | 2 |
@@ -393,7 +393,7 @@ For existing graphs, add migration Cypher:
 
 ```cypher
 // Rename WikiPage.status from 'crawled' to 'discovered'
-MATCH (wp:WikiPage {status: 'crawled'})
+MATCH (wp:WikiPage {status: 'scanned'})
 SET wp.status = 'discovered'
 
 // Rename FacilityPath.path_purpose field uses no change needed (values same)

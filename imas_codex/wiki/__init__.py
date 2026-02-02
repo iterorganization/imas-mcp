@@ -2,7 +2,7 @@
 
 Provides a three-phase pipeline for discovering and ingesting wiki content:
 
-Phase 1 - CRAWL: Fast link extraction, builds wiki graph structure
+Phase 1 - SCAN: Fast link extraction, builds wiki graph structure
 Phase 2 - SCORE: Agent evaluates graph metrics, assigns interest scores
 Phase 3 - INGEST: Fetch content for high-score pages/artifacts, create chunks
 
@@ -16,7 +16,7 @@ Example:
         facility="tcv",
         cost_limit_usd=10.00,
     )
-    print(f"Crawled {stats['pages_crawled']} pages")
+    print(f"Scanned {stats['pages_scanned']} pages")
 """
 
 from .auth import CredentialManager, WikiSiteConfig, require_credentials
@@ -42,7 +42,7 @@ from .pipeline import (
     mark_wiki_page_status,
     persist_chunks_batch,
 )
-from .progress import CrawlProgressMonitor, WikiProgressMonitor
+from .progress import ScanProgressMonitor, WikiProgressMonitor
 from .scraper import (
     WikiPage,
     extract_conventions,
@@ -72,7 +72,7 @@ __all__ = [
     "WikiIngestionPipeline",
     "WikiPage",
     "WikiProgressMonitor",
-    "CrawlProgressMonitor",
+    "ScanProgressMonitor",
     # Extraction utilities
     "extract_conventions",
     "extract_imas_paths",

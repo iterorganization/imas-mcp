@@ -440,9 +440,9 @@ def discover_wiki_pages(
     max_pages: int = 100,
     rate_limit: float = 0.5,
 ) -> list[str]:
-    """Discover wiki pages by crawling links.
+    """Discover wiki pages by scanning links.
 
-    Graph-aware crawler that skips already-discovered pages and continues
+    Graph-aware scanner that skips already-discovered pages and continues
     finding new pages. Subsequent runs will explore deeper into the wiki
     beyond the previous limit.
 
@@ -450,7 +450,7 @@ def discover_wiki_pages(
     Filters out special pages (File:, Category:, Special:, etc.)
 
     Args:
-        start_page: Page to start crawling from
+        start_page: Page to start scanning from
         facility: SSH host alias
         max_pages: Maximum NEW pages to discover (skips existing)
         rate_limit: Minimum seconds between requests
@@ -477,8 +477,8 @@ def discover_wiki_pages(
 
     discovered: set[str] = already_discovered.copy()
     new_pages: set[str] = set()  # Track only newly found pages
-    to_crawl = [start_page]
-    crawled: set[str] = set()
+    to_scan = [start_page]
+    scanned: set[str] = set()
 
     # Priority pages to ensure we get the important ones
     priority_pages = [
@@ -497,12 +497,12 @@ def discover_wiki_pages(
             discovered.add(page)
             new_pages.add(page)
 
-    while to_crawl and len(new_pages) < max_pages:
-        page = to_crawl.pop(0)
-        if page in crawled:
+    while to_scan and len(new_pages) < max_pages:
+        page = to_scan.pop(0)
+        if page in scanned:
             continue
 
-        crawled.add(page)
+        scanned.add(page)
 
         # Extract links via SSH
         cmd = f"curl -sk '{WIKI_BASE_URL}/{page}' | grep -oP 'href=\"/wiki/[^\"]+\"' | sed 's|href=\"/wiki/||;s|\"||g' | sort -u"
@@ -528,7 +528,7 @@ def discover_wiki_pages(
                     ):
                         discovered.add(link)
                         new_pages.add(link)
-                        to_crawl.append(link)
+                        to_scan.append(link)
 
         except subprocess.TimeoutExpired:
             logger.warning("Timeout discovering from %s", page)

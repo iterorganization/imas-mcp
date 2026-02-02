@@ -262,18 +262,18 @@ flowchart TB
     subgraph ITER["ITER (SDCC)"]
         subgraph BUILD["imas-codex"]
             direction LR
-            CRAWL["Crawl & Ingest"]
+            SCAN["Scan & Ingest"]
             SCORE["Score"]
         end
         GRAPH[("Fusion Knowledge Graph
 (private)")]
     end
 
-    WIKI -- "pages" --> CRAWL
-    CRAWL -- "SSH" --> WIKI
+    WIKI -- "pages" --> SCAN
+    SCAN -- "SSH" --> WIKI
     L -- "responses" --> SCORE
     SCORE -- "prompts" --> L
-    CRAWL --> GRAPH
+    SCAN --> GRAPH
     SCORE --> GRAPH
 
     style TOP fill:none,stroke:none
@@ -285,11 +285,11 @@ flowchart TB
 ```
 
 **Pipeline stages:**
-1. **Crawl** — Follow links from portal via `curl -sk`, extract page metadata
+1. **Scan** — Follow links from portal via `curl -sk`, extract page metadata
 2. **Score** — LLM-assisted relevance scoring (ReAct agent evaluates each page)
 3. **Ingest** — Fetch content, chunk text, generate embeddings with **local SentenceTransformer**, link entities with regex patterns
 
-**LLM Usage:** **Score phase only** — Crawl and Ingest phases use no LLM. The Score phase uses a ReAct agent to evaluate page relevance and assign interest scores, allowing selective ingestion of high-value content.
+**LLM Usage:** **Score phase only** — Scan and Ingest phases use no LLM. The Score phase uses a ReAct agent to evaluate page relevance and assign interest scores, allowing selective ingestion of high-value content.
 
 **Extracted entities:**
 | Entity Type | Pattern | Example (EPFL/TCV) |
@@ -309,7 +309,7 @@ flowchart TB
 | | Ingest & Embed | ❌ No | tree-sitter + local SentenceTransformer |
 | **MDSplus Tree Walking** | Walk & Extract | ❌ No | SSH + MDSplus Python |
 | | Enrich (optional) | ✅ Yes | OpenRouter LLM (ZDR) |
-| **Wiki Ingestion** | Crawl | ❌ No | SSH + curl |
+| **Wiki Ingestion** | Scan | ❌ No | SSH + curl |
 | | Score | ✅ Yes | OpenRouter ReAct Agent (ZDR) |
 | | Ingest & Embed | ❌ No | Local SentenceTransformer |
 

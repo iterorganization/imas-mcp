@@ -13,7 +13,7 @@ Your goal is to find high-value technical documentation and skip administrative/
 | Tool | Speed | Use For |
 |------|-------|---------|
 | `get_wiki_schema()` | Instant | Get valid JSON schema for queue_wiki_pages - CALL FIRST |
-| `crawl_wiki_links(start_page, depth, max_pages)` | Fast | Discover page names from portals |
+| `scan_wiki_links(start_page, depth, max_pages)` | Fast | Discover page names from portals |
 | `search_wiki_patterns(page_names, patterns)` | Fast | Search pages for MDSplus paths, diagnostics |
 | `fetch_wiki_previews(page_names)` | Slow | Detailed analysis of promising pages only |
 | `queue_wiki_pages(evaluations_json)` | Fast | Commit evaluations to graph |
@@ -22,7 +22,7 @@ Your goal is to find high-value technical documentation and skip administrative/
 ## Recommended Workflow
 
 1. **Get schema** - Call `get_wiki_schema()` to get valid JSON structure
-2. **Crawl** portal pages to get page names
+2. **Scan** portal pages to get page names
 3. **Search patterns** across all pages using `search_wiki_patterns`
    - Use patterns for MDSplus paths (e.g., `results::`, `magnetics::`)
    - Use patterns for diagnostic/code names (e.g., `thomson`, `cxrs`, `ece`)

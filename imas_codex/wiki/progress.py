@@ -342,10 +342,10 @@ def set_current_monitor(monitor: WikiProgressMonitor | None) -> None:
 
 
 @dataclass
-class CrawlStats:
-    """Statistics for wiki crawl progress."""
+class ScanStats:
+    """Statistics for wiki scan progress."""
 
-    pages_crawled: int = 0
+    pages_scanned: int = 0
     pages_skipped: int = 0
     artifacts_found: int = 0
     links_discovered: int = 0
@@ -375,39 +375,39 @@ class CrawlStats:
 
     @property
     def pages_per_second(self) -> float:
-        if self.elapsed_seconds > 0 and self.pages_crawled > 0:
-            return self.pages_crawled / self.elapsed_seconds
+        if self.elapsed_seconds > 0 and self.pages_scanned > 0:
+            return self.pages_scanned / self.elapsed_seconds
         return 0.0
 
     @property
     def progress_pct(self) -> float:
-        """Dynamic progress: crawled / (crawled + remaining frontier)."""
-        total = self.pages_crawled + self.frontier_size
+        """Dynamic progress: scanned / (scanned + remaining frontier)."""
+        total = self.pages_scanned + self.frontier_size
         if total > 0:
-            return 100 * self.pages_crawled / total
+            return 100 * self.pages_scanned / total
         return 0.0
 
 
-class CrawlProgressMonitor:
-    """Progress monitor for wiki crawl with clean Rich display.
+class ScanProgressMonitor:
+    """Progress monitor for wiki scan with clean Rich display.
 
     Displays running totals integrated into the progress bar,
     avoiding verbose output corruption. Progress percentage is
-    dynamic: crawled / (crawled + frontier).
+    dynamic: scanned / (scanned + frontier).
 
     Example:
-        with CrawlProgressMonitor() as monitor:
-            for page, links in crawl_generator():
+        with ScanProgressMonitor() as monitor:
+            for page, links in scan_generator():
                 monitor.update(page, links_found=len(links), depth=depth)
     """
 
     def __init__(self, facility: str = "wiki"):
-        self.stats = CrawlStats()
+        self.stats = ScanStats()
         self.facility = facility
         self._live = None
         self._console = None
 
-    def __enter__(self) -> "CrawlProgressMonitor":
+    def __enter__(self) -> "ScanProgressMonitor":
         self.start()
         return self
 
@@ -436,10 +436,10 @@ class CrawlProgressMonitor:
         depth: int = 0,
         skipped: bool = False,
     ) -> None:
-        """Update crawl progress.
+        """Update scan progress.
 
         Args:
-            page: Current page being crawled
+            page: Current page being scanned
             links_found: New page links discovered from this page
             artifacts_found: New artifact links discovered from this page
             frontier_size: Current frontier queue size
@@ -451,7 +451,7 @@ class CrawlProgressMonitor:
         if skipped:
             self.stats.pages_skipped += 1
         else:
-            self.stats.pages_crawled += 1
+            self.stats.pages_scanned += 1
         self.stats.links_discovered += links_found
         self.stats.artifacts_found += artifacts_found
         self.stats.frontier_size = frontier_size
@@ -467,20 +467,20 @@ class CrawlProgressMonitor:
         from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
         from rich.table import Table
 
-        # Dynamic total: crawled + frontier remaining
-        total = self.stats.pages_crawled + self.stats.frontier_size
+        # Dynamic total: scanned + frontier remaining
+        total = self.stats.pages_scanned + self.stats.frontier_size
         pct = self.stats.progress_pct
 
         # Progress bar with percentage
         progress = Progress(
             SpinnerColumn(),
-            TextColumn(f"[bold cyan]Crawling {self.facility}"),
+            TextColumn(f"[bold cyan]Scanning {self.facility}"),
             BarColumn(bar_width=40),
             TextColumn(f"[green]{pct:5.1f}%[/]"),
             expand=False,
         )
         task = progress.add_task("", total=max(1, total))
-        progress.update(task, completed=self.stats.pages_crawled)
+        progress.update(task, completed=self.stats.pages_scanned)
 
         # Stats table - compact 2-column layout
         stats = Table.grid(padding=(0, 2))
@@ -490,8 +490,8 @@ class CrawlProgressMonitor:
         stats.add_column(justify="right", width=8)
 
         stats.add_row(
-            "Crawled:",
-            f"[green]{self.stats.pages_crawled}[/]",
+            "Scanned:",
+            f"[green]{self.stats.pages_scanned}[/]",
             "Frontier:",
             f"[yellow]{self.stats.frontier_size}[/]",
         )
@@ -532,7 +532,7 @@ class CrawlProgressMonitor:
 
         return Group(progress, stats, current) if current else Group(progress, stats)
 
-    def finish(self) -> CrawlStats:
+    def finish(self) -> ScanStats:
         """Stop the live display and return final stats."""
         if self._live:
             self._live.stop()
@@ -544,7 +544,7 @@ class CrawlProgressMonitor:
             if self.stats.artifacts_found > 0:
                 artifacts_msg = f", [blue]{self.stats.artifacts_found}[/] artifacts"
             self._console.print(
-                f"\n[green]✓[/] Crawled [bold]{self.stats.pages_crawled}[/] pages"
+                f"\n[green]✓[/] Scanned [bold]{self.stats.pages_scanned}[/] pages"
                 f"{artifacts_msg} in [bold]{elapsed}[/]"
             )
 

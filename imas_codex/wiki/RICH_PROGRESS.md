@@ -6,36 +6,36 @@ This document tracks which CLI commands use Rich progress monitoring.
 
 | Command | Rich Progress | Progress Features |
 |---------|---------------|-------------------|
-| `wiki crawl` | ✅ Yes | Live progress bar with running totals (discovered, frontier, depth) |
+| `wiki scan` | ✅ Yes | Live progress bar with running totals (discovered, frontier, depth) |
 | `wiki ingest` | ✅ Yes | Multi-stage progress bars, live statistics panel, content preview with MDSplus paths |
-| `wiki discover` | ✅ Yes | Uses CrawlProgressMonitor for phase 1, standard progress for phase 2 |
+| `wiki discover` | ✅ Yes | Uses ScanProgressMonitor for phase 1, standard progress for phase 2 |
 | `wiki status` | ❌ No | Table output only |
 
 ## Implementation Details
 
-### `wiki crawl`
+### `wiki scan`
 
-Uses `CrawlProgressMonitor` with live updating display showing:
+Uses `ScanProgressMonitor` with live updating display showing:
 
-- **Progress Bar**: Dynamic percentage (crawled / (crawled + frontier))
+- **Progress Bar**: Dynamic percentage (scanned / (scanned + frontier))
 - **Statistics Grid** (compact 2-column layout):
-  - Crawled (pages processed) / Frontier (queue size)
+  - Scanned (pages processed) / Frontier (queue size)
   - Current depth / Max depth reached
   - Skipped pages / Processing rate
-- **Current Page**: Shows page being crawled
+- **Current Page**: Shows page being scanned
 
-Graph-driven: restarts resume from existing state. Already-crawled
+Graph-driven: restarts resume from existing state. Already-scanned
 pages are loaded from the graph; pending pages form the frontier.
 
 **Example output:**
 ```
-⠧ Crawling wiki ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  23.4%
-Crawled:           188    Frontier:         612
+⠧ Scanning wiki ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  23.4%
+Scanned:           188    Frontier:         612
 Depth:               6    Max depth:          6
 Rate:           4.2/s
 → Thomson_scattering
 
-✓ Crawled 188 pages in 45.2s
+✓ Scanned 188 pages in 45.2s
 ```
 
 ### `wiki ingest`
@@ -81,7 +81,7 @@ Potential Rich progress additions:
 
 ## Related Files
 
-- `imas_codex/wiki/progress.py` - WikiProgressMonitor and CrawlProgressMonitor implementations
+- `imas_codex/wiki/progress.py` - WikiProgressMonitor and ScanProgressMonitor implementations
 - `imas_codex/wiki/pipeline.py` - Pipeline that uses the monitor
-- `imas_codex/wiki/discovery.py` - Discovery pipeline using CrawlProgressMonitor
+- `imas_codex/wiki/discovery.py` - Discovery pipeline using ScanProgressMonitor
 - `imas_codex/cli.py` - CLI command implementations

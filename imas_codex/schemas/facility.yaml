@@ -401,9 +401,9 @@ enums:
     description: Lifecycle status of a wiki page through the discovery pipeline
     permissible_values:
       discovered:
-        description: Page found and links extracted during crawl phase
+        description: Page found and links extracted during scan phase
       skipped:
-        description: Page intentionally not crawled (external, filtered, or low priority)
+        description: Page intentionally not scanned (external, filtered, or low priority)
       scored:
         description: Page has been evaluated by scoring agent (interest_score set)
       ingested:
@@ -433,7 +433,7 @@ enums:
     description: Lifecycle status of a wiki artifact
     permissible_values:
       discovered:
-        description: Artifact link found during crawl phase
+        description: Artifact link found during scan phase
       skipped:
         description: Artifact intentionally not processed
       scored:
@@ -2136,8 +2136,8 @@ classes:
         description: Discovery status
         range: DocSourceStatus
         required: true
-      last_crawled:
-        description: When this source was last fully crawled
+      last_scanned:
+        description: When this source was last fully scanned
         range: datetime
       page_count:
         description: Total WikiPage nodes from this source
@@ -2161,12 +2161,12 @@ classes:
       Contains authoritative signal descriptions, conventions, and specs.
       
       Three-phase lifecycle:
-      1. CRAWL: Extract links, create nodes with status=crawled, build LINKS_TO graph
+      1. SCAN: Extract links, create nodes with status=scanned, build LINKS_TO graph
       2. SCORE: Agent evaluates graph metrics, assigns interest_score, updates status
       3. INGEST: Fetch content for high-score pages, create WikiChunks
       
       Relationships:
-      - LINKS_TO -> WikiPage (wiki link structure, created during crawl)
+      - LINKS_TO -> WikiPage (wiki link structure, created during scan)
       - FACILITY_ID -> Facility
       - MENTIONS_TREE_NODE -> TreeNode (created during ingest)
       - MENTIONS_DIAGNOSTIC -> Diagnostic
@@ -2196,11 +2196,11 @@ classes:
         description: Page title (extracted from wiki, may differ from page_name)
         required: true
       status:
-        description: Lifecycle status (crawled -> scored -> discovered/skipped -> ingested)
+        description: Lifecycle status (scanned -> scored -> discovered/skipped -> ingested)
         range: WikiPageStatus
         required: true
       
-      # Graph structure fields (computed during crawl)
+      # Graph structure fields (computed during scan)
       link_depth:
         description: Distance from portal page (0=portal, 1=direct link, etc.)
         range: integer
@@ -2261,7 +2261,7 @@ classes:
       
       # Discovery metadata
       discovered_at:
-        description: When this page was first crawled
+        description: When this page was first scanned
         range: datetime
       scored_at:
         description: When the agent assigned interest_score
@@ -2324,10 +2324,10 @@ classes:
 
   WikiArtifact:
     description: >-
-      A linked artifact (PDF, PowerPoint, image, etc.) discovered during wiki crawl.
+      A linked artifact (PDF, PowerPoint, image, etc.) discovered during wiki scan.
       Created during Phase 1 when links to non-wiki files are found.
       
-      These artifacts are NOT crawlable wiki pages - they are binary files.
+      These artifacts are NOT scannable wiki pages - they are binary files.
       The scoring phase (Phase 2) evaluates them based on:
       - Filename keywords (e.g., "ASTRA_manual", "IpB0signs")
       - in_degree: how many wiki pages link to this artifact
@@ -2363,7 +2363,7 @@ classes:
         range: WikiArtifactStatus
         required: true
       
-      # Graph metrics (computed during crawl)
+      # Graph metrics (computed during scan)
       in_degree:
         description: Number of wiki pages linking TO this artifact
         range: integer

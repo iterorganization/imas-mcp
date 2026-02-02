@@ -309,13 +309,13 @@ ReAct agents provide autonomous discovery and evaluation of remote resources usi
 Discover and evaluate wiki pages in three phases:
 
 ```bash
-# Full discovery (crawl + score in one command)
+# Full discovery (scan + score in one command)
 imas-codex wiki discover tcv
 
 # Or run phases separately for more control:
 
-# Phase 1: Fast link crawling (no LLM, builds graph structure)
-imas-codex wiki crawl tcv --max-pages 500
+# Phase 1: Fast link scanning (no LLM, builds graph structure)
+imas-codex wiki scan tcv --max-pages 500
 
 # Phase 2: Agent-based scoring (evaluates pages using graph metrics)
 imas-codex wiki score tcv -v  # -v for verbose agent reasoning
@@ -350,8 +350,8 @@ imas-codex wiki discover tcv --cost-limit 2.0
 **Graph-Driven Workflow:**
 
 The pipeline is graph-driven - it persists progress to Neo4j so you can:
-- Resume interrupted crawls
-- Run scoring on pages crawled in previous sessions
+- Resume interrupted scans
+- Run scoring on pages scanned in previous sessions
 - Track which pages are queued, scored, skipped, or ingested
 
 ### Docker Setup

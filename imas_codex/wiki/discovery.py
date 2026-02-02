@@ -1,7 +1,7 @@
 """Integrated wiki discovery pipeline.
 
 Complete workflow:
-1. CRAWL - Fast link extraction, builds wiki graph structure
+1. SCAN - Fast link extraction, builds wiki graph structure
 2. PREFETCH - Fetch page content and generate summaries
 3. SCORE - Content-aware LLM evaluation, assigns interest scores
 4. INGEST - Fetch and chunk high-score pages for search
@@ -16,7 +16,7 @@ Example:
     await discovery.run()
 
     # Or run individual steps
-    discovery.crawl()
+    discovery.scan()
     await discovery.prefetch()
     await discovery.score()
     await discovery.ingest()
@@ -57,7 +57,7 @@ from imas_codex.agentic.agents import (  # noqa: E402
 from imas_codex.agentic.prompt_loader import load_prompts  # noqa: E402
 from imas_codex.graph import GraphClient  # noqa: E402
 from imas_codex.wiki.progress import (  # noqa: E402
-    CrawlProgressMonitor,
+    ScanProgressMonitor,
     ScoreProgressMonitor,
 )
 
@@ -69,8 +69,8 @@ console = Console()
 class DiscoveryStats:
     """Statistics for discovery progress."""
 
-    # Phase 1: Crawl
-    pages_crawled: int = 0
+    # Phase 1: Scan
+    pages_scanned: int = 0
     artifacts_found: int = 0
     links_found: int = 0
     max_depth_reached: int = 0
@@ -258,7 +258,7 @@ class WikiDiscovery:
     """Integrated wiki discovery pipeline.
 
     Provides both unified workflow (run()) and individual steps
-    (crawl, prefetch, score, ingest) for flexible execution.
+    (scan, prefetch, score, ingest) for flexible execution.
     """
 
     # File extensions that indicate artifacts (not wiki pages)
@@ -311,13 +311,15 @@ class WikiDiscovery:
         verbose: bool = False,
         model: str | None = None,
         focus: str | None = None,
+        site_index: int = 0,
     ):
-        self.config = WikiConfig.from_facility(facility)
+        self.config = WikiConfig.from_facility(facility, site_index=site_index)
         self.stats = DiscoveryStats(cost_limit_usd=cost_limit_usd)
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.verbose = verbose
         self.focus = focus
+        self.site_index = site_index
         # Model override - if None, get_model_for_task("discovery") is used
         self._model = model
 
@@ -411,7 +413,7 @@ class WikiDiscovery:
             return self._confluence_page_titles[page_id]
 
         # Title not in cache, return page ID as fallback
-        # The title will be populated when the page is crawled
+        # The title will be populated when the page is scanned
         return page_id
 
     def _classify_link(self, link: str) -> tuple[str, str | None]:
@@ -435,7 +437,7 @@ class WikiDiscovery:
         return parts[-1] if parts else decoded
 
     # =========================================================================
-    # Phase 1: CRAWL - Fast link extraction
+    # Phase 1: SCAN - Fast link extraction
     # =========================================================================
 
     def _extract_links_from_page(
@@ -447,11 +449,13 @@ class WikiDiscovery:
 
         Returns:
             (page_links, artifact_links) where:
-            - page_links: list of page names to crawl
+            - page_links: list of page names to scan
             - artifact_links: list of (url_path, artifact_type) tuples
         """
         if self.config.site_type == "confluence":
             return self._extract_links_from_confluence_page(page_name)
+        elif self.config.site_type == "twiki":
+            return self._extract_links_from_twiki_page(page_name)
         else:
             return self._extract_links_from_mediawiki_page(page_name)
 
@@ -563,7 +567,7 @@ class WikiDiscovery:
 
         Returns:
             (page_links, artifact_links) where:
-            - page_links: list of page names to crawl
+            - page_links: list of page names to scan
             - artifact_links: list of (url_path, artifact_type) tuples
         """
         if not self.config.ssh_host:
@@ -637,10 +641,112 @@ class WikiDiscovery:
             logger.warning("Timeout extracting links from %s", page_name)
             return [], []
 
-    def _crawl_batch(
+    def _extract_links_from_twiki_page(
+        self, page_name: str
+    ) -> tuple[list[str], list[tuple[str, str]]]:
+        """Extract all internal wiki links from a TWiki page via SSH.
+
+        TWiki URLs have the format:
+        - /twiki/bin/view/Web/TopicName - View a topic
+        - /twiki/pub/Web/TopicName/attachment.pdf - Attachments
+
+        Args:
+            page_name: Topic name in format "Web/TopicName" (e.g., "Main/WebHome")
+
+        Returns:
+            (page_links, artifact_links) where:
+            - page_links: list of "Web/Topic" names to scan
+            - artifact_links: list of (url_path, artifact_type) tuples
+        """
+        if not self.config.ssh_host:
+            logger.error("SSH host not configured for TWiki site")
+            return [], []
+
+        # TWiki URLs use /twiki/bin/view/Web/TopicName
+        # Ensure page_name is in Web/Topic format
+        if "/" not in page_name:
+            page_name = f"Main/{page_name}"
+
+        url = f"{self.config.base_url}/bin/view/{page_name}"
+
+        # Extract links to other topics (/twiki/bin/view/Web/Topic)
+        # and attachments (/twiki/pub/Web/Topic/file.pdf)
+        cmd = f'''curl -s "{url}" | grep -oP 'href="[^"]*"' | sed 's/href="//;s/"$//' | sort -u'''
+
+        try:
+            result = subprocess.run(
+                ["ssh", self.config.ssh_host, cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode != 0:
+                logger.warning("TWiki scan failed for %s: %s", page_name, result.stderr)
+                return [], []
+
+            page_links: list[str] = []
+            artifact_links: list[tuple[str, str]] = []
+
+            # Patterns to exclude
+            excluded_patterns = (
+                "/twiki/bin/edit/",
+                "/twiki/bin/attach/",
+                "/twiki/bin/rdiff/",
+                "/twiki/bin/oops/",
+                "/twiki/bin/search/",
+                "/twiki/bin/rename/",
+                "/twiki/bin/changes/",
+                "/twiki/bin/compare/",
+                "?",  # Query strings
+                "#",  # Anchors
+                "mailto:",
+                "javascript:",
+            )
+
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                # Skip excluded patterns
+                if any(pat in line for pat in excluded_patterns):
+                    continue
+
+                # Extract topic links: /twiki/bin/view/Web/Topic
+                if "/twiki/bin/view/" in line:
+                    # Extract Web/Topic portion
+                    import re
+
+                    match = re.search(r"/twiki/bin/view/(\w+/\w+)", line)
+                    if match:
+                        topic = match.group(1)
+                        # Skip system topics
+                        if topic.startswith(("TWiki/", "Sandbox/")):
+                            continue
+                        if topic not in page_links:
+                            page_links.append(topic)
+
+                # Extract attachment links: /twiki/pub/Web/Topic/file.ext
+                elif "/twiki/pub/" in line:
+                    link_type, artifact_type = self._classify_link(line)
+                    if link_type == "artifact" and artifact_type:
+                        artifact_links.append((line, artifact_type))
+
+            logger.debug(
+                "TWiki %s: found %d topics, %d artifacts",
+                page_name,
+                len(page_links),
+                len(artifact_links),
+            )
+            return page_links, artifact_links
+
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout extracting TWiki links from %s", page_name)
+            return [], []
+
+    def _scan_batch(
         self, pages: list[str]
     ) -> dict[str, tuple[list[str], list[tuple[str, str]]]]:
-        """Crawl multiple pages in parallel.
+        """Scan multiple pages in parallel.
 
         Returns:
             Dict mapping page -> (page_links, artifact_links)
@@ -659,31 +765,31 @@ class WikiDiscovery:
                     page_links, artifact_links = future.result()
                     results[page] = (page_links, artifact_links)
                 except Exception as e:
-                    logger.warning("Error crawling %s: %s", page, e)
+                    logger.warning("Error scanning %s: %s", page, e)
                     results[page] = ([], [])
 
         return results
 
-    def crawl(self, monitor: CrawlProgressMonitor | None = None) -> int:
-        """Crawl wiki and build link structure.
+    def scan(self, monitor: ScanProgressMonitor | None = None) -> int:
+        """Scan wiki and build link structure.
 
-        Graph-driven: resumes from existing state. Already-crawled pages
+        Graph-driven: resumes from existing state. Already-scanned pages
         are loaded from the graph, and pending pages form the frontier.
 
         Creates WikiPage nodes for pages and WikiArtifact nodes for linked
         documents (PDFs, presentations, etc.).
 
         Args:
-            monitor: Optional CrawlProgressMonitor for Rich display.
+            monitor: Optional ScanProgressMonitor for Rich display.
 
         Returns:
-            Number of pages crawled in this session.
+            Number of pages scanned in this session.
         """
-        self.stats.phase = "CRAWL"
+        self.stats.phase = "SCAN"
         gc = self._get_gc()
 
         # Load existing state from graph
-        visited, frontier, depth_map = self._load_crawl_state(gc)
+        visited, frontier, depth_map = self._load_scan_state(gc)
         known_artifacts = self._load_known_artifacts(gc)
 
         # If no frontier and no visited, start from portal
@@ -700,25 +806,25 @@ class WikiDiscovery:
         all_page_links: dict[str, list[str]] = {}
         # Track all page->artifact links for relationship creation
         all_artifact_links: dict[str, list[str]] = {}
-        session_crawled = 0
+        session_scanned = 0
 
         # Update stats with loaded state
-        self.stats.pages_crawled = len(visited)
+        self.stats.pages_scanned = len(visited)
         self.stats.frontier_size = len(frontier)
         if depth_map:
             self.stats.max_depth_reached = max(depth_map.values())
 
-        # Crawl until frontier is empty or max_pages reached
+        # Scan until frontier is empty or max_pages reached
         while frontier:
-            if self.max_pages is not None and session_crawled >= self.max_pages:
+            if self.max_pages is not None and session_scanned >= self.max_pages:
                 break
 
             # Get next batch from frontier
             batch = list(frontier)[:50]
             frontier -= set(batch)
 
-            # Crawl batch - returns {page: (page_links, artifact_links)}
-            results = self._crawl_batch(batch)
+            # Scan batch - returns {page: (page_links, artifact_links)}
+            results = self._scan_batch(batch)
 
             for page, (page_links, artifact_links) in results.items():
                 if page in visited:
@@ -801,8 +907,8 @@ class WikiDiscovery:
                 if artifact_ids_for_page:
                     all_artifact_links[page] = artifact_ids_for_page
 
-                session_crawled += 1
-                self.stats.pages_crawled += 1
+                session_scanned += 1
+                self.stats.pages_scanned += 1
                 self.stats.links_found += total_out_degree
 
                 if monitor:
@@ -844,7 +950,7 @@ class WikiDiscovery:
             facility_id=self.config.facility_id,
         )
 
-        return session_crawled
+        return session_scanned
 
     def _load_known_artifacts(self, gc: GraphClient) -> set[str]:
         """Load known artifact IDs from graph."""
@@ -913,29 +1019,29 @@ class WikiDiscovery:
 
         return artifact_id
 
-    def _load_crawl_state(
+    def _load_scan_state(
         self, gc: GraphClient
     ) -> tuple[set[str], set[str], dict[str, int]]:
-        """Load crawl state from graph.
+        """Load scan state from graph.
 
         Returns:
             (visited, frontier, depth_map)
         """
-        # Get already-crawled pages
-        crawled_result = gc.query(
+        # Get already-scanned pages
+        scanned_result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility_id, status: 'discovered'})
             RETURN wp.title AS title, wp.link_depth AS depth
             """,
             facility_id=self.config.facility_id,
         )
-        visited = {r["title"] for r in crawled_result}
-        depth_map = {r["title"]: r["depth"] or 0 for r in crawled_result}
+        visited = {r["title"] for r in scanned_result}
+        depth_map = {r["title"]: r["depth"] or 0 for r in scanned_result}
 
-        # Get pending pages (discovered but not crawled)
+        # Get pending pages (discovered but not scanned)
         pending_result = gc.query(
             """
-            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'pending_crawl'})
+            MATCH (wp:WikiPage {facility_id: $facility_id, status: 'pending_scan'})
             RETURN wp.title AS title, wp.link_depth AS depth
             """,
             facility_id=self.config.facility_id,
@@ -955,7 +1061,7 @@ class WikiDiscovery:
             """
             MERGE (wp:WikiPage {id: $id})
             ON CREATE SET wp.title = $title,
-                          wp.status = 'pending_crawl',
+                          wp.status = 'pending_scan',
                           wp.facility_id = $facility_id,
                           wp.link_depth = $depth,
                           wp.discovered_at = datetime()
@@ -1024,10 +1130,10 @@ class WikiDiscovery:
         stats = self.stats
 
         class GetPagesToScoreTool(Tool):
-            """Get crawled pages that need scoring."""
+            """Get scanned pages that need scoring."""
 
             name = "get_pages_to_score"
-            description = "Get crawled pages needing scores. Returns id, title, depth, in_degree, out_degree."
+            description = "Get scanned pages needing scores. Returns id, title, depth, in_degree, out_degree."
             inputs = {
                 "limit": {
                     "type": "integer",
@@ -1886,16 +1992,16 @@ LOW SCORE (0.0-0.4):
     # =========================================================================
 
     async def run(self) -> DiscoveryStats:
-        """Run full discovery pipeline: crawl → prefetch → score → ingest."""
+        """Run full discovery pipeline: scan → prefetch → score → ingest."""
         console.print(f"[bold]Wiki Discovery: {self.config.facility_id}[/bold]")
         console.print(f"Portal: {self.config.portal_page}")
         console.print(f"Cost limit: ${self.stats.cost_limit_usd:.2f}")
         console.print()
 
-        # Step 1: Crawl
-        console.print("[cyan]Step 1: CRAWL[/cyan]")
-        with CrawlProgressMonitor() as monitor:
-            self.crawl(monitor)
+        # Step 1: Scan
+        console.print("[cyan]Step 1: SCAN[/cyan]")
+        with ScanProgressMonitor() as monitor:
+            self.scan(monitor)
 
         # Step 2: Prefetch content for content-aware scoring
         console.print("\n[cyan]Step 2: PREFETCH[/cyan]")
@@ -1934,7 +2040,7 @@ LOW SCORE (0.0-0.4):
             f"\n[green]Discovery complete in {self.stats.elapsed_formatted()}[/green]"
         )
         console.print(
-            f"Crawled: {self.stats.pages_crawled} pages, {self.stats.artifacts_found} artifacts | "
+            f"Scanned: {self.stats.pages_scanned} pages, {self.stats.artifacts_found} artifacts | "
             f"Scored: {self.stats.pages_scored + self.stats.artifacts_scored} total ({self.stats.high_score_count} high, {self.stats.low_score_count} low) | "
             f"Ingested: {self.stats.pages_ingested} pages, {self.stats.chunks_created} chunks"
         )
@@ -1957,17 +2063,23 @@ async def run_wiki_discovery(
     verbose: bool = False,
     model: str | None = None,
     focus: str | None = None,
+    site_index: int = 0,
+    scan_only: bool = False,
+    score_only: bool = False,
 ) -> dict:
     """Run wiki discovery and return stats as dict.
 
     Args:
-        facility: Facility ID (e.g., "tcv")
+        facility: Facility ID (e.g., "tcv", "jet", "jt60sa")
         cost_limit_usd: Maximum cost budget
-        max_pages: Maximum pages to crawl (None = unlimited)
+        max_pages: Maximum pages to scan (None = unlimited)
         max_depth: Maximum link depth from portal
         verbose: Enable verbose output
         model: LLM model override (None = use config)
         focus: Optional focus for discovery (e.g., "equilibrium")
+        site_index: Index of wiki site in facility config (default: 0)
+        scan_only: Only scan links, skip scoring and ingestion
+        score_only: Only score already-discovered pages, skip scan
 
     Returns:
         Dictionary with discovery statistics
@@ -1980,12 +2092,21 @@ async def run_wiki_discovery(
         verbose=verbose,
         model=model,
         focus=focus,
+        site_index=site_index,
     )
 
     try:
-        stats = await discovery.run()
+        if scan_only:
+            # Only scan phase
+            stats = discovery.scan()
+        elif score_only:
+            # Only score phase (assumes pages already scanned)
+            stats = await discovery.score()
+        else:
+            # Full pipeline
+            stats = await discovery.run()
         return {
-            "pages_crawled": stats.pages_crawled,
+            "pages_scanned": stats.pages_scanned,
             "artifacts_found": stats.artifacts_found,
             "links_found": stats.links_found,
             "pages_scored": stats.pages_scored,

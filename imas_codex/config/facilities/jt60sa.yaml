@@ -20,12 +20,22 @@ data_systems:
   - uda      # UDA available via modules
 
 # Wiki/documentation sites
+# JT60SA uses TWiki hosted internally on nakasvr23
+# Access requires SSH tunnel - content is mixed Japanese/English
 wiki_sites:
   - url: http://nakasvr23.iferc.org/twiki
     portal_page: Main/WebHome
     site_type: twiki
     auth_type: none
-    requires_ssh: true  # Access via SSH tunnel
+    requires_ssh: true
+    description: >-
+      JT-60SA TWiki - primary internal documentation.
+      Contains 6700+ topics in Japanese and English.
+      Accessible via SSH to nakasvr23.
+    filesystem_mirror: /JT60SA_TWIKI/data
+    languages:
+      - ja
+      - en
 
 # User info discovery configuration
 user_info:

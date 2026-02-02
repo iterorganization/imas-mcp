@@ -2728,7 +2728,7 @@ def wiki() -> None:
     \b
     OLD                              NEW
     imas-codex wiki discover         imas-codex discover docs
-    imas-codex wiki crawl            imas-codex discover docs (integrated)
+    imas-codex wiki scan             imas-codex discover docs (integrated)
     imas-codex wiki score            imas-codex discover docs (integrated)
     imas-codex wiki ingest           imas-codex ingest docs
     imas-codex wiki status           imas-codex discover status --domain docs
@@ -3028,7 +3028,7 @@ def wiki_sites(facility: str) -> None:
     "-n",
     default=None,
     type=int,
-    help="Maximum pages to crawl (default: unlimited)",
+    help="Maximum pages to scan (default: unlimited)",
 )
 @click.option(
     "--max-depth",
@@ -3061,7 +3061,7 @@ def wiki_discover(
     """Discover wiki pages using integrated pipeline.
 
     Runs complete workflow automatically:
-    1. CRAWL: Fast link extraction, builds wiki graph structure
+    1. SCAN: Fast link extraction, builds wiki graph structure
     2. PREFETCH: Fetch page content and generate summaries
     3. SCORE: Content-aware LLM evaluation, assigns interest scores
     4. INGEST: Fetch and chunk high-score pages for search
@@ -3075,7 +3075,7 @@ def wiki_discover(
         # Focus on equilibrium topics
         imas-codex wiki discover tcv -p "equilibrium reconstruction"
 
-        # Limit crawl scope
+        # Limit scan scope
         imas-codex wiki discover tcv -n 500 --max-depth 3
 
         # Verbose mode to see agent reasoning
@@ -3099,14 +3099,14 @@ def wiki_discover(
     )
 
 
-@wiki.command("crawl")
+@wiki.command("scan")
 @click.argument("facility")
 @click.option(
     "--max-pages",
     "-n",
     default=None,
     type=int,
-    help="Maximum pages to crawl this session (default: unlimited)",
+    help="Maximum pages to scan this session (default: unlimited)",
 )
 @click.option(
     "--max-depth",
@@ -3120,35 +3120,35 @@ def wiki_discover(
     is_flag=True,
     help="Show progress details",
 )
-def wiki_crawl(
+def wiki_scan(
     facility: str,
     max_pages: int | None,
     max_depth: int,
     verbose: bool,
 ) -> None:
-    """Crawl wiki links without scoring (no LLM).
+    """Scan wiki links without scoring (no LLM).
 
-    Fast breadth-first crawl that extracts links and builds
+    Fast breadth-first scan that extracts links and builds
     the wiki graph structure. Use 'wiki score' afterwards
     to evaluate pages.
 
-    Graph-driven: restarts resume from existing state. Already-crawled
+    Graph-driven: restarts resume from existing state. Already-scanned
     pages are skipped, pending pages form the frontier.
 
     Examples:
-        # Full crawl to completion
-        imas-codex wiki crawl tcv
+        # Full scan to completion
+        imas-codex wiki scan tcv
 
-        # Crawl up to 500 pages this session
-        imas-codex wiki crawl tcv -n 500
+        # Scan up to 500 pages this session
+        imas-codex wiki scan tcv -n 500
 
-        # Shallow crawl
-        imas-codex wiki crawl tcv --max-depth 3
+        # Shallow scan
+        imas-codex wiki scan tcv --max-depth 3
     """
     from rich.console import Console
 
     from imas_codex.wiki.discovery import WikiDiscovery
-    from imas_codex.wiki.progress import CrawlProgressMonitor
+    from imas_codex.wiki.progress import ScanProgressMonitor
 
     console = Console()
     discovery = WikiDiscovery(
@@ -3159,8 +3159,8 @@ def wiki_crawl(
     )
 
     try:
-        with CrawlProgressMonitor(facility=facility) as monitor:
-            discovery.crawl(monitor)
+        with ScanProgressMonitor(facility=facility) as monitor:
+            discovery.scan(monitor)
 
         console.print(f"  Links found: {discovery.stats.links_found}")
         console.print(f"  Max depth: {discovery.stats.max_depth_reached}")
@@ -3283,7 +3283,7 @@ def wiki_score(
     model: str | None,
     verbose: bool,
 ) -> None:
-    """Score crawled wiki pages using content-aware LLM evaluation.
+    """Score scanned wiki pages using content-aware LLM evaluation.
 
     Evaluates pages based on graph metrics (in_degree, out_degree,
     link_depth) AND content summaries (if prefetched) to assign
@@ -3297,7 +3297,7 @@ def wiki_score(
     is reached, or cost limit is exceeded.
 
     Examples:
-        # Score all crawled pages (up to $20 cost)
+        # Score all scanned pages (up to $20 cost)
         imas-codex wiki score tcv
 
         # Focus on equilibrium topics
@@ -3672,7 +3672,7 @@ def wiki_status(facility: str) -> None:
     queue_table.add_column("Status", style="cyan")
     queue_table.add_column("Count", justify="right")
 
-    queue_table.add_row("Crawled (pending score)", str(queue_stats["crawled"]))
+    queue_table.add_row("Scanned (pending score)", str(queue_stats["scanned"]))
     queue_table.add_row("Scored (pending ingest)", str(queue_stats["scored"]))
     queue_table.add_row("Skipped", str(queue_stats["skipped"]))
     queue_table.add_row("Ingested", str(queue_stats["ingested"]))
@@ -3682,7 +3682,7 @@ def wiki_status(facility: str) -> None:
 
     console.print(queue_table)
 
-    if queue_stats["crawled"] > 0:
+    if queue_stats["scanned"] > 0:
         console.print(
             f"\n[dim]Score pending pages with: imas-codex wiki score {facility}[/dim]"
         )
@@ -4202,7 +4202,7 @@ def scout_status(
     "-n",
     default=None,
     type=int,
-    help="Maximum pages to crawl (default: unlimited)",
+    help="Maximum pages to scan (default: unlimited)",
 )
 @click.option(
     "--max-depth",
@@ -4224,7 +4224,7 @@ def scout_wiki(
 ) -> None:
     """Discover wiki pages and documentation.
 
-    Crawls wiki starting from a portal page, evaluates page value using LLM,
+    Scans wiki starting from a portal page, evaluates page value using LLM,
     and queues high-value pages for ingestion.
 
     Credentials are prompted interactively if not already stored.
@@ -7129,45 +7129,189 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option(
     "--source",
     "-s",
-    help="Specific DocSource ID to crawl (otherwise all for facility)",
+    help="Specific wiki site URL or index (otherwise all for facility)",
 )
 @click.option(
     "--cost-limit",
     "-c",
     type=float,
-    default=5.0,
-    help="Maximum LLM spend in USD (default: $5)",
+    default=10.0,
+    help="Maximum LLM spend in USD (default: $10)",
 )
-def discover_docs(facility: str, source: str | None, cost_limit: float) -> None:
+@click.option(
+    "--max-pages",
+    "-n",
+    type=int,
+    default=None,
+    help="Maximum pages to scan (default: unlimited)",
+)
+@click.option(
+    "--max-depth",
+    type=int,
+    default=None,
+    help="Maximum link depth from portal (default: unlimited)",
+)
+@click.option(
+    "--focus",
+    "-p",
+    help="Focus discovery (e.g., 'equilibrium', 'diagnostics')",
+)
+@click.option(
+    "--scan-only",
+    is_flag=True,
+    help="Only scan links, don't score or ingest",
+)
+@click.option(
+    "--score-only",
+    is_flag=True,
+    help="Only score already-discovered pages",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="LLM model to use (default: from config for 'discovery' task)",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed progress",
+)
+def discover_docs(
+    facility: str,
+    source: str | None,
+    cost_limit: float,
+    max_pages: int | None,
+    max_depth: int | None,
+    focus: str | None,
+    scan_only: bool,
+    score_only: bool,
+    model: str | None,
+    verbose: bool,
+) -> None:
     """Discover documentation: wiki pages and filesystem artifacts.
 
-    NOT YET IMPLEMENTED.
+    Runs complete wiki discovery workflow:
+    1. SCAN: Fast link extraction, builds doc graph
+    2. PREFETCH: Fetch page content and generate summaries
+    3. SCORE: Content-aware LLM evaluation
+    4. INGEST: Chunk and embed high-score pages
 
-    This command crawls configured documentation sources (wiki sites,
-    readthedocs, etc.) and scans scored paths for document artifacts
-    (PDFs, READMEs, etc.).
-
-    Prerequisites:
-        - Configure doc sources: 'discover sources add --facility <facility> ...'
-        - Or run 'discover paths' first for filesystem artifacts
+    Supports multiple wiki types:
+    - MediaWiki (e.g., SPCwiki, JET wikis)
+    - Confluence (e.g., ITER)
+    - TWiki (e.g., JT60SA)
 
     Examples:
-        imas-codex discover docs iter
-        imas-codex discover docs iter --source iter-confluence
-        imas-codex discover docs iter -c 10.0
+        imas-codex discover docs jet
+        imas-codex discover docs jt60sa --max-pages 100
+        imas-codex discover docs iter --focus "JOREK disruptions"
+        imas-codex discover docs tcv --scan-only
     """
+    import asyncio
+
     from rich.console import Console
 
+    from imas_codex.discovery.facility import get_facility
+    from imas_codex.wiki.discovery import run_wiki_discovery
+
     console = Console()
-    console.print("[yellow]discover docs: Not yet implemented[/yellow]")
-    console.print("\nThis feature will:")
-    console.print("  1. Crawl configured DocSource sites (wikis, readthedocs)")
-    console.print("  2. Scan scored paths for document artifacts (PDFs, READMEs)")
-    console.print("  3. Score and prioritize discovered documentation")
-    console.print(
-        f"\nUse 'discover sources' to manage documentation sources for {facility}."
-    )
-    raise SystemExit(1)
+
+    # Get facility config to verify wiki sites exist
+    try:
+        config = get_facility(facility)
+        wiki_sites = config.get("wiki_sites", [])
+    except Exception as e:
+        console.print(f"[red]Error loading facility config: {e}[/red]")
+        raise SystemExit(1) from e
+
+    if not wiki_sites:
+        console.print(
+            f"[yellow]No wiki sites configured for {facility}.[/yellow]\n"
+            "Configure wiki sites in the facility YAML under 'wiki_sites:'\n"
+            "Or use 'discover sources add' to add documentation sources."
+        )
+        raise SystemExit(1)
+
+    # Show configured sites
+    console.print(f"[bold]Documentation sources for {facility}:[/bold]")
+    for i, site in enumerate(wiki_sites):
+        site_type = site.get("site_type", "mediawiki")
+        url = site.get("url", "")
+        desc = site.get("description", "")
+        console.print(f"  [{i}] {site_type}: {url}")
+        if desc and verbose:
+            console.print(f"      {desc}")
+    console.print()
+
+    # Filter by source if specified
+    site_indices = list(range(len(wiki_sites)))
+    if source:
+        try:
+            # Try parsing as index
+            idx = int(source)
+            if 0 <= idx < len(wiki_sites):
+                site_indices = [idx]
+            else:
+                console.print(f"[red]Invalid site index: {idx}[/red]")
+                raise SystemExit(1)
+        except ValueError:
+            # Try matching by URL
+            matched = [
+                i
+                for i, s in enumerate(wiki_sites)
+                if source.lower() in s.get("url", "").lower()
+            ]
+            if matched:
+                site_indices = matched
+            else:
+                console.print(f"[red]No site matching '{source}'[/red]")
+                raise SystemExit(1) from None
+
+    # Process each wiki site
+    for site_idx in site_indices:
+        site = wiki_sites[site_idx]
+        site_type = site.get("site_type", "mediawiki")
+        console.print(f"\n[bold cyan]Processing: {site.get('url')}[/bold cyan]")
+
+        if site_type == "twiki":
+            # TWiki requires special handling via filesystem
+            console.print("[yellow]TWiki support: using filesystem mirror[/yellow]")
+            fs_mirror = site.get("filesystem_mirror")
+            if fs_mirror:
+                console.print(f"  Filesystem mirror: {fs_mirror}")
+                # TODO: Implement TWiki filesystem discovery
+                console.print(
+                    "[yellow]TWiki filesystem discovery not yet implemented.[/yellow]"
+                )
+                console.print("Use HTTP scanner via SSH for now.")
+
+        try:
+            # Run wiki discovery for this site
+            asyncio.run(
+                run_wiki_discovery(
+                    facility=facility,
+                    cost_limit_usd=cost_limit,
+                    max_pages=max_pages,
+                    max_depth=max_depth,
+                    verbose=verbose,
+                    model=model,
+                    focus=focus,
+                    site_index=site_idx,
+                    scan_only=scan_only,
+                    score_only=score_only,
+                )
+            )
+        except Exception as e:
+            console.print(f"[red]Error processing site: {e}[/red]")
+            if verbose:
+                import traceback
+
+                traceback.print_exc()
+            continue
+
+    console.print("\n[green]Documentation discovery complete.[/green]")
 
 
 @discover.command("data")

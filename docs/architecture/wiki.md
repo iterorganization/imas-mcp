@@ -11,7 +11,7 @@ The system uses a three-phase pipeline:
 │                    Wiki Ingestion Pipeline                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  Phase 1: CRAWL (No LLM)                                        │
+│  Phase 1: SCAN (No LLM)                                        │
 │  ─────────────────────                                          │
 │  - Start from portal page (e.g., Portal:TCV)                    │
 │  - Extract links via SSH + curl                                 │
@@ -41,11 +41,11 @@ The system uses a three-phase pipeline:
 ## CLI Commands
 
 ```bash
-# Full discovery pipeline: crawl + score
+# Full discovery pipeline: scan + score
 uv run imas-codex wiki discover tcv
 
 # Individual phases
-uv run imas-codex wiki crawl tcv       # Link extraction only
+uv run imas-codex wiki scan tcv       # Link extraction only
 uv run imas-codex wiki score tcv       # Agent evaluation
 uv run imas-codex wiki ingest tcv      # Fetch, chunk, embed
 

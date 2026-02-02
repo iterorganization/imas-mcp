@@ -1,7 +1,7 @@
 """Wiki ingestion pipeline using LlamaIndex.
 
 Processes wiki pages and artifacts through a deterministic pipeline:
-1. Crawl: Discover pages/artifacts via link traversal (creates nodes with status='crawled')
+1. Scan: Discover pages/artifacts via link traversal (creates nodes with status='scanned')
 2. Score: Agent evaluates interest_score (sets status='scored' or 'skipped')
 3. Ingest: Fetch content, chunk, embed, and link to graph (sets status='ingested')
 
@@ -9,8 +9,8 @@ The pipeline is graph-driven and fully deterministic (no LLM calls during ingest
 Entity extraction uses regex patterns for MDSplus paths, IMAS paths, units, conventions.
 
 Example:
-    # Step 1: Crawl wiki (link extraction, no content fetch)
-    # imas-codex wiki crawl tcv
+    # Step 1: Scan wiki (link extraction, no content fetch)
+    # imas-codex wiki scan tcv
 
     # Step 2: Score pages with LLM agent
     # imas-codex wiki score tcv
@@ -123,7 +123,7 @@ def get_wiki_queue_stats(facility_id: str) -> dict:
 
         # Initialize with zero counts for all expected statuses
         stats = {
-            "crawled": 0,
+            "scanned": 0,
             "scored": 0,
             "skipped": 0,
             "ingested": 0,
@@ -191,7 +191,7 @@ def mark_wiki_page_status(
 
     Args:
         page_id: WikiPage ID
-        status: New status (crawled, scored, skipped, ingested, failed, stale)
+        status: New status (scanned, scored, skipped, ingested, failed, stale)
         error: Error message if status is 'failed'
     """
     with GraphClient() as gc:

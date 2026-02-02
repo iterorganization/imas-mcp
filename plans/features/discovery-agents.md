@@ -93,7 +93,7 @@ ReAct agents loop autonomously with budget controls; VS Code chat requires human
 │  Phase 2: Path Discovery (hours)                                        │
 │  ──────────────────────────────                                         │
 │  imas-codex agent discover paths <facility> --root /home --budget 4h    │
-│  - Recursive directory crawl                                            │
+│  - Recursive directory scan                                            │
 │  - Pattern matching for code directories                                │
 │  - Interest scoring via LLM                                             │
 │  Output: FacilityPath nodes with status                                 │
