@@ -1,5 +1,5 @@
 """
-Clean progress display for parallel facility discovery.
+Progress display for parallel facility path discovery.
 
 Design principles:
 - Minimal visual clutter (no emojis, no stopwatch icons)
@@ -7,117 +7,33 @@ Design principles:
 - Gradient progress bars with percentage
 - Resource gauges for time and cost budgets
 - Compact current activity with relevant details only
+
+Uses common progress infrastructure from progress_common module.
 """
 
 from __future__ import annotations
 
-import re
 import time
-from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.live import Live
-from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
+# Import common utilities
+from imas_codex.discovery.progress_common import (
+    StreamQueue,
+    clean_text,
+    clip_path,
+    format_time,
+    make_bar,
+    make_resource_gauge,
+)
+
 if TYPE_CHECKING:
     from imas_codex.discovery.parallel import WorkerStats
-
-
-# Strip ANSI escape codes from text (in case LLM output contains them)
-_ANSI_PATTERN = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-
-
-def clean_text(text: str) -> str:
-    """Remove ANSI codes and escape Rich markup."""
-    return escape(_ANSI_PATTERN.sub("", text))
-
-
-# ============================================================================
-# Utility Functions
-# ============================================================================
-
-
-def clip_path(path: str, max_len: int = 63) -> str:
-    """Clip middle of path: /home/user/.../deep/dir"""
-    if len(path) <= max_len:
-        return path
-    keep_start = max_len // 3
-    keep_end = max_len - keep_start - 3
-    return f"{path[:keep_start]}...{path[-keep_end:]}"
-
-
-def format_time(seconds: float) -> str:
-    """Format duration: 1h 23m, 5m 30s, 45s"""
-    if seconds < 0:
-        return "--"
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    if seconds < 3600:
-        mins, secs = divmod(int(seconds), 60)
-        return f"{mins}m {secs:02d}s" if secs else f"{mins}m"
-    hours, rem = divmod(int(seconds), 3600)
-    mins = rem // 60
-    return f"{hours}h {mins:02d}m" if mins else f"{hours}h"
-
-
-def make_bar(
-    ratio: float, width: int, filled_char: str = "━", empty_char: str = "─"
-) -> str:
-    """Create a simple thin progress bar string."""
-    ratio = max(0.0, min(1.0, ratio))
-    filled = int(width * ratio)
-    return filled_char * filled + empty_char * (width - filled)
-
-
-def make_gradient_bar(ratio: float, width: int) -> Text:
-    """Create a gradient progress bar (green → yellow → red as it fills)."""
-    ratio = max(0.0, min(1.0, ratio))
-    filled = int(width * ratio)
-
-    bar = Text()
-    for i in range(width):
-        if i < filled:
-            # Gradient based on position
-            pos_ratio = i / width
-            if pos_ratio < 0.5:
-                bar.append("━", style="green")
-            elif pos_ratio < 0.75:
-                bar.append("━", style="yellow")
-            else:
-                bar.append("━", style="red")
-        else:
-            bar.append("─", style="dim")
-    return bar
-
-
-def make_resource_gauge(
-    used: float, limit: float, width: int = 20, unit: str = ""
-) -> Text:
-    """Create a resource consumption gauge with color coding."""
-    ratio = used / limit if limit > 0 else 0
-    ratio = max(0.0, min(1.0, ratio))
-
-    # Color based on consumption
-    if ratio < 0.5:
-        color = "green"
-    elif ratio < 0.8:
-        color = "yellow"
-    else:
-        color = "red"
-
-    filled = int(width * ratio)
-
-    gauge = Text()
-    gauge.append("│", style="dim")
-    gauge.append("━" * filled, style=color)
-    gauge.append("─" * (width - filled), style="dim")
-    gauge.append("│", style="dim")
-
-    return gauge
 
 
 # ============================================================================
@@ -164,45 +80,6 @@ class EnrichItem:
         default_factory=dict
     )  # Per-category matches (mdsplus, hdf5, imas, etc.)
     error: str | None = None
-
-
-@dataclass
-class StreamQueue:
-    """Rate-limited queue for smooth display updates.
-
-    Has a max size to prevent unbounded backlog - when full, oldest items
-    are dropped to ensure the queue never blocks termination.
-    """
-
-    items: deque = field(default_factory=deque)
-    last_pop: float = field(default_factory=time.time)
-    rate: float = 1.6  # items per second (reduced for less flicker)
-    max_size: int = 150  # Prevent unbounded backlog, larger buffer for stability
-
-    def add(self, items: list, rate: float | None = None) -> None:
-        self.items.extend(items)
-        if rate and rate > 0:
-            self.rate = rate
-        # Drop oldest items if queue exceeds max size
-        while len(self.items) > self.max_size:
-            self.items.popleft()
-
-    def pop(self) -> Any | None:
-        if not self.items:
-            return None
-        interval = 1.0 / self.rate if self.rate > 0 else 0.5
-        now = time.time()
-        if now - self.last_pop >= interval:
-            self.last_pop = now
-            return self.items.popleft()
-        return None
-
-    def clear(self) -> None:
-        """Clear the queue. Use on termination to prevent hanging."""
-        self.items.clear()
-
-    def __len__(self) -> int:
-        return len(self.items)
 
 
 # ============================================================================
