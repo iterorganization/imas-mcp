@@ -213,6 +213,59 @@ enums:
       binary_directory:
         description: Directory containing executables
 
+  PathPurpose:
+    description: >-
+      LLM-classified purpose of a directory. Used during discovery scoring
+      to determine expansion priority (for containers) or ingestion priority
+      (for leaf directories). Score semantics vary by purpose type.
+      
+      Terminology aligns with DiscoveryRootCategory for consistent vocabulary.
+    permissible_values:
+      # === FORWARD MODELING CODE (predictive, offline simulation) ===
+      modeling_code:
+        description: Physics simulation/modeling code (CHEASE, ASTRA, JOREK, JINTRAC)
+      # === EXPERIMENTAL ANALYSIS CODE (shot processing, diagnostics) ===
+      analysis_code:
+        description: >-
+          Experimental data processing code: equilibrium reconstruction (LIUQE, EFIT),
+          diagnostic analysis (Thomson, bolometry), profile fitting, intershot tools
+      operations_code:
+        description: >-
+          Real-time facility operations: control systems, DAQ, hardware interfaces,
+          timing systems, feedback algorithms, actuator commands
+      # === SHARED INFRASTRUCTURE CODE ===
+      data_access:
+        description: Data access/conversion tools (IMAS wrappers, MDSplus readers, EQDSK, TDI)
+      workflow:
+        description: Orchestration and batch processing scripts
+      visualization:
+        description: Plotting and rendering tools
+      # === DATA CATEGORIES ===
+      experimental_data:
+        description: Experimental shot data, measurement databases (MDSplus trees, shot archives)
+      modeling_data:
+        description: Outputs from modeling codes (HDF5 runs, NetCDF outputs, parameter scans)
+      # === SUPPORT CATEGORIES ===
+      documentation:
+        description: Docs, papers, tutorials, READMEs
+      configuration:
+        description: Config files, settings, module files
+      test_suite:
+        description: Unit/integration tests (pytest directories)
+      # === STRUCTURAL CATEGORIES ===
+      container:
+        description: >-
+          Organizational directory with varied content (/home, /work, /work/imas).
+          Score reflects exploration potential of children, not content value.
+          High score = explore children; low score = skip subtree.
+      # === SKIP CATEGORIES (low score forced) ===
+      archive:
+        description: Old/backup content (backup/, old_projects/, deprecated/)
+      build_artifact:
+        description: Generated/cached files (__pycache__, .venv, node_modules)
+      system:
+        description: OS/infrastructure directories (/var, /tmp, /opt/modules)
+
   DiscoveryStatus:
     description: >-
       Lifecycle status for graph-led discovery pipeline.
@@ -715,7 +768,7 @@ classes:
         description: Primary physics domain (equilibrium, transport, etc.)
       path_purpose:
         description: Classified purpose of the directory
-        range: ResourcePurpose
+        range: PathPurpose
       # Enrichment tracking (for high-value paths with dust/tokei/scc data)
       is_enriched:
         description: Whether this path has been enriched with deep scan data
@@ -1392,7 +1445,7 @@ classes:
   FacilitySignal:
     description: >-
       A facility-specific data signal. Contains ONLY signal identity and semantics.
-      All access information (templates, data sources) lives in DataAccess.
+      All access information (templates, data sources) lives in AccessMethod.
       
       ID format: facility:physics_domain/signal_name[:variant]
       The physics_domain MUST be a valid PhysicsDomain enum value to ensure
@@ -1405,13 +1458,13 @@ classes:
         - tcv:radiation_measurement_diagnostics/radiated_power (was bolometry)
         - jet:equilibrium/plasma_current
       
-      Design principle: A signal is WHAT we measure, DataAccess is HOW we fetch it.
+      Design principle: A signal is WHAT we measure, AccessMethod is HOW we fetch it.
       The same physics quantity at different facilities links to facility-specific
-      DataAccess nodes but shares the same physics_domain categorization.
+      AccessMethods but shares the same physics_domain categorization.
       
       Required relationships:
         - FACILITY_ID -> Facility
-        - USES_DATA_ACCESS -> DataAccess (code generation)
+        - ACCESS_METHOD -> AccessMethod (code generation)
       
       Optional relationships:
         - HAS_UNIT -> Unit (data units)
@@ -1429,7 +1482,7 @@ classes:
         Discovery produces FacilitySignal nodes with:
         - physics_domain: classified via LLM or regex patterns
         - accessor: extracted from data system introspection
-        - USES_DATA_ACCESS edge: linked to facility's DataAccess
+        - ACCESS_METHOD edge: linked to facility's AccessMethod
     class_uri: facility:FacilitySignal
     attributes:
       id:
@@ -1464,17 +1517,17 @@ classes:
       accessor:
         description: >-
           Native accessor expression - the ONLY access-specific field on signals.
-          This is the expression passed to DataAccess templates.
+          This is the expression passed to AccessMethod templates.
           For MDSplus: TDI function call like "tcv_eq('i_p')"
           For IMAS: IDS path like "core_profiles.profiles_1d[0].electrons.density_thermal"
           For HDF5: dataset path like "/diagnostics/magnetics/ip"
         required: true
-      data_access:
+      access_method:
         description: >-
-          DataAccess node that provides code generation templates.
-          The signal's accessor is substituted into DataAccess templates.
+          AccessMethod that provides code generation templates.
+          The signal's accessor is substituted into AccessMethod templates.
         required: true
-        range: DataAccess
+        range: AccessMethod
       description:
         description: What this signal measures (physics description)
       is_primary:
@@ -1505,7 +1558,7 @@ classes:
       validation_error:
         description: Error message if validation failed
 
-  DataAccess:
+  AccessMethod:
     description: >-
       Code generation template for accessing data at a facility.
       Provides the "how" to FacilitySignal's "what".
@@ -1521,7 +1574,7 @@ classes:
         - IMAS: imas.DBEntry for IDS access
         - HDF5: h5py file access
         - REST: HTTP API calls
-    class_uri: facility:DataAccess
+    class_uri: facility:AccessMethod
     attributes:
       id:
         identifier: true
@@ -1595,11 +1648,11 @@ classes:
           Python code for decimation. Applied before serialization.
           Placeholder: {max_points}
           Example: "step = max(1, len(data) // {max_points}); data = data[::step]; time = time[::step]"
-      # Environment setup - makes DataAccess self-contained for imas-ambix
+      # Environment setup - makes AccessMethod self-contained for imas-ambix
       setup_commands:
         description: >-
           Shell commands to execute before Python (module loads, env setup).
-          These make the DataAccess node self-contained and executable.
+          These make the AccessMethod self-contained and executable.
           E.g., ["source /etc/profile.d/modules.sh", "module load python/3.9"]
         multivalued: true
       environment_variables:
