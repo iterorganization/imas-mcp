@@ -770,7 +770,7 @@ class WikiDiscovery:
 
         return results
 
-    def scan(self, monitor: ScanProgressMonitor | None = None) -> int:
+    def scan(self, monitor: ScanProgressMonitor | None = None) -> DiscoveryStats:
         """Scan wiki and build link structure.
 
         Graph-driven: resumes from existing state. Already-scanned pages
@@ -783,7 +783,7 @@ class WikiDiscovery:
             monitor: Optional ScanProgressMonitor for Rich display.
 
         Returns:
-            Number of pages scanned in this session.
+            DiscoveryStats with scan results.
         """
         self.stats.phase = "SCAN"
         gc = self._get_gc()
@@ -950,7 +950,8 @@ class WikiDiscovery:
             facility_id=self.config.facility_id,
         )
 
-        return session_scanned
+        # Return stats for the caller
+        return self.stats
 
     def _load_known_artifacts(self, gc: GraphClient) -> set[str]:
         """Load known artifact IDs from graph."""
