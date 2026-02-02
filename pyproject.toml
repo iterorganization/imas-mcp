@@ -108,11 +108,6 @@ test = [
     "coverage>=7.0.0",
 ]
 bench = ["asv>=0.6.0,<1.0.0"]
-# GPU support for embedding server (CUDA 12.1)
-# Install with: uv sync --extra gpu
-gpu = [
-    "torch @ https://download.pytorch.org/whl/cu121/torch-2.6.0%2Bcu121-cp312-cp312-linux_x86_64.whl",
-]
 
 [dependency-groups]
 dev = [
@@ -374,9 +369,8 @@ known-first-party = ["imas_codex"]
 force-single-line = false
 combine-as-imports = true
 
-# UV configuration: CPU-only PyTorch
-# Uses pytorch-cpu index for torch (no nvidia-* deps, ~6GB smaller)
-# GPU users can manually: uv pip install torch --index-url https://download.pytorch.org/whl/cu128
+# UV configuration: CPU-only PyTorch by default (~2GB, no nvidia deps)
+# GPU users: uv pip install torch --index-url https://download.pytorch.org/whl/cu121 --reinstall
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
