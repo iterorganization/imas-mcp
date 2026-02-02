@@ -108,6 +108,11 @@ test = [
     "coverage>=7.0.0",
 ]
 bench = ["asv>=0.6.0,<1.0.0"]
+# GPU support for embedding server (CUDA 12.1)
+# Install with: uv sync --extra gpu
+gpu = [
+    "torch @ https://download.pytorch.org/whl/cu121/torch-2.6.0%2Bcu121-cp312-cp312-linux_x86_64.whl",
+]
 
 [dependency-groups]
 dev = [
