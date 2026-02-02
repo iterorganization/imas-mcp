@@ -1,17 +1,20 @@
 """Embedding management module for IMAS Codex.
 
-Supports both local and remote embedding:
-- Local: SentenceTransformer with optional GPU
-- Remote: GPU server via HTTP (typically through SSH tunnel)
+Supports multiple embedding backends:
+- local: SentenceTransformer with optional GPU
+- remote: GPU server via HTTP (iter cluster through SSH tunnel)
+- openrouter: OpenRouter API for cloud embeddings
 """
 
 from .cache import EmbeddingCache
 from .client import RemoteEmbeddingClient, RemoteServerInfo, get_remote_client
-from .config import EncoderConfig
+from .config import EmbeddingBackend, EncoderConfig
 from .embeddings import Embeddings
-from .encoder import Encoder
+from .encoder import EmbeddingBackendError, Encoder
 
 __all__ = [
+    "EmbeddingBackend",
+    "EmbeddingBackendError",
     "EmbeddingCache",
     "EncoderConfig",
     "Embeddings",

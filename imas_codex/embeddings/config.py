@@ -2,18 +2,35 @@
 
 import os
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 # Load .env file for local development
 from dotenv import load_dotenv
 
-from imas_codex.settings import get_embed_remote_url, get_imas_embedding_model
+from imas_codex.settings import (
+    get_embed_remote_url,
+    get_embedding_backend,
+    get_imas_embedding_model,
+)
 
 load_dotenv(override=True)  # Load .env file values, overriding existing env vars
 
 
 # Define constants - uses pyproject.toml defaults with env var override
 IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
+
+
+class EmbeddingBackend(Enum):
+    """Embedding backend selection.
+
+    Explicit backend selection - no automatic fallback between backends.
+    If the selected backend is unavailable, an error is raised.
+    """
+
+    LOCAL = "local"  # Local CPU/GPU via SentenceTransformer
+    REMOTE = "remote"  # Remote GPU server (iter cluster via SSH tunnel)
+    OPENROUTER = "openrouter"  # OpenRouter API for Qwen embeddings
 
 
 @dataclass
@@ -24,11 +41,14 @@ class EncoderConfig:
     model_name: str | None = None
     device: str | None = None
 
-    # Remote embedding configuration
-    # When set, uses remote GPU server; falls back to local on failure
+    # Backend selection (explicit - no fallback)
+    backend: EmbeddingBackend | None = None
+
+    # Remote configuration (for REMOTE backend)
     remote_url: str | None = None
-    # Whether to automatically try remote embedding
-    use_remote: bool = True
+
+    # OpenRouter configuration (for OPENROUTER backend)
+    openrouter_api_key: str | None = None
 
     # Generation settings
     batch_size: int = 250
@@ -52,9 +72,26 @@ class EncoderConfig:
             self.model_name = os.getenv(
                 "IMAS_CODEX_EMBEDDING_MODEL", IMAS_CODEX_EMBEDDING_MODEL
             )
-        # Load remote URL from settings if not explicitly set
-        if self.remote_url is None and self.use_remote:
+
+        # Load backend from settings if not explicitly set
+        if self.backend is None:
+            backend_str = get_embedding_backend()
+            try:
+                self.backend = EmbeddingBackend(backend_str)
+            except ValueError:
+                # Default to local if invalid backend specified
+                self.backend = EmbeddingBackend.LOCAL
+
+        # Load remote URL for remote backend
+        if self.backend == EmbeddingBackend.REMOTE and self.remote_url is None:
             self.remote_url = get_embed_remote_url()
+
+        # Load OpenRouter API key for openrouter backend
+        if (
+            self.backend == EmbeddingBackend.OPENROUTER
+            and self.openrouter_api_key is None
+        ):
+            self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 
     def generate_cache_key(self) -> str | None:
         """
@@ -80,8 +117,8 @@ class EncoderConfig:
         return {
             "model_name": self.model_name,
             "device": self.device,
+            "backend": self.backend.value if self.backend else None,
             "remote_url": self.remote_url,
-            "use_remote": self.use_remote,
             "batch_size": self.batch_size,
             "normalize_embeddings": self.normalize_embeddings,
             "use_half_precision": self.use_half_precision,
@@ -99,6 +136,8 @@ class EncoderConfig:
             if hasattr(config, key):
                 if key == "ids_set" and value is not None:
                     setattr(config, key, set(value))
+                elif key == "backend" and value is not None:
+                    setattr(config, key, EmbeddingBackend(value))
                 else:
                     setattr(config, key, value)
 

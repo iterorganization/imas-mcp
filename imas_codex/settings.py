@@ -170,6 +170,35 @@ def get_include_error_fields() -> bool:
     return False
 
 
+def get_embedding_backend() -> str:
+    """Get the embedding backend selection.
+
+    Backend options:
+        - "local": Local CPU/GPU via SentenceTransformer
+        - "remote": Remote GPU server (iter cluster via SSH tunnel)
+        - "openrouter": OpenRouter API for cloud embeddings
+
+    No fallback between backends - if selected backend is unavailable,
+    an error is raised rather than silently switching.
+
+    Priority:
+        1. IMAS_CODEX_EMBEDDING_BACKEND environment variable
+        2. pyproject.toml [tool.imas-codex] embedding-backend
+        3. Fallback default: "local"
+
+    Returns:
+        Backend name string.
+    """
+    if env_backend := os.getenv("IMAS_CODEX_EMBEDDING_BACKEND"):
+        return env_backend.lower()
+
+    settings = _load_pyproject_settings()
+    if backend := settings.get("embedding-backend"):
+        return str(backend).lower()
+
+    return "local"
+
+
 def get_embed_remote_url() -> str | None:
     """Get the remote embedding server URL.
 
@@ -218,5 +247,6 @@ IMAS_CODEX_LANGUAGE_MODEL = get_language_model()
 LABELING_BATCH_SIZE = get_labeling_batch_size()
 INCLUDE_GGD = get_include_ggd()
 INCLUDE_ERROR_FIELDS = get_include_error_fields()
+EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()

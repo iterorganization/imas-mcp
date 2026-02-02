@@ -1,10 +1,11 @@
 """Embedding encoder providing model loading, cached corpus build, and ad-hoc embedding.
 
-Supports both local and remote embedding:
-- Local: Uses SentenceTransformer with optional GPU acceleration
-- Remote: Connects to GPU server via HTTP (typically through SSH tunnel)
+Supports multiple embedding backends:
+- local: Uses SentenceTransformer with optional GPU acceleration
+- remote: Connects to GPU server via HTTP (typically through SSH tunnel)
+- openrouter: Uses OpenRouter API for cloud embeddings (future)
 
-Remote embedding is attempted first when configured, with automatic fallback to local.
+No automatic fallback between backends - explicit selection required.
 """
 
 import hashlib
@@ -24,13 +25,19 @@ from imas_codex.resource_path_accessor import ResourcePathAccessor
 
 from .cache import EmbeddingCache
 from .client import RemoteEmbeddingClient
-from .config import EncoderConfig
+from .config import EmbeddingBackend, EncoderConfig
+
+
+class EmbeddingBackendError(Exception):
+    """Error raised when embedding backend is unavailable or misconfigured."""
+
+    pass
 
 
 class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching.
 
-    Supports remote embedding via GPU server with automatic fallback to local.
+    No fallback between backends - raises EmbeddingBackendError if selected backend fails.
     """
 
     def __init__(self, config: EncoderConfig | None = None):
@@ -41,17 +48,66 @@ class Encoder:
         self._cache_path: Path | None = None
         self._lock = threading.RLock()
         self._remote_client: RemoteEmbeddingClient | None = None
-        self._remote_available: bool | None = None  # None = not checked yet
-        self._local_fallback_warned: bool = False
+        self._backend_validated: bool = False
 
-        # Try remote first if configured
-        if self.config.remote_url and self.config.use_remote:
-            self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
-            # Check availability lazily on first use
+        # Initialize based on backend selection
+        self._initialize_backend()
 
-        # Load local model only if remote not configured or as fallback
-        if not self._remote_client:
+    def _initialize_backend(self) -> None:
+        """Initialize the selected embedding backend."""
+        backend = self.config.backend or EmbeddingBackend.LOCAL
+
+        if backend == EmbeddingBackend.LOCAL:
             self._load_model()
+        elif backend == EmbeddingBackend.REMOTE:
+            if not self.config.remote_url:
+                raise EmbeddingBackendError(
+                    "Remote backend selected but embed-remote-url not configured. "
+                    "Set IMAS_CODEX_EMBED_REMOTE_URL or embed-remote-url in pyproject.toml."
+                )
+            self._remote_client = RemoteEmbeddingClient(self.config.remote_url)
+            # Validate remote on first use (lazy)
+        elif backend == EmbeddingBackend.OPENROUTER:
+            raise EmbeddingBackendError(
+                "OpenRouter backend not yet implemented. Use 'local' or 'remote'."
+            )
+        else:
+            raise EmbeddingBackendError(f"Unknown backend: {backend}")
+
+    def _validate_remote_backend(self) -> None:
+        """Validate remote backend is available and model matches.
+
+        Raises:
+            EmbeddingBackendError: If remote unavailable or model mismatch.
+        """
+        if self._backend_validated:
+            return
+
+        if not self._remote_client:
+            raise EmbeddingBackendError("Remote client not initialized")
+
+        if not self._remote_client.is_available():
+            raise EmbeddingBackendError(
+                f"Remote embedding server not available at {self.config.remote_url}. "
+                "Ensure SSH tunnel is active: ssh -L 18765:127.0.0.1:18765 iter"
+            )
+
+        info = self._remote_client.get_info()
+        if not info:
+            raise EmbeddingBackendError(
+                "Failed to get remote server info. Server may be misconfigured."
+            )
+
+        # Strict model validation - must match exactly
+        expected_model = self.config.model_name
+        if expected_model and info.model != expected_model:
+            raise EmbeddingBackendError(
+                f"Remote embedder model mismatch: expected '{expected_model}', "
+                f"got '{info.model}'. Update embedding-backend config or restart server."
+            )
+
+        self.logger.info(f"Using remote embedder: {info.model} on {info.device}")
+        self._backend_validated = True
 
     def build_document_embeddings(
         self,
@@ -88,21 +144,27 @@ class Encoder:
     def embed_texts(self, texts: list[str], **kwargs) -> np.ndarray:
         """Embed ad-hoc texts (no caching).
 
-        Tries remote embedding first if configured, falls back to local.
+        Uses the configured backend - no fallback on failure.
+
+        Raises:
+            EmbeddingBackendError: If backend is unavailable or misconfigured.
         """
-        # Try remote embedding first
-        if self._remote_client and self._check_remote_available():
+        backend = self.config.backend or EmbeddingBackend.LOCAL
+
+        if backend == EmbeddingBackend.REMOTE:
+            self._validate_remote_backend()
             try:
-                return self._remote_client.embed(
+                return self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
             except ConnectionError as e:
-                self._handle_remote_failure(e)
+                raise EmbeddingBackendError(
+                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                ) from e
             except RuntimeError as e:
-                self.logger.warning(f"Remote embedding error: {e}")
-                self._handle_remote_failure(e)
+                raise EmbeddingBackendError(f"Remote embedding error: {e}") from e
 
-        # Fall back to local embedding
+        # Local backend
         model = self.get_model()
         encode_kwargs = {
             "convert_to_numpy": True,
@@ -113,45 +175,10 @@ class Encoder:
         }
         return model.encode(texts, **encode_kwargs)
 
-    def _check_remote_available(self) -> bool:
-        """Check if remote embedding server is available and serves the expected model."""
-        if self._remote_available is None and self._remote_client:
-            self._remote_available = self._remote_client.is_available()
-            if self._remote_available:
-                info = self._remote_client.get_info()
-                if info:
-                    # Validate that remote model matches expected model
-                    expected_model = self.config.model_name
-                    if expected_model and info.model != expected_model:
-                        self.logger.warning(
-                            f"Remote embedder model mismatch: "
-                            f"expected '{expected_model}', got '{info.model}'. "
-                            "Using remote anyway (dimension: remote may differ)."
-                        )
-                    self.logger.info(
-                        f"Using remote embedder: {info.model} on {info.device}"
-                    )
-            else:
-                self.logger.debug("Remote embedder not available")
-        return bool(self._remote_available)
-
-    def _handle_remote_failure(self, error: Exception) -> None:
-        """Handle remote embedding failure by falling back to local."""
-        self._remote_available = False
-        if not self._local_fallback_warned:
-            self.logger.warning(
-                f"Remote embedder unavailable ({error}), falling back to local. "
-                "This may be slower without GPU."
-            )
-            self._local_fallback_warned = True
-        # Ensure local model is loaded
-        if self._model is None:
-            self._load_model()
-
     @property
     def is_using_remote(self) -> bool:
-        """Check if currently using remote embedding."""
-        return bool(self._remote_client and self._remote_available)
+        """Check if currently configured for remote embedding."""
+        return self.config.backend == EmbeddingBackend.REMOTE
 
     def get_cache_info(self) -> dict[str, Any]:
         if not self._cache:
@@ -253,14 +280,16 @@ class Encoder:
             self.config.model_name = fallback
 
     def _generate_embeddings(self, texts: list[str]) -> np.ndarray:
-        """Generate embeddings for texts, using remote if available."""
-        # Try remote embedding first for batch operations
-        if self._remote_client and self._check_remote_available():
+        """Generate embeddings for texts using configured backend."""
+        backend = self.config.backend or EmbeddingBackend.LOCAL
+
+        if backend == EmbeddingBackend.REMOTE:
+            self._validate_remote_backend()
             try:
                 self.logger.debug(
                     f"Generating embeddings remotely for {len(texts)} texts..."
                 )
-                embeddings = self._remote_client.embed(
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
                     texts, normalize=self.config.normalize_embeddings
                 )
                 if self.config.use_half_precision:
@@ -270,9 +299,11 @@ class Encoder:
                 )
                 return embeddings
             except (ConnectionError, RuntimeError) as e:
-                self._handle_remote_failure(e)
+                raise EmbeddingBackendError(
+                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                ) from e
 
-        # Fall back to local embedding
+        # Local embedding with progress tracking
         if not self._model:
             self._load_model()
         total_batches = (
@@ -434,4 +465,4 @@ class Encoder:
                 self.logger.error(f"Failed to save embeddings cache: {e}")
 
 
-__all__ = ["Encoder"]
+__all__ = ["Encoder", "EmbeddingBackendError"]

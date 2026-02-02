@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 
 
@@ -16,6 +16,7 @@ def test_embedding_encoder_build_and_embed(tmp_path: Path):
         batch_size=2,
         use_rich=False,
         enable_cache=True,
+        backend=EmbeddingBackend.LOCAL,
         model_name="all-MiniLM-L6-v2",  # Explicitly set local model to avoid env var override
     )
     encoder = Encoder(config)
@@ -42,7 +43,12 @@ def test_embedding_encoder_build_and_embed(tmp_path: Path):
 
 @pytest.mark.slow
 def test_embedding_encoder_ad_hoc_embed():
-    config = EncoderConfig(use_rich=False, enable_cache=False)
+    config = EncoderConfig(
+        use_rich=False,
+        enable_cache=False,
+        backend=EmbeddingBackend.LOCAL,
+        model_name="all-MiniLM-L6-v2",
+    )
     encoder = Encoder(config)
     vecs = encoder.embed_texts(["one", "two"])
     assert vecs.shape[0] == 2
@@ -57,6 +63,7 @@ def test_model_fallback_to_local():
         model_name="nonexistent/model-name",
         use_rich=False,
         enable_cache=False,
+        backend=EmbeddingBackend.LOCAL,
     )
 
     # Mock SentenceTransformer to fail for the nonexistent model but succeed for fallback

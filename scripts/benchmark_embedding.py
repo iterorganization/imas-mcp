@@ -11,7 +11,6 @@ Usage:
 
 import time
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 import numpy as np
@@ -36,12 +35,18 @@ class BenchmarkResult:
 
 # IDS test cases: (query, expected_top_path)
 IDS_TEST_CASES = [
-    ("electron temperature profile", "core_profiles.profiles_1d[:].electrons.temperature"),
+    (
+        "electron temperature profile",
+        "core_profiles.profiles_1d[:].electrons.temperature",
+    ),
     ("toroidal magnetic field", "equilibrium.time_slice[:].profiles_1d.b_field_tor"),
     ("plasma current", "equilibrium.time_slice[:].global_quantities.ip"),
     ("ion density", "core_profiles.profiles_1d[:].ion[:].density"),
     ("electron density profile", "core_profiles.profiles_1d[:].electrons.density"),
-    ("magnetic axis position", "equilibrium.time_slice[:].global_quantities.magnetic_axis.r"),
+    (
+        "magnetic axis position",
+        "equilibrium.time_slice[:].global_quantities.magnetic_axis.r",
+    ),
     ("plasma boundary", "equilibrium.time_slice[:].boundary.outline.r"),
     ("safety factor q profile", "equilibrium.time_slice[:].profiles_1d.q"),
     ("neutron rate", "summary.fusion.neutron_fluxes.total.value"),
@@ -50,7 +55,10 @@ IDS_TEST_CASES = [
     ("divertor target heat flux", "divertor.divertor_unit[:].target[:].flux.heat"),
     ("NBI power", "nbi.unit[:].power_launched.value"),
     ("ECH frequency", "ec_launchers.beam[:].frequency.value"),
-    ("pellet injection velocity", "pellets.unit[:].pellet_set[:].launching_speed.value"),
+    (
+        "pellet injection velocity",
+        "pellets.unit[:].pellet_set[:].launching_speed.value",
+    ),
 ]
 
 # IDS paths corpus (subset for benchmark)
@@ -131,7 +139,9 @@ def benchmark_local_minilm() -> tuple[BenchmarkResult, np.ndarray, np.ndarray]:
     return result, query_embeddings, path_embeddings
 
 
-def benchmark_remote_qwen(url: str = "http://localhost:18765") -> tuple[BenchmarkResult, np.ndarray, np.ndarray]:
+def benchmark_remote_qwen(
+    url: str = "http://localhost:18765",
+) -> tuple[BenchmarkResult, np.ndarray, np.ndarray]:
     """Benchmark remote Qwen3-Embedding-0.6B via HTTP."""
     print("\n=== Remote Qwen3-Embedding-0.6B (iter GPU) ===")
 
@@ -195,7 +205,7 @@ def compute_retrieval_metrics(
     correct_at_1 = 0
     correct_at_5 = 0
 
-    for i, (query, expected_path) in enumerate(IDS_TEST_CASES):
+    for i, (_, expected_path) in enumerate(IDS_TEST_CASES):
         # Get ranked indices
         ranked_indices = np.argsort(similarities[i])[::-1]
         ranked_paths = [corpus_texts[j] for j in ranked_indices]
@@ -228,26 +238,40 @@ def print_comparison(local: BenchmarkResult, remote: BenchmarkResult):
     print("-" * 65)
 
     # Dimension (informational)
-    print(f"{'Dimension':<25} {local.dimension:<15} {remote.dimension:<15} {'Qwen3 (2.7x)':<10}")
+    print(
+        f"{'Dimension':<25} {local.dimension:<15} {remote.dimension:<15} {'Qwen3 (2.7x)':<10}"
+    )
 
     # Speed comparison
-    speed_winner = "Qwen3" if remote.embeddings_per_sec > local.embeddings_per_sec else "MiniLM"
-    speed_ratio = max(remote.embeddings_per_sec, local.embeddings_per_sec) / min(remote.embeddings_per_sec, local.embeddings_per_sec)
-    print(f"{'Speed (emb/s)':<25} {local.embeddings_per_sec:<15.1f} {remote.embeddings_per_sec:<15.1f} {speed_winner} ({speed_ratio:.1f}x)")
+    speed_winner = (
+        "Qwen3" if remote.embeddings_per_sec > local.embeddings_per_sec else "MiniLM"
+    )
+    speed_ratio = max(remote.embeddings_per_sec, local.embeddings_per_sec) / min(
+        remote.embeddings_per_sec, local.embeddings_per_sec
+    )
+    print(
+        f"{'Speed (emb/s)':<25} {local.embeddings_per_sec:<15.1f} {remote.embeddings_per_sec:<15.1f} {speed_winner} ({speed_ratio:.1f}x)"
+    )
 
     # Latency
     lat_winner = "Qwen3" if remote.avg_latency_ms < local.avg_latency_ms else "MiniLM"
-    print(f"{'Latency (ms/text)':<25} {local.avg_latency_ms:<15.2f} {remote.avg_latency_ms:<15.2f} {lat_winner}")
+    print(
+        f"{'Latency (ms/text)':<25} {local.avg_latency_ms:<15.2f} {remote.avg_latency_ms:<15.2f} {lat_winner}"
+    )
 
     # Semantic metrics
     mrr_winner = "Qwen3" if remote.mrr > local.mrr else "MiniLM"
     print(f"{'MRR':<25} {local.mrr:<15.3f} {remote.mrr:<15.3f} {mrr_winner}")
 
     p1_winner = "Qwen3" if remote.precision_at_1 > local.precision_at_1 else "MiniLM"
-    print(f"{'Precision@1':<25} {local.precision_at_1:<15.3f} {remote.precision_at_1:<15.3f} {p1_winner}")
+    print(
+        f"{'Precision@1':<25} {local.precision_at_1:<15.3f} {remote.precision_at_1:<15.3f} {p1_winner}"
+    )
 
     p5_winner = "Qwen3" if remote.precision_at_5 > local.precision_at_5 else "MiniLM"
-    print(f"{'Precision@5':<25} {local.precision_at_5:<15.3f} {remote.precision_at_5:<15.3f} {p5_winner}")
+    print(
+        f"{'Precision@5':<25} {local.precision_at_5:<15.3f} {remote.precision_at_5:<15.3f} {p5_winner}"
+    )
 
     print("\n" + "=" * 60)
     print("SUMMARY")

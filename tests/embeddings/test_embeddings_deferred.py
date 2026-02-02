@@ -6,6 +6,7 @@ from tests.conftest import STANDARD_TEST_IDS_SET
 
 
 def test_embeddings_encoder_config_exposed(monkeypatch):
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
     ds = DocumentStore()
     emb = Embeddings(document_store=ds, load_embeddings=False)
     cfg = emb.encoder_config
@@ -13,7 +14,8 @@ def test_embeddings_encoder_config_exposed(monkeypatch):
 
 
 def test_embeddings_lazy_build(monkeypatch):
-    # Use free API embeddings by default
+    # Use local backend with free API embeddings model
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     ds = DocumentStore()
@@ -27,7 +29,8 @@ def test_embeddings_lazy_build(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_endpoint_deferred(monkeypatch):
-    # Use free API embeddings by default
+    # Use local backend with free API embeddings
+    monkeypatch.setenv("IMAS_CODEX_EMBEDDING_BACKEND", "local")
     monkeypatch.setenv("IMAS_CODEX_EMBEDDING_MODEL", "openai/text-embedding-3-small")
 
     from imas_codex.server import Server

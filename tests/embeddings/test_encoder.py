@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from imas_codex.embeddings.cache import EmbeddingCache
-from imas_codex.embeddings.config import EncoderConfig
+from imas_codex.embeddings.config import EmbeddingBackend, EncoderConfig
 from imas_codex.embeddings.encoder import Encoder
 
 
@@ -24,6 +24,7 @@ class TestEncoder:
             batch_size=8,
             enable_cache=True,
             use_rich=False,
+            backend=EmbeddingBackend.LOCAL,
         )
 
     @pytest.fixture
@@ -32,16 +33,14 @@ class TestEncoder:
         return Encoder(config=encoder_config)
 
     def test_initialization_default_config(self):
-        """Encoder initializes with default config.
+        """Encoder initializes with explicit local backend config.
 
-        When remote_url is configured (default from settings), model is loaded lazily.
-        When remote is disabled or unavailable, model loads on first use.
+        When backend is LOCAL, model loads eagerly.
         """
-        # Create encoder with remote explicitly disabled to test local path
-        config = EncoderConfig(use_remote=False)
+        config = EncoderConfig(backend=EmbeddingBackend.LOCAL)
         encoder = Encoder(config=config)
         assert encoder.config is not None
-        # Model loads eagerly when remote is disabled
+        # Model loads eagerly when backend is local
         assert encoder._model is not None
         assert encoder._cache is None
 

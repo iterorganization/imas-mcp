@@ -76,29 +76,41 @@ class TestRemoteEmbeddingClient:
 class TestEncoderConfigRemote:
     """Tests for remote embedding configuration."""
 
-    def test_config_loads_remote_url_from_settings(self):
-        """EncoderConfig loads remote_url from settings when use_remote=True."""
-        config = EncoderConfig(use_remote=True)
+    def test_config_loads_remote_url_for_remote_backend(self):
+        """EncoderConfig loads remote_url from settings when backend=REMOTE."""
+        from imas_codex.embeddings.config import EmbeddingBackend
+
+        config = EncoderConfig(backend=EmbeddingBackend.REMOTE)
         # Should have loaded default from settings
         assert config.remote_url is not None
 
     def test_config_explicit_remote_url_overrides_settings(self):
         """Explicit remote_url parameter overrides settings."""
-        config = EncoderConfig(remote_url="http://custom:9999", use_remote=True)
+        from imas_codex.embeddings.config import EmbeddingBackend
+
+        config = EncoderConfig(
+            remote_url="http://custom:9999", backend=EmbeddingBackend.REMOTE
+        )
         assert config.remote_url == "http://custom:9999"
 
-    def test_config_use_remote_false_skips_url_loading(self):
-        """When use_remote=False, remote_url stays None if not set."""
-        config = EncoderConfig(use_remote=False)
+    def test_config_local_backend_skips_url_loading(self):
+        """When backend=LOCAL, remote_url stays None if not set."""
+        from imas_codex.embeddings.config import EmbeddingBackend
+
+        config = EncoderConfig(backend=EmbeddingBackend.LOCAL)
         assert config.remote_url is None
 
-    def test_config_serialization_includes_remote_fields(self):
-        """to_dict includes remote configuration fields."""
-        config = EncoderConfig(remote_url="http://test:8080", use_remote=True)
+    def test_config_serialization_includes_backend_field(self):
+        """to_dict includes backend configuration fields."""
+        from imas_codex.embeddings.config import EmbeddingBackend
+
+        config = EncoderConfig(
+            remote_url="http://test:8080", backend=EmbeddingBackend.REMOTE
+        )
         data = config.to_dict()
 
         assert data["remote_url"] == "http://test:8080"
-        assert data["use_remote"] is True
+        assert data["backend"] == "remote"
 
 
 @pytest.mark.skipif(True, reason="Integration test - requires running server")
