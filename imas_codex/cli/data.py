@@ -4,6 +4,7 @@ This module provides the `imas-codex data` command group for:
 - Graph database dump/load/push/pull to GHCR
 - Neo4j database server management (under `data db`)
 - Private YAML file management via GitHub Gist (under `data private`)
+- Secrets management via SSH (under `data secrets`)
 """
 
 import json
@@ -32,6 +33,7 @@ NEO4J_IMAGE = Path.home() / "apptainer" / "neo4j_2025.11-community.sif"
 GIST_ID_FILE = Path.home() / ".config" / "imas-codex" / "private-gist-id"
 LOCAL_GRAPH_MANIFEST = Path.home() / ".config" / "imas-codex" / "graph-manifest.json"
 NEO4J_LOCK_FILE = Path.home() / ".config" / "imas-codex" / "neo4j-operation.lock"
+SECRETS_DEFAULT_PROJECT_PATH = "~/Code/imas-codex"
 
 
 # ============================================================================
@@ -47,12 +49,6 @@ class Neo4jOperation:
     - Stopping Neo4j if running
     - Performing the operation
     - Restarting Neo4j if it was running
-
-    Usage:
-        with Neo4jOperation("dump graph") as op:
-            if op.acquired:
-                # Do operation...
-                pass
     """
 
     def __init__(self, operation_name: str, require_stopped: bool = True):
@@ -70,7 +66,6 @@ class Neo4jOperation:
             operation = lock_info.get("operation", "unknown")
             started = lock_info.get("started", "unknown")
 
-            # Check if process is still running
             if pid and self._process_exists(pid):
                 raise click.ClickException(
                     f"Another operation is in progress:\n"
@@ -80,7 +75,6 @@ class Neo4jOperation:
                     f"If the process crashed, remove lock: rm {self._lock_file}"
                 )
             else:
-                # Stale lock, remove it
                 self._lock_file.unlink()
 
         # Acquire lock
@@ -99,7 +93,6 @@ class Neo4jOperation:
             click.echo(f"Stopping Neo4j for {self.operation_name}...")
             self._stop_neo4j()
 
-            # Wait for stop
             import time
 
             for _ in range(30):
@@ -114,7 +107,6 @@ class Neo4jOperation:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         try:
-            # Restart Neo4j if it was running
             if self.was_running:
                 click.echo("Restarting Neo4j...")
                 self._start_neo4j()
@@ -123,7 +115,6 @@ class Neo4jOperation:
         return False
 
     def _process_exists(self, pid: int) -> bool:
-        """Check if a process with given PID exists."""
         try:
             os.kill(pid, 0)
             return True
@@ -131,8 +122,6 @@ class Neo4jOperation:
             return False
 
     def _stop_neo4j(self) -> None:
-        """Stop Neo4j via systemd or pkill."""
-        # Try systemd first
         result = subprocess.run(
             ["systemctl", "--user", "stop", "imas-codex-neo4j"],
             capture_output=True,
@@ -140,29 +129,22 @@ class Neo4jOperation:
         if result.returncode == 0:
             return
 
-        # Fallback to pkill - try multiple patterns that may match
-        # Pattern 1: Apptainer container with neo4j image
         subprocess.run(
             ["pkill", "-15", "-f", "neo4j_2025.*community.sif"],
             capture_output=True,
         )
-        # Pattern 2: Neo4j Java process
         subprocess.run(
             ["pkill", "-15", "-f", "Neo4jCommunity"],
             capture_output=True,
         )
-        # Pattern 3: Legacy pattern
         subprocess.run(["pkill", "-15", "-f", "neo4j.*console"], capture_output=True)
 
     def _start_neo4j(self) -> None:
-        """Start Neo4j via systemd or direct command."""
-        # Try systemd first
         result = subprocess.run(
             ["systemctl", "--user", "start", "imas-codex-neo4j"],
             capture_output=True,
         )
         if result.returncode == 0:
-            # Wait for startup
             import time
 
             for _ in range(30):
@@ -173,14 +155,17 @@ class Neo4jOperation:
             click.echo("Warning: Neo4j may still be starting")
             return
 
-        # Fallback to direct start (would need to invoke db_start)
         click.echo("Note: Restart Neo4j manually: imas-codex data db start")
 
     def _release_lock(self) -> None:
-        """Release the lock file."""
         if self._lock_file.exists():
             self._lock_file.unlink()
         self.acquired = False
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
 
 def get_git_info() -> dict:
@@ -195,7 +180,6 @@ def get_git_info() -> dict:
         "is_fork": False,
     }
 
-    # Get current commit
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], capture_output=True, text=True
     )
@@ -203,7 +187,6 @@ def get_git_info() -> dict:
         info["commit"] = result.stdout.strip()
         info["commit_short"] = info["commit"][:7]
 
-    # Check if on a tag
     result = subprocess.run(
         ["git", "describe", "--tags", "--exact-match", "HEAD"],
         capture_output=True,
@@ -212,20 +195,17 @@ def get_git_info() -> dict:
     if result.returncode == 0:
         info["tag"] = result.stdout.strip()
 
-    # Check dirty state
     result = subprocess.run(
         ["git", "status", "--porcelain"], capture_output=True, text=True
     )
     info["is_dirty"] = bool(result.stdout.strip())
 
-    # Get origin remote URL to detect fork
     result = subprocess.run(
         ["git", "remote", "get-url", "origin"], capture_output=True, text=True
     )
     if result.returncode == 0:
         url = result.stdout.strip()
         info["remote_url"] = url
-        # Extract owner from GitHub URL
         if "github.com" in url:
             if url.startswith("git@"):
                 parts = url.split(":")[-1].replace(".git", "").split("/")
@@ -253,14 +233,8 @@ def get_registry(git_info: dict, force_registry: str | None = None) -> str:
 
 
 def get_version_tag(git_info: dict, dev: bool = False) -> str:
-    """Determine version tag for push.
-
-    For dev pushes, uses full package version (e.g., 3.2.1.dev588-g2d31208df.d20260129)
-    which includes base version, distance from tag, commit hash, and dirty date.
-    OCI tags don't allow '+', so we replace with '-'.
-    """
+    """Determine version tag for push."""
     if dev:
-        # Use full PEP 440 version, replacing '+' with '-' for OCI compatibility
         return __version__.replace("+", "-")
     if git_info["tag"]:
         return git_info["tag"]
@@ -270,7 +244,6 @@ def get_version_tag(git_info: dict, dev: bool = False) -> str:
 
 
 def require_clean_git(git_info: dict) -> None:
-    """Raise error if git working tree is dirty."""
     if git_info["is_dirty"]:
         raise click.ClickException(
             "Working tree has uncommitted changes. Commit or stash first."
@@ -278,7 +251,6 @@ def require_clean_git(git_info: dict) -> None:
 
 
 def require_oras() -> None:
-    """Raise error if oras is not installed."""
     if not shutil.which("oras"):
         raise click.ClickException(
             "oras not found in PATH. Install from: "
@@ -287,13 +259,11 @@ def require_oras() -> None:
 
 
 def require_apptainer() -> None:
-    """Raise error if apptainer is not installed."""
     if not shutil.which("apptainer"):
         raise click.ClickException("apptainer not found in PATH")
 
 
 def require_gh() -> None:
-    """Raise error if gh CLI is not installed."""
     if not shutil.which("gh"):
         raise click.ClickException(
             "gh CLI not found. Install from: https://cli.github.com/"
@@ -301,7 +271,6 @@ def require_gh() -> None:
 
 
 def is_neo4j_running() -> bool:
-    """Check if Neo4j is responding on localhost."""
     try:
         import urllib.request
 
@@ -312,7 +281,6 @@ def is_neo4j_running() -> bool:
 
 
 def backup_existing_data(reason: str) -> Path | None:
-    """Backup current graph state marker to recovery directory."""
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     recovery_path = RECOVERY_DIR / f"{timestamp}-{reason}"
 
@@ -325,7 +293,6 @@ def backup_existing_data(reason: str) -> Path | None:
 
 
 def login_to_ghcr(token: str | None) -> None:
-    """Login to GHCR using provided token."""
     if not token:
         return
 
@@ -340,46 +307,39 @@ def login_to_ghcr(token: str | None) -> None:
 
 
 def get_private_files() -> list[Path]:
-    """Get list of private facility YAML files."""
     return list(Path(".").glob(PRIVATE_YAML_GLOB))
 
 
 def get_saved_gist_id() -> str | None:
-    """Get saved gist ID from config file."""
     if GIST_ID_FILE.exists():
         return GIST_ID_FILE.read_text().strip()
     return os.environ.get("IMAS_PRIVATE_GIST_ID")
 
 
 def save_gist_id(gist_id: str) -> None:
-    """Save gist ID to config file."""
     GIST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
     GIST_ID_FILE.write_text(gist_id)
 
 
 def get_file_hash(path: Path) -> str:
-    """Get SHA256 hash of file contents."""
     import hashlib
 
     return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
 def get_local_graph_manifest() -> dict | None:
-    """Get manifest of currently loaded graph."""
     if LOCAL_GRAPH_MANIFEST.exists():
         return json.loads(LOCAL_GRAPH_MANIFEST.read_text())
     return None
 
 
 def save_local_graph_manifest(manifest: dict) -> None:
-    """Save manifest for currently loaded graph."""
     LOCAL_GRAPH_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     manifest["loaded_at"] = datetime.now(UTC).isoformat()
     LOCAL_GRAPH_MANIFEST.write_text(json.dumps(manifest, indent=2))
 
 
 def show_file_diff(local_path: Path, remote_path: Path) -> bool:
-    """Show diff between local and remote file, return True if different."""
     if not local_path.exists():
         click.echo(f"  + {local_path.name} (new file)")
         return True
@@ -394,7 +354,6 @@ def show_file_diff(local_path: Path, remote_path: Path) -> bool:
         click.echo(f"  = {local_path.name} (unchanged)")
         return False
 
-    # Show line count diff
     local_lines = len(local_path.read_text().splitlines())
     remote_lines = len(remote_path.read_text().splitlines())
     diff = remote_lines - local_lines
@@ -406,9 +365,21 @@ def show_file_diff(local_path: Path, remote_path: Path) -> bool:
 
 
 def check_graph_exists() -> bool:
-    """Check if Neo4j data directory has graph data."""
     data_path = DATA_DIR / "data" / "databases" / "neo4j"
     return data_path.exists() and any(data_path.iterdir())
+
+
+def _get_secrets_host() -> str | None:
+    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
+    if host_file.exists():
+        return host_file.read_text().strip()
+    return os.environ.get("IMAS_SECRETS_HOST")
+
+
+def _save_secrets_host(host: str) -> None:
+    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
+    host_file.parent.mkdir(parents=True, exist_ok=True)
+    host_file.write_text(host)
 
 
 # ============================================================================
@@ -567,10 +538,10 @@ def db_status() -> None:
         import urllib.request
 
         with urllib.request.urlopen("http://localhost:7474/", timeout=5) as resp:
-            data = json.loads(resp.read().decode())
+            resp_data = json.loads(resp.read().decode())
             click.echo("Neo4j is running")
-            click.echo(f"  Version: {data.get('neo4j_version', 'unknown')}")
-            click.echo(f"  Edition: {data.get('neo4j_edition', 'unknown')}")
+            click.echo(f"  Version: {resp_data.get('neo4j_version', 'unknown')}")
+            click.echo(f"  Edition: {resp_data.get('neo4j_edition', 'unknown')}")
     except Exception:
         click.echo("Neo4j is not responding on port 7474")
 
@@ -615,19 +586,7 @@ def db_service(
     password: str,
     minimal: bool,
 ) -> None:
-    """Manage Neo4j as a systemd user service.
-
-    Uses the template from imas_codex/config/services/imas-codex-db.service
-    which includes cleanup, graceful shutdown, and resource limits.
-
-    The template uses systemd %h specifier for home directory.
-
-    Examples:
-        imas-codex data db service install      # Install with defaults
-        imas-codex data db service install --minimal  # Basic service
-        imas-codex data db service status       # Check service status
-        imas-codex data db service uninstall    # Remove service
-    """
+    """Manage Neo4j as a systemd user service."""
     import platform
 
     if platform.system() != "Linux":
@@ -657,7 +616,6 @@ def db_service(
             (data_path / subdir).mkdir(parents=True, exist_ok=True)
 
         if minimal or not template_file.exists():
-            # Minimal service without resource limits
             service_content = f"""[Unit]
 Description=Neo4j Graph Database (IMAS Codex)
 After=network.target
@@ -681,8 +639,6 @@ WantedBy=default.target
             service_file.write_text(service_content)
             click.echo("Installed minimal service")
         else:
-            # Use production template with resource limits
-            # Template uses %h for home dir (systemd resolves this)
             shutil.copy(template_file, service_file)
             click.echo(f"Installed from template: {template_file}")
             click.echo("  Includes: cleanup, graceful shutdown, resource limits")
@@ -745,15 +701,7 @@ def data_private() -> None:
 @click.option("--gist-id", envvar="IMAS_PRIVATE_GIST_ID", help="Existing gist ID")
 @click.option("--dry-run", is_flag=True, help="Show what would be pushed")
 def private_push(gist_id: str | None, dry_run: bool) -> None:
-    """Push private YAML files to a secret GitHub Gist.
-
-    Creates a new secret gist on first run, updates existing on subsequent runs.
-    The gist ID is saved to ~/.config/imas-codex/private-gist-id
-
-    Examples:
-        imas-codex data private push
-        imas-codex data private push --dry-run
-    """
+    """Push private YAML files to a secret GitHub Gist."""
     require_gh()
 
     private_files = get_private_files()
@@ -762,7 +710,6 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
         click.echo(f"  Expected pattern: {PRIVATE_YAML_GLOB}")
         return
 
-    # Use saved gist ID if not provided
     effective_gist_id = gist_id or get_saved_gist_id()
 
     click.echo(f"Private files to push: {len(private_files)}")
@@ -777,13 +724,11 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
         return
 
     if effective_gist_id:
-        # Update existing gist by cloning, replacing files, and pushing
         click.echo(f"\nUpdating gist {effective_gist_id}...")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             gist_dir = Path(tmpdir) / "gist"
 
-            # Clone the gist
             result = subprocess.run(
                 ["gh", "gist", "clone", effective_gist_id, str(gist_dir)],
                 capture_output=True,
@@ -793,7 +738,6 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                 click.echo("Gist not found, creating new one...")
                 effective_gist_id = None
             else:
-                # Set SSH remote URL for push (gh clone uses HTTPS which fails for secret gists)
                 subprocess.run(
                     [
                         "git",
@@ -806,11 +750,9 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                     capture_output=True,
                 )
 
-                # Copy local files over (replaces existing)
                 for f in private_files:
                     shutil.copy(f, gist_dir / f.name)
 
-                # Commit and push
                 subprocess.run(
                     ["git", "add", "-A"],
                     cwd=gist_dir,
@@ -835,7 +777,6 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
                         raise click.ClickException(f"Push failed: {result.stderr}")
 
     if not effective_gist_id:
-        # Create new secret gist
         click.echo("\nCreating secret gist...")
         cmd = [
             "gh",
@@ -850,11 +791,9 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
         if result.returncode != 0:
             raise click.ClickException(f"Failed to create gist: {result.stderr}")
 
-        # Extract gist URL/ID from output
         gist_url = result.stdout.strip()
         effective_gist_id = gist_url.split("/")[-1]
 
-        # Save gist ID for future use
         save_gist_id(effective_gist_id)
         click.echo(f"Gist ID saved to: {GIST_ID_FILE}")
 
@@ -870,24 +809,10 @@ def private_push(gist_id: str | None, dry_run: bool) -> None:
 def private_pull(
     gist_id: str | None, gist_url: str | None, force: bool, no_backup: bool
 ) -> None:
-    """Pull private YAML files from GitHub Gist.
-
-    Shows diff and prompts for confirmation before overwriting.
-    Use --force to skip prompt, --no-backup to skip backup.
-
-    For onboarding, use --url to specify a gist URL (ID will be saved):
-        imas-codex data private pull --url https://gist.github.com/abc123
-
-    Examples:
-        imas-codex data private pull
-        imas-codex data private pull --url https://gist.github.com/abc123
-        imas-codex data private pull --force
-    """
+    """Pull private YAML files from GitHub Gist."""
     require_gh()
 
-    # Extract gist ID from URL if provided
     if gist_url:
-        # URL format: https://gist.github.com/[user/]<gist_id>
         gist_id = gist_url.rstrip("/").split("/")[-1]
         click.echo(f"Extracted gist ID: {gist_id}")
         save_gist_id(gist_id)
@@ -907,7 +832,6 @@ def private_pull(
 
     existing_files = get_private_files()
 
-    # Clone gist to temp dir for comparison
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
 
@@ -926,7 +850,6 @@ def private_pull(
             click.echo("No *_private.yaml files found in gist")
             return
 
-        # Show diff if not forcing
         if existing_files and not force:
             click.echo("\nChanges:")
             has_changes = False
@@ -935,7 +858,6 @@ def private_pull(
                 if show_file_diff(local_file, gist_file):
                     has_changes = True
 
-            # Check for files in local but not in gist
             gist_names = {f.name for f in yaml_files}
             for local_file in existing_files:
                 if local_file.name not in gist_names:
@@ -950,7 +872,6 @@ def private_pull(
                 click.echo("\nNo changes to apply.")
                 return
 
-        # Backup existing files
         if existing_files and not no_backup:
             timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             backup_dir = RECOVERY_DIR / f"{timestamp}-private-pull"
@@ -959,14 +880,12 @@ def private_pull(
                 shutil.copy(f, backup_dir / f.name)
             click.echo(f"Backed up {len(existing_files)} files to: {backup_dir}")
 
-        # Copy files to target directory
         PRIVATE_YAML_DIR.mkdir(parents=True, exist_ok=True)
         for f in yaml_files:
             target = PRIVATE_YAML_DIR / f.name
             shutil.copy(f, target)
             click.echo(f"  ✓ {f.name}")
 
-    # Save gist ID if we didn't have it
     if not get_saved_gist_id():
         save_gist_id(effective_gist_id)
 
@@ -998,8 +917,6 @@ def private_status() -> None:
 # Secrets Subgroup (SSH-based transfer)
 # ============================================================================
 
-SECRETS_DEFAULT_PROJECT_PATH = "~/Code/imas-codex"
-
 
 @data.group("secrets")
 def data_secrets() -> None:
@@ -1018,21 +935,6 @@ def data_secrets() -> None:
     pass
 
 
-def _get_secrets_host() -> str | None:
-    """Get saved secrets host."""
-    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
-    if host_file.exists():
-        return host_file.read_text().strip()
-    return os.environ.get("IMAS_SECRETS_HOST")
-
-
-def _save_secrets_host(host: str) -> None:
-    """Save secrets host."""
-    host_file = Path.home() / ".config" / "imas-codex" / "secrets-host"
-    host_file.parent.mkdir(parents=True, exist_ok=True)
-    host_file.write_text(host)
-
-
 @data_secrets.command("push")
 @click.argument("host", required=False, envvar="IMAS_SECRETS_HOST")
 @click.option(
@@ -1043,16 +945,7 @@ def _save_secrets_host(host: str) -> None:
 )
 @click.option("--dry-run", is_flag=True, help="Show what would be transferred")
 def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
-    """Push .env to remote project directory.
-
-    HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
-    If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
-
-    Examples:
-        imas-codex data secrets push iter
-        imas-codex data secrets push iter --path ~/projects/imas-codex
-        imas-codex data secrets push iter --dry-run
-    """
+    """Push .env to remote project directory."""
     effective_host = host or _get_secrets_host()
     if not effective_host:
         raise click.ClickException(
@@ -1077,7 +970,6 @@ def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
         click.echo("  3. Set .env permissions to 0600")
         return
 
-    # Verify remote project exists
     click.echo("\nVerifying remote project...")
     result = subprocess.run(
         ["ssh", effective_host, f"test -d {path} && echo exists"],
@@ -1091,7 +983,6 @@ def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
             f"  Use --path to specify a different location"
         )
 
-    # Copy file
     click.echo("Transferring .env...")
     result = subprocess.run(
         ["scp", "-q", str(env_file), remote_path],
@@ -1101,7 +992,6 @@ def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
     if result.returncode != 0:
         raise click.ClickException(f"Transfer failed: {result.stderr}")
 
-    # Set strict permissions
     result = subprocess.run(
         ["ssh", effective_host, f"chmod 600 {remote_env}"],
         capture_output=True,
@@ -1110,7 +1000,6 @@ def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
     if result.returncode != 0:
         click.echo(f"Warning: Could not set permissions: {result.stderr}", err=True)
 
-    # Save host for future use
     if host:
         _save_secrets_host(host)
 
@@ -1127,16 +1016,7 @@ def secrets_push(host: str | None, path: str, dry_run: bool) -> None:
 )
 @click.option("--force", is_flag=True, help="Overwrite existing .env without prompt")
 def secrets_pull(host: str | None, path: str, force: bool) -> None:
-    """Pull .env from remote project directory.
-
-    HOST is an SSH host alias (from ~/.ssh/config) or user@hostname.
-    If omitted, uses previously saved host or IMAS_SECRETS_HOST env var.
-
-    Examples:
-        imas-codex data secrets pull iter
-        imas-codex data secrets pull iter --path ~/projects/imas-codex
-        imas-codex data secrets pull iter --force
-    """
+    """Pull .env from remote project directory."""
     effective_host = host or _get_secrets_host()
     if not effective_host:
         raise click.ClickException(
@@ -1147,7 +1027,6 @@ def secrets_pull(host: str | None, path: str, force: bool) -> None:
     remote_env = f"{path}/.env"
     remote_path = f"{effective_host}:{remote_env}"
 
-    # Check if .env exists locally
     if env_file.exists() and not force:
         click.echo("Local .env exists. Overwrite? (use --force to skip prompt)")
         if not click.confirm("Continue?"):
@@ -1156,7 +1035,6 @@ def secrets_pull(host: str | None, path: str, force: bool) -> None:
     click.echo(f"Pulling from: {effective_host}")
     click.echo(f"  Remote project: {path}")
 
-    # Check remote file exists
     result = subprocess.run(
         ["ssh", effective_host, f"test -f {remote_env} && echo exists"],
         capture_output=True,
@@ -1169,7 +1047,6 @@ def secrets_pull(host: str | None, path: str, force: bool) -> None:
             f"  Use --path to specify a different location"
         )
 
-    # Pull file
     click.echo("Transferring .env...")
     result = subprocess.run(
         ["scp", "-q", remote_path, str(env_file)],
@@ -1179,10 +1056,8 @@ def secrets_pull(host: str | None, path: str, force: bool) -> None:
     if result.returncode != 0:
         raise click.ClickException(f"Transfer failed: {result.stderr}")
 
-    # Set strict local permissions
     env_file.chmod(0o600)
 
-    # Save host for future use
     if host:
         _save_secrets_host(host)
 
@@ -1225,16 +1100,7 @@ def secrets_status() -> None:
 )
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after dump")
 def data_dump(output: str | None, no_restart: bool) -> None:
-    """Export graph database to archive.
-
-    Creates a tarball containing the Neo4j database dump.
-    Automatically stops Neo4j, dumps, and restarts.
-
-    Examples:
-        imas-codex data dump
-        imas-codex data dump -o backup.tar.gz
-        imas-codex data dump --no-restart
-    """
+    """Export graph database to archive."""
     require_apptainer()
 
     git_info = get_git_info()
@@ -1247,7 +1113,7 @@ def data_dump(output: str | None, no_restart: bool) -> None:
 
     with Neo4jOperation("graph dump", require_stopped=True) as op:
         if no_restart:
-            op.was_running = False  # Don't restart
+            op.was_running = False
 
         click.echo(f"Creating archive: {output_path}")
 
@@ -1256,7 +1122,6 @@ def data_dump(output: str | None, no_restart: bool) -> None:
             archive_dir = tmp / f"imas-codex-graph-{version_label}"
             archive_dir.mkdir()
 
-            # Dump graph
             click.echo("  Dumping graph database...")
             dumps_dir = DATA_DIR / "dumps"
             dumps_dir.mkdir(parents=True, exist_ok=True)
@@ -1289,7 +1154,6 @@ def data_dump(output: str | None, no_restart: bool) -> None:
             else:
                 raise click.ClickException("Graph dump file not created")
 
-            # Write manifest
             manifest = {
                 "version": __version__,
                 "git_commit": git_info["commit"],
@@ -1298,7 +1162,6 @@ def data_dump(output: str | None, no_restart: bool) -> None:
             }
             (archive_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-            # Create tarball
             click.echo("  Creating archive...")
             with tarfile.open(output_path, "w:gz") as tar:
                 tar.add(archive_dir, arcname=archive_dir.name)
@@ -1312,14 +1175,7 @@ def data_dump(output: str | None, no_restart: bool) -> None:
 @click.option("--force", is_flag=True, help="Overwrite existing data")
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
 def data_load(archive: str, force: bool, no_restart: bool) -> None:
-    """Load graph database from archive.
-
-    Automatically stops Neo4j, loads, and restarts.
-
-    Examples:
-        imas-codex data load imas-codex-graph-v1.0.0.tar.gz
-        imas-codex data load backup.tar.gz --no-restart
-    """
+    """Load graph database from archive."""
     require_apptainer()
 
     archive_path = Path(archive)
@@ -1343,14 +1199,12 @@ def data_load(archive: str, force: bool, no_restart: bool) -> None:
                 raise click.ClickException("Empty archive")
             archive_dir = extracted_dirs[0]
 
-            # Read manifest
             manifest_file = archive_dir / "manifest.json"
             if manifest_file.exists():
                 manifest = json.loads(manifest_file.read_text())
                 click.echo(f"  Version: {manifest.get('version')}")
                 click.echo(f"  Commit: {manifest.get('git_commit', 'unknown')[:7]}")
 
-            # Load graph
             graph_dump = archive_dir / "graph.dump"
             if graph_dump.exists():
                 click.echo("  Loading graph database...")
@@ -1378,10 +1232,9 @@ def data_load(archive: str, force: bool, no_restart: bool) -> None:
                 if result.returncode != 0:
                     raise click.ClickException(f"Graph load failed: {result.stderr}")
 
-            # Save manifest for loaded graph (not pushed until explicitly pushed)
             if manifest_file.exists():
                 manifest = json.loads(manifest_file.read_text())
-                manifest["pushed"] = False  # Local load = needs push to backup
+                manifest["pushed"] = False
                 manifest["loaded_from"] = str(archive_path)
                 save_local_graph_manifest(manifest)
 
@@ -1401,17 +1254,7 @@ def data_push(
     dry_run: bool,
     skip_private: bool,
 ) -> None:
-    """Push graph archive to GHCR and private facility configs to Gist.
-
-    Auto-detects fork and pushes to your GHCR registry.
-    Also syncs private facility files (*_private.yaml) to GitHub Gist.
-    Requires clean git state for release pushes.
-
-    Examples:
-        imas-codex data push              # Push release (requires git tag)
-        imas-codex data push --dev        # Push dev version
-        imas-codex data push --skip-private  # Graph only, no gist sync
-    """
+    """Push graph archive to GHCR and private facility configs to Gist."""
     require_oras()
 
     git_info = get_git_info()
@@ -1435,7 +1278,6 @@ def data_push(
     archive_path = Path(f"imas-codex-graph-{version_tag}.tar.gz")
 
     try:
-        # data_dump uses Neo4jOperation internally for stop/start
         from click.testing import CliRunner
 
         runner = CliRunner()
@@ -1464,7 +1306,6 @@ def data_push(
 
         click.echo(f"✓ Pushed: {artifact_ref}")
 
-        # Update manifest to mark as pushed
         manifest = get_local_graph_manifest() or {}
         manifest["pushed"] = True
         manifest["pushed_version"] = version_tag
@@ -1488,7 +1329,6 @@ def data_push(
         if archive_path.exists():
             archive_path.unlink()
 
-    # Sync private YAML files to Gist
     if not skip_private and not dry_run:
         private_files = get_private_files()
         if private_files:
@@ -1522,35 +1362,16 @@ def data_pull(
     skip_private: bool,
     gist_url: str | None,
 ) -> None:
-    """Pull graph archive from GHCR and private facility configs from Gist.
-
-    Neo4j is automatically stopped/restarted during load.
-    Also pulls private facility files (*_private.yaml) from Gist.
-
-    For onboarding, use --gist-url to configure the private gist:
-        imas-codex data pull --gist-url https://gist.github.com/abc123
-
-    Safety: Refuses to overwrite existing graph unless:
-    - Graph was previously pushed (tracked in manifest), or
-    - --force is specified
-
-    Examples:
-        imas-codex data pull                 # Pull latest
-        imas-codex data pull -v v1.0.0       # Pull specific version
-        imas-codex data pull --gist-url https://gist.github.com/abc123
-        imas-codex data pull --force         # Overwrite without checks
-    """
+    """Pull graph archive from GHCR and private facility configs from Gist."""
     require_oras()
 
     git_info = get_git_info()
     target_registry = get_registry(git_info, registry)
     artifact_ref = f"{target_registry}/imas-codex-graph:{version}"
 
-    # Safety check: if graph exists, verify it's been pushed or require --force
     if check_graph_exists() and not force:
         manifest = get_local_graph_manifest()
         if manifest is None:
-            # Graph exists but no manifest - unsafe to overwrite
             raise click.ClickException(
                 "Local graph exists but has no manifest (unknown origin).\n"
                 "Either:\n"
@@ -1598,7 +1419,6 @@ def data_pull(
         if result.exit_code != 0:
             raise click.ClickException(f"Load failed: {result.output}")
 
-        # Extract manifest from archive and save
         with tarfile.open(archives[0], "r:gz") as tar:
             tar.extractall(tmp / "extracted")
         extracted_dirs = list((tmp / "extracted").iterdir())
@@ -1608,15 +1428,13 @@ def data_pull(
                 manifest = json.loads(manifest_file.read_text())
                 manifest["pulled_from"] = artifact_ref
                 manifest["pulled_version"] = version
-                manifest["pushed"] = True  # Pulled = already in registry
+                manifest["pushed"] = True
                 manifest["pushed_version"] = version
                 save_local_graph_manifest(manifest)
 
     click.echo("✓ Graph pull complete")
 
-    # Sync private YAML files from Gist
     if not skip_private:
-        # If gist_url provided, extract and save ID first
         if gist_url:
             extracted_id = gist_url.rstrip("/").split("/")[-1]
             save_gist_id(extracted_id)
