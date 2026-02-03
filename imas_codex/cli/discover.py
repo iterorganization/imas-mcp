@@ -933,10 +933,11 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> None:
     """Clear discovered data for a facility.
 
+    \b
     Domains:
-        paths  - FacilityPath nodes (filesystem discovery)
-        wiki   - WikiPage nodes (documentation discovery)
-        all    - Both paths and wiki
+      - paths: FacilityPath nodes (filesystem discovery)
+      - wiki: WikiPage nodes (documentation discovery)
+      - all: Both paths and wiki
 
     Use --cascade to also delete derived data like SourceFile and FacilityUser.
     """
@@ -1054,6 +1055,12 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option("--score-only", is_flag=True, help="Only score already-discovered pages")
 @click.option("--model", "-m", default=None, help="LLM model to use")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed progress")
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    default=False,
+    help="Use logging output instead of rich progress display",
+)
 def discover_wiki(
     facility: str,
     source: str | None,
@@ -1065,16 +1072,17 @@ def discover_wiki(
     score_only: bool,
     model: str | None,
     verbose: bool,
+    no_rich: bool,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
     Runs parallel wiki discovery workers:
 
     \b
-    1. SCAN: Fast link extraction, builds doc graph (continues even at budget)
-    2. PREFETCH: Fetch page content and generate summaries
-    3. SCORE: Content-aware LLM evaluation (stops at budget limit)
-    4. INGEST: Chunk and embed high-score pages (stops at budget limit)
+    - SCAN: Fast link extraction, builds doc graph (continues even at budget)
+    - PREFETCH: Fetch page content and generate summaries
+    - SCORE: Content-aware LLM evaluation (stops at budget limit)
+    - INGEST: Chunk and embed high-score pages (stops at budget limit)
     """
     from imas_codex.discovery.base.facility import get_facility
     from imas_codex.discovery.wiki.parallel import (
@@ -1082,31 +1090,55 @@ def discover_wiki(
         run_parallel_wiki_discovery,
     )
 
-    console = Console()
+    # Auto-detect if rich can run (TTY check) or use no_rich flag
+    use_rich = not no_rich and sys.stdout.isatty()
+
+    if use_rich:
+        console = Console()
+    else:
+        console = None
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+    wiki_logger = logging.getLogger("imas_codex.discovery.wiki")
+    if not use_rich:
+        wiki_logger.setLevel(logging.INFO)
+
+    def log_print(msg: str, style: str = "") -> None:
+        """Print to console or log, stripping rich markup."""
+        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
+        if console:
+            console.print(msg)
+        else:
+            wiki_logger.info(clean_msg)
 
     try:
         config = get_facility(facility)
         wiki_sites = config.get("wiki_sites", [])
     except Exception as e:
-        console.print(f"[red]Error loading facility config: {e}[/red]")
+        log_print(f"[red]Error loading facility config: {e}[/red]")
         raise SystemExit(1) from e
 
     if not wiki_sites:
-        console.print(
+        log_print(
             f"[yellow]No wiki sites configured for {facility}.[/yellow]\n"
             "Configure wiki sites in the facility YAML under 'wiki_sites:'"
         )
         raise SystemExit(1)
 
-    console.print(f"[bold]Documentation sources for {facility}:[/bold]")
+    log_print(f"[bold]Documentation sources for {facility}:[/bold]")
     for i, site in enumerate(wiki_sites):
         site_type = site.get("site_type", "mediawiki")
         url = site.get("url", "")
         desc = site.get("description", "")
-        console.print(f"  [{i}] {site_type}: {url}")
+        log_print(f"  [{i}] {site_type}: {url}")
         if desc and verbose:
-            console.print(f"      {desc}")
-    console.print()
+            log_print(f"      {desc}")
+    if use_rich:
+        console.print()
 
     site_indices = list(range(len(wiki_sites)))
     if source:
@@ -1115,7 +1147,7 @@ def discover_wiki(
             if 0 <= idx < len(wiki_sites):
                 site_indices = [idx]
             else:
-                console.print(f"[red]Invalid site index: {idx}[/red]")
+                log_print(f"[red]Invalid site index: {idx}[/red]")
                 raise SystemExit(1)
         except ValueError:
             matched = [
@@ -1126,7 +1158,7 @@ def discover_wiki(
             if matched:
                 site_indices = matched
             else:
-                console.print(f"[red]No site matching '{source}'[/red]")
+                log_print(f"[red]No site matching '{source}'[/red]")
                 raise SystemExit(1) from None
 
     for site_idx in site_indices:
@@ -1142,18 +1174,18 @@ def discover_wiki(
         ):
             ssh_host = config.get("ssh_host")
 
-        console.print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
+        log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
         if site_type == "twiki":
-            console.print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
+            log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
         elif ssh_host:
-            console.print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
+            log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
         # Reset any transient states from crashed previous runs
         reset_counts = reset_transient_pages(facility, silent=True)
         if any(reset_counts.values()):
             total_reset = sum(reset_counts.values())
-            console.print(
+            log_print(
                 f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]"
             )
 
@@ -1171,7 +1203,45 @@ def discover_wiki(
                 _focus: str | None,
                 _scan_only: bool,
                 _score_only: bool,
+                _use_rich: bool,
             ):
+                # Logging-only callbacks for non-rich mode
+                def log_on_scan(msg, stats, results=None):
+                    wiki_logger.info(f"SCAN: {msg}")
+
+                def log_on_prefetch(msg, stats, results=None):
+                    wiki_logger.info(f"PREFETCH: {msg}")
+
+                def log_on_score(msg, stats, results=None):
+                    wiki_logger.info(f"SCORE: {msg}")
+
+                def log_on_ingest(msg, stats, results=None):
+                    wiki_logger.info(f"INGEST: {msg}")
+
+                if not _use_rich:
+                    # Non-rich mode: just run discovery with logging callbacks
+                    result = await run_parallel_wiki_discovery(
+                        facility=_facility,
+                        site_type=_site_type,
+                        base_url=_base_url,
+                        portal_page=_portal_page,
+                        ssh_host=_ssh_host,
+                        cost_limit=_cost_limit,
+                        page_limit=_max_pages,
+                        max_depth=_max_depth,
+                        focus=_focus,
+                        num_scan_workers=1,
+                        num_score_workers=1,
+                        scan_only=_scan_only,
+                        score_only=_score_only,
+                        on_scan_progress=log_on_scan,
+                        on_prefetch_progress=log_on_prefetch,
+                        on_score_progress=log_on_score,
+                        on_ingest_progress=log_on_ingest,
+                    )
+                    return result
+
+                # Rich mode: use WikiProgressDisplay
                 from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 
                 with WikiProgressDisplay(
@@ -1313,28 +1383,29 @@ def discover_wiki(
                     _focus=focus,
                     _scan_only=scan_only,
                     _score_only=score_only,
+                    _use_rich=use_rich,
                 )
             )
 
             # Display final results
-            console.print(
+            log_print(
                 f"  [green]{result.get('scanned', 0)} pages scanned, "
                 f"{result.get('scored', 0)} scored, "
                 f"{result.get('ingested', 0)} ingested[/green]"
             )
-            console.print(
+            log_print(
                 f"  [dim]Cost: ${result.get('cost', 0):.2f}, "
                 f"Time: {result.get('elapsed_seconds', 0):.1f}s[/dim]"
             )
         except Exception as e:
-            console.print(f"[red]Error processing site: {e}[/red]")
+            log_print(f"[red]Error processing site: {e}[/red]")
             if verbose:
                 import traceback
 
                 traceback.print_exc()
             continue
 
-    console.print("\n[green]Documentation discovery complete.[/green]")
+    log_print("\n[green]Documentation discovery complete.[/green]")
 
 
 @discover.command("data")
