@@ -45,7 +45,7 @@ import io
 import logging
 import subprocess
 import sys
-from contextlib import asynccontextmanager
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -869,33 +869,51 @@ def _reload_repl() -> str:
 
 
 # =============================================================================
-# MCP Lifespan - Eager REPL initialization after handshake
+# Background REPL initialization (non-blocking)
 # =============================================================================
 
+# Event signaling REPL initialization completion
+_repl_ready = threading.Event()
+_repl_init_error: Exception | None = None
 
-@asynccontextmanager
-async def _agents_lifespan(mcp: FastMCP):
-    """Initialize REPL after MCP handshake completes.
 
-    This runs AFTER the server responds to the MCP 'initialize' request,
-    avoiding the client timeout. Tools wait until this completes.
+def _init_repl_background():
+    """Initialize REPL in background thread.
 
-    Logs progress to stderr so MCP server output shows initialization status.
+    Logs progress to stderr (visible in MCP output) and signals completion.
     """
-    logger.info("Starting REPL initialization (embedding model + graph client)...")
+    global _repl_init_error
 
-    # Run sync initialization in thread pool to avoid blocking event loop
-    loop = asyncio.get_event_loop()
     try:
-        await loop.run_in_executor(None, _init_repl)
+        logger.info("Starting REPL initialization (embedding model + graph client)...")
+        _init_repl()
         logger.info("REPL initialization complete - all tools ready")
     except Exception as e:
         logger.error(f"REPL initialization failed: {e}")
-        raise
+        _repl_init_error = e
+    finally:
+        _repl_ready.set()
 
-    yield  # Server runs here
 
-    logger.info("Agents server shutting down")
+def _wait_for_repl(timeout: float = 300.0) -> None:
+    """Wait for REPL initialization to complete.
+
+    Args:
+        timeout: Maximum seconds to wait (default 5 minutes for embedding rebuild)
+
+    Raises:
+        RuntimeError: If initialization failed or timed out
+    """
+    if not _repl_ready.wait(timeout=timeout):
+        raise RuntimeError(
+            f"REPL initialization timed out after {timeout}s. "
+            "Check MCP server logs for details."
+        )
+
+    if _repl_init_error is not None:
+        raise RuntimeError(
+            f"REPL initialization failed: {_repl_init_error}"
+        ) from _repl_init_error
 
 
 # =============================================================================
@@ -908,8 +926,8 @@ class AgentsServer:
     """
     MCP server with 9 core tools for facility exploration.
 
-    Uses lifespan pattern to eagerly initialize REPL after MCP handshake,
-    avoiding client timeout while ensuring tools are ready on first call.
+    Uses background initialization to eagerly load REPL without blocking
+    the MCP handshake. The python() tool waits for initialization to complete.
 
     Tools:
     - python: Persistent REPL with rich utilities (primary interface)
@@ -935,21 +953,31 @@ class AgentsServer:
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize the MCP server with eager REPL loading via lifespan.
+        """Initialize the MCP server with background REPL loading.
 
-        The lifespan pattern ensures:
+        The background initialization pattern ensures:
         1. Server responds to MCP 'initialize' immediately (no timeout)
-        2. REPL initialization runs after handshake with progress logging
-        3. Tools wait for REPL to be ready before becoming available
+        2. REPL initialization runs in background with progress logging
+        3. python() tool waits for REPL to be ready before executing
         """
-        self.mcp = FastMCP(name="imas-codex-agents", lifespan=_agents_lifespan)
+        self.mcp = FastMCP(name="imas-codex-agents")
         self._prompts = load_prompts()
+
+        # Start REPL initialization in background thread
+        # This allows the server to respond to 'initialize' immediately
+        init_thread = threading.Thread(
+            target=_init_repl_background,
+            name="repl-init",
+            daemon=True,
+        )
+        init_thread.start()
+        logger.info("REPL initialization started in background")
 
         self._register_tools()
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server configured with 9 tools and {len(self._prompts)} prompts"
+            f"Agents MCP server ready with 9 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
@@ -1037,6 +1065,9 @@ class AgentsServer:
                 python("x = 42")
                 python("print(x * 2)")  # prints 84
             """
+            # Wait for background initialization to complete (up to 5 minutes)
+            _wait_for_repl()
+
             repl = _get_repl()
 
             stdout_capture = io.StringIO()
