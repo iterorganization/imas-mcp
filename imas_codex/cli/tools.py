@@ -256,7 +256,7 @@ def tools_install(
     console.print("[bold]Fast Tools[/bold]")
 
     # Collect tool names for progress
-    all_tools = list(config.tools.keys())
+    all_tools = list(config.all_tools.keys())
 
     with Progress(
         SpinnerColumn(),
