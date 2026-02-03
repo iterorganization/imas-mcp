@@ -24,6 +24,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+# Suppress litellm verbose output BEFORE importing litellm
+# These environment variables prevent the "Give Feedback" and "Provider List" messages
+os.environ.setdefault("LITELLM_LOG", "ERROR")
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
@@ -36,11 +41,11 @@ from imas_codex.discovery.paths.models import (
 
 logger = logging.getLogger(__name__)
 
-# Suppress verbose litellm logging (rate limit messages, help links, etc.)
-# These are set before import to avoid the default verbose output
-os.environ.setdefault("LITELLM_LOG", "ERROR")
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-logging.getLogger("LiteLLM Proxy").setLevel(logging.WARNING)
+# Suppress all litellm logging to ERROR level
+# This prevents INFO-level help messages from cluttering the progress display
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+logging.getLogger("LiteLLM Proxy").setLevel(logging.ERROR)
+logging.getLogger("LiteLLM Router").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Retry configuration for rate limiting

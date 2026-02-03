@@ -1861,7 +1861,7 @@ async def persist_scan_results(
 
             children_created = len(all_children)
 
-        # Handle excluded directories (create with status='excluded')
+        # Handle excluded directories (create with status='skipped', terminal_reason='excluded')
         if excluded:
             excluded_nodes = []
             for path, parent_path, reason in excluded:
@@ -1881,6 +1881,7 @@ async def persist_scan_results(
                         "parent_id": parent_id,
                         "depth": (parent_depth or 0) + 1,
                         "status": PathStatus.skipped.value,
+                        "terminal_reason": TerminalReason.excluded.value,
                         "skip_reason": reason,
                         "discovered_at": now,
                     }
@@ -1894,6 +1895,7 @@ async def persist_scan_results(
                     ON CREATE SET p.facility_id = node.facility_id,
                                   p.path = node.path,
                                   p.status = node.status,
+                                  p.terminal_reason = node.terminal_reason,
                                   p.skip_reason = node.skip_reason,
                                   p.depth = node.depth,
                                   p.in_directory = node.parent_id,

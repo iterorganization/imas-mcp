@@ -27,6 +27,7 @@ from imas_codex.discovery.base.progress import (
     StreamQueue,
     clean_text,
     clip_path,
+    clip_text,
     format_time,
     make_bar,
     make_resource_gauge,
@@ -452,6 +453,11 @@ class ParallelProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
 
+        # Helper to determine if worker should show "idle"
+        # Only show idle when worker is not processing AND queue is empty
+        def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
+            return not processing and queue.is_empty()
+
         # SCAN section - always 2 lines for consistent height
         section.append("  SCAN ", style="bold blue")
         if scan:
@@ -468,9 +474,13 @@ class ParallelProgressDisplay:
         elif self.state.scan_processing:
             section.append("processing batch...", style="cyan italic")
             section.append("\n    ", style="dim")  # Empty second line
-        else:
+        elif should_show_idle(self.state.scan_processing, self.state.scan_queue):
             section.append("idle", style="dim italic")
             section.append("\n    ", style="dim")  # Empty second line
+        else:
+            # Queue has items but nothing displayed yet (waiting for tick)
+            section.append("...", style="dim italic")
+            section.append("\n    ", style="dim")
         section.append("\n")
 
         # SCORE section - always 2 lines for consistent height (skip in scan_only mode)
@@ -514,25 +524,29 @@ class ParallelProgressDisplay:
                         desc = ""
 
                     if desc:
-                        # Truncate to available width
-                        if len(desc) > desc_width:
-                            desc = desc[: desc_width - 3] + "..."
-                        section.append(f"  {desc}", style="italic dim")
+                        # Use clip_text for end-clipping
+                        section.append(
+                            f"  {clip_text(desc, desc_width)}", style="italic dim"
+                        )
                 elif score.skipped:
                     # No score available, just show skipped status
                     desc_width = self.WIDTH - 16  # "    skipped  " = ~12 chars
                     section.append("skipped", style="yellow")
                     if score.skip_reason:
                         reason = clean_text(score.skip_reason)
-                        if len(reason) > desc_width:
-                            reason = reason[: desc_width - 3] + "..."
-                        section.append(f"  {reason}", style="dim")
+                        section.append(
+                            f"  {clip_text(reason, desc_width)}", style="dim"
+                        )
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
-            else:
+            elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")  # Empty second line
+            else:
+                # Queue has items but nothing displayed yet
+                section.append("...", style="dim italic")
+                section.append("\n    ", style="dim")
             section.append("\n")
 
         # ENRICH section - always 2 lines for consistent height (skip in scan_only mode)
@@ -569,9 +583,15 @@ class ParallelProgressDisplay:
             elif self.state.enrich_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
-            else:
+            elif should_show_idle(
+                self.state.enrich_processing, self.state.enrich_queue
+            ):
                 section.append(" idle", style="dim italic")
                 section.append("\n    ", style="dim")  # Empty second line
+            else:
+                # Queue has items but nothing displayed yet
+                section.append(" ...", style="dim italic")
+                section.append("\n    ", style="dim")
 
         return section
 

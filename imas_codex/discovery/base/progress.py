@@ -61,12 +61,30 @@ def clean_text(text: str) -> str:
 
 
 def clip_path(path: str, max_len: int = 63) -> str:
-    """Clip middle of path: /home/user/.../deep/dir"""
+    """Clip middle of path with ellipsis: /home/user/.../deep/dir
+
+    Center-clips the path, keeping the start (context) and end (specificity).
+    The /.../ format is distinctive and indicates path truncation.
+    """
     if len(path) <= max_len:
         return path
+    # Keep more of the end (specific part) than the start
     keep_start = max_len // 3
-    keep_end = max_len - keep_start - 3
-    return f"{path[:keep_start]}...{path[-keep_end:]}"
+    keep_end = max_len - keep_start - 5  # 5 for "/.../"
+    if keep_end < 10:
+        # Very short max_len - just clip end
+        return path[: max_len - 3] + "..."
+    return f"{path[:keep_start]}/.../{path[-keep_end:]}"
+
+
+def clip_text(text: str, max_len: int = 60) -> str:
+    """Clip end of text with ellipsis: Long description text...
+
+    End-clips for descriptions/reasons where the start is most important.
+    """
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
 
 
 def format_time(seconds: float) -> str:
@@ -173,34 +191,54 @@ def make_resource_gauge(
 class StreamQueue:
     """Rate-limited queue for smooth display updates.
 
-    Prevents rapid flickering by popping items at a controlled rate.
-    Has max size to prevent unbounded backlog - oldest items dropped when full.
+    Prevents rapid flickering by:
+    1. Rate-limiting pops to a maximum rate (default 2.0/s)
+    2. Enforcing minimum display time per item (default 0.4s)
+    3. Larger queue buffer to absorb batch processing bursts
+
+    The min_display_time ensures items stay visible long enough to read,
+    even when processing is fast. This prevents the jarring path/idle flicker.
     """
 
     items: deque = field(default_factory=deque)
     last_pop: float = field(default_factory=time.time)
-    rate: float = 1.6  # items per second (reduced for less flicker)
-    max_size: int = 150  # Prevent unbounded backlog
+    rate: float = 2.0  # items per second (capped max rate)
+    max_rate: float = 2.5  # never exceed this rate even if worker is faster
+    min_display_time: float = 0.4  # minimum seconds each item stays visible
+    max_size: int = 500  # larger buffer to absorb batch bursts
 
     def add(self, items: list, rate: float | None = None) -> None:
-        """Add items to queue."""
+        """Add items to queue.
+
+        The rate is capped at max_rate to ensure smooth display.
+        """
         self.items.extend(items)
         if rate and rate > 0:
-            self.rate = rate
+            # Cap at max_rate to prevent too-fast streaming
+            self.rate = min(rate, self.max_rate)
         # Drop oldest items if queue exceeds max size
         while len(self.items) > self.max_size:
             self.items.popleft()
 
     def pop(self) -> Any | None:
-        """Pop next item if rate limit allows."""
+        """Pop next item if rate limit allows.
+
+        Enforces both rate limiting and minimum display time.
+        """
         if not self.items:
             return None
-        interval = 1.0 / self.rate if self.rate > 0 else 0.5
+        # Use the slower of: rate interval or min_display_time
+        rate_interval = 1.0 / self.rate if self.rate > 0 else 0.5
+        interval = max(rate_interval, self.min_display_time)
         now = time.time()
         if now - self.last_pop >= interval:
             self.last_pop = now
             return self.items.popleft()
         return None
+
+    def is_empty(self) -> bool:
+        """Check if queue has no pending items."""
+        return len(self.items) == 0
 
     def clear(self) -> None:
         """Clear the queue. Use on termination to prevent hanging."""
