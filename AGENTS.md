@@ -56,6 +56,57 @@ data = {"id": "...", "status": "discovered"}  # No type checking!
 
 Schema changes are additive only in the graph. Add properties, never rename or remove.
 
+## LLM Prompts
+
+Prompts live in `imas_codex/agentic/prompts/` using Jinja2 templates with schema injection.
+
+**Key principles:**
+- Never hardcode JSON examples - use Pydantic schema injection
+- Each prompt declares its `schema_needs` to load only required context
+- LLM structured output uses Pydantic models via LiteLLM `response_format`
+
+**Schema injection pattern** (`prompt_loader.py`):
+
+```python
+# Prompts get schema context via providers:
+_DEFAULT_SCHEMA_NEEDS = {
+    "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
+    "discovery/rescorer": ["rescore_schema"],  # Only 2 context keys
+}
+
+# Template uses injected variables:
+{{ scoring_schema_example }}    # JSON example from Pydantic
+{{ scoring_schema_fields }}     # Field descriptions
+{{ path_purposes }}             # Enum values from LinkML
+```
+
+**Pydantic models for LLM output** (`discovery/paths/models.py`):
+
+```python
+class DirectoryScoringBatch(BaseModel):
+    """LLM returns this structure via response_format."""
+    results: list[DirectoryScoringResult] = Field(...)
+
+# Scorer uses:
+response = litellm.completion(
+    model=model_id,
+    response_format=DirectoryScoringBatch,  # Enforced by LLM
+    messages=[...],
+)
+batch = DirectoryScoringBatch.model_validate_json(response.content)
+```
+
+**DO:**
+- Define Pydantic models for all LLM structured output
+- Use `get_pydantic_schema_json()` to generate JSON examples
+- Add new prompts to `_DEFAULT_SCHEMA_NEEDS` with minimal context
+- Include `{% include "schema/output-format.md" %}` for schema documentation
+
+**DON'T:**
+- Hardcode JSON examples in prompts (breaks on schema changes)
+- Load full schema context when prompt only needs specific fields
+- Use plain text parsing when structured output is available
+
 ## Critical Rules
 
 ### Locality Check

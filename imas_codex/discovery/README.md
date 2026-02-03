@@ -375,6 +375,63 @@ Key optimizations:
 - **Persistent workers**: No Python restart between batches
 - **Atomic claims**: Cypher transactions prevent race conditions
 
+## LLM Structured Output
+
+Path scoring uses Pydantic models with LiteLLM's `response_format` for reliable parsing.
+
+### Schema Injection
+
+Prompts in `imas_codex/agentic/prompts/discovery/` use Jinja2 templating with dynamic
+schema injection. The scorer prompt includes:
+
+```jinja
+{{ scoring_schema_example }}    # JSON example from Pydantic model
+{{ scoring_schema_fields }}     # Field descriptions
+{{ path_purposes }}             # Enum values from LinkML schema
+```
+
+Schema context is loaded lazily via `get_schema_for_prompt()`:
+
+```python
+from imas_codex.agentic.prompt_loader import render_prompt
+
+# Only loads what the prompt needs (9 keys for scorer, 2 for rescorer)
+prompt = render_prompt("discovery/scorer", {"facility": "tcv", "paths": paths})
+```
+
+### Pydantic Models
+
+LLM responses are validated against `DirectoryScoringBatch`:
+
+```python
+from imas_codex.discovery.paths.models import DirectoryScoringBatch
+
+# In scorer.py:
+response = litellm.completion(
+    model=model_id,
+    response_format=DirectoryScoringBatch,  # Enforced by LLM
+    messages=[{"role": "system", "content": system_prompt}, ...],
+)
+batch = DirectoryScoringBatch.model_validate_json(response.content)
+```
+
+### Adding New Prompts
+
+1. Create prompt in `imas_codex/agentic/prompts/discovery/`
+2. Define Pydantic model in `imas_codex/discovery/paths/models.py`
+3. Add to `_DEFAULT_SCHEMA_NEEDS` in `prompt_loader.py`:
+   ```python
+   _DEFAULT_SCHEMA_NEEDS = {
+       "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
+       "discovery/rescorer": ["rescore_schema"],
+       "discovery/your_new_prompt": ["your_schema_needs"],
+   }
+   ```
+4. Use `response_format=YourModel` in LiteLLM call
+
+**Never hardcode JSON examples** - use `get_pydantic_schema_json(Model)` to generate
+examples from the Pydantic model. This ensures prompts stay in sync with schema changes.
+
 ## Module Structure
 
 | File | Purpose |
