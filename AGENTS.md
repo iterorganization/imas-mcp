@@ -177,6 +177,7 @@ These are essential for effective exploration:
 | `fd` | Find files by name/extension (5x faster than find) | `find` |
 | `git` | Version control, metadata extraction | - |
 | `gh` | GitHub API access, repo visibility checking | curl to API |
+| `uv` | Fast Python package manager for venv/dependency management | pip, virtualenv |
 
 ### Optional Tools
 
@@ -228,6 +229,51 @@ fd -e py
 # Single command via SSH
 ssh tcv "rg -l 'IMAS' /home/codes"
 ssh tcv "fd -e py /home/codes | head -20"
+```
+
+## Python Environments
+
+Use uv to ensure modern Python (3.10+) on all facilities, avoiding version compatibility issues.
+
+### Why This Matters
+
+- System Python varies: JET has 3.13, TCV has 3.9, ITER has 3.9
+- Development on modern Python, then deployment fails on old Python
+- uv installs Python from python-build-standalone (GitHub), not PyPI
+- Works on airgapped facilities if GitHub is accessible
+
+### Quick Setup
+
+```bash
+# Check Python status on a facility
+uv run imas-codex tools python status tcv
+
+# Complete setup (uv + Python + venv) in one command
+uv run imas-codex tools python setup tcv
+
+# Or step by step:
+uv run imas-codex tools install tcv --tool uv      # 1. Install uv
+uv run imas-codex tools python install tcv          # 2. Install Python 3.12
+uv run imas-codex tools python venv tcv            # 3. Create project venv
+```
+
+### Facility Status Reference
+
+| Facility | System Python | uv | PyPI | Strategy |
+|----------|--------------|-----|------|----------|
+| JET | 3.13.3 | ✗ | ✓ | Already modern, install uv for venv |
+| TCV | 3.9.25 | ✗ | ✓ | Install uv, then Python 3.12 |
+| ITER | 3.9.16 | ✗ | ✓ | Install uv, then Python 3.12 |
+| JT60SA | 3.9.10 | ✓ | ✗ | Already has 3.12/3.13 via uv |
+
+### Using the Remote venv
+
+```bash
+# Activate on remote
+ssh tcv "source ~/.local/share/imas-codex/venv/bin/activate && python --version"
+
+# Run scripts with the venv Python
+ssh tcv "~/.local/share/imas-codex/venv/bin/python script.py"
 ```
 
 ## Commit Workflow

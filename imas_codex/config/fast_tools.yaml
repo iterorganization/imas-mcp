@@ -88,6 +88,26 @@ required:
       local: "gh api repos/owner/repo"
       remote: "ssh('gh api repos/owner/repo')"
 
+  uv:
+    name: uv
+    purpose: Fast Python package manager for venv and dependency management
+    binary: uv
+    fallback: null
+    releases:
+      repo: astral-sh/uv
+      version: "0.6.11"
+      # uv uses standalone binaries, not tarballs
+      asset_pattern: "uv-{arch}.tar.gz"
+      strip_components: 0
+      binary_path: "uv"
+    # Critical for modern Python on remote facilities - enables:
+    # - Installing Python versions without root access (uv python install)
+    # - Fast venv creation (uv venv)
+    # - Dependency management for imas-codex remote components
+    examples:
+      local: "uv python install 3.12"
+      remote: "ssh facility 'uv python install 3.12'"
+
 # Optional tools - enhance exploration but not required
 optional:
   tokei:
