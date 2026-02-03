@@ -466,6 +466,57 @@ Select from the VS Code agent dropdown for restricted toolsets:
 | Ingest | Code ingestion pipeline (core + MCP) |
 | Graph | Knowledge graph operations (core + MCP) |
 
+## Remote Embedding Server
+
+The MCP server uses remote embedding by default (`embedding-backend = "remote"` in pyproject.toml). The embedding server runs on the ITER cluster GPU and is accessed via SSH tunnel.
+
+**Architecture:**
+- Server: FastAPI app running on ITER with Tesla T4 GPU
+- Client: HTTP requests via SSH tunnel (port 18765)
+- Model: Qwen/Qwen3-Embedding-0.6B (1024-dim embeddings)
+
+**Local workstation setup:**
+
+```bash
+# Establish SSH tunnel (required for MCP embedding functions)
+ssh -f -N -L 18765:127.0.0.1:18765 iter
+
+# Check server status
+imas-codex serve embed status
+```
+
+**ITER cluster management:**
+
+```bash
+# Check service status
+ssh iter "systemctl --user status imas-codex-embed"
+
+# Start/stop/restart
+ssh iter "systemctl --user start imas-codex-embed"
+ssh iter "systemctl --user stop imas-codex-embed"
+ssh iter "systemctl --user restart imas-codex-embed"
+
+# View logs
+ssh iter "journalctl --user -u imas-codex-embed -f"
+```
+
+**First-time installation on ITER cluster:**
+
+```bash
+ssh iter
+cd ~/Code/imas-codex
+uv sync --extra gpu
+imas-codex serve embed service install --gpu 1
+imas-codex serve embed service start
+```
+
+**Troubleshooting:**
+
+If embedding calls fail from MCP, check in order:
+1. SSH tunnel active: `lsof -i :18765`
+2. Server running: `ssh iter "systemctl --user status imas-codex-embed"`
+3. Server health: `curl http://localhost:18765/health`
+
 ## Fallback: MCP Server Not Running
 
 If `python()` is unavailable, use CLI:
