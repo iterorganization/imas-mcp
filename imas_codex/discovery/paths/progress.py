@@ -144,10 +144,14 @@ class ProgressState:
     score_processing: bool = False  # True when awaiting LLM batch
     enrich_processing: bool = False  # True when awaiting SSH enrichment batch
 
-    # Streaming
+    # Streaming - enrich uses slower rate to fill time between infrequent batches
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
     score_queue: StreamQueue = field(default_factory=StreamQueue)
-    enrich_queue: StreamQueue = field(default_factory=StreamQueue)
+    enrich_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=1.0, min_display_time=1.5
+        )
+    )
 
     # Tracking
     scored_paths: set[str] = field(default_factory=set)
@@ -590,8 +594,13 @@ class ParallelProgressDisplay:
             elif self.state.enrich_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
+            elif should_show_idle(
+                self.state.enrich_processing, self.state.enrich_queue
+            ):
+                section.append(" idle", style="dim italic")
+                section.append("\n    ", style="dim")  # Empty second line
             else:
-                # Show ... when idle or waiting for queue items (no idle flicker)
+                # Queue has items but nothing displayed yet
                 section.append(" ...", style="dim italic")
                 section.append("\n    ", style="dim")
 
@@ -972,8 +981,10 @@ class ParallelProgressDisplay:
                         error=r.get("error"),
                     )
                 )
-            # Use worker rate with 0.8 factor; StreamQueue max_rate caps display speed
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Use lower display rate for enrich (items visible ~1.5-2s each)
+            # This ensures items stream steadily between infrequent SSH batches
+            # The enrich_queue has max_rate=1.0 and min_display_time=1.5 configured
+            display_rate = stats.rate * 0.4 if stats.rate else 0.5
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
