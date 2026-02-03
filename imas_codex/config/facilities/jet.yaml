@@ -31,100 +31,60 @@ user_info:
 # Wiki/documentation sites
 # JET Data Centre hosts 16 separate MediaWiki instances at wiki.jetdata.eu
 # Each is a distinct site for different task forces/groups
+
+# Common defaults for all JET wiki sites
+_wiki_defaults: &wiki_defaults
+  portal_page: Main_Page
+  site_type: mediawiki
+  auth_type: none
+  requires_ssh: true
+
 wiki_sites:
-  - url: https://wiki.jetdata.eu/pog
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/pog
     description: Plasma Operations Group - operational procedures and session logs
-  - url: https://wiki.jetdata.eu/ia
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/ia
     description: Integrated Analysis - analysis tools and workflows
-  - url: https://wiki.jetdata.eu/ek
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/ek
     description: Electron Kinetics
-  - url: https://wiki.jetdata.eu/open
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/open
     description: OpenWiki - general documentation
-  - url: https://wiki.jetdata.eu/rtmc
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/rtmc
     description: Real Time Measurement and Control
-  - url: https://wiki.jetdata.eu/seed
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/seed
     description: SeedWiki
-  - url: https://wiki.jetdata.eu/tf
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tf
     description: TFWiki - Task Force general
-  - url: https://wiki.jetdata.eu/tfd
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfd
     description: Task Force D - diagnostics
-  - url: https://wiki.jetdata.eu/tfe
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfe
     description: Task Force E - exhaust
-  - url: https://wiki.jetdata.eu/tfe1
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfe1
     description: Task Force E1
-  - url: https://wiki.jetdata.eu/tfe2
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfe2
     description: Task Force E2
-  - url: https://wiki.jetdata.eu/tfh
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfh
     description: Task Force H - heating and current drive
-  - url: https://wiki.jetdata.eu/tfm
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfm
     description: Task Force M - MHD
-  - url: https://wiki.jetdata.eu/tfs1
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfs1
     description: Task Force S1 - scenario 1
-  - url: https://wiki.jetdata.eu/tfs2
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tfs2
     description: Task Force S2 - scenario 2
-  - url: https://wiki.jetdata.eu/tft
-    portal_page: Main_Page
-    site_type: mediawiki
-    auth_type: none
-    requires_ssh: true
+  - <<: *wiki_defaults
+    url: https://wiki.jetdata.eu/tft
     description: Task Force Transport
