@@ -888,8 +888,11 @@ async def score_worker(
     """Scorer worker: LLM scoring of prefetched pages.
 
     Transitions: prefetched → scoring → scored/skipped
+
+    Uses centralized LLM access via get_model_for_task().
+    Cost is tracked from actual OpenRouter response.
     """
-    from imas_codex.agentic.agents import create_litellm_model, get_model_for_task
+    from imas_codex.agentic.agents import get_model_for_task
 
     while not state.should_stop_scoring():
         pages = claim_pages_for_scoring(state.facility, limit=50)
@@ -907,11 +910,11 @@ async def score_worker(
             on_progress(f"scoring {len(pages)} pages", state.score_stats)
 
         try:
-            # Use LLM to score batch
+            # Get model from centralized config
             model = get_model_for_task("discovery")
-            llm = create_litellm_model(model=model, temperature=0.3, max_tokens=4096)
 
-            results, cost = await _score_pages_batch(pages, llm, state.focus)
+            # Score batch with actual LLM call and cost tracking
+            results, cost = await _score_pages_batch(pages, model, state.focus)
 
             mark_pages_scored(state.facility, results)
             state.score_stats.processed += len(results)
@@ -922,6 +925,11 @@ async def score_worker(
                     f"scored {len(results)} pages", state.score_stats, results=results
                 )
 
+        except ValueError as e:
+            # API key missing - log once and stop scoring
+            logger.error("LLM configuration error: %s", e)
+            state.stop_requested = True
+            break
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
             # Reset pages to prefetched state
@@ -937,6 +945,9 @@ async def ingest_worker(
     """Ingest worker: Chunk and embed high-value pages.
 
     Transitions: scored → ingesting → ingested
+
+    Uses WikiIngestionPipeline for proper chunking and embedding.
+    No LLM calls - all entity extraction uses regex patterns.
     """
     while not state.should_stop_scoring():
         pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
@@ -959,7 +970,13 @@ async def ingest_worker(
             url = page.get("url", "")
 
             try:
-                chunk_count = await _ingest_page(url, page_id, state.ssh_host)
+                chunk_count = await _ingest_page(
+                    url=url,
+                    page_id=page_id,
+                    facility=state.facility,
+                    site_type=state.site_type,
+                    ssh_host=state.ssh_host,
+                )
                 results.append(
                     {
                         "id": page_id,
@@ -1069,25 +1086,84 @@ def _create_discovered_artifacts(
 
 
 async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
-    """Fetch page content and generate a summary."""
-    # Placeholder - actual implementation would fetch HTML and extract text
-    # For now, return empty summary (page title serves as minimal context)
-    return ""
+    """Fetch page content and extract text preview.
+
+    No LLM is used here - prefetch extracts text deterministically.
+    The summary is just cleaned text for the scorer to evaluate.
+
+    Args:
+        url: Page URL to fetch
+        ssh_host: Optional SSH host for proxied fetching
+
+    Returns:
+        Extracted text preview (up to 2000 chars) or empty string on error
+    """
+    from imas_codex.wiki.prefetch import extract_text_from_html, fetch_page_content
+
+    if ssh_host:
+        # Fetch via SSH proxy using curl
+        cmd = f'curl -sk "{url}" 2>/dev/null'
+        try:
+            result = subprocess.run(
+                ["ssh", ssh_host, cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and result.stdout:
+                return extract_text_from_html(result.stdout, max_chars=2000)
+            return ""
+        except subprocess.TimeoutExpired:
+            logger.warning("Timeout fetching %s via SSH", url)
+            return ""
+        except Exception as e:
+            logger.warning("Error fetching %s via SSH: %s", url, e)
+            return ""
+    else:
+        # Direct HTTP fetch
+        html, error = await fetch_page_content(url)
+        if html:
+            return extract_text_from_html(html, max_chars=2000)
+        if error:
+            logger.debug("Failed to fetch %s: %s", url, error)
+        return ""
 
 
 async def _score_pages_batch(
     pages: list[dict[str, Any]],
-    llm: Any,
+    model: str,
     focus: str | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
-    """Score a batch of pages using LLM.
+    """Score a batch of pages using LLM via centralized OpenRouter access.
+
+    Uses litellm.acompletion with the centralized model configuration.
+    Cost is extracted from OpenRouter response, not estimated.
+
+    Args:
+        pages: List of page dicts with id, title, summary, etc.
+        model: Model identifier from get_model_for_task()
+        focus: Optional focus area for scoring
 
     Returns:
-        (results, cost) tuple where cost is the actual LLM cost from OpenRouter.
+        (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
     import json
+    import os
 
     import litellm
+
+    # Get API key - same pattern as discovery/scorer.py
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "OPENROUTER_API_KEY environment variable not set. "
+            "Set it in .env or export it."
+        )
+
+    # Ensure OpenRouter prefix
+    model_id = model
+    if not model_id.startswith("openrouter/"):
+        model_id = f"openrouter/{model_id}"
 
     # Build scoring prompt
     focus_instruction = f"\nFocus: {focus}" if focus else ""
@@ -1130,65 +1206,88 @@ Example response:
         f"Score these {len(pages)} wiki pages:\n{json.dumps(page_data, indent=2)}"
     )
 
-    # Call LLM
+    # Retry loop for rate limiting (same pattern as discovery/scorer.py)
+    max_retries = 3
+    retry_base_delay = 2.0
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            response = await litellm.acompletion(
+                model=model_id,
+                api_key=api_key,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=4096,
+            )
+            break
+        except Exception as e:
+            last_error = e
+            error_msg = str(e).lower()
+            if any(
+                x in error_msg for x in ["overloaded", "rate", "429", "503", "timeout"]
+            ):
+                delay = retry_base_delay * (2**attempt)
+                logger.debug(
+                    "LLM rate limited (attempt %d/%d), waiting %.1fs...",
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+    else:
+        raise last_error  # type: ignore[misc]
+
+    # Extract actual cost from OpenRouter response
+    input_tokens = response.usage.prompt_tokens
+    output_tokens = response.usage.completion_tokens
+
+    if (
+        hasattr(response, "_hidden_params")
+        and "response_cost" in response._hidden_params
+    ):
+        cost = response._hidden_params["response_cost"]
+    else:
+        # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
+        cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+    # Parse response
+    content = response.choices[0].message.content
+    if not content:
+        logger.warning("LLM returned empty response, returning empty results")
+        return [], cost
+
+    # Strip markdown code blocks if present
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1]
+    if content.endswith("```"):
+        content = content.rsplit("\n", 1)[0]
+    content = content.strip()
+
     try:
-        response = await litellm.acompletion(
-            model=llm.model
-            if hasattr(llm, "model")
-            else "openrouter/anthropic/claude-sonnet-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-            max_tokens=4096,
+        parsed = json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse LLM response as JSON: %s", e)
+        return [], cost
+
+    results = []
+    for r in parsed:
+        results.append(
+            {
+                "id": r["id"],
+                "score": max(0.0, min(1.0, float(r.get("score", 0.5)))),
+                "reasoning": r.get("reasoning", "")[:80],
+                "page_type": r.get("page_type", "other"),
+                "is_physics": bool(r.get("is_physics", False)),
+            }
         )
 
-        # Extract actual cost from OpenRouter response
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-
-        if (
-            hasattr(response, "_hidden_params")
-            and "response_cost" in response._hidden_params
-        ):
-            cost = response._hidden_params["response_cost"]
-        else:
-            # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
-            cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-        # Parse response
-        content = response.choices[0].message.content
-        if not content:
-            logger.warning("LLM returned empty response, using heuristic fallback")
-            return _score_pages_heuristic(pages), cost
-
-        # Strip markdown code blocks if present
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1]
-        if content.endswith("```"):
-            content = content.rsplit("\n", 1)[0]
-        content = content.strip()
-
-        parsed = json.loads(content)
-        results = []
-        for r in parsed:
-            results.append(
-                {
-                    "id": r["id"],
-                    "score": max(0.0, min(1.0, float(r.get("score", 0.5)))),
-                    "reasoning": r.get("reasoning", "")[:80],
-                    "page_type": r.get("page_type", "other"),
-                    "is_physics": bool(r.get("is_physics", False)),
-                }
-            )
-
-        return results, cost
-
-    except Exception as e:
-        logger.warning("LLM scoring failed, using heuristic fallback: %s", e)
-        # Fallback to heuristic scoring (zero cost)
-        return _score_pages_heuristic(pages), 0.0
+    return results, cost
 
 
 def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1246,10 +1345,113 @@ def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return results
 
 
-async def _ingest_page(url: str, page_id: str, ssh_host: str | None) -> int:
-    """Ingest a page: fetch content, chunk, and embed."""
-    # Placeholder - actual implementation would use WikiIngestionPipeline
-    return 0
+async def _ingest_page(
+    url: str,
+    page_id: str,
+    facility: str,
+    site_type: str,
+    ssh_host: str | None,
+) -> int:
+    """Ingest a page: fetch content, chunk, and embed.
+
+    Uses the WikiIngestionPipeline for proper chunking and embedding.
+
+    Args:
+        url: Page URL to fetch
+        page_id: Unique page identifier
+        facility: Facility ID (e.g., 'tcv', 'jet')
+        site_type: Site type ('mediawiki', 'confluence', 'twiki')
+        ssh_host: Optional SSH host for proxied fetching
+
+    Returns:
+        Number of chunks created
+    """
+    from imas_codex.wiki.pipeline import WikiIngestionPipeline
+    from imas_codex.wiki.scraper import WikiPage
+
+    # Extract page name from URL or page_id
+    page_name = page_id.split(":", 1)[1] if ":" in page_id else page_id
+
+    # Fetch HTML content
+    html = await _fetch_html(url, ssh_host)
+    if not html or len(html) < 100:
+        logger.warning("Insufficient content for %s", page_id)
+        return 0
+
+    # Extract title from HTML
+    import re
+
+    title_match = re.search(r"<title>([^<]+)</title>", html)
+    title = title_match.group(1) if title_match else page_name
+
+    # Clean up title (remove wiki suffix)
+    for suffix in [" - SPCwiki", " - Wikipedia", " - Confluence"]:
+        if title.endswith(suffix):
+            title = title[: -len(suffix)]
+
+    # Create WikiPage object (fields from dataclass in scraper.py)
+    page = WikiPage(
+        url=url,
+        title=title,
+        content_html=html,
+        content_text="",  # Will be extracted by pipeline
+        sections={},
+        mdsplus_paths=[],  # Will be extracted by pipeline
+        imas_paths=[],
+        units=[],
+        conventions=[],
+    )
+
+    # Use the ingestion pipeline
+    pipeline = WikiIngestionPipeline(
+        facility_id=facility,
+        use_rich=False,  # No progress display in worker
+    )
+
+    try:
+        stats = await pipeline.ingest_page(page)
+        return stats.get("chunks", 0)
+    except Exception as e:
+        logger.warning("Failed to ingest %s: %s", page_id, e)
+        return 0
+
+
+async def _fetch_html(url: str, ssh_host: str | None) -> str:
+    """Fetch HTML content from URL.
+
+    Args:
+        url: Page URL
+        ssh_host: Optional SSH host for proxied fetching
+
+    Returns:
+        HTML content string or empty string on error
+    """
+    from imas_codex.wiki.prefetch import fetch_page_content
+
+    if ssh_host:
+        # Fetch via SSH proxy
+        cmd = f'curl -sk "{url}" 2>/dev/null'
+        try:
+            result = subprocess.run(
+                ["ssh", ssh_host, cmd],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                return result.stdout
+            return ""
+        except Exception as e:
+            logger.warning("SSH fetch failed for %s: %s", url, e)
+            return ""
+    else:
+        # Direct HTTP fetch
+        html, error = await fetch_page_content(url)
+        if html:
+            return html
+        if error:
+            logger.debug("HTTP fetch failed for %s: %s", url, error)
+        return ""
 
 
 # =============================================================================
