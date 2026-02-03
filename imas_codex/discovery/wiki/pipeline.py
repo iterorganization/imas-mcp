@@ -35,7 +35,7 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from imas_codex.graph import GraphClient
 from imas_codex.settings import get_imas_embedding_model
 
-from .progress import WikiProgressMonitor, set_current_monitor
+from .monitor import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
 
 logger = logging.getLogger(__name__)
@@ -906,7 +906,7 @@ class WikiIngestionPipeline:
 
                 try:
                     # Determine site type from facility config
-                    from imas_codex.wiki.config import WikiConfig
+                    from imas_codex.discovery.wiki.config import WikiConfig
 
                     wiki_config = WikiConfig.from_facility(self.facility_id)
                     site_type = wiki_config.site_type
@@ -1006,7 +1006,7 @@ class WikiIngestionPipeline:
         # Extract page identifiers from the graph results
         # For Confluence: use page ID (numeric)
         # For MediaWiki: use page title
-        from imas_codex.wiki.config import WikiConfig
+        from imas_codex.discovery.wiki.config import WikiConfig
 
         wiki_config = WikiConfig.from_facility(self.facility_id)
 

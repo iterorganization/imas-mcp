@@ -37,7 +37,7 @@ class WikiConfig:
         Returns:
             WikiConfig for the specified site
         """
-        from imas_codex.discovery.facility import get_facility
+        from imas_codex.discovery.base.facility import get_facility
 
         # Try to load from facility YAML first
         try:
@@ -102,7 +102,7 @@ class WikiConfig:
         Returns:
             List of WikiConfig for all configured sites
         """
-        from imas_codex.discovery.facility import get_facility
+        from imas_codex.discovery.base.facility import get_facility
 
         sites = []
 

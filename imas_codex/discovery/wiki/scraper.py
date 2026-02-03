@@ -255,8 +255,8 @@ def _fetch_confluence_page(
     Returns:
         WikiPage with content, or None if fetch failed
     """
-    from imas_codex.discovery.facility import get_facility
-    from imas_codex.wiki.confluence import ConfluenceClient
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.wiki.confluence import ConfluenceClient
 
     config = get_facility(facility)
     wiki_sites = config.get("wiki_sites", [])

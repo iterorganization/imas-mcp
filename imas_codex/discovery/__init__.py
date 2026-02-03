@@ -1,30 +1,26 @@
 """
 Discovery Engine for remote facility exploration.
 
-This module provides:
-1. Configuration management for remote fusion facilities
-2. Graph-led discovery pipeline (scan → score → discover)
-3. Parallel discovery engine with concurrent scan/score workers
+Provides three discovery domains:
 
-Public API for facility configuration:
-- get_facility(): Load complete config (public + private merged)
-- get_facility_metadata(): Load public metadata only (graph-safe)
-- get_facility_infrastructure(): Load private infrastructure only
-- update_infrastructure(): Update private config (tools, paths, notes)
-- update_metadata(): Update public config (name, description)
-- add_exploration_note(): Add timestamped exploration note
+1. **base** - Shared infrastructure
+   - Facility configuration (get_facility, update_infrastructure, etc.)
+   - Parallel command execution
+   - Progress display utilities
 
-Graph-led discovery API:
-- get_discovery_stats(): Get discovery statistics
-- get_frontier(): Get paths awaiting scan
-- seed_facility_roots(): Create initial root paths
-- clear_facility_paths(): Delete all paths for fresh start
+2. **paths** - Filesystem discovery
+   - SSH directory scanning
+   - LLM-based path scoring
+   - Deep enrichment (dust, tokei, patterns)
 
-Parallel discovery API:
-- run_parallel_discovery(): Run concurrent scan/score workers
+3. **wiki** - Documentation discovery
+   - MediaWiki/Confluence support
+   - Parallel scan/score/ingest workers
+   - Content chunking and embedding
 """
 
-from imas_codex.discovery.facility import (
+# Re-export base infrastructure at discovery level for convenience
+from imas_codex.discovery.base import (
     add_exploration_note,
     filter_private_fields,
     get_facilities_dir,
@@ -36,36 +32,35 @@ from imas_codex.discovery.facility import (
     update_metadata,
     validate_no_private_fields,
 )
-from imas_codex.discovery.frontier import (
+
+# Re-export paths discovery at discovery level for convenience
+from imas_codex.discovery.paths import (
+    DirectoryScorer,
     clear_facility_paths,
     get_discovery_stats,
     get_frontier,
     get_high_value_paths,
     get_purpose_distribution,
     get_scorable_paths,
+    grounded_score,
+    run_parallel_discovery,
     seed_facility_roots,
     seed_missing_roots,
 )
-from imas_codex.discovery.parallel import run_parallel_discovery
-from imas_codex.discovery.scorer import (
-    DirectoryScorer,
-    grounded_score,
-)
 
 __all__ = [
-    # Core API
+    # Base infrastructure
     "get_facility",
     "get_facility_metadata",
     "get_facility_infrastructure",
     "update_infrastructure",
     "update_metadata",
     "add_exploration_note",
-    # Utilities
     "list_facilities",
     "get_facilities_dir",
     "filter_private_fields",
     "validate_no_private_fields",
-    # Graph-led discovery
+    # Paths discovery
     "DirectoryScorer",
     "grounded_score",
     "get_discovery_stats",
@@ -76,6 +71,5 @@ __all__ = [
     "seed_facility_roots",
     "seed_missing_roots",
     "clear_facility_paths",
-    # Parallel discovery
     "run_parallel_discovery",
 ]

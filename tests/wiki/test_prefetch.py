@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from imas_codex.wiki.prefetch import (
+from imas_codex.discovery.wiki.prefetch import (
     extract_text_from_html,
     fetch_page_content,
     prefetch_pages,
@@ -130,7 +130,7 @@ class TestSummarizeBatch:
             }
         ]
 
-        with patch("imas_codex.wiki.prefetch.get_llm") as mock_get_llm:
+        with patch("imas_codex.discovery.wiki.prefetch.get_llm") as mock_get_llm:
             mock_llm = AsyncMock()
             mock_response = MagicMock()
             # Use return_value to mock str() behavior
@@ -161,7 +161,7 @@ class TestSummarizeBatch:
             },
         ]
 
-        with patch("imas_codex.wiki.prefetch.get_llm") as mock_get_llm:
+        with patch("imas_codex.discovery.wiki.prefetch.get_llm") as mock_get_llm:
             mock_llm = AsyncMock()
             mock_response = MagicMock()
             # Use return_value to mock str() behavior
@@ -178,7 +178,7 @@ class TestPrefetchPages:
     @pytest.mark.asyncio
     async def test_prefetch_no_pages(self):
         """Test prefetch when no pages need processing."""
-        with patch("imas_codex.wiki.prefetch.GraphClient") as mock_gc_class:
+        with patch("imas_codex.discovery.wiki.prefetch.GraphClient") as mock_gc_class:
             mock_gc = MagicMock()
             mock_gc.query = MagicMock(return_value=[])
             mock_gc_class.return_value = mock_gc
@@ -196,9 +196,13 @@ class TestPrefetchPages:
         ]
 
         with (
-            patch("imas_codex.wiki.prefetch.GraphClient") as mock_gc_class,
-            patch("imas_codex.wiki.prefetch.fetch_page_content") as mock_fetch,
-            patch("imas_codex.wiki.prefetch.summarize_pages_batch") as mock_summarize,
+            patch("imas_codex.discovery.wiki.prefetch.GraphClient") as mock_gc_class,
+            patch(
+                "imas_codex.discovery.wiki.prefetch.fetch_page_content"
+            ) as mock_fetch,
+            patch(
+                "imas_codex.discovery.wiki.prefetch.summarize_pages_batch"
+            ) as mock_summarize,
         ):
             mock_gc = MagicMock()
             mock_gc.query = MagicMock(

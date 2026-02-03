@@ -21,7 +21,7 @@ def facilities() -> None:
 @facilities.command("list")
 def facilities_list() -> None:
     """List all registered facilities."""
-    from imas_codex.discovery.facility import get_facility, list_facilities
+    from imas_codex.discovery.base.facility import get_facility, list_facilities
 
     facility_names = list_facilities()
 
@@ -59,7 +59,7 @@ def facilities_show(name: str, as_json: bool) -> None:
     """
     import json as json_module
 
-    from imas_codex.discovery.facility import get_facility, list_facilities
+    from imas_codex.discovery.base.facility import get_facility, list_facilities
 
     try:
         config = get_facility(name)

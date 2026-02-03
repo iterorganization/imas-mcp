@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.discovery.facility import get_facility
+from imas_codex.discovery.base.facility import get_facility
 from imas_codex.remote.executor import run_python_script
 
 if TYPE_CHECKING:

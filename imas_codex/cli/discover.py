@@ -350,7 +350,10 @@ def _print_discovery_summary(
 ) -> None:
     """Print detailed discovery summary with statistics."""
     from imas_codex.discovery import get_discovery_stats
-    from imas_codex.discovery.frontier import get_accumulated_cost, get_high_value_paths
+    from imas_codex.discovery.paths.frontier import (
+        get_accumulated_cost,
+        get_high_value_paths,
+    )
 
     _ansi_pattern = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
@@ -606,14 +609,14 @@ async def _async_discovery_loop(
     root_filter: list[str] | None = None,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""
-    from imas_codex.discovery.parallel import run_parallel_discovery
+    from imas_codex.discovery.paths.parallel import run_parallel_discovery
 
     disc_logger = logging.getLogger("imas_codex.discovery")
     scored_this_run: set[str] = set()
 
     if use_rich:
         from imas_codex.agentic.agents import get_model_for_task
-        from imas_codex.discovery.parallel_progress import ParallelProgressDisplay
+        from imas_codex.discovery.paths.progress import ParallelProgressDisplay
 
         model_name = get_model_for_task("score")
 
@@ -758,7 +761,7 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
     import json as json_module
 
     from imas_codex.discovery import get_discovery_stats, get_high_value_paths
-    from imas_codex.discovery.progress import print_discovery_status
+    from imas_codex.discovery.paths.progress import print_discovery_status
 
     try:
         if as_json:
@@ -1031,8 +1034,8 @@ def discover_wiki(
     3. SCORE: Content-aware LLM evaluation (stops at budget limit)
     4. INGEST: Chunk and embed high-score pages (stops at budget limit)
     """
-    from imas_codex.discovery.facility import get_facility
-    from imas_codex.wiki.parallel import (
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.wiki.parallel import (
         reset_transient_pages,
         run_parallel_wiki_discovery,
     )
@@ -1127,7 +1130,7 @@ def discover_wiki(
                 _scan_only: bool,
                 _score_only: bool,
             ):
-                from imas_codex.wiki.wiki_progress import WikiProgressDisplay
+                from imas_codex.discovery.wiki.progress import WikiProgressDisplay
 
                 with WikiProgressDisplay(
                     facility=_facility,
@@ -1140,7 +1143,9 @@ def discover_wiki(
                 ) as display:
                     # Periodic graph state refresh
                     async def refresh_graph_state():
-                        from imas_codex.wiki.parallel import get_wiki_discovery_stats
+                        from imas_codex.discovery.wiki.parallel import (
+                            get_wiki_discovery_stats,
+                        )
 
                         while True:
                             stats = get_wiki_discovery_stats(_facility)

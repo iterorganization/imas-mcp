@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from imas_codex.agentic.agents import get_model_for_task
-from imas_codex.discovery.models import (
+from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
     DirectoryScoringBatch,
     ResourcePurpose,
@@ -313,7 +313,7 @@ class DirectoryScorer:
         - dimension_examples: cross-facility examples per score dimension
         """
         from imas_codex.agentic.prompt_loader import render_prompt
-        from imas_codex.discovery.frontier import (
+        from imas_codex.discovery.paths.frontier import (
             sample_paths_by_dimension,
             sample_scored_paths,
         )
@@ -529,7 +529,7 @@ class DirectoryScorer:
                 )
                 if is_public_host:
                     # Verify actual visibility via HTTP (confirms not private)
-                    from imas_codex.discovery.frontier import (
+                    from imas_codex.discovery.paths.frontier import (
                         _is_repo_publicly_accessible,
                     )
 

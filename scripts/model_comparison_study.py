@@ -894,7 +894,7 @@ def run_model_evaluation(
     model_id: str, model_name: str, directories: list[dict]
 ) -> ModelResult:
     """Evaluate a single model on the test directories."""
-    from imas_codex.discovery.scorer import DirectoryScorer
+    from imas_codex.discovery.paths.scorer import DirectoryScorer
 
     result = ModelResult(model_id=model_id, model_name=model_name)
 

@@ -498,7 +498,7 @@ def get_exclusion_config_for_facility(facility: str) -> ExclusionConfig:
     base_config = get_discovery_config().exclusions
 
     try:
-        from imas_codex.discovery.facility import get_facility_infrastructure
+        from imas_codex.discovery.base.facility import get_facility_infrastructure
 
         infra = get_facility_infrastructure(facility)
         facility_excludes = infra.get("excludes", {})

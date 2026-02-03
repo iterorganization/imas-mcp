@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 # Import common utilities
-from imas_codex.discovery.progress_common import (
+from imas_codex.discovery.base.progress import (
     StreamQueue,
     clean_text,
     clip_path,
@@ -33,7 +33,7 @@ from imas_codex.discovery.progress_common import (
 )
 
 if TYPE_CHECKING:
-    from imas_codex.discovery.parallel import WorkerStats
+    from imas_codex.discovery.paths.parallel import WorkerStats
 
 
 # ============================================================================
@@ -994,7 +994,7 @@ class ParallelProgressDisplay:
 
     def refresh_from_graph(self, facility: str) -> None:
         """Refresh totals from graph database."""
-        from imas_codex.discovery.frontier import (
+        from imas_codex.discovery.paths.frontier import (
             get_accumulated_cost,
             get_discovery_stats,
         )
@@ -1075,3 +1075,93 @@ class ParallelProgressDisplay:
         """Refresh the live display."""
         if self._live:
             self._live.update(self._build_display())
+
+
+def print_discovery_status(facility: str, console: Console | None = None) -> None:
+    """Print a formatted discovery status report.
+
+    Args:
+        facility: Facility ID
+        console: Optional Rich console
+    """
+    from imas_codex.discovery.paths.frontier import (
+        get_discovery_stats,
+        get_high_value_paths,
+        get_purpose_distribution,
+        get_top_paths_by_purpose,
+    )
+
+    console = console or Console()
+    stats = get_discovery_stats(facility)
+
+    # Header
+    console.print(f"\n[bold]Facility: {facility}[/bold]")
+    console.print(f"Total paths: {stats['total']:,}")
+
+    # Status breakdown
+    total = stats["total"] or 1  # Avoid division by zero
+    discovered = stats.get("discovered", 0)
+    scanned = stats.get("scanned", 0)
+    scored = stats.get("scored", 0)
+    skipped = stats.get("skipped", 0)
+    excluded = stats.get("excluded", 0)
+    max_depth = stats.get("max_depth", 0)
+
+    console.print(f"├─ Discovered: {discovered:,} ({discovered / total * 100:.1f}%)")
+    console.print(f"├─ Scanned:    {scanned:,} ({scanned / total * 100:.1f}%)")
+    console.print(f"├─ Scored:     {scored:,} ({scored / total * 100:.1f}%)")
+    console.print(f"├─ Skipped:    {skipped:,} ({skipped / total * 100:.1f}%)")
+    console.print(f"└─ Excluded:   {excluded:,} ({excluded / total * 100:.1f}%)")
+
+    # Purpose distribution with top paths per category
+    purpose_dist = get_purpose_distribution(facility)
+    if purpose_dist:
+        console.print("\n[bold]By Purpose (top 3 per category):[/bold]")
+
+        # Define category groups with their purposes
+        categories = [
+            ("Modeling Code", "cyan", ["modeling_code"]),
+            ("Analysis Code", "green", ["analysis_code", "operations_code"]),
+            ("Data", "yellow", ["modeling_data", "experimental_data"]),
+            ("Infrastructure", "blue", ["data_access", "workflow", "visualization"]),
+            ("Documentation", "magenta", ["documentation"]),
+        ]
+
+        for cat_name, color, purposes in categories:
+            purpose_count = sum(purpose_dist.get(p, 0) for p in purposes)
+            if purpose_count == 0:
+                continue
+
+            console.print(f"\n[{color}]{cat_name}[/{color}] ({purpose_count:,} paths)")
+
+            # Get top paths for each purpose in this category
+            for purpose in purposes:
+                if purpose_dist.get(purpose, 0) == 0:
+                    continue
+
+                top_paths = get_top_paths_by_purpose(facility, purpose, limit=3)
+                if top_paths:
+                    for p in top_paths:
+                        console.print(f"  [{p['score']:.2f}] [dim]{p['path']}[/dim]")
+
+        # Structural/skip categories (just counts, no paths)
+        structural_purposes = ["container", "archive", "build_artifact", "system"]
+        structural = sum(purpose_dist.get(p, 0) for p in structural_purposes)
+        if structural > 0:
+            console.print(f"\n[dim]Structural[/dim] ({structural:,} paths)")
+
+    # Summary
+    frontier = discovered + scanned
+    console.print(f"\nFrontier: {frontier} paths awaiting work")
+    console.print(f"Max depth: {max_depth}")
+    coverage = scored / total * 100 if total > 0 else 0
+    console.print(f"Coverage: {coverage:.1f}% scored")
+
+    # High value paths
+    high_value = get_high_value_paths(facility, min_score=0.7, limit=10)
+    if high_value:
+        console.print(f"High-value paths (score > 0.7): {len(high_value)}")
+        for p in high_value[:5]:
+            console.print(f"  [{p['score']:.2f}] {p['path']}")
+        if len(high_value) > 5:
+            console.print(f"  ... and {len(high_value) - 5} more")

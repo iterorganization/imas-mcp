@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.discovery.progress_common import WorkerStats
+from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.graph.models import PathStatus, TerminalReason
 
 if TYPE_CHECKING:
@@ -410,7 +410,7 @@ async def mark_scan_complete(
                       child_dirs is list of {path, is_symlink, realpath, device_inode} dicts.
         excluded: Optional list of (path, parent_path, reason) for excluded dirs
     """
-    from imas_codex.discovery.frontier import persist_scan_results
+    from imas_codex.discovery.paths.frontier import persist_scan_results
 
     return await persist_scan_results(facility, scan_results, excluded=excluded)
 
@@ -423,7 +423,7 @@ def mark_score_complete(
 
     Transition: scoring → scored
     """
-    from imas_codex.discovery.frontier import mark_paths_scored
+    from imas_codex.discovery.paths.frontier import mark_paths_scored
 
     return mark_paths_scored(facility, score_data)
 
@@ -652,7 +652,7 @@ async def scan_worker(
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 50)
     """
-    from imas_codex.discovery.scanner import scan_paths
+    from imas_codex.discovery.paths.scanner import scan_paths
 
     while not state.should_stop():
         # Claim work from graph
@@ -818,7 +818,7 @@ async def expand_worker(
         on_progress: Progress callback
         batch_size: Paths per SSH call (default 50)
     """
-    from imas_codex.discovery.scanner import scan_paths
+    from imas_codex.discovery.paths.scanner import scan_paths
 
     while not state.should_stop():
         # Claim expansion work from graph - paths with should_expand=true
@@ -943,7 +943,7 @@ async def score_worker(
         on_progress: Progress callback
         batch_size: Paths per LLM call (default 25)
     """
-    from imas_codex.discovery.scorer import DirectoryScorer
+    from imas_codex.discovery.paths.scorer import DirectoryScorer
 
     scorer = DirectoryScorer(facility=state.facility)
     loop = asyncio.get_running_loop()
@@ -1203,7 +1203,7 @@ async def enrich_worker(
     """
     # Use local claim_paths_for_enriching and mark_enrichment_complete
     # (defined above in this module with root_filter support)
-    from imas_codex.discovery.path_enrichment import enrich_paths
+    from imas_codex.discovery.paths.enrichment import enrich_paths
 
     loop = asyncio.get_running_loop()
 
@@ -1411,8 +1411,8 @@ def _rescore_with_llm(
 
     from imas_codex.agentic.agents import get_model_for_task
     from imas_codex.agentic.prompt_loader import render_prompt
-    from imas_codex.discovery.frontier import sample_enriched_paths
-    from imas_codex.discovery.models import RescoreBatch
+    from imas_codex.discovery.paths.frontier import sample_enriched_paths
+    from imas_codex.discovery.paths.models import RescoreBatch
 
     # Build prompt context with enriched examples
     context: dict = {}
@@ -1630,7 +1630,7 @@ def check_ssh_connectivity(facility: str, timeout: int = 10) -> tuple[bool, str]
     Returns:
         Tuple of (success, message)
     """
-    from imas_codex.discovery.facility import get_facility
+    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.remote.tools import run
 
     try:
@@ -1846,7 +1846,7 @@ async def run_parallel_discovery(
 
     # Auto-normalize scores after scoring completes
     if state.score_stats.processed > 0:
-        from imas_codex.discovery.frontier import normalize_scores
+        from imas_codex.discovery.paths.frontier import normalize_scores
 
         normalize_scores(facility)
 

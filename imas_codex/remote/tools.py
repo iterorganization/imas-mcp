@@ -98,7 +98,7 @@ def _resolve_ssh_host(facility: str | None) -> str | None:
         return None
 
     # Import here to avoid circular import at module load time
-    from imas_codex.discovery.facility import get_facility
+    from imas_codex.discovery.base.facility import get_facility
 
     try:
         config = get_facility(facility)

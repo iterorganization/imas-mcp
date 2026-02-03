@@ -1,4 +1,4 @@
-"""Wiki ingestion module for facility documentation.
+"""Wiki discovery for facility documentation.
 
 Provides a four-phase parallel pipeline for discovering and ingesting wiki content:
 
@@ -8,23 +8,27 @@ Phase 3 - SCORE: LLM evaluation with cost tracking (stops at budget limit)
 Phase 4 - INGEST: Chunk and embed high-score pages
 
 Facility-agnostic design - wiki configuration comes from facility YAML.
-
-Example:
-    from imas_codex.wiki.parallel import run_parallel_wiki_discovery
-
-    # Run via CLI (recommended):
-    # imas-codex discover wiki tcv --cost-limit 10.0
 """
 
-from .auth import CredentialManager, WikiSiteConfig, require_credentials
-from .config import WikiConfig
-from .confluence import (
+from imas_codex.discovery.wiki.auth import (
+    CredentialManager,
+    WikiSiteConfig,
+    require_credentials,
+)
+from imas_codex.discovery.wiki.config import WikiConfig
+from imas_codex.discovery.wiki.confluence import (
     ConfluenceClient,
     ConfluencePage,
     ConfluenceSpace,
     detect_site_type,
 )
-from .pipeline import (
+from imas_codex.discovery.wiki.monitor import (
+    ScanProgressMonitor,
+    WikiIngestionStats,
+    WikiProgressMonitor,
+)
+from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
+from imas_codex.discovery.wiki.pipeline import (
     WikiArtifactPipeline,
     WikiIngestionPipeline,
     get_pending_wiki_artifacts,
@@ -34,8 +38,8 @@ from .pipeline import (
     mark_wiki_page_status,
     persist_chunks_batch,
 )
-from .progress import ScanProgressMonitor, WikiProgressMonitor
-from .scraper import (
+from imas_codex.discovery.wiki.progress import WikiProgressDisplay
+from imas_codex.discovery.wiki.scraper import (
     WikiPage,
     extract_conventions,
     extract_imas_paths,
@@ -56,12 +60,17 @@ __all__ = [
     "detect_site_type",
     # Configuration
     "WikiConfig",
-    # Ingestion
+    # Progress monitoring
+    "WikiProgressMonitor",
+    "WikiIngestionStats",
+    "ScanProgressMonitor",
+    "WikiProgressDisplay",
+    # Parallel discovery
+    "run_parallel_wiki_discovery",
+    # Ingestion pipeline
     "WikiArtifactPipeline",
     "WikiIngestionPipeline",
     "WikiPage",
-    "WikiProgressMonitor",
-    "ScanProgressMonitor",
     # Extraction utilities
     "extract_conventions",
     "extract_imas_paths",

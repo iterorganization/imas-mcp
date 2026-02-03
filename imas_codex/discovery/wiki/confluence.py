@@ -10,7 +10,7 @@ The Confluence REST API is preferred over HTML scraping because:
 - Better rate limiting handling
 
 Example:
-    from imas_codex.wiki.confluence import ConfluenceClient
+    from imas_codex.discovery.wiki.confluence import ConfluenceClient
 
     client = ConfluenceClient(
         base_url="https://confluence.iter.org",
@@ -39,7 +39,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from imas_codex.wiki.auth import CredentialManager, require_credentials
+from imas_codex.discovery.wiki.auth import CredentialManager, require_credentials
 
 logger = logging.getLogger(__name__)
 

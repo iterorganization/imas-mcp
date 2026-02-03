@@ -22,7 +22,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from imas_codex.discovery.progress_common import (
+from imas_codex.discovery.base.progress import (
     StreamQueue,
     format_time,
     make_bar,
@@ -30,7 +30,7 @@ from imas_codex.discovery.progress_common import (
 )
 
 if TYPE_CHECKING:
-    from imas_codex.discovery.progress_common import WorkerStats
+    from imas_codex.discovery.base.progress import WorkerStats
 
 
 # =============================================================================

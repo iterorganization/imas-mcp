@@ -72,7 +72,7 @@ def hosts_status(host: str | None, timeout: int) -> None:
     """
     import time
 
-    from imas_codex.discovery.facility import get_facility, list_facilities
+    from imas_codex.discovery.base.facility import get_facility, list_facilities
 
     facility_names = list_facilities()
 

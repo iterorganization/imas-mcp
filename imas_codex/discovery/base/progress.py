@@ -11,7 +11,7 @@ Design Principles:
 - Streaming: Rate-limited queues for smooth updates
 
 Usage:
-    from imas_codex.discovery.progress_common import (
+    from imas_codex.discovery.base.progress import (
         ProgressConfig,
         StreamQueue,
         format_time,

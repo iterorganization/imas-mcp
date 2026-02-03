@@ -28,7 +28,7 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from imas_codex.discovery.progress_common import WorkerStats
+from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import WikiPageStatus
 
@@ -1133,7 +1133,7 @@ def _create_discovered_pages(
         return 0
 
     # Deduplicate and check for existing pages
-    from imas_codex.wiki.scraper import canonical_page_id
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     created = 0
     with GraphClient() as gc:
@@ -1234,7 +1234,10 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
     Returns:
         Extracted text preview (up to 2000 chars) or empty string on error
     """
-    from imas_codex.wiki.prefetch import extract_text_from_html, fetch_page_content
+    from imas_codex.discovery.wiki.prefetch import (
+        extract_text_from_html,
+        fetch_page_content,
+    )
 
     if ssh_host:
         # Fetch via SSH proxy using curl
@@ -1502,8 +1505,8 @@ async def _ingest_page(
     Returns:
         Number of chunks created
     """
-    from imas_codex.wiki.pipeline import WikiIngestionPipeline
-    from imas_codex.wiki.scraper import WikiPage
+    from imas_codex.discovery.wiki.pipeline import WikiIngestionPipeline
+    from imas_codex.discovery.wiki.scraper import WikiPage
 
     # Extract page name from URL or page_id
     page_name = page_id.split(":", 1)[1] if ":" in page_id else page_id
@@ -1562,7 +1565,7 @@ async def _fetch_html(url: str, ssh_host: str | None) -> str:
     Returns:
         HTML content string or empty string on error
     """
-    from imas_codex.wiki.prefetch import fetch_page_content
+    from imas_codex.discovery.wiki.prefetch import fetch_page_content
 
     if ssh_host:
         # Fetch via SSH proxy
@@ -1689,7 +1692,7 @@ def _seed_portal_page(
     site_type: str,
 ) -> None:
     """Create the portal page as initial seed if it doesn't exist."""
-    from imas_codex.wiki.scraper import canonical_page_id
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
 
     page_id = canonical_page_id(portal_page, facility)
 

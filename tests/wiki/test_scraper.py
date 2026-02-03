@@ -4,7 +4,7 @@ import re
 
 import pytest
 
-from imas_codex.wiki.scraper import (
+from imas_codex.discovery.wiki.scraper import (
     COCOS_PATTERN,
     IMAS_PATH_PATTERN,
     MDSPLUS_PATH_PATTERN,

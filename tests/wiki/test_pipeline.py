@@ -2,7 +2,7 @@
 
 import pytest
 
-from imas_codex.wiki.pipeline import html_to_text
+from imas_codex.discovery.wiki.pipeline import html_to_text
 
 
 class TestHTMLToText:
@@ -97,13 +97,13 @@ class TestPipelineInit:
 
     def test_import(self):
         """Pipeline should be importable."""
-        from imas_codex.wiki.pipeline import WikiIngestionPipeline
+        from imas_codex.discovery.wiki.pipeline import WikiIngestionPipeline
 
         assert WikiIngestionPipeline is not None
 
     def test_create_instance(self):
         """Pipeline should be instantiable without Neo4j."""
-        from imas_codex.wiki.pipeline import WikiIngestionPipeline
+        from imas_codex.discovery.wiki.pipeline import WikiIngestionPipeline
 
         # This may fail without Neo4j, which is expected
         # We just test that the class exists and has expected attributes
@@ -118,7 +118,7 @@ class TestPipelineIntegration:
     @pytest.fixture
     def pipeline(self):
         """Create pipeline instance."""
-        from imas_codex.wiki.pipeline import WikiIngestionPipeline
+        from imas_codex.discovery.wiki.pipeline import WikiIngestionPipeline
 
         try:
             p = WikiIngestionPipeline("tcv")
@@ -128,7 +128,7 @@ class TestPipelineIntegration:
 
     def test_ingest_page(self, pipeline):
         """Test ingesting a single page."""
-        from imas_codex.wiki.scraper import WikiPage
+        from imas_codex.discovery.wiki.scraper import WikiPage
 
         # Create a test page - just verify it can be constructed
         _page = WikiPage(

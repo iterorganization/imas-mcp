@@ -27,7 +27,7 @@ from imas_codex.config.discovery_config import (
     get_discovery_config,
     get_exclusion_config_for_facility,
 )
-from imas_codex.discovery.facility import get_facility
+from imas_codex.discovery.base.facility import get_facility
 from imas_codex.remote.executor import run_python_script
 
 if TYPE_CHECKING:

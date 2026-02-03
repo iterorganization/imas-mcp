@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imas_codex.discovery.parallel import (
+from imas_codex.discovery.paths.parallel import (
     DiscoveryState,
     WorkerStats,
 )
@@ -60,7 +60,7 @@ class TestDiscoveryState:
         state.score_stats.cost = 5.5
         assert state.should_stop()
 
-    @patch("imas_codex.discovery.parallel.has_pending_work", return_value=False)
+    @patch("imas_codex.discovery.paths.parallel.has_pending_work", return_value=False)
     def test_should_stop_when_both_idle(self, mock_has_pending):
         """Test should_stop returns True when all workers idle."""
         state = DiscoveryState(facility="test", cost_limit=10.0)
@@ -91,7 +91,7 @@ class TestClaimPaths:
     @patch("imas_codex.graph.GraphClient")
     def test_claim_paths_for_scanning_calls_graph(self, mock_gc_class):
         """Test claim_paths_for_scanning calls graph correctly."""
-        from imas_codex.discovery.parallel import claim_paths_for_scanning
+        from imas_codex.discovery.paths.parallel import claim_paths_for_scanning
 
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -116,7 +116,7 @@ class TestClaimPaths:
     @patch("imas_codex.graph.GraphClient")
     def test_claim_paths_for_expanding_calls_graph(self, mock_gc_class):
         """Test claim_paths_for_expanding claims expansion paths."""
-        from imas_codex.discovery.parallel import claim_paths_for_expanding
+        from imas_codex.discovery.paths.parallel import claim_paths_for_expanding
 
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)
@@ -140,7 +140,7 @@ class TestClaimPaths:
     @patch("imas_codex.graph.GraphClient")
     def test_claim_paths_for_scoring_calls_graph(self, mock_gc_class):
         """Test claim_paths_for_scoring calls graph correctly."""
-        from imas_codex.discovery.parallel import claim_paths_for_scoring
+        from imas_codex.discovery.paths.parallel import claim_paths_for_scoring
 
         mock_gc = MagicMock()
         mock_gc_class.return_value.__enter__ = MagicMock(return_value=mock_gc)

@@ -11,7 +11,7 @@ Credential lookup order:
 Session cookies are also stored in keyring for persistence across runs.
 
 Example:
-    from imas_codex.wiki.auth import CredentialManager
+    from imas_codex.discovery.wiki.auth import CredentialManager
 
     creds = CredentialManager()
 

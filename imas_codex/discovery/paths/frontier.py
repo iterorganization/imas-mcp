@@ -971,7 +971,7 @@ async def _create_person_link(
         email: Email address if available
         now: ISO timestamp
     """
-    from imas_codex.discovery.orcid import enrich_person_with_orcid
+    from imas_codex.discovery.paths.orcid import enrich_person_with_orcid
 
     # Try ORCID lookup (cached if already done)
     orcid = None
@@ -1399,7 +1399,7 @@ async def persist_scan_results(
     Returns:
         Dict with scanned, children_created, excluded, errors counts
     """
-    from imas_codex.discovery.facility import get_facility
+    from imas_codex.discovery.base.facility import get_facility
     from imas_codex.graph import GraphClient
 
     now = datetime.now(UTC).isoformat()
@@ -1875,7 +1875,7 @@ async def persist_scan_results(
         # Run in same transaction for consistency
         all_paths = [path for path, _stats, _children, _error, _expanding in results]
         try:
-            from imas_codex.discovery.user_enrichment import enrich_users_from_paths
+            from imas_codex.discovery.paths.users import enrich_users_from_paths
 
             facility_users = enrich_users_from_paths(facility, all_paths, gc=gc)
             if facility_users:
