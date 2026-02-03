@@ -2,6 +2,7 @@
 
 import click
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 console = Console()
@@ -220,12 +221,21 @@ def tools_install(
 
     facility = None if target == "local" else target
     has_failures = False
+    config = load_fast_tools()
 
     console.print(f"\n[bold]Installing on {target}...[/bold]\n")
 
     # === Single tool mode ===
     if tool_name:
-        result = install_tool(tool_name, facility=facility, force=force)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task(f"Installing {tool_name}...", total=None)
+            result = install_tool(tool_name, facility=facility, force=force)
+
         if result.get("success"):
             action = result.get("action", "installed")
             version = result.get("version", "")
@@ -242,11 +252,20 @@ def tools_install(
         return
 
     # === Full installation mode ===
-
-    # Step 1: Install fast tools
+    # Step 1: Install fast tools with progress
     console.print("[bold]Fast Tools[/bold]")
-    tool_results = install_all_tools(facility=facility, force=force)
-    config = load_fast_tools()
+
+    # Collect tool names for progress
+    all_tools = list(config.tools.keys())
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task(f"Installing {len(all_tools)} tools...", total=None)
+        tool_results = install_all_tools(facility=facility, force=force)
 
     for name, result in sorted(tool_results.items()):
         if isinstance(result, dict):
@@ -278,11 +297,20 @@ def tools_install(
         console.print("[dim]Skipping Python setup (--tools-only)[/dim]\n")
     else:
         console.print("[bold]Python Environment[/bold]")
-        python_result = setup_python_env(
-            facility=facility,
-            python_version=python_version,
-            force=force,
-        )
+
+        # Run with progress spinner
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Setting up Python environment...", total=None)
+            python_result = setup_python_env(
+                facility=facility,
+                python_version=python_version,
+                force=force,
+            )
 
         # Display step results
         for step_info in python_result.get("steps", []):

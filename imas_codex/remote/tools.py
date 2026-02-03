@@ -385,7 +385,12 @@ def check_tool(
     # Build version check command
     # Use custom version_command if specified, otherwise default to --version
     version_arg = tool.version_command or "--version"
-    check_cmd = f"~/bin/{tool.binary} {version_arg} 2>/dev/null || {tool.binary} {version_arg} 2>/dev/null"
+    # Expand ~ explicitly and try multiple paths
+    check_cmd = (
+        f"eval ~/bin/{tool.binary} {version_arg} 2>/dev/null || "
+        f"$HOME/bin/{tool.binary} {version_arg} 2>/dev/null || "
+        f"{tool.binary} {version_arg} 2>/dev/null"
+    )
 
     try:
         output = run(check_cmd, facility=facility, timeout=10)
@@ -403,8 +408,11 @@ def check_tool(
 
             version = version_match.group(1)
 
-            # Check which path
-            which_cmd = f"which ~/bin/{tool.binary} 2>/dev/null || which {tool.binary} 2>/dev/null"
+            # Check which path - expand ~ explicitly
+            which_cmd = (
+                f"eval echo ~/bin/{tool.binary} 2>/dev/null || "
+                f"which {tool.binary} 2>/dev/null"
+            )
             path_output = run(which_cmd, facility=facility, timeout=5)
             path = (
                 path_output.split("\n")[0]
@@ -867,29 +875,15 @@ def install_all_tools(
         force: Reinstall even if already present
 
     Returns:
-        Dict with installation results
+        Dict mapping tool_key -> installation result dict
     """
     config = load_fast_tools()
-    results: dict[str, Any] = {
-        "facility": facility or "local",
-        "installed": [],
-        "already_present": [],
-        "failed": [],
-    }
+    results: dict[str, Any] = {}
 
     tools_to_install = config.required if required_only else config.all_tools
 
     for key in tools_to_install:
         result = install_tool(key, facility=facility, force=force)
-
-        if result.get("success"):
-            if result.get("action") == "already_installed":
-                results["already_present"].append(key)
-            else:
-                results["installed"].append(key)
-        else:
-            results["failed"].append({"tool": key, "error": result.get("error")})
-
-    results["success"] = len(results["failed"]) == 0
+        results[key] = result
 
     return results
