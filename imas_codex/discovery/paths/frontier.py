@@ -273,7 +273,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
                 sum(CASE WHEN p.status = $scoring THEN 1 ELSE 0 END) AS scoring,
                 sum(CASE WHEN p.status = $scored THEN 1 ELSE 0 END) AS scored,
                 sum(CASE WHEN p.status = $skipped THEN 1 ELSE 0 END) AS skipped,
-                sum(CASE WHEN p.status = $excluded THEN 1 ELSE 0 END) AS excluded,
+                sum(CASE WHEN p.terminal_reason = $excluded_reason THEN 1 ELSE 0 END) AS excluded,
                 sum(CASE WHEN p.status = $scored AND p.should_expand = true AND p.expanded_at IS NULL THEN 1 ELSE 0 END) AS expansion_ready,
                 sum(CASE WHEN p.status = $scored AND p.should_enrich = true AND (p.is_enriched IS NULL OR p.is_enriched = false) THEN 1 ELSE 0 END) AS enrichment_ready,
                 max(coalesce(p.depth, 0)) AS max_depth
@@ -285,7 +285,7 @@ def get_discovery_stats(facility: str) -> dict[str, Any]:
             scoring=PathStatus.scoring.value,
             scored=PathStatus.scored.value,
             skipped=PathStatus.skipped.value,
-            excluded=PathStatus.skipped.value,
+            excluded_reason=TerminalReason.excluded.value,
         )
 
         if result:

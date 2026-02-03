@@ -32,7 +32,9 @@ _yaml.width = 120
 
 def get_config_dir() -> Path:
     """Get the config directory path."""
-    return Path(__file__).parent.parent / "config"
+    # facility.py is at imas_codex/discovery/base/facility.py
+    # config is at imas_codex/config
+    return Path(__file__).parent.parent.parent / "config"
 
 
 def get_facilities_dir() -> Path:
