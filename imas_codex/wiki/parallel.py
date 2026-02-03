@@ -572,10 +572,31 @@ def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
 
 
 def extract_links_mediawiki(
-    page_url: str, ssh_host: str
+    page_url: str, ssh_host: str, base_url: str | None = None
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """Extract links from a MediaWiki page via SSH."""
-    cmd = f'''curl -sk "{page_url}" | grep -oP 'href="/wiki/[^"#]+' | sed 's|href="/wiki/||' | sort -u'''
+    """Extract links from a MediaWiki page via SSH.
+
+    Args:
+        page_url: Full URL of the page to scan
+        ssh_host: SSH host for proxied access
+        base_url: Base URL of the wiki (used to determine link prefix)
+
+    The function handles multiple MediaWiki URL formats:
+    1. /wiki/Page_Name (standard)
+    2. /path/Page_Name (short URLs)
+    3. /path/index.php?title=Page_Name (query string format)
+    """
+    from urllib.parse import parse_qs, urlparse
+
+    # Determine the wiki path prefix from base_url
+    wiki_path = ""
+    if base_url:
+        parsed = urlparse(base_url)
+        if parsed.path and parsed.path != "/":
+            wiki_path = parsed.path.rstrip("/")
+
+    # Fetch the page and extract all href attributes
+    cmd = f'''curl -sk "{page_url}" | grep -oP 'href="[^"]*"' | sed 's/href="//;s/"$//' | sort -u'''
 
     try:
         result = subprocess.run(
@@ -600,19 +621,94 @@ def extract_links_mediawiki(
             "Category:",
             "Help:",
             "MediaWiki:",
-            "index.php",
-            "skins/",
+            "User:",
         )
+
+        excluded_actions = {"edit", "history", "delete", "protect", "watch"}
 
         for line in result.stdout.strip().split("\n"):
             if not line:
                 continue
-            if line.startswith(excluded_prefixes):
-                continue
-            if "?" in line or "&" in line:
+
+            # Skip external links, javascript, mailto
+            if line.startswith(("http://", "https://", "javascript:", "mailto:", "#")):
+                # Check if it's a link to the same wiki (external but same host)
+                if line.startswith(("http://", "https://")):
+                    parsed = urlparse(line)
+                    if base_url:
+                        base_parsed = urlparse(base_url)
+                        if parsed.netloc != base_parsed.netloc:
+                            continue
+                        # Same host - extract the path
+                        line = parsed.path
+                        if parsed.query:
+                            line += "?" + parsed.query
+                    else:
+                        continue
+                else:
+                    continue
+
+            # Skip non-wiki paths (images, js, css, etc)
+            if any(
+                x in line.lower()
+                for x in [
+                    "/images/",
+                    "/skins/",
+                    "/load.php",
+                    ".css",
+                    ".js",
+                    ".png",
+                    ".jpg",
+                    ".gif",
+                    ".ico",
+                    "opensearch",
+                    "api.php",
+                ]
+            ):
                 continue
 
-            decoded = urllib.parse.unquote(line)
+            page_name = None
+
+            # Handle index.php?title=Page_Name format
+            if "index.php" in line and "title=" in line:
+                # Parse the query string
+                if "?" in line:
+                    query_part = line.split("?", 1)[1]
+                    # Handle HTML entity encoded ampersands
+                    query_part = query_part.replace("&amp;", "&")
+                    params = parse_qs(query_part)
+                    if "title" in params:
+                        page_name = params["title"][0]
+                        # Skip edit/history/etc actions
+                        action = params.get("action", ["view"])[0]
+                        if action in excluded_actions:
+                            continue
+                        # Skip redlinks (non-existent pages)
+                        if "redlink" in params:
+                            continue
+
+            # Handle /wiki/Page_Name or /path/Page_Name format
+            elif wiki_path and line.startswith(wiki_path + "/"):
+                page_name = line[len(wiki_path) + 1 :]
+            elif line.startswith("/wiki/"):
+                page_name = line[6:]
+
+            if not page_name:
+                continue
+
+            # Skip excluded namespaces
+            if page_name.startswith(excluded_prefixes):
+                continue
+
+            # Skip query params in page name (shouldn't happen but be safe)
+            if "?" in page_name:
+                page_name = page_name.split("?")[0]
+
+            decoded = urllib.parse.unquote(page_name)
+
+            # Skip empty or just whitespace
+            if not decoded.strip():
+                continue
 
             # Classify as page or artifact
             if _is_artifact(decoded):
@@ -621,7 +717,15 @@ def extract_links_mediawiki(
             else:
                 page_links.append(decoded)
 
-        return page_links, artifact_links
+        # Deduplicate while preserving order
+        seen = set()
+        unique_pages = []
+        for p in page_links:
+            if p not in seen:
+                seen.add(p)
+                unique_pages.append(p)
+
+        return unique_pages, artifact_links
 
     except subprocess.TimeoutExpired:
         logger.warning("Timeout extracting links from %s", page_url)
@@ -777,15 +881,16 @@ async def scan_worker(
 
             try:
                 # Extract links based on site type
-                if state.site_type == "twiki":
+                if state.site_type == "twiki" and state.ssh_host:
                     page_links, artifact_links = extract_links_twiki(
                         title, state.base_url, state.ssh_host
                     )
                 elif state.ssh_host:
                     page_links, artifact_links = extract_links_mediawiki(
-                        url, state.ssh_host
+                        url, state.ssh_host, state.base_url
                     )
                 else:
+                    # No SSH host - can't scan remote wiki
                     page_links, artifact_links = [], []
 
                 # Create new pending pages for discovered links
@@ -794,6 +899,8 @@ async def scan_worker(
                     page_links,
                     page.get("depth", 0) + 1,
                     state.max_depth,
+                    base_url=state.base_url,
+                    site_type=state.site_type,
                 )
 
                 # Create artifact nodes
@@ -1006,8 +1113,19 @@ def _create_discovered_pages(
     page_names: list[str],
     depth: int,
     max_depth: int | None = None,
+    base_url: str | None = None,
+    site_type: str = "mediawiki",
 ) -> int:
-    """Create pending page nodes for newly discovered links."""
+    """Create pending page nodes for newly discovered links.
+
+    Args:
+        facility: Facility ID
+        page_names: List of page names (not full URLs)
+        depth: Link depth from portal
+        max_depth: Maximum depth limit
+        base_url: Base URL of the wiki (for constructing page URLs)
+        site_type: Type of wiki site
+    """
     if max_depth is not None and depth > max_depth:
         return 0
 
@@ -1021,11 +1139,28 @@ def _create_discovered_pages(
     with GraphClient() as gc:
         for name in page_names:
             page_id = canonical_page_id(name, facility)
+
+            # Construct URL based on site type
+            url = None
+            if base_url:
+                if site_type == "twiki":
+                    if "/" not in name:
+                        name_with_web = f"Main/{name}"
+                    else:
+                        name_with_web = name
+                    url = f"{base_url}/bin/view/{name_with_web}"
+                elif site_type == "confluence":
+                    url = f"{base_url}/pages/viewpage.action?pageId={name}"
+                else:
+                    # MediaWiki - use index.php format for consistency
+                    url = f"{base_url}/index.php?title={urllib.parse.quote(name, safe='')}"
+
             # MERGE to avoid duplicates
             result = gc.query(
                 """
                 MERGE (wp:WikiPage {id: $id})
                 ON CREATE SET wp.title = $title,
+                              wp.url = $url,
                               wp.facility_id = $facility,
                               wp.status = $discovered,
                               wp.link_depth = $depth,
@@ -1037,6 +1172,7 @@ def _create_discovered_pages(
                 """,
                 id=page_id,
                 title=name,
+                url=url,
                 facility=facility,
                 discovered=WikiPageStatus.discovered.value,
                 depth=depth,

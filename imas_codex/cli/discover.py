@@ -1089,9 +1089,13 @@ def discover_wiki(
         site_type = site.get("site_type", "mediawiki")
         base_url = site.get("url", "")
         portal_page = site.get("portal_page", "Main_Page")
-        ssh_host = (
-            site.get("ssh_host") if site.get("auth_type") == "ssh_proxy" else None
-        )
+
+        # Determine SSH host: explicit site ssh_host, or facility default if requires_ssh
+        ssh_host = site.get("ssh_host")
+        if not ssh_host and (
+            site.get("requires_ssh") or site.get("auth_type") == "ssh_proxy"
+        ):
+            ssh_host = config.get("ssh_host")
 
         console.print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
