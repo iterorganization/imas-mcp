@@ -1814,8 +1814,15 @@ async def run_parallel_discovery(
         """Monitor for budget/path limits and cancel workers when reached."""
         while not state.should_stop():
             await asyncio.sleep(0.25)
-        # Limit reached - give workers a moment to finish current batch
-        logger.info("Limit reached, initiating graceful shutdown...")
+        # Determine why we're stopping for better logging
+        if state.budget_exhausted:
+            logger.info("Budget limit reached, initiating graceful shutdown...")
+        elif state.path_limit_reached:
+            logger.info("Path limit reached, initiating graceful shutdown...")
+        elif state.stop_requested:
+            logger.info("Stop requested, initiating graceful shutdown...")
+        else:
+            logger.info("Discovery complete (no pending work), shutting down...")
         await asyncio.sleep(graceful_shutdown_timeout)
         # Cancel any still-running tasks
         for task in all_tasks:
