@@ -152,13 +152,13 @@ High-performance Rust-based CLI tools that **must be used instead of slower buil
 ### Installation
 
 ```bash
-# Check tool availability on local system
-uv run imas-codex tools check local
+# Check environment status (tools + Python + venv)
+uv run imas-codex tools status local
 
-# Install all tools locally (to ~/bin)
+# Install everything (tools + Python + venv)
 uv run imas-codex tools install local
 
-# Install specific tool
+# Install specific tool only
 uv run imas-codex tools install local --tool rg
 
 # Install on remote facility
@@ -245,16 +245,17 @@ Use uv to ensure modern Python (3.10+) on all facilities, avoiding version compa
 ### Quick Setup
 
 ```bash
-# Check Python status on a facility
-uv run imas-codex tools python status tcv
+# Check environment status on a facility (tools + Python + venv)
+uv run imas-codex tools status tcv
 
-# Complete setup (uv + Python + venv) in one command
-uv run imas-codex tools python setup tcv
+# Complete setup (tools + uv + Python + venv) in one command
+uv run imas-codex tools install tcv
 
-# Or step by step:
-uv run imas-codex tools install tcv --tool uv      # 1. Install uv
-uv run imas-codex tools python install tcv          # 2. Install Python 3.12
-uv run imas-codex tools python venv tcv            # 3. Create project venv
+# Install specific tool only
+uv run imas-codex tools install tcv --tool rg
+
+# Install tools only, skip Python/venv
+uv run imas-codex tools install tcv --tools-only
 ```
 
 ### Facility Status Reference
