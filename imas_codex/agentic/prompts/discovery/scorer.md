@@ -372,3 +372,4 @@ Use them to calibrate your dimension-specific scoring:
 {% endfor %}
 {% endif %}
 {% endif %}
+{% include "schema/scoring-output.md" %}

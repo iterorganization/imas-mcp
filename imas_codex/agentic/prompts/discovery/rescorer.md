@@ -179,25 +179,4 @@ These examples show how scores distribute across the graph. Use this to calibrat
 {% endif %}
 {% endif %}
 
-## Output Format
-
-For each directory, return adjusted scores for ONLY the dimensions where enrichment provides new evidence. Leave other dimensions as null (will keep original value).
-
-```json
-{
-  "path": "/home/codes/astra",
-  "score_modeling_code": 0.92,
-  "score_analysis_code": null,
-  "score_data_access": 0.75,
-  "score_imas": 0.70,
-  "new_score": 0.92,
-  "adjustment_reason": "Fortran+Python 45k LOC → +0.15 modeling, +0.10 data_access"
-}
-```
-
-## Score Precision (CRITICAL)
-
-- Use exactly 2 decimal places (e.g., 0.85, 0.72)
-- Maximum individual dimension score is 0.95
-- Maximum combined score (new_score) is 1.50 for exceptional directories
-- Set dimension to null if no enrichment evidence supports changing it
+{% include "schema/rescore-output.md" %}

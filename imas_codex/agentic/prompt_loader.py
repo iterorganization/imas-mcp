@@ -183,6 +183,149 @@ def list_prompts_summary(prompts_dir: Path | None = None) -> list[dict[str, str]
 # =============================================================================
 
 
+def get_pydantic_schema_json(
+    model_class: type, *, indent: int = 2, example: bool = True
+) -> str:
+    """Generate a JSON representation of a Pydantic model schema for prompts.
+
+    This creates a human-readable JSON example that shows the expected structure
+    and field descriptions, suitable for embedding in LLM prompts.
+
+    Args:
+        model_class: Pydantic model class to generate schema for
+        indent: JSON indentation level
+        example: If True, generate an example instance; if False, generate JSON Schema
+
+    Returns:
+        JSON string suitable for embedding in prompts
+    """
+    import json
+    from typing import get_args, get_origin
+
+    def generate_example_value(field_info, field_type) -> Any:
+        """Generate a reasonable example value for a field type."""
+        # Handle Optional types
+        origin = get_origin(field_type)
+        args = get_args(field_type)
+
+        if origin is list:
+            # List type - return example list
+            inner_type = args[0] if args else str
+            if hasattr(inner_type, "model_fields"):
+                return [generate_example_for_model(inner_type)]
+            return []
+
+        if origin in (type(None) | str, str | None):
+            # Optional[str] or str | None
+            inner = args[0] if args else str
+            if inner is type(None):
+                inner = args[1] if len(args) > 1 else str
+            if inner is str:
+                return None
+            return generate_example_value(field_info, inner)
+
+        # Check if it's an enum
+        if hasattr(field_type, "__members__"):
+            # Return first enum value as example
+            members = list(field_type.__members__.values())
+            return members[0].value if members else "unknown"
+
+        # Primitive types
+        if field_type is str:
+            desc = getattr(field_info, "description", "") or ""
+            if "path" in desc.lower():
+                return "/absolute/path/to/directory"
+            if "description" in desc.lower():
+                return "Concise description (1-2 sentences)"
+            return ""
+        if field_type is bool:
+            return True
+        if field_type is float:
+            return 0.0
+        if field_type is int:
+            return 0
+
+        # Nested Pydantic model
+        if hasattr(field_type, "model_fields"):
+            return generate_example_for_model(field_type)
+
+        return None
+
+    def generate_example_for_model(model: type) -> dict[str, Any]:
+        """Generate example dict for a Pydantic model."""
+        result = {}
+        for field_name, field_info in model.model_fields.items():
+            field_type = field_info.annotation
+            result[field_name] = generate_example_value(field_info, field_type)
+        return result
+
+    if example:
+        # Generate an example instance
+        example_data = generate_example_for_model(model_class)
+        return json.dumps(example_data, indent=indent)
+    else:
+        # Return the JSON Schema
+        schema = model_class.model_json_schema()
+        return json.dumps(schema, indent=indent)
+
+
+def get_pydantic_schema_description(model_class: type) -> str:
+    """Generate a human-readable field description for a Pydantic model.
+
+    Creates a markdown-formatted list of fields with their types and descriptions,
+    suitable for embedding in LLM prompts.
+
+    Args:
+        model_class: Pydantic model class
+
+    Returns:
+        Markdown string describing all fields
+    """
+    from typing import get_args, get_origin
+
+    lines = []
+
+    def format_type(field_type) -> str:
+        """Format a type annotation as a readable string."""
+        origin = get_origin(field_type)
+        args = get_args(field_type)
+
+        if origin is list:
+            inner = args[0] if args else "Any"
+            inner_name = getattr(inner, "__name__", str(inner))
+            return f"list[{inner_name}]"
+
+        if origin in (type(None) | str, str | None):
+            # Union with None (Optional)
+            non_none = [a for a in args if a is not type(None)]
+            if non_none:
+                inner_name = getattr(non_none[0], "__name__", str(non_none[0]))
+                return f"{inner_name} | null"
+            return "string | null"
+
+        if hasattr(field_type, "__members__"):
+            # Enum - list allowed values
+            values = [m.value for m in field_type.__members__.values()]
+            if len(values) <= 5:
+                return f"enum: {values}"
+            return f"enum: {values[:5]}..."
+
+        return getattr(field_type, "__name__", str(field_type))
+
+    for field_name, field_info in model_class.model_fields.items():
+        field_type = field_info.annotation
+        type_str = format_type(field_type)
+        desc = field_info.description or ""
+        required = field_info.is_required()
+        req_str = "(required)" if required else "(optional)"
+
+        lines.append(f"- **{field_name}**: `{type_str}` {req_str}")
+        if desc:
+            lines.append(f"  - {desc}")
+
+    return "\n".join(lines)
+
+
 def get_schema_context() -> dict[str, Any]:
     """Get schema-derived context for prompt rendering.
 
@@ -194,6 +337,10 @@ def get_schema_context() -> dict[str, Any]:
     - discovery_categories: List of DiscoveryRootCategory enum values
     - path_purposes: List of PathPurpose enum values
     - score_dimensions: List of per-purpose score field names with descriptions
+    - scoring_schema_example: JSON example for DirectoryScoringBatch
+    - scoring_schema_fields: Field descriptions for DirectoryScoringResult
+    - rescore_schema_example: JSON example for RescoreBatch
+    - rescore_schema_fields: Field descriptions for RescoreResult
     - Each with 'value' and 'description' keys
 
     This allows prompts to loop over schema-defined enums without hardcoding.
@@ -298,6 +445,21 @@ def get_schema_context() -> dict[str, Any]:
         elif slot_name in doc_fields:
             access_method_fields["documentation"].append(field_info)
 
+    # Generate Pydantic schema context for scoring prompts
+    # Import here to avoid circular imports
+    from imas_codex.discovery.paths.models import (
+        DirectoryScoringBatch,
+        DirectoryScoringResult,
+        RescoreBatch,
+        RescoreResult,
+    )
+
+    # Generate schema examples and field descriptions
+    scoring_schema_example = get_pydantic_schema_json(DirectoryScoringBatch)
+    scoring_schema_fields = get_pydantic_schema_description(DirectoryScoringResult)
+    rescore_schema_example = get_pydantic_schema_json(RescoreBatch)
+    rescore_schema_fields = get_pydantic_schema_description(RescoreResult)
+
     return {
         "discovery_categories": discovery_categories,
         "path_purposes": path_purposes,
@@ -326,6 +488,11 @@ def get_schema_context() -> dict[str, Any]:
             for c in discovery_categories
             if c["value"] in ("data_access", "workflow", "documentation")
         ],
+        # Pydantic schema context for LLM structured output prompts
+        "scoring_schema_example": scoring_schema_example,
+        "scoring_schema_fields": scoring_schema_fields,
+        "rescore_schema_example": rescore_schema_example,
+        "rescore_schema_fields": rescore_schema_fields,
     }
 
 
