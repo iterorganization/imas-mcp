@@ -540,10 +540,10 @@ class WikiProgressDisplay:
 
         # Queue results for streaming with adaptive rate
         if results:
-            # Calculate display rate to spread items over ~15 seconds
-            target_duration = 15.0
-            batch_size = len(results)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.scan_queue.add(results, display_rate)
 
         self._refresh()
@@ -570,10 +570,10 @@ class WikiProgressDisplay:
 
         # Queue results for streaming with adaptive rate
         if results:
-            # Calculate display rate to spread items over ~15 seconds
-            target_duration = 15.0
-            batch_size = len(results)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.score_queue.add(results, display_rate)
 
         self._refresh()
@@ -600,10 +600,10 @@ class WikiProgressDisplay:
 
         # Queue results for streaming with adaptive rate
         if results:
-            # Calculate display rate to spread items over ~15 seconds
-            target_duration = 15.0
-            batch_size = len(results)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.ingest_queue.add(results, display_rate)
 
         self._refresh()

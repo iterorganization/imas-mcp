@@ -807,11 +807,10 @@ class ParallelProgressDisplay:
                 )
                 for r in scan_results
             ]
-            # Calculate display rate to spread items over ~15 seconds
-            # This fills the gap between infrequent SSH batches
-            target_duration = 15.0
-            batch_size = len(items)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.scan_queue.add(items, display_rate)
 
         self._refresh()
@@ -859,11 +858,10 @@ class ParallelProgressDisplay:
                         terminal_reason=r.get("terminal_reason", ""),
                     )
                 )
-            # Calculate display rate to spread items over ~15 seconds
-            # This fills the gap between infrequent LLM batches
-            target_duration = 15.0
-            batch_size = len(items)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.score_queue.add(items, display_rate)
 
         self._refresh()
@@ -990,13 +988,10 @@ class ParallelProgressDisplay:
                         error=r.get("error"),
                     )
                 )
-            # Calculate display rate to spread items over ~15 seconds
-            # This fills the gap between infrequent SSH batches
-            # e.g., 25 items / 15s = 1.67 items/s (each item visible ~0.6s)
-            # e.g., 10 items / 15s = 0.67 items/s (each item visible ~1.5s)
-            target_duration = 15.0  # seconds to spread batch over
-            batch_size = len(items)
-            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
+            # Use actual worker rate, capped for readability
+            # Max 2.0/s = each item visible for at least 0.5s
+            max_display_rate = 2.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
