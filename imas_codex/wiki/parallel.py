@@ -911,11 +911,11 @@ async def score_worker(
             model = get_model_for_task("discovery")
             llm = create_litellm_model(model=model, temperature=0.3, max_tokens=4096)
 
-            results = await _score_pages_batch(pages, llm, state.focus)
+            results, cost = await _score_pages_batch(pages, llm, state.focus)
 
             mark_pages_scored(state.facility, results)
             state.score_stats.processed += len(results)
-            state.score_stats.cost += 0.05  # Estimated cost per batch
+            state.score_stats.cost += cost  # Actual cost from OpenRouter
 
             if on_progress:
                 on_progress(
@@ -1079,16 +1079,125 @@ async def _score_pages_batch(
     pages: list[dict[str, Any]],
     llm: Any,
     focus: str | None = None,
-) -> list[dict[str, Any]]:
-    """Score a batch of pages using LLM."""
-    # Placeholder - actual implementation would use smolagents CodeAgent
-    # For now, return heuristic scores based on title
+) -> tuple[list[dict[str, Any]], float]:
+    """Score a batch of pages using LLM.
+
+    Returns:
+        (results, cost) tuple where cost is the actual LLM cost from OpenRouter.
+    """
+    import json
+
+    import litellm
+
+    # Build scoring prompt
+    focus_instruction = f"\nFocus: {focus}" if focus else ""
+
+    system_prompt = f"""You are a wiki page scorer for fusion research documentation.
+Score each page from 0.0 to 1.0 based on technical value for plasma physics and IMAS data.
+{focus_instruction}
+
+Scoring guidelines:
+- 0.8-1.0: Core technical content (data sources, diagnostics, physics codes, IMAS mappings)
+- 0.6-0.8: Technical documentation (code docs, analysis methods, experimental procedures)
+- 0.4-0.6: Supporting content (tutorials, overviews, general descriptions)
+- 0.2-0.4: Administrative/process (meeting notes, project management)
+- 0.0-0.2: Low value (personal pages, sandboxes, outdated drafts)
+
+Respond with a JSON array of objects, each with:
+- id: the page id
+- score: float 0.0-1.0
+- reasoning: brief explanation (max 50 chars)
+- page_type: one of [data_source, diagnostic, code, documentation, tutorial, administrative, other]
+- is_physics: boolean, true if related to plasma physics
+
+Example response:
+[{{"id": "jet:POG", "score": 0.85, "reasoning": "Core diagnostic data source", "page_type": "data_source", "is_physics": true}}]"""
+
+    # Format pages for prompt
+    page_data = []
+    for p in pages:
+        page_data.append(
+            {
+                "id": p["id"],
+                "title": p.get("title", ""),
+                "summary": p.get("summary", "")[:500] if p.get("summary") else None,
+                "in_degree": p.get("in_degree", 0),
+                "depth": p.get("depth", 0),
+            }
+        )
+
+    user_prompt = (
+        f"Score these {len(pages)} wiki pages:\n{json.dumps(page_data, indent=2)}"
+    )
+
+    # Call LLM
+    try:
+        response = await litellm.acompletion(
+            model=llm.model
+            if hasattr(llm, "model")
+            else "openrouter/anthropic/claude-sonnet-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.3,
+            max_tokens=4096,
+        )
+
+        # Extract actual cost from OpenRouter response
+        input_tokens = response.usage.prompt_tokens
+        output_tokens = response.usage.completion_tokens
+
+        if (
+            hasattr(response, "_hidden_params")
+            and "response_cost" in response._hidden_params
+        ):
+            cost = response._hidden_params["response_cost"]
+        else:
+            # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
+            cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+        # Parse response
+        content = response.choices[0].message.content
+        if not content:
+            logger.warning("LLM returned empty response, using heuristic fallback")
+            return _score_pages_heuristic(pages), cost
+
+        # Strip markdown code blocks if present
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1]
+        if content.endswith("```"):
+            content = content.rsplit("\n", 1)[0]
+        content = content.strip()
+
+        parsed = json.loads(content)
+        results = []
+        for r in parsed:
+            results.append(
+                {
+                    "id": r["id"],
+                    "score": max(0.0, min(1.0, float(r.get("score", 0.5)))),
+                    "reasoning": r.get("reasoning", "")[:80],
+                    "page_type": r.get("page_type", "other"),
+                    "is_physics": bool(r.get("is_physics", False)),
+                }
+            )
+
+        return results, cost
+
+    except Exception as e:
+        logger.warning("LLM scoring failed, using heuristic fallback: %s", e)
+        # Fallback to heuristic scoring (zero cost)
+        return _score_pages_heuristic(pages), 0.0
+
+
+def _score_pages_heuristic(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Heuristic fallback scoring based on keywords. Zero cost."""
     results = []
     for page in pages:
         title = page.get("title", "").lower()
         summary = page.get("summary", "") or ""
 
-        # Heuristic scoring based on keywords
         score = 0.5
         reasoning = "Default score"
 
