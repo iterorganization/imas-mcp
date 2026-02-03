@@ -406,7 +406,7 @@ class DirectoryScorer:
             # Prefer tree context over flat child_names (shows hierarchy)
             tree_context = d.get("tree_context")
             if tree_context:
-                lines.append("Structure (tree -L 2):")
+                lines.append("Structure (eza --tree):")
                 lines.append(f"```\n{tree_context}\n```")
             else:
                 # Fall back to flat child names

@@ -108,6 +108,23 @@ required:
       local: "uv python install 3.12"
       remote: "ssh facility 'uv python install 3.12'"
 
+  eza:
+    name: eza
+    purpose: Modern ls with tree view for directory hierarchy context
+    binary: eza
+    fallback: "ls -la"
+    releases:
+      repo: eza-community/eza
+      version: "0.23.4"
+      asset_pattern: "eza_{arch}.tar.gz"
+      strip_components: 0
+      binary_path: "./eza"
+    # Used in discovery scanner to provide 2-level tree context for LLM scoring
+    # eza --tree --level 2 --only-dirs replaces tree -L 2 -d
+    examples:
+      local: "eza --tree --level 2 --only-dirs /path"
+      remote: "ssh facility 'eza --tree --level 2 --only-dirs /path'"
+
 # Optional tools - enhance exploration but not required
 optional:
   tokei:
@@ -160,20 +177,7 @@ optional:
       local: "dust -d 2 ."
       remote: "ssh('dust -d 2 /path')"
 
-  eza:
-    name: eza
-    purpose: Modern ls with git status
-    binary: eza
-    fallback: "ls -la"
-    releases:
-      repo: eza-community/eza
-      version: "0.23.4"
-      asset_pattern: "eza_{arch}.tar.gz"
-      strip_components: 0
-      binary_path: "./eza"
-    examples:
-      local: "eza -la --git"
-      remote: "ssh('eza -la --git /path')"
+
 
   bat:
     name: bat

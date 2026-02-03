@@ -873,7 +873,7 @@ classes:
         description: JSON-encoded list of child file/dir names for LLM context
       tree_context:
         description: >-
-          Tree output showing 2-level directory hierarchy (tree -L 2 -d).
+          Tree output showing 2-level directory hierarchy (eza --tree --level 2).
           Provides better context than flat child_names for complex directories.
           Capped at 25 lines to limit tokens.
       numeric_dir_ratio:

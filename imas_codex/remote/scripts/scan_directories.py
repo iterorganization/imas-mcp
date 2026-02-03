@@ -196,28 +196,48 @@ def scan_directory(
             numeric_dir_count += 1
     numeric_dir_ratio = numeric_dir_count / len(dirs) if dirs else 0.0
 
-    # Tree context for hierarchical view (if tree command available)
+    # Tree context for hierarchical view (eza preferred, tree fallback)
     tree_context: Optional[str] = None
-    if len(dirs) > 5 and has_command("tree"):
-        try:
-            # Use tree to show 2-level hierarchy, dirs first, capped output
-            proc = subprocess.run(
-                ["tree", "-L", "2", "-d", "--dirsfirst", "--noreport", path],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                lines = proc.stdout.strip().split("\n")
-                # Cap to 25 lines to avoid token explosion
-                if len(lines) > 25:
-                    tree_context = (
-                        "\n".join(lines[:25]) + f"\n... ({len(lines)} dirs total)"
-                    )
-                else:
-                    tree_context = proc.stdout.strip()
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+    if len(dirs) > 5:
+        # Prefer eza --tree (fast tool), fall back to tree if unavailable
+        if has_command("eza"):
+            try:
+                proc = subprocess.run(
+                    ["eza", "--tree", "--level", "2", "--only-dirs", path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    lines = proc.stdout.strip().split("\n")
+                    # Cap to 25 lines to avoid token explosion
+                    if len(lines) > 25:
+                        tree_context = (
+                            "\n".join(lines[:25]) + f"\n... ({len(lines)} dirs total)"
+                        )
+                    else:
+                        tree_context = proc.stdout.strip()
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+        elif has_command("tree"):
+            try:
+                # Fallback to tree if eza not available
+                proc = subprocess.run(
+                    ["tree", "-L", "2", "-d", "--dirsfirst", "--noreport", path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    lines = proc.stdout.strip().split("\n")
+                    if len(lines) > 25:
+                        tree_context = (
+                            "\n".join(lines[:25]) + f"\n... ({len(lines)} dirs total)"
+                        )
+                    else:
+                        tree_context = proc.stdout.strip()
+            except (subprocess.TimeoutExpired, Exception):
+                pass
 
     # Quality indicators (case-insensitive check)
     names_lower: set[str] = set()

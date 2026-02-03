@@ -175,6 +175,7 @@ These are essential for effective exploration:
 |------|---------|----------------|
 | `rg` | Pattern search across files (10x faster than grep) | `grep -r` |
 | `fd` | Find files by name/extension (5x faster than find) | `find` |
+| `eza` | Modern ls with tree view for directory hierarchy | `ls -la`, `tree` |
 | `git` | Version control, metadata extraction | - |
 | `gh` | GitHub API access, repo visibility checking | curl to API |
 | `uv` | Fast Python package manager for venv/dependency management | pip, virtualenv |
@@ -188,7 +189,6 @@ Enhance exploration but not required:
 | `tokei` | Lines of code by language | `wc -l`, `cloc` |
 | `scc` | Code complexity and SLOC metrics | `cloc` |
 | `dust` | Visual disk usage analyzer | `du -h` |
-| `eza` | Modern ls with git status | `ls -la` |
 | `bat` | Syntax-highlighted file viewing | `cat`, `less` |
 | `delta` | Better git diff viewer | `diff` |
 | `fzf` | Fuzzy finder for interactive selection | - |
