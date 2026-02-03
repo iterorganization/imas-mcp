@@ -11,6 +11,7 @@ from .client import RemoteEmbeddingClient, RemoteServerInfo, get_remote_client
 from .config import EmbeddingBackend, EncoderConfig
 from .embeddings import Embeddings
 from .encoder import EmbeddingBackendError, Encoder
+from .llama_index import RemoteLlamaEmbedding, get_llama_embed_model
 
 __all__ = [
     "EmbeddingBackend",
@@ -20,6 +21,8 @@ __all__ = [
     "Embeddings",
     "Encoder",
     "RemoteEmbeddingClient",
+    "RemoteLlamaEmbedding",
     "RemoteServerInfo",
+    "get_llama_embed_model",
     "get_remote_client",
 ]

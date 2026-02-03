@@ -19,13 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from llama_index.core import Document
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
+from imas_codex.embeddings.llama_index import get_llama_embed_model
 from imas_codex.graph import GraphClient
-from imas_codex.settings import get_imas_embedding_model
 
 from .facility_reader import TEXT_SPLITTER_LANGUAGES, fetch_remote_files
 from .graph_linker import (
@@ -43,13 +43,12 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int, str], None]
 
 
-def get_embed_model() -> HuggingFaceEmbedding:
-    """Get the project's standard embedding model."""
-    model_name = get_imas_embedding_model()
-    return HuggingFaceEmbedding(
-        model_name=model_name,
-        trust_remote_code=False,
-    )
+def get_embed_model() -> BaseEmbedding:
+    """Get the project's standard embedding model.
+
+    Respects the embedding-backend config (local/remote).
+    """
+    return get_llama_embed_model()
 
 
 def create_vector_store(

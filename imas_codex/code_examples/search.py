@@ -8,13 +8,13 @@ import logging
 from dataclasses import dataclass, field
 
 from llama_index.core import VectorStoreIndex
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.vector_stores.types import (
     FilterCondition,
     FilterOperator,
     MetadataFilter,
     MetadataFilters,
 )
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
 from .pipeline import create_vector_store, get_embed_model
@@ -39,9 +39,12 @@ class CodeSearchResult:
 
 @dataclass
 class CodeExampleSearch:
-    """Search code examples using LlamaIndex VectorStoreIndex."""
+    """Search code examples using LlamaIndex VectorStoreIndex.
 
-    embed_model: HuggingFaceEmbedding = field(default_factory=get_embed_model)
+    Uses the embedding-backend config to choose local or remote embedding.
+    """
+
+    embed_model: BaseEmbedding = field(default_factory=get_embed_model)
     vector_store: Neo4jVectorStore | None = None
     _index: VectorStoreIndex | None = field(default=None, init=False)
 
