@@ -25,6 +25,7 @@ Module Structure:
 import logging
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -866,6 +867,7 @@ def install_all_tools(
     facility: str | None = None,
     required_only: bool = False,
     force: bool = False,
+    on_progress: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Install all fast tools.
 
@@ -873,6 +875,7 @@ def install_all_tools(
         facility: Facility ID (None = local)
         required_only: Only install required tools
         force: Reinstall even if already present
+        on_progress: Optional callback called after each tool with (tool_key, result)
 
     Returns:
         Dict mapping tool_key -> installation result dict
@@ -885,5 +888,7 @@ def install_all_tools(
     for key in tools_to_install:
         result = install_tool(key, facility=facility, force=force)
         results[key] = result
+        if on_progress:
+            on_progress(key, result)
 
     return results

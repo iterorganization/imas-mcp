@@ -1,9 +1,11 @@
 """Tools commands - manage development tools and Python environment."""
 
 import click
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.console import Console, Group
+from rich.live import Live
+from rich.spinner import Spinner
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 
@@ -217,7 +219,7 @@ def tools_install(
         imas-codex tools install jt60sa --force     # Reinstall everything
     """
     from imas_codex.remote.python import DEFAULT_VENV_PATH, setup_python_env
-    from imas_codex.remote.tools import install_all_tools, install_tool, load_fast_tools
+    from imas_codex.remote.tools import install_tool, load_fast_tools
 
     facility = None if target == "local" else target
     has_failures = False
@@ -225,70 +227,100 @@ def tools_install(
 
     console.print(f"\n[bold]Installing on {target}...[/bold]\n")
 
-    # === Single tool mode ===
-    if tool_name:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task(f"Installing {tool_name}...", total=None)
-            result = install_tool(tool_name, facility=facility, force=force)
-
+    def format_tool_result(name: str, result: dict, is_required: bool = False) -> Text:
+        """Format a single tool result as rich Text."""
         if result.get("success"):
             action = result.get("action", "installed")
             version = result.get("version", "")
             if action in ("already_installed", "system_sufficient"):
-                console.print(
-                    f"[green]✓[/green] {tool_name}: {version} (already present)"
+                return Text.assemble(
+                    ("  ✓ ", "green"),
+                    (name, ""),
+                    (f": {version} ", ""),
+                    ("(present)", "dim"),
                 )
             else:
-                console.print(f"[green]✓[/green] {tool_name}: {version}")
+                return Text.assemble(
+                    ("  ✓ ", "green"),
+                    (name, ""),
+                    (f": {version}", ""),
+                )
         else:
-            console.print(f"[red]✗[/red] {tool_name}: {result.get('error', 'failed')}")
+            error = result.get("error", "failed")
+            if is_required:
+                return Text.assemble(
+                    ("  ✗ ", "red"),
+                    (name, ""),
+                    (f": {error} ", ""),
+                    ("(required)", "red"),
+                )
+            else:
+                return Text.assemble(
+                    ("  ○ ", "yellow"),
+                    (name, ""),
+                    (f": {error} ", ""),
+                    ("(optional)", "dim"),
+                )
+
+    # === Single tool mode ===
+    if tool_name:
+        spinner = Spinner("dots", text=f"Installing {tool_name}...")
+        with Live(spinner, console=console, transient=True):
+            result = install_tool(tool_name, facility=facility, force=force)
+
+        tool = config.get_tool(tool_name)
+        is_required = tool.required if tool else False
+        console.print(format_tool_result(tool_name, result, is_required))
+
+        if not result.get("success") and is_required:
             raise SystemExit(1)
         console.print()
         return
 
     # === Full installation mode ===
-    # Step 1: Install fast tools with progress
+    # Step 1: Install fast tools with live progress
     console.print("[bold]Fast Tools[/bold]")
 
-    # Collect tool names for progress
+    # Track completed tools for live display
+    completed_tools: list[tuple[str, dict, bool]] = []
+    current_tool: str | None = None
     all_tools = list(config.all_tools.keys())
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
-        progress.add_task(f"Installing {len(all_tools)} tools...", total=None)
-        tool_results = install_all_tools(facility=facility, force=force)
+    def render_tools_progress() -> Group:
+        """Render current tools progress."""
+        items = []
+        # Show completed tools
+        for name, result, is_required in completed_tools:
+            items.append(format_tool_result(name, result, is_required))
+        # Show current tool with spinner
+        if current_tool:
+            items.append(
+                Text.assemble(
+                    ("  ⠋ ", "cyan"),
+                    (current_tool, ""),
+                    ("...", "dim"),
+                )
+            )
+        return Group(*items)
 
-    for name, result in sorted(tool_results.items()):
-        if isinstance(result, dict):
-            if result.get("success"):
-                action = result.get("action", "installed")
-                version = result.get("version", "")
-                if action in ("already_installed", "system_sufficient"):
-                    console.print(f"  [green]✓[/green] {name}: {version} (present)")
-                else:
-                    console.print(f"  [green]✓[/green] {name}: {version}")
-            else:
-                tool = config.get_tool(name)
-                is_required = tool.required if tool else False
+    def on_tool_progress(name: str, result: dict) -> None:
+        """Callback called after each tool installation."""
+        nonlocal current_tool, has_failures
+        tool = config.get_tool(name)
+        is_required = tool.required if tool else False
+        completed_tools.append((name, result, is_required))
+        if is_required and not result.get("success"):
+            has_failures = True
+        # Update current_tool for next iteration
+        current_tool = None
 
-                if is_required:
-                    console.print(
-                        f"  [red]✗[/red] {name}: {result.get('error', 'failed')} [red](required)[/red]"
-                    )
-                    has_failures = True
-                else:
-                    console.print(
-                        f"  [yellow]○[/yellow] {name}: {result.get('error', 'failed')} [dim](optional)[/dim]"
-                    )
+    with Live(render_tools_progress(), console=console, refresh_per_second=10) as live:
+        for tool_key in all_tools:
+            current_tool = tool_key
+            live.update(render_tools_progress())
+            result = install_tool(tool_key, facility=facility, force=force)
+            on_tool_progress(tool_key, result)
+            live.update(render_tools_progress())
 
     console.print()
 
@@ -298,52 +330,82 @@ def tools_install(
     else:
         console.print("[bold]Python Environment[/bold]")
 
-        # Run with progress spinner
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task("Setting up Python environment...", total=None)
-            python_result = setup_python_env(
-                facility=facility,
-                python_version=python_version,
-                force=force,
-            )
+        # Track Python setup steps with live display
+        python_steps: list[tuple[str, dict]] = []
+        current_step: str | None = None
 
-        # Display step results
-        for step_info in python_result.get("steps", []):
-            step = step_info.get("step", "unknown")
-            step_result = step_info.get("result", {})
-
+        def render_python_progress() -> Group:
+            """Render Python setup progress."""
             step_names = {
                 "install_uv": "uv",
                 "install_python": "Python",
                 "create_venv": "venv",
             }
-            step_name = step_names.get(step, step)
-
-            if step_result.get("success"):
-                action = step_result.get("action", "")
-                version = step_result.get(
-                    "version", step_result.get("python_version", "")
-                )
-                if action in (
-                    "already_installed",
-                    "already_available",
-                    "already_exists",
-                ):
-                    console.print(
-                        f"  [green]✓[/green] {step_name}: {version} (present)"
-                    )
+            items = []
+            for step, result in python_steps:
+                step_name = step_names.get(step, step)
+                if result.get("success"):
+                    action = result.get("action", "")
+                    version = result.get("version", result.get("python_version", ""))
+                    if action in (
+                        "already_installed",
+                        "already_available",
+                        "already_exists",
+                    ):
+                        items.append(
+                            Text.assemble(
+                                ("  ✓ ", "green"),
+                                (step_name, ""),
+                                (f": {version} ", ""),
+                                ("(present)", "dim"),
+                            )
+                        )
+                    else:
+                        items.append(
+                            Text.assemble(
+                                ("  ✓ ", "green"),
+                                (step_name, ""),
+                                (f": {version}", ""),
+                            )
+                        )
                 else:
-                    console.print(f"  [green]✓[/green] {step_name}: {version}")
-            else:
-                console.print(
-                    f"  [red]✗[/red] {step_name}: {step_result.get('error', 'failed')}"
+                    items.append(
+                        Text.assemble(
+                            ("  ✗ ", "red"),
+                            (step_name, ""),
+                            (f": {result.get('error', 'failed')}", ""),
+                        )
+                    )
+            if current_step:
+                step_name = step_names.get(current_step, current_step)
+                items.append(
+                    Text.assemble(
+                        ("  ⠋ ", "cyan"),
+                        (step_name, ""),
+                        ("...", "dim"),
+                    )
                 )
-                has_failures = True
+            return Group(*items)
+
+        # Show initial spinner
+        with Live(
+            Text.assemble(("  ⠋ ", "cyan"), ("Setting up...", "dim")),
+            console=console,
+            refresh_per_second=10,
+        ) as live:
+            python_result = setup_python_env(
+                facility=facility,
+                python_version=python_version,
+                force=force,
+            )
+            # Process results
+            for step_info in python_result.get("steps", []):
+                step = step_info.get("step", "unknown")
+                step_result = step_info.get("result", {})
+                python_steps.append((step, step_result))
+                if not step_result.get("success"):
+                    has_failures = True
+            live.update(render_python_progress())
 
         console.print()
 
