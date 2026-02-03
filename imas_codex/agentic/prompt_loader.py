@@ -4,11 +4,26 @@ Prompts are markdown files with YAML frontmatter:
 - name: Prompt identifier (can include path like "discovery/scorer")
 - description: Short description
 - task: Task type for model selection (optional)
+- schema_needs: List of schema providers to include (optional)
 
 Prompts support Jinja2 templating:
 - Includes: {% include "safety.md" %} (resolved from shared/)
 - Variables: {{ facility }} (from render context)
 - Schema loops: {% for cat in discovery_categories %}...{% endfor %}
+
+Schema Provider Architecture:
+    Each prompt declares what schema context it needs via schema_needs frontmatter.
+    Providers are cached and only loaded when requested:
+
+    - path_purposes: PathPurpose enum values (grouped by category)
+    - discovery_categories: DiscoveryRootCategory enum values
+    - score_dimensions: score_* fields from FacilityPath schema
+    - scoring_schema: DirectoryScoringBatch Pydantic schema
+    - rescore_schema: RescoreBatch Pydantic schema
+    - access_method_fields: AccessMethod schema fields
+    - access_methods_graph: Existing AccessMethod nodes from graph
+
+    Providers use @lru_cache so schema is loaded once per process.
 
 Rendering modes:
 1. Static: parse_prompt_file() - includes only, for MCP registration
@@ -36,6 +51,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -326,50 +342,28 @@ def get_pydantic_schema_description(model_class: type) -> str:
     return "\n".join(lines)
 
 
-def get_schema_context() -> dict[str, Any]:
-    """Get schema-derived context for prompt rendering.
+# =============================================================================
+# Cached Schema Providers
+# =============================================================================
+#
+# Each provider is cached with @lru_cache so schema data is loaded once per process.
+# Prompts declare what they need via schema_needs frontmatter, and only those
+# providers are invoked.
 
-    Uses LinkML schema introspection to get enum values with their descriptions.
-    This is the single source of truth - descriptions come from the schema YAML,
-    not from generated Python code.
 
-    Returns a dict with:
-    - discovery_categories: List of DiscoveryRootCategory enum values
-    - path_purposes: List of PathPurpose enum values
-    - score_dimensions: List of per-purpose score field names with descriptions
-    - scoring_schema_example: JSON example for DirectoryScoringBatch
-    - scoring_schema_fields: Field descriptions for DirectoryScoringResult
-    - rescore_schema_example: JSON example for RescoreBatch
-    - rescore_schema_fields: Field descriptions for RescoreResult
-    - Each with 'value' and 'description' keys
-
-    This allows prompts to loop over schema-defined enums without hardcoding.
-    """
+@lru_cache(maxsize=1)
+def _get_linkml_schema():
+    """Cached LinkML schema accessor."""
     from imas_codex.graph.schema import get_schema
 
-    schema = get_schema()
+    return get_schema()
 
-    # Get enum values with descriptions directly from LinkML schema
-    discovery_categories = (
-        schema.get_enum_with_descriptions("DiscoveryRootCategory") or []
-    )
+
+@lru_cache(maxsize=1)
+def _provide_path_purposes() -> dict[str, Any]:
+    """Provide PathPurpose enum values grouped by category."""
+    schema = _get_linkml_schema()
     path_purposes = schema.get_enum_with_descriptions("PathPurpose") or []
-
-    # Get score dimensions from FacilityPath schema
-    # These are the score_* fields that map to DiscoveryRootCategory taxonomy
-    facility_path_slots = schema.get_all_slots("FacilityPath")
-    score_dimensions = []
-    for slot_name, slot_info in facility_path_slots.items():
-        if slot_name.startswith("score_") and slot_info.get("type") == "float":
-            # Extract description and build dimension info
-            desc = slot_info.get("description", "")
-            score_dimensions.append(
-                {
-                    "field": slot_name,
-                    "label": slot_name.replace("score_", "").replace("_", " ").title(),
-                    "description": desc,
-                }
-            )
 
     # Group path purposes for convenience in templates
     code_purposes = [
@@ -396,8 +390,98 @@ def get_schema_context() -> dict[str, Any]:
         if p["value"] in ("container", "archive", "build_artifact", "system")
     ]
 
-    # Get AccessMethod slots grouped by purpose
+    return {
+        "path_purposes": path_purposes,
+        "path_purposes_code": code_purposes,
+        "path_purposes_data": data_purposes,
+        "path_purposes_infra": infra_purposes,
+        "path_purposes_support": support_purposes,
+        "path_purposes_structural": structural_purposes,
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_discovery_categories() -> dict[str, Any]:
+    """Provide DiscoveryRootCategory enum values grouped."""
+    schema = _get_linkml_schema()
+    discovery_categories = (
+        schema.get_enum_with_descriptions("DiscoveryRootCategory") or []
+    )
+
+    return {
+        "discovery_categories": discovery_categories,
+        "discovery_categories_modeling": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("modeling_code", "modeling_data")
+        ],
+        "discovery_categories_experimental": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("analysis_code", "experimental_data")
+        ],
+        "discovery_categories_shared": [
+            c
+            for c in discovery_categories
+            if c["value"] in ("data_access", "workflow", "documentation")
+        ],
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_score_dimensions() -> dict[str, Any]:
+    """Provide score_* field definitions from FacilityPath schema."""
+    schema = _get_linkml_schema()
+    facility_path_slots = schema.get_all_slots("FacilityPath")
+
+    score_dimensions = []
+    for slot_name, slot_info in facility_path_slots.items():
+        if slot_name.startswith("score_") and slot_info.get("type") == "float":
+            desc = slot_info.get("description", "")
+            score_dimensions.append(
+                {
+                    "field": slot_name,
+                    "label": slot_name.replace("score_", "").replace("_", " ").title(),
+                    "description": desc,
+                }
+            )
+
+    return {"score_dimensions": score_dimensions}
+
+
+@lru_cache(maxsize=1)
+def _provide_scoring_schema() -> dict[str, Any]:
+    """Provide DirectoryScoringBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.paths.models import (
+        DirectoryScoringBatch,
+        DirectoryScoringResult,
+    )
+
+    return {
+        "scoring_schema_example": get_pydantic_schema_json(DirectoryScoringBatch),
+        "scoring_schema_fields": get_pydantic_schema_description(
+            DirectoryScoringResult
+        ),
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_rescore_schema() -> dict[str, Any]:
+    """Provide RescoreBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.paths.models import RescoreBatch, RescoreResult
+
+    return {
+        "rescore_schema_example": get_pydantic_schema_json(RescoreBatch),
+        "rescore_schema_fields": get_pydantic_schema_description(RescoreResult),
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_access_method_fields() -> dict[str, Any]:
+    """Provide AccessMethod schema fields grouped by purpose."""
+    schema = _get_linkml_schema()
     access_method_slots = schema.get_all_slots("AccessMethod")
+
     access_method_fields = {
         "required": [],
         "environment": [],
@@ -445,55 +529,67 @@ def get_schema_context() -> dict[str, Any]:
         elif slot_name in doc_fields:
             access_method_fields["documentation"].append(field_info)
 
-    # Generate Pydantic schema context for scoring prompts
-    # Import here to avoid circular imports
-    from imas_codex.discovery.paths.models import (
-        DirectoryScoringBatch,
-        DirectoryScoringResult,
-        RescoreBatch,
-        RescoreResult,
-    )
+    return {"access_method_fields": access_method_fields}
 
-    # Generate schema examples and field descriptions
-    scoring_schema_example = get_pydantic_schema_json(DirectoryScoringBatch)
-    scoring_schema_fields = get_pydantic_schema_description(DirectoryScoringResult)
-    rescore_schema_example = get_pydantic_schema_json(RescoreBatch)
-    rescore_schema_fields = get_pydantic_schema_description(RescoreResult)
 
-    return {
-        "discovery_categories": discovery_categories,
-        "path_purposes": path_purposes,
-        "score_dimensions": score_dimensions,
-        # AccessMethod schema for data_access prompt
-        "access_method_fields": access_method_fields,
-        # Grouped path purposes for cleaner template organization
-        "path_purposes_code": code_purposes,
-        "path_purposes_data": data_purposes,
-        "path_purposes_infra": infra_purposes,
-        "path_purposes_support": support_purposes,
-        "path_purposes_structural": structural_purposes,
-        # Grouped discovery categories for discovery/roots template
-        "discovery_categories_modeling": [
-            c
-            for c in discovery_categories
-            if c["value"] in ("modeling_code", "modeling_data")
-        ],
-        "discovery_categories_experimental": [
-            c
-            for c in discovery_categories
-            if c["value"] in ("analysis_code", "experimental_data")
-        ],
-        "discovery_categories_shared": [
-            c
-            for c in discovery_categories
-            if c["value"] in ("data_access", "workflow", "documentation")
-        ],
-        # Pydantic schema context for LLM structured output prompts
-        "scoring_schema_example": scoring_schema_example,
-        "scoring_schema_fields": scoring_schema_fields,
-        "rescore_schema_example": rescore_schema_example,
-        "rescore_schema_fields": rescore_schema_fields,
-    }
+# Registry mapping schema_needs names to provider functions
+_SCHEMA_PROVIDERS: dict[str, Any] = {
+    "path_purposes": _provide_path_purposes,
+    "discovery_categories": _provide_discovery_categories,
+    "score_dimensions": _provide_score_dimensions,
+    "scoring_schema": _provide_scoring_schema,
+    "rescore_schema": _provide_rescore_schema,
+    "access_method_fields": _provide_access_method_fields,
+}
+
+# Default schema needs per prompt (when not specified in frontmatter)
+# Only load what's actually used by each prompt
+_DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
+    "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
+    "discovery/rescorer": ["rescore_schema"],
+    "discovery/roots": ["discovery_categories"],
+    "discovery/data_access": ["access_method_fields"],
+    # wiki prompts don't need schema context
+}
+
+
+def get_schema_for_prompt(
+    prompt_name: str, schema_needs: list[str] | None = None
+) -> dict[str, Any]:
+    """Get only the schema context needed for a specific prompt.
+
+    Uses prompt frontmatter schema_needs if available, otherwise uses
+    defaults based on prompt name. Only invokes the required providers.
+
+    Args:
+        prompt_name: Prompt identifier (e.g., "discovery/scorer")
+        schema_needs: Explicit list of needs (overrides frontmatter/defaults)
+
+    Returns:
+        Dict with only the requested schema context
+    """
+    if schema_needs is None:
+        schema_needs = _DEFAULT_SCHEMA_NEEDS.get(prompt_name, [])
+
+    context: dict[str, Any] = {}
+    for need in schema_needs:
+        provider = _SCHEMA_PROVIDERS.get(need)
+        if provider:
+            context.update(provider())
+
+    return context
+
+
+def get_schema_context() -> dict[str, Any]:
+    """Get full schema context for prompt rendering.
+
+    DEPRECATED: Use get_schema_for_prompt() for targeted loading.
+    This function loads everything for backwards compatibility.
+    """
+    context: dict[str, Any] = {}
+    for provider in _SCHEMA_PROVIDERS.values():
+        context.update(provider())
+    return context
 
 
 def get_access_methods_context() -> dict[str, Any]:
@@ -599,10 +695,12 @@ def render_prompt(
 
     prompt_def = prompts[name]
 
-    # Build full context: schema + prompt-specific + user-provided
-    full_context = get_schema_context()
+    # Build targeted context: only load schema providers the prompt needs
+    # Check frontmatter for explicit schema_needs, otherwise use defaults
+    schema_needs = prompt_def.metadata.get("schema_needs")
+    full_context = get_schema_for_prompt(name, schema_needs)
 
-    # Add prompt-specific context
+    # Add prompt-specific context (backwards compat)
     if name == "discovery/data_access":
         full_context.update(get_access_methods_context())
 
