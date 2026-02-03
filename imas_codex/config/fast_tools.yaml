@@ -95,11 +95,12 @@ required:
     fallback: null
     releases:
       repo: astral-sh/uv
-      version: "0.6.11"
-      # uv uses standalone binaries, not tarballs
+      version: "0.9.28"
+      tag_prefix: ""  # uv uses no v prefix
+      # uv tarball contains uv-{arch}/uv and uv-{arch}/uvx
+      # strip_components=1 flattens to ~/bin/uv and ~/bin/uvx
       asset_pattern: "uv-{arch}.tar.gz"
-      strip_components: 0
-      binary_path: "uv"
+      strip_components: 1
     # Critical for modern Python on remote facilities - enables:
     # - Installing Python versions without root access (uv python install)
     # - Fast venv creation (uv venv)
