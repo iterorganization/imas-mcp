@@ -395,20 +395,31 @@ class DirectoryScorer:
             if patterns:
                 lines.append(f"Patterns: {', '.join(patterns)}")
 
-            # Add child names for context (critical for LLM to infer purpose)
-            # Names end with / for directories, no suffix for files
-            child_names = d.get("child_names")
-            if child_names:
-                # Parse JSON if stored as string
-                if isinstance(child_names, str):
-                    try:
-                        child_names = json_module.loads(child_names)
-                    except json_module.JSONDecodeError:
-                        child_names = []
+            # Numeric directory ratio warning (shot folders, run dirs)
+            numeric_ratio = d.get("numeric_dir_ratio", 0)
+            if numeric_ratio > 0.5:
+                lines.append(
+                    f"⚠️ DATA CONTAINER: {numeric_ratio:.0%} of subdirs are "
+                    f"numeric (shot IDs/runs). Set should_expand=false."
+                )
+
+            # Prefer tree context over flat child_names (shows hierarchy)
+            tree_context = d.get("tree_context")
+            if tree_context:
+                lines.append("Structure (tree -L 2):")
+                lines.append(f"```\n{tree_context}\n```")
+            else:
+                # Fall back to flat child names
+                child_names = d.get("child_names")
                 if child_names:
-                    # Limit to first 30 names to avoid excessive tokens
-                    names_to_show = child_names[:30]
-                    lines.append(f"Contents: {', '.join(names_to_show)}")
+                    if isinstance(child_names, str):
+                        try:
+                            child_names = json_module.loads(child_names)
+                        except json_module.JSONDecodeError:
+                            child_names = []
+                    if child_names:
+                        names_to_show = child_names[:30]
+                        lines.append(f"Contents: {', '.join(names_to_show)}")
 
         lines.append(
             "\n\nReturn results for each directory in order. "

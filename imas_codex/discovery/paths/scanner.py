@@ -84,6 +84,8 @@ class DirStats:
     git_branch: str | None = None  # Current branch name
     git_root_commit: str | None = None  # First commit in history (for fork detection)
     child_names: list[str] | None = None  # First 30 child file/dir names
+    tree_context: str | None = None  # 2-level tree output for hierarchy
+    numeric_dir_ratio: float = 0.0  # Fraction of numeric subdirs (shot IDs)
     file_type_counts: dict[str, int] = field(default_factory=dict)
     patterns_detected: list[str] = field(default_factory=list)
     # Fast tool data for grounded scoring
@@ -108,6 +110,10 @@ class DirStats:
             result["git_root_commit"] = self.git_root_commit
         if self.child_names:
             result["child_names"] = self.child_names
+        if self.tree_context:
+            result["tree_context"] = self.tree_context
+        if self.numeric_dir_ratio > 0:
+            result["numeric_dir_ratio"] = self.numeric_dir_ratio
         if self.file_type_counts:
             result["file_type_counts"] = json.dumps(self.file_type_counts)
         if self.patterns_detected:
@@ -271,6 +277,8 @@ def scan_paths(
             git_branch=stats_data.get("git_branch"),
             git_root_commit=stats_data.get("git_root_commit"),
             child_names=data.get("child_names", []),
+            tree_context=data.get("tree_context"),
+            numeric_dir_ratio=stats_data.get("numeric_dir_ratio", 0.0),
             file_type_counts=stats_data.get("file_type_counts", {}),
             size_bytes=size_bytes,
             rg_matches=rg_matches,

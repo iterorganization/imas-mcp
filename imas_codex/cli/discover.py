@@ -743,17 +743,29 @@ async def _async_discovery_loop(
 @click.argument("facility")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.option(
+    "--no-rich",
+    "no_rich",
+    is_flag=True,
+    help="Disable rich output (for LLM tools in non-TTY)",
+)
+@click.option(
     "--domain",
     "-d",
     type=click.Choice(["paths", "code", "docs", "data"]),
     help="Show detailed status for specific domain",
 )
-def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
+def discover_status(
+    facility: str, as_json: bool, no_rich: bool, domain: str | None
+) -> None:
     """Show discovery statistics for a facility."""
     import json as json_module
+    import sys
 
     from imas_codex.discovery import get_discovery_stats, get_high_value_paths
     from imas_codex.discovery.paths.progress import print_discovery_status
+
+    # Auto-detect TTY if --no-rich not explicitly set
+    use_rich = not no_rich and sys.stdout.isatty()
 
     try:
         if as_json:
@@ -766,7 +778,7 @@ def discover_status(facility: str, as_json: bool, domain: str | None) -> None:
             }
             click.echo(json_module.dumps(output, indent=2))
         else:
-            print_discovery_status(facility)
+            print_discovery_status(facility, use_rich=use_rich)
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

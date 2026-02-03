@@ -195,6 +195,11 @@ When classifying `path_purpose`, set the corresponding dimension HIGH:
   - If you see `Dirs: 500`, `Dirs: 1000+ ` with similarly-named children (run*, scan*, shot*), this is data
   - Even with helper scripts mixed in, classify as modeling_data, expand=false
   - The scripts are for post-processing the data, not standalone code
+- **Numeric directory warning (⚠️ DATA CONTAINER)**: Input may include a warning like:
+  `⚠️ DATA CONTAINER: 85% of subdirs are numeric (shot IDs/runs). Set should_expand=false.`
+  - This is calculated automatically from directory names
+  - Trust this signal - numeric subdirectories almost always contain shot/run data
+  - Set should_expand=false and purpose=modeling_data or experimental_data
 - **Purpose is: `system`, `build_artifact`, `archive`**
 - **Combined score < 0.3 for any purpose**
 - **Leaf directory with only files (no subdirectories)**

@@ -187,6 +187,38 @@ def scan_directory(
     # Combine for legacy child_names field (first 30 total with trailing / on dirs)
     child_names = dir_names[:15] + file_names[:15]
 
+    # Detect numeric directories (shot IDs, run numbers) - signal data container
+    numeric_dir_count = 0
+    for d in dirs:
+        name = d.name
+        # Consider dir numeric if it's all digits or has numeric prefix/suffix
+        if name.isdigit() or (len(name) > 3 and name[:4].isdigit()):
+            numeric_dir_count += 1
+    numeric_dir_ratio = numeric_dir_count / len(dirs) if dirs else 0.0
+
+    # Tree context for hierarchical view (if tree command available)
+    tree_context: Optional[str] = None
+    if len(dirs) > 5 and has_command("tree"):
+        try:
+            # Use tree to show 2-level hierarchy, dirs first, capped output
+            proc = subprocess.run(
+                ["tree", "-L", "2", "-d", "--dirsfirst", "--noreport", path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                lines = proc.stdout.strip().split("\n")
+                # Cap to 25 lines to avoid token explosion
+                if len(lines) > 25:
+                    tree_context = (
+                        "\n".join(lines[:25]) + f"\n... ({len(lines)} dirs total)"
+                    )
+                else:
+                    tree_context = proc.stdout.strip()
+        except (subprocess.TimeoutExpired, Exception):
+            pass
+
     # Quality indicators (case-insensitive check)
     names_lower: set[str] = set()
     for entry in entries:
@@ -326,9 +358,12 @@ def scan_directory(
         "size_bytes": size_bytes,
         "file_type_counts": ext_counts,
         "rg_matches": rg_matches,
+        "numeric_dir_ratio": numeric_dir_ratio,
     }
     result["child_dirs"] = child_dirs
     result["child_names"] = child_names
+    if tree_context:
+        result["tree_context"] = tree_context
     # Include symlink status and device_inode for the scanned path itself
     result["is_symlink"] = is_symlink
     result["realpath"] = realpath

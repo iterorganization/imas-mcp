@@ -871,6 +871,17 @@ classes:
         description: JSON-encoded file type counts from scan
       child_names:
         description: JSON-encoded list of child file/dir names for LLM context
+      tree_context:
+        description: >-
+          Tree output showing 2-level directory hierarchy (tree -L 2 -d).
+          Provides better context than flat child_names for complex directories.
+          Capped at 25 lines to limit tokens.
+      numeric_dir_ratio:
+        description: >-
+          Fraction of subdirectories with numeric names (0.0-1.0).
+          High ratio (>0.5) indicates data container (shot IDs, run numbers).
+          Used to prevent wasteful expansion into data directories.
+        range: float
       listed_at:
         description: When this path completed listing
         range: datetime

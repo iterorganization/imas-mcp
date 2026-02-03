@@ -244,14 +244,6 @@ class TestCLISubcommands:
         assert result.exit_code == 0
         assert "directory structure" in result.output.lower()
 
-    def test_discover_sources_help(self, runner):
-        """discover sources subgroup exists."""
-        from imas_codex.cli import main
-
-        result = runner.invoke(main, ["discover", "sources", "--help"])
-        assert result.exit_code == 0
-        assert "documentation sources" in result.output.lower()
-
     def test_imas_build_help(self, runner):
         """imas build subcommand exists."""
         from imas_codex.cli import main

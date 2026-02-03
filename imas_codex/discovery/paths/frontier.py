@@ -1505,6 +1505,14 @@ async def persist_scan_results(
                 import json
 
                 update_dict["child_names"] = json.dumps(child_names)
+            # Store tree context for hierarchical view
+            tree_context = stats.get("tree_context")
+            if tree_context:
+                update_dict["tree_context"] = tree_context
+            # Store numeric directory ratio (data container detection)
+            numeric_dir_ratio = stats.get("numeric_dir_ratio", 0)
+            if numeric_dir_ratio > 0:
+                update_dict["numeric_dir_ratio"] = numeric_dir_ratio
             # Store patterns detected
             patterns = stats.get("patterns_detected")
             if patterns:
