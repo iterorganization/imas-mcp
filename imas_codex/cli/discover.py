@@ -917,27 +917,69 @@ def discover_inspect(facility: str, scanned: int, scored: int, as_json: bool) ->
 
 @discover.command("clear")
 @click.argument("facility")
+@click.option(
+    "--domain",
+    "-d",
+    type=click.Choice(["paths", "wiki", "all"]),
+    default="all",
+    help="Which discovery domain to clear (default: all)",
+)
+@click.option(
+    "--cascade",
+    is_flag=True,
+    help="Also delete related nodes (SourceFile, FacilityUser for paths)",
+)
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-def discover_clear(facility: str, force: bool) -> None:
-    """Clear all discovered paths for a facility."""
+def discover_clear(facility: str, domain: str, cascade: bool, force: bool) -> None:
+    """Clear discovered data for a facility.
+
+    Domains:
+        paths  - FacilityPath nodes (filesystem discovery)
+        wiki   - WikiPage nodes (documentation discovery)
+        all    - Both paths and wiki
+
+    Use --cascade to also delete derived data like SourceFile and FacilityUser.
+    """
+    from functools import partial
+
     from imas_codex.discovery import clear_facility_paths, get_discovery_stats
+    from imas_codex.discovery.wiki import clear_facility_wiki, get_wiki_stats
 
     try:
-        stats = get_discovery_stats(facility)
-        total = stats.get("total", 0)
+        items_to_clear: list[tuple[str, int, callable]] = []
 
-        if total == 0:
-            click.echo(f"No paths to clear for {facility}")
+        if domain in ("paths", "all"):
+            stats = get_discovery_stats(facility)
+            total = stats.get("total", 0)
+            if total > 0:
+                clear_func = partial(clear_facility_paths, cascade=cascade)
+                label = "paths + related" if cascade else "paths"
+                items_to_clear.append((label, total, clear_func))
+
+        if domain in ("wiki", "all"):
+            wiki_stats = get_wiki_stats(facility)
+            total = wiki_stats.get("pages", 0)  # WikiPage count
+            if total > 0:
+                items_to_clear.append(("wiki pages", total, clear_facility_wiki))
+
+        if not items_to_clear:
+            click.echo(f"No {domain} data to clear for {facility}")
             return
+
+        # Summary message
+        summary_parts = [f"{count} {name}" for name, count, _ in items_to_clear]
+        summary = " and ".join(summary_parts)
 
         if not force:
             click.confirm(
-                f"This will delete {total} paths for {facility}. Continue?",
+                f"This will delete {summary} for {facility}. Continue?",
                 abort=True,
             )
 
-        deleted = clear_facility_paths(facility)
-        click.echo(f"✓ Deleted {deleted} paths for {facility}")
+        # Execute deletions
+        for name, _, clear_func in items_to_clear:
+            deleted = clear_func(facility)
+            click.echo(f"✓ Deleted {deleted} {name} for {facility}")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)

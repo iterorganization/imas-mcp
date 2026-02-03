@@ -31,9 +31,11 @@ from imas_codex.discovery.wiki.parallel import run_parallel_wiki_discovery
 from imas_codex.discovery.wiki.pipeline import (
     WikiArtifactPipeline,
     WikiIngestionPipeline,
+    clear_facility_wiki,
     get_pending_wiki_artifacts,
     get_pending_wiki_pages,
     get_wiki_queue_stats,
+    get_wiki_stats,
     link_chunks_to_entities,
     mark_wiki_page_status,
     persist_chunks_batch,
@@ -78,9 +80,11 @@ __all__ = [
     "extract_units",
     "fetch_wiki_page",
     # Queue management
+    "clear_facility_wiki",
     "get_pending_wiki_artifacts",
     "get_pending_wiki_pages",
     "get_wiki_queue_stats",
+    "get_wiki_stats",
     "mark_wiki_page_status",
     # Batch operations
     "link_chunks_to_entities",

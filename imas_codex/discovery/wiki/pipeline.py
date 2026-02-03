@@ -1091,6 +1091,73 @@ def get_wiki_stats(facility_id: str) -> dict:
         return {"pages": 0, "chunks": 0, "tree_nodes_linked": 0, "imas_paths_linked": 0}
 
 
+def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
+    """Delete all WikiPage and WikiChunk nodes for a facility in batches.
+
+    Also removes WikiArtifact nodes associated with the facility.
+
+    Args:
+        facility: Facility ID
+        batch_size: Nodes to delete per batch (default 1000)
+
+    Returns:
+        Total number of wiki pages deleted
+    """
+    total_deleted = 0
+
+    with GraphClient() as gc:
+        # First delete WikiChunks (they reference WikiPages)
+        while True:
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})-[:HAS_CHUNK]->(wc:WikiChunk)
+                WITH wc LIMIT $batch_size
+                DETACH DELETE wc
+                RETURN count(wc) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            if deleted < batch_size:
+                break
+
+        # Delete WikiArtifacts
+        while True:
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})-[:HAS_ARTIFACT]->(wa:WikiArtifact)
+                WITH wa LIMIT $batch_size
+                DETACH DELETE wa
+                RETURN count(wa) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            if deleted < batch_size:
+                break
+
+        # Finally delete WikiPages
+        while True:
+            result = gc.query(
+                """
+                MATCH (wp:WikiPage {facility_id: $facility})
+                WITH wp LIMIT $batch_size
+                DETACH DELETE wp
+                RETURN count(wp) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            total_deleted += deleted
+            if deleted < batch_size:
+                break
+
+    return total_deleted
+
+
 # =============================================================================
 # Artifact Ingestion
 # =============================================================================
@@ -1525,6 +1592,7 @@ __all__ = [
     "ProgressCallback",
     "WikiArtifactPipeline",
     "WikiIngestionPipeline",
+    "clear_facility_wiki",
     "create_wiki_vector_index",
     "fetch_artifact_content",
     "fetch_artifact_size",

@@ -49,11 +49,20 @@ class Neo4jOperation:
     - Stopping Neo4j if running
     - Performing the operation
     - Restarting Neo4j if it was running
+    - Resetting password after database load (which clears auth)
     """
 
-    def __init__(self, operation_name: str, require_stopped: bool = True):
+    def __init__(
+        self,
+        operation_name: str,
+        require_stopped: bool = True,
+        reset_password_on_restart: bool = False,
+        password: str = "imas-codex",
+    ):
         self.operation_name = operation_name
         self.require_stopped = require_stopped
+        self.reset_password_on_restart = reset_password_on_restart
+        self.password = password
         self.acquired = False
         self.was_running = False
         self._lock_file: Path = NEO4J_LOCK_FILE
@@ -107,12 +116,44 @@ class Neo4jOperation:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
         try:
+            # Always reset password after load operations, regardless of whether
+            # Neo4j was running before. The dump replaces the auth database.
+            if self.reset_password_on_restart:
+                click.echo("Resetting Neo4j password after load...")
+                self._reset_password()
+
             if self.was_running:
                 click.echo("Restarting Neo4j...")
                 self._start_neo4j()
         finally:
             self._release_lock()
         return False
+
+    def _reset_password(self) -> None:
+        """Reset Neo4j password after database load.
+
+        After loading a database dump, Neo4j's auth database is replaced and
+        the password must be re-initialized before the first start.
+        """
+        cmd = [
+            "apptainer",
+            "exec",
+            "--bind",
+            f"{DATA_DIR}/data:/data",
+            "--writable-tmpfs",
+            str(NEO4J_IMAGE),
+            "neo4j-admin",
+            "dbms",
+            "set-initial-password",
+            self.password,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            # May fail if password already set - not an error
+            if "password is already set" not in result.stderr.lower():
+                click.echo(f"Warning: Password reset issue: {result.stderr.strip()}")
+        else:
+            click.echo("  Password reset successful")
 
     def _process_exists(self, pid: int) -> bool:
         try:
@@ -1174,14 +1215,20 @@ def data_dump(output: str | None, no_restart: bool) -> None:
 @click.argument("archive", type=click.Path(exists=True))
 @click.option("--force", is_flag=True, help="Overwrite existing data")
 @click.option("--no-restart", is_flag=True, help="Don't restart Neo4j after load")
-def data_load(archive: str, force: bool, no_restart: bool) -> None:
+@click.option("--password", envvar="NEO4J_PASSWORD", default="imas-codex")
+def data_load(archive: str, force: bool, no_restart: bool, password: str) -> None:
     """Load graph database from archive."""
     require_apptainer()
 
     archive_path = Path(archive)
     click.echo(f"Loading archive: {archive_path}")
 
-    with Neo4jOperation("graph load", require_stopped=True) as op:
+    with Neo4jOperation(
+        "graph load",
+        require_stopped=True,
+        reset_password_on_restart=True,
+        password=password,
+    ) as op:
         if no_restart:
             op.was_running = False
 

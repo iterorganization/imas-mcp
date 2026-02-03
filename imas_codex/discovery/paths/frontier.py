@@ -1332,7 +1332,9 @@ def get_top_paths_by_purpose(
         return list(result)
 
 
-def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
+def clear_facility_paths(
+    facility: str, batch_size: int = 5000, cascade: bool = False
+) -> int:
     """Delete all FacilityPath nodes for a facility in batches.
 
     Uses batched deletion to avoid memory exhaustion on large facilities.
@@ -1340,6 +1342,7 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
     Args:
         facility: Facility ID
         batch_size: Nodes to delete per batch (default 5000)
+        cascade: If True, also delete SourceFile and FacilityUser nodes
 
     Returns:
         Total number of paths deleted
@@ -1349,6 +1352,39 @@ def clear_facility_paths(facility: str, batch_size: int = 5000) -> int:
     total_deleted = 0
 
     with GraphClient() as gc:
+        # If cascade, first delete SourceFile nodes for this facility
+        if cascade:
+            while True:
+                result = gc.query(
+                    """
+                    MATCH (sf:SourceFile {facility_id: $facility})
+                    WITH sf LIMIT $batch_size
+                    DETACH DELETE sf
+                    RETURN count(sf) AS deleted
+                    """,
+                    facility=facility,
+                    batch_size=batch_size,
+                )
+                deleted = result[0]["deleted"] if result else 0
+                if deleted < batch_size:
+                    break
+
+            # Delete FacilityUser nodes with facility relationship
+            while True:
+                result = gc.query(
+                    """
+                    MATCH (fu:FacilityUser)-[:FACILITY_ID]->(f:Facility {id: $facility})
+                    WITH fu LIMIT $batch_size
+                    DETACH DELETE fu
+                    RETURN count(fu) AS deleted
+                    """,
+                    facility=facility,
+                    batch_size=batch_size,
+                )
+                deleted = result[0]["deleted"] if result else 0
+                if deleted < batch_size:
+                    break
+
         while True:
             # Delete a batch and return count
             result = gc.query(
