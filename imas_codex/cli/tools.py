@@ -325,26 +325,28 @@ def tools_install(
                 )
             return Group(*items)
 
-    def on_tool_progress(name: str, result: dict) -> None:
-        """Callback called after each tool installation."""
-        nonlocal current_tool, has_failures
-        tool = config.get_tool(name)
-        is_required = tool.required if tool else False
-        completed_tools.append((name, result, is_required))
-        if is_required and not result.get("success"):
-            has_failures = True
-        # Update current_tool for next iteration
-        current_tool = None
+        def on_tool_progress(name: str, result: dict) -> None:
+            """Callback called after each tool installation."""
+            nonlocal current_tool, has_failures
+            tool = config.get_tool(name)
+            is_required = tool.required if tool else False
+            completed_tools.append((name, result, is_required))
+            if is_required and not result.get("success"):
+                has_failures = True
+            # Update current_tool for next iteration
+            current_tool = None
 
-    with Live(render_tools_progress(), console=console, refresh_per_second=10) as live:
-        for tool_key in all_tools:
-            current_tool = tool_key
-            live.update(render_tools_progress())
-            result = install_tool(tool_key, facility=facility, force=force)
-            on_tool_progress(tool_key, result)
-            live.update(render_tools_progress())
+        with Live(
+            render_tools_progress(), console=console, refresh_per_second=10
+        ) as live:
+            for tool_key in all_tools:
+                current_tool = tool_key
+                live.update(render_tools_progress())
+                result = install_tool(tool_key, facility=facility, force=force)
+                on_tool_progress(tool_key, result)
+                live.update(render_tools_progress())
 
-    console.print()
+        console.print()
 
     # Step 2: Python environment (unless --tools-only)
     if tools_only:
