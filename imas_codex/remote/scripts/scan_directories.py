@@ -72,6 +72,7 @@ def scan_directory(
     enable_rg: bool,
     enable_size: bool,
     has_rg: bool,
+    has_dust: bool,
 ) -> Dict[str, Any]:
     """Scan a single directory and return results dict.
 
@@ -81,6 +82,7 @@ def scan_directory(
         enable_rg: Whether to run rg pattern matching
         enable_size: Whether to calculate directory size
         has_rg: Whether rg command is available
+        has_dust: Whether dust command is available
 
     Returns:
         Dict with path, stats, child_dirs, child_names, and optional error
@@ -283,22 +285,43 @@ def scan_directory(
         except Exception:
             pass
 
-    # Size calculation (if enabled)
+    # Size calculation (if enabled) - prefer dust over du
     size_bytes = 0
     if enable_size:
-        try:
-            proc = subprocess.run(
-                ["du", "-sb", path],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                size_bytes = int(proc.stdout.split()[0])
-        except (subprocess.TimeoutExpired, ValueError, IndexError):
-            pass
-        except Exception:
-            pass
+        if has_dust:
+            try:
+                proc = subprocess.run(
+                    ["dust", "-sb", path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    # dust -sb outputs: "1234 /path"
+                    first_line = proc.stdout.strip().split("\n")[0]
+                    parts = first_line.split()
+                    if parts:
+                        try:
+                            size_bytes = int(parts[0])
+                        except ValueError:
+                            pass
+            except (subprocess.TimeoutExpired, Exception):
+                pass
+        if size_bytes == 0:
+            # Fallback to du
+            try:
+                proc = subprocess.run(
+                    ["du", "-sb", path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    size_bytes = int(proc.stdout.split()[0])
+            except (subprocess.TimeoutExpired, ValueError, IndexError):
+                pass
+            except Exception:
+                pass
 
     # Git metadata extraction (if .git directory exists)
     git_remote_url: Optional[str] = None
@@ -406,12 +429,14 @@ def main() -> None:
     enable_rg: bool = config.get("enable_rg", False)
     enable_size: bool = config.get("enable_size", False)
 
-    # Check for rg once
+    # Check for tools once
     has_rg = has_command("rg")
+    has_dust = has_command("dust")
 
     # Scan all paths
     results = [
-        scan_directory(p, rg_patterns, enable_rg, enable_size, has_rg) for p in paths
+        scan_directory(p, rg_patterns, enable_rg, enable_size, has_rg, has_dust)
+        for p in paths
     ]
 
     # Output JSON (handles all escaping correctly)
