@@ -246,6 +246,33 @@ enums:
       asserted:
         description: User-provided, not verified
 
+  DiscoveryTool:
+    description: >-
+      Workflow or tool that created graph nodes. Enables targeted removal
+      and re-processing queries. Use with DiscoveryProvenance mixin.
+      
+      Value semantics:
+      - CLI commands use underscore naming (discover_paths, clusters_build)
+      - Agent tools use their registered name (scout, explore_agent)
+      - Manual entry uses "manual"
+    permissible_values:
+      discover_paths:
+        description: "CLI: imas-codex discover paths"
+      discover_wiki:
+        description: "CLI: imas-codex discover wiki"
+      ingest_code:
+        description: "CLI: imas-codex ingest run (code ingestion)"
+      clusters_build:
+        description: "CLI: imas-codex clusters build"
+      dd_build:
+        description: "CLI: imas-codex imas build"
+      scout:
+        description: "Agent: Scout exploration tool"
+      explore_agent:
+        description: "Agent: Explore subagent discoveries"
+      manual:
+        description: Manual entry via MCP or direct graph edit
+
   DiscoveryRootCategory:
     description: >-
       Broad category for discovery seeding roots. Used to ensure balanced
@@ -402,6 +429,48 @@ classes:
       llm_at:
         description: When LLM operation was performed
         range: datetime
+
+  DiscoveryProvenance:
+    description: >-
+      Mixin providing unified provenance tracking for all discovered/ingested nodes.
+      Apply to any node type created by discovery or ingestion workflows.
+      
+      Enables targeted removal and re-processing queries:
+      - Delete all nodes from tool X between time Y and Z
+      - Re-run discovery for nodes created before schema version V
+      - Track data lineage across workflows
+      - Group deletions by session ID
+      
+      Example queries:
+        MATCH (n) WHERE n.created_by_tool = 'discover_paths' 
+          AND n.created_at >= datetime('2026-01-01')
+          AND n.created_at < datetime('2026-01-15')
+        DETACH DELETE n
+        
+        MATCH (n) WHERE n.created_by_session = 'session-abc123'
+        DETACH DELETE n
+    mixin: true
+    class_uri: common:DiscoveryProvenance
+    attributes:
+      created_by_tool:
+        description: >-
+          Tool/workflow that created this node. Use DiscoveryTool enum values.
+          Enables "delete everything created by discover_paths" queries.
+        range: DiscoveryTool
+      created_at:
+        description: >-
+          ISO timestamp when node was created. Required for time-based queries.
+          Stored as datetime for efficient range queries.
+        range: datetime
+      created_by_session:
+        description: >-
+          Optional session/invocation ID for grouping related operations.
+          Enables "delete everything from this session" queries.
+          Format: ISO timestamp or UUID of CLI invocation.
+      source_version:
+        description: >-
+          Version of imas-codex at creation time (e.g., "3.2.1").
+          Enables "re-process nodes created before schema change" queries.
 
   COCOSMixin:
     description: >-

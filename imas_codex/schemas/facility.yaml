@@ -646,6 +646,7 @@ classes:
       Use score field to prioritize paths for code ingestion.
     mixins:
       - LLMOperation
+      - DiscoveryProvenance
     class_uri: facility:FacilityPath
     attributes:
       id:
@@ -931,6 +932,8 @@ classes:
       - Multiple facilities can discover same SoftwareRepo independently
       
       Schema.org alignment: Based on schema:SoftwareSourceCode vocabulary.
+    mixins:
+      - DiscoveryProvenance
     class_uri: facility:SoftwareRepo
     attributes:
       id:
@@ -1009,6 +1012,8 @@ classes:
       Relationships:
       - (FacilityUser)-[:OWNS]->(FacilityPath) - paths owned by this user
       - (FacilityUser)-[:IS_PERSON]->(Person) - cross-facility identity link
+    mixins:
+      - DiscoveryProvenance
     class_uri: facility:FacilityUser
     attributes:
       id:
@@ -1051,6 +1056,8 @@ classes:
       A researcher that may have accounts at multiple facilities.
       Uses Schema.org Person semantics for interoperability.
       Enables cross-facility user identification via ORCID or name matching.
+    mixins:
+      - DiscoveryProvenance
     class_uri: schema:Person
     attributes:
       id:
@@ -1518,6 +1525,8 @@ classes:
         - accessor: extracted from data system introspection
         - ACCESS_METHOD edge: linked to facility's AccessMethod
     class_uri: facility:FacilitySignal
+    mixins:
+      - DiscoveryProvenance
     attributes:
       id:
         identifier: true
@@ -2210,6 +2219,7 @@ classes:
     mixins:
       - LLMProvenance
       - LLMOperation
+      - DiscoveryProvenance
     class_uri: facility:WikiPage
     attributes:
       id:
@@ -2373,6 +2383,8 @@ classes:
       - FACILITY_ID -> Facility
       - LINKED_FROM -> WikiPage (pages that link to this artifact)
     class_uri: facility:WikiArtifact
+    mixins:
+      - DiscoveryProvenance
     attributes:
       id:
         identifier: true
