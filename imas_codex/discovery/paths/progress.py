@@ -144,12 +144,12 @@ class ProgressState:
     score_processing: bool = False  # True when awaiting LLM batch
     enrich_processing: bool = False  # True when awaiting SSH enrichment batch
 
-    # Streaming - enrich uses slower rate to fill time between infrequent batches
+    # Streaming queues - enrich adapts rate based on batch size to fill inter-batch gaps
     scan_queue: StreamQueue = field(default_factory=StreamQueue)
     score_queue: StreamQueue = field(default_factory=StreamQueue)
     enrich_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
-            rate=0.5, max_rate=1.0, min_display_time=1.5
+            rate=0.5, max_rate=2.5, min_display_time=0.4
         )
     )
 
@@ -563,8 +563,11 @@ class ParallelProgressDisplay:
         # ENRICH section - always 2 lines for consistent height (skip in scan_only mode)
         if not self.state.scan_only:
             enrich = self.state.current_enrich
+            queue_empty = self.state.enrich_queue.is_empty()
             section.append("  ENRICH", style="bold magenta")
-            if enrich:
+            # Show current item if queue still has items OR we're still processing
+            # Once queue is drained and worker is idle, show "idle" instead of stale item
+            if enrich and (not queue_empty or self.state.enrich_processing):
                 section.append(clip_path(enrich.path, self.WIDTH - 11), style="white")
                 section.append("\n")
                 # Stats indented below
@@ -594,13 +597,12 @@ class ParallelProgressDisplay:
             elif self.state.enrich_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
-            elif should_show_idle(
-                self.state.enrich_processing, self.state.enrich_queue
-            ):
+            elif queue_empty:
+                # Queue drained and not processing - truly idle
                 section.append(" idle", style="dim italic")
                 section.append("\n    ", style="dim")  # Empty second line
             else:
-                # Queue has items but nothing displayed yet
+                # Queue has items but nothing displayed yet (waiting for rate limit)
                 section.append(" ...", style="dim italic")
                 section.append("\n    ", style="dim")
 
@@ -903,8 +905,9 @@ class ParallelProgressDisplay:
         self.state.enrich_rate = stats.rate
 
         # Track processing state for display
+        # Don't clear current_enrich when waiting - let queue drain naturally
+        # via tick(). Only update the processing flag.
         if "waiting" in message.lower():
-            self.state.current_enrich = None
             self.state.enrich_processing = False
             self._refresh()
             return
@@ -981,10 +984,13 @@ class ParallelProgressDisplay:
                         error=r.get("error"),
                     )
                 )
-            # Use lower display rate for enrich (items visible ~1.5-2s each)
-            # This ensures items stream steadily between infrequent SSH batches
-            # The enrich_queue has max_rate=1.0 and min_display_time=1.5 configured
-            display_rate = stats.rate * 0.4 if stats.rate else 0.5
+            # Calculate display rate to spread items over ~15 seconds
+            # This fills the gap between infrequent SSH batches
+            # e.g., 25 items / 15s = 1.67 items/s (each item visible ~0.6s)
+            # e.g., 10 items / 15s = 0.67 items/s (each item visible ~1.5s)
+            target_duration = 15.0  # seconds to spread batch over
+            batch_size = len(items)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
