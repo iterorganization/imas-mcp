@@ -11,8 +11,8 @@ Category-aware pattern selection:
 
 Requirements:
 - Python 3.8+ (stdlib only, no external dependencies)
+- du (standard Unix utility, always available)
 - Optional: rg (ripgrep) for pattern matching
-- Optional: dust or du for size analysis
 - Optional: tokei for lines of code analysis
 
 Usage:
@@ -135,7 +135,6 @@ def count_pattern_matches(path: str, pattern: str, timeout: int = 30) -> int:
 def enrich_directory(
     path: str,
     has_rg: bool,
-    has_dust: bool,
     has_tokei: bool,
     purpose: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -153,7 +152,6 @@ def enrich_directory(
     Args:
         path: Directory path to enrich
         has_rg: Whether rg command is available
-        has_dust: Whether dust command is available
         has_tokei: Whether tokei command is available
         purpose: Path purpose category (e.g., "modeling_code", "documentation")
 
@@ -203,43 +201,24 @@ def enrich_directory(
     result["read_matches"] = read_matches
     result["write_matches"] = write_matches
 
-    # Storage size analysis
+    # Storage size analysis using du -sb (reliable byte output)
+    # Note: dust is a visual tool without simple bytes-only output,
+    # so we use du -sb which outputs "BYTES\tPATH" format
     total_bytes = 0
-    if has_dust:
-        try:
-            proc = subprocess.run(
-                ["dust", "-sb", path],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                # dust -sb outputs: "1234 /path"
-                first_line = proc.stdout.strip().split("\n")[0]
-                parts = first_line.split()
-                if parts:
-                    try:
-                        total_bytes = int(parts[0])
-                    except ValueError:
-                        pass
-        except (subprocess.TimeoutExpired, Exception):
-            pass
-    else:
-        # Fallback to du
-        try:
-            proc = subprocess.run(
-                ["du", "-sb", path],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if proc.returncode == 0 and proc.stdout.strip():
-                try:
-                    total_bytes = int(proc.stdout.split()[0])
-                except (ValueError, IndexError):
-                    pass
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+    try:
+        proc = subprocess.run(
+            ["du", "-sb", path],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            try:
+                total_bytes = int(proc.stdout.split()[0])
+            except (ValueError, IndexError):
+                pass
+    except (subprocess.TimeoutExpired, Exception):
+        pass
 
     result["total_bytes"] = total_bytes
 
@@ -292,7 +271,6 @@ def main() -> None:
 
     # Check for tools once
     has_rg = has_command("rg")
-    has_dust = has_command("dust")
     has_tokei = has_command("tokei")
 
     # Enrich all paths with their purpose (for targeted pattern selection)
@@ -300,7 +278,6 @@ def main() -> None:
         enrich_directory(
             p,
             has_rg,
-            has_dust,
             has_tokei,
             purpose=path_purposes.get(p),
         )

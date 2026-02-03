@@ -532,10 +532,9 @@ class ParallelProgressDisplay:
                         desc = ""
 
                     if desc:
-                        # Use clip_text for end-clipping
-                        section.append(
-                            f"  {clip_text(desc, desc_width)}", style="italic dim"
-                        )
+                        # Use clip_text for end-clipping, cap at 65 to prevent wrapping
+                        clipped_desc = clip_text(desc, min(desc_width, 65))
+                        section.append(f"  {clipped_desc}", style="italic dim")
                 elif score.skipped:
                     # No score available, just show skipped status
                     desc_width = self.WIDTH - 16  # "    skipped  " = ~12 chars
@@ -978,7 +977,9 @@ class ParallelProgressDisplay:
                         error=r.get("error"),
                     )
                 )
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Use min floor rate of 0.5/s to ensure enrich items stay visible
+            # Enrichment is slower than scan/score so needs longer display time
+            display_rate = max(stats.rate * 0.8, 0.5) if stats.rate else 0.5
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()
