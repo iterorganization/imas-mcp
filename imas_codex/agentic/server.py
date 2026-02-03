@@ -896,19 +896,18 @@ class AgentsServer:
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize the MCP server and eagerly load REPL."""
+        """Initialize the MCP server (REPL loaded lazily on first use)."""
         self.mcp = FastMCP(name="imas-codex-agents")
         self._prompts = load_prompts()
 
-        # Eagerly initialize REPL on server startup
-        logger.info("Eagerly loading REPL environment...")
-        _init_repl()
+        # REPL is loaded lazily on first python() call to avoid blocking
+        # the MCP initialize handshake (which caused exit code 137 timeouts)
 
         self._register_tools()
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server initialized with 4 core tools and {len(self._prompts)} prompts"
+            f"Agents MCP server initialized with 9 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
