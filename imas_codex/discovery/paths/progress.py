@@ -781,9 +781,9 @@ class ParallelProgressDisplay:
         self.state.scan_rate = stats.rate
 
         # Track processing state for display
-        # "idle" = no work, "scanning" = processing SSH batch
+        # Don't clear current_scan when idle - let queue drain naturally
+        # via tick(). Only update the processing flag.
         if message == "idle":
-            self.state.current_scan = None
             self.state.scan_processing = False
             self._refresh()
             return
@@ -795,7 +795,6 @@ class ParallelProgressDisplay:
             self.state.scan_processing = False
 
         # Queue scan results for streaming (tick() handles rate-limited popping)
-        # Apply 0.8 factor to reduce path/idle flickering
         if scan_results:
             items = [
                 ScanItem(
@@ -808,7 +807,11 @@ class ParallelProgressDisplay:
                 )
                 for r in scan_results
             ]
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Calculate display rate to spread items over ~15 seconds
+            # This fills the gap between infrequent SSH batches
+            target_duration = 15.0
+            batch_size = len(items)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.scan_queue.add(items, display_rate)
 
         self._refresh()
@@ -825,9 +828,9 @@ class ParallelProgressDisplay:
         self.state._run_score_cost = stats.cost
 
         # Track processing state for display
-        # "waiting" = idle, "scoring" = processing LLM, "skipped" = just finished
+        # Don't clear current_score when waiting - let queue drain naturally
+        # via tick(). Only update the processing flag.
         if "waiting" in message.lower():
-            self.state.current_score = None
             self.state.score_processing = False
             self._refresh()
             return
@@ -839,7 +842,6 @@ class ParallelProgressDisplay:
             self.state.score_processing = False
 
         # Queue score results for streaming (tick() handles rate-limited popping)
-        # Apply 0.8 factor to reduce path/idle flickering
         if results:
             items = []
             for r in results:
@@ -857,7 +859,11 @@ class ParallelProgressDisplay:
                         terminal_reason=r.get("terminal_reason", ""),
                     )
                 )
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Calculate display rate to spread items over ~15 seconds
+            # This fills the gap between infrequent LLM batches
+            target_duration = 15.0
+            batch_size = len(items)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.score_queue.add(items, display_rate)
 
         self._refresh()

@@ -324,6 +324,11 @@ class WikiProgressDisplay:
         scan = self.state.current_scan
         score = self.state.current_score
 
+        # Helper to determine if worker should show "idle"
+        # Only show idle when worker is not processing AND queue is empty
+        def should_show_idle(processing: bool, queue) -> bool:
+            return not processing and queue.is_empty()
+
         # SCAN section - always 2 lines for consistent height
         section.append("  SCAN ", style="bold blue")
         if scan:
@@ -336,8 +341,12 @@ class WikiProgressDisplay:
         elif self.state.scan_processing:
             section.append("processing batch...", style="cyan italic")
             section.append("\n    ", style="dim")
-        else:
+        elif should_show_idle(self.state.scan_processing, self.state.scan_queue):
             section.append("idle", style="dim italic")
+            section.append("\n    ", style="dim")
+        else:
+            # Queue has items but nothing displayed yet (waiting for tick)
+            section.append("...", style="dim italic")
             section.append("\n    ", style="dim")
         section.append("\n")
 
@@ -366,8 +375,12 @@ class WikiProgressDisplay:
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
-            else:
+            elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 section.append("idle", style="dim italic")
+                section.append("\n    ", style="dim")
+            else:
+                # Queue has items but nothing displayed yet (waiting for tick)
+                section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
 
         return section
@@ -517,17 +530,20 @@ class WikiProgressDisplay:
         self.state.scan_rate = stats.rate
 
         # Track processing state
+        # Don't clear current_scan when idle - let queue drain naturally
         if message == "idle":
-            self.state.current_scan = None
             self.state.scan_processing = False
         elif "scanning" in message.lower():
             self.state.scan_processing = True
         else:
             self.state.scan_processing = False
 
-        # Queue results for streaming
+        # Queue results for streaming with adaptive rate
         if results:
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Calculate display rate to spread items over ~15 seconds
+            target_duration = 15.0
+            batch_size = len(results)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.scan_queue.add(results, display_rate)
 
         self._refresh()
@@ -544,17 +560,20 @@ class WikiProgressDisplay:
         self.state._run_score_cost = stats.cost
 
         # Track processing state
+        # Don't clear current_score when waiting - let queue drain naturally
         if "waiting" in message.lower() or message == "idle":
-            self.state.current_score = None
             self.state.score_processing = False
         elif "scoring" in message.lower():
             self.state.score_processing = True
         else:
             self.state.score_processing = False
 
-        # Queue results for streaming
+        # Queue results for streaming with adaptive rate
         if results:
-            display_rate = stats.rate * 0.8 if stats.rate else None
+            # Calculate display rate to spread items over ~15 seconds
+            target_duration = 15.0
+            batch_size = len(results)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.score_queue.add(results, display_rate)
 
         self._refresh()
@@ -571,17 +590,20 @@ class WikiProgressDisplay:
         self.state._run_ingest_cost = stats.cost
 
         # Track processing state
+        # Don't clear current_ingest when waiting - let queue drain naturally
         if "waiting" in message.lower() or message == "idle":
-            self.state.current_ingest = None
             self.state.ingest_processing = False
         elif "ingesting" in message.lower():
             self.state.ingest_processing = True
         else:
             self.state.ingest_processing = False
 
-        # Queue results for streaming
+        # Queue results for streaming with adaptive rate
         if results:
-            display_rate = stats.rate * 0.5 if stats.rate else None
+            # Calculate display rate to spread items over ~15 seconds
+            target_duration = 15.0
+            batch_size = len(results)
+            display_rate = batch_size / target_duration if batch_size > 0 else 0.5
             self.state.ingest_queue.add(results, display_rate)
 
         self._refresh()
