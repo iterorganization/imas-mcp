@@ -113,24 +113,33 @@ def _parse_uv_python_list(output: str) -> list[PythonVersion]:
 
     uv python list shows:
     - cpython-3.12.12-linux-x86_64-gnu    /home/user/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/bin/python3
-    - cpython-3.13.9-linux-x86_64-gnu     /home/user/.local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/bin/python3
+    - cpython-3.13.9-linux-x86_64-gnu     .local/share/uv/python/cpython-3.13.9-linux-x86_64-gnu/bin/python3  (relative)
 
     Returns:
         List of installed Python versions
     """
     versions = []
+    seen = set()  # Dedupe by version
     for line in output.splitlines():
-        # Look for cpython-X.Y.Z patterns with a path (indicates installed)
-        match = re.search(r"cpython-(\d+)\.(\d+)\.(\d+)-\S+\s+(/\S+)", line)
+        # Look for cpython-X.Y.Z patterns with a path (absolute or relative)
+        # Path can start with / or . (for relative paths like .local/)
+        match = re.search(r"cpython-(\d+)\.(\d+)\.(\d+)-\S+\s+([/.]\S+)", line)
         if match:
-            versions.append(
-                PythonVersion(
-                    major=int(match.group(1)),
-                    minor=int(match.group(2)),
-                    patch=int(match.group(3)),
-                    source=match.group(4),
-                )
+            version_key = (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
             )
+            if version_key not in seen:
+                seen.add(version_key)
+                versions.append(
+                    PythonVersion(
+                        major=version_key[0],
+                        minor=version_key[1],
+                        patch=version_key[2],
+                        source=match.group(4),
+                    )
+                )
     return versions
 
 
