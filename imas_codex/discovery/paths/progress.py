@@ -349,17 +349,25 @@ class ParallelProgressDisplay:
         The key insight: SCAN completion includes paths currently being scored
         (they have already been scanned), while SCORE completion only includes
         terminal states (scored + skipped).
+
+        Note: `excluded` paths have status='skipped' AND terminal_reason='excluded'.
+        They are counted in both `skipped` and `excluded` stats. We subtract
+        `excluded` from both numerator and denominator to avoid double-counting.
         """
         section = Text()
 
         bar_width = self.BAR_WIDTH
 
         # SCAN progress: paths that have finished scanning vs all that need scanning
-        # Completed scan = scanned + scoring + scored + skipped
-        #                = pending_score + scored + skipped (since pending_score = scanned + scoring)
+        # Completed scan = scanned + scoring + scored + (skipped - excluded)
+        #   - excluded paths were pre-filtered, never actually scanned
+        #   - skipped includes excluded, so subtract to avoid double-counting
         # Total needing scan = total - excluded (everything except excluded needs scanning)
         scanned_paths = (
-            self.state.pending_score + self.state.scored + self.state.skipped
+            self.state.pending_score
+            + self.state.scored
+            + self.state.skipped
+            - self.state.excluded
         )
         scan_total = self.state.total - self.state.excluded
         if scan_total <= 0:

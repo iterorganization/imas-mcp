@@ -190,6 +190,9 @@ def tools_status(target: str, as_json: bool) -> None:
 )
 @click.option("--tools-only", is_flag=True, help="Skip Python/venv setup")
 @click.option(
+    "--python-only", is_flag=True, help="Skip fast tools, only setup Python/venv"
+)
+@click.option(
     "--python", "python_version", default="3.12", help="Python version for venv"
 )
 @click.option("--force", is_flag=True, help="Reinstall even if already present")
@@ -197,6 +200,7 @@ def tools_install(
     target: str,
     tool_name: str | None,
     tools_only: bool,
+    python_only: bool,
     python_version: str,
     force: bool,
 ) -> None:
@@ -209,17 +213,32 @@ def tools_install(
     2. Python via uv (if system Python < 3.10)
     3. imas-codex venv
 
-    Use --tool to install a specific tool, or --tools-only to skip Python setup.
+    Use --tool to install a specific tool, --tools-only to skip Python setup,
+    or --python-only to skip fast tools and only setup Python/venv.
 
     Examples:
-        imas-codex tools install tcv          # Full setup
+        imas-codex tools install tcv            # Full setup
         imas-codex tools install tcv --tool rg  # Just ripgrep
-        imas-codex tools install iter --tools-only  # Skip Python/venv
-        imas-codex tools install jet --python 3.13  # Use Python 3.13
-        imas-codex tools install jt60sa --force     # Reinstall everything
+        imas-codex tools install iter --tools-only   # Skip Python/venv
+        imas-codex tools install iter --python-only  # Only Python/venv
+        imas-codex tools install jet --python 3.13   # Use Python 3.13
+        imas-codex tools install jt60sa --force      # Reinstall everything
     """
     from imas_codex.remote.python import DEFAULT_VENV_PATH, setup_python_env
     from imas_codex.remote.tools import install_tool, load_fast_tools
+
+    # Validate conflicting options
+    if tools_only and python_only:
+        console.print(
+            "[red]Error: --tools-only and --python-only are mutually exclusive[/red]"
+        )
+        raise SystemExit(1)
+
+    if tool_name and (tools_only or python_only):
+        console.print(
+            "[red]Error: --tool cannot be used with --tools-only or --python-only[/red]"
+        )
+        raise SystemExit(1)
 
     facility = None if target == "local" else target
     has_failures = False
@@ -278,30 +297,33 @@ def tools_install(
         return
 
     # === Full installation mode ===
-    # Step 1: Install fast tools with live progress
-    console.print("[bold]Fast Tools[/bold]")
+    # Step 1: Install fast tools with live progress (unless --python-only)
+    if python_only:
+        console.print("[dim]Skipping fast tools (--python-only)[/dim]\n")
+    else:
+        console.print("[bold]Fast Tools[/bold]")
 
-    # Track completed tools for live display
-    completed_tools: list[tuple[str, dict, bool]] = []
-    current_tool: str | None = None
-    all_tools = list(config.all_tools.keys())
+        # Track completed tools for live display
+        completed_tools: list[tuple[str, dict, bool]] = []
+        current_tool: str | None = None
+        all_tools = list(config.all_tools.keys())
 
-    def render_tools_progress() -> Group:
-        """Render current tools progress."""
-        items = []
-        # Show completed tools
-        for name, result, is_required in completed_tools:
-            items.append(format_tool_result(name, result, is_required))
-        # Show current tool with spinner
-        if current_tool:
-            items.append(
-                Text.assemble(
-                    ("  ⠋ ", "cyan"),
-                    (current_tool, ""),
-                    ("...", "dim"),
+        def render_tools_progress() -> Group:
+            """Render current tools progress."""
+            items = []
+            # Show completed tools
+            for name, result, is_required in completed_tools:
+                items.append(format_tool_result(name, result, is_required))
+            # Show current tool with spinner
+            if current_tool:
+                items.append(
+                    Text.assemble(
+                        ("  ⠋ ", "cyan"),
+                        (current_tool, ""),
+                        ("...", "dim"),
+                    )
                 )
-            )
-        return Group(*items)
+            return Group(*items)
 
     def on_tool_progress(name: str, result: dict) -> None:
         """Callback called after each tool installation."""
