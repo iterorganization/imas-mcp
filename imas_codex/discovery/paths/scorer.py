@@ -589,24 +589,6 @@ class DirectoryScorer:
             if purpose in data_purposes:
                 should_expand = False
 
-            # CRITICAL: High subdirectory count is a strong signal of data container
-            # Even if LLM misclassifies as container, block expansion for dirs with
-            # many subdirectories (typical of simulation run directories)
-            # EXCEPTION: Canonical user containers (/home, /users) should always expand
-            total_dirs = directories[i].get("total_dirs", 0)
-            canonical_user_containers = {"/home", "/users", "/work", "/gss/work"}
-            is_user_container = path in canonical_user_containers
-            if (
-                total_dirs > 100
-                and purpose == ResourcePurpose.container
-                and not is_user_container
-            ):
-                should_expand = False
-                # Log this override for debugging
-                logger.debug(
-                    f"Blocked expansion of {path}: {total_dirs} subdirs (likely data)"
-                )
-
             # Enrichment decision - LLM decides, but override for known-large paths
             should_enrich = getattr(result, "should_enrich", True)
             enrich_skip_reason = getattr(result, "enrich_skip_reason", None)
