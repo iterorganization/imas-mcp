@@ -138,20 +138,53 @@ def _run_async(coro):
 def _init_repl() -> dict[str, Any]:
     """Initialize the persistent REPL environment with all utilities.
 
-    Called once at server startup. Loads embedding model and IMAS tools.
+    Called once at server startup. Uses lazy embedding via Encoder class
+    which respects the embedding-backend config (local/remote).
     """
     global _repl_globals
     if _repl_globals is not None:
         return _repl_globals
 
-    logger.info("Initializing Python REPL (loading embedding model and IMAS tools...)")
+    logger.info("Initializing Python REPL...")
 
-    from imas_codex.code_examples.pipeline import get_embed_model
     from imas_codex.code_examples.search import CodeExampleSearch
+    from imas_codex.embeddings.config import EncoderConfig
+    from imas_codex.embeddings.encoder import EmbeddingBackendError, Encoder
     from imas_codex.graph import GraphClient
+    from imas_codex.settings import get_embedding_backend
 
     gc = GraphClient()
-    embed_model = get_embed_model()
+
+    # Create encoder with lazy initialization - respects embedding-backend config
+    # This will NOT load the model until actually used
+    backend = get_embedding_backend()
+    logger.info(f"Embedding backend: {backend}")
+
+    # Track embedding availability
+    _embedding_error: Exception | None = None
+    _encoder: Encoder | None = None
+
+    def _get_encoder() -> Encoder:
+        """Get or create the encoder, raising any deferred initialization error."""
+        nonlocal _encoder, _embedding_error
+
+        if _embedding_error is not None:
+            raise _embedding_error
+
+        if _encoder is None:
+            try:
+                config = EncoderConfig()
+                _encoder = Encoder(config)
+                logger.info(f"Encoder initialized (backend={config.backend})")
+            except Exception as e:
+                _embedding_error = e
+                logger.error(f"Embedding initialization failed: {e}")
+                raise EmbeddingBackendError(
+                    f"Embedding backend '{backend}' unavailable: {e}. "
+                    f"Check configuration or use a different backend."
+                ) from e
+
+        return _encoder
 
     # =========================================================================
     # Core utilities
@@ -180,9 +213,14 @@ def _init_repl() -> dict[str, Any]:
             text: Text to embed
 
         Returns:
-            384-dim embedding vector
+            Embedding vector (dimension depends on configured model)
+
+        Raises:
+            EmbeddingBackendError: If embedding backend is unavailable
         """
-        return embed_model.get_text_embedding(text)
+        encoder = _get_encoder()
+        embeddings = encoder.embed_texts([text])
+        return embeddings[0].tolist()
 
     def semantic_search(
         text: str,
@@ -204,8 +242,13 @@ def _init_repl() -> dict[str, Any]:
 
         Returns:
             List of {node: ..., score: float} dicts
+
+        Raises:
+            EmbeddingBackendError: If embedding backend is unavailable
         """
-        embedding = embed_model.get_text_embedding(text)
+        encoder = _get_encoder()
+        embeddings = encoder.embed_texts([text])
+        embedding = embeddings[0].tolist()
         return gc.query(
             f'CALL db.index.vector.queryNodes("{index}", $k, $embedding) '
             "YIELD node, score RETURN node, score ORDER BY score DESC",
@@ -407,7 +450,16 @@ def _init_repl() -> dict[str, Any]:
     # Code search utilities
     # =========================================================================
 
-    _code_searcher = CodeExampleSearch()
+    _code_searcher: CodeExampleSearch | None = None
+
+    def _get_code_searcher() -> CodeExampleSearch:
+        """Get or create CodeExampleSearch, loading embedding model on first use."""
+        nonlocal _code_searcher
+        if _code_searcher is None:
+            logger.info("Initializing CodeExampleSearch (embedding loading)...")
+            _code_searcher = CodeExampleSearch()
+            logger.info("CodeExampleSearch ready")
+        return _code_searcher
 
     def search_code(
         query_text: str,
@@ -426,7 +478,7 @@ def _init_repl() -> dict[str, Any]:
         Returns:
             List of code results with content, source_file, score
         """
-        results = _code_searcher.search(
+        results = _get_code_searcher().search(
             query=query_text,
             top_k=top_k,
             facility=facility,
@@ -782,10 +834,11 @@ def _init_repl() -> dict[str, Any]:
     _repl_globals = {
         # Core utilities
         "gc": gc,
-        "embed_model": embed_model,
         "query": query,
         "embed": embed,
         "semantic_search": semantic_search,
+        # Embedding (lazy - only initialized when used)
+        "EmbeddingBackendError": EmbeddingBackendError,
         # Facility utilities
         "get_facility": get_facility,
         "get_facility_infrastructure": get_facility_infrastructure,
