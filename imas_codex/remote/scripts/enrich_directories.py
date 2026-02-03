@@ -42,7 +42,7 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # Purposes that are primarily documentation - skip code pattern matching
 DOC_PURPOSES = {"documentation"}
@@ -137,8 +137,8 @@ def enrich_directory(
     has_rg: bool,
     has_dust: bool,
     has_tokei: bool,
-    purpose: str | None = None,
-) -> dict[str, Any]:
+    purpose: Optional[str] = None,
+) -> Dict[str, Any]:
     """Enrich a single directory and return results dict.
 
     Uses purpose to target pattern matching:
@@ -160,7 +160,7 @@ def enrich_directory(
     Returns:
         Dict with path, pattern_categories, size, and lines of code
     """
-    result: dict[str, Any] = {"path": sanitize_str(path)}
+    result: Dict[str, Any] = {"path": sanitize_str(path)}
 
     if not os.path.isdir(path):
         result["error"] = "not a directory"
@@ -176,7 +176,7 @@ def enrich_directory(
     skip_loc = purpose in DATA_PURPOSES
 
     # Categorized pattern matching with rg (skip for docs/containers)
-    pattern_categories: dict[str, int] = {}
+    pattern_categories: Dict[str, int] = {}
     read_matches = 0
     write_matches = 0
 
@@ -245,7 +245,7 @@ def enrich_directory(
 
     # Lines of code analysis with tokei (skip for data paths - not code)
     total_lines = 0
-    language_breakdown: dict[str, int] = {}
+    language_breakdown: Dict[str, int] = {}
 
     if has_tokei and not skip_loc and not skip_patterns:
         try:
@@ -287,8 +287,8 @@ def main() -> None:
         print(json.dumps({"error": f"Invalid JSON input: {e}"}), file=sys.stderr)
         sys.exit(1)
 
-    paths: list[str] = config.get("paths", [])
-    path_purposes: dict[str, str] = config.get("path_purposes", {})
+    paths: List[str] = config.get("paths", [])
+    path_purposes: Dict[str, str] = config.get("path_purposes", {})
 
     # Check for tools once
     has_rg = has_command("rg")

@@ -45,7 +45,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def sanitize_str(s: str) -> str:
@@ -96,7 +96,7 @@ def scan_directory(
 
     # Get device:inode for deduplication (detects bind mounts)
     # Format: "device:inode" e.g. "64:9468985"
-    device_inode: str | None = None
+    device_inode: Optional[str] = None
     try:
         stat_info = os.stat(path)
         device_inode = f"{stat_info.st_dev}:{stat_info.st_ino}"
@@ -141,7 +141,7 @@ def scan_directory(
     child_dirs: List[Dict[str, Any]] = []
     for entry in dirs:
         child_path = sanitize_str(entry.path)
-        child_device_inode: str | None = None
+        child_device_inode: Optional[str] = None
         try:
             child_is_symlink = entry.is_symlink()
             if child_is_symlink:
@@ -249,10 +249,10 @@ def scan_directory(
             pass
 
     # Git metadata extraction (if .git directory exists)
-    git_remote_url: str | None = None
-    git_head_commit: str | None = None
-    git_branch: str | None = None
-    git_root_commit: str | None = None
+    git_remote_url: Optional[str] = None
+    git_head_commit: Optional[str] = None
+    git_branch: Optional[str] = None
+    git_root_commit: Optional[str] = None
 
     if has_git:
         git_dir = os.path.join(path, ".git")
