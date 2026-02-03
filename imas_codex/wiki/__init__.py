@@ -1,36 +1,28 @@
 """Wiki ingestion module for facility documentation.
 
-Provides a three-phase pipeline for discovering and ingesting wiki content:
+Provides a four-phase parallel pipeline for discovering and ingesting wiki content:
 
 Phase 1 - SCAN: Fast link extraction, builds wiki graph structure
-Phase 2 - SCORE: Agent evaluates graph metrics, assigns interest scores
-Phase 3 - INGEST: Fetch content for high-score pages/artifacts, create chunks
+Phase 2 - PREFETCH: Fetch content and generate summaries
+Phase 3 - SCORE: LLM evaluation with cost tracking (stops at budget limit)
+Phase 4 - INGEST: Chunk and embed high-score pages
 
 Facility-agnostic design - wiki configuration comes from facility YAML.
 
 Example:
-    from imas_codex.wiki import run_wiki_discovery
+    from imas_codex.wiki.parallel import run_parallel_wiki_discovery
 
-    # Run full discovery pipeline
-    stats = await run_wiki_discovery(
-        facility="tcv",
-        cost_limit_usd=10.00,
-    )
-    print(f"Scanned {stats['pages_scanned']} pages")
+    # Run via CLI (recommended):
+    # imas-codex discover wiki tcv --cost-limit 10.0
 """
 
 from .auth import CredentialManager, WikiSiteConfig, require_credentials
+from .config import WikiConfig
 from .confluence import (
     ConfluenceClient,
     ConfluencePage,
     ConfluenceSpace,
     detect_site_type,
-)
-from .discovery import (
-    DiscoveryStats,
-    WikiConfig,
-    WikiDiscovery,
-    run_wiki_discovery,
 )
 from .pipeline import (
     WikiArtifactPipeline,
@@ -62,11 +54,8 @@ __all__ = [
     "ConfluencePage",
     "ConfluenceSpace",
     "detect_site_type",
-    # Discovery pipeline
-    "DiscoveryStats",
+    # Configuration
     "WikiConfig",
-    "WikiDiscovery",
-    "run_wiki_discovery",
     # Ingestion
     "WikiArtifactPipeline",
     "WikiIngestionPipeline",

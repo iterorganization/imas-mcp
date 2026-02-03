@@ -906,7 +906,7 @@ class WikiIngestionPipeline:
 
                 try:
                     # Determine site type from facility config
-                    from imas_codex.wiki.discovery import WikiConfig
+                    from imas_codex.wiki.config import WikiConfig
 
                     wiki_config = WikiConfig.from_facility(self.facility_id)
                     site_type = wiki_config.site_type
@@ -1006,7 +1006,7 @@ class WikiIngestionPipeline:
         # Extract page identifiers from the graph results
         # For Confluence: use page ID (numeric)
         # For MediaWiki: use page title
-        from imas_codex.wiki.discovery import WikiConfig
+        from imas_codex.wiki.config import WikiConfig
 
         wiki_config = WikiConfig.from_facility(self.facility_id)
 
