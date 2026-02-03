@@ -590,13 +590,8 @@ class ParallelProgressDisplay:
             elif self.state.enrich_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")  # Empty second line
-            elif should_show_idle(
-                self.state.enrich_processing, self.state.enrich_queue
-            ):
-                section.append(" idle", style="dim italic")
-                section.append("\n    ", style="dim")  # Empty second line
             else:
-                # Queue has items but nothing displayed yet
+                # Show ... when idle or waiting for queue items (no idle flicker)
                 section.append(" ...", style="dim italic")
                 section.append("\n    ", style="dim")
 
@@ -977,9 +972,8 @@ class ParallelProgressDisplay:
                         error=r.get("error"),
                     )
                 )
-            # Use min floor rate of 0.5/s to ensure enrich items stay visible
-            # Enrichment is slower than scan/score so needs longer display time
-            display_rate = max(stats.rate * 0.8, 0.5) if stats.rate else 0.5
+            # Use worker rate with 0.8 factor; StreamQueue max_rate caps display speed
+            display_rate = stats.rate * 0.8 if stats.rate else None
             self.state.enrich_queue.add(items, display_rate)
 
         self._refresh()

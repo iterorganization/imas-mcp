@@ -573,7 +573,7 @@ def _print_discovery_summary(
             elif not should_expand:
                 path_line += " [magenta]terminal[/magenta]"
 
-            reason = description[:65] + "..." if len(description) > 65 else description
+            reason = description[:80] + "..." if len(description) > 80 else description
 
             console.print(path_line, highlight=False)
             if reason:
