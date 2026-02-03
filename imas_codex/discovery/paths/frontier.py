@@ -160,8 +160,11 @@ done
             continue
 
         # Check if any candidate canonical base is equivalent
+        # Skip comparing path to itself (e.g., /home as candidate for /home)
         found_canonical = None
         for candidate in path_to_candidates.get(path, []):
+            if candidate == path:
+                continue  # Don't alias a path to itself
             if candidate in path_info and paths_are_same(path, candidate):
                 found_canonical = candidate
                 logger.info(f"Dedup: {candidate} (canonical) <- {path} (same content)")
