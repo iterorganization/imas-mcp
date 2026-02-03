@@ -22,19 +22,18 @@ def tools() -> None:
 @tools.command("list")
 def tools_list() -> None:
     """List all available development tools."""
-    from imas_codex.agentic.tool_installer import ToolInstaller
+    from imas_codex.remote.tools import load_fast_tools
 
-    installer = ToolInstaller()
-    tool_info = installer.get_all_tools()
+    config = load_fast_tools()
 
     table = Table(title="Available Development Tools")
     table.add_column("Name", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Required", style="yellow")
 
-    for name, info in sorted(tool_info.items()):
-        required = "✓" if info.get("required", False) else ""
-        table.add_row(name, info.get("description", ""), required)
+    for _key, tool in sorted(config.all_tools.items()):
+        required = "✓" if tool.required else ""
+        table.add_row(tool.name, tool.purpose, required)
 
     console.print(table)
 
@@ -53,14 +52,10 @@ def tools_check(target: str, as_json: bool) -> None:
     """
     import json as json_module
 
-    from imas_codex.agentic.tool_installer import ToolInstaller
+    from imas_codex.remote.tools import check_all_tools
 
-    installer = ToolInstaller()
-
-    if target == "local":
-        status = installer.check_local()
-    else:
-        status = installer.check_remote(target)
+    facility = None if target == "local" else target
+    status = check_all_tools(facility=facility)
 
     if as_json:
         click.echo(json_module.dumps(status, indent=2))
@@ -71,8 +66,8 @@ def tools_check(target: str, as_json: bool) -> None:
     table.add_column("Status", style="white")
     table.add_column("Version", style="dim")
 
-    for name, info in sorted(status.items()):
-        if info.get("installed", False):
+    for name, info in sorted(status.get("tools", {}).items()):
+        if info.get("available", False):
             status_str = "[green]✓ Installed[/green]"
             version = info.get("version", "")
         else:
@@ -98,16 +93,18 @@ def tools_install(target: str, tool_name: str | None, force: bool) -> None:
         imas-codex tools install tcv --tool rg
         imas-codex tools install iter --force
     """
-    from imas_codex.agentic.tool_installer import ToolInstaller
+    from imas_codex.remote.tools import install_all_tools, install_tool
 
-    installer = ToolInstaller()
+    facility = None if target == "local" else target
 
     console.print(f"[bold]Installing tools on {target}...[/bold]")
 
-    if target == "local":
-        results = installer.install_local(tool_name=tool_name, force=force)
+    if tool_name:
+        # Install specific tool
+        results = {tool_name: install_tool(tool_name, facility=facility, force=force)}
     else:
-        results = installer.install_remote(target, tool_name=tool_name, force=force)
+        # Install all required tools
+        results = install_all_tools(facility=facility, force=force)
 
     # Display results
     success_count = sum(1 for r in results.values() if r.get("success", False))

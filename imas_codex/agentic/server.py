@@ -45,6 +45,7 @@ import io
 import logging
 import subprocess
 import sys
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -868,20 +869,58 @@ def _reload_repl() -> str:
 
 
 # =============================================================================
-# MCP Server with 4 Core Tools
+# MCP Lifespan - Eager REPL initialization after handshake
+# =============================================================================
+
+
+@asynccontextmanager
+async def _agents_lifespan(mcp: FastMCP):
+    """Initialize REPL after MCP handshake completes.
+
+    This runs AFTER the server responds to the MCP 'initialize' request,
+    avoiding the client timeout. Tools wait until this completes.
+
+    Logs progress to stderr so MCP server output shows initialization status.
+    """
+    logger.info("Starting REPL initialization (embedding model + graph client)...")
+
+    # Run sync initialization in thread pool to avoid blocking event loop
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, _init_repl)
+        logger.info("REPL initialization complete - all tools ready")
+    except Exception as e:
+        logger.error(f"REPL initialization failed: {e}")
+        raise
+
+    yield  # Server runs here
+
+    logger.info("Agents server shutting down")
+
+
+# =============================================================================
+# MCP Server with 9 Core Tools
 # =============================================================================
 
 
 @dataclass
 class AgentsServer:
     """
-    Streamlined MCP server with 4 core tools for facility exploration.
+    MCP server with 9 core tools for facility exploration.
+
+    Uses lifespan pattern to eagerly initialize REPL after MCP handshake,
+    avoiding client timeout while ensuring tools are ready on first call.
 
     Tools:
     - python: Persistent REPL with rich utilities (primary interface)
     - get_graph_schema: Schema introspection for query generation
-    - ingest_nodes: Schema-validated node creation with privacy filtering
-    - private: Read/update sensitive infrastructure files
+    - add_to_graph: Schema-validated node creation with privacy filtering
+    - update_facility_config: Read/update facility config (public or private)
+    - update_facility_infrastructure: Deep-merge update to private YAML
+    - get_facility_infrastructure: Read private infrastructure data
+    - add_exploration_note: Append timestamped exploration note
+    - update_facility_paths: Update path mappings
+    - update_facility_tools: Update tool availability
 
     The python() REPL provides access to:
     - Graph: query(), semantic_search(), embed()
@@ -896,18 +935,21 @@ class AgentsServer:
     _prompts: dict[str, PromptDefinition] = field(init=False, repr=False)
 
     def __post_init__(self):
-        """Initialize the MCP server (REPL loaded lazily on first use)."""
-        self.mcp = FastMCP(name="imas-codex-agents")
-        self._prompts = load_prompts()
+        """Initialize the MCP server with eager REPL loading via lifespan.
 
-        # REPL is loaded lazily on first python() call to avoid blocking
-        # the MCP initialize handshake (which caused exit code 137 timeouts)
+        The lifespan pattern ensures:
+        1. Server responds to MCP 'initialize' immediately (no timeout)
+        2. REPL initialization runs after handshake with progress logging
+        3. Tools wait for REPL to be ready before becoming available
+        """
+        self.mcp = FastMCP(name="imas-codex-agents", lifespan=_agents_lifespan)
+        self._prompts = load_prompts()
 
         self._register_tools()
         self._register_prompts()
 
         logger.info(
-            f"Agents MCP server initialized with 9 tools and {len(self._prompts)} prompts"
+            f"Agents MCP server configured with 9 tools and {len(self._prompts)} prompts"
         )
 
     def _register_tools(self):
