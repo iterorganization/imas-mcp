@@ -1316,10 +1316,6 @@ def discover_wiki(
                     if msg != "idle":
                         wiki_logger.info(f"SCAN: {msg}")
 
-                def log_on_prefetch(msg, stats, results=None):
-                    if msg != "idle":
-                        wiki_logger.info(f"PREFETCH: {msg}")
-
                 def log_on_score(msg, stats, results=None):
                     if msg != "idle":
                         wiki_logger.info(f"SCORE: {msg}")
@@ -1348,7 +1344,6 @@ def discover_wiki(
                         score_only=_score_only,
                         bulk_discover=_bulk_discover,
                         on_scan_progress=log_on_scan,
-                        on_prefetch_progress=log_on_prefetch,
                         on_score_progress=log_on_score,
                         on_ingest_progress=log_on_ingest,
                     )
@@ -1416,9 +1411,6 @@ def discover_wiki(
                             ]
                         display.update_scan(msg, stats, result_dicts)
 
-                    def on_prefetch(msg, stats, results=None):
-                        display.update_prefetch(msg, stats)
-
                     def on_score(msg, stats, results=None):
                         result_dicts = None
                         if results:
@@ -1465,7 +1457,6 @@ def discover_wiki(
                             score_only=_score_only,
                             bulk_discover=_bulk_discover,
                             on_scan_progress=on_scan,
-                            on_prefetch_progress=on_prefetch,
                             on_score_progress=on_score,
                             on_ingest_progress=on_ingest,
                         )

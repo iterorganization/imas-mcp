@@ -385,7 +385,9 @@ def mark_pages_scored(
                 status=WikiPageStatus.scored.value,
                 score=score,
                 page_purpose=r.get("page_purpose", "other"),
-                description=r.get("description", "")[:150] if r.get("description") else "",
+                description=r.get("description", "")[:150]
+                if r.get("description")
+                else "",
                 reasoning=r.get("reasoning", ""),
                 keywords=r.get("keywords", []),
                 physics_domain=r.get("physics_domain"),
@@ -1223,7 +1225,9 @@ async def score_worker(
         try:
             # Step 2: Score batch with LLM
             model = get_model_for_task("discovery")
-            results, cost = await _score_pages_batch(pages_with_content, model, state.focus)
+            results, cost = await _score_pages_batch(
+                pages_with_content, model, state.focus
+            )
 
             # Add preview_text to results for persistence
             for r in results:
@@ -1627,7 +1631,7 @@ async def _score_pages_batch(
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
-                max_tokens=8192,
+                max_tokens=32000,
             )
             break
         except Exception as e:

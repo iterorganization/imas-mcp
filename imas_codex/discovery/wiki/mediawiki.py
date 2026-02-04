@@ -280,7 +280,7 @@ class MediaWikiClient:
 
                 # If we don't get redirected to Tequila, session is valid
                 if not self._is_tequila_redirect(response):
-                    logger.info("Session valid (no Tequila redirect)")
+                    logger.debug("Session valid (no Tequila redirect)")
                     self._authenticated = True
                     return True
 
