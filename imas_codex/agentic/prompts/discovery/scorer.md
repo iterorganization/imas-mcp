@@ -18,6 +18,8 @@ For each directory path and its metadata, provide:
 
 {% include "schema/path-purposes.md" %}
 
+{% include "schema/physics-domains.md" %}
+
 ## Scoring Dimensions
 
 Each dimension represents a distinct value category. Score dimensions independently (0.0-1.0):
@@ -79,14 +81,14 @@ Set `should_expand=true` when subdirectories likely contain valuable content to 
 Set `should_enrich=true` for directories worth running deep pattern analysis.
 
 **What enrichment does:**
+Enrichment runs pattern matching that provides concrete evidence to confirm or refute your initial classification.
+
 1. **Pattern matching** via `rg` - searches for imports, function calls, and API patterns mapped to each score dimension
 2. **Language breakdown** via `tokei` - counts lines of code by programming language
-3. **Disk usage** via `dust` - measures total bytes
+3. **Disk usage** via `du` - measures total bytes
 
 **Patterns searched (by score dimension):**
 {{ enrichment_patterns }}
-
-**Pattern evidence enables rescoring.** Without enrichment, rescoring has no new information. Directories with `should_enrich=false` keep their initial scores. Enrichment runs pattern matching that provides concrete evidence to confirm or refute your initial classification.
 
 **Skip enrichment for:**
 - Root containers (`/work`, `/home`) - too many files, patterns would be noise

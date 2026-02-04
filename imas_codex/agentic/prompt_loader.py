@@ -555,12 +555,64 @@ def _provide_format_patterns() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_physics_domains() -> dict[str, Any]:
+    """Provide PhysicsDomain enum values for LLM prompts.
+
+    Returns the physics domain values with descriptions, organized by category.
+    This ensures the LLM outputs valid enum values rather than freeform strings.
+    """
+    from imas_codex.core.physics_domain import PhysicsDomain
+
+    # Get the schema definition if available for categories
+    try:
+        from pathlib import Path
+
+        from linkml_runtime.utils.schemaview import SchemaView
+
+        schema_path = Path(__file__).parent.parent / "definitions/physics/domains.yaml"
+        if schema_path.exists():
+            sv = SchemaView(str(schema_path))
+            enum_def = sv.get_enum("PhysicsDomain")
+            if enum_def:
+                domains = []
+                for pv_name, pv in enum_def.permissible_values.items():
+                    category = (
+                        pv.annotations.get("category", {}).get("value", "uncategorized")
+                        if pv.annotations
+                        else "uncategorized"
+                    )
+                    domains.append(
+                        {
+                            "value": pv_name,
+                            "description": pv.description or "",
+                            "category": category,
+                        }
+                    )
+                return {"physics_domains": domains}
+    except Exception:
+        pass
+
+    # Fallback: extract from enum directly without categories
+    domains = []
+    for member in PhysicsDomain:
+        domains.append(
+            {
+                "value": member.value,
+                "description": "",
+                "category": "uncategorized",
+            }
+        )
+    return {"physics_domains": domains}
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
     "discovery_categories": _provide_discovery_categories,
     "score_dimensions": _provide_score_dimensions,
     "scoring_schema": _provide_scoring_schema,
+    "physics_domains": _provide_physics_domains,
     "rescore_schema": _provide_rescore_schema,
     "access_method_fields": _provide_access_method_fields,
     "format_patterns": _provide_format_patterns,
@@ -574,6 +626,7 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
         "score_dimensions",
         "scoring_schema",
         "format_patterns",
+        "physics_domains",
     ],
     "discovery/rescorer": ["rescore_schema", "format_patterns"],
     "discovery/roots": ["discovery_categories"],

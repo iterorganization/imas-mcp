@@ -36,6 +36,7 @@ from imas_codex.discovery.base import (
 # Re-export paths discovery at discovery level for convenience
 from imas_codex.discovery.paths import (
     DirectoryScorer,
+    cleanup_orphaned_software_repos,
     clear_facility_paths,
     get_discovery_stats,
     get_frontier,
@@ -71,5 +72,6 @@ __all__ = [
     "seed_facility_roots",
     "seed_missing_roots",
     "clear_facility_paths",
+    "cleanup_orphaned_software_repos",
     "run_parallel_discovery",
 ]

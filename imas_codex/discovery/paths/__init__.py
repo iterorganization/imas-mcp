@@ -15,6 +15,7 @@ Workers:
 """
 
 from imas_codex.discovery.paths.frontier import (
+    cleanup_orphaned_software_repos,
     clear_facility_paths,
     get_discovery_stats,
     get_frontier,
@@ -48,6 +49,7 @@ __all__ = [
     "seed_facility_roots",
     "seed_missing_roots",
     "clear_facility_paths",
+    "cleanup_orphaned_software_repos",
     # Models
     "ResourcePurpose",
     "DiscoveryStatus",

@@ -1408,6 +1408,63 @@ def clear_facility_paths(
             if deleted < batch_size:
                 break
 
+        # Clean up orphaned SoftwareRepo nodes (no INSTANCE_OF relationships)
+        orphan_result = gc.query(
+            """
+            MATCH (r:SoftwareRepo)
+            WHERE NOT EXISTS { MATCH (:FacilityPath)-[:INSTANCE_OF]->(r) }
+            WITH r LIMIT $batch_size
+            DELETE r
+            RETURN count(r) AS orphans_deleted
+            """,
+            batch_size=batch_size,
+        )
+        orphans = orphan_result[0]["orphans_deleted"] if orphan_result else 0
+        if orphans > 0:
+            import logging
+
+            logging.getLogger(__name__).info(
+                f"Cleaned up {orphans} orphaned SoftwareRepo nodes"
+            )
+
+    return total_deleted
+
+
+def cleanup_orphaned_software_repos(batch_size: int = 1000) -> int:
+    """Delete SoftwareRepo nodes with no linked FacilityPath instances.
+
+    SoftwareRepos are shared across facilities (same remote URL = same node).
+    When FacilityPath nodes are deleted, the INSTANCE_OF relationships are
+    severed but the SoftwareRepo nodes remain. This function cleans them up.
+
+    Args:
+        batch_size: Nodes to delete per batch (default 1000)
+
+    Returns:
+        Total number of orphaned repos deleted
+    """
+    from imas_codex.graph import GraphClient
+
+    total_deleted = 0
+
+    with GraphClient() as gc:
+        while True:
+            result = gc.query(
+                """
+                MATCH (r:SoftwareRepo)
+                WHERE NOT EXISTS { MATCH (:FacilityPath)-[:INSTANCE_OF]->(r) }
+                WITH r LIMIT $batch_size
+                DELETE r
+                RETURN count(r) AS deleted
+                """,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            total_deleted += deleted
+
+            if deleted < batch_size:
+                break
+
     return total_deleted
 
 

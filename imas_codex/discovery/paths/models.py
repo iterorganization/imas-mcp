@@ -21,9 +21,11 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 # Import schema-derived enums from generated models
+from imas_codex.core.physics_domain import PhysicsDomain
 from imas_codex.graph.models import DiscoveryStatus, ResourcePurpose, TerminalReason
 
 __all__ = [
+    "PhysicsDomain",
     "ResourcePurpose",
     "DiscoveryStatus",
     "TerminalReason",
@@ -170,9 +172,9 @@ class ScoreResult(BaseModel):
         description="Searchable keywords (max 5)",
     )
 
-    physics_domain: str | None = Field(
+    physics_domain: PhysicsDomain | None = Field(
         default=None,
-        description="Primary physics domain (equilibrium, transport, etc.)",
+        description="Primary physics domain from PhysicsDomain enum",
     )
 
     expansion_reason: str | None = Field(
@@ -406,8 +408,8 @@ class ScoredDirectory:
     keywords: list[str] = field(default_factory=list)
     """Searchable keywords for this directory (max 5)."""
 
-    physics_domain: str | None = None
-    """Primary physics domain if applicable (equilibrium, transport, etc)."""
+    physics_domain: PhysicsDomain | None = None
+    """Primary physics domain from PhysicsDomain enum."""
 
     expansion_reason: str | None = None
     """Why this directory should be expanded."""
@@ -449,7 +451,9 @@ class ScoredDirectory:
             "should_expand": self.should_expand,
             "should_enrich": self.should_enrich,
             "keywords": self.keywords,
-            "physics_domain": self.physics_domain,
+            "physics_domain": self.physics_domain.value
+            if self.physics_domain
+            else None,
             "expansion_reason": self.expansion_reason,
             "skip_reason": self.skip_reason,
             "enrich_skip_reason": self.enrich_skip_reason,
