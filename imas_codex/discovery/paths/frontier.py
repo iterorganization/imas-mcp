@@ -2612,6 +2612,115 @@ def claim_paths_for_rescoring(facility: str, limit: int = 10) -> list[dict[str, 
         return list(result)
 
 
+def sample_dimension_calibration_examples(
+    facility: str | None = None,
+    per_level: int = 3,
+    tolerance: float = 0.1,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Sample calibration examples for each dimension at 5 score levels.
+
+    Returns representative examples at score levels 0.0, 0.2, 0.5, 0.8, and 0.95
+    for each scoring dimension. This enables LLMs to calibrate their scoring
+    by seeing what historically received each score level.
+
+    Args:
+        facility: Current facility (preferring same-facility examples)
+        per_level: Number of examples per score level (default 3)
+        tolerance: Score range tolerance (default ±0.1)
+
+    Returns:
+        Nested dict: dimension -> level -> list of examples
+        Each example has: path, facility, score, purpose, description
+        Level keys: "lowest", "low", "medium", "high", "highest"
+
+    Example structure:
+        {
+            "score_modeling_code": {
+                "lowest": [{"path": "...", "score": 0.05, ...}, ...],
+                "low": [{"path": "...", "score": 0.22, ...}, ...],
+                "medium": [{"path": "...", "score": 0.48, ...}, ...],
+                "high": [{"path": "...", "score": 0.78, ...}, ...],
+                "highest": [{"path": "...", "score": 0.92, ...}, ...],
+            },
+            ...
+        }
+    """
+    from imas_codex.graph import GraphClient
+
+    # Target score levels with descriptive names
+    score_levels = {
+        "lowest": 0.0,  # Range: 0.0-0.1
+        "low": 0.2,  # Range: 0.1-0.3
+        "medium": 0.5,  # Range: 0.4-0.6
+        "high": 0.8,  # Range: 0.7-0.9
+        "highest": 0.95,  # Range: 0.85-0.95
+    }
+
+    samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
+
+    with GraphClient() as gc:
+        for dim in SCORE_DIMENSIONS:
+            samples[dim] = {}
+
+            for level_name, target_score in score_levels.items():
+                # Calculate score range based on level (different ranges for edge cases)
+                if level_name == "lowest":
+                    min_score, max_score = 0.0, 0.15
+                elif level_name == "highest":
+                    min_score, max_score = 0.85, 0.96
+                else:
+                    min_score = max(0.0, target_score - tolerance)
+                    max_score = min(0.96, target_score + tolerance)
+
+                # Query for examples at this score level for this dimension
+                # Only consider paths where this dimension has a meaningful score
+                result = gc.query(
+                    f"""
+                    MATCH (p:FacilityPath)
+                    WHERE p.status = 'scored'
+                        AND p.{dim} >= $min_score
+                        AND p.{dim} < $max_score
+                        AND p.{dim} IS NOT NULL
+                    RETURN p.path AS path,
+                           p.facility_id AS facility,
+                           p.{dim} AS score,
+                           p.path_purpose AS purpose,
+                           p.description AS description
+                    ORDER BY rand()
+                    LIMIT $limit
+                    """,
+                    min_score=min_score,
+                    max_score=max_score,
+                    limit=per_level * 3,  # Get extras for facility preference
+                )
+
+                # Prefer current facility examples, then others
+                paths: list[dict[str, Any]] = []
+                current_facility_paths = [
+                    r for r in result if r["facility"] == facility
+                ]
+                other_paths = [r for r in result if r["facility"] != facility]
+
+                # Interleave: current facility first
+                for r in current_facility_paths[:per_level]:
+                    paths.append(r)
+                for r in other_paths[: per_level - len(paths)]:
+                    paths.append(r)
+
+                samples[dim][level_name] = [
+                    {
+                        "path": r["path"],
+                        "facility": r["facility"],
+                        "score": round(r["score"], 2),
+                        "purpose": r["purpose"] or "unknown",
+                        "description": (r["description"] or "")[:100],
+                    }
+                    for r in paths[:per_level]
+                ]
+
+    return samples
+
+
 def mark_rescore_complete(
     facility: str,
     results: list[dict[str, Any]],

@@ -314,13 +314,11 @@ class DirectoryScorer:
 
         Injects:
         - focus: optional natural language focus
-        - example_paths: calibration examples from previously scored paths
-        - dimension_examples: cross-facility examples per score dimension
+        - dimension_calibration: examples at 5 score levels per dimension
         """
         from imas_codex.agentic.prompt_loader import render_prompt
         from imas_codex.discovery.paths.frontier import (
-            sample_paths_by_dimension,
-            sample_scored_paths,
+            sample_dimension_calibration_examples,
         )
 
         # Build context for template rendering
@@ -330,24 +328,21 @@ class DirectoryScorer:
         if focus:
             context["focus"] = focus
 
-        # Add example_paths for calibration (by combined score quartile)
-        if self.facility:
-            example_paths = sample_scored_paths(self.facility, per_quartile=3)
-            has_examples = any(example_paths.get(q) for q in example_paths)
-            if has_examples:
-                context["example_paths"] = example_paths
-
-        # Add dimension_examples for per-category calibration (cross-facility)
-        dimension_examples = sample_paths_by_dimension(
+        # Add dimension calibration examples (5 levels x 10 dimensions x 3 examples)
+        # This provides comprehensive calibration for the LLM to understand
+        # what scores have historically been assigned at each level
+        dimension_calibration = sample_dimension_calibration_examples(
             facility=self.facility,
-            per_dimension=2,
-            cross_facility=True,
+            per_level=3,
+            tolerance=0.1,
         )
-        has_dimension_examples = any(
-            dimension_examples.get(d) for d in dimension_examples
+        # Only add if we have meaningful data
+        has_calibration = any(
+            any(examples for examples in dim_levels.values())
+            for dim_levels in dimension_calibration.values()
         )
-        if has_dimension_examples:
-            context["dimension_examples"] = dimension_examples
+        if has_calibration:
+            context["dimension_calibration"] = dimension_calibration
 
         # Use render_prompt for proper Jinja2 rendering with schema context
         return render_prompt("discovery/scorer", context)
