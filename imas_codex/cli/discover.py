@@ -1163,15 +1163,37 @@ def discover_wiki(
             remote_url = get_embed_remote_url()
             client = RemoteEmbeddingClient(remote_url)
             if not client.is_available():
-                log_print(
-                    f"[red]Remote embedding server not available at {remote_url}[/red]"
-                )
-                log_print(
-                    "[yellow]Ensure SSH tunnel is active:[/yellow]\n"
-                    "  ssh -f -N -L 18765:127.0.0.1:18765 iter\n\n"
-                    "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
-                )
-                raise SystemExit(1)
+                # Try to auto-start SSH tunnel (relies on LocalForward in ~/.ssh/config)
+                log_print("[dim]Starting SSH tunnel to iter...[/dim]")
+                import subprocess
+
+                try:
+                    subprocess.run(
+                        ["ssh", "-f", "-N", "-o", "ExitOnForwardFailure=yes", "iter"],
+                        timeout=10,
+                        check=True,
+                        capture_output=True,
+                    )
+                    # Give server a moment to bind
+                    import time
+
+                    time.sleep(0.5)
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                    log_print(f"[yellow]SSH tunnel start failed: {e}[/yellow]")
+
+                # Re-check after tunnel attempt
+                if not client.is_available():
+                    log_print(
+                        f"[red]Remote embedding server not available at {remote_url}[/red]"
+                    )
+                    log_print(
+                        "[yellow]Start SSH tunnel manually:[/yellow]\n"
+                        "  ssh -f -N iter\n\n"
+                        "[dim]Requires LocalForward 18765 127.0.0.1:18765 in ~/.ssh/config[/dim]\n"
+                        "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
+                    )
+                    raise SystemExit(1)
+                log_print("[green]SSH tunnel established[/green]")
             log_print(
                 f"[dim]Embedding server: {remote_url} ({client.get_info().model})[/dim]"
             )
