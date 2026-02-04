@@ -2,20 +2,19 @@
 Parallel wiki discovery engine with async workers.
 
 Architecture:
-- Four independent async workers: Scanner, Prefetcher, Scorer, Ingester
-- Graph is the coordination mechanism (no locks needed)
-- Atomic status transitions prevent race conditions:
-  - pending → scanning → scanned (Scanner worker)
-  - scanned → prefetching → prefetched (Prefetcher worker)
-  - prefetched → scoring → scored (Scorer worker)
-  - scored → ingesting → ingested (Ingester worker)
-- Workers continuously poll graph for work
-- Cost-based termination for Scorer/Ingester
-- Orphan recovery: pages stuck in transient states >10 min are reset
+- Three async workers: Scorer, Prefetcher, Ingester (scan is bulk upfront)
+- Graph + claimed_at timestamp for coordination (same pattern as paths discovery)
+- Status transitions:
+  - scanned → scored (first-pass scoring by title/URL)
+  - scored → prefetched (content fetch for score >= 0.3)
+  - prefetched → ingested (rescore + embed for score >= 0.5)
+- Workers claim pages by setting claimed_at, release by clearing it
+- Orphan recovery: pages with claimed_at > 5 min old are reclaimed
 
-Key insight: The graph acts as a thread-safe work queue. Each worker
-claims work by atomically updating status, processes it, then marks complete.
-No two workers can claim the same page.
+New workflow (after bulk discovery):
+1. SCORE: First-pass - title/URL patterns only → sets score, updates to 'scored'
+2. PREFETCH: Content fetch for high-score pages → updates to 'prefetched'
+3. INGEST: Rescore with content + embed → updates to 'ingested'
 """
 
 from __future__ import annotations
@@ -36,6 +35,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+# Claim timeout - pages claimed longer than this are reclaimed
+CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
 # =============================================================================
@@ -145,52 +147,52 @@ class WikiDiscoveryState:
 
 
 def has_pending_work(facility: str) -> bool:
-    """Check if there's pending wiki work in the graph."""
+    """Check if there's pending wiki work in the graph.
+
+    Work exists if there are:
+    - scanned pages awaiting scoring (claimed_at is null)
+    - scored pages with score >= 0.3 awaiting prefetch (claimed_at is null)
+    - prefetched pages awaiting rescore/ingest (claimed_at is null)
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status IN $transient_states
-               OR (wp.status = $scanned AND wp.preview_summary IS NULL)
-               OR (wp.status = $prefetched AND wp.interest_score IS NULL)
-               OR (wp.status = $scored AND wp.interest_score >= 0.5)
+            WHERE (wp.status = $scanned AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+               OR (wp.status = $scored AND wp.score >= 0.3 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+               OR (wp.status = $prefetched AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
             RETURN count(wp) AS pending
             """,
             facility=facility,
-            transient_states=[
-                WikiPageStatus.scanning.value,
-                WikiPageStatus.prefetching.value,
-                WikiPageStatus.scoring.value,
-                WikiPageStatus.ingesting.value,
-            ],
             scanned=WikiPageStatus.scanned.value,
-            prefetched=WikiPageStatus.prefetched.value,
             scored=WikiPageStatus.scored.value,
+            prefetched=WikiPageStatus.prefetched.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
 
 def has_pending_scan_work(facility: str) -> bool:
-    """Check if there's pending scan/prefetch work in the graph.
+    """Check if there's pending score/prefetch work in the graph.
 
-    Only checks for work that scan and prefetch workers handle.
-    Does not consider scoring/ingesting work.
+    With bulk discovery, there's no scan phase. This now checks for:
+    - scanned pages awaiting scoring
+    - scored pages awaiting prefetch
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $discovered
-               OR wp.status = $scanning
-               OR wp.status = $scanned
-               OR wp.status = $prefetching
+            WHERE (wp.status = $scanned AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+               OR (wp.status = $scored AND wp.score >= 0.3 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
             RETURN count(wp) AS pending
             """,
             facility=facility,
-            discovered=WikiPageStatus.discovered.value,
-            scanning=WikiPageStatus.scanning.value,
             scanned=WikiPageStatus.scanned.value,
-            prefetching=WikiPageStatus.prefetching.value,
+            scored=WikiPageStatus.scored.value,
+            cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
 
@@ -201,179 +203,106 @@ def has_pending_scan_work(facility: str) -> bool:
 
 
 def reset_transient_pages(facility: str, *, silent: bool = False) -> dict[str, int]:
-    """Reset ALL wiki pages in transient states on CLI startup.
+    """Reset claimed_at on all wiki pages on CLI startup.
 
-    Since only one CLI process runs per facility at a time, any pages in
-    transient states are orphans from a previous crashed/killed process.
-
-    Transient state fallbacks:
-    - scanning → discovered
-    - prefetching → scanned
-    - scoring → prefetched
-    - ingesting → scored
-    """
-    with GraphClient() as gc:
-        # Reset scanning → discovered
-        scanning_result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scanning
-            SET wp.status = $discovered, wp.claimed_at = null
-            RETURN count(wp) AS reset_count
-            """,
-            facility=facility,
-            scanning=WikiPageStatus.scanning.value,
-            discovered=WikiPageStatus.discovered.value,
-        )
-        scanning_reset = scanning_result[0]["reset_count"] if scanning_result else 0
-
-        # Reset prefetching → scanned
-        prefetching_result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $prefetching
-            SET wp.status = $scanned, wp.claimed_at = null
-            RETURN count(wp) AS reset_count
-            """,
-            facility=facility,
-            prefetching=WikiPageStatus.prefetching.value,
-            scanned=WikiPageStatus.scanned.value,
-        )
-        prefetching_reset = (
-            prefetching_result[0]["reset_count"] if prefetching_result else 0
-        )
-
-        # Reset scoring → prefetched
-        scoring_result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scoring
-            SET wp.status = $prefetched, wp.claimed_at = null
-            RETURN count(wp) AS reset_count
-            """,
-            facility=facility,
-            scoring=WikiPageStatus.scoring.value,
-            prefetched=WikiPageStatus.prefetched.value,
-        )
-        scoring_reset = scoring_result[0]["reset_count"] if scoring_result else 0
-
-        # Reset ingesting → scored
-        ingesting_result = gc.query(
-            """
-            MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $ingesting
-            SET wp.status = $scored, wp.claimed_at = null
-            RETURN count(wp) AS reset_count
-            """,
-            facility=facility,
-            ingesting=WikiPageStatus.ingesting.value,
-            scored=WikiPageStatus.scored.value,
-        )
-        ingesting_reset = ingesting_result[0]["reset_count"] if ingesting_result else 0
-
-        # No legacy migration needed - "discovered" is now the canonical first state
-        discovered_reset = 0
-
-    if not silent:
-        total_reset = (
-            scanning_reset
-            + prefetching_reset
-            + scoring_reset
-            + ingesting_reset
-            + discovered_reset
-        )
-        if total_reset > 0:
-            logger.info(
-                "Reset wiki pages on startup: "
-                f"{scanning_reset} scanning, {prefetching_reset} prefetching, "
-                f"{scoring_reset} scoring, {ingesting_reset} ingesting, "
-                f"{discovered_reset} legacy discovered"
-            )
-
-    return {
-        "scanning_reset": scanning_reset,
-        "prefetching_reset": prefetching_reset,
-        "scoring_reset": scoring_reset,
-        "ingesting_reset": ingesting_reset,
-        "discovered_reset": discovered_reset,
-    }
-
-
-# =============================================================================
-# Graph-based Work Claiming
-# =============================================================================
-
-
-def claim_pages_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim discovered pages for scanning.
-
-    Uses atomic status transition: discovered → scanning
+    Since only one CLI process runs per facility at a time, any pages with
+    claimed_at set are orphans from a previous crashed/killed process.
+    Simply clear claimed_at to make them reclaimable.
     """
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $discovered
-            WITH wp
-            ORDER BY wp.link_depth ASC, wp.discovered_at ASC
-            LIMIT $limit
-            SET wp.status = $scanning, wp.claimed_at = datetime()
-            RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.link_depth AS depth
+            WHERE wp.claimed_at IS NOT NULL
+            SET wp.claimed_at = null
+            RETURN count(wp) AS reset_count
             """,
             facility=facility,
-            discovered=WikiPageStatus.discovered.value,
-            scanning=WikiPageStatus.scanning.value,
-            limit=limit,
         )
-        return list(result)
+        reset_count = result[0]["reset_count"] if result else 0
+
+    if not silent and reset_count > 0:
+        logger.info(f"Reset {reset_count} orphaned wiki pages on startup")
+
+    return {"orphan_reset": reset_count}
 
 
-def claim_pages_for_prefetching(facility: str, limit: int = 20) -> list[dict[str, Any]]:
-    """Atomically claim scanned pages for prefetching.
+# =============================================================================
+# Graph-based Work Claiming (uses claimed_at for coordination)
+# =============================================================================
 
-    Uses atomic status transition: scanned → prefetching
+
+def claim_pages_for_scanning(facility: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Claim pages for link extraction (optional link-following workflow).
+
+    With bulk MediaWiki discovery, all pages are created with status='scanned'
+    so this function returns empty list. Link-following is not needed when
+    the full page list is obtained from the API.
+
+    For non-bulk (crawl) discovery, this would claim pages needing link extraction.
+    Currently returns empty - link-following can be re-enabled by tracking
+    'links_extracted' as a separate field from workflow status.
     """
+    # Bulk discovery creates all pages as 'scanned' - no link following needed
+    return []
+
+
+def claim_pages_for_scoring(facility: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Claim scanned pages for first-pass scoring (title/URL only).
+
+    Workflow: scanned + unclaimed → set claimed_at
+    After scoring: update status to 'scored' and set score field.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"  # ISO 8601 duration
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scanned
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
-            ORDER BY wp.in_degree DESC, wp.link_depth ASC
+            ORDER BY wp.discovered_at ASC
             LIMIT $limit
-            SET wp.status = $prefetching, wp.claimed_at = datetime()
+            SET wp.claimed_at = datetime()
             RETURN wp.id AS id, wp.title AS title, wp.url AS url
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
-            prefetching=WikiPageStatus.prefetching.value,
+            cutoff=cutoff,
             limit=limit,
         )
         return list(result)
 
 
-def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, Any]]:
-    """Atomically claim prefetched pages for LLM scoring.
+def claim_pages_for_prefetching(
+    facility: str, min_score: float = 0.3, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Claim scored pages for content prefetch.
 
-    Uses atomic status transition: prefetched → scoring
+    Workflow: scored + score >= min_score + unclaimed → set claimed_at
+    After prefetch: update status to 'prefetched' and set preview_summary.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $prefetched
+            WHERE wp.status = $scored
+              AND wp.score >= $min_score
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
-            ORDER BY wp.in_degree DESC, wp.link_depth ASC
+            ORDER BY wp.score DESC, wp.discovered_at ASC
             LIMIT $limit
-            SET wp.status = $scoring, wp.claimed_at = datetime()
+            SET wp.claimed_at = datetime()
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.preview_summary AS summary, wp.in_degree AS in_degree,
-                   wp.out_degree AS out_degree, wp.link_depth AS depth
+                   wp.score AS score
             """,
             facility=facility,
-            prefetched=WikiPageStatus.prefetched.value,
-            scoring=WikiPageStatus.scoring.value,
+            scored=WikiPageStatus.scored.value,
+            min_score=min_score,
+            cutoff=cutoff,
             limit=limit,
         )
         return list(result)
@@ -382,27 +311,30 @@ def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, An
 def claim_pages_for_ingesting(
     facility: str, min_score: float = 0.5, limit: int = 10
 ) -> list[dict[str, Any]]:
-    """Atomically claim scored high-value pages for ingestion.
+    """Claim prefetched pages for rescore and ingestion.
 
-    Uses atomic status transition: scored → ingesting
+    Workflow: prefetched + unclaimed → set claimed_at
+    After rescore+ingest: update status to 'ingested', update score field.
     """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
-            WHERE wp.status = $scored
-              AND wp.interest_score >= $min_score
+            WHERE wp.status = $prefetched
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
-            ORDER BY wp.interest_score DESC, wp.in_degree DESC
+            ORDER BY wp.score DESC, wp.in_degree DESC
             LIMIT $limit
-            SET wp.status = $ingesting, wp.claimed_at = datetime()
+            SET wp.claimed_at = datetime()
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.interest_score AS score
+                   wp.score AS score, wp.preview_summary AS summary,
+                   wp.in_degree AS in_degree, wp.out_degree AS out_degree
             """,
             facility=facility,
-            scored=WikiPageStatus.scored.value,
-            ingesting=WikiPageStatus.ingesting.value,
-            min_score=min_score,
+            prefetched=WikiPageStatus.prefetched.value,
+            cutoff=cutoff,
             limit=limit,
         )
         return list(result)
@@ -478,8 +410,13 @@ def mark_pages_prefetched(
 def mark_pages_scored(
     facility: str,
     results: list[dict[str, Any]],
+    skip_threshold: float = 0.3,
 ) -> int:
-    """Mark pages as scored with interest scores and per-dimension data."""
+    """Mark pages as scored with score value (first-pass scoring).
+
+    Pages with score >= skip_threshold move to 'scored' (await prefetch).
+    Pages with score < skip_threshold move to 'skipped'.
+    """
     if not results:
         return 0
 
@@ -489,16 +426,11 @@ def mark_pages_scored(
             if not page_id:
                 continue
 
-            # Determine final status based on should_ingest flag
-            # If should_ingest=True, mark as scored (to be ingested)
-            # Otherwise mark as skipped
-            should_ingest = r.get("should_ingest", False)
-            score = r.get("score", 0.5)
-
-            # Legacy fallback: also check score threshold
-            final_status = (
+            score = r.get("score", 0.0)
+            # Decide status: high-score → scored, low-score → skipped
+            next_status = (
                 WikiPageStatus.scored.value
-                if should_ingest or score >= 0.5
+                if score >= skip_threshold
                 else WikiPageStatus.skipped.value
             )
 
@@ -506,24 +438,75 @@ def mark_pages_scored(
                 """
                 MATCH (wp:WikiPage {id: $id})
                 SET wp.status = $status,
-                    wp.interest_score = $score,
+                    wp.score = $score,
+                    wp.score_reasoning = $reasoning,
+                    wp.page_purpose = $page_purpose,
+                    wp.skip_reason = CASE WHEN $status = 'skipped' THEN $skip_reason ELSE null END,
+                    wp.scored_at = datetime(),
+                    wp.claimed_at = null
+                """,
+                id=page_id,
+                status=next_status,
+                score=score,
+                reasoning=r.get("reasoning", ""),
+                page_purpose=r.get("page_purpose"),
+                skip_reason=r.get("skip_reason", "score below threshold"),
+            )
+
+    return len(results)
+
+
+def mark_pages_rescored_and_ingested(
+    facility: str,
+    results: list[dict[str, Any]],
+    ingest_threshold: float = 0.5,
+) -> int:
+    """Mark pages with updated scores (rescore with content) and ingestion data.
+
+    Called after content-based rescore + ingest. Updates score field with
+    content-aware value, then marks as ingested or skipped based on threshold.
+    """
+    if not results:
+        return 0
+
+    with GraphClient() as gc:
+        for r in results:
+            page_id = r.get("id")
+            if not page_id:
+                continue
+
+            score = r.get("score", 0.5)
+            should_ingest = r.get("should_ingest", score >= ingest_threshold)
+
+            # Decide status: ingest if score high enough, otherwise skip
+            final_status = (
+                WikiPageStatus.ingested.value
+                if should_ingest
+                else WikiPageStatus.skipped.value
+            )
+
+            gc.query(
+                """
+                MATCH (wp:WikiPage {id: $id})
+                SET wp.status = $status,
+                    wp.score = $score,
                     wp.page_purpose = $page_purpose,
                     wp.description = $description,
                     wp.score_reasoning = $reasoning,
                     wp.keywords = $keywords,
                     wp.physics_domain = $physics_domain,
-                    wp.should_ingest = $should_ingest,
-                    wp.skip_reason = $skip_reason,
+                    wp.skip_reason = CASE WHEN $status = 'skipped' THEN $skip_reason ELSE null END,
                     wp.score_data_documentation = $score_data_documentation,
                     wp.score_physics_content = $score_physics_content,
                     wp.score_code_documentation = $score_code_documentation,
                     wp.score_data_access = $score_data_access,
                     wp.score_calibration = $score_calibration,
                     wp.score_imas_relevance = $score_imas_relevance,
-                    wp.page_type = $page_type,
                     wp.is_physics_content = $is_physics,
+                    wp.chunk_count = $chunks,
                     wp.score_cost = $score_cost,
                     wp.scored_at = datetime(),
+                    wp.ingested_at = CASE WHEN $status = 'ingested' THEN datetime() ELSE null END,
                     wp.claimed_at = null
                 """,
                 id=page_id,
@@ -534,16 +517,15 @@ def mark_pages_scored(
                 reasoning=r.get("reasoning", ""),
                 keywords=r.get("keywords", []),
                 physics_domain=r.get("physics_domain"),
-                should_ingest=should_ingest,
-                skip_reason=r.get("skip_reason"),
+                skip_reason=r.get("skip_reason", "score below threshold"),
                 score_data_documentation=r.get("score_data_documentation", 0.0),
                 score_physics_content=r.get("score_physics_content", 0.0),
                 score_code_documentation=r.get("score_code_documentation", 0.0),
                 score_data_access=r.get("score_data_access", 0.0),
                 score_calibration=r.get("score_calibration", 0.0),
                 score_imas_relevance=r.get("score_imas_relevance", 0.0),
-                page_type=r.get("page_type", "other"),
                 is_physics=r.get("is_physics", False),
+                chunks=r.get("chunk_count", 0),
                 score_cost=r.get("score_cost", 0.0),
             )
 
@@ -554,7 +536,7 @@ def mark_pages_ingested(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark pages as ingested with chunk data."""
+    """Mark pages as ingested with chunk data (legacy interface)."""
     if not results:
         return 0
 
@@ -724,7 +706,7 @@ def bulk_discover_all_pages_mediawiki(
             page_id = canonical_page_id(page_name, facility)
             url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
 
-            # MERGE to avoid duplicates, set to scanned status
+            # MERGE to avoid duplicates, set to discovered status (awaiting quick score)
             result = gc.query(
                 """
                 MERGE (wp:WikiPage {id: $id})
@@ -1098,7 +1080,7 @@ async def scan_worker(
             except Exception as e:
                 logger.warning("Error scanning %s: %s", page_id, e)
                 await asyncio.to_thread(
-                    mark_page_failed, page_id, str(e), WikiPageStatus.discovered.value
+                    mark_page_failed, page_id, str(e), WikiPageStatus.scanned.value
                 )
                 return None
 
@@ -1206,9 +1188,9 @@ async def score_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Scorer worker: LLM scoring of prefetched pages.
+    """Scorer worker: First-pass LLM scoring based on title/URL.
 
-    Transitions: prefetched → scoring → scored/skipped
+    Transitions: scanned → scored (if score >= 0.3) or skipped (if score < 0.3)
 
     Uses centralized LLM access via get_model_for_task().
     Cost is tracked from actual OpenRouter response.
@@ -1253,9 +1235,9 @@ async def score_worker(
             break
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
-            # Reset pages to prefetched state
+            # Reset pages to scanned state for retry
             for page in pages:
-                mark_page_failed(page["id"], str(e), WikiPageStatus.prefetched.value)
+                mark_page_failed(page["id"], str(e), WikiPageStatus.scanned.value)
 
 
 async def ingest_worker(
@@ -1263,12 +1245,12 @@ async def ingest_worker(
     on_progress: Callable | None = None,
     min_score: float = 0.5,
 ) -> None:
-    """Ingest worker: Chunk and embed high-value pages.
+    """Ingest worker: Rescore with content, then chunk and embed high-value pages.
 
-    Transitions: scored → ingesting → ingested
+    Transitions: prefetched → ingested (if rescore >= 0.5) or skipped
 
     Uses WikiIngestionPipeline for proper chunking and embedding.
-    No LLM calls - all entity extraction uses regex patterns.
+    Rescoring uses content summary for second-pass evaluation.
     """
     while not state.should_stop_scoring():
         pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
@@ -1306,7 +1288,7 @@ async def ingest_worker(
                 )
             except Exception as e:
                 logger.warning("Error ingesting %s: %s", page_id, e)
-                mark_page_failed(page_id, str(e), WikiPageStatus.scored.value)
+                mark_page_failed(page_id, str(e), WikiPageStatus.prefetched.value)
 
         mark_pages_ingested(state.facility, results)
         state.ingest_stats.processed += len(results)
@@ -1376,7 +1358,7 @@ def _create_discovered_pages(
                 ON CREATE SET wp.title = $title,
                               wp.url = $url,
                               wp.facility_id = $facility,
-                              wp.status = $discovered,
+                              wp.status = $scanned,
                               wp.link_depth = $depth,
                               wp.discovered_at = datetime()
                 ON MATCH SET wp.link_depth = CASE
@@ -1388,10 +1370,10 @@ def _create_discovered_pages(
                 title=name,
                 url=url,
                 facility=facility,
-                discovered=WikiPageStatus.discovered.value,
+                scanned=WikiPageStatus.scanned.value,
                 depth=depth,
             )
-            if result and result[0]["status"] == WikiPageStatus.discovered.value:
+            if result and result[0]["status"] == WikiPageStatus.scanned.value:
                 created += 1
 
     return created
@@ -2003,7 +1985,7 @@ def _seed_portal_page(
             ON CREATE SET wp.title = $title,
                           wp.url = $url,
                           wp.facility_id = $facility,
-                          wp.status = $discovered,
+                          wp.status = $scanned,
                           wp.link_depth = 0,
                           wp.discovered_at = datetime()
             """,
@@ -2011,7 +1993,7 @@ def _seed_portal_page(
             title=portal_page,
             url=url,
             facility=facility,
-            discovered=WikiPageStatus.discovered.value,
+            scanned=WikiPageStatus.scanned.value,
         )
 
 

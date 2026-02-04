@@ -214,7 +214,7 @@ async def prefetch_pages(
     WHERE wp.preview_text IS NULL
     """
     if not include_scored:
-        query += " AND wp.status = 'discovered'"
+        query += " AND wp.status = 'scored'"
 
     query += """
     RETURN wp.id AS id, wp.url AS url, wp.title AS title
