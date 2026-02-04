@@ -126,6 +126,10 @@ def is_local_facility(facility: str | None) -> bool:
     return is_local_host(ssh_host)
 
 
+# PATH prefix to ensure tools in ~/bin are accessible via SSH
+PATH_PREFIX = 'export PATH="$HOME/bin:$HOME/.local/bin:$PATH" && '
+
+
 def run(
     cmd: str,
     facility: str | None = None,
@@ -133,6 +137,9 @@ def run(
     check: bool = False,
 ) -> str:
     """Execute command locally or via SSH depending on facility.
+
+    For remote execution, automatically prepends PATH to ensure
+    tools installed in ~/bin (like uv) are accessible.
 
     Args:
         cmd: Shell command to execute
@@ -143,7 +150,13 @@ def run(
     Returns:
         Command output (stdout + stderr)
     """
-    ssh_host = _resolve_ssh_host(facility) if not is_local_host(facility) else None
+    is_local = is_local_host(facility)
+    ssh_host = _resolve_ssh_host(facility) if not is_local else None
+
+    # Prepend PATH for remote execution to find ~/bin tools
+    if not is_local:
+        cmd = PATH_PREFIX + cmd
+
     return run_command(cmd, ssh_host=ssh_host, timeout=timeout, check=check)
 
 

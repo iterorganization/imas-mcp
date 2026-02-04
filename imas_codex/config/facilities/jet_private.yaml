@@ -71,6 +71,8 @@ exploration_notes:
 - '2026-01-30: Discovery roots updated to 32 entries (added /solhome container for SOLhome operations accounts). Home directories
   discovered: /home for primary JAChome (2853 dirs), /solhome for SOLhome operations (481 dirs). Both are NFS automounted
   from kfs6-1 and kfs6-3.'
+- '2026-02-03: Python 3.13.3 (!), pip 25.1.1, PyPI accessible. No uv available. tree command available (no eza). Fast tools
+  in ~/bin: rg, fd, bat, dust, fzf, autossh.'
 hostname: heimdall136
 
 python:
