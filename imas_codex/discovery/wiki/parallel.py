@@ -455,12 +455,12 @@ def mark_pages_prefetched(
 def mark_pages_scored(
     facility: str,
     results: list[dict[str, Any]],
-    skip_threshold: float = 0.3,
 ) -> int:
     """Mark pages as scored with score value (first-pass scoring).
 
-    Pages with score >= skip_threshold move to 'scored' (await prefetch).
-    Pages with score < skip_threshold move to 'skipped'.
+    All scored pages move to 'scored' status regardless of score.
+    The ingester filters by score >= threshold, so low scores are
+    effectively skipped without explicit status transition.
     """
     if not results:
         return 0
@@ -472,12 +472,6 @@ def mark_pages_scored(
                 continue
 
             score = r.get("score", 0.0)
-            # Decide status: high-score → scored, low-score → skipped
-            next_status = (
-                WikiPageStatus.scored.value
-                if score >= skip_threshold
-                else WikiPageStatus.skipped.value
-            )
 
             gc.query(
                 """
@@ -486,16 +480,14 @@ def mark_pages_scored(
                     wp.score = $score,
                     wp.score_reasoning = $reasoning,
                     wp.page_purpose = $page_purpose,
-                    wp.skip_reason = CASE WHEN $status = 'skipped' THEN $skip_reason ELSE null END,
                     wp.scored_at = datetime(),
                     wp.claimed_at = null
                 """,
                 id=page_id,
-                status=next_status,
+                status=WikiPageStatus.scored.value,
                 score=score,
                 reasoning=r.get("reasoning", ""),
                 page_purpose=r.get("page_purpose"),
-                skip_reason=r.get("skip_reason", "score below threshold"),
             )
 
     return len(results)
@@ -504,12 +496,12 @@ def mark_pages_scored(
 def mark_pages_rescored(
     facility: str,
     results: list[dict[str, Any]],
-    rescore_threshold: float = 0.5,
 ) -> int:
     """Mark pages with updated scores from content-based rescore.
 
-    Pages with score >= rescore_threshold move to 'rescored' (await ingest).
-    Pages with score < rescore_threshold move to 'skipped'.
+    All rescored pages move to 'rescored' status regardless of score.
+    The ingester filters by score >= threshold, so low scores are
+    effectively skipped without explicit status transition.
     """
     if not results:
         return 0
@@ -521,14 +513,6 @@ def mark_pages_rescored(
                 continue
 
             score = r.get("score", 0.5)
-            should_ingest = r.get("should_ingest", score >= rescore_threshold)
-
-            # Decide status: high-score → rescored, low-score → skipped
-            next_status = (
-                WikiPageStatus.rescored.value
-                if should_ingest
-                else WikiPageStatus.skipped.value
-            )
 
             gc.query(
                 """
@@ -540,7 +524,6 @@ def mark_pages_rescored(
                     wp.score_reasoning = $reasoning,
                     wp.keywords = $keywords,
                     wp.physics_domain = $physics_domain,
-                    wp.skip_reason = CASE WHEN $status = 'skipped' THEN $skip_reason ELSE null END,
                     wp.score_data_documentation = $score_data_documentation,
                     wp.score_physics_content = $score_physics_content,
                     wp.score_code_documentation = $score_code_documentation,
@@ -553,14 +536,13 @@ def mark_pages_rescored(
                     wp.claimed_at = null
                 """,
                 id=page_id,
-                status=next_status,
+                status=WikiPageStatus.rescored.value,
                 score=score,
                 page_purpose=r.get("page_purpose", "other"),
                 description=r.get("description", "")[:150],
                 reasoning=r.get("reasoning", ""),
                 keywords=r.get("keywords", []),
                 physics_domain=r.get("physics_domain"),
-                skip_reason=r.get("skip_reason", "score below threshold"),
                 score_data_documentation=r.get("score_data_documentation", 0.0),
                 score_physics_content=r.get("score_physics_content", 0.0),
                 score_code_documentation=r.get("score_code_documentation", 0.0),
@@ -1408,7 +1390,7 @@ async def score_worker(
     logger.info("score_worker started")
 
     while not state.should_stop_scoring():
-        pages = claim_pages_for_scoring(state.facility, limit=50)
+        pages = claim_pages_for_scoring(state.facility, limit=25)
         logger.debug(f"score_worker claimed {len(pages)} pages")
 
         if not pages:
@@ -1517,7 +1499,7 @@ async def rescore_worker(
             r["score_cost"] = rescore_cost / len(rescore_results)
 
         # Mark pages as rescored (or skipped if below threshold)
-        mark_pages_rescored(state.facility, rescore_results, rescore_threshold)
+        mark_pages_rescored(state.facility, rescore_results)
         state.rescore_stats.processed += len(rescore_results)
 
         if on_progress:

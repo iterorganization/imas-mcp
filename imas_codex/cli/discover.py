@@ -1311,17 +1311,22 @@ def discover_wiki(
                 _bulk_discover: bool,
             ):
                 # Logging-only callbacks for non-rich mode
+                # Skip idle messages to reduce log noise
                 def log_on_scan(msg, stats, results=None):
-                    wiki_logger.info(f"SCAN: {msg}")
+                    if msg != "idle":
+                        wiki_logger.info(f"SCAN: {msg}")
 
                 def log_on_prefetch(msg, stats, results=None):
-                    wiki_logger.info(f"PREFETCH: {msg}")
+                    if msg != "idle":
+                        wiki_logger.info(f"PREFETCH: {msg}")
 
                 def log_on_score(msg, stats, results=None):
-                    wiki_logger.info(f"SCORE: {msg}")
+                    if msg != "idle":
+                        wiki_logger.info(f"SCORE: {msg}")
 
                 def log_on_ingest(msg, stats, results=None):
-                    wiki_logger.info(f"INGEST: {msg}")
+                    if msg != "idle":
+                        wiki_logger.info(f"INGEST: {msg}")
 
                 if not _use_rich:
                     # Non-rich mode: just run discovery with logging callbacks
