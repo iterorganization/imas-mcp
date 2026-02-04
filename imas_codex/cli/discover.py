@@ -1235,6 +1235,8 @@ def discover_wiki(
         site_type = site.get("site_type", "mediawiki")
         base_url = site.get("url", "")
         portal_page = site.get("portal_page", "Main_Page")
+        auth_type = site.get("auth_type")
+        credential_service = site.get("credential_service")
 
         # Determine SSH host: explicit site ssh_host, or facility default if requires_ssh
         ssh_host = site.get("ssh_host")
@@ -1247,6 +1249,8 @@ def discover_wiki(
 
         if site_type == "twiki":
             log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
+        elif auth_type in ("tequila", "session"):
+            log_print("[cyan]Using Tequila authentication[/cyan]")
         elif ssh_host:
             log_print(f"[cyan]Using SSH proxy via {ssh_host}[/cyan]")
 
@@ -1266,6 +1270,8 @@ def discover_wiki(
                 _base_url: str,
                 _portal_page: str,
                 _ssh_host: str | None,
+                _auth_type: str | None,
+                _credential_service: str | None,
                 _cost_limit: float,
                 _max_pages: int | None,
                 _max_depth: int | None,
@@ -1295,6 +1301,8 @@ def discover_wiki(
                         base_url=_base_url,
                         portal_page=_portal_page,
                         ssh_host=_ssh_host,
+                        auth_type=_auth_type,
+                        credential_service=_credential_service,
                         cost_limit=_cost_limit,
                         page_limit=_max_pages,
                         max_depth=_max_depth,
@@ -1409,6 +1417,8 @@ def discover_wiki(
                             base_url=_base_url,
                             portal_page=_portal_page,
                             ssh_host=_ssh_host,
+                            auth_type=_auth_type,
+                            credential_service=_credential_service,
                             cost_limit=_cost_limit,
                             page_limit=_max_pages,
                             max_depth=_max_depth,
@@ -1446,6 +1456,8 @@ def discover_wiki(
                     _base_url=base_url,
                     _portal_page=portal_page,
                     _ssh_host=ssh_host,
+                    _auth_type=auth_type,
+                    _credential_service=credential_service,
                     _cost_limit=cost_limit,
                     _max_pages=max_pages,
                     _max_depth=max_depth,

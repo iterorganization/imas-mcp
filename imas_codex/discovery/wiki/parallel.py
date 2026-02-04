@@ -55,6 +55,10 @@ class WikiDiscoveryState:
     portal_page: str
     ssh_host: str | None = None
 
+    # Authentication for HTTP-based access (Tequila SSO)
+    auth_type: str | None = None  # tequila, session, ssh_proxy, or None
+    credential_service: str | None = None  # Keyring service for credentials
+
     # Limits
     cost_limit: float = 10.0
     page_limit: int | None = None
@@ -736,6 +740,167 @@ def bulk_discover_all_pages_mediawiki(
     return created
 
 
+def bulk_discover_all_pages_http(
+    facility: str,
+    base_url: str,
+    credential_service: str,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all wiki pages via Special:AllPages using HTTP with Tequila auth.
+
+    This is 100-300x faster than crawling links page-by-page.
+    MediaWiki's Special:AllPages returns ~300-500 pages per request.
+
+    Strategy:
+    1. Authenticate with Tequila (EPFL SSO)
+    2. Fetch AllPages index to get alphabetical range links
+    3. Fetch each range to extract page titles
+    4. Create all pages as 'scanned' status (skip scanning phase)
+
+    Args:
+        facility: Facility ID
+        base_url: Wiki base URL
+        credential_service: Keyring service name for Tequila credentials
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    import re
+    from urllib.parse import unquote
+
+    from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+    logger.info("Starting bulk page discovery via Special:AllPages (HTTP)...")
+
+    # Create authenticated client
+    client = MediaWikiClient(base_url=base_url, credential_service=credential_service)
+
+    if not client.authenticate():
+        logger.error("Failed to authenticate with Tequila")
+        return 0
+
+    try:
+        session = client._get_session()
+
+        # Step 1: Get the alphabetical index to find range links
+        index_url = f"{base_url}/index.php?title=Special:AllPages"
+
+        try:
+            response = session.get(index_url, timeout=30, verify=client.verify_ssl)
+            if response.status_code != 200:
+                logger.warning(
+                    f"Failed to fetch AllPages index: HTTP {response.status_code}"
+                )
+                return 0
+            html_content = response.text
+        except Exception as e:
+            logger.warning(f"Error fetching AllPages index: {e}")
+            return 0
+
+        # Parse range links from the allpageslist table
+        # Format: from=Page_Name&to=Page_Name
+        range_pattern = re.compile(
+            r'href="[^"]*title=Special:AllPages[^"]*from=([^&"]+)[^"]*"'
+        )
+        ranges = list(set(range_pattern.findall(html_content)))
+
+        if not ranges:
+            logger.warning("No page ranges found in AllPages index")
+            return 0
+
+        logger.info(f"Found {len(ranges)} page ranges to process")
+        if on_progress:
+            on_progress(f"found {len(ranges)} ranges", None)
+
+        # Step 2: Fetch each range to get page titles
+        all_pages: set[str] = set()
+
+        for i, from_page in enumerate(ranges):
+            range_url = f"{base_url}/index.php?title=Special:AllPages&from={from_page}"
+
+            try:
+                response = session.get(range_url, timeout=30, verify=client.verify_ssl)
+                if response.status_code != 200:
+                    continue
+                range_html = response.text
+            except Exception:
+                continue
+
+            # Extract page links from response
+            # Format: href="/wiki/Page_Name" or href="/path/Page_Name"
+            page_pattern = re.compile(r'href="/wiki/([^"?]+)"')
+            for match in page_pattern.finditer(range_html):
+                page_name = unquote(match.group(1))
+                # Skip special pages and system namespaces
+                if not any(
+                    page_name.startswith(prefix)
+                    for prefix in (
+                        "Special:",
+                        "File:",
+                        "Talk:",
+                        "User:",
+                        "Template:",
+                        "Category:",
+                        "Help:",
+                        "MediaWiki:",
+                        "SPCwiki:",
+                    )
+                ):
+                    all_pages.add(page_name)
+
+            if on_progress:
+                on_progress(
+                    f"range {i + 1}/{len(ranges)}: {len(all_pages)} pages", None
+                )
+
+            logger.debug(f"Range {i + 1}/{len(ranges)}: total {len(all_pages)} pages")
+
+        logger.info(f"Discovered {len(all_pages)} unique pages")
+
+        # Step 3: Create all pages in graph as 'scanned' status
+        # Skip the scanning phase entirely - go straight to prefetch
+        from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+        created = 0
+        with GraphClient() as gc:
+            for page_name in all_pages:
+                page_id = canonical_page_id(page_name, facility)
+                url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
+
+                # MERGE to avoid duplicates, set to discovered status (awaiting quick score)
+                result = gc.query(
+                    """
+                    MERGE (wp:WikiPage {id: $id})
+                    ON CREATE SET wp.title = $title,
+                                  wp.url = $url,
+                                  wp.facility_id = $facility,
+                                  wp.status = $scanned,
+                                  wp.link_depth = 1,
+                                  wp.discovered_at = datetime(),
+                                  wp.bulk_discovered = true
+                    ON MATCH SET wp.bulk_discovered = true
+                    RETURN wp.status AS status
+                    """,
+                    id=page_id,
+                    title=page_name,
+                    url=url,
+                    facility=facility,
+                    scanned=WikiPageStatus.scanned.value,
+                )
+                if result:
+                    created += 1
+
+        logger.info(f"Created/updated {created} pages in graph (scanned status)")
+        if on_progress:
+            on_progress(f"created {created} pages", None)
+
+        return created
+
+    finally:
+        client.close()
+
+
 # =============================================================================
 # Link Extraction (Scanner Worker Helpers)
 # =============================================================================
@@ -1137,8 +1302,13 @@ async def prefetch_worker(
             url = page.get("url", "")
 
             try:
-                # Fetch content and generate summary
-                summary = await _fetch_and_summarize(url, state.ssh_host)
+                # Fetch content and generate summary with auth
+                summary = await _fetch_and_summarize(
+                    url,
+                    state.ssh_host,
+                    auth_type=state.auth_type,
+                    credential_service=state.credential_service,
+                )
                 return {
                     "id": page_id,
                     "summary": summary,
@@ -1282,6 +1452,8 @@ async def ingest_worker(
                     facility=state.facility,
                     site_type=state.site_type,
                     ssh_host=state.ssh_host,
+                    auth_type=state.auth_type,
+                    credential_service=state.credential_service,
                 )
                 results.append(
                     {
@@ -1420,7 +1592,12 @@ def _create_discovered_artifacts(
     return created
 
 
-async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
+async def _fetch_and_summarize(
+    url: str,
+    ssh_host: str | None,
+    auth_type: str | None = None,
+    credential_service: str | None = None,
+) -> str:
     """Fetch page content and extract text preview.
 
     No LLM is used here - prefetch extracts text deterministically.
@@ -1429,14 +1606,13 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
     Args:
         url: Page URL to fetch
         ssh_host: Optional SSH host for proxied fetching
+        auth_type: Authentication type (tequila, session, etc.)
+        credential_service: Keyring service for credentials
 
     Returns:
         Extracted text preview (up to 2000 chars) or empty string on error
     """
-    from imas_codex.discovery.wiki.prefetch import (
-        extract_text_from_html,
-        fetch_page_content,
-    )
+    from imas_codex.discovery.wiki.prefetch import extract_text_from_html
 
     def _ssh_fetch() -> str:
         """Blocking SSH fetch - run in thread pool."""
@@ -1458,20 +1634,63 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
             logger.warning("Error fetching %s via SSH: %s", url, e)
             return ""
 
+    def _tequila_fetch() -> str:
+        """Fetch with Tequila authentication - run in thread pool."""
+        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+        # Extract page name from URL
+        page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
+        if "?" in page_name:
+            # Handle index.php?title=Page format
+            import urllib.parse
+
+            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            page_name = parsed.get("title", [page_name])[0]
+
+        # Decode URL encoding
+        import urllib.parse
+
+        page_name = urllib.parse.unquote(page_name)
+
+        base_url = url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]
+        if "/wiki" in base_url:
+            base_url = base_url.rsplit("/wiki", 1)[0] + "/wiki"
+
+        client = MediaWikiClient(
+            base_url=base_url,
+            credential_service=credential_service or "tcv-wiki",
+            verify_ssl=False,
+        )
+        try:
+            if not client.authenticate():
+                logger.warning("Tequila auth failed for %s", url)
+                return ""
+            page = client.get_page(page_name)
+            if page:
+                return page.content_html
+            return ""
+        finally:
+            client.close()
+
+    # Determine fetch strategy
     if ssh_host:
         # Fetch via SSH proxy using curl in thread pool
         html = await asyncio.to_thread(_ssh_fetch)
-        if html:
-            return extract_text_from_html(html, max_chars=2000)
-        return ""
+    elif auth_type in ("tequila", "session"):
+        # Fetch via Tequila SSO authentication
+        html = await asyncio.to_thread(_tequila_fetch)
     else:
-        # Direct HTTP fetch
+        # Direct HTTP fetch (no auth) - will fail for protected wikis
+        from imas_codex.discovery.wiki.prefetch import fetch_page_content
+
         html, error = await fetch_page_content(url)
-        if html:
-            return extract_text_from_html(html, max_chars=2000)
         if error:
             logger.debug("Failed to fetch %s: %s", url, error)
-        return ""
+            html = ""
+
+    if html:
+        return extract_text_from_html(html, max_chars=2000)
+    return ""
 
 
 async def _score_pages_batch(
@@ -1734,6 +1953,8 @@ async def _ingest_page(
     facility: str,
     site_type: str,
     ssh_host: str | None,
+    auth_type: str | None = None,
+    credential_service: str | None = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -1745,6 +1966,8 @@ async def _ingest_page(
         facility: Facility ID (e.g., 'tcv', 'jet')
         site_type: Site type ('mediawiki', 'confluence', 'twiki')
         ssh_host: Optional SSH host for proxied fetching
+        auth_type: Authentication type (tequila, session, etc.)
+        credential_service: Keyring service for credentials
 
     Returns:
         Number of chunks created
@@ -1755,8 +1978,13 @@ async def _ingest_page(
     # Extract page name from URL or page_id
     page_name = page_id.split(":", 1)[1] if ":" in page_id else page_id
 
-    # Fetch HTML content
-    html = await _fetch_html(url, ssh_host)
+    # Fetch HTML content with auth
+    html = await _fetch_html(
+        url,
+        ssh_host,
+        auth_type=auth_type,
+        credential_service=credential_service,
+    )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
         return 0
@@ -1799,20 +2027,26 @@ async def _ingest_page(
         return 0
 
 
-async def _fetch_html(url: str, ssh_host: str | None) -> str:
+async def _fetch_html(
+    url: str,
+    ssh_host: str | None,
+    auth_type: str | None = None,
+    credential_service: str | None = None,
+) -> str:
     """Fetch HTML content from URL.
 
     Args:
         url: Page URL
         ssh_host: Optional SSH host for proxied fetching
+        auth_type: Authentication type (tequila, session, etc.)
+        credential_service: Keyring service for credentials
 
     Returns:
         HTML content string or empty string on error
     """
-    from imas_codex.discovery.wiki.prefetch import fetch_page_content
 
-    if ssh_host:
-        # Fetch via SSH proxy
+    def _ssh_fetch() -> str:
+        """Fetch via SSH proxy."""
         cmd = f'curl -sk "{url}" 2>/dev/null'
         try:
             result = subprocess.run(
@@ -1827,8 +2061,54 @@ async def _fetch_html(url: str, ssh_host: str | None) -> str:
         except Exception as e:
             logger.warning("SSH fetch failed for %s: %s", url, e)
             return ""
+
+    def _tequila_fetch() -> str:
+        """Fetch with Tequila authentication."""
+        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+        # Extract page name from URL
+        page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
+        if "?" in page_name:
+            import urllib.parse
+
+            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            page_name = parsed.get("title", [page_name])[0]
+
+        import urllib.parse
+
+        page_name = urllib.parse.unquote(page_name)
+
+        base_url_local = (
+            url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]
+        )
+        if "/wiki" in base_url_local:
+            base_url_local = base_url_local.rsplit("/wiki", 1)[0] + "/wiki"
+
+        client = MediaWikiClient(
+            base_url=base_url_local,
+            credential_service=credential_service or "tcv-wiki",
+            verify_ssl=False,
+        )
+        try:
+            if not client.authenticate():
+                logger.warning("Tequila auth failed for %s", url)
+                return ""
+            page = client.get_page(page_name)
+            if page:
+                return page.content_html
+            return ""
+        finally:
+            client.close()
+
+    # Determine fetch strategy
+    if ssh_host:
+        return await asyncio.to_thread(_ssh_fetch)
+    elif auth_type in ("tequila", "session"):
+        return await asyncio.to_thread(_tequila_fetch)
     else:
-        # Direct HTTP fetch
+        # Direct HTTP fetch (no auth)
+        from imas_codex.discovery.wiki.prefetch import fetch_page_content
+
         html, error = await fetch_page_content(url)
         if html:
             return html
@@ -1848,6 +2128,8 @@ async def run_parallel_wiki_discovery(
     base_url: str,
     portal_page: str,
     ssh_host: str | None = None,
+    auth_type: str | None = None,
+    credential_service: str | None = None,
     cost_limit: float = 10.0,
     page_limit: int | None = None,
     max_depth: int | None = None,
@@ -1865,6 +2147,9 @@ async def run_parallel_wiki_discovery(
     """Run parallel wiki discovery with async workers.
 
     Args:
+        ssh_host: SSH host for proxied access (for non-public wikis)
+        auth_type: Authentication type (tequila, session, ssh_proxy, or None)
+        credential_service: Keyring service name for credentials
         bulk_discover: If True (default), use Special:AllPages for fast
             discovery of all pages upfront. This is 100-300x faster than
             crawling links page-by-page. Only works for MediaWiki sites.
@@ -1877,13 +2162,15 @@ async def run_parallel_wiki_discovery(
     # Reset orphans from previous runs
     reset_transient_pages(facility)
 
-    # Initialize state
+    # Initialize state with auth info
     state = WikiDiscoveryState(
         facility=facility,
         site_type=site_type,
         base_url=base_url,
         portal_page=portal_page,
         ssh_host=ssh_host,
+        auth_type=auth_type,
+        credential_service=credential_service,
         cost_limit=cost_limit,
         page_limit=page_limit,
         max_depth=max_depth,
@@ -1893,22 +2180,44 @@ async def run_parallel_wiki_discovery(
     # Bulk discovery: use Special:AllPages to find all pages instantly
     # This replaces the slow scan phase for MediaWiki sites
     bulk_discovered = 0
-    if bulk_discover and site_type == "mediawiki" and ssh_host and not score_only:
-        logger.info("Using bulk discovery via Special:AllPages...")
+    if bulk_discover and site_type == "mediawiki" and not score_only:
+        # Choose discovery method based on auth type
+        if state.auth_type == "tequila" and state.credential_service:
+            # HTTP-based discovery with Tequila auth
+            logger.info("Using bulk discovery via Special:AllPages (HTTP/Tequila)...")
 
-        def bulk_progress(msg, _stats):
-            if on_scan_progress:
-                on_scan_progress(f"bulk: {msg}", state.scan_stats)
+            def bulk_progress(msg, _stats):
+                if on_scan_progress:
+                    on_scan_progress(f"bulk: {msg}", state.scan_stats)
 
-        # Run bulk discovery in thread pool (blocking SSH calls)
-        bulk_discovered = await asyncio.to_thread(
-            bulk_discover_all_pages_mediawiki,
-            facility,
-            base_url,
-            ssh_host,
-            bulk_progress,
-        )
-        logger.info(f"Bulk discovery found {bulk_discovered} pages")
+            # Run bulk discovery in thread pool (blocking HTTP calls)
+            bulk_discovered = await asyncio.to_thread(
+                bulk_discover_all_pages_http,
+                facility,
+                base_url,
+                state.credential_service,
+                bulk_progress,
+            )
+        elif ssh_host:
+            # SSH-based discovery
+            logger.info("Using bulk discovery via Special:AllPages (SSH)...")
+
+            def bulk_progress(msg, _stats):
+                if on_scan_progress:
+                    on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+            # Run bulk discovery in thread pool (blocking SSH calls)
+            bulk_discovered = await asyncio.to_thread(
+                bulk_discover_all_pages_mediawiki,
+                facility,
+                base_url,
+                ssh_host,
+                bulk_progress,
+            )
+
+        if bulk_discovered:
+            logger.info(f"Bulk discovery found {bulk_discovered} pages")
+            state.scan_stats.processed = bulk_discovered
         state.scan_stats.processed = bulk_discovered
 
     # Create portal page if not exists (may already exist from bulk discovery)
@@ -1933,7 +2242,9 @@ async def run_parallel_wiki_discovery(
             workers.append(asyncio.create_task(score_worker(state, on_score_progress)))
         workers.append(asyncio.create_task(ingest_worker(state, on_ingest_progress)))
 
-    logger.info(f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}")
+    logger.info(
+        f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}"
+    )
 
     # Wait for termination condition
     while not state.should_stop():
