@@ -129,7 +129,7 @@ def grounded_score(
         quality_boost += 0.10
 
     # Code diversity boost from file_type_counts
-    file_types = input_data.get("file_type_counts", {})
+    file_types = input_data.get("file_type_counts") or {}
     if isinstance(file_types, str):
         import json as json_module
 
@@ -523,7 +523,7 @@ class DirectoryScorer:
             purpose = parse_path_purpose(result.path_purpose.value)
 
             # Build evidence from input data (not LLM response - schema simplified)
-            file_types = directories[i].get("file_type_counts", {})
+            file_types = directories[i].get("file_type_counts") or {}
             if isinstance(file_types, str):
                 try:
                     file_types = json_module.loads(file_types)
@@ -742,7 +742,7 @@ class DirectoryScorer:
             purpose = parse_path_purpose(result.get("path_purpose", "unknown"))
 
             # Build evidence from input data (not LLM response - schema simplified)
-            file_types = directories[i].get("file_type_counts", {})
+            file_types = directories[i].get("file_type_counts") or {}
             if isinstance(file_types, str):
                 try:
                     file_types = json.loads(file_types)
