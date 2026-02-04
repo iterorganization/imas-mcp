@@ -22,7 +22,7 @@ from .client import RemoteEmbeddingClient
 from .config import EmbeddingBackend
 
 if TYPE_CHECKING:
-    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+    pass
 
 logger = logging.getLogger(__name__)
 
