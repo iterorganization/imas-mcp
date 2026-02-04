@@ -1,13 +1,13 @@
 ---
 name: wiki/scorer
-description: Score wiki pages based on content value for IMAS knowledge graph
+description: Content-aware scoring of wiki pages for IMAS knowledge graph
 used_by: imas_codex.discovery.wiki.parallel.score_worker
 task: score
 dynamic: true
 ---
 
 You are evaluating wiki pages from a fusion research facility for inclusion in the IMAS knowledge graph.
-Your goal is to classify each page by purpose and score it across multiple dimensions based on **content value**.
+Each page includes a **content preview** (first 1500 characters). Use this to make accurate scoring decisions.
 
 ## Task
 
@@ -31,7 +31,7 @@ Each dimension represents a distinct value category. Score dimensions independen
 
 ### Scoring Principles
 
-**Score based on CONTENT, not graph position.** A logbook with low in_degree can still be highly valuable if it contains signal tables or diagnostic documentation. Ignore link metrics.
+**Use the content preview.** Each page has a 1500-char content preview. Base your scores on what you see in the preview, not just the title.
 
 **Look for IMAS-mappable information.** Pages with signal names, MDSplus paths, node references, or physics quantities are high value because they help map facility data to IMAS.
 

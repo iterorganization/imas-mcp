@@ -164,35 +164,24 @@ enums:
 
   WikiPageStatus:
     description: >-
-      Lifecycle status for wiki page discovery. Uses transient states for async worker
-      coordination. Graph acts as ledger - workers atomically claim pages by transitioning
-      to transient states (scanning, prefetching, scoring, ingesting).
-      Transient states have fallback states for orphan recovery on timeout.
+      Lifecycle status for wiki page discovery. Uses claimed_at timestamp for
+      transient worker coordination (same pattern as FacilityPathStatus).
+      
+      Simple 3-phase workflow: scanned → scored → ingested
+      - Bulk discovery sets status=scanned
+      - Score: fetch content preview + LLM scoring in single pass
+      - Ingest: embed pages with score >= 0.5
     permissible_values:
-      discovered:
-        description: Page URL discovered but not yet scanned
-      scanning:
-        description: Scanner worker active (fallback to discovered on timeout)
       scanned:
-        description: Links extracted, structure captured, awaiting prefetch
-      prefetching:
-        description: Prefetch worker active (fallback to scanned on timeout)
-      prefetched:
-        description: Content fetched and summarized, awaiting score
-      scoring:
-        description: Scorer worker active (fallback to prefetched on timeout)
+        description: Discovered via bulk API or crawl. Awaiting content-aware scoring.
       scored:
-        description: LLM scored, interest_score set
-      ingesting:
-        description: Ingest worker active (fallback to scored on timeout)
+        description: Content-aware scoring complete. Pages with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content chunked, embedded, and linked to graph
       skipped:
-        description: Low interest_score or filtered, not worth processing
+        description: Filtered out by scoring (too low value to process)
       failed:
-        description: Error during processing (check error property)
-      stale:
-        description: Previously processed but content may have changed
+        description: Error during processing (check error field)
 
   WikiArtifactStatus:
     description: >-

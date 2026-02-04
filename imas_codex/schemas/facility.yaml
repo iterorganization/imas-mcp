@@ -402,28 +402,18 @@ enums:
       Lifecycle status for wiki page discovery. Uses claimed_at timestamp for
       transient worker coordination (same pattern as FacilityPathStatus).
       
-      Workflow: scanned → scored → prefetched → rescored → ingested
-      - Bulk discovery sets status=scanned with links extracted
-      - First-pass scoring filters by title/URL, updates score field
-      - Prefetch fetches full content for high-score pages (score >= 0.3)
-      - Rescore evaluates prefetched content, updates score with content-aware value
-      - Ingest embeds pages with score >= 0.5
+      Workflow: scanned → scored → ingested (simple 3-phase)
+      - Bulk discovery sets status=scanned
+      - Score: fetch content preview + LLM scoring in single pass
+        Pages with score >= 0.5 proceed to ingestion
+      - Ingest: embed pages with score >= 0.5
     permissible_values:
       scanned:
         description: >-
-          Links extracted via bulk discovery or crawl. Has link_depth, in_degree,
-          out_degree. Awaiting first-pass scoring.
+          Discovered via bulk API or crawl. Awaiting content-aware scoring.
       scored:
         description: >-
-          First-pass scored based on title/URL patterns. Score field set.
-          High-score pages (>= 0.3) proceed to prefetch.
-      prefetched:
-        description: >-
-          Content fetched, preview_summary generated. Ready for content-based
-          rescore.
-      rescored:
-        description: >-
-          Content-based rescore complete. Score updated with content-aware value.
+          Content-aware scoring complete. Score field set based on page content.
           Pages with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content chunked, embedded, and linked to graph
@@ -2211,13 +2201,11 @@ classes:
       A wiki page from facility documentation (e.g., TCV wiki).
       Contains authoritative signal descriptions, conventions, and specs.
       
-      Four-phase lifecycle (uses score field throughout, updated at each phase):
+      Three-phase lifecycle (simple single-pass scoring):
       1. SCAN: Bulk discover via Special:AllPages → status=scanned
-      2. SCORE: First-pass LLM scoring by title/URL → score field set
-         Pages with score >= 0.3 proceed to prefetch
-      3. PREFETCH: Fetch content for promising pages → status=prefetched
-         Rescore with content, updating score field
-      4. INGEST: Embed pages with score >= 0.5 → status=ingested
+      2. SCORE: Fetch content + LLM scoring in one pass → status=scored
+         Pages with score >= 0.5 proceed to ingestion
+      3. INGEST: Embed pages with score >= 0.5 → status=ingested
       
       Worker coordination via claimed_at timestamp (same as FacilityPath).
       
@@ -2282,12 +2270,11 @@ classes:
           If set and older than timeout (5 min), page is reclaimed.
         range: datetime
       
-      # Scoring field (updated at each scoring phase)
+      # Scoring field (set once during content-aware scoring)
       score:
         description: >-
-          Page score (0.0-1.0). Updated twice:
-          1. First-pass: based on title/URL only (pages >= 0.3 prefetched)
-          2. Rescore: based on content (pages >= 0.5 ingested)
+          Page score (0.0-1.0). Set once based on content preview.
+          Pages with score >= 0.5 proceed to ingestion.
         range: float
       score_reasoning:
         description: LLM explanation for score assignment
@@ -2296,17 +2283,13 @@ classes:
           Why the agent marked this page as skipped. Grounded in metrics.
           Examples: "in_degree=0, no pages reference this", "administrative page"
       
-      # Prefetch fields (content-aware scoring)
+      # Content preview (fetched during scoring)
       preview_text:
         description: >-
-          Raw page content preview (first 2000 chars). Fetched during prefetch stage.
-          Used for validation and debugging. May contain HTML artifacts.
-      preview_summary:
-        description: >-
-          LLM-generated summary of page content (max 300 chars). Clean, structured
-          description of what the page provides. Used for rescore prompt.
+          Page content preview (first 1500 chars). Fetched during scoring.
+          Used for content-aware LLM scoring and debugging.
       preview_fetched_at:
-        description: When the preview was fetched and summarized
+        description: When the preview was fetched for scoring
         range: datetime
       preview_fetch_error:
         description: Error message if preview fetch failed (auth, timeout, etc.)
