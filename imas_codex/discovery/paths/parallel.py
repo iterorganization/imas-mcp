@@ -1596,7 +1596,7 @@ def _rescore_with_llm(
             ]:
                 llm_value = getattr(r, dim, None)
                 if llm_value is not None:
-                    result[dim] = max(0.0, min(0.95, llm_value))
+                    result[dim] = max(0.0, llm_value)  # Allow scores > 1.0
                 else:
                     # Keep original value
                     result[dim] = p.get(dim, 0.0)

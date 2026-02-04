@@ -32,8 +32,8 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 from imas_codex.agentic.agents import get_model_for_task
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
-    DirectoryScoringBatch,
     ResourcePurpose,
+    ScoreBatch,
     ScoredBatch,
     ScoredDirectory,
     parse_path_purpose,
@@ -246,7 +246,7 @@ class DirectoryScorer:
                     model=model_id,
                     api_key=api_key,
                     max_tokens=32000,
-                    response_format=DirectoryScoringBatch,
+                    response_format=ScoreBatch,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
@@ -438,7 +438,7 @@ class DirectoryScorer:
         """Parse structured LLM response into ScoredDirectory objects.
 
         Uses LiteLLM's structured output - the response is already validated
-        against the DirectoryScoringBatch Pydantic model.
+        against the ScoreBatch Pydantic model.
 
         Args:
             response: LiteLLM response object
@@ -460,7 +460,7 @@ class DirectoryScorer:
             content = content.encode("utf-8", errors="surrogateescape").decode(
                 "utf-8", errors="replace"
             )
-            batch = DirectoryScoringBatch.model_validate_json(content)
+            batch = ScoreBatch.model_validate_json(content)
             results = batch.results
         except Exception as e:
             # CRITICAL: Validation error means LLM response was malformed.

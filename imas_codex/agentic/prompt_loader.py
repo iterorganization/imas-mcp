@@ -18,7 +18,7 @@ Schema Provider Architecture:
     - path_purposes: PathPurpose enum values (grouped by category)
     - discovery_categories: DiscoveryRootCategory enum values
     - score_dimensions: score_* fields from FacilityPath schema
-    - scoring_schema: DirectoryScoringBatch Pydantic schema
+    - scoring_schema: ScoreBatch Pydantic schema
     - rescore_schema: RescoreBatch Pydantic schema
     - access_method_fields: AccessMethod schema fields
     - access_methods_graph: Existing AccessMethod nodes from graph
@@ -451,17 +451,15 @@ def _provide_score_dimensions() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _provide_scoring_schema() -> dict[str, Any]:
-    """Provide DirectoryScoringBatch Pydantic schema for LLM prompts."""
+    """Provide ScoreBatch Pydantic schema for LLM prompts."""
     from imas_codex.discovery.paths.models import (
-        DirectoryScoringBatch,
-        DirectoryScoringResult,
+        ScoreBatch,
+        ScoreResult,
     )
 
     return {
-        "scoring_schema_example": get_pydantic_schema_json(DirectoryScoringBatch),
-        "scoring_schema_fields": get_pydantic_schema_description(
-            DirectoryScoringResult
-        ),
+        "scoring_schema_example": get_pydantic_schema_json(ScoreBatch),
+        "scoring_schema_fields": get_pydantic_schema_description(ScoreResult),
     }
 
 

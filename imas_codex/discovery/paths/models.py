@@ -9,7 +9,7 @@ Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
 structures for the scorer, NOT graph node types. They are converted to
 graph updates via frontier.mark_paths_scored().
 
-The Pydantic models (EvidenceSchema, DirectoryScoringResult, DirectoryScoringBatch)
+The Pydantic models (EvidenceSchema, ScoreResult, ScoreBatch)
 are used for LLM structured output - LiteLLM parses responses directly into these.
 """
 
@@ -31,8 +31,8 @@ __all__ = [
     "ScoredDirectory",
     "ScoredBatch",
     "EvidenceSchema",
-    "DirectoryScoringResult",
-    "DirectoryScoringBatch",
+    "ScoreResult",
+    "ScoreBatch",
     "RescoreResult",
     "RescoreBatch",
 ]
@@ -80,7 +80,7 @@ class EvidenceSchema(BaseModel):
     )
 
 
-class DirectoryScoringResult(BaseModel):
+class ScoreResult(BaseModel):
     """LLM scoring result for a single directory.
 
     This Pydantic model is passed to LiteLLM's response_format parameter
@@ -190,14 +190,14 @@ class DirectoryScoringResult(BaseModel):
     )
 
 
-class DirectoryScoringBatch(BaseModel):
+class ScoreBatch(BaseModel):
     """Batch of directory scoring results from LLM.
 
     This is the top-level model passed to LiteLLM's response_format.
-    The LLM returns a list of DirectoryScoringResult objects.
+    The LLM returns a list of ScoreResult objects.
     """
 
-    results: list[DirectoryScoringResult] = Field(
+    results: list[ScoreResult] = Field(
         description="List of scoring results, one per input directory, in order"
     )
 

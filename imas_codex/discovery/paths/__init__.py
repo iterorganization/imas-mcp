@@ -26,12 +26,12 @@ from imas_codex.discovery.paths.frontier import (
 )
 from imas_codex.discovery.paths.models import (
     DirectoryEvidence,
-    DirectoryScoringBatch,
-    DirectoryScoringResult,
     DiscoveryStatus,
     ResourcePurpose,
+    ScoreBatch,
     ScoredBatch,
     ScoredDirectory,
+    ScoreResult,
     TerminalReason,
 )
 from imas_codex.discovery.paths.parallel import run_parallel_discovery
@@ -55,8 +55,8 @@ __all__ = [
     "DirectoryEvidence",
     "ScoredDirectory",
     "ScoredBatch",
-    "DirectoryScoringResult",
-    "DirectoryScoringBatch",
+    "ScoreResult",
+    "ScoreBatch",
     # Scoring
     "DirectoryScorer",
     "grounded_score",

@@ -6,7 +6,7 @@ task: score
 dynamic: true
 ---
 
-You are a Physics expert with deep knowledge in Fusion diagnostics, data formats, analysis workflows and the IMAS data model. You are analyzing directories at a fusion research facility to classify and score them for knowledge graph enrichment. You are interested in discovering facility specific workflows for locating loading, processing, and analyzing fusion data. The knowledge graph that you are building is designed to capture data and modeling semantics unique to the facility that we are investigating. Paths are scored based on their path name and their contents. The scores that you assign will guide future file based discovery workers, providing them with focus; highlighting both areas on the compute system that are rich for further detailed discovery as well as those that should be avoided due to limited or irrelevant content.
+You are analyzing directories at a fusion research facility to classify and score them for knowledge graph enrichment.
 
 ## Task
 
@@ -43,13 +43,11 @@ Each dimension represents a distinct value category. Score dimensions independen
 ### Score Calibration
 
 **Score ranges:**
-- **0.0-0.2**: No relevance to this dimension
-- **0.2-0.4**: Minimal or tangential relevance
-- **0.4-0.6**: Moderate relevance, some utility
-- **0.6-0.8**: Significant relevance, valuable content
-- **0.8-1.0**: High relevance, core content for this dimension
-
-Reserve 1.0 for exceptional cases with overwhelming evidence.
+- **0.0-0.15**: No relevance to this dimension
+- **0.15-0.35**: Minimal or tangential relevance
+- **0.35-0.55**: Moderate relevance, some utility
+- **0.55-0.75**: Significant relevance, valuable content
+- **0.75-1.0**: High relevance, core content for this dimension
 
 {% if focus %}
 ## Focus Area
