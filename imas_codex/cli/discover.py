@@ -113,6 +113,12 @@ def discover():
     default=False,
     help="Additive seed: add missing discovery_roots from config",
 )
+@click.option(
+    "--auto-enrich-threshold",
+    type=float,
+    default=None,
+    help="Auto-enrich paths scoring >= threshold even if should_enrich=false (e.g., 0.75)",
+)
 def discover_paths(
     facility: str,
     root: tuple[str, ...],
@@ -126,6 +132,7 @@ def discover_paths(
     score_only: bool,
     no_rich: bool,
     seed: bool,
+    auto_enrich_threshold: float | None,
 ) -> None:
     """Discover and score directory structure at a facility.
 
@@ -171,6 +178,7 @@ def discover_paths(
         no_rich=no_rich,
         root_filter=root_filter,
         seed=seed,
+        auto_enrich_threshold=auto_enrich_threshold,
     )
 
 
@@ -187,6 +195,7 @@ def _run_iterative_discovery(
     no_rich: bool = False,
     root_filter: list[str] | None = None,
     seed: bool = False,
+    auto_enrich_threshold: float | None = None,
 ) -> None:
     """Run parallel scan/score discovery."""
     from imas_codex.agentic.agents import get_model_for_task
@@ -318,6 +327,7 @@ def _run_iterative_discovery(
                 score_only=score_only,
                 use_rich=use_rich,
                 root_filter=root_filter,
+                auto_enrich_threshold=auto_enrich_threshold,
             )
         )
 
@@ -599,6 +609,7 @@ async def _async_discovery_loop(
     score_only: bool = False,
     use_rich: bool = True,
     root_filter: list[str] | None = None,
+    auto_enrich_threshold: float = 0.75,
 ) -> tuple[dict, set[str]]:
     """Async discovery loop with parallel scan/score workers."""
     from imas_codex.discovery.paths.parallel import run_parallel_discovery
@@ -661,6 +672,7 @@ async def _async_discovery_loop(
                     focus=focus,
                     threshold=threshold,
                     root_filter=root_filter,
+                    auto_enrich_threshold=auto_enrich_threshold,
                     num_scan_workers=num_scan_workers,
                     num_score_workers=num_score_workers,
                     on_scan_progress=on_scan,
@@ -711,6 +723,7 @@ async def _async_discovery_loop(
             focus=focus,
             threshold=threshold,
             root_filter=root_filter,
+            auto_enrich_threshold=auto_enrich_threshold,
             num_scan_workers=num_scan_workers,
             num_score_workers=num_score_workers,
             on_scan_progress=on_scan_log,

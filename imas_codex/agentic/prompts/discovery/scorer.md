@@ -83,19 +83,10 @@ Set `should_enrich=true` for directories worth running deep pattern analysis.
 2. **Language breakdown** via `tokei` - counts lines of code by programming language
 3. **Disk usage** via `dust` - measures total bytes
 
-**Patterns searched by dimension:**
-- **Data Access**: MDSplus, PPF, UFile, shotfile, HDF5, NetCDF patterns
-- **IMAS**: IDS access, put_slice, get_slice, Access Layer patterns
-- **Modeling Code**: EFIT, JETTO, JOREK, equilibrium, transport solver patterns
-- **Analysis Code**: curve_fit, FFT, spectral, diagnostic names
-- **Operations Code**: real-time control, PCS, feedback patterns
-- **Workflow**: Airflow, SLURM, pipeline patterns
-- **Visualization**: matplotlib, plotting, GUI patterns
-- **Documentation**: Sphinx, README, tutorial patterns
+**Patterns searched (by score dimension):**
+{{ enrichment_patterns }}
 
-**Pattern evidence enables rescoring.** Without enrichment, rescoring has no new information. Directories with `should_enrich=false` will keep their initial scores.
-
-**Automatic enrichment threshold:** Consider directories scoring ≥ 0.5 on any dimension as candidates for enrichment - pattern evidence can confirm or refute the initial classification.
+**Pattern evidence enables rescoring.** Without enrichment, rescoring has no new information. Directories with `should_enrich=false` keep their initial scores. Enrichment runs pattern matching that provides concrete evidence to confirm or refute your initial classification.
 
 **Skip enrichment for:**
 - Root containers (`/work`, `/home`) - too many files, patterns would be noise

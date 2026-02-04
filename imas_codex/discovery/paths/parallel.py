@@ -44,6 +44,7 @@ class DiscoveryState:
     focus: str | None = None
     threshold: float = 0.7
     root_filter: list[str] | None = None  # Restrict work to these roots
+    auto_enrich_threshold: float | None = None  # Also enrich paths scoring >= this
 
     # Worker stats
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
@@ -429,13 +430,16 @@ def mark_score_complete(
 
 
 def claim_paths_for_enriching(
-    facility: str, limit: int = 25, root_filter: list[str] | None = None
+    facility: str,
+    limit: int = 25,
+    root_filter: list[str] | None = None,
+    auto_enrich_threshold: float | None = None,
 ) -> list[dict[str, Any]]:
     """Atomically claim scored paths for enrichment.
 
     Claims paths where:
     - status = 'scored'
-    - should_enrich = true
+    - should_enrich = true OR score >= auto_enrich_threshold
     - is_enriched is null or false
 
     Uses claimed_at timestamp for orphan recovery.
@@ -445,6 +449,7 @@ def claim_paths_for_enriching(
         facility: Facility ID
         limit: Maximum paths to claim
         root_filter: If set, only claim paths under these roots
+        auto_enrich_threshold: If set, also claim paths with score >= threshold
     """
     from imas_codex.graph import GraphClient
 
@@ -453,12 +458,18 @@ def claim_paths_for_enriching(
     if root_filter:
         root_clause = "AND any(root IN $root_filter WHERE p.path STARTS WITH root)"
 
+    # Build enrich condition: should_enrich=true OR (threshold and score >= threshold)
+    if auto_enrich_threshold is not None:
+        enrich_clause = "(p.should_enrich = true OR p.score >= $auto_enrich_threshold)"
+    else:
+        enrich_clause = "p.should_enrich = true"
+
     with GraphClient() as gc:
         result = gc.query(
             f"""
             MATCH (p:FacilityPath)-[:FACILITY_ID]->(f:Facility {{id: $facility}})
             WHERE p.status = $scored
-              AND p.should_enrich = true
+              AND {enrich_clause}
               AND (p.is_enriched IS NULL OR p.is_enriched = false)
             {root_clause}
             WITH p ORDER BY p.score DESC, p.depth ASC LIMIT $limit
@@ -470,6 +481,7 @@ def claim_paths_for_enriching(
             limit=limit,
             scored=PathStatus.scored.value,
             root_filter=root_filter or [],
+            auto_enrich_threshold=auto_enrich_threshold,
         )
         return list(result)
 
@@ -1242,7 +1254,10 @@ async def enrich_worker(
     while not state.should_stop():
         # Claim work from graph
         paths = claim_paths_for_enriching(
-            state.facility, limit=batch_size, root_filter=state.root_filter
+            state.facility,
+            limit=batch_size,
+            root_filter=state.root_filter,
+            auto_enrich_threshold=state.auto_enrich_threshold,
         )
 
         if not paths:
@@ -1698,6 +1713,7 @@ async def run_parallel_discovery(
     focus: str | None = None,
     threshold: float = 0.7,
     root_filter: list[str] | None = None,
+    auto_enrich_threshold: float | None = None,
     num_scan_workers: int = 1,
     num_expand_workers: int = 1,
     num_score_workers: int = 1,  # Single scorer: rescore also uses LLM (total=2)
@@ -1792,6 +1808,7 @@ async def run_parallel_discovery(
         focus=focus,
         threshold=threshold,
         root_filter=root_filter,
+        auto_enrich_threshold=auto_enrich_threshold,
     )
 
     # Pre-set idle counts for disabled workers so should_stop() works correctly

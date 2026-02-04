@@ -569,7 +569,12 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
 _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
-    "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
+    "discovery/scorer": [
+        "path_purposes",
+        "score_dimensions",
+        "scoring_schema",
+        "format_patterns",
+    ],
     "discovery/rescorer": ["rescore_schema", "format_patterns"],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["access_method_fields"],
