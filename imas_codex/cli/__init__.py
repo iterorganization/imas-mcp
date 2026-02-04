@@ -3,24 +3,28 @@
 Modular CLI structure with command groups split by functionality.
 """
 
-import logging
+# CRITICAL: Filter warnings BEFORE any imports that might trigger them
+# This must be at the absolute top of the module
 import warnings
 
-# Suppress third-party deprecation warnings before importing other modules
-warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 # Suppress aiohttp's enable_cleanup_closed warning (fixed in Python 3.12.7+)
-# Must filter BEFORE any aiohttp imports occur
+# Use regex patterns to match the warning message and all aiohttp submodules
 warnings.filterwarnings(
     "ignore",
-    message=".*enable_cleanup_closed.*",
+    message=r".*enable_cleanup_closed.*",
     category=DeprecationWarning,
 )
-# Also filter by module pattern for robustness
+# Suppress all deprecation warnings from aiohttp and its submodules
+# The module parameter uses regex, so aiohttp.* matches aiohttp.connector etc
 warnings.filterwarnings(
     "ignore",
     category=DeprecationWarning,
     module=r"aiohttp\..*",
 )
+# Suppress neo4j driver destructor warning
+warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
+
+import logging  # noqa: E402
 
 import click  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402

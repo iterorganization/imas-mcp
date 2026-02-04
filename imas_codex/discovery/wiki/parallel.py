@@ -356,30 +356,38 @@ def mark_pages_scanned(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark pages as scanned with extracted link data."""
+    """Mark pages as scanned with extracted link data.
+
+    Uses batched UNWIND for O(1) graph operations instead of O(n) individual queries.
+    """
     if not results:
         return 0
 
+    # Prepare batch data
+    batch_data = [
+        {"id": r.get("id"), "out_degree": r.get("out_degree", 0)}
+        for r in results
+        if r.get("id")
+    ]
+
+    if not batch_data:
+        return 0
+
     with GraphClient() as gc:
-        for r in results:
-            page_id = r.get("id")
-            if not page_id:
-                continue
+        gc.query(
+            """
+            UNWIND $batch AS item
+            MATCH (wp:WikiPage {id: item.id})
+            SET wp.status = $scanned,
+                wp.out_degree = item.out_degree,
+                wp.scanned_at = datetime(),
+                wp.claimed_at = null
+            """,
+            batch=batch_data,
+            scanned=WikiPageStatus.scanned.value,
+        )
 
-            gc.query(
-                """
-                MATCH (wp:WikiPage {id: $id})
-                SET wp.status = $scanned,
-                    wp.out_degree = $out_degree,
-                    wp.scanned_at = datetime(),
-                    wp.claimed_at = null
-                """,
-                id=page_id,
-                scanned=WikiPageStatus.scanned.value,
-                out_degree=r.get("out_degree", 0),
-            )
-
-    return len(results)
+    return len(batch_data)
 
 
 def mark_pages_scored(
@@ -391,93 +399,111 @@ def mark_pages_scored(
     All scored pages move to 'scored' status regardless of score.
     The ingester filters by score >= threshold, so low scores are
     effectively skipped without explicit status transition.
+
+    Uses batched UNWIND for O(1) graph operations instead of O(n) individual queries.
     """
     if not results:
         return 0
 
+    # Prepare batch data with all scoring fields
+    batch_data = []
+    for r in results:
+        page_id = r.get("id")
+        if not page_id:
+            continue
+
+        batch_data.append(
+            {
+                "id": page_id,
+                "score": r.get("score", 0.0),
+                "page_purpose": r.get("page_purpose", "other"),
+                "description": (r.get("description", "") or "")[:150],
+                "reasoning": r.get("reasoning", ""),
+                "keywords": r.get("keywords", []),
+                "physics_domain": r.get("physics_domain"),
+                "preview_text": r.get("preview_text", ""),
+                "score_data_documentation": r.get("score_data_documentation", 0.0),
+                "score_physics_content": r.get("score_physics_content", 0.0),
+                "score_code_documentation": r.get("score_code_documentation", 0.0),
+                "score_data_access": r.get("score_data_access", 0.0),
+                "score_calibration": r.get("score_calibration", 0.0),
+                "score_imas_relevance": r.get("score_imas_relevance", 0.0),
+                "is_physics": r.get("is_physics", False),
+                "score_cost": r.get("score_cost", 0.0),
+            }
+        )
+
+    if not batch_data:
+        return 0
+
     with GraphClient() as gc:
-        for r in results:
-            page_id = r.get("id")
-            if not page_id:
-                continue
+        gc.query(
+            """
+            UNWIND $batch AS item
+            MATCH (wp:WikiPage {id: item.id})
+            SET wp.status = $status,
+                wp.score = item.score,
+                wp.page_purpose = item.page_purpose,
+                wp.description = item.description,
+                wp.score_reasoning = item.reasoning,
+                wp.keywords = item.keywords,
+                wp.physics_domain = item.physics_domain,
+                wp.preview_text = item.preview_text,
+                wp.score_data_documentation = item.score_data_documentation,
+                wp.score_physics_content = item.score_physics_content,
+                wp.score_code_documentation = item.score_code_documentation,
+                wp.score_data_access = item.score_data_access,
+                wp.score_calibration = item.score_calibration,
+                wp.score_imas_relevance = item.score_imas_relevance,
+                wp.is_physics_content = item.is_physics,
+                wp.score_cost = item.score_cost,
+                wp.scored_at = datetime(),
+                wp.preview_fetched_at = datetime(),
+                wp.claimed_at = null
+            """,
+            batch=batch_data,
+            status=WikiPageStatus.scored.value,
+        )
 
-            score = r.get("score", 0.0)
-
-            gc.query(
-                """
-                MATCH (wp:WikiPage {id: $id})
-                SET wp.status = $status,
-                    wp.score = $score,
-                    wp.page_purpose = $page_purpose,
-                    wp.description = $description,
-                    wp.score_reasoning = $reasoning,
-                    wp.keywords = $keywords,
-                    wp.physics_domain = $physics_domain,
-                    wp.preview_text = $preview_text,
-                    wp.score_data_documentation = $score_data_documentation,
-                    wp.score_physics_content = $score_physics_content,
-                    wp.score_code_documentation = $score_code_documentation,
-                    wp.score_data_access = $score_data_access,
-                    wp.score_calibration = $score_calibration,
-                    wp.score_imas_relevance = $score_imas_relevance,
-                    wp.is_physics_content = $is_physics,
-                    wp.score_cost = $score_cost,
-                    wp.scored_at = datetime(),
-                    wp.preview_fetched_at = datetime(),
-                    wp.claimed_at = null
-                """,
-                id=page_id,
-                status=WikiPageStatus.scored.value,
-                score=score,
-                page_purpose=r.get("page_purpose", "other"),
-                description=r.get("description", "")[:150]
-                if r.get("description")
-                else "",
-                reasoning=r.get("reasoning", ""),
-                keywords=r.get("keywords", []),
-                physics_domain=r.get("physics_domain"),
-                preview_text=r.get("preview_text", ""),
-                score_data_documentation=r.get("score_data_documentation", 0.0),
-                score_physics_content=r.get("score_physics_content", 0.0),
-                score_code_documentation=r.get("score_code_documentation", 0.0),
-                score_data_access=r.get("score_data_access", 0.0),
-                score_calibration=r.get("score_calibration", 0.0),
-                score_imas_relevance=r.get("score_imas_relevance", 0.0),
-                is_physics=r.get("is_physics", False),
-                score_cost=r.get("score_cost", 0.0),
-            )
-
-    return len(results)
+    return len(batch_data)
 
 
 def mark_pages_ingested(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark pages as ingested with chunk data (legacy interface)."""
+    """Mark pages as ingested with chunk data.
+
+    Uses batched UNWIND for O(1) graph operations instead of O(n) individual queries.
+    """
     if not results:
         return 0
 
+    # Prepare batch data
+    batch_data = [
+        {"id": r.get("id"), "chunks": r.get("chunk_count", 0)}
+        for r in results
+        if r.get("id")
+    ]
+
+    if not batch_data:
+        return 0
+
     with GraphClient() as gc:
-        for r in results:
-            page_id = r.get("id")
-            if not page_id:
-                continue
+        gc.query(
+            """
+            UNWIND $batch AS item
+            MATCH (wp:WikiPage {id: item.id})
+            SET wp.status = $ingested,
+                wp.chunk_count = item.chunks,
+                wp.ingested_at = datetime(),
+                wp.claimed_at = null
+            """,
+            batch=batch_data,
+            ingested=WikiPageStatus.ingested.value,
+        )
 
-            gc.query(
-                """
-                MATCH (wp:WikiPage {id: $id})
-                SET wp.status = $ingested,
-                    wp.chunk_count = $chunks,
-                    wp.ingested_at = datetime(),
-                    wp.claimed_at = null
-                """,
-                id=page_id,
-                ingested=WikiPageStatus.ingested.value,
-                chunks=r.get("chunk_count", 0),
-            )
-
-    return len(results)
+    return len(batch_data)
 
 
 def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
