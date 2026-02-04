@@ -1,6 +1,6 @@
 ## physics_domain Values (CRITICAL - use exactly these values)
 
-Select the primary physics domain for code directories. Use `null` if no clear domain applies.
+Select the primary physics domain for code directories. Use `general` if no clear domain applies.
 
 {% for d in physics_domains %}
 - `{{ d.value }}`: {{ d.description }}
@@ -11,4 +11,4 @@ Select the primary physics domain for code directories. Use `null` if no clear d
 - Thomson scattering analysis → `electromagnetic_wave_diagnostics`
 - Transport solver → `transport`
 - MHD stability analysis → `magnetohydrodynamics` (NOT "mhd" or "MHD")
-- General utilities, data management → `general` or `null`
+- General utilities, data containers → `general`

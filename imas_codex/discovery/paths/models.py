@@ -9,7 +9,7 @@ Note: DirectoryEvidence, ScoredDirectory, ScoredBatch are transient runtime
 structures for the scorer, NOT graph node types. They are converted to
 graph updates via frontier.mark_paths_scored().
 
-The Pydantic models (EvidenceSchema, ScoreResult, ScoreBatch)
+The Pydantic models (ScoreResult, ScoreBatch, RescoreResult, RescoreBatch)
 are used for LLM structured output - LiteLLM parses responses directly into these.
 """
 
@@ -32,7 +32,6 @@ __all__ = [
     "DirectoryEvidence",
     "ScoredDirectory",
     "ScoredBatch",
-    "EvidenceSchema",
     "ScoreResult",
     "ScoreBatch",
     "RescoreResult",
@@ -47,39 +46,12 @@ __all__ = [
 # Note: ResourcePurpose is imported from the generated LinkML models (graph/models.py).
 # The generated enum is used directly for LLM structured output - no duplicate needed.
 # LiteLLM/Pydantic correctly handle str-based enums from LinkML.
-
-
-class EvidenceSchema(BaseModel):
-    """Evidence collected about a directory's contents.
-
-    Used by LLM for structured output - maps directly to DirectoryEvidence.
-    Generic semantic signal container reusable across node types.
-    """
-
-    code_indicators: list[str] = Field(
-        default_factory=list,
-        description="Programming file extensions found (e.g., ['py', 'f90', 'cpp'])",
-    )
-    data_indicators: list[str] = Field(
-        default_factory=list,
-        description="Data file extensions found (e.g., ['nc', 'h5', 'csv'])",
-    )
-    doc_indicators: list[str] = Field(
-        default_factory=list,
-        description="Documentation signals (e.g., ['README', 'docs/', 'pdf', 'tutorial'])",
-    )
-    imas_indicators: list[str] = Field(
-        default_factory=list,
-        description="IMAS-related patterns (e.g., ['put_slice', 'ids_properties'])",
-    )
-    physics_indicators: list[str] = Field(
-        default_factory=list,
-        description="Physics domain patterns (e.g., ['equilibrium', 'transport'])",
-    )
-    quality_indicators: list[str] = Field(
-        default_factory=list,
-        description="Project quality signals (e.g., ['has_readme', 'has_git'])",
-    )
+#
+# SCHEMA SIMPLIFICATION (Feb 2026):
+# Removed EvidenceSchema nested object to reduce JSON schema complexity for Gemini.
+# Evidence is now derived from input data (has_readme, file_type_counts, etc.)
+# and pattern matches from the enrichment worker. This eliminates 6 list fields
+# and the nested object definition from the schema sent to the LLM.
 
 
 class ScoreResult(BaseModel):
@@ -95,9 +67,12 @@ class ScoreResult(BaseModel):
     - Support: documentation
     - Cross-cutting: imas (for IMAS relevance)
 
-    Note: ge/le constraints removed from float fields because Anthropic
-    via OpenRouter doesn't support minimum/maximum JSON schema properties.
-    Score clamping is done in the parser instead.
+    SCHEMA SIMPLIFICATION (Feb 2026):
+    - Removed nested EvidenceSchema (evidence derived from input data)
+    - Changed nullable str fields to empty-string defaults (removes anyOf branching)
+    - Made physics_domain required with 'general' default (removes anyOf branching)
+    - Made should_enrich required
+    These changes reduce JSON schema complexity for Gemini structured output.
     """
 
     path: str = Field(description="The directory path (echo from input)")
@@ -110,11 +85,6 @@ class ScoreResult(BaseModel):
 
     description: str = Field(
         description="Concise description of directory contents (1-2 sentences)"
-    )
-
-    evidence: EvidenceSchema = Field(
-        default_factory=EvidenceSchema,
-        description="Structured evidence for scoring",
     )
 
     # Per-purpose scores (0.0-1.0 each)
@@ -162,9 +132,8 @@ class ScoreResult(BaseModel):
     should_expand: bool = Field(description="Whether to explore child directories")
 
     should_enrich: bool = Field(
-        default=True,
         description="Whether to run deep analysis (dust, tokei, patterns). "
-        "False for huge dirs like /work, /home, or paths with no code files.",
+        "False for huge dirs like /work, /home, or paths with no code files."
     )
 
     keywords: list[str] = Field(
@@ -172,21 +141,21 @@ class ScoreResult(BaseModel):
         description="Searchable keywords (max 5)",
     )
 
-    physics_domain: PhysicsDomain | None = Field(
-        default=None,
-        description="Primary physics domain from PhysicsDomain enum",
+    physics_domain: PhysicsDomain = Field(
+        default=PhysicsDomain.GENERAL,
+        description="Primary physics domain (use 'general' if no clear domain)",
     )
 
-    expansion_reason: str | None = Field(
-        default=None, description="Why to expand (if should_expand=true)"
+    expansion_reason: str = Field(
+        default="", description="Why to expand (if should_expand=true)"
     )
 
-    skip_reason: str | None = Field(
-        default=None, description="Why not to expand (if should_expand=false)"
+    skip_reason: str = Field(
+        default="", description="Why not to expand (if should_expand=false)"
     )
 
-    enrich_skip_reason: str | None = Field(
-        default=None,
+    enrich_skip_reason: str = Field(
+        default="",
         description="Why not to enrich (if should_enrich=false). "
         "E.g., 'too large', 'no code files', 'container only'",
     )
