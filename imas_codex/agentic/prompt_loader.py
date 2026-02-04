@@ -606,6 +606,74 @@ def _provide_physics_domains() -> dict[str, Any]:
     return {"physics_domains": domains}
 
 
+@lru_cache(maxsize=1)
+def _provide_wiki_page_purposes() -> dict[str, Any]:
+    """Provide WikiPagePurpose enum values grouped by priority."""
+    from imas_codex.discovery.wiki.models import WikiPagePurpose
+
+    # Group by value tier
+    high_value = {
+        WikiPagePurpose.data_source,
+        WikiPagePurpose.diagnostic,
+        WikiPagePurpose.code,
+        WikiPagePurpose.calibration,
+        WikiPagePurpose.data_access,
+    }
+    medium_value = {
+        WikiPagePurpose.physics_analysis,
+        WikiPagePurpose.experimental_procedure,
+        WikiPagePurpose.tutorial,
+        WikiPagePurpose.reference,
+    }
+    low_value = {
+        WikiPagePurpose.administrative,
+        WikiPagePurpose.personal,
+        WikiPagePurpose.other,
+    }
+
+    def purpose_to_dict(p: WikiPagePurpose) -> dict[str, str]:
+        # Use the description property which accesses _WIKI_PURPOSE_DESCRIPTIONS
+        return {"value": p.value, "description": p.description}
+
+    return {
+        "wiki_purposes": [purpose_to_dict(p) for p in WikiPagePurpose],
+        "wiki_purposes_high": [purpose_to_dict(p) for p in high_value],
+        "wiki_purposes_medium": [purpose_to_dict(p) for p in medium_value],
+        "wiki_purposes_low": [purpose_to_dict(p) for p in low_value],
+    }
+
+
+@lru_cache(maxsize=1)
+def _provide_wiki_score_dimensions() -> dict[str, Any]:
+    """Provide wiki score dimensions from WikiScoreResult model."""
+    from imas_codex.discovery.wiki.models import WikiScoreResult
+
+    score_dimensions = []
+    for field_name, field_info in WikiScoreResult.model_fields.items():
+        if field_name.startswith("score_"):
+            desc = field_info.description or ""
+            score_dimensions.append(
+                {
+                    "field": field_name,
+                    "label": field_name.replace("score_", "").replace("_", " ").title(),
+                    "description": desc,
+                }
+            )
+
+    return {"wiki_score_dimensions": score_dimensions}
+
+
+@lru_cache(maxsize=1)
+def _provide_wiki_scoring_schema() -> dict[str, Any]:
+    """Provide WikiScoreBatch Pydantic schema for LLM prompts."""
+    from imas_codex.discovery.wiki.models import WikiScoreBatch, WikiScoreResult
+
+    return {
+        "wiki_scoring_schema_example": get_pydantic_schema_json(WikiScoreBatch),
+        "wiki_scoring_schema_fields": get_pydantic_schema_description(WikiScoreResult),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -616,6 +684,10 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "rescore_schema": _provide_rescore_schema,
     "access_method_fields": _provide_access_method_fields,
     "format_patterns": _provide_format_patterns,
+    # Wiki providers
+    "wiki_page_purposes": _provide_wiki_page_purposes,
+    "wiki_score_dimensions": _provide_wiki_score_dimensions,
+    "wiki_scoring_schema": _provide_wiki_scoring_schema,
 }
 
 # Default schema needs per prompt (when not specified in frontmatter)
@@ -631,7 +703,13 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     "discovery/rescorer": ["rescore_schema", "format_patterns"],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["access_method_fields"],
-    # wiki prompts don't need schema context
+    # Wiki prompts
+    "wiki/scorer": [
+        "wiki_page_purposes",
+        "wiki_score_dimensions",
+        "wiki_scoring_schema",
+        "physics_domains",
+    ],
 }
 
 

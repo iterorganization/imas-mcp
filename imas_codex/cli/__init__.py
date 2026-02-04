@@ -9,6 +9,13 @@ import warnings
 # Suppress third-party deprecation warnings before importing other modules
 warnings.simplefilter("ignore", DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
+# Suppress aiohttp's enable_cleanup_closed warning (fixed in Python 3.12.7+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*enable_cleanup_closed.*",
+    category=DeprecationWarning,
+    module="aiohttp.connector",
+)
 
 import click  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402

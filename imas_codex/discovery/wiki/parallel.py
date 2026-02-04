@@ -479,7 +479,7 @@ def mark_pages_scored(
     facility: str,
     results: list[dict[str, Any]],
 ) -> int:
-    """Mark pages as scored with interest scores."""
+    """Mark pages as scored with interest scores and per-dimension data."""
     if not results:
         return 0
 
@@ -489,11 +489,16 @@ def mark_pages_scored(
             if not page_id:
                 continue
 
-            # Determine final status based on score
+            # Determine final status based on should_ingest flag
+            # If should_ingest=True, mark as scored (to be ingested)
+            # Otherwise mark as skipped
+            should_ingest = r.get("should_ingest", False)
             score = r.get("score", 0.5)
+
+            # Legacy fallback: also check score threshold
             final_status = (
                 WikiPageStatus.scored.value
-                if score >= 0.3
+                if should_ingest or score >= 0.5
                 else WikiPageStatus.skipped.value
             )
 
@@ -502,18 +507,44 @@ def mark_pages_scored(
                 MATCH (wp:WikiPage {id: $id})
                 SET wp.status = $status,
                     wp.interest_score = $score,
+                    wp.page_purpose = $page_purpose,
+                    wp.description = $description,
                     wp.score_reasoning = $reasoning,
+                    wp.keywords = $keywords,
+                    wp.physics_domain = $physics_domain,
+                    wp.should_ingest = $should_ingest,
+                    wp.skip_reason = $skip_reason,
+                    wp.score_data_documentation = $score_data_documentation,
+                    wp.score_physics_content = $score_physics_content,
+                    wp.score_code_documentation = $score_code_documentation,
+                    wp.score_data_access = $score_data_access,
+                    wp.score_calibration = $score_calibration,
+                    wp.score_imas_relevance = $score_imas_relevance,
                     wp.page_type = $page_type,
                     wp.is_physics_content = $is_physics,
+                    wp.score_cost = $score_cost,
                     wp.scored_at = datetime(),
                     wp.claimed_at = null
                 """,
                 id=page_id,
                 status=final_status,
                 score=score,
+                page_purpose=r.get("page_purpose", "other"),
+                description=r.get("description", "")[:150],
                 reasoning=r.get("reasoning", ""),
+                keywords=r.get("keywords", []),
+                physics_domain=r.get("physics_domain"),
+                should_ingest=should_ingest,
+                skip_reason=r.get("skip_reason"),
+                score_data_documentation=r.get("score_data_documentation", 0.0),
+                score_physics_content=r.get("score_physics_content", 0.0),
+                score_code_documentation=r.get("score_code_documentation", 0.0),
+                score_data_access=r.get("score_data_access", 0.0),
+                score_calibration=r.get("score_calibration", 0.0),
+                score_imas_relevance=r.get("score_imas_relevance", 0.0),
                 page_type=r.get("page_type", "other"),
                 is_physics=r.get("is_physics", False),
+                score_cost=r.get("score_cost", 0.0),
             )
 
     return len(results)
@@ -1306,23 +1337,29 @@ async def _score_pages_batch(
     model: str,
     focus: str | None = None,
 ) -> tuple[list[dict[str, Any]], float]:
-    """Score a batch of pages using LLM via centralized OpenRouter access.
+    """Score a batch of pages using LLM with structured output.
 
-    Uses litellm.acompletion with the centralized model configuration.
-    Cost is extracted from OpenRouter response, not estimated.
+    Uses litellm.acompletion with WikiScoreBatch Pydantic model for
+    structured output. Content-based scoring with per-dimension scores.
 
     Args:
-        pages: List of page dicts with id, title, summary, etc.
+        pages: List of page dicts with id, title, summary, preview_text, etc.
         model: Model identifier from get_model_for_task()
         focus: Optional focus area for scoring
 
     Returns:
         (results, cost) tuple where cost is actual LLM cost from OpenRouter.
     """
-    import json
     import os
+    import re
 
     import litellm
+
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.wiki.models import (
+        WikiScoreBatch,
+        grounded_wiki_score,
+    )
 
     # Get API key - same pattern as discovery/scorer.py
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -1337,48 +1374,42 @@ async def _score_pages_batch(
     if not model_id.startswith("openrouter/"):
         model_id = f"openrouter/{model_id}"
 
-    # Build scoring prompt
-    focus_instruction = f"\nFocus: {focus}" if focus else ""
+    # Build system prompt using dynamic template with schema injection
+    context: dict[str, Any] = {}
+    if focus:
+        context["focus"] = focus
 
-    system_prompt = f"""You are a wiki page scorer for fusion research documentation.
-Score each page from 0.0 to 1.0 based on technical value for plasma physics and IMAS data.
-{focus_instruction}
+    system_prompt = render_prompt("wiki/scorer", context)
 
-Scoring guidelines:
-- 0.8-1.0: Core technical content (data sources, diagnostics, physics codes, IMAS mappings)
-- 0.6-0.8: Technical documentation (code docs, analysis methods, experimental procedures)
-- 0.4-0.6: Supporting content (tutorials, overviews, general descriptions)
-- 0.2-0.4: Administrative/process (meeting notes, project management)
-- 0.0-0.2: Low value (personal pages, sandboxes, outdated drafts)
+    # Build user prompt with page content (not graph metrics)
+    lines = [
+        f"Score these {len(pages)} wiki pages based on their content.",
+        "(Use the preview text to infer value - graph metrics like in_degree are NOT indicators.)\n",
+    ]
 
-Respond with a JSON array of objects, each with:
-- id: the page id
-- score: float 0.0-1.0
-- reasoning: brief explanation (max 50 chars)
-- page_type: one of [data_source, diagnostic, code, documentation, tutorial, administrative, other]
-- is_physics: boolean, true if related to plasma physics
+    for i, p in enumerate(pages, 1):
+        lines.append(f"\n## Page {i}")
+        lines.append(f"ID: {p['id']}")
+        lines.append(f"Title: {p.get('title', 'Unknown')}")
 
-Example response:
-[{{"id": "jet:POG", "score": 0.85, "reasoning": "Core diagnostic data source", "page_type": "data_source", "is_physics": true}}]"""
+        # Use preview_text for content-based scoring (preferred over summary)
+        preview = p.get("preview_text") or p.get("summary") or ""
+        if preview:
+            lines.append(f"Preview: {preview[:800]}")
 
-    # Format pages for prompt
-    page_data = []
-    for p in pages:
-        page_data.append(
-            {
-                "id": p["id"],
-                "title": p.get("title", ""),
-                "summary": p.get("summary", "")[:500] if p.get("summary") else None,
-                "in_degree": p.get("in_degree", 0),
-                "depth": p.get("depth", 0),
-            }
-        )
+        # Include URL for context (Confluence vs MediaWiki structure hints)
+        url = p.get("url")
+        if url:
+            lines.append(f"URL: {url}")
 
-    user_prompt = (
-        f"Score these {len(pages)} wiki pages:\n{json.dumps(page_data, indent=2)}"
+    lines.append(
+        "\n\nReturn results for each page in order. "
+        "The response format is enforced by the schema."
     )
 
-    # Retry loop for rate limiting (same pattern as discovery/scorer.py)
+    user_prompt = "\n".join(lines)
+
+    # Retry loop for rate limiting
     max_retries = 3
     retry_base_delay = 2.0
     last_error = None
@@ -1388,12 +1419,13 @@ Example response:
             response = await litellm.acompletion(
                 model=model_id,
                 api_key=api_key,
+                response_format=WikiScoreBatch,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
-                max_tokens=4096,
+                max_tokens=8192,
             )
             break
         except Exception as e:
@@ -1428,34 +1460,71 @@ Example response:
         # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
         cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
 
-    # Parse response
+    # Parse response using Pydantic structured output
     content = response.choices[0].message.content
     if not content:
         logger.warning("LLM returned empty response, returning empty results")
         return [], cost
 
-    # Strip markdown code blocks if present
-    if content.startswith("```"):
-        content = content.split("\n", 1)[1]
-    if content.endswith("```"):
-        content = content.rsplit("\n", 1)[0]
-    content = content.strip()
+    # Sanitize: remove control characters (except newline/tab)
+    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+    content = content.encode("utf-8", errors="surrogateescape").decode(
+        "utf-8", errors="replace"
+    )
 
     try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.warning("Failed to parse LLM response as JSON: %s", e)
-        return [], cost
+        batch = WikiScoreBatch.model_validate_json(content)
+        llm_results = batch.results
+    except Exception as e:
+        logger.error(
+            "LLM validation error for batch of %d pages: %s. "
+            "Pages will be reverted to prefetched status.",
+            len(pages),
+            e,
+        )
+        raise ValueError(f"LLM response validation failed: {e}") from e
 
+    # Convert to result dicts, computing combined scores
+    cost_per_page = cost / len(pages) if pages else 0.0
     results = []
-    for r in parsed:
+
+    for r in llm_results[: len(pages)]:
+        # Build per-dimension scores dict
+        scores = {
+            "score_data_documentation": r.score_data_documentation,
+            "score_physics_content": r.score_physics_content,
+            "score_code_documentation": r.score_code_documentation,
+            "score_data_access": r.score_data_access,
+            "score_calibration": r.score_calibration,
+            "score_imas_relevance": r.score_imas_relevance,
+        }
+
+        # Compute combined score using grounded function
+        combined_score = grounded_wiki_score(scores, r.page_purpose)
+
         results.append(
             {
-                "id": r["id"],
-                "score": max(0.0, min(1.0, float(r.get("score", 0.5)))),
-                "reasoning": r.get("reasoning", "")[:80],
-                "page_type": r.get("page_type", "other"),
-                "is_physics": bool(r.get("is_physics", False)),
+                "id": r.id,
+                "score": combined_score,
+                "page_purpose": r.page_purpose.value,
+                "description": r.description[:150],
+                "reasoning": r.reasoning[:80],
+                "keywords": r.keywords[:5],
+                "physics_domain": r.physics_domain.value if r.physics_domain else None,
+                "should_ingest": r.should_ingest,
+                "skip_reason": r.skip_reason or None,
+                # Per-dimension scores
+                "score_data_documentation": r.score_data_documentation,
+                "score_physics_content": r.score_physics_content,
+                "score_code_documentation": r.score_code_documentation,
+                "score_data_access": r.score_data_access,
+                "score_calibration": r.score_calibration,
+                "score_imas_relevance": r.score_imas_relevance,
+                # Legacy fields for compatibility
+                "page_type": r.page_purpose.value,
+                "is_physics": r.physics_domain is not None
+                and r.physics_domain.value != "general",
+                "score_cost": cost_per_page,
             }
         )
 

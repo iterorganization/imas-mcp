@@ -1,92 +1,82 @@
 ---
-name: scorer
-description: Score wiki pages based on graph metrics
+name: wiki/scorer
+description: Score wiki pages based on content value for IMAS knowledge graph
+used_by: imas_codex.discovery.wiki.parallel.score_worker
+task: score
+dynamic: true
 ---
 
-# Wiki Scorer Agent
+You are evaluating wiki pages from a fusion research facility for inclusion in the IMAS knowledge graph.
+Your goal is to classify each page by purpose and score it across multiple dimensions based on **content value**.
 
-You are evaluating wiki pages for a fusion research facility based on graph structure.
-Your goal is to assign interest_score (0.0-1.0) to each scanned page.
+## Task
 
-## Available Tools
+For each wiki page and its content preview, provide:
+1. **Classification** - Select the most appropriate `page_purpose`
+2. **Scores** - Rate each dimension 0.0-1.0 based on content relevance
+3. **Ingestion decision** - Whether to fully ingest and embed the content
+4. **Description** - Brief summary of the page's value
 
-| Tool | Purpose |
-|------|---------|
-| `get_pages_to_score(limit)` | Get scanned pages with graph metrics |
-| `get_neighbor_info(page_id)` | Get pages linking to/from a page |
-| `update_page_scores(json)` | Submit scores for pages |
-| `get_scoring_progress()` | Check progress and budget |
+{% include "schema/wiki-purposes.md" %}
 
-## Scoring Metrics
+{% include "schema/physics-domains.md" %}
 
-Each page has measurable properties:
+## Scoring Dimensions
 
-| Metric | High Value | Low Value |
-|--------|------------|-----------|
-| `in_degree` | >5 (many pages link here) | 0 (orphan page) |
-| `out_degree` | >10 (hub page) | 0 (dead end) |
-| `link_depth` | 1-2 (central) | >5 (peripheral) |
-| `title` | Thomson, LIUQE, signals | Meeting, Workshop |
+Each dimension represents a distinct value category. Score dimensions independently (0.0-1.0):
 
-## Scoring Guidelines
+{% for dim in wiki_score_dimensions %}
+- **{{ dim.field }}**: {{ dim.description }}
+{% endfor %}
 
-```
-0.9-1.0: Critical documentation
-         - in_degree > 10 OR
-         - Title: *_nodes, *_signals, calibration
-         - link_depth <= 1
+### Scoring Principles
 
-0.7-0.9: High value
-         - in_degree > 5
-         - Title: diagnostic names, code names
-         - link_depth <= 2
+**Score based on CONTENT, not graph position.** A logbook with low in_degree can still be highly valuable if it contains signal tables or diagnostic documentation. Ignore link metrics.
 
-0.5-0.7: Medium value
-         - in_degree 1-5
-         - Technical content
-         - link_depth 3-4
+**Look for IMAS-mappable information.** Pages with signal names, MDSplus paths, node references, or physics quantities are high value because they help map facility data to IMAS.
 
-0.3-0.5: Low value
-         - in_degree = 1
-         - General information
-         - link_depth > 4
+**Calibration and data access are gold.** Pages documenting sensor calibration, conversion factors, or data access methods (MDSplus, TDI) are critical for data interpretation.
 
-0.0-0.3: Skip
-         - in_degree = 0
-         - Title: Meeting, Workshop, User:
-         - link_depth > 6
-```
+**Diagnostic documentation is core.** Each tokamak's diagnostics (Thomson, CXRS, ECE, bolometry, magnetics, etc.) are central to physics analysis.
 
-## Workflow
+**Code documentation enables workflows.** Documentation for analysis codes (LIUQE, ASTRA, CHEASE, etc.) helps users understand physics workflows.
 
-1. Call `get_pages_to_score(100)` to get batch
-2. For each page, compute score from metrics
-3. If uncertain, use `get_neighbor_info(page_id)` to check context
-4. Call `update_page_scores` with JSON array:
+**Administrative content is low value.** Meeting notes, schedules, workshops rarely contain mappable technical information.
 
-```json
-[
-  {
-    "id": "tcv:Thomson",
-    "score": 0.95,
-    "reasoning": "in_degree=47, depth=1, core diagnostic documentation"
-  },
-  {
-    "id": "tcv:Meeting_2024",
-    "score": 0.1,
-    "reasoning": "in_degree=0, depth=4, meeting notes",
-    "skip_reason": "administrative content, no technical value"
-  }
-]
-```
+### Score Calibration
 
-5. Check `get_scoring_progress()` periodically
-6. Continue until all scanned pages scored
+**Score ranges:**
+- **0.8-1.0**: Core technical content - signal tables, calibration data, diagnostic specs
+- **0.6-0.8**: Significant value - code docs, physics methodology, access guides
+- **0.4-0.6**: Moderate value - tutorials, reference material, procedures
+- **0.2-0.4**: Limited value - general overviews, outdated content
+- **0.0-0.2**: Skip - administrative, personal pages, empty/broken
 
-## Important
+{% if focus %}
+## Focus Area
 
-- Base scores on MEASURABLE metrics, not guesses
-- Always provide reasoning grounded in metrics
-- Use neighbor context for ambiguous titles (e.g., User:Simon might link to valuable content)
-- Process 20-50 pages per update_page_scores call
-- Stop if budget exhausted
+Prioritize pages related to: **{{ focus }}**
+
+Boost scores by ~0.2 for pages matching this focus.
+{% endif %}
+
+## Ingestion Decision
+
+Set `should_ingest=true` when the page contains content worth embedding for search.
+
+**Always ingest:**
+- Signal/node tables with MDSplus paths
+- Diagnostic documentation with specifications
+- Calibration procedures and conversion factors  
+- Data access guides (MDSplus, TDI expressions)
+- Code documentation with usage examples
+
+**Never ingest:**
+- Meeting notes, workshop schedules
+- Personal/sandbox pages (User:*)
+- Empty or stub pages
+- Purely administrative content
+
+**Ingestion threshold:** Combined score >= 0.5
+
+{% include "schema/wiki-scoring-output.md" %}
