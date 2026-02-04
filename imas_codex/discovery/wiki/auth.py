@@ -57,6 +57,15 @@ class WikiSiteConfig:
     ssh_host: str | None = None  # for ssh_proxy auth
 
 
+def _is_wsl() -> bool:
+    """Detect if running in Windows Subsystem for Linux."""
+    try:
+        with open("/proc/version", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
 class CredentialManager:
     """Manage credentials using system keyring with fallbacks.
 
@@ -69,19 +78,63 @@ class CredentialManager:
     and interactive prompts for first-time setup.
     """
 
+    # Timeout for keyring operations (seconds)
+    KEYRING_TIMEOUT = 3
+
     def __init__(self) -> None:
         """Initialize credential manager."""
         self._keyring_available = self._check_keyring()
 
     def _check_keyring(self) -> bool:
-        """Check if keyring is available and functional."""
-        try:
+        """Check if keyring is available and functional.
+
+        Returns False (disables keyring) in these cases:
+        - No DISPLAY and no DBUS_SESSION_BUS_ADDRESS (headless server)
+        - Keyring backend check times out
+        - PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring (explicit disable)
+        """
+        # Check for explicit disable via environment
+        if os.environ.get("PYTHON_KEYRING_BACKEND") == "keyring.backends.null.Keyring":
+            logger.info("Keyring explicitly disabled via PYTHON_KEYRING_BACKEND")
+            return False
+
+        # Skip on headless Linux without D-Bus (but not WSL - it has GUI support)
+        if sys.platform == "linux" and not _is_wsl():
+            if not os.environ.get("DISPLAY") and not os.environ.get(
+                "DBUS_SESSION_BUS_ADDRESS"
+            ):
+                logger.info(
+                    "Headless Linux detected (no DISPLAY/DBUS) - using env vars."
+                )
+                return False
+
+        import concurrent.futures
+
+        def _do_check() -> bool:
             import keyring
 
             # Test with a dummy operation
             backend = keyring.get_keyring()
             logger.debug("Keyring backend: %s", backend)
             return True
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_check)
+                result = future.result(timeout=self.KEYRING_TIMEOUT)
+                return result
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "Keyring check timed out after %ds - D-Bus/SecretService may be unresponsive. "
+                "Using environment variables instead.",
+                self.KEYRING_TIMEOUT,
+            )
+            if _is_wsl():
+                logger.warning(
+                    "WSL detected: If GNOME Keyring prompts for unlock password, "
+                    "you can reset it with: rm -rf ~/.local/share/keyrings/*"
+                )
+            return False
         except Exception as e:
             logger.warning("Keyring not available: %s", e)
             return False
@@ -98,6 +151,36 @@ class CredentialManager:
         """
         site_upper = site.upper().replace("-", "_").replace("/", "_")
         return f"{site_upper}_{key.upper()}"
+
+    def _keyring_op(self, func, *args, **kwargs):
+        """Run a keyring operation with timeout.
+
+        Prevents blocking when GNOME Keyring prompts for unlock password.
+
+        Args:
+            func: Function to call (e.g., keyring.get_password)
+            *args: Positional arguments for func
+            **kwargs: Keyword arguments for func
+
+        Returns:
+            Result of func, or None on timeout/error
+        """
+        import concurrent.futures
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+                return future.result(timeout=self.KEYRING_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            logger.warning(
+                "Keyring operation timed out after %ds - may need unlock. "
+                "See: imas-codex wiki credentials status",
+                self.KEYRING_TIMEOUT,
+            )
+            return None
+        except Exception as e:
+            logger.debug("Keyring operation failed: %s", e)
+            return None
 
     def set_credentials(
         self,
@@ -125,9 +208,22 @@ class CredentialManager:
         try:
             # Store username and password as JSON
             creds = json.dumps({"username": username, "password": password})
-            keyring.set_password(service, "credentials", creds)
-            logger.info("Stored credentials for %s", site)
-            return True
+
+            # Use timeout wrapper to avoid blocking on unlock prompt
+            def _set():
+                keyring.set_password(service, "credentials", creds)
+                return True
+
+            result = self._keyring_op(_set)
+            if result:
+                logger.info("Stored credentials for %s", site)
+                return True
+            else:
+                logger.error(
+                    "Failed to store credentials - keyring may need unlock. "
+                    "Run: imas-codex wiki credentials status"
+                )
+                return False
         except Exception as e:
             # Provide detailed error with setup instructions
             error_msg = str(e)
@@ -177,19 +273,38 @@ class CredentialManager:
         Returns:
             Tuple of (username, password) or None if not available
         """
-        # 1. Try keyring
+        # 1. Try keyring (with timeout to avoid blocking on unlock prompt)
         if self._keyring_available:
             import keyring
 
             service = self._service_name(site)
-            try:
-                creds_json = keyring.get_password(service, "credentials")
-                if creds_json:
+
+            def _get():
+                return keyring.get_password(service, "credentials")
+
+            creds_json = self._keyring_op(_get)
+            if creds_json:
+                try:
                     creds = json.loads(creds_json)
                     logger.debug("Retrieved credentials from keyring for %s", site)
                     return creds["username"], creds["password"]
-            except Exception as e:
-                logger.debug("Keyring lookup failed: %s", e)
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.debug("Invalid credentials JSON: %s", e)
+
+        # 2. Try environment variables
+        username_var = self._env_var_name(site, "username")
+        password_var = self._env_var_name(site, "password")
+        username = os.environ.get(username_var)
+        password = os.environ.get(password_var)
+        if username and password:
+            logger.debug("Retrieved credentials from environment for %s", site)
+            return username, password
+
+        # 3. Interactive prompt
+        if prompt_if_missing and sys.stdin.isatty():
+            return self._prompt_credentials(site)
+
+        return None
 
         # 2. Try environment variables
         username_var = self._env_var_name(site, "username")
@@ -358,16 +473,18 @@ class CredentialManager:
         Returns:
             True if credentials are available (keyring or env)
         """
-        # Check keyring
+        # Check keyring (with timeout to avoid blocking on unlock prompt)
         if self._keyring_available:
             import keyring
 
             service = self._service_name(site)
-            try:
-                if keyring.get_password(service, "credentials"):
-                    return True
-            except Exception:
-                pass
+
+            def _check():
+                return keyring.get_password(service, "credentials")
+
+            result = self._keyring_op(_check)
+            if result:
+                return True
 
         # Check environment
         username_var = self._env_var_name(site, "username")

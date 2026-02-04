@@ -333,10 +333,13 @@ def fetch_wiki_page(
     facility: str = "tcv",
     timeout: int = 60,
     site_type: str = "mediawiki",
+    auth_type: str | None = None,
+    credential_service: str | None = None,
 ) -> WikiPage:
     """Fetch a wiki page.
 
-    For MediaWiki: Fetches via SSH using urllib on remote host.
+    For MediaWiki with tequila auth: Fetches via HTTP with Tequila SSO.
+    For MediaWiki with ssh_proxy: Fetches via SSH using urllib on remote host.
     For Confluence: Fetches via REST API.
 
     Args:
@@ -344,6 +347,8 @@ def fetch_wiki_page(
         facility: Facility identifier (e.g., "tcv", "iter")
         timeout: Request timeout in seconds
         site_type: Site type ("mediawiki" or "confluence")
+        auth_type: Authentication type ("tequila", "ssh_proxy", "session", or None)
+        credential_service: Keyring service name for credentials
 
     Returns:
         WikiPage with HTML content and extracted entities
@@ -355,7 +360,104 @@ def fetch_wiki_page(
     if site_type == "confluence":
         return _fetch_confluence_page(page_name, facility, timeout)
 
-    # Handle MediaWiki sites via SSH
+    # Handle MediaWiki with Tequila auth (direct HTTP)
+    if auth_type == "tequila" or auth_type == "session":
+        return _fetch_mediawiki_page_http(
+            page_name=page_name,
+            facility=facility,
+            timeout=timeout,
+            credential_service=credential_service or f"{facility}-wiki",
+        )
+
+    # Handle MediaWiki sites via SSH (fallback)
+    return _fetch_mediawiki_page_ssh(page_name, facility, timeout)
+
+
+def _fetch_mediawiki_page_http(
+    page_name: str,
+    facility: str,
+    timeout: int,
+    credential_service: str,
+) -> WikiPage:
+    """Fetch MediaWiki page via HTTP with Tequila authentication.
+
+    Args:
+        page_name: Wiki page name
+        facility: Facility identifier
+        timeout: Request timeout in seconds
+        credential_service: Keyring service name for credentials
+
+    Returns:
+        WikiPage with HTML content and extracted entities
+
+    Raises:
+        RuntimeError: If fetch fails
+    """
+    from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+    client = MediaWikiClient(
+        base_url=WIKI_BASE_URL,
+        credential_service=credential_service,
+        timeout=timeout,
+        verify_ssl=False,  # Self-signed cert
+    )
+
+    try:
+        if not client.authenticate():
+            raise RuntimeError(f"Failed to authenticate to {WIKI_BASE_URL}")
+
+        page = client.get_page(page_name)
+        if page is None:
+            raise RuntimeError(f"Failed to fetch page: {page_name}")
+
+        # Extract entities from content
+        mdsplus_paths = extract_mdsplus_paths(page.content_html)
+        imas_paths = extract_imas_paths(page.content_html)
+        units = extract_units(page.content_html)
+        conventions = extract_conventions(page.content_html)
+
+        logger.info(
+            "Fetched %s via HTTP: %d chars, %d MDSplus paths, %d units, %d conventions",
+            page_name,
+            len(page.content_html),
+            len(mdsplus_paths),
+            len(units),
+            len(conventions),
+        )
+
+        return WikiPage(
+            url=page.url,
+            title=page.title,
+            content_html=page.content_html,
+            content_text=page.content_text,
+            mdsplus_paths=mdsplus_paths,
+            imas_paths=imas_paths,
+            units=units,
+            conventions=conventions,
+        )
+
+    finally:
+        client.close()
+
+
+def _fetch_mediawiki_page_ssh(
+    page_name: str,
+    facility: str,
+    timeout: int,
+) -> WikiPage:
+    """Fetch MediaWiki page via SSH proxy (fallback method).
+
+    Args:
+        page_name: Wiki page name
+        facility: Facility identifier (SSH host)
+        timeout: Request timeout in seconds
+
+    Returns:
+        WikiPage with HTML content and extracted entities
+
+    Raises:
+        RuntimeError: If fetch fails
+    """
     # URL-encode page name to handle spaces and special characters
     # Use safe="/" to preserve subpage slashes (e.g., Thomson/DDJ)
     import urllib.parse
@@ -378,7 +480,7 @@ except Exception as e:
     print('ERROR:', str(e))
 "'''
 
-    logger.debug("Fetching wiki page: %s", url)
+    logger.debug("Fetching wiki page via SSH: %s", url)
 
     try:
         result = subprocess.run(
@@ -414,7 +516,7 @@ except Exception as e:
     conventions = extract_conventions(html)
 
     logger.info(
-        "Fetched %s: %d chars, %d MDSplus paths, %d units, %d conventions",
+        "Fetched %s via SSH: %d chars, %d MDSplus paths, %d units, %d conventions",
         page_name,
         len(html),
         len(mdsplus_paths),

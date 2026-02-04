@@ -1197,8 +1197,11 @@ async def score_worker(
     """
     from imas_codex.agentic.agents import get_model_for_task
 
+    logger.info("score_worker started")
+
     while not state.should_stop_scoring():
         pages = claim_pages_for_scoring(state.facility, limit=50)
+        logger.debug(f"score_worker claimed {len(pages)} pages")
 
         if not pages:
             state.score_idle_count += 1
@@ -1929,6 +1932,8 @@ async def run_parallel_wiki_discovery(
         for _ in range(num_score_workers):
             workers.append(asyncio.create_task(score_worker(state, on_score_progress)))
         workers.append(asyncio.create_task(ingest_worker(state, on_ingest_progress)))
+
+    logger.info(f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}")
 
     # Wait for termination condition
     while not state.should_stop():

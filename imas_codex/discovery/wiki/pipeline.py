@@ -21,22 +21,25 @@ Example:
     print(f"Created {stats['chunks']} chunks")
 """
 
+from __future__ import annotations
+
 import hashlib
 import logging
 import re
 from collections.abc import Callable
 from html.parser import HTMLParser
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from llama_index.core import Document
-from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.node_parser import SentenceSplitter
 
-from imas_codex.embeddings.llama_index import get_llama_embed_model
 from imas_codex.graph import GraphClient
 
 from .monitor import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
+
+if TYPE_CHECKING:
+    from llama_index.core.embeddings import BaseEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -574,6 +577,8 @@ def get_embed_model() -> BaseEmbedding:
 
     Uses global caching to avoid reloading model for each page ingestion.
     """
+    from imas_codex.embeddings.llama_index import get_llama_embed_model
+
     global _CACHED_EMBED_MODEL
     if _CACHED_EMBED_MODEL is None:
         _CACHED_EMBED_MODEL = get_llama_embed_model()
@@ -919,7 +924,11 @@ class WikiIngestionPipeline:
 
                     # Fetch the page
                     page = fetch_wiki_page(
-                        page_name, facility=self.facility_id, site_type=site_type
+                        page_name,
+                        facility=self.facility_id,
+                        site_type=site_type,
+                        auth_type=wiki_config.auth_type,
+                        credential_service=wiki_config.credential_service,
                     )
 
                     # Check if fetch succeeded

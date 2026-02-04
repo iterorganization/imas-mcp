@@ -1,0 +1,495 @@
+"""MediaWiki client with Tequila (EPFL SSO) authentication.
+
+Provides HTTP access to MediaWiki sites that use EPFL Tequila SSO.
+Session cookies are stored in system keyring for persistence.
+
+Tequila Authentication Flow:
+1. Request wiki page → redirects to tequila.epfl.ch
+2. POST username/password to Tequila login form
+3. Tequila validates and redirects back with session cookie
+4. Session cookies cached in keyring for future requests (TTL: 24 hours)
+
+Example:
+    from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+    client = MediaWikiClient(
+        base_url="https://spcwiki.epfl.ch/wiki",
+        credential_service="tcv-wiki",
+    )
+
+    if client.authenticate():
+        page = client.get_page("Portal:TCV")
+        print(page.content_html)
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+
+import requests
+
+from imas_codex.discovery.wiki.auth import CredentialManager, require_credentials
+
+if TYPE_CHECKING:
+    from requests import Response
+
+logger = logging.getLogger(__name__)
+
+# Session TTL for wiki: 24 hours (Tequila sessions last ~8 hours)
+MEDIAWIKI_SESSION_TTL = 24 * 60 * 60
+
+# Request timeout
+DEFAULT_TIMEOUT = 30
+
+# Rate limiting: minimum seconds between requests
+RATE_LIMIT_DELAY = 0.3
+
+
+@dataclass
+class MediaWikiPage:
+    """A MediaWiki page with content and metadata."""
+
+    title: str
+    url: str
+    content_html: str
+    content_text: str = ""
+    page_id: int | None = None
+    revision_id: int | None = None
+    last_modified: str | None = None
+    categories: list[str] | None = None
+
+    @property
+    def page_name(self) -> str:
+        """Page name for compatibility with WikiPage interface."""
+        return self.title
+
+
+class TequilaAuthError(Exception):
+    """Tequila authentication failed."""
+
+    pass
+
+
+class MediaWikiClient:
+    """HTTP client for MediaWiki sites with Tequila (EPFL SSO) authentication.
+
+    Handles the Tequila SSO redirect flow:
+    1. Access wiki → redirect to tequila.epfl.ch
+    2. Submit credentials to Tequila login form
+    3. Follow redirects back to wiki with session
+    4. Cache session cookies in keyring
+
+    Attributes:
+        base_url: MediaWiki base URL (e.g., "https://spcwiki.epfl.ch/wiki")
+        credential_service: Keyring service name for credentials
+        timeout: Request timeout in seconds
+    """
+
+    # Tequila SSO endpoints
+    TEQUILA_HOST = "tequila.epfl.ch"
+    TEQUILA_LOGIN_URL = "https://tequila.epfl.ch/cgi-bin/tequila/login"
+
+    def __init__(
+        self,
+        base_url: str,
+        credential_service: str,
+        timeout: int = DEFAULT_TIMEOUT,
+        verify_ssl: bool = False,  # SPC wiki has self-signed cert
+    ) -> None:
+        """Initialize MediaWiki client.
+
+        Args:
+            base_url: MediaWiki base URL (e.g., "https://spcwiki.epfl.ch/wiki")
+            credential_service: Keyring service name for credentials
+            timeout: Request timeout in seconds
+            verify_ssl: Whether to verify SSL certificates
+        """
+        self.base_url = base_url.rstrip("/")
+        self.credential_service = credential_service
+        self.timeout = timeout
+        self.verify_ssl = verify_ssl
+
+        self._session: requests.Session | None = None
+        self._creds = CredentialManager()
+        self._last_request_time = 0.0
+        self._authenticated = False
+
+    def _get_session(self) -> requests.Session:
+        """Get or create requests session with restored cookies."""
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.headers.update(
+                {
+                    "User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                }
+            )
+
+            # Restore session cookies from keyring
+            cookies = self._creds.get_session(self.credential_service)
+            if cookies:
+                self._session.cookies.clear()
+                self._session.cookies.update(cookies)
+                logger.debug("Restored session cookies from keyring")
+
+        return self._session
+
+    def _rate_limit(self) -> None:
+        """Apply rate limiting between requests."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < RATE_LIMIT_DELAY:
+            time.sleep(RATE_LIMIT_DELAY - elapsed)
+        self._last_request_time = time.time()
+
+    def _is_tequila_redirect(self, response: Response) -> bool:
+        """Check if response is a Tequila login redirect."""
+        # Check if we were redirected to Tequila
+        return self.TEQUILA_HOST in response.url
+
+    def _extract_tequila_params(self, html: str, url: str) -> dict[str, str]:
+        """Extract hidden form parameters from Tequila login page.
+
+        Args:
+            html: Tequila login page HTML
+            url: Current URL (contains requestkey)
+
+        Returns:
+            Dict of form parameters needed for login POST
+        """
+        params = {}
+
+        # Extract requestkey from URL
+        requestkey_match = re.search(r"requestkey=([^&]+)", url)
+        if requestkey_match:
+            params["requestkey"] = requestkey_match.group(1)
+
+        # Extract any hidden form fields
+        hidden_pattern = re.compile(
+            r'<input[^>]*type=["\']hidden["\'][^>]*name=["\']([^"\']+)["\'][^>]*value=["\']([^"\']*)["\']',
+            re.IGNORECASE,
+        )
+        for match in hidden_pattern.finditer(html):
+            params[match.group(1)] = match.group(2)
+
+        # Also try reversed order (value before name)
+        hidden_pattern2 = re.compile(
+            r'<input[^>]*value=["\']([^"\']*)["\'][^>]*name=["\']([^"\']+)["\'][^>]*type=["\']hidden["\']',
+            re.IGNORECASE,
+        )
+        for match in hidden_pattern2.finditer(html):
+            params[match.group(2)] = match.group(1)
+
+        return params
+
+    def _perform_tequila_login(
+        self,
+        login_page_html: str,
+        login_url: str,
+        username: str,
+        password: str,
+    ) -> Response:
+        """Submit Tequila login form and follow redirects.
+
+        Args:
+            login_page_html: HTML of Tequila login page
+            login_url: URL of Tequila login page
+            username: EPFL username
+            password: EPFL password
+
+        Returns:
+            Final response after authentication
+
+        Raises:
+            TequilaAuthError: If login fails
+        """
+        session = self._get_session()
+
+        # Extract form parameters
+        params = self._extract_tequila_params(login_page_html, login_url)
+
+        # Add credentials and submit button
+        params["username"] = username
+        params["password"] = password
+        params["login"] = ""  # Submit button field
+
+        logger.debug("Submitting Tequila login form to %s", self.TEQUILA_LOGIN_URL)
+
+        # POST to Tequila
+        # Note: Use verify=False because the redirect chain ends at spcwiki
+        # which has a self-signed certificate
+        response = session.post(
+            self.TEQUILA_LOGIN_URL,
+            data=params,
+            timeout=self.timeout,
+            verify=False,  # Redirect back to spcwiki needs this
+            allow_redirects=True,
+        )
+
+        # Check if login failed (still on Tequila page)
+        if self.TEQUILA_HOST in response.url:
+            # Check for error message in response
+            if (
+                "Invalid username" in response.text
+                or "Invalid password" in response.text
+            ):
+                raise TequilaAuthError("Invalid username or password")
+            if "form" in response.text.lower() and "login" in response.text.lower():
+                raise TequilaAuthError("Login failed - still on login page")
+
+        return response
+
+    def authenticate(self, force: bool = False) -> bool:
+        """Authenticate with Tequila SSO.
+
+        Attempts to use existing session, falls back to fresh login.
+
+        Args:
+            force: Force re-authentication even if session exists
+
+        Returns:
+            True if authenticated successfully
+        """
+        session = self._get_session()
+
+        # Check if existing session is valid
+        if not force and self._authenticated:
+            return True
+
+        if not force:
+            try:
+                # Test session with a simple page request
+                test_url = self.base_url
+                response = session.get(
+                    test_url,
+                    timeout=self.timeout,
+                    verify=self.verify_ssl,
+                    allow_redirects=True,
+                )
+
+                # If we don't get redirected to Tequila, session is valid
+                if not self._is_tequila_redirect(response):
+                    logger.info("Session valid (no Tequila redirect)")
+                    self._authenticated = True
+                    return True
+
+                logger.debug("Session expired, need to re-authenticate")
+
+            except Exception as e:
+                logger.debug("Session check failed: %s", e)
+
+        # Need to authenticate with credentials
+        username, password = require_credentials(self.credential_service)
+
+        try:
+            # Access wiki to trigger Tequila redirect
+            response = session.get(
+                self.base_url,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                allow_redirects=True,
+            )
+
+            if not self._is_tequila_redirect(response):
+                # No auth needed? Unusual but possible
+                logger.info("No Tequila redirect - site may be public")
+                self._authenticated = True
+                return True
+
+            # Perform Tequila login
+            response = self._perform_tequila_login(
+                login_page_html=response.text,
+                login_url=response.url,
+                username=username,
+                password=password,
+            )
+
+            # Verify we're back on the wiki
+            if self._is_tequila_redirect(response):
+                logger.error("Still on Tequila after login - authentication failed")
+                return False
+
+            logger.info("Authenticated successfully via Tequila")
+
+            # Save session cookies
+            cookie_dict = {cookie.name: cookie.value for cookie in session.cookies}
+            self._creds.set_session(
+                self.credential_service,
+                cookie_dict,
+                ttl=MEDIAWIKI_SESSION_TTL,
+            )
+
+            self._authenticated = True
+            return True
+
+        except TequilaAuthError as e:
+            logger.error("Tequila authentication failed: %s", e)
+            return False
+        except requests.RequestException as e:
+            logger.error("Request failed during authentication: %s", e)
+            return False
+
+    def get_page(self, page_name: str) -> MediaWikiPage | None:
+        """Fetch a MediaWiki page.
+
+        Args:
+            page_name: Page name (e.g., "Portal:TCV", "Thomson/DDJ")
+
+        Returns:
+            MediaWikiPage or None if fetch failed
+        """
+        if not self._authenticated:
+            if not self.authenticate():
+                return None
+
+        self._rate_limit()
+        session = self._get_session()
+
+        # URL-encode page name (preserve slashes for subpages)
+        from urllib.parse import quote
+
+        encoded_name = quote(page_name, safe="/")
+        url = f"{self.base_url}/{encoded_name}"
+
+        try:
+            response = session.get(
+                url,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                allow_redirects=True,
+            )
+
+            # Check if session expired mid-request
+            if self._is_tequila_redirect(response):
+                logger.warning("Session expired during request, re-authenticating")
+                self._authenticated = False
+                if not self.authenticate(force=True):
+                    return None
+                # Retry request
+                response = session.get(
+                    url,
+                    timeout=self.timeout,
+                    verify=self.verify_ssl,
+                    allow_redirects=True,
+                )
+
+            response.raise_for_status()
+
+            # Extract title
+            title_match = re.search(r"<title>([^<]+)</title>", response.text)
+            title = (
+                title_match.group(1).replace(" - SPCwiki", "")
+                if title_match
+                else page_name
+            )
+
+            # Extract text content (strip tags for entity extraction)
+            text_content = re.sub(r"<[^>]+>", " ", response.text)
+            text_content = re.sub(r"\s+", " ", text_content)
+
+            return MediaWikiPage(
+                title=title,
+                url=url,
+                content_html=response.text,
+                content_text=text_content,
+            )
+
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                logger.debug("Page not found: %s", page_name)
+            else:
+                logger.error("HTTP error fetching %s: %s", page_name, e)
+            return None
+        except requests.RequestException as e:
+            logger.error("Request failed for %s: %s", page_name, e)
+            return None
+
+    def get_page_links(self, page_name: str) -> list[str]:
+        """Extract internal wiki links from a page.
+
+        Args:
+            page_name: Page name to extract links from
+
+        Returns:
+            List of linked page names
+        """
+        page = self.get_page(page_name)
+        if not page:
+            return []
+
+        links = set()
+        parsed_base = urlparse(self.base_url)
+        wiki_path = parsed_base.path  # e.g., "/wiki"
+
+        # Find internal wiki links
+        link_pattern = re.compile(
+            rf'<a[^>]*href=["\']({re.escape(wiki_path)}/([^"\'#]+))["\']',
+            re.IGNORECASE,
+        )
+
+        for match in link_pattern.finditer(page.content_html):
+            page_path = match.group(2)
+            # Skip special pages, images, etc.
+            if not any(
+                page_path.startswith(s)
+                for s in ("Special:", "File:", "Image:", "User:", "Talk:", "Category:")
+            ):
+                from urllib.parse import unquote
+
+                links.add(unquote(page_path))
+
+        # Also look for relative links
+        relative_pattern = re.compile(
+            r'<a[^>]*href=["\'](?!\w+://)["\']?/wiki/([^"\'#]+)["\']',
+            re.IGNORECASE,
+        )
+        for match in relative_pattern.finditer(page.content_html):
+            page_path = match.group(1)
+            if not any(
+                page_path.startswith(s)
+                for s in ("Special:", "File:", "Image:", "User:", "Talk:", "Category:")
+            ):
+                from urllib.parse import unquote
+
+                links.add(unquote(page_path))
+
+        return list(links)
+
+    def close(self) -> None:
+        """Close the session."""
+        if self._session is not None:
+            self._session.close()
+            self._session = None
+            self._authenticated = False
+
+
+def get_mediawiki_client(facility: str, site_index: int = 0) -> MediaWikiClient:
+    """Create a MediaWiki client for a facility.
+
+    Args:
+        facility: Facility identifier (e.g., "tcv")
+        site_index: Index of wiki site in facility config
+
+    Returns:
+        Configured MediaWikiClient
+
+    Raises:
+        ValueError: If facility has no wiki sites or invalid index
+    """
+    from imas_codex.discovery.wiki.config import WikiConfig
+
+    config = WikiConfig.from_facility(facility, site_index)
+
+    if config.site_type != "mediawiki":
+        raise ValueError(f"Site type {config.site_type} is not mediawiki")
+
+    return MediaWikiClient(
+        base_url=config.base_url,
+        credential_service=config.credential_service or f"{facility}-wiki",
+        verify_ssl=False,  # Most MediaWiki sites have self-signed certs
+    )

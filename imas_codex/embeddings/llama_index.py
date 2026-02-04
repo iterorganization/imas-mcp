@@ -11,16 +11,18 @@ Usage:
 """
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from llama_index.core.embeddings import BaseEmbedding
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import PrivateAttr
 
 from imas_codex.settings import get_embedding_backend, get_imas_embedding_model
 
 from .client import RemoteEmbeddingClient
 from .config import EmbeddingBackend
+
+if TYPE_CHECKING:
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,10 @@ def get_llama_embed_model() -> BaseEmbedding:
         return RemoteLlamaEmbedding(model_name=model_name, remote_url=remote_url)
 
     elif backend == EmbeddingBackend.LOCAL:
+        # Import HuggingFaceEmbedding only when local backend is used
+        # This avoids downloading models on import when using remote backend
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
         logger.info(f"Using local embedding backend: {model_name}")
         return HuggingFaceEmbedding(
             model_name=model_name,

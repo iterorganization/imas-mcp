@@ -22,6 +22,12 @@ from imas_codex.discovery.wiki.confluence import (
     ConfluenceSpace,
     detect_site_type,
 )
+from imas_codex.discovery.wiki.mediawiki import (
+    MediaWikiClient,
+    MediaWikiPage,
+    TequilaAuthError,
+    get_mediawiki_client,
+)
 from imas_codex.discovery.wiki.monitor import (
     ScanProgressMonitor,
     WikiIngestionStats,
@@ -60,6 +66,11 @@ __all__ = [
     "ConfluencePage",
     "ConfluenceSpace",
     "detect_site_type",
+    # MediaWiki client
+    "MediaWikiClient",
+    "MediaWikiPage",
+    "TequilaAuthError",
+    "get_mediawiki_client",
     # Configuration
     "WikiConfig",
     # Progress monitoring
