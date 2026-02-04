@@ -152,53 +152,98 @@ class RemoteEmbeddingClient:
         self,
         texts: list[str],
         normalize: bool = True,
+        max_retries: int = 3,
     ) -> np.ndarray:
-        """Embed texts using remote server.
+        """Embed texts using remote server with retry logic.
 
         Args:
             texts: List of texts to embed
             normalize: Whether to normalize embeddings
+            max_retries: Maximum retry attempts for transient errors
 
         Returns:
             Numpy array of embeddings
 
         Raises:
-            ConnectionError: If server is unavailable
-            RuntimeError: If embedding fails
+            ConnectionError: If server is unavailable after retries
+            RuntimeError: If embedding fails after retries
         """
         if not texts:
             return np.array([])
 
         client = self._get_client()
         start = time.time()
+        last_error: Exception | None = None
 
-        try:
-            response = client.post(
-                "/embed",
-                json={"texts": texts, "normalize": normalize},
-            )
+        for attempt in range(max_retries):
+            try:
+                response = client.post(
+                    "/embed",
+                    json={"texts": texts, "normalize": normalize},
+                )
 
-            if response.status_code != 200:
-                error_detail = response.json().get("detail", response.text)
-                raise RuntimeError(f"Embedding failed: {error_detail}")
+                if response.status_code != 200:
+                    error_detail = response.json().get("detail", response.text)
+                    raise RuntimeError(f"Embedding failed: {error_detail}")
 
-            data = response.json()
-            embeddings = np.array(data["embeddings"], dtype=np.float32)
+                data = response.json()
+                embeddings = np.array(data["embeddings"], dtype=np.float32)
 
-            elapsed = time.time() - start
-            logger.debug(
-                f"Remote embedding: {len(texts)} texts in {elapsed:.2f}s "
-                f"(server: {data.get('elapsed_ms', 0):.0f}ms)"
-            )
+                elapsed = time.time() - start
+                logger.debug(
+                    f"Remote embedding: {len(texts)} texts in {elapsed:.2f}s "
+                    f"(server: {data.get('elapsed_ms', 0):.0f}ms)"
+                )
 
-            return embeddings
+                return embeddings
 
-        except httpx.ConnectError as e:
-            raise ConnectionError(f"Cannot connect to embedding server: {e}") from e
-        except httpx.TimeoutException as e:
-            raise ConnectionError(f"Embedding request timed out: {e}") from e
-        except httpx.HTTPError as e:
-            raise RuntimeError(f"HTTP error during embedding: {e}") from e
+            except httpx.ConnectError as e:
+                last_error = ConnectionError(f"Cannot connect to embedding server: {e}")
+                # Retry on connection errors
+                if attempt < max_retries - 1:
+                    delay = 2**attempt
+                    logger.debug(
+                        f"Connection error (attempt {attempt + 1}/{max_retries}), "
+                        f"retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                raise last_error from e
+
+            except httpx.TimeoutException as e:
+                last_error = ConnectionError(f"Embedding request timed out: {e}")
+                # Retry on timeout
+                if attempt < max_retries - 1:
+                    delay = 2**attempt
+                    logger.debug(
+                        f"Timeout (attempt {attempt + 1}/{max_retries}), "
+                        f"retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                raise last_error from e
+
+            except httpx.HTTPError as e:
+                # Retry on server disconnection and transient HTTP errors
+                error_msg = str(e).lower()
+                is_transient = any(
+                    x in error_msg
+                    for x in ["disconnected", "reset", "broken", "503", "502", "429"]
+                )
+                last_error = RuntimeError(f"HTTP error during embedding: {e}")
+
+                if is_transient and attempt < max_retries - 1:
+                    delay = 2**attempt
+                    logger.debug(
+                        f"Transient error (attempt {attempt + 1}/{max_retries}), "
+                        f"retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                raise last_error from e
+
+        # Should not reach here, but handle edge case
+        raise last_error or RuntimeError("Embedding failed after retries")
 
 
 def get_remote_client(url: str | None = None) -> RemoteEmbeddingClient | None:

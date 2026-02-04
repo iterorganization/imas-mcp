@@ -374,7 +374,14 @@ class WikiProgressDisplay:
                         f" ({self.state.bulk_discovery_count:,} found)", style="white"
                     )
             elif score:
-                # Show score value and title
+                # Line 1: Page title (clipped to fit)
+                section.append(
+                    self._clip_title(score.title, self.WIDTH - 10), style="white"
+                )
+                section.append("\n")
+
+                # Line 2: Score, physics domain, description
+                section.append("    ", style="dim")
                 if score.score is not None:
                     if score.score >= 0.7:
                         style = "bold green"
@@ -382,25 +389,21 @@ class WikiProgressDisplay:
                         style = "yellow"
                     else:
                         style = "red"
-                    section.append(f"{score.score:.2f} ", style=style)
+                    section.append(f"{score.score:.2f}  ", style=style)
 
-                section.append(
-                    self._clip_title(score.title, self.WIDTH - 20), style="white"
-                )
-                section.append("\n")
-                section.append("    ", style="dim")
-
-                # Second line: physics domain + description
+                # Physics domain without brackets (matching paths CLI)
                 if score.physics_domain:
-                    section.append(f"[{score.physics_domain}] ", style="cyan")
+                    section.append(f"{score.physics_domain}  ", style="cyan")
                 elif score.is_physics:
-                    section.append("[physics] ", style="cyan")
+                    section.append("physics  ", style="cyan")
 
                 if score.description:
                     desc = clean_text(score.description)
-                    desc_width = self.WIDTH - 16  # Account for indent and domain
+                    # Calculate width: 4 indent + 5 score + 2 space + domain + 2 space
+                    used = 11
                     if score.physics_domain:
-                        desc_width -= len(score.physics_domain) + 3
+                        used += len(score.physics_domain) + 2
+                    desc_width = self.WIDTH - used
                     section.append(clip_text(desc, desc_width), style="italic dim")
                 elif score.skipped:
                     section.append(f"skipped: {score.skip_reason}", style="yellow dim")
@@ -415,17 +418,18 @@ class WikiProgressDisplay:
                 section.append("\n    ", style="dim")
             section.append("\n")
 
-        # INGEST section - always 2 lines, show score + description
+        # INGEST section - 2 lines: title, then score + domain + description + chunks
         if not self.state.scan_only:
             section.append("  INGEST", style="bold magenta")
             if ingest:
+                # Line 1: Page title
                 section.append(
                     " " + self._clip_title(ingest.title, self.WIDTH - 12), style="white"
                 )
                 section.append("\n")
-                section.append("    ", style="dim")
 
-                # Second line: score + physics domain + description + chunk count
+                # Line 2: score + physics domain + description + chunk count
+                section.append("    ", style="dim")
                 if ingest.score is not None:
                     if ingest.score >= 0.7:
                         style = "bold green"
@@ -433,14 +437,19 @@ class WikiProgressDisplay:
                         style = "yellow"
                     else:
                         style = "dim"
-                    section.append(f"{ingest.score:.2f} ", style=style)
+                    section.append(f"{ingest.score:.2f}  ", style=style)
 
+                # Physics domain without brackets (matching paths CLI)
                 if ingest.physics_domain:
-                    section.append(f"[{ingest.physics_domain}] ", style="cyan")
+                    section.append(f"{ingest.physics_domain}  ", style="cyan")
 
                 if ingest.description:
                     desc = clean_text(ingest.description)
-                    desc_width = self.WIDTH - 30  # Account for score, domain, chunks
+                    # Calculate width: 4 indent + 5 score + 2 sp + domain + 2 sp + chunks (~12)
+                    used = 23
+                    if ingest.physics_domain:
+                        used += len(ingest.physics_domain) + 2
+                    desc_width = self.WIDTH - used
                     section.append(clip_text(desc, desc_width), style="italic dim")
 
                 section.append(f"  {ingest.chunk_count} chunks", style="cyan")
@@ -673,9 +682,11 @@ class WikiProgressDisplay:
         if results:
             items = []
             for r in results:
+                # Use title if already extracted, otherwise extract from id
+                title = r.get("title") or r.get("id", "?").split(":")[-1]
                 items.append(
                     {
-                        "title": r.get("id", "?").split(":")[-1][:60],
+                        "title": title[:60],
                         "score": r.get("score"),
                         "physics_domain": r.get("physics_domain"),
                         "description": r.get("description", ""),
@@ -714,9 +725,11 @@ class WikiProgressDisplay:
         if results:
             items = []
             for r in results:
+                # Use title if already extracted, otherwise extract from id
+                title = r.get("title") or r.get("id", "?").split(":")[-1]
                 items.append(
                     {
-                        "title": r.get("id", "?").split(":")[-1][:60],
+                        "title": title[:60],
                         "score": r.get("score"),
                         "description": r.get("description", ""),
                         "physics_domain": r.get("physics_domain"),
