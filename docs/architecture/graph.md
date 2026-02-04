@@ -83,7 +83,7 @@ with GraphClient() as client:
 |------|---------|----------------|
 | `DDVersion` | DD version | version, release_date |
 | `DDPath` | Data path | full_path, documentation, units |
-| `PathChange` | Version change | change_type, semantic_type |
+| `IMASPathChange` | Version change | change_type, semantic_type |
 
 ## CLI Commands
 

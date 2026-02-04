@@ -31,12 +31,12 @@ The IMAS Data Dictionary (DD) is stored in Neo4j with full version tracking acro
 })
 ```
 
-### PathChange Node
+### IMASPathChange Node
 
 Tracks metadata changes between versions:
 
 ```cypher
-(:PathChange {
+(:IMASPathChange {
     path: "equilibrium/time_slice/profiles_1d/psi",
     from_version: "3.42.2",
     to_version: "4.0.0",
@@ -51,7 +51,7 @@ Instead of storing N copies of each path, we track:
 
 1. **Introduction**: When path first appeared (`INTRODUCED_IN` relationship)
 2. **Deprecation**: When path was removed (`DEPRECATED_IN` relationship)
-3. **Changes**: Metadata changes between versions (`PathChange` nodes)
+3. **Changes**: Metadata changes between versions (`IMASPathChange` nodes)
 4. **Renames**: Path migrations (`RENAMED_TO` relationship)
 
 ## Semantic Change Detection
@@ -83,7 +83,7 @@ WHERE intro.version <= "3.42.0"
 RETURN p.documentation, p.units
 
 -- Sign convention changes
-MATCH (c:PathChange {semantic_type: "sign_convention"})
+MATCH (c:IMASPathChange {semantic_type: "sign_convention"})
 WHERE c.from_version STARTS WITH "3." AND c.to_version STARTS WITH "4."
 RETURN c.path, c.old_value, c.new_value
 ```

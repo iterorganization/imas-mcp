@@ -7,8 +7,8 @@ This module provides functions to populate Neo4j with IMAS DD structure:
 - IMASPath nodes with hierarchical relationships
 - Unit and CoordinateSpec nodes
 - Version tracking (INTRODUCED_IN, DEPRECATED_IN, RENAMED_TO)
-- PathChange nodes for metadata changes with semantic classification
-- SemanticCluster nodes from existing clusters (optional)
+- IMASPathChange nodes for metadata changes with semantic classification
+- IMASSemanticCluster nodes from existing clusters (optional)
 - Embeddings for IMASPath nodes with content-based caching
 
 The graph is augmented incrementally, not rebuilt - this preserves
@@ -1155,7 +1155,7 @@ def build_dd_graph(
             # Batch mark deprecated paths
             _batch_mark_paths_deprecated(client, changes["removed"], version)
 
-            # Batch create PathChange nodes for metadata changes
+            # Batch create IMASPathChange nodes for metadata changes
             change_count = _batch_create_path_changes(
                 client, changes["changed"], version
             )
@@ -1309,9 +1309,9 @@ def _ensure_indexes(client: GraphClient) -> None:
     # Unit.symbol - for unit relationship lookups
     client.query("CREATE INDEX unit_symbol IF NOT EXISTS FOR (u:Unit) ON (u.symbol)")
 
-    # SemanticCluster.id - for cluster lookups
+    # IMASSemanticCluster.id - for cluster lookups
     client.query(
-        "CREATE INDEX semanticcluster_id IF NOT EXISTS FOR (c:SemanticCluster) ON (c.id)"
+        "CREATE INDEX imassemcluster_id IF NOT EXISTS FOR (c:IMASSemanticCluster) ON (c.id)"
     )
 
     # Vector indexes for semantic search
@@ -1349,12 +1349,12 @@ def _ensure_vector_indexes(client: GraphClient) -> None:
         except Exception as e:
             logger.warning(f"Failed to create imas_path_embedding index: {e}")
 
-    # Create SemanticCluster centroid index
+    # Create IMASSemanticCluster centroid index
     if "cluster_centroid" not in existing_names:
         try:
             client.query("""
                 CREATE VECTOR INDEX cluster_centroid IF NOT EXISTS
-                FOR (c:SemanticCluster) ON c.centroid
+                FOR (c:IMASSemanticCluster) ON c.centroid
                 OPTIONS {
                     indexConfig: {
                         `vector.dimensions`: 384,
@@ -1655,7 +1655,7 @@ def _batch_create_path_changes(
     changes: dict[str, list[dict]],
     version: str,
 ) -> int:
-    """Batch create PathChange nodes for metadata changes with semantic classification."""
+    """Batch create IMASPathChange nodes for metadata changes with semantic classification."""
     if not changes:
         return 0
 
@@ -1687,11 +1687,11 @@ def _batch_create_path_changes(
     if not change_list:
         return 0
 
-    # Create PathChange nodes with semantic classification
+    # Create IMASPathChange nodes with semantic classification
     client.query(
         """
         UNWIND $changes AS c
-        MERGE (change:PathChange {id: c.id})
+        MERGE (change:IMASPathChange {id: c.id})
         SET change.change_type = c.change_type,
             change.old_value = c.old_value,
             change.new_value = c.new_value,
@@ -1705,7 +1705,7 @@ def _batch_create_path_changes(
     client.query(
         """
         UNWIND $changes AS c
-        MATCH (change:PathChange {id: c.id})
+        MATCH (change:IMASPathChange {id: c.id})
         MATCH (p:IMASPath {id: c.path})
         MATCH (v:DDVersion {id: $version})
         MERGE (change)-[:PATH]->(p)
@@ -1876,11 +1876,11 @@ def _import_clusters(
                     "ids_names": ids_names if ids_names else [],
                 }
 
-                # Create SemanticCluster node with all properties
+                # Create IMASSemanticCluster node with all properties
                 # Use CASE expressions to handle null centroid
                 client.query(
                     """
-                    MERGE (c:SemanticCluster {id: $cluster_id})
+                    MERGE (c:IMASSemanticCluster {id: $cluster_id})
                     SET c.label = $label,
                         c.physics_domain = $physics_domain,
                         c.path_count = $path_count,
@@ -1912,7 +1912,7 @@ def _import_clusters(
                         """
                         UNWIND $memberships AS m
                         MATCH (p:IMASPath {id: m.path})
-                        MATCH (c:SemanticCluster {id: $cluster_id})
+                        MATCH (c:IMASSemanticCluster {id: $cluster_id})
                         MERGE (p)-[r:IN_CLUSTER]->(c)
                         SET r.distance = m.distance
                         """,

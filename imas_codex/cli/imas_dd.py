@@ -86,11 +86,11 @@ def imas_build(
     - IMASPath nodes with hierarchical relationships (PARENT, IDS)
     - Unit nodes with HAS_UNIT relationships
     - CoordinateSpec nodes with HAS_COORDINATE relationships
-    - PathChange nodes for metadata evolution between versions
+    - IMASPathChange nodes for metadata evolution between versions
     - RENAMED_TO relationships for path migrations
     - HAS_ERROR relationships linking data paths to error fields
     - Vector embeddings for semantic search (current version only)
-    - SemanticCluster nodes with centroids for cluster-based search
+    - IMASSemanticCluster nodes with centroids for cluster-based search
 
     \b
     Examples:
@@ -174,7 +174,7 @@ def imas_build(
         click.echo(f"IDS nodes: {stats['ids_created']}")
         click.echo(f"IMASPath nodes created: {stats['paths_created']}")
         click.echo(f"Unit nodes: {stats['units_created']}")
-        click.echo(f"PathChange nodes: {stats['path_changes_created']}")
+        click.echo(f"IMASPathChange nodes: {stats['path_changes_created']}")
         if not skip_embeddings:
             click.echo(f"Paths filtered (error/metadata): {stats['paths_filtered']}")
             click.echo(f"HAS_ERROR relationships: {stats['error_relationships']}")
@@ -293,9 +293,11 @@ def imas_status(version_filter: str | None) -> None:
                 console.print(stats_table)
 
             # Cluster stats
-            clusters = gc.query("MATCH (c:SemanticCluster) RETURN count(c) AS count")
+            clusters = gc.query(
+                "MATCH (c:IMASSemanticCluster) RETURN count(c) AS count"
+            )
             if clusters and clusters[0]["count"] > 0:
-                console.print(f"\nSemanticCluster nodes: {clusters[0]['count']}")
+                console.print(f"\nIMASSemanticCluster nodes: {clusters[0]['count']}")
 
 
 @imas.command("search")
@@ -500,10 +502,10 @@ def _show_version_details(gc, version: str) -> None:
         version=version,
     )[0]
 
-    # Get PathChange statistics
+    # Get IMASPathChange statistics
     path_changes = gc.query(
         """
-        MATCH (pc:PathChange)-[:VERSION]->(v:DDVersion {id: $version})
+        MATCH (pc:IMASPathChange)-[:VERSION]->(v:DDVersion {id: $version})
         RETURN pc.change_type AS change_type, count(*) AS count
         ORDER BY count DESC
         LIMIT 10
@@ -526,7 +528,7 @@ def _show_version_details(gc, version: str) -> None:
 
     console.print(table)
 
-    # PathChange statistics if any
+    # IMASPathChange statistics if any
     if path_changes:
         pc_table = Table(title="Metadata Changes", show_header=True)
         pc_table.add_column("Change Type", style="magenta")

@@ -343,7 +343,7 @@ classes:
         description: Maximum size if bounded (e.g., 3 for "1...3")
         range: integer
 
-  SemanticCluster:
+  IMASSemanticCluster:
     description: >-
       A semantic cluster of related IMAS paths, derived from HDBSCAN
       clustering on path embeddings. Paths link to clusters via IN_CLUSTER.
@@ -351,7 +351,7 @@ classes:
       Centroid embeddings enable fast cluster-based semantic search:
       query embedding is compared against cluster centroids first, then
       individual paths within matching clusters are searched.
-    class_uri: imas_dd:SemanticCluster
+    class_uri: imas_dd:IMASSemanticCluster
     attributes:
       id:
         identifier: true
@@ -417,11 +417,11 @@ classes:
       options:
         description: JSON-encoded list of {index, name, description}
 
-  PathChange:
+  IMASPathChange:
     description: >-
       Records a change to path metadata between DD versions.
       Enables tracking of documentation updates, unit changes, etc.
-    class_uri: imas_dd:PathChange
+    class_uri: imas_dd:IMASPathChange
     attributes:
       id:
         identifier: true
@@ -480,7 +480,7 @@ classes:
   # Relationship class for cluster membership
   ClusterMembership:
     description: >-
-      Represents membership of an IMASPath in a SemanticCluster.
+      Represents membership of an IMASPath in a IMASSemanticCluster.
       Distance indicates proximity to cluster centroid.
     class_uri: imas_dd:ClusterMembership
     attributes:
@@ -490,7 +490,7 @@ classes:
         required: true
       cluster:
         description: The cluster
-        range: SemanticCluster
+        range: IMASSemanticCluster
         required: true
       distance:
         description: Distance to cluster centroid (lower = more central)
