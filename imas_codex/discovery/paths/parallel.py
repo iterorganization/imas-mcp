@@ -524,7 +524,11 @@ def claim_paths_for_rescoring(
                    p.total_bytes AS total_bytes, p.total_lines AS total_lines,
                    p.language_breakdown AS language_breakdown,
                    p.is_multiformat AS is_multiformat,
-                   p.path_purpose AS path_purpose
+                   p.pattern_categories AS pattern_categories,
+                   p.read_matches AS read_matches,
+                   p.write_matches AS write_matches,
+                   p.path_purpose AS path_purpose,
+                   p.description AS description
             """,
             facility=facility,
             limit=limit,
@@ -567,6 +571,13 @@ def mark_enrichment_complete(
 
                 lang_breakdown = json.dumps(lang_breakdown) if lang_breakdown else None
 
+            # Serialize pattern_categories dict to JSON
+            pattern_cats = result.get("pattern_categories")
+            if isinstance(pattern_cats, dict):
+                import json
+
+                pattern_cats = json.dumps(pattern_cats) if pattern_cats else None
+
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
@@ -576,6 +587,9 @@ def mark_enrichment_complete(
                     p.total_lines = $total_lines,
                     p.language_breakdown = $language_breakdown,
                     p.is_multiformat = $is_multiformat,
+                    p.pattern_categories = $pattern_categories,
+                    p.read_matches = $read_matches,
+                    p.write_matches = $write_matches,
                     p.claimed_at = null
                 """,
                 id=path_id,
@@ -584,6 +598,9 @@ def mark_enrichment_complete(
                 total_lines=result.get("total_lines"),
                 language_breakdown=lang_breakdown,
                 is_multiformat=result.get("is_multiformat", False),
+                pattern_categories=pattern_cats,
+                read_matches=result.get("read_matches", 0),
+                write_matches=result.get("write_matches", 0),
             )
             updated += 1
 

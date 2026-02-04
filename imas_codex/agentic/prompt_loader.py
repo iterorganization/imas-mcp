@@ -530,6 +530,36 @@ def _provide_access_method_fields() -> dict[str, Any]:
     return {"access_method_fields": access_method_fields}
 
 
+@lru_cache(maxsize=1)
+def _provide_format_patterns() -> dict[str, Any]:
+    """Provide format read/write patterns from enrichment module.
+
+    These patterns are what the enricher searches for with rg.
+    Injecting them into the rescorer prompt lets the LLM understand
+    what was actually searched for.
+    """
+    from imas_codex.discovery.paths.enrichment import (
+        FORMAT_READ_PATTERNS,
+        FORMAT_WRITE_PATTERNS,
+    )
+
+    # Format for prompt display
+    read_patterns = []
+    for name, pattern in FORMAT_READ_PATTERNS.items():
+        read_patterns.append(f"- **{name}**: `{pattern}`")
+
+    write_patterns = []
+    for name, pattern in FORMAT_WRITE_PATTERNS.items():
+        write_patterns.append(f"- **{name}**: `{pattern}`")
+
+    return {
+        "format_read_patterns": "\n".join(read_patterns),
+        "format_write_patterns": "\n".join(write_patterns),
+        "format_categories": list(FORMAT_READ_PATTERNS.keys())
+        + list(FORMAT_WRITE_PATTERNS.keys()),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -538,13 +568,14 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "scoring_schema": _provide_scoring_schema,
     "rescore_schema": _provide_rescore_schema,
     "access_method_fields": _provide_access_method_fields,
+    "format_patterns": _provide_format_patterns,
 }
 
 # Default schema needs per prompt (when not specified in frontmatter)
 # Only load what's actually used by each prompt
 _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     "discovery/scorer": ["path_purposes", "score_dimensions", "scoring_schema"],
-    "discovery/rescorer": ["rescore_schema"],
+    "discovery/rescorer": ["rescore_schema", "format_patterns"],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["access_method_fields"],
     # wiki prompts don't need schema context
