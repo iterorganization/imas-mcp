@@ -1340,7 +1340,7 @@ async def score_worker(
                 }
 
     while not state.should_stop_scoring():
-        pages = claim_pages_for_scoring(state.facility, limit=50)
+        pages = claim_pages_for_scoring(state.facility, limit=25)
         logger.debug(f"score_worker claimed {len(pages)} pages")
 
         if not pages:
