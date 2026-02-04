@@ -507,19 +507,58 @@ def mark_pages_ingested(
 
 
 def mark_page_failed(page_id: str, error: str, fallback_status: str) -> None:
-    """Mark a page as failed with error message."""
-    with GraphClient() as gc:
-        gc.query(
-            """
-            MATCH (wp:WikiPage {id: $id})
-            SET wp.status = $status,
-                wp.error = $error,
-                wp.failed_at = datetime(),
-                wp.claimed_at = null
-            """,
-            id=page_id,
-            status=fallback_status,
-            error=error,
+    """Mark a page as failed with error message.
+
+    If Neo4j is unavailable, logs a warning and silently fails.
+    The page will be reclaimed after CLAIM_TIMEOUT_SECONDS.
+    """
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                MATCH (wp:WikiPage {id: $id})
+                SET wp.status = $status,
+                    wp.error = $error,
+                    wp.failed_at = datetime(),
+                    wp.claimed_at = null
+                """,
+                id=page_id,
+                status=fallback_status,
+                error=error,
+            )
+    except Exception as e:
+        logger.warning(
+            "Could not mark page %s as failed (Neo4j unavailable): %s", page_id, e
+        )
+
+
+def _release_claimed_pages(page_ids: list[str]) -> None:
+    """Release claimed pages back for reprocessing.
+
+    Clears claimed_at without changing status, allowing pages to be
+    reclaimed by the next worker iteration.
+
+    If Neo4j is unavailable, logs a warning and silently fails.
+    Pages will be reclaimed after CLAIM_TIMEOUT_SECONDS anyway.
+    """
+    if not page_ids:
+        return
+
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                UNWIND $ids AS id
+                MATCH (wp:WikiPage {id: id})
+                SET wp.claimed_at = null
+                """,
+                ids=page_ids,
+            )
+    except Exception as e:
+        logger.warning(
+            "Could not release %d claimed pages (Neo4j unavailable): %s",
+            len(page_ids),
+            e,
         )
 
 
@@ -1348,9 +1387,19 @@ async def score_worker(
                 )
 
         except ValueError as e:
-            logger.error("LLM configuration error: %s", e)
-            state.stop_requested = True
-            break
+            # LLM validation error (e.g., truncated JSON) - release pages and continue
+            # Don't stop the whole process; pages will be reclaimed after timeout
+            logger.warning(
+                "LLM validation error for batch of %d pages: %s. "
+                "Releasing pages for retry.",
+                len(pages),
+                e,
+            )
+            state.score_stats.errors = getattr(state.score_stats, "errors", 0) + 1
+            # Release pages by clearing claimed_at (not marking as failed)
+            _release_claimed_pages([p["id"] for p in pages])
+            # Continue processing - don't stop the whole discovery
+            continue
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
             for page in pages:
@@ -1723,10 +1772,11 @@ async def _score_pages_batch(
 
     user_prompt = "\n".join(lines)
 
-    # Retry loop for rate limiting
+    # Retry loop for rate limiting and JSON parsing errors (truncated responses)
     max_retries = 3
     retry_base_delay = 2.0
     last_error = None
+    total_cost = 0.0
 
     for attempt in range(max_retries):
         try:
@@ -1741,65 +1791,82 @@ async def _score_pages_batch(
                 temperature=0.3,
                 max_tokens=32000,
             )
-            break
+
+            # Extract actual cost from OpenRouter response
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
+            if (
+                hasattr(response, "_hidden_params")
+                and "response_cost" in response._hidden_params
+            ):
+                cost = response._hidden_params["response_cost"]
+            else:
+                # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
+                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+
+            total_cost += cost
+
+            # Parse response using Pydantic structured output
+            content = response.choices[0].message.content
+            if not content:
+                logger.warning("LLM returned empty response, returning empty results")
+                return [], total_cost
+
+            # Sanitize: remove control characters (except newline/tab)
+            content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
+            content = content.encode("utf-8", errors="surrogateescape").decode(
+                "utf-8", errors="replace"
+            )
+
+            batch = WikiScoreBatch.model_validate_json(content)
+            llm_results = batch.results
+            break  # Success - exit retry loop
+
         except Exception as e:
             last_error = e
             error_msg = str(e).lower()
-            if any(
-                x in error_msg for x in ["overloaded", "rate", "429", "503", "timeout"]
-            ):
+
+            # Retry on rate limiting, server errors, OR JSON parsing errors
+            is_retryable = any(
+                x in error_msg
+                for x in [
+                    "overloaded",
+                    "rate",
+                    "429",
+                    "503",
+                    "timeout",
+                    "eof",  # EOF while parsing JSON
+                    "json",  # JSON parsing errors
+                    "truncated",
+                    "validation",
+                ]
+            )
+
+            if is_retryable and attempt < max_retries - 1:
                 delay = retry_base_delay * (2**attempt)
-                logger.debug(
-                    "LLM rate limited (attempt %d/%d), waiting %.1fs...",
+                logger.warning(
+                    "LLM error (attempt %d/%d): %s. Retrying in %.1fs...",
                     attempt + 1,
                     max_retries,
+                    str(e)[:100],
                     delay,
                 )
                 await asyncio.sleep(delay)
             else:
-                raise
+                # Last attempt or non-retryable error
+                logger.error(
+                    "LLM validation error for batch of %d pages: %s. "
+                    "Pages will be reverted to scanned status.",
+                    len(pages),
+                    e,
+                )
+                raise ValueError(f"LLM response validation failed: {e}") from e
     else:
         raise last_error  # type: ignore[misc]
 
-    # Extract actual cost from OpenRouter response
-    input_tokens = response.usage.prompt_tokens
-    output_tokens = response.usage.completion_tokens
-
-    if (
-        hasattr(response, "_hidden_params")
-        and "response_cost" in response._hidden_params
-    ):
-        cost = response._hidden_params["response_cost"]
-    else:
-        # Fallback: Claude Sonnet rates via OpenRouter ($3/$15 per 1M tokens)
-        cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
-
-    # Parse response using Pydantic structured output
-    content = response.choices[0].message.content
-    if not content:
-        logger.warning("LLM returned empty response, returning empty results")
-        return [], cost
-
-    # Sanitize: remove control characters (except newline/tab)
-    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", content)
-    content = content.encode("utf-8", errors="surrogateescape").decode(
-        "utf-8", errors="replace"
-    )
-
-    try:
-        batch = WikiScoreBatch.model_validate_json(content)
-        llm_results = batch.results
-    except Exception as e:
-        logger.error(
-            "LLM validation error for batch of %d pages: %s. "
-            "Pages will be reverted to scanned status.",
-            len(pages),
-            e,
-        )
-        raise ValueError(f"LLM response validation failed: {e}") from e
-
     # Convert to result dicts, computing combined scores
-    cost_per_page = cost / len(pages) if pages else 0.0
+    cost_per_page = total_cost / len(pages) if pages else 0.0
     results = []
 
     for r in llm_results[: len(pages)]:

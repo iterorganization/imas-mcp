@@ -21,6 +21,12 @@ warnings.filterwarnings(
     category=DeprecationWarning,
     module=r"aiohttp\..*",
 )
+# Also specifically target aiohttp.connector which emits the warning
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module=r"aiohttp\.connector",
+)
 # Suppress neo4j driver destructor warning
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 

@@ -1263,10 +1263,17 @@ def discover_wiki(
         # Check if wiki pages already exist for this facility
         wiki_stats = get_wiki_stats(facility)
         existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
+        scanned_pages = wiki_stats.get("scanned", 0)
 
-        # Determine if bulk discovery should run
-        should_bulk_discover = force_discovery or existing_pages == 0
-        if existing_pages > 0 and not force_discovery:
+        # Determine if bulk discovery should run:
+        # - Always run if --force-discovery
+        # - Run if no pages exist at all
+        # - Run if existing pages is very low (< 100) - likely a reset condition
+        # - Run if no scanned pages exist (nothing left to score)
+        needs_bulk = existing_pages == 0 or existing_pages < 100 or scanned_pages == 0
+        should_bulk_discover = force_discovery or needs_bulk
+
+        if existing_pages > 0 and not should_bulk_discover:
             log_print(
                 f"[dim]Found {existing_pages} existing wiki pages, skipping bulk discovery[/dim]"
             )
@@ -1274,6 +1281,10 @@ def discover_wiki(
         elif force_discovery and existing_pages > 0:
             log_print(
                 f"[yellow]Force discovery: adding new pages (keeping {existing_pages} existing)[/yellow]"
+            )
+        elif needs_bulk and existing_pages > 0:
+            log_print(
+                f"[yellow]Few pages exist ({existing_pages}), running bulk discovery[/yellow]"
             )
 
         if site_type == "twiki":
