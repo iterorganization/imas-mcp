@@ -2,16 +2,27 @@
 IMAS Codex Server - A server providing Model Context Protocol (MCP) access to IMAS data structures.
 """
 
-import importlib.metadata
-import os
+# CRITICAL: Filter deprecation warnings BEFORE any imports.
+# This must be at the absolute top of the module to catch aiohttp warnings.
 import warnings
-from functools import lru_cache
-from pathlib import Path
 
-# Suppress third-party deprecation warnings early, before any imports
-# These are upstream issues in Pydantic, LlamaIndex, and Neo4j that we cannot fix
-warnings.simplefilter("ignore", DeprecationWarning)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*enable_cleanup_closed.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module=r"aiohttp\..*",
+)
+# Suppress neo4j driver destructor warning
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
+
+import importlib.metadata  # noqa: E402
+import os  # noqa: E402
+from functools import lru_cache  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 
 @lru_cache(maxsize=1)

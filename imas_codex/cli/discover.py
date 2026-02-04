@@ -1356,6 +1356,21 @@ def discover_wiki(
             # Since bulk discovery ran, don't run it again in run_parallel_wiki_discovery
             should_bulk_discover = False
 
+        # Display worker configuration (above the progress panel)
+        worker_parts = []
+        if not score_only:
+            worker_parts.append("1 scan")
+        if not scan_only:
+            worker_parts.append("1 score")
+            worker_parts.append("1 ingest")
+        log_print(f"Workers: {', '.join(worker_parts)}")
+        if not scan_only:
+            log_print(f"Cost limit: ${cost_limit:.2f}")
+        if max_pages:
+            log_print(f"Page limit: {max_pages}")
+        if focus and not scan_only:
+            log_print(f"Focus: {focus}")
+
         try:
 
             async def run_discovery_with_progress(

@@ -3,39 +3,15 @@
 Modular CLI structure with command groups split by functionality.
 """
 
-# CRITICAL: Filter warnings BEFORE any imports that might trigger them
-# This must be at the absolute top of the module
-import warnings
+# Warning filters are set in imas_codex/__init__.py at package import time
+# to ensure they're applied before any aiohttp imports.
 
-# Suppress aiohttp's enable_cleanup_closed warning (fixed in Python 3.12.7+)
-# Use regex patterns to match the warning message and all aiohttp submodules
-warnings.filterwarnings(
-    "ignore",
-    message=r".*enable_cleanup_closed.*",
-    category=DeprecationWarning,
-)
-# Suppress all deprecation warnings from aiohttp and its submodules
-# The module parameter uses regex, so aiohttp.* matches aiohttp.connector etc
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    module=r"aiohttp\..*",
-)
-# Also specifically target aiohttp.connector which emits the warning
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    module=r"aiohttp\.connector",
-)
-# Suppress neo4j driver destructor warning
-warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
+import logging
 
-import logging  # noqa: E402
+import click
+from dotenv import load_dotenv
 
-import click  # noqa: E402
-from dotenv import load_dotenv  # noqa: E402
-
-from imas_codex import __version__  # noqa: E402
+from imas_codex import __version__
 
 # Load environment variables from .env file
 load_dotenv(override=True)

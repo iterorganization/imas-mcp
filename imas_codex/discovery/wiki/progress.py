@@ -417,7 +417,7 @@ class WikiProgressDisplay:
                 section.append("\n    ", style="dim")
             section.append("\n")
 
-        # INGEST section - 2 lines: title, then score + domain + description + chunks
+        # INGEST section - 2 lines: title, then score + domain + description
         if not self.state.scan_only:
             section.append("  INGEST", style="bold magenta")
             if ingest:
@@ -447,25 +447,19 @@ class WikiProgressDisplay:
                     domain_str = ingest.physics_domain
                     section.append(f"{domain_str}  ", style="cyan")
 
-                # Chunk count suffix (calculate length first)
-                chunk_suffix = f"  {ingest.chunk_count} chunks"
-
                 if ingest.description:
                     desc = clean_text(ingest.description)
                     # Calculate remaining width for description
-                    # 4 indent + score + domain + chunk_suffix
+                    # 4 indent + score + domain
                     used = (
                         4
                         + (len(score_str) + 2 if score_str else 0)
                         + (len(domain_str) + 2 if domain_str else 0)
-                        + len(chunk_suffix)
                     )
                     desc_width = content_width - used
                     section.append(
                         clip_text(desc, max(10, desc_width)), style="italic dim"
                     )
-
-                section.append(chunk_suffix, style="cyan")
             elif self.state.ingest_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
