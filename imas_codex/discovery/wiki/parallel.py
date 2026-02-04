@@ -130,7 +130,7 @@ class WikiDiscoveryState:
         return False
 
     def should_stop_scoring(self) -> bool:
-        """Check if score/ingest workers should stop.
+        """Check if score workers should stop.
 
         Score workers stop when budget exhausted or page limit reached.
         """
@@ -139,6 +139,22 @@ class WikiDiscoveryState:
         if self.budget_exhausted:
             return True
         if self.page_limit_reached:
+            return True
+        return False
+
+    def should_stop_ingesting(self) -> bool:
+        """Check if ingest workers should stop.
+
+        Ingest workers continue AFTER budget is exhausted to drain the
+        ingest queue. This ensures all scorable content gets ingested
+        before termination. They only stop when:
+        1. Explicitly requested
+        2. Idle for 3+ iterations with no pending ingest work
+        """
+        if self.stop_requested:
+            return True
+        # Continue even when budget exhausted - drain the ingest queue
+        if self.ingest_idle_count >= 3 and not has_pending_ingest_work(self.facility):
             return True
         return False
 
@@ -184,6 +200,28 @@ def has_pending_scan_work(facility: str) -> bool:
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
+            cutoff=cutoff,
+        )
+        return result[0]["pending"] > 0 if result else False
+
+
+def has_pending_ingest_work(facility: str) -> bool:
+    """Check if there's pending ingest work in the graph.
+
+    Returns True if there are scored pages with score >= 0.5 awaiting ingestion.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.status = $scored
+              AND wp.score >= 0.5
+              AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff))
+            RETURN count(wp) AS pending
+            """,
+            facility=facility,
+            scored=WikiPageStatus.scored.value,
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -290,7 +328,9 @@ def claim_pages_for_ingesting(
             LIMIT $limit
             SET wp.claimed_at = datetime()
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
-                   wp.score AS score, wp.preview_text AS preview,
+                   wp.score AS score, wp.description AS description,
+                   wp.physics_domain AS physics_domain,
+                   wp.preview_text AS preview,
                    wp.in_degree AS in_degree, wp.out_degree AS out_degree
             """,
             facility=facility,
@@ -1267,8 +1307,11 @@ async def ingest_worker(
 
     Claims scored pages with score >= min_score, fetches full content,
     chunks it, and creates embeddings.
+
+    The ingest worker continues running even after cost limit is reached
+    to drain the ingest queue. This ensures all scored content gets ingested.
     """
-    while not state.should_stop_scoring():
+    while not state.should_stop_ingesting():
         pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
 
         if not pages:
@@ -1298,10 +1341,14 @@ async def ingest_worker(
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
                 )
+                # Include score, description, physics_domain for display
                 results.append(
                     {
                         "id": page_id,
                         "chunk_count": chunk_count,
+                        "score": page.get("score"),
+                        "description": page.get("description", ""),
+                        "physics_domain": page.get("physics_domain"),
                     }
                 )
             except Exception as e:
@@ -2158,9 +2205,21 @@ def _seed_portal_page(
 # =============================================================================
 
 
-def get_wiki_discovery_stats(facility: str) -> dict[str, int]:
-    """Get wiki discovery statistics from graph."""
+def get_wiki_discovery_stats(facility: str) -> dict[str, int | float]:
+    """Get wiki discovery statistics from graph.
+
+    Returns stats needed for progress display:
+    - total: Total wiki pages for this facility
+    - scanned: Pages with status=scanned (awaiting scoring)
+    - scored: Pages with status=scored (awaiting ingest or skipped)
+    - ingested: Pages with status=ingested (final state)
+    - pending_score: Same as scanned count (for progress display)
+    - pending_ingest: Scored pages with score >= 0.5 awaiting ingestion
+    - accumulated_cost: Total score_cost from all scored/ingested pages
+    - skipped: Pages with status=skipped or score < 0.5
+    """
     with GraphClient() as gc:
+        # Get status counts
         result = gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
@@ -2170,7 +2229,7 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int]:
             facility=facility,
         )
 
-        stats = {
+        stats: dict[str, int | float] = {
             "total": 0,
             "discovered": 0,
             "scanning": 0,
@@ -2189,6 +2248,36 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int]:
             if status in stats:
                 stats[status] = count
             stats["total"] += count
+
+        # Get pending ingest count (scored pages with score >= 0.5)
+        ingest_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.status = $scored AND wp.score >= 0.5
+            RETURN count(wp) AS pending_ingest
+            """,
+            facility=facility,
+            scored=WikiPageStatus.scored.value,
+        )
+        stats["pending_score"] = stats["scanned"]
+        stats["pending_ingest"] = (
+            ingest_result[0]["pending_ingest"] if ingest_result else 0
+        )
+
+        # Get accumulated cost from all pages
+        cost_result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.score_cost IS NOT NULL
+            RETURN sum(wp.score_cost) AS total_cost
+            """,
+            facility=facility,
+        )
+        stats["accumulated_cost"] = (
+            cost_result[0]["total_cost"]
+            if cost_result and cost_result[0]["total_cost"]
+            else 0.0
+        )
 
         # Add artifact stats
         artifact_result = gc.query(

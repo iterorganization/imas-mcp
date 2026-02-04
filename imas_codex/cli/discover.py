@@ -1371,21 +1371,15 @@ def discover_wiki(
                             stats = get_wiki_discovery_stats(_facility)
                             display.update_from_graph(
                                 total_pages=stats.get("total", 0),
-                                pages_scanned=stats.get("scanned", 0)
-                                + stats.get("prefetched", 0)
-                                + stats.get("scored", 0)
-                                + stats.get("ingested", 0),
-                                pages_prefetched=stats.get("prefetched", 0)
-                                + stats.get("scored", 0)
-                                + stats.get("ingested", 0),
-                                pages_scored=stats.get("scored", 0)
-                                + stats.get("ingested", 0),
+                                pages_scanned=stats.get("scanned", 0),
+                                pages_scored=stats.get("scored", 0),
                                 pages_ingested=stats.get("ingested", 0),
                                 pages_skipped=stats.get("skipped", 0),
-                                pending_scan=stats.get("pending", 0),
-                                pending_prefetch=stats.get("scanned", 0),
-                                pending_score=stats.get("prefetched", 0),
-                                pending_ingest=stats.get("scored", 0),
+                                pending_score=stats.get(
+                                    "pending_score", stats.get("scanned", 0)
+                                ),
+                                pending_ingest=stats.get("pending_ingest", 0),
+                                accumulated_cost=stats.get("accumulated_cost", 0.0),
                             )
                             await asyncio.sleep(0.5)
 
@@ -1416,8 +1410,10 @@ def discover_wiki(
                         if results:
                             result_dicts = [
                                 {
-                                    "title": r.get("id", "?").split(":")[-1][:50],
-                                    "score": r.get("score", 0.5),
+                                    "title": r.get("id", "?").split(":")[-1][:60],
+                                    "score": r.get("score"),
+                                    "physics_domain": r.get("physics_domain"),
+                                    "description": r.get("description", ""),
                                     "is_physics": r.get("is_physics", False),
                                     "skipped": r.get("skipped", False),
                                     "skip_reason": r.get("skip_reason", ""),
@@ -1431,10 +1427,13 @@ def discover_wiki(
                         if results:
                             result_dicts = [
                                 {
-                                    "title": r.get("id", "?").split(":")[-1][:50],
+                                    "title": r.get("id", "?").split(":")[-1][:60],
+                                    "score": r.get("score"),
+                                    "description": r.get("description", ""),
+                                    "physics_domain": r.get("physics_domain"),
                                     "chunk_count": r.get("chunk_count", 0),
                                 }
-                                for r in results[:3]
+                                for r in results[:5]
                             ]
                         display.update_ingest(msg, stats, result_dicts)
 

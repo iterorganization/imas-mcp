@@ -8,10 +8,12 @@ Design principles (matching paths parallel_progress.py):
 - Resource gauges for time and cost budgets
 - Compact current activity with relevant details only
 
-Display layout: SCORE → ENRICH → INGEST
-- SCORE: First-pass LLM scoring (title/URL only)
-- ENRICH: Content prefetch and enrichment
-- INGEST: Rescore with content and chunk/embed
+Display layout: SCORE → INGEST (matching actual workers)
+- SCORE: Content-aware LLM scoring (fetches content, scores with LLM)
+- INGEST: Chunk and embed high-value pages (score >= 0.5)
+
+Progress is tracked against total pages in graph, not just this session.
+ETA/ETC metrics calculated like paths discovery.
 
 Uses common progress infrastructure from progress_common module.
 """
@@ -30,6 +32,8 @@ from rich.text import Text
 
 from imas_codex.discovery.base.progress import (
     StreamQueue,
+    clean_text,
+    clip_text,
     format_time,
     make_bar,
     make_resource_gauge,
@@ -45,20 +49,13 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class ScanItem:
-    """Current scan activity."""
-
-    title: str
-    out_links: int = 0
-    depth: int = 0
-
-
-@dataclass
 class ScoreItem:
     """Current score activity."""
 
     title: str
     score: float | None = None
+    physics_domain: str | None = None  # Physics domain if detected
+    description: str = ""  # LLM description of page value
     is_physics: bool = False
     skipped: bool = False
     skip_reason: str = ""
@@ -69,6 +66,9 @@ class IngestItem:
     """Current ingest activity."""
 
     title: str
+    score: float | None = None  # Redisplay score on ingest
+    description: str = ""  # Redisplay LLM description
+    physics_domain: str | None = None  # Physics domain if detected
     chunk_count: int = 0
 
 
@@ -95,43 +95,45 @@ class ProgressState:
     bulk_discovery_message: str = ""
     bulk_discovery_count: int = 0
 
-    # Counts from graph
-    total_pages: int = 0
-    pages_scanned: int = 0
-    pages_prefetched: int = 0
-    pages_scored: int = 0
-    pages_ingested: int = 0
-    pages_skipped: int = 0
-    artifacts_found: int = 0
+    # Counts from graph (total pages for progress denominator)
+    total_pages: int = 0  # All wiki pages in graph for this facility
+    pages_scanned: int = 0  # Status = scanned (awaiting score)
+    pages_scored: int = 0  # Status = scored (awaiting ingest or skipped)
+    pages_ingested: int = 0  # Status = ingested (final state)
+    pages_skipped: int = 0  # Skipped (low score or skip_reason)
 
-    # Pending work counts (for progress bars)
-    pending_scan: int = 0
-    pending_prefetch: int = 0
-    pending_score: int = 0
-    pending_ingest: int = 0
+    # Pending work counts (for queue display)
+    pending_score: int = 0  # scanned pages awaiting scoring
+    pending_ingest: int = 0  # scored pages awaiting ingestion
 
     # This run stats
-    run_scanned: int = 0
     run_scored: int = 0
     run_ingested: int = 0
     _run_score_cost: float = 0.0
     _run_ingest_cost: float = 0.0
-    scan_rate: float | None = None
     score_rate: float | None = None
     ingest_rate: float | None = None
 
+    # Accumulated facility cost (from graph)
+    accumulated_cost: float = 0.0
+
     # Current items (and their processing state)
-    current_scan: ScanItem | None = None
     current_score: ScoreItem | None = None
     current_ingest: IngestItem | None = None
-    scan_processing: bool = False
     score_processing: bool = False
     ingest_processing: bool = False
 
-    # Streaming queues
-    scan_queue: StreamQueue = field(default_factory=StreamQueue)
-    score_queue: StreamQueue = field(default_factory=StreamQueue)
-    ingest_queue: StreamQueue = field(default_factory=StreamQueue)
+    # Streaming queues - adaptive rate based on worker speed
+    score_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.5, min_display_time=0.4
+        )
+    )
+    ingest_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.5, max_rate=2.5, min_display_time=0.4
+        )
+    )
 
     # Tracking
     start_time: float = field(default_factory=time.time)
@@ -162,26 +164,48 @@ class ProgressState:
         return self.run_scored >= self.page_limit
 
     @property
+    def limit_reason(self) -> str | None:
+        """Return which limit was reached, or None if no limit reached."""
+        if self.cost_limit_reached:
+            return "cost"
+        if self.page_limit_reached:
+            return "page"
+        return None
+
+    @property
+    def cost_per_page(self) -> float | None:
+        """Average cost per scored page."""
+        if self.run_scored > 0:
+            return self.run_cost / self.run_scored
+        return None
+
+    @property
     def eta_seconds(self) -> float | None:
-        """Estimated time to termination based on limits."""
-        # Try cost-based ETA first
+        """Estimated time to termination based on limits.
+
+        Priority order:
+        1. Cost limit: if budget set, estimate time to exhaust budget
+        2. Page limit: if --max-pages set, estimate time to process that many
+        3. Full work: estimate time to complete all remaining scoring
+        """
+        # Try cost-based ETA first (if we have cost data)
         if self.run_cost > 0 and self.cost_limit > 0:
             cost_rate = self.run_cost / self.elapsed if self.elapsed > 0 else 0
             if cost_rate > 0:
                 remaining_budget = self.cost_limit - self.run_cost
                 return max(0, remaining_budget / cost_rate)
 
-        # Try page-limit-based ETA
+        # Try page-limit-based ETA (if --max-pages set)
         if self.page_limit is not None and self.page_limit > 0:
             if self.run_scored > 0 and self.elapsed > 0:
                 rate = self.run_scored / self.elapsed
                 remaining = self.page_limit - self.run_scored
                 return max(0, remaining / rate) if rate > 0 else None
 
-        # Fall back to work-based ETA
+        # Fall back to work-based ETA (all pending pages)
         if not self.score_rate or self.score_rate <= 0:
             return None
-        remaining = self.pending_scan + self.pending_score
+        remaining = self.pending_score
         return remaining / self.score_rate if remaining > 0 else 0
 
 
@@ -193,32 +217,33 @@ class ProgressState:
 class WikiProgressDisplay:
     """Clean progress display for parallel wiki discovery.
 
-    Layout (88 chars wide) - matching paths parallel_progress.py:
-    ┌────────────────────────────────────────────────────────────────────────────────────┐
-    │                         JT60SA Wiki Discovery                                      │
-    ├────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━━━━━━─────────────────────    234  42%  0.8/s        │
-    │  ENRICH ━━━━━━━━━━━━━━━━━━━━━─────────────────────────      92  28%  7.1/s        │
-    │  INGEST ━━━━━━━━━━━━━─────────────────────────────────      45  14%  0.3/s        │
-    ├────────────────────────────────────────────────────────────────────────────────────┤
-    │  SCORE 0.85 COCOS Convention Documentation                                         │
-    │  ENRICH IMAS Data Dictionary Overview                                              │
-    │    prefetching content...                                                          │
-    ├────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME   ▐████████░░░░░░░░░░░▌  2m 30s  ETA 8m                                      │
-    │  COST   ▐████████░░░░░░░░░░░▌  $0.45 / $1.00                                       │
-    │  STATS  scored=234  prefetched=92  ingested=45  skipped=12                         │
-    └────────────────────────────────────────────────────────────────────────────────────┘
+    Layout (100 chars wide - matching paths summary panel):
+    ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+    │                               TCV Wiki Discovery                                                 │
+    │                           Focus: diagnostics                                                     │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │  SCORE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────    388  5%   0.6/s              │
+    │  INGEST ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────     136  35%  0.3/s              │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │  SCORE 0.70 Microwave_lab/software                                                               │
+    │    [physics domain] Power supply calibration for gyrotron system                                 │
+    │  INGEST Service_Mécanique/Information_TCV/Connexion_dans_l                                       │
+    │    0.65 [equilibrium] Vacuum vessel port documentation with coordinates                          │
+    ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+    │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  7m     ETA 2h 15m                                              │
+    │  COST   │━━━━━━━━━━━━━━━━━━━━━━│  $0.04 / $0.01  cost limit reached                              │
+    │  TOTAL  │━━━━━━━━━━━━━━━━━━━━━━│  $0.04  ETC $1.50                                               │
+    │  STATS  scored=388  ingested=136  skipped=0  pending=[score:7386 ingest:252]                     │
+    └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
     Workflow:
-    - SCORE: First-pass LLM scoring based on title/URL (scanned → scored)
-    - ENRICH: Content prefetch and enrichment (scored → prefetched)
-    - INGEST: Rescore with content and chunk/embed (prefetched → ingested)
+    - SCORE: Content-aware LLM scoring (scanned → scored)
+    - INGEST: Chunk and embed high-value pages (scored → ingested)
     """
 
-    WIDTH = 88
-    BAR_WIDTH = 40
-    GAUGE_WIDTH = 20
+    WIDTH = 100
+    BAR_WIDTH = 48
+    GAUGE_WIDTH = 24
 
     def __init__(
         self,
@@ -262,15 +287,20 @@ class WikiProgressDisplay:
         return header
 
     def _build_progress_section(self) -> Text:
-        """Build the main progress bars for SCORE, ENRICH, INGEST."""
+        """Build the main progress bars for SCORE and INGEST.
+
+        Progress is measured against total pages in graph, not just this session.
+        This shows true coverage of the wiki.
+        """
         section = Text()
         bar_width = self.BAR_WIDTH
 
-        # SCORE row - first-pass scoring (scanned → scored)
-        score_total = self.state.pages_scored + self.state.pending_score
-        if score_total <= 0:
-            score_total = 1
-        score_pct = self.state.pages_scored / score_total * 100
+        # SCORE row - scoring progress against total pages
+        # Total to score = total_pages (all wiki pages for this facility)
+        # Completed = pages_scored + pages_ingested (scored includes ingest-ready)
+        score_total = self.state.total_pages or 1
+        scored_pages = self.state.pages_scored + self.state.pages_ingested
+        score_pct = scored_pages / score_total * 100 if score_total > 0 else 0
 
         if self.state.scan_only:
             section.append("  SCORE ", style="dim")
@@ -278,37 +308,18 @@ class WikiProgressDisplay:
             section.append("    disabled", style="dim italic")
         else:
             section.append("  SCORE ", style="bold blue")
-            score_ratio = min(self.state.pages_scored / score_total, 1.0)
+            score_ratio = min(scored_pages / score_total, 1.0) if score_total > 0 else 0
             section.append(make_bar(score_ratio, bar_width), style="blue")
-            section.append(f" {self.state.pages_scored:>6,}", style="bold")
+            section.append(f" {scored_pages:>6,}", style="bold")
             section.append(f" {score_pct:>3.0f}%", style="cyan")
             if self.state.score_rate and self.state.score_rate > 0:
                 section.append(f" {self.state.score_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # ENRICH row - content prefetch (scored → prefetched)
-        enrich_total = self.state.pages_prefetched + self.state.pending_prefetch
-        if enrich_total <= 0:
-            enrich_total = 1
-        enrich_pct = self.state.pages_prefetched / enrich_total * 100
-
-        if self.state.scan_only:
-            section.append("  ENRICH", style="dim")
-            section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
-        else:
-            section.append("  ENRICH", style="bold green")
-            enrich_ratio = min(self.state.pages_prefetched / enrich_total, 1.0)
-            section.append(make_bar(enrich_ratio, bar_width), style="green")
-            section.append(f" {self.state.pages_prefetched:>6,}", style="bold")
-            section.append(f" {enrich_pct:>3.0f}%", style="cyan")
-            if self.state.scan_rate and self.state.scan_rate > 0:
-                # scan_rate tracks prefetch rate in new workflow
-                section.append(f" {self.state.scan_rate:>5.1f}/s", style="dim")
-        section.append("\n")
-
-        # INGEST row - rescore + chunk (prefetched → ingested)
-        ingest_total = self.state.pages_ingested + self.state.pending_ingest
+        # INGEST row - ingestion progress against scored pages
+        # Total to ingest = pages that qualify for ingestion (score >= 0.5)
+        # For simplicity, use pages_scored + pages_ingested as denominator
+        ingest_total = self.state.pages_scored + self.state.pages_ingested
         if ingest_total <= 0:
             ingest_total = 1
         ingest_pct = self.state.pages_ingested / ingest_total * 100
@@ -328,30 +339,31 @@ class WikiProgressDisplay:
 
         return section
 
-    def _clip_title(self, title: str, max_len: int = 60) -> str:
-        """Clip title to max length."""
+    def _clip_title(self, title: str, max_len: int = 70) -> str:
+        """Clip title to max length, preferring end truncation."""
         if len(title) <= max_len:
             return title
         return title[: max_len - 3] + "..."
 
     def _build_activity_section(self) -> Text:
-        """Build the current activity section showing SCORE, ENRICH, INGEST."""
+        """Build the current activity section showing SCORE and INGEST.
+
+        Shows physics domain and LLM description for both workers.
+        """
         section = Text()
 
         score = self.state.current_score
-        scan = self.state.current_scan  # Repurposed for ENRICH (prefetch) activity
         ingest = self.state.current_ingest
 
         # Helper to determine if worker should show "idle"
-        # Only show idle when worker is not processing AND queue is empty
-        def should_show_idle(processing: bool, queue) -> bool:
+        def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
             return not processing and queue.is_empty()
 
-        # SCORE section - first-pass scoring (always 2 lines, skip in scan_only mode)
+        # SCORE section - always 2 lines for consistent height
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold blue")
             if self.state.bulk_discovery_active:
-                # Bulk discovery in progress - show this in SCORE section
+                # Bulk discovery in progress
                 section.append("bulk discovery...", style="cyan italic")
                 section.append("\n")
                 section.append("    ", style="dim")
@@ -371,13 +383,25 @@ class WikiProgressDisplay:
                     else:
                         style = "red"
                     section.append(f"{score.score:.2f} ", style=style)
+
                 section.append(
                     self._clip_title(score.title, self.WIDTH - 20), style="white"
                 )
                 section.append("\n")
                 section.append("    ", style="dim")
-                if score.is_physics:
-                    section.append("[physics domain] ", style="cyan")
+
+                # Second line: physics domain + description
+                if score.physics_domain:
+                    section.append(f"[{score.physics_domain}] ", style="cyan")
+                elif score.is_physics:
+                    section.append("[physics] ", style="cyan")
+
+                if score.description:
+                    desc = clean_text(score.description)
+                    desc_width = self.WIDTH - 16  # Account for indent and domain
+                    if score.physics_domain:
+                        desc_width -= len(score.physics_domain) + 3
+                    section.append(clip_text(desc, desc_width), style="italic dim")
                 elif score.skipped:
                     section.append(f"skipped: {score.skip_reason}", style="yellow dim")
             elif self.state.score_processing:
@@ -387,33 +411,11 @@ class WikiProgressDisplay:
                 section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
-                # Queue has items but nothing displayed yet (waiting for tick)
                 section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
             section.append("\n")
 
-        # ENRICH section - content prefetch (always 2 lines)
-        section.append("  ENRICH", style="bold green")
-        if scan:
-            section.append(
-                " " + self._clip_title(scan.title, self.WIDTH - 12), style="white"
-            )
-            section.append("\n")
-            section.append("    ", style="dim")
-            section.append("prefetching content...", style="cyan")
-        elif self.state.scan_processing:
-            section.append(" processing batch...", style="cyan italic")
-            section.append("\n    ", style="dim")
-        elif should_show_idle(self.state.scan_processing, self.state.scan_queue):
-            section.append(" idle", style="dim italic")
-            section.append("\n    ", style="dim")
-        else:
-            # Queue has items but nothing displayed yet (waiting for tick)
-            section.append(" ...", style="dim italic")
-            section.append("\n    ", style="dim")
-        section.append("\n")
-
-        # INGEST section - rescore + chunk (always 2 lines, skip in scan_only mode)
+        # INGEST section - always 2 lines, show score + description
         if not self.state.scan_only:
             section.append("  INGEST", style="bold magenta")
             if ingest:
@@ -422,7 +424,26 @@ class WikiProgressDisplay:
                 )
                 section.append("\n")
                 section.append("    ", style="dim")
-                section.append(f"{ingest.chunk_count} chunks", style="cyan")
+
+                # Second line: score + physics domain + description + chunk count
+                if ingest.score is not None:
+                    if ingest.score >= 0.7:
+                        style = "bold green"
+                    elif ingest.score >= 0.4:
+                        style = "yellow"
+                    else:
+                        style = "dim"
+                    section.append(f"{ingest.score:.2f} ", style=style)
+
+                if ingest.physics_domain:
+                    section.append(f"[{ingest.physics_domain}] ", style="cyan")
+
+                if ingest.description:
+                    desc = clean_text(ingest.description)
+                    desc_width = self.WIDTH - 30  # Account for score, domain, chunks
+                    section.append(clip_text(desc, desc_width), style="italic dim")
+
+                section.append(f"  {ingest.chunk_count} chunks", style="cyan")
             elif self.state.ingest_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -432,19 +453,18 @@ class WikiProgressDisplay:
                 section.append(" idle", style="dim italic")
                 section.append("\n    ", style="dim")
             else:
-                # Queue has items but nothing displayed yet (waiting for tick)
                 section.append(" ...", style="dim italic")
-                section.append("\n    ", style="dim")
                 section.append("\n    ", style="dim")
 
         return section
 
     def _build_resources_section(self) -> Text:
-        """Build the resource consumption gauges."""
+        """Build the resource consumption gauges with ETA/ETC like paths CLI."""
         section = Text()
 
-        # TIME row
+        # TIME row with ETA
         section.append("  TIME  ", style="bold cyan")
+
         eta = None if self.state.scan_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
@@ -460,9 +480,11 @@ class WikiProgressDisplay:
 
         if eta is not None:
             if eta <= 0:
-                if self.state.cost_limit_reached:
+                # Show which limit was reached
+                limit_reason = self.state.limit_reason
+                if limit_reason == "cost":
                     section.append("  cost limit reached", style="yellow dim")
-                elif self.state.page_limit_reached:
+                elif limit_reason == "page":
                     section.append("  page limit reached", style="yellow dim")
                 else:
                     section.append("  complete", style="green dim")
@@ -482,15 +504,48 @@ class WikiProgressDisplay:
             section.append(f" / ${self.state.cost_limit:.2f}", style="dim")
             section.append("\n")
 
-        # STATS row
+            # TOTAL row - cumulative cost with ETC (Estimated Total Cost)
+            total_facility_cost = self.state.accumulated_cost + self.state.run_cost
+            if total_facility_cost > 0 or self.state.pending_score > 0:
+                section.append("  TOTAL ", style="bold white")
+
+                # Calculate ETC based on cost per page
+                cpp = self.state.cost_per_page
+                etc = total_facility_cost
+                if cpp and cpp > 0 and self.state.pending_score > 0:
+                    etc = total_facility_cost + (self.state.pending_score * cpp)
+
+                if etc > 0:
+                    section.append_text(
+                        make_resource_gauge(total_facility_cost, etc, self.GAUGE_WIDTH)
+                    )
+                else:
+                    section.append("│", style="dim")
+                    section.append("━" * self.GAUGE_WIDTH, style="white")
+                    section.append("│", style="dim")
+
+                section.append(f"  ${total_facility_cost:.2f}", style="bold")
+                if etc > total_facility_cost:
+                    section.append(f"  ETC ${etc:.2f}", style="dim")
+                section.append("\n")
+
+        # STATS row - graph state with pending work
         section.append("  STATS ", style="bold magenta")
-        section.append(f"scored={self.state.pages_scored}", style="blue")
-        section.append(f"  prefetched={self.state.pages_prefetched}", style="green")
+        section.append(
+            f"scored={self.state.pages_scored + self.state.pages_ingested}",
+            style="blue",
+        )
         section.append(f"  ingested={self.state.pages_ingested}", style="magenta")
         section.append(f"  skipped={self.state.pages_skipped}", style="yellow")
 
-        if self.state.artifacts_found > 0:
-            section.append(f"  artifacts={self.state.artifacts_found}", style="cyan")
+        # Pending work by worker type
+        pending_parts = []
+        if self.state.pending_score > 0:
+            pending_parts.append(f"score:{self.state.pending_score}")
+        if self.state.pending_ingest > 0:
+            pending_parts.append(f"ingest:{self.state.pending_ingest}")
+        if pending_parts:
+            section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
         return section
 
@@ -546,19 +601,13 @@ class WikiProgressDisplay:
 
     def tick(self) -> None:
         """Drain streaming queues for smooth display."""
-        # Pop from scan queue
-        if item := self.state.scan_queue.pop():
-            self.state.current_scan = ScanItem(
-                title=item.get("title", ""),
-                out_links=item.get("out_links", 0),
-                depth=item.get("depth", 0),
-            )
-
         # Pop from score queue
         if item := self.state.score_queue.pop():
             self.state.current_score = ScoreItem(
                 title=item.get("title", ""),
                 score=item.get("score"),
+                physics_domain=item.get("physics_domain"),
+                description=item.get("description", ""),
                 is_physics=item.get("is_physics", False),
                 skipped=item.get("skipped", False),
                 skip_reason=item.get("skip_reason", ""),
@@ -568,6 +617,9 @@ class WikiProgressDisplay:
         if item := self.state.ingest_queue.pop():
             self.state.current_ingest = IngestItem(
                 title=item.get("title", ""),
+                score=item.get("score"),
+                description=item.get("description", ""),
+                physics_domain=item.get("physics_domain"),
                 chunk_count=item.get("chunk_count", 0),
             )
 
@@ -579,10 +631,7 @@ class WikiProgressDisplay:
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update scanner state."""
-        self.state.run_scanned = stats.processed
-        self.state.scan_rate = stats.rate
-
+        """Update scanner state (for bulk discovery reporting)."""
         # Handle bulk discovery phase (messages prefixed with "bulk:")
         if message.startswith("bulk:"):
             self.state.bulk_discovery_active = True
@@ -595,26 +644,9 @@ class WikiProgressDisplay:
             self._refresh()
             return
         else:
-            # Bulk discovery complete, normal scanning
+            # Bulk discovery complete
             self.state.bulk_discovery_active = False
             self.state.bulk_discovery_message = ""
-
-        # Track processing state
-        # Don't clear current_scan when idle - let queue drain naturally
-        if message == "idle":
-            self.state.scan_processing = False
-        elif "scanning" in message.lower():
-            self.state.scan_processing = True
-        else:
-            self.state.scan_processing = False
-
-        # Queue results for streaming with adaptive rate
-        if results:
-            # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
-            max_display_rate = 2.0
-            display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.scan_queue.add(results, display_rate)
 
         self._refresh()
 
@@ -630,21 +662,32 @@ class WikiProgressDisplay:
         self.state._run_score_cost = stats.cost
 
         # Track processing state
-        # Don't clear current_score when waiting - let queue drain naturally
         if "waiting" in message.lower() or message == "idle":
             self.state.score_processing = False
-        elif "scoring" in message.lower():
+        elif "scoring" in message.lower() or "fetching" in message.lower():
             self.state.score_processing = True
         else:
             self.state.score_processing = False
 
         # Queue results for streaming with adaptive rate
         if results:
+            items = []
+            for r in results:
+                items.append(
+                    {
+                        "title": r.get("id", "?").split(":")[-1][:60],
+                        "score": r.get("score"),
+                        "physics_domain": r.get("physics_domain"),
+                        "description": r.get("description", ""),
+                        "is_physics": r.get("is_physics", False),
+                        "skipped": r.get("skipped", False),
+                        "skip_reason": r.get("skip_reason", ""),
+                    }
+                )
             # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.score_queue.add(results, display_rate)
+            self.state.score_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -660,7 +703,6 @@ class WikiProgressDisplay:
         self.state._run_ingest_cost = stats.cost
 
         # Track processing state
-        # Don't clear current_ingest when waiting - let queue drain naturally
         if "waiting" in message.lower() or message == "idle":
             self.state.ingest_processing = False
         elif "ingesting" in message.lower():
@@ -670,49 +712,44 @@ class WikiProgressDisplay:
 
         # Queue results for streaming with adaptive rate
         if results:
-            # Use actual worker rate, capped for readability
-            # Max 2.0/s = each item visible for at least 0.5s
+            items = []
+            for r in results:
+                items.append(
+                    {
+                        "title": r.get("id", "?").split(":")[-1][:60],
+                        "score": r.get("score"),
+                        "description": r.get("description", ""),
+                        "physics_domain": r.get("physics_domain"),
+                        "chunk_count": r.get("chunk_count", 0),
+                    }
+                )
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
-            self.state.ingest_queue.add(results, display_rate)
+            self.state.ingest_queue.add(items, display_rate)
 
         self._refresh()
-
-    def update_prefetch(
-        self,
-        message: str,
-        stats: WorkerStats,
-    ) -> None:
-        """Update prefetch worker state (no display, just tracking)."""
-        # Prefetch doesn't have dedicated display, just affects pending counts
-        pass
 
     def update_from_graph(
         self,
         total_pages: int = 0,
         pages_scanned: int = 0,
-        pages_prefetched: int = 0,
         pages_scored: int = 0,
         pages_ingested: int = 0,
         pages_skipped: int = 0,
-        pending_scan: int = 0,
-        pending_prefetch: int = 0,
         pending_score: int = 0,
         pending_ingest: int = 0,
-        artifacts_found: int = 0,
+        accumulated_cost: float = 0.0,
+        **kwargs,  # Ignore extra args for compatibility
     ) -> None:
         """Update state from graph statistics."""
         self.state.total_pages = total_pages
         self.state.pages_scanned = pages_scanned
-        self.state.pages_prefetched = pages_prefetched
         self.state.pages_scored = pages_scored
         self.state.pages_ingested = pages_ingested
         self.state.pages_skipped = pages_skipped
-        self.state.pending_scan = pending_scan
-        self.state.pending_prefetch = pending_prefetch
         self.state.pending_score = pending_score
         self.state.pending_ingest = pending_ingest
-        self.state.artifacts_found = artifacts_found
+        self.state.accumulated_cost = accumulated_cost
         self._refresh()
 
     def print_summary(self) -> None:
@@ -731,32 +768,31 @@ class WikiProgressDisplay:
         """Build final summary text."""
         summary = Text()
 
-        # SCORE stats - first-pass scoring
+        # SCORE stats
+        total_scored = self.state.pages_scored + self.state.pages_ingested
         summary.append("  SCORE ", style="bold blue")
-        summary.append(f"scored={self.state.pages_scored:,}", style="blue")
+        summary.append(f"scored={total_scored:,}", style="blue")
         summary.append(f"  skipped={self.state.pages_skipped:,}", style="yellow")
         summary.append(f"  cost=${self.state._run_score_cost:.3f}", style="yellow")
         if self.state.score_rate:
             summary.append(f"  {self.state.score_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # ENRICH stats - content prefetch
-        summary.append("  ENRICH", style="bold green")
-        summary.append(f"  prefetched={self.state.pages_prefetched:,}", style="green")
-        if self.state.scan_rate:
-            summary.append(f"  {self.state.scan_rate:.1f}/s", style="dim")
-        summary.append("\n")
-
-        # INGEST stats - rescore + chunk
+        # INGEST stats
         summary.append("  INGEST", style="bold magenta")
         summary.append(f"  ingested={self.state.pages_ingested:,}", style="magenta")
-        if self.state.artifacts_found > 0:
-            summary.append(f"  artifacts={self.state.artifacts_found:,}", style="cyan")
+        if self.state.ingest_rate:
+            summary.append(f"  {self.state.ingest_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats
         summary.append("  USAGE ", style="bold white")
         summary.append(f"time={format_time(self.state.elapsed)}", style="white")
         summary.append(f"  total_cost=${self.state.run_cost:.2f}", style="yellow")
+
+        # Show coverage percentage
+        if self.state.total_pages > 0:
+            coverage = total_scored / self.state.total_pages * 100
+            summary.append(f"  coverage={coverage:.1f}%", style="cyan")
 
         return summary
