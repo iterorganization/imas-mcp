@@ -1078,6 +1078,13 @@ def discover_code(facility: str, dry_run: bool) -> None:
     default=False,
     help="Use logging output instead of rich progress display",
 )
+@click.option(
+    "--force-discovery",
+    "-f",
+    is_flag=True,
+    default=False,
+    help="Force bulk discovery even if wiki pages already exist",
+)
 def discover_wiki(
     facility: str,
     source: str | None,
@@ -1090,6 +1097,7 @@ def discover_wiki(
     model: str | None,
     verbose: bool,
     no_rich: bool,
+    force_discovery: bool,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -1100,8 +1108,13 @@ def discover_wiki(
     - PREFETCH: Fetch page content and generate summaries
     - SCORE: Content-aware LLM evaluation (stops at budget limit)
     - INGEST: Chunk and embed high-score pages (stops at budget limit)
+
+    Bulk discovery runs automatically on first invocation when no wiki pages
+    exist for the facility. Use --force-discovery to re-run bulk discovery
+    (adds new pages only, does not reset existing ones).
     """
     from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.wiki import get_wiki_stats
     from imas_codex.discovery.wiki.parallel import (
         reset_transient_pages,
         run_parallel_wiki_discovery,
@@ -1247,6 +1260,22 @@ def discover_wiki(
 
         log_print(f"\n[bold cyan]Processing: {base_url}[/bold cyan]")
 
+        # Check if wiki pages already exist for this facility
+        wiki_stats = get_wiki_stats(facility)
+        existing_pages = wiki_stats.get("pages", 0) or wiki_stats.get("total", 0)
+
+        # Determine if bulk discovery should run
+        should_bulk_discover = force_discovery or existing_pages == 0
+        if existing_pages > 0 and not force_discovery:
+            log_print(
+                f"[dim]Found {existing_pages} existing wiki pages, skipping bulk discovery[/dim]"
+            )
+            log_print("[dim]Use --force-discovery to re-run bulk page discovery[/dim]")
+        elif force_discovery and existing_pages > 0:
+            log_print(
+                f"[yellow]Force discovery: adding new pages (keeping {existing_pages} existing)[/yellow]"
+            )
+
         if site_type == "twiki":
             log_print("[cyan]TWiki: using HTTP scanner via SSH[/cyan]")
         elif auth_type in ("tequila", "session"):
@@ -1279,6 +1308,7 @@ def discover_wiki(
                 _scan_only: bool,
                 _score_only: bool,
                 _use_rich: bool,
+                _bulk_discover: bool,
             ):
                 # Logging-only callbacks for non-rich mode
                 def log_on_scan(msg, stats, results=None):
@@ -1311,6 +1341,7 @@ def discover_wiki(
                         num_score_workers=1,
                         scan_only=_scan_only,
                         score_only=_score_only,
+                        bulk_discover=_bulk_discover,
                         on_scan_progress=log_on_scan,
                         on_prefetch_progress=log_on_prefetch,
                         on_score_progress=log_on_score,
@@ -1427,6 +1458,7 @@ def discover_wiki(
                             num_score_workers=1,
                             scan_only=_scan_only,
                             score_only=_score_only,
+                            bulk_discover=_bulk_discover,
                             on_scan_progress=on_scan,
                             on_prefetch_progress=on_prefetch,
                             on_score_progress=on_score,
@@ -1465,6 +1497,7 @@ def discover_wiki(
                     _scan_only=scan_only,
                     _score_only=score_only,
                     _use_rich=use_rich,
+                    _bulk_discover=should_bulk_discover,
                 )
             )
 

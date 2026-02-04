@@ -2,19 +2,21 @@
 Parallel wiki discovery engine with async workers.
 
 Architecture:
-- Three async workers: Scorer, Prefetcher, Ingester (scan is bulk upfront)
+- Four async workers: Scorer, Prefetcher, Rescorer, Ingester (scan is bulk upfront)
 - Graph + claimed_at timestamp for coordination (same pattern as paths discovery)
 - Status transitions:
   - scanned → scored (first-pass scoring by title/URL)
   - scored → prefetched (content fetch for score >= 0.3)
-  - prefetched → ingested (rescore + embed for score >= 0.5)
+  - prefetched → rescored (content-based rescore)
+  - rescored → ingested (embed for score >= 0.5)
 - Workers claim pages by setting claimed_at, release by clearing it
 - Orphan recovery: pages with claimed_at > 5 min old are reclaimed
 
-New workflow (after bulk discovery):
+Workflow (after bulk discovery):
 1. SCORE: First-pass - title/URL patterns only → sets score, updates to 'scored'
 2. PREFETCH: Content fetch for high-score pages → updates to 'prefetched'
-3. INGEST: Rescore with content + embed → updates to 'ingested'
+3. RESCORE: Content-based evaluation → updates to 'rescored'
+4. INGEST: Chunk and embed high-value pages → updates to 'ingested'
 """
 
 from __future__ import annotations
@@ -69,6 +71,7 @@ class WikiDiscoveryState:
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     prefetch_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
+    rescore_stats: WorkerStats = field(default_factory=WorkerStats)
     ingest_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
@@ -76,6 +79,7 @@ class WikiDiscoveryState:
     scan_idle_count: int = 0
     prefetch_idle_count: int = 0
     score_idle_count: int = 0
+    rescore_idle_count: int = 0
     ingest_idle_count: int = 0
 
     # SSH retry tracking
@@ -85,7 +89,7 @@ class WikiDiscoveryState:
 
     @property
     def total_cost(self) -> float:
-        return self.score_stats.cost + self.ingest_stats.cost
+        return self.score_stats.cost + self.rescore_stats.cost + self.ingest_stats.cost
 
     @property
     def budget_exhausted(self) -> bool:
@@ -109,6 +113,7 @@ class WikiDiscoveryState:
             self.scan_idle_count >= 3
             and self.prefetch_idle_count >= 3
             and self.score_idle_count >= 3
+            and self.rescore_idle_count >= 3
             and self.ingest_idle_count >= 3
         )
         if all_idle:
@@ -117,6 +122,7 @@ class WikiDiscoveryState:
                 self.scan_idle_count = 0
                 self.prefetch_idle_count = 0
                 self.score_idle_count = 0
+                self.rescore_idle_count = 0
                 self.ingest_idle_count = 0
                 return False
             return True
@@ -156,7 +162,8 @@ def has_pending_work(facility: str) -> bool:
     Work exists if there are:
     - scanned pages awaiting scoring (claimed_at is null)
     - scored pages with score >= 0.3 awaiting prefetch (claimed_at is null)
-    - prefetched pages awaiting rescore/ingest (claimed_at is null)
+    - prefetched pages awaiting rescore (claimed_at is null)
+    - rescored pages with score >= 0.5 awaiting ingest (claimed_at is null)
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
@@ -166,12 +173,14 @@ def has_pending_work(facility: str) -> bool:
             WHERE (wp.status = $scanned AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
                OR (wp.status = $scored AND wp.score >= 0.3 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
                OR (wp.status = $prefetched AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
+               OR (wp.status = $rescored AND wp.score >= 0.5 AND (wp.claimed_at IS NULL OR wp.claimed_at < datetime() - duration($cutoff)))
             RETURN count(wp) AS pending
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
             scored=WikiPageStatus.scored.value,
             prefetched=WikiPageStatus.prefetched.value,
+            rescored=WikiPageStatus.rescored.value,
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -312,13 +321,11 @@ def claim_pages_for_prefetching(
         return list(result)
 
 
-def claim_pages_for_ingesting(
-    facility: str, min_score: float = 0.5, limit: int = 10
-) -> list[dict[str, Any]]:
-    """Claim prefetched pages for rescore and ingestion.
+def claim_pages_for_rescoring(facility: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Claim prefetched pages for content-based rescoring.
 
     Workflow: prefetched + unclaimed → set claimed_at
-    After rescore+ingest: update status to 'ingested', update score field.
+    After rescore: update status to 'rescored', update score field.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
     with GraphClient() as gc:
@@ -338,6 +345,40 @@ def claim_pages_for_ingesting(
             """,
             facility=facility,
             prefetched=WikiPageStatus.prefetched.value,
+            cutoff=cutoff,
+            limit=limit,
+        )
+        return list(result)
+
+
+def claim_pages_for_ingesting(
+    facility: str, min_score: float = 0.5, limit: int = 10
+) -> list[dict[str, Any]]:
+    """Claim rescored pages for ingestion (chunking and embedding).
+
+    Workflow: rescored + score >= min_score + unclaimed → set claimed_at
+    After ingest: update status to 'ingested'.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility})
+            WHERE wp.status = $rescored
+              AND wp.score >= $min_score
+              AND (wp.claimed_at IS NULL
+                   OR wp.claimed_at < datetime() - duration($cutoff))
+            WITH wp
+            ORDER BY wp.score DESC, wp.in_degree DESC
+            LIMIT $limit
+            SET wp.claimed_at = datetime()
+            RETURN wp.id AS id, wp.title AS title, wp.url AS url,
+                   wp.score AS score, wp.preview_summary AS summary,
+                   wp.in_degree AS in_degree, wp.out_degree AS out_degree
+            """,
+            facility=facility,
+            rescored=WikiPageStatus.rescored.value,
+            min_score=min_score,
             cutoff=cutoff,
             limit=limit,
         )
@@ -460,15 +501,15 @@ def mark_pages_scored(
     return len(results)
 
 
-def mark_pages_rescored_and_ingested(
+def mark_pages_rescored(
     facility: str,
     results: list[dict[str, Any]],
-    ingest_threshold: float = 0.5,
+    rescore_threshold: float = 0.5,
 ) -> int:
-    """Mark pages with updated scores (rescore with content) and ingestion data.
+    """Mark pages with updated scores from content-based rescore.
 
-    Called after content-based rescore + ingest. Updates score field with
-    content-aware value, then marks as ingested or skipped based on threshold.
+    Pages with score >= rescore_threshold move to 'rescored' (await ingest).
+    Pages with score < rescore_threshold move to 'skipped'.
     """
     if not results:
         return 0
@@ -480,11 +521,11 @@ def mark_pages_rescored_and_ingested(
                 continue
 
             score = r.get("score", 0.5)
-            should_ingest = r.get("should_ingest", score >= ingest_threshold)
+            should_ingest = r.get("should_ingest", score >= rescore_threshold)
 
-            # Decide status: ingest if score high enough, otherwise skip
-            final_status = (
-                WikiPageStatus.ingested.value
+            # Decide status: high-score → rescored, low-score → skipped
+            next_status = (
+                WikiPageStatus.rescored.value
                 if should_ingest
                 else WikiPageStatus.skipped.value
             )
@@ -507,14 +548,12 @@ def mark_pages_rescored_and_ingested(
                     wp.score_calibration = $score_calibration,
                     wp.score_imas_relevance = $score_imas_relevance,
                     wp.is_physics_content = $is_physics,
-                    wp.chunk_count = $chunks,
                     wp.score_cost = $score_cost,
-                    wp.scored_at = datetime(),
-                    wp.ingested_at = CASE WHEN $status = 'ingested' THEN datetime() ELSE null END,
+                    wp.rescored_at = datetime(),
                     wp.claimed_at = null
                 """,
                 id=page_id,
-                status=final_status,
+                status=next_status,
                 score=score,
                 page_purpose=r.get("page_purpose", "other"),
                 description=r.get("description", "")[:150],
@@ -529,7 +568,6 @@ def mark_pages_rescored_and_ingested(
                 score_calibration=r.get("score_calibration", 0.0),
                 score_imas_relevance=r.get("score_imas_relevance", 0.0),
                 is_physics=r.get("is_physics", False),
-                chunks=r.get("chunk_count", 0),
                 score_cost=r.get("score_cost", 0.0),
             )
 
@@ -1413,17 +1451,94 @@ async def score_worker(
                 mark_page_failed(page["id"], str(e), WikiPageStatus.scanned.value)
 
 
+async def rescore_worker(
+    state: WikiDiscoveryState,
+    on_progress: Callable | None = None,
+    rescore_threshold: float = 0.5,
+) -> None:
+    """Rescore worker: Content-based LLM evaluation of prefetched pages.
+
+    Transitions: prefetched → rescored (if score >= 0.5) or skipped
+
+    Uses the prefetched content (preview_summary) for a more accurate
+    content-based evaluation than the first-pass title/URL scoring.
+    """
+    from imas_codex.agentic.agents import get_model_for_task
+
+    logger.info("rescore_worker started")
+
+    while not state.should_stop_scoring():
+        pages = claim_pages_for_rescoring(state.facility, limit=20)
+        logger.debug(f"rescore_worker claimed {len(pages)} pages")
+
+        if not pages:
+            state.rescore_idle_count += 1
+            if on_progress:
+                on_progress("idle", state.rescore_stats)
+            await asyncio.sleep(1.0)
+            continue
+
+        state.rescore_idle_count = 0
+
+        if on_progress:
+            on_progress(f"rescoring {len(pages)} pages", state.rescore_stats)
+
+        # Build batch for content-aware scoring
+        pages_for_rescore = []
+        for page in pages:
+            pages_for_rescore.append(
+                {
+                    "id": page["id"],
+                    "title": page.get("title", ""),
+                    "url": page.get("url", ""),
+                    "preview_text": page.get("summary", ""),  # From preview_summary
+                }
+            )
+
+        try:
+            model = get_model_for_task("discovery")
+            rescore_results, rescore_cost = await _score_pages_batch(
+                pages_for_rescore, model, state.focus
+            )
+            state.rescore_stats.cost += rescore_cost
+        except ValueError as e:
+            logger.error("LLM configuration error during rescore: %s", e)
+            state.stop_requested = True
+            break
+        except Exception as e:
+            logger.error("Error in rescore batch: %s", e)
+            # Reset pages to prefetched state for retry
+            for page in pages:
+                mark_page_failed(page["id"], str(e), WikiPageStatus.prefetched.value)
+            continue
+
+        # Add cost per page to results
+        for r in rescore_results:
+            r["score_cost"] = rescore_cost / len(rescore_results)
+
+        # Mark pages as rescored (or skipped if below threshold)
+        mark_pages_rescored(state.facility, rescore_results, rescore_threshold)
+        state.rescore_stats.processed += len(rescore_results)
+
+        if on_progress:
+            on_progress(
+                f"rescored {len(rescore_results)} pages",
+                state.rescore_stats,
+                results=rescore_results,
+            )
+
+
 async def ingest_worker(
     state: WikiDiscoveryState,
     on_progress: Callable | None = None,
     min_score: float = 0.5,
 ) -> None:
-    """Ingest worker: Rescore with content, then chunk and embed high-value pages.
+    """Ingest worker: Chunk and embed rescored high-value pages.
 
-    Transitions: prefetched → ingested (if rescore >= 0.5) or skipped
+    Transitions: rescored → ingested
 
-    Uses WikiIngestionPipeline for proper chunking and embedding.
-    Rescoring uses content summary for second-pass evaluation.
+    Claims rescored pages with score >= min_score, fetches full content,
+    chunks it, and creates embeddings.
     """
     while not state.should_stop_scoring():
         pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
@@ -1463,7 +1578,7 @@ async def ingest_worker(
                 )
             except Exception as e:
                 logger.warning("Error ingesting %s: %s", page_id, e)
-                mark_page_failed(page_id, str(e), WikiPageStatus.prefetched.value)
+                mark_page_failed(page_id, str(e), WikiPageStatus.rescored.value)
 
         mark_pages_ingested(state.facility, results)
         state.ingest_stats.processed += len(results)
@@ -2142,6 +2257,7 @@ async def run_parallel_wiki_discovery(
     on_scan_progress: Callable | None = None,
     on_prefetch_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
+    on_rescore_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
@@ -2240,6 +2356,7 @@ async def run_parallel_wiki_discovery(
     if not scan_only:
         for _ in range(num_score_workers):
             workers.append(asyncio.create_task(score_worker(state, on_score_progress)))
+        workers.append(asyncio.create_task(rescore_worker(state, on_rescore_progress)))
         workers.append(asyncio.create_task(ingest_worker(state, on_ingest_progress)))
 
     logger.info(
@@ -2265,11 +2382,13 @@ async def run_parallel_wiki_discovery(
         "scanned": state.scan_stats.processed,
         "prefetched": state.prefetch_stats.processed,
         "scored": state.score_stats.processed,
+        "rescored": state.rescore_stats.processed,
         "ingested": state.ingest_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,
         "score_rate": state.score_stats.rate,
+        "rescore_rate": state.rescore_stats.rate,
     }
 
 
@@ -2339,6 +2458,8 @@ def get_wiki_discovery_stats(facility: str) -> dict[str, int]:
             "prefetched": 0,
             "scoring": 0,
             "scored": 0,
+            "rescoring": 0,
+            "rescored": 0,
             "ingesting": 0,
             "ingested": 0,
             "skipped": 0,

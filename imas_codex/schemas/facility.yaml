@@ -402,11 +402,11 @@ enums:
       Lifecycle status for wiki page discovery. Uses claimed_at timestamp for
       transient worker coordination (same pattern as FacilityPathStatus).
       
-      Workflow: scanned → scored → prefetched → ingested
+      Workflow: scanned → scored → prefetched → rescored → ingested
       - Bulk discovery sets status=scanned with links extracted
       - First-pass scoring filters by title/URL, updates score field
       - Prefetch fetches full content for high-score pages (score >= 0.3)
-      - Rescore with content updates score field again
+      - Rescore evaluates prefetched content, updates score with content-aware value
       - Ingest embeds pages with score >= 0.5
     permissible_values:
       scanned:
@@ -420,7 +420,11 @@ enums:
       prefetched:
         description: >-
           Content fetched, preview_summary generated. Ready for content-based
-          rescore and ingestion decision.
+          rescore.
+      rescored:
+        description: >-
+          Content-based rescore complete. Score updated with content-aware value.
+          Pages with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content chunked, embedded, and linked to graph
       skipped:

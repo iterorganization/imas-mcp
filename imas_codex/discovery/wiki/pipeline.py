@@ -737,13 +737,14 @@ class WikiIngestionPipeline:
 
         # Persist all chunks in batches
         with GraphClient() as gc:
-            # Update WikiPage: match by title first (handles duplicates), set canonical ID
-            # This fixes the ID mismatch bug where discovery and ingestion created
-            # different IDs for the same page
+            # Update WikiPage: MERGE on id to match discovery phase
+            # Constraint is on (id, facility_id), so MERGE on id ensures we update
+            # existing nodes rather than creating duplicates with title mismatches
             gc.query(
                 """
-                MERGE (p:WikiPage {facility_id: $facility_id, title: $title})
-                SET p.id = $id,
+                MERGE (p:WikiPage {id: $id})
+                SET p.facility_id = $facility_id,
+                    p.title = $title,
                     p.url = $url,
                     p.status = 'ingested',
                     p.content_hash = $hash,

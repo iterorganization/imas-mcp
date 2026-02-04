@@ -27,16 +27,22 @@ from __future__ import annotations
 import logging
 import re
 import time
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import requests
+import urllib3
 
 from imas_codex.discovery.wiki.auth import CredentialManager, require_credentials
 
 if TYPE_CHECKING:
     from requests import Response
+
+# Suppress InsecureRequestWarning when verify_ssl=False (intended behavior)
+# This is set after imports because it modifies urllib3 behavior at runtime
+warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
