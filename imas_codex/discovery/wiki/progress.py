@@ -382,6 +382,30 @@ class WikiProgressDisplay:
                 # Queue has items but nothing displayed yet (waiting for tick)
                 section.append("...", style="dim italic")
                 section.append("\n    ", style="dim")
+            section.append("\n")
+
+            # INGEST section - always 2 lines (skip in scan_only mode)
+            ingest = self.state.current_ingest
+            section.append("  INGEST", style="bold magenta")
+            if ingest:
+                section.append(
+                    self._clip_title(ingest.title, self.WIDTH - 12), style="white"
+                )
+                section.append("\n")
+                section.append("    ", style="dim")
+                section.append(f"{ingest.chunk_count} chunks", style="cyan")
+            elif self.state.ingest_processing:
+                section.append(" processing batch...", style="cyan italic")
+                section.append("\n    ", style="dim")
+            elif should_show_idle(
+                self.state.ingest_processing, self.state.ingest_queue
+            ):
+                section.append(" idle", style="dim italic")
+                section.append("\n    ", style="dim")
+            else:
+                # Queue has items but nothing displayed yet (waiting for tick)
+                section.append(" ...", style="dim italic")
+                section.append("\n    ", style="dim")
 
         return section
 
