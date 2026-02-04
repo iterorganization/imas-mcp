@@ -13,6 +13,7 @@ Uses common progress infrastructure from progress_common module.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -83,6 +84,11 @@ class ProgressState:
     # Mode flags
     scan_only: bool = False
     score_only: bool = False
+
+    # Bulk discovery phase
+    bulk_discovery_active: bool = False
+    bulk_discovery_message: str = ""
+    bulk_discovery_count: int = 0
 
     # Counts from graph
     total_pages: int = 0
@@ -331,7 +337,18 @@ class WikiProgressDisplay:
 
         # SCAN section - always 2 lines for consistent height
         section.append("  SCAN ", style="bold blue")
-        if scan:
+        if self.state.bulk_discovery_active:
+            # Bulk discovery in progress
+            section.append("bulk discovery...", style="cyan italic")
+            section.append("\n")
+            section.append("    ", style="dim")
+            if self.state.bulk_discovery_message:
+                section.append(self.state.bulk_discovery_message, style="cyan")
+            if self.state.bulk_discovery_count > 0:
+                section.append(
+                    f" ({self.state.bulk_discovery_count:,} found)", style="white"
+                )
+        elif scan:
             section.append(self._clip_title(scan.title, self.WIDTH - 10), style="white")
             section.append("\n")
             section.append("    ", style="dim")
@@ -552,6 +569,22 @@ class WikiProgressDisplay:
         """Update scanner state."""
         self.state.run_scanned = stats.processed
         self.state.scan_rate = stats.rate
+
+        # Handle bulk discovery phase (messages prefixed with "bulk:")
+        if message.startswith("bulk:"):
+            self.state.bulk_discovery_active = True
+            bulk_msg = message[5:].strip()
+            self.state.bulk_discovery_message = bulk_msg
+            # Parse count from message like "range 1/17: 342 pages"
+            count_match = re.search(r"(\d+)\s*pages", bulk_msg)
+            if count_match:
+                self.state.bulk_discovery_count = int(count_match.group(1))
+            self._refresh()
+            return
+        else:
+            # Bulk discovery complete, normal scanning
+            self.state.bulk_discovery_active = False
+            self.state.bulk_discovery_message = ""
 
         # Track processing state
         # Don't clear current_scan when idle - let queue drain naturally
