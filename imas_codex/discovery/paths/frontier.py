@@ -1427,6 +1427,30 @@ def clear_facility_paths(
                 f"Cleaned up {orphans} orphaned SoftwareRepo nodes"
             )
 
+        # Clean up orphaned Person nodes (no relationships to any nodes)
+        person_deleted = 0
+        while True:
+            result = gc.query(
+                """
+                MATCH (p:Person)
+                WHERE NOT (p)--()
+                WITH p LIMIT $batch_size
+                DELETE p
+                RETURN count(p) AS deleted
+                """,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            person_deleted += deleted
+            if deleted < batch_size:
+                break
+        if person_deleted > 0:
+            import logging
+
+            logging.getLogger(__name__).info(
+                f"Cleaned up {person_deleted} orphaned Person nodes"
+            )
+
     return total_deleted
 
 
