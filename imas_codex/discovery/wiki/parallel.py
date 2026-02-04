@@ -609,38 +609,53 @@ def bulk_discover_all_pages_mediawiki(
 
     logger.info(f"Discovered {len(all_pages)} unique pages")
 
-    # Step 3: Create all pages in graph as 'scanned' status
-    # Skip the scanning phase entirely - go straight to prefetch
+    # Step 3: Create all pages in graph as 'scanned' status using batch insert
     from imas_codex.discovery.wiki.scraper import canonical_page_id
 
+    # Prepare batch data for efficient insertion
+    batch_data = []
+    for page_name in all_pages:
+        page_id = canonical_page_id(page_name, facility)
+        url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
+        batch_data.append(
+            {
+                "id": page_id,
+                "title": page_name,
+                "url": url,
+            }
+        )
+
+    # Insert in batches of 500 for efficiency
+    batch_size = 500
     created = 0
     with GraphClient() as gc:
-        for page_name in all_pages:
-            page_id = canonical_page_id(page_name, facility)
-            url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
-
-            # MERGE to avoid duplicates, set to discovered status (awaiting quick score)
+        for i in range(0, len(batch_data), batch_size):
+            batch = batch_data[i : i + batch_size]
             result = gc.query(
                 """
-                MERGE (wp:WikiPage {id: $id})
-                ON CREATE SET wp.title = $title,
-                              wp.url = $url,
+                UNWIND $pages AS page
+                MERGE (wp:WikiPage {id: page.id})
+                ON CREATE SET wp.title = page.title,
+                              wp.url = page.url,
                               wp.facility_id = $facility,
                               wp.status = $scanned,
                               wp.link_depth = 1,
                               wp.discovered_at = datetime(),
                               wp.bulk_discovered = true
                 ON MATCH SET wp.bulk_discovered = true
-                RETURN wp.status AS status
+                RETURN count(wp) AS count
                 """,
-                id=page_id,
-                title=page_name,
-                url=url,
+                pages=batch,
                 facility=facility,
                 scanned=WikiPageStatus.scanned.value,
             )
             if result:
-                created += 1
+                created += result[0]["count"]
+
+            if on_progress:
+                on_progress(
+                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                )
 
     logger.info(f"Created/updated {created} pages in graph (scanned status)")
     if on_progress:
@@ -767,38 +782,53 @@ def bulk_discover_all_pages_http(
 
         logger.info(f"Discovered {len(all_pages)} unique pages")
 
-        # Step 3: Create all pages in graph as 'scanned' status
-        # Skip the scanning phase entirely - go straight to prefetch
+        # Step 3: Create all pages in graph as 'scanned' status using batch insert
         from imas_codex.discovery.wiki.scraper import canonical_page_id
 
+        # Prepare batch data for efficient insertion
+        batch_data = []
+        for page_name in all_pages:
+            page_id = canonical_page_id(page_name, facility)
+            url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
+            batch_data.append(
+                {
+                    "id": page_id,
+                    "title": page_name,
+                    "url": url,
+                }
+            )
+
+        # Insert in batches of 500 for efficiency
+        batch_size = 500
         created = 0
         with GraphClient() as gc:
-            for page_name in all_pages:
-                page_id = canonical_page_id(page_name, facility)
-                url = f"{base_url}/{urllib.parse.quote(page_name, safe='/')}"
-
-                # MERGE to avoid duplicates, set to discovered status (awaiting quick score)
+            for i in range(0, len(batch_data), batch_size):
+                batch = batch_data[i : i + batch_size]
                 result = gc.query(
                     """
-                    MERGE (wp:WikiPage {id: $id})
-                    ON CREATE SET wp.title = $title,
-                                  wp.url = $url,
+                    UNWIND $pages AS page
+                    MERGE (wp:WikiPage {id: page.id})
+                    ON CREATE SET wp.title = page.title,
+                                  wp.url = page.url,
                                   wp.facility_id = $facility,
                                   wp.status = $scanned,
                                   wp.link_depth = 1,
                                   wp.discovered_at = datetime(),
                                   wp.bulk_discovered = true
                     ON MATCH SET wp.bulk_discovered = true
-                    RETURN wp.status AS status
+                    RETURN count(wp) AS count
                     """,
-                    id=page_id,
-                    title=page_name,
-                    url=url,
+                    pages=batch,
                     facility=facility,
                     scanned=WikiPageStatus.scanned.value,
                 )
                 if result:
-                    created += 1
+                    created += result[0]["count"]
+
+                if on_progress:
+                    on_progress(
+                        f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                    )
 
         logger.info(f"Created/updated {created} pages in graph (scanned status)")
         if on_progress:

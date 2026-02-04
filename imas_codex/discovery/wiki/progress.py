@@ -20,7 +20,6 @@ Uses common progress infrastructure from progress_common module.
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -89,11 +88,6 @@ class ProgressState:
     # Mode flags
     scan_only: bool = False
     score_only: bool = False
-
-    # Bulk discovery phase
-    bulk_discovery_active: bool = False
-    bulk_discovery_message: str = ""
-    bulk_discovery_count: int = 0
 
     # Counts from graph (total pages for progress denominator)
     total_pages: int = 0  # All wiki pages in graph for this facility
@@ -362,18 +356,7 @@ class WikiProgressDisplay:
         # SCORE section - always 2 lines for consistent height
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold blue")
-            if self.state.bulk_discovery_active:
-                # Bulk discovery in progress
-                section.append("bulk discovery...", style="cyan italic")
-                section.append("\n")
-                section.append("    ", style="dim")
-                if self.state.bulk_discovery_message:
-                    section.append(self.state.bulk_discovery_message, style="cyan")
-                if self.state.bulk_discovery_count > 0:
-                    section.append(
-                        f" ({self.state.bulk_discovery_count:,} found)", style="white"
-                    )
-            elif score:
+            if score:
                 # Line 1: Page title (clipped to fit)
                 section.append(
                     self._clip_title(score.title, self.WIDTH - 10), style="white"
@@ -640,23 +623,9 @@ class WikiProgressDisplay:
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
-        """Update scanner state (for bulk discovery reporting)."""
-        # Handle bulk discovery phase (messages prefixed with "bulk:")
-        if message.startswith("bulk:"):
-            self.state.bulk_discovery_active = True
-            bulk_msg = message[5:].strip()
-            self.state.bulk_discovery_message = bulk_msg
-            # Parse count from message like "range 1/17: 342 pages"
-            count_match = re.search(r"(\d+)\s*pages", bulk_msg)
-            if count_match:
-                self.state.bulk_discovery_count = int(count_match.group(1))
-            self._refresh()
-            return
-        else:
-            # Bulk discovery complete
-            self.state.bulk_discovery_active = False
-            self.state.bulk_discovery_message = ""
-
+        """Update scanner state (currently unused since bulk discovery runs before display)."""
+        # Bulk discovery now runs as a setup step before the display starts,
+        # so scan messages only come from link-crawling mode (non-bulk)
         self._refresh()
 
     def update_score(

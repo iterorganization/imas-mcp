@@ -1291,6 +1291,67 @@ def discover_wiki(
                 f"[dim]Reset {total_reset} orphaned pages from previous run[/dim]"
             )
 
+        # Run bulk discovery as a setup step BEFORE the main progress display
+        # This is a one-time operation that discovers all wiki page names quickly
+        bulk_discovered = 0
+        if should_bulk_discover and site_type == "mediawiki" and not score_only:
+            from imas_codex.discovery.wiki.parallel import (
+                bulk_discover_all_pages_http,
+                bulk_discover_all_pages_mediawiki,
+            )
+
+            def bulk_progress_log(msg, _):
+                """Log-only progress for bulk discovery."""
+                wiki_logger.info(f"BULK: {msg}")
+
+            if use_rich:
+                from rich.status import Status
+
+                with Status(
+                    "[cyan]Bulk discovery: scanning Special:AllPages...[/cyan]",
+                    console=console,
+                    spinner="dots",
+                ) as status:
+
+                    def bulk_progress_rich(msg, _):
+                        """Update status spinner during bulk discovery."""
+                        # Parse progress from messages like "range 1/23: 355 pages"
+                        if "pages" in msg:
+                            status.update(f"[cyan]Bulk discovery: {msg}[/cyan]")
+                        elif "creating" in msg:
+                            status.update(f"[cyan]Creating pages: {msg}[/cyan]")
+                        elif "created" in msg:
+                            status.update(f"[green]{msg}[/green]")
+
+                    if auth_type == "tequila" and credential_service:
+                        bulk_discovered = bulk_discover_all_pages_http(
+                            facility, base_url, credential_service, bulk_progress_rich
+                        )
+                    elif ssh_host:
+                        bulk_discovered = bulk_discover_all_pages_mediawiki(
+                            facility, base_url, ssh_host, bulk_progress_rich
+                        )
+
+                if bulk_discovered > 0:
+                    log_print(
+                        f"[green]Discovered {bulk_discovered:,} wiki pages[/green]"
+                    )
+            else:
+                # Non-rich mode: log only
+                if auth_type == "tequila" and credential_service:
+                    bulk_discovered = bulk_discover_all_pages_http(
+                        facility, base_url, credential_service, bulk_progress_log
+                    )
+                elif ssh_host:
+                    bulk_discovered = bulk_discover_all_pages_mediawiki(
+                        facility, base_url, ssh_host, bulk_progress_log
+                    )
+                if bulk_discovered > 0:
+                    wiki_logger.info(f"Discovered {bulk_discovered} wiki pages")
+
+            # Since bulk discovery ran, don't run it again in run_parallel_wiki_discovery
+            should_bulk_discover = False
+
         try:
 
             async def run_discovery_with_progress(
