@@ -1146,6 +1146,36 @@ def discover_wiki(
         )
         raise SystemExit(1)
 
+    # Check embedding server availability upfront for ingestion mode
+    if not scan_only and not score_only:
+        from imas_codex.embeddings.config import EmbeddingBackend
+        from imas_codex.settings import get_embed_remote_url, get_embedding_backend
+
+        backend_str = get_embedding_backend()
+        try:
+            backend = EmbeddingBackend(backend_str)
+        except ValueError:
+            backend = EmbeddingBackend.LOCAL
+
+        if backend == EmbeddingBackend.REMOTE:
+            from imas_codex.embeddings.client import RemoteEmbeddingClient
+
+            remote_url = get_embed_remote_url()
+            client = RemoteEmbeddingClient(remote_url)
+            if not client.is_available():
+                log_print(
+                    f"[red]Remote embedding server not available at {remote_url}[/red]"
+                )
+                log_print(
+                    "[yellow]Ensure SSH tunnel is active:[/yellow]\n"
+                    "  ssh -f -N -L 18765:127.0.0.1:18765 iter\n\n"
+                    "[dim]Or use --scan-only / --score-only to skip embedding[/dim]"
+                )
+                raise SystemExit(1)
+            log_print(
+                f"[dim]Embedding server: {remote_url} ({client.get_info().model})[/dim]"
+            )
+
     log_print(f"[bold]Documentation sources for {facility}:[/bold]")
     for i, site in enumerate(wiki_sites):
         site_type = site.get("site_type", "mediawiki")

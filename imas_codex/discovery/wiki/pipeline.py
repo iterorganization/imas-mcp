@@ -29,11 +29,11 @@ from html.parser import HTMLParser
 from typing import TypedDict
 
 from llama_index.core import Document
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
+from imas_codex.embeddings.llama_index import get_llama_embed_model
 from imas_codex.graph import GraphClient
-from imas_codex.settings import get_imas_embedding_model
 
 from .monitor import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
@@ -565,13 +565,19 @@ def html_to_text(html: str) -> tuple[str, dict[str, str]]:
     return text, sections
 
 
-def get_embed_model() -> HuggingFaceEmbedding:
-    """Get the project's standard embedding model (all-MiniLM-L6-v2)."""
-    model_name = get_imas_embedding_model()
-    return HuggingFaceEmbedding(
-        model_name=model_name,
-        trust_remote_code=False,
-    )
+# Global cached embed model to avoid reloading for each page
+_CACHED_EMBED_MODEL: BaseEmbedding | None = None
+
+
+def get_embed_model() -> BaseEmbedding:
+    """Get embedding model respecting embedding-backend config (local/remote).
+
+    Uses global caching to avoid reloading model for each page ingestion.
+    """
+    global _CACHED_EMBED_MODEL
+    if _CACHED_EMBED_MODEL is None:
+        _CACHED_EMBED_MODEL = get_llama_embed_model()
+    return _CACHED_EMBED_MODEL
 
 
 class WikiIngestionPipeline:
@@ -609,11 +615,11 @@ class WikiIngestionPipeline:
         )
 
         # Embedding model is loaded lazily
-        self._embed_model: HuggingFaceEmbedding | None = None
+        self._embed_model: BaseEmbedding | None = None
 
     @property
-    def embed_model(self) -> HuggingFaceEmbedding:
-        """Lazy-load embedding model."""
+    def embed_model(self) -> BaseEmbedding:
+        """Lazy-load embedding model respecting embedding-backend config."""
         if self._embed_model is None:
             self._embed_model = get_embed_model()
         return self._embed_model
@@ -1326,11 +1332,11 @@ class WikiArtifactPipeline:
             separator="\n",
         )
 
-        self._embed_model: HuggingFaceEmbedding | None = None
+        self._embed_model: BaseEmbedding | None = None
 
     @property
-    def embed_model(self) -> HuggingFaceEmbedding:
-        """Lazy-load embedding model."""
+    def embed_model(self) -> BaseEmbedding:
+        """Lazy-load embedding model respecting embedding-backend config."""
         if self._embed_model is None:
             self._embed_model = get_embed_model()
         return self._embed_model
