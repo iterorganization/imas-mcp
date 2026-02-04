@@ -1517,6 +1517,16 @@ def discover_wiki(
                             ]
                         display.update_ingest(msg, stats, result_dicts)
 
+                    def on_artifact(msg, stats, results=None):
+                        # Artifact progress is logged, not displayed in rich UI
+                        if results and "ingested" in msg:
+                            for r in results:
+                                logger.info(
+                                    "Artifact ingested: %s (%d chunks)",
+                                    r.get("filename", "?"),
+                                    r.get("chunk_count", 0),
+                                )
+
                     try:
                         result = await run_parallel_wiki_discovery(
                             facility=_facility,
@@ -1538,6 +1548,7 @@ def discover_wiki(
                             on_scan_progress=on_scan,
                             on_score_progress=on_score,
                             on_ingest_progress=on_ingest,
+                            on_artifact_progress=on_artifact,
                         )
                     finally:
                         refresh_task.cancel()
@@ -1580,7 +1591,8 @@ def discover_wiki(
             log_print(
                 f"  [green]{result.get('scanned', 0)} pages scanned, "
                 f"{result.get('scored', 0)} scored, "
-                f"{result.get('ingested', 0)} ingested[/green]"
+                f"{result.get('ingested', 0)} ingested, "
+                f"{result.get('artifacts', 0)} artifacts[/green]"
             )
             log_print(
                 f"  [dim]Cost: ${result.get('cost', 0):.2f}, "

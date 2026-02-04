@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import WorkerStats
 from imas_codex.graph import GraphClient
-from imas_codex.graph.models import WikiPageStatus
+from imas_codex.graph.models import WikiArtifactStatus, WikiPageStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -67,12 +67,14 @@ class WikiDiscoveryState:
     scan_stats: WorkerStats = field(default_factory=WorkerStats)
     score_stats: WorkerStats = field(default_factory=WorkerStats)
     ingest_stats: WorkerStats = field(default_factory=WorkerStats)
+    artifact_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
     scan_idle_count: int = 0
     score_idle_count: int = 0
     ingest_idle_count: int = 0
+    artifact_idle_count: int = 0
 
     # SSH retry tracking
     ssh_retry_count: int = 0
@@ -105,13 +107,17 @@ class WikiDiscoveryState:
             self.scan_idle_count >= 3
             and self.score_idle_count >= 3
             and self.ingest_idle_count >= 3
+            and self.artifact_idle_count >= 3
         )
         if all_idle:
-            if has_pending_work(self.facility):
+            if has_pending_work(self.facility) or has_pending_artifact_work(
+                self.facility
+            ):
                 # Reset idle counts to force workers to re-poll
                 self.scan_idle_count = 0
                 self.score_idle_count = 0
                 self.ingest_idle_count = 0
+                self.artifact_idle_count = 0
                 return False
             return True
         return False
@@ -162,6 +168,44 @@ class WikiDiscoveryState:
             if scoring_done and not has_pending_ingest_work(self.facility):
                 return True
         return False
+
+    def should_stop_artifact_worker(self) -> bool:
+        """Check if artifact workers should stop.
+
+        Artifact workers continue until no pending artifacts remain.
+        They stop when explicitly requested or idle for 3+ iterations.
+        """
+        if self.stop_requested:
+            return True
+        if self.artifact_idle_count >= 3 and not has_pending_artifact_work(
+            self.facility
+        ):
+            return True
+        return False
+
+
+def has_pending_artifact_work(facility: str) -> bool:
+    """Check if there are pending artifacts for ingestion.
+
+    Artifacts are ready for ingestion when:
+    - status = 'discovered' AND artifact_type = 'pdf' (skip scoring for now)
+    - claimed_at is null or expired
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility})
+            WHERE wa.status = $discovered
+              AND wa.artifact_type = 'pdf'
+              AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
+            RETURN count(wa) AS pending
+            """,
+            facility=facility,
+            discovered=WikiArtifactStatus.discovered.value,
+            cutoff=cutoff,
+        )
+        return result[0]["pending"] > 0 if result else False
 
 
 def has_pending_work(facility: str) -> bool:
@@ -558,6 +602,133 @@ def _release_claimed_pages(page_ids: list[str]) -> None:
         logger.warning(
             "Could not release %d claimed pages (Neo4j unavailable): %s",
             len(page_ids),
+            e,
+        )
+
+
+# =============================================================================
+# Artifact Claim/Mark Functions
+# =============================================================================
+
+
+def claim_artifacts_for_ingesting(
+    facility: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Claim discovered PDF artifacts for ingestion.
+
+    Claims artifacts with status='discovered' and artifact_type='pdf'.
+    Other artifact types are currently deferred (no parser available).
+
+    Workflow: discovered + pdf + unclaimed → set claimed_at
+    After ingest: update status to 'ingested'.
+    """
+    cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    with GraphClient() as gc:
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility})
+            WHERE wa.status = $discovered
+              AND wa.artifact_type = 'pdf'
+              AND (wa.claimed_at IS NULL
+                   OR wa.claimed_at < datetime() - duration($cutoff))
+            WITH wa
+            ORDER BY wa.discovered_at ASC
+            LIMIT $limit
+            SET wa.claimed_at = datetime(),
+                wa.status = $ingesting
+            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
+                   wa.artifact_type AS artifact_type
+            """,
+            facility=facility,
+            discovered=WikiArtifactStatus.discovered.value,
+            ingesting=WikiArtifactStatus.ingesting.value,
+            cutoff=cutoff,
+            limit=limit,
+        )
+        return list(result)
+
+
+def mark_artifacts_ingested(
+    facility: str,
+    results: list[dict[str, Any]],
+) -> int:
+    """Mark artifacts as ingested with chunk data.
+
+    Uses batched UNWIND for O(1) graph operations.
+    """
+    if not results:
+        return 0
+
+    batch_data = [
+        {"id": r.get("id"), "chunks": r.get("chunk_count", 0)}
+        for r in results
+        if r.get("id")
+    ]
+
+    if not batch_data:
+        return 0
+
+    with GraphClient() as gc:
+        gc.query(
+            """
+            UNWIND $batch AS item
+            MATCH (wa:WikiArtifact {id: item.id})
+            SET wa.status = $ingested,
+                wa.chunk_count = item.chunks,
+                wa.ingested_at = datetime(),
+                wa.claimed_at = null
+            """,
+            batch=batch_data,
+            ingested=WikiArtifactStatus.ingested.value,
+        )
+
+    return len(batch_data)
+
+
+def mark_artifact_failed(artifact_id: str, error: str) -> None:
+    """Mark an artifact as failed with error message."""
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                MATCH (wa:WikiArtifact {id: $id})
+                SET wa.status = $failed,
+                    wa.error = $error,
+                    wa.failed_at = datetime(),
+                    wa.claimed_at = null
+                """,
+                id=artifact_id,
+                failed=WikiArtifactStatus.failed.value,
+                error=error,
+            )
+    except Exception as e:
+        logger.warning(
+            "Could not mark artifact %s as failed (Neo4j unavailable): %s",
+            artifact_id,
+            e,
+        )
+
+
+def mark_artifact_deferred(artifact_id: str, reason: str) -> None:
+    """Mark an artifact as deferred (unsupported type or too large)."""
+    try:
+        with GraphClient() as gc:
+            gc.query(
+                """
+                MATCH (wa:WikiArtifact {id: $id})
+                SET wa.status = $deferred,
+                    wa.defer_reason = $reason,
+                    wa.claimed_at = null
+                """,
+                id=artifact_id,
+                deferred=WikiArtifactStatus.deferred.value,
+                reason=reason,
+            )
+    except Exception as e:
+        logger.warning(
+            "Could not mark artifact %s as deferred (Neo4j unavailable): %s",
+            artifact_id,
             e,
         )
 
@@ -1474,6 +1645,104 @@ async def ingest_worker(
             )
 
 
+async def artifact_worker(
+    state: WikiDiscoveryState,
+    on_progress: Callable | None = None,
+    max_size_mb: float = 5.0,
+) -> None:
+    """Artifact worker: Download and ingest PDF artifacts.
+
+    Transitions: discovered → ingesting → ingested
+
+    Claims discovered PDF artifacts, downloads content, and extracts text.
+    Non-PDF artifacts are marked as deferred (require specialized parsers).
+
+    Args:
+        state: Shared discovery state
+        on_progress: Progress callback (msg, stats, results=None)
+        max_size_mb: Maximum artifact size in MB
+    """
+    from imas_codex.discovery.wiki.pipeline import (
+        WikiArtifactPipeline,
+        fetch_artifact_content,
+        fetch_artifact_size,
+    )
+
+    max_size_bytes = int(max_size_mb * 1024 * 1024)
+    pipeline = WikiArtifactPipeline(
+        facility_id=state.facility,
+        max_size_mb=max_size_mb,
+        use_rich=False,
+    )
+
+    while not state.should_stop_artifact_worker():
+        artifacts = claim_artifacts_for_ingesting(state.facility, limit=3)
+
+        if not artifacts:
+            state.artifact_idle_count += 1
+            if on_progress:
+                on_progress("idle", state.artifact_stats)
+            await asyncio.sleep(1.0)
+            continue
+
+        state.artifact_idle_count = 0
+
+        if on_progress:
+            on_progress(f"ingesting {len(artifacts)} artifacts", state.artifact_stats)
+
+        results = []
+        for artifact in artifacts:
+            artifact_id = artifact["id"]
+            artifact_type = artifact.get("artifact_type", "unknown")
+            url = artifact.get("url", "")
+            filename = artifact.get("filename", "unknown")
+
+            try:
+                # Check size before downloading
+                size_bytes = fetch_artifact_size(url, facility=state.facility)
+
+                if size_bytes is not None and size_bytes > max_size_bytes:
+                    size_mb = size_bytes / (1024 * 1024)
+                    reason = (
+                        f"File size {size_mb:.1f} MB exceeds limit {max_size_mb:.1f} MB"
+                    )
+                    logger.info("Deferring oversized artifact %s: %s", filename, reason)
+                    mark_artifact_deferred(artifact_id, reason)
+                    continue
+
+                if artifact_type == "pdf":
+                    _, content = await fetch_artifact_content(
+                        url, facility=state.facility
+                    )
+                    stats = await pipeline.ingest_pdf(artifact_id, content)
+                    results.append(
+                        {
+                            "id": artifact_id,
+                            "chunk_count": stats["chunks"],
+                            "filename": filename,
+                            "artifact_type": artifact_type,
+                        }
+                    )
+                else:
+                    # Mark non-PDF as deferred
+                    reason = f"Artifact type '{artifact_type}' not yet supported"
+                    mark_artifact_deferred(artifact_id, reason)
+
+            except Exception as e:
+                logger.warning("Error ingesting artifact %s: %s", artifact_id, e)
+                mark_artifact_failed(artifact_id, str(e))
+
+        mark_artifacts_ingested(state.facility, results)
+        state.artifact_stats.processed += len(results)
+
+        if on_progress:
+            on_progress(
+                f"ingested {len(results)} artifacts",
+                state.artifact_stats,
+                results=results,
+            )
+
+
 # =============================================================================
 # Worker Helpers
 # =============================================================================
@@ -1585,7 +1854,7 @@ def _create_discovered_artifacts(
                 filename=filename,
                 path=path,
                 artifact_type=artifact_type,
-                pending=WikiArtifactStatus.discovered.value,
+                discovered=WikiArtifactStatus.discovered.value,
             )
             created += 1
 
@@ -2159,9 +2428,11 @@ async def run_parallel_wiki_discovery(
     scan_only: bool = False,
     score_only: bool = False,
     bulk_discover: bool = True,
+    ingest_artifacts: bool = True,
     on_scan_progress: Callable | None = None,
     on_score_progress: Callable | None = None,
     on_ingest_progress: Callable | None = None,
+    on_artifact_progress: Callable | None = None,
 ) -> dict[str, Any]:
     """Run parallel wiki discovery with async workers.
 
@@ -2172,6 +2443,9 @@ async def run_parallel_wiki_discovery(
         bulk_discover: If True (default), use Special:AllPages for fast
             discovery of all pages upfront. This is 100-300x faster than
             crawling links page-by-page. Only works for MediaWiki sites.
+        ingest_artifacts: If True (default), start artifact worker to
+            download and ingest PDF artifacts discovered during scanning.
+        on_artifact_progress: Progress callback for artifact worker.
 
     Returns:
         Dict with discovery statistics
@@ -2258,8 +2532,15 @@ async def run_parallel_wiki_discovery(
             workers.append(asyncio.create_task(score_worker(state, on_score_progress)))
         workers.append(asyncio.create_task(ingest_worker(state, on_ingest_progress)))
 
+        # Artifact worker runs by default to ingest PDFs discovered during scanning
+        if ingest_artifacts:
+            workers.append(
+                asyncio.create_task(artifact_worker(state, on_artifact_progress))
+            )
+
     logger.info(
-        f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}"
+        f"Started {len(workers)} workers: score_only={score_only}, scan_only={scan_only}, "
+        f"ingest_artifacts={ingest_artifacts}"
     )
 
     # Wait for termination condition
@@ -2281,6 +2562,7 @@ async def run_parallel_wiki_discovery(
         "scanned": state.scan_stats.processed,
         "scored": state.score_stats.processed,
         "ingested": state.ingest_stats.processed,
+        "artifacts": state.artifact_stats.processed,
         "cost": state.total_cost,
         "elapsed_seconds": elapsed,
         "scan_rate": state.scan_stats.rate,
