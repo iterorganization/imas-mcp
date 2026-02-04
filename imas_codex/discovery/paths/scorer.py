@@ -85,10 +85,10 @@ CONTAINER_PURPOSES = {
 
 def grounded_score(
     scores: dict[str, float],
-    evidence: DirectoryEvidence,
+    input_data: dict[str, Any],
     purpose: ResourcePurpose,
 ) -> float:
-    """Compute combined score from per-purpose scores with evidence adjustments.
+    """Compute combined score from per-purpose scores with input-derived adjustments.
 
     Uses MAX of per-purpose scores (not weighted average) so that paths excelling
     in a single dimension (e.g., pure data, pure docs) are not penalized.
@@ -106,7 +106,7 @@ def grounded_score(
 
     Args:
         scores: Dict of per-purpose scores (score_modeling_code, score_imas, etc.)
-        evidence: Collected evidence from LLM
+        input_data: Directory info dict with has_readme, has_git, file_type_counts, etc.
         purpose: Classified purpose
 
     Returns:
@@ -115,22 +115,31 @@ def grounded_score(
     # Use max of all per-purpose scores - paths may excel in only one dimension
     base_score = max(scores.values()) if scores else 0.0
 
-    # Quality boost
+    # Quality boost from input data (previously from LLM evidence)
     quality_boost = 0.0
-    quality_lower = [q.lower() for q in evidence.quality_indicators]
-    if any("readme" in q for q in quality_lower):
+    if input_data.get("has_readme"):
         quality_boost += 0.05
-    if any("makefile" in q for q in quality_lower):
+    if input_data.get("has_makefile"):
         quality_boost += 0.05
-    if any("git" in q for q in quality_lower):
+    if input_data.get("has_git"):
         quality_boost += 0.05
 
     # IMAS boost (from score_imas)
     if scores.get("score_imas", 0.0) > 0.3:
         quality_boost += 0.10
 
-    # Code diversity boost
-    if len(evidence.code_indicators) > 3:
+    # Code diversity boost from file_type_counts
+    file_types = input_data.get("file_type_counts", {})
+    if isinstance(file_types, str):
+        import json as json_module
+
+        try:
+            file_types = json_module.loads(file_types)
+        except (json_module.JSONDecodeError, TypeError):
+            file_types = {}
+    code_extensions = {"py", "f90", "f", "cpp", "c", "h", "jl", "m", "pro", "idl"}
+    code_type_count = sum(1 for ext in file_types if ext.lower() in code_extensions)
+    if code_type_count > 3:
         quality_boost += 0.05
 
     # Purpose-based multipliers
@@ -449,6 +458,7 @@ class DirectoryScorer:
         Returns:
             List of ScoredDirectory objects with scores and cost_per_path set
         """
+        import json as json_module
         import re
 
         try:
@@ -512,18 +522,34 @@ class DirectoryScorer:
             # Convert Pydantic enum to graph ResourcePurpose
             purpose = parse_path_purpose(result.path_purpose.value)
 
-            # Build evidence from Pydantic model
+            # Build evidence from input data (not LLM response - schema simplified)
+            file_types = directories[i].get("file_type_counts", {})
+            if isinstance(file_types, str):
+                try:
+                    file_types = json_module.loads(file_types)
+                except (json_module.JSONDecodeError, TypeError):
+                    file_types = {}
+            code_exts = {"py", "f90", "f", "cpp", "c", "h", "jl", "m", "pro", "idl"}
+            data_exts = {"nc", "h5", "hdf5", "csv", "dat", "mat"}
             evidence = DirectoryEvidence(
-                code_indicators=result.evidence.code_indicators,
-                data_indicators=result.evidence.data_indicators,
-                doc_indicators=result.evidence.doc_indicators,
-                imas_indicators=result.evidence.imas_indicators,
-                physics_indicators=result.evidence.physics_indicators,
-                quality_indicators=result.evidence.quality_indicators,
+                code_indicators=[ext for ext in file_types if ext.lower() in code_exts],
+                data_indicators=[ext for ext in file_types if ext.lower() in data_exts],
+                doc_indicators=["README"] if directories[i].get("has_readme") else [],
+                imas_indicators=[],  # Filled by enrichment worker
+                physics_indicators=[],  # Filled by enrichment worker
+                quality_indicators=[
+                    name
+                    for name, flag in [
+                        ("has_readme", directories[i].get("has_readme")),
+                        ("has_makefile", directories[i].get("has_makefile")),
+                        ("has_git", directories[i].get("has_git")),
+                    ]
+                    if flag
+                ],
             )
 
-            # Compute grounded score from per-purpose scores
-            combined = grounded_score(scores, evidence, purpose)
+            # Compute grounded score from per-purpose scores and input data
+            combined = grounded_score(scores, directories[i], purpose)
 
             # Extract git metadata for penalty and expansion decisions
             has_git = directories[i].get("has_git", False)
@@ -585,8 +611,8 @@ class DirectoryScorer:
                 should_expand = False
 
             # Enrichment decision - LLM decides, but override for known-large paths
-            should_enrich = getattr(result, "should_enrich", True)
-            enrich_skip_reason = getattr(result, "enrich_skip_reason", None)
+            should_enrich = result.should_enrich
+            enrich_skip_reason = result.enrich_skip_reason
 
             # Override: never enrich git repos with accessible remotes
             # (can get LOC from remote API)
@@ -715,19 +741,34 @@ class DirectoryScorer:
             # Parse purpose
             purpose = parse_path_purpose(result.get("path_purpose", "unknown"))
 
-            # Build evidence
-            evidence_data = result.get("evidence", {})
+            # Build evidence from input data (not LLM response - schema simplified)
+            file_types = directories[i].get("file_type_counts", {})
+            if isinstance(file_types, str):
+                try:
+                    file_types = json.loads(file_types)
+                except (json.JSONDecodeError, TypeError):
+                    file_types = {}
+            code_exts = {"py", "f90", "f", "cpp", "c", "h", "jl", "m", "pro", "idl"}
+            data_exts = {"nc", "h5", "hdf5", "csv", "dat", "mat"}
             evidence = DirectoryEvidence(
-                code_indicators=evidence_data.get("code_indicators", []),
-                data_indicators=evidence_data.get("data_indicators", []),
-                doc_indicators=evidence_data.get("doc_indicators", []),
-                imas_indicators=evidence_data.get("imas_indicators", []),
-                physics_indicators=evidence_data.get("physics_indicators", []),
-                quality_indicators=evidence_data.get("quality_indicators", []),
+                code_indicators=[ext for ext in file_types if ext.lower() in code_exts],
+                data_indicators=[ext for ext in file_types if ext.lower() in data_exts],
+                doc_indicators=["README"] if directories[i].get("has_readme") else [],
+                imas_indicators=[],  # Filled by enrichment worker
+                physics_indicators=[],  # Filled by enrichment worker
+                quality_indicators=[
+                    name
+                    for name, flag in [
+                        ("has_readme", directories[i].get("has_readme")),
+                        ("has_makefile", directories[i].get("has_makefile")),
+                        ("has_git", directories[i].get("has_git")),
+                    ]
+                    if flag
+                ],
             )
 
-            # Compute grounded score
-            combined = grounded_score(scores, evidence, purpose)
+            # Compute grounded score from input data
+            combined = grounded_score(scores, directories[i], purpose)
 
             # Git metadata for expansion/enrichment decisions (no score penalty)
             has_git = directories[i].get("has_git", False)
