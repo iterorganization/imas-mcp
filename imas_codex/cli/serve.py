@@ -519,3 +519,297 @@ WantedBy=default.target
     elif action == "stop":
         subprocess.run(["systemctl", "--user", "stop", "imas-codex-embed"], check=True)
         click.echo("Service stopped")
+
+
+# ============================================================================
+# Serve Tunnel Command Group
+# ============================================================================
+
+
+@serve.group("tunnel")
+def serve_tunnel() -> None:
+    """Manage SSH tunnel to remote embedding server.
+
+    Uses autossh to maintain a persistent, auto-reconnecting SSH tunnel
+    to the ITER embedding server. Required for remote embedding.
+
+    \b
+      imas-codex serve tunnel status    Check tunnel status
+      imas-codex serve tunnel start     Start tunnel (foreground)
+      imas-codex serve tunnel service   Manage systemd service
+    """
+    pass
+
+
+@serve_tunnel.command("status")
+@click.option("--host", default="iter", help="SSH host alias (default: iter)")
+def tunnel_status(host: str) -> None:
+    """Check tunnel and embedding server status.
+
+    Examples:
+        imas-codex serve tunnel status
+        imas-codex serve tunnel status --host iter-gpu
+    """
+    import subprocess
+    from pathlib import Path
+
+    from imas_codex.settings import get_embed_server_port
+
+    port = get_embed_server_port()
+
+    # Check if tunnel port is open
+    click.echo(f"SSH tunnel to {host} (port {port}):")
+
+    # Check if port is in use
+    result = subprocess.run(
+        ["lsof", "-i", f":{port}"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        # Parse process info
+        lines = result.stdout.strip().split("\n")
+        if len(lines) > 1:
+            parts = lines[1].split()
+            process = parts[0] if parts else "unknown"
+            pid = parts[1] if len(parts) > 1 else "?"
+            click.echo(f"  ✓ Port {port} in use by {process} (PID {pid})")
+    else:
+        click.echo(f"  ✗ Port {port} not in use (tunnel not active)")
+        click.echo(f"    Start: imas-codex serve tunnel start --host {host}")
+        click.echo(f"    Or:    ssh -f -N -L {port}:127.0.0.1:{port} {host}")
+        return
+
+    # Check embedding server health
+    from imas_codex.embeddings.client import RemoteEmbeddingClient
+    from imas_codex.settings import get_embed_remote_url
+
+    url = get_embed_remote_url()
+    client = RemoteEmbeddingClient(url)
+
+    if client.is_available():
+        info = client.get_detailed_info()
+        if info:
+            click.echo("  ✓ Embedding server reachable")
+            click.echo(f"    Model: {info['model']['name']}")
+            click.echo(f"    Uptime: {info['server']['uptime_seconds'] / 3600:.1f}h")
+    else:
+        click.echo("  ✗ Embedding server not responding")
+        click.echo(
+            "    Check server on remote: ssh iter systemctl --user status imas-codex-embed"
+        )
+
+    # Check if systemd service is installed
+    service_file = (
+        Path.home() / ".config" / "systemd" / "user" / "imas-codex-tunnel.service"
+    )
+    if service_file.exists():
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "imas-codex-tunnel"],
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout.strip() == "active":
+            click.echo("  ✓ systemd service active (auto-reconnect enabled)")
+        else:
+            click.echo(f"  Service installed but {result.stdout.strip()}")
+
+
+@serve_tunnel.command("start")
+@click.option("--host", default="iter", help="SSH host alias (default: iter)")
+@click.option("--background", "-b", is_flag=True, help="Run in background")
+def tunnel_start(host: str, background: bool) -> None:
+    """Start SSH tunnel to embedding server.
+
+    Uses autossh if available for auto-reconnection, otherwise plain ssh.
+
+    Examples:
+        # Start in foreground (Ctrl+C to stop)
+        imas-codex serve tunnel start
+
+        # Start in background
+        imas-codex serve tunnel start -b
+
+        # Use different host
+        imas-codex serve tunnel start --host iter-gpu
+    """
+    import shutil
+    import subprocess
+
+    from imas_codex.settings import get_embed_server_port
+
+    port = get_embed_server_port()
+
+    # Prefer autossh if available
+    autossh = shutil.which("autossh")
+    if autossh:
+        click.echo("Using autossh for auto-reconnection")
+        # -M 0 disables monitoring port (ServerAliveInterval handles liveness)
+        # -o ServerAliveInterval=30 sends keepalive every 30s
+        # -o ServerAliveCountMax=3 disconnects after 3 missed keepalives
+        cmd = [
+            autossh,
+            "-M",
+            "0",
+            "-N",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-L",
+            f"{port}:127.0.0.1:{port}",
+            host,
+        ]
+    else:
+        click.echo("autossh not found, using plain ssh (no auto-reconnect)")
+        click.echo("  Install: sudo apt install autossh  # or brew install autossh")
+        cmd = [
+            "ssh",
+            "-N",
+            "-o",
+            "ServerAliveInterval=30",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-L",
+            f"{port}:127.0.0.1:{port}",
+            host,
+        ]
+
+    if background:
+        # Add -f flag for background
+        if autossh:
+            # autossh uses AUTOSSH_GATETIME=0 to background immediately
+            env = os.environ.copy()
+            env["AUTOSSH_GATETIME"] = "0"
+            subprocess.Popen(cmd + ["-f"], env=env)
+        else:
+            subprocess.Popen(["ssh", "-f"] + cmd[1:])
+        click.echo(f"Tunnel started in background (port {port})")
+    else:
+        click.echo(f"Starting tunnel to {host}:{port} (Ctrl+C to stop)")
+        try:
+            subprocess.run(cmd, check=True)
+        except KeyboardInterrupt:
+            click.echo("\nTunnel stopped")
+
+
+@serve_tunnel.command("service")
+@click.argument(
+    "action",
+    type=click.Choice(["install", "uninstall", "status", "start", "stop", "logs"]),
+)
+@click.option("--host", default="iter", help="SSH host alias (default: iter)")
+def tunnel_service(action: str, host: str) -> None:
+    """Manage SSH tunnel as systemd user service.
+
+    Installs autossh-based tunnel with auto-reconnection on failure.
+
+    Examples:
+        imas-codex serve tunnel service install
+        imas-codex serve tunnel service start
+        imas-codex serve tunnel service status
+        imas-codex serve tunnel service logs
+    """
+    import platform
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if platform.system() != "Linux":
+        raise click.ClickException("systemd services only supported on Linux")
+
+    if not shutil.which("systemctl"):
+        raise click.ClickException("systemctl not found")
+
+    service_dir = Path.home() / ".config" / "systemd" / "user"
+    service_file = service_dir / "imas-codex-tunnel.service"
+
+    if action == "install":
+        # Check for autossh
+        autossh = shutil.which("autossh")
+        if not autossh:
+            raise click.ClickException(
+                "autossh not found. Install with: sudo apt install autossh"
+            )
+
+        service_dir.mkdir(parents=True, exist_ok=True)
+
+        from imas_codex.settings import get_embed_server_port
+
+        port = get_embed_server_port()
+
+        # autossh service with auto-reconnection
+        service_content = f"""[Unit]
+Description=IMAS Codex SSH Tunnel (autossh to {host})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment="AUTOSSH_GATETIME=0"
+Environment="AUTOSSH_POLL=60"
+ExecStart={autossh} -M 0 -N -o "ServerAliveInterval=30" -o "ServerAliveCountMax=3" -o "ExitOnForwardFailure=yes" -L {port}:127.0.0.1:{port} {host}
+ExecStop=/bin/kill $MAINPID
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+"""
+        service_file.write_text(service_content)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(
+            ["systemctl", "--user", "enable", "imas-codex-tunnel"], check=True
+        )
+        click.echo("✓ Tunnel service installed and enabled")
+        click.echo(f"  Host: {host}")
+        click.echo(f"  Port: {port}")
+        click.echo("  Start: imas-codex serve tunnel service start")
+
+    elif action == "uninstall":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            return
+        subprocess.run(
+            ["systemctl", "--user", "stop", "imas-codex-tunnel"], capture_output=True
+        )
+        subprocess.run(
+            ["systemctl", "--user", "disable", "imas-codex-tunnel"], capture_output=True
+        )
+        service_file.unlink()
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        click.echo("Service uninstalled")
+
+    elif action == "status":
+        if not service_file.exists():
+            click.echo("Service not installed")
+            click.echo("  Install: imas-codex serve tunnel service install")
+            return
+        result = subprocess.run(
+            ["systemctl", "--user", "status", "imas-codex-tunnel"],
+            capture_output=True,
+            text=True,
+        )
+        click.echo(result.stdout)
+        if result.stderr:
+            click.echo(result.stderr)
+
+    elif action == "start":
+        if not service_file.exists():
+            raise click.ClickException(
+                "Service not installed. Run: imas-codex serve tunnel service install"
+            )
+        subprocess.run(
+            ["systemctl", "--user", "start", "imas-codex-tunnel"], check=True
+        )
+        click.echo("Tunnel service started")
+
+    elif action == "stop":
+        subprocess.run(["systemctl", "--user", "stop", "imas-codex-tunnel"], check=True)
+        click.echo("Tunnel service stopped")
+
+    elif action == "logs":
+        # Show recent logs and follow
+        subprocess.run(
+            ["journalctl", "--user", "-u", "imas-codex-tunnel", "-n", "50", "-f"]
+        )
