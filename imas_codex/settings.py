@@ -241,6 +241,53 @@ def get_embed_server_port() -> int:
     return 18765
 
 
+# Model name to embedding dimension mapping
+# Add new models here when supported
+MODEL_DIMENSIONS: dict[str, int] = {
+    # Qwen3 embedding models (preferred)
+    "Qwen/Qwen3-Embedding-0.6B": 1024,
+    "qwen/qwen3-embedding-0.6b": 1024,
+    "Qwen/Qwen3-Embedding-4B": 2560,
+    "Qwen/Qwen3-Embedding-8B": 4096,
+    # Legacy models (for backward compatibility)
+    "all-MiniLM-L6-v2": 384,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+    "all-mpnet-base-v2": 768,
+    "sentence-transformers/all-mpnet-base-v2": 768,
+}
+
+
+def get_embedding_dimension(model_name: str | None = None) -> int:
+    """Get embedding dimension for the configured or specified model.
+
+    Args:
+        model_name: Optional model name. If None, uses configured model.
+
+    Returns:
+        Embedding dimension (e.g., 1024 for Qwen3-Embedding-0.6B)
+
+    Raises:
+        ValueError: If model dimension is unknown
+    """
+    if model_name is None:
+        model_name = get_imas_embedding_model()
+
+    if model_name in MODEL_DIMENSIONS:
+        return MODEL_DIMENSIONS[model_name]
+
+    # Try case-insensitive match
+    model_lower = model_name.lower()
+    for key, dim in MODEL_DIMENSIONS.items():
+        if key.lower() == model_lower:
+            return dim
+
+    raise ValueError(
+        f"Unknown embedding model dimension for '{model_name}'. "
+        f"Add it to MODEL_DIMENSIONS in settings.py or use a known model: "
+        f"{list(MODEL_DIMENSIONS.keys())}"
+    )
+
+
 # Computed defaults (for use in module-level constants)
 IMAS_CODEX_EMBEDDING_MODEL = get_imas_embedding_model()
 IMAS_CODEX_LANGUAGE_MODEL = get_language_model()
@@ -250,3 +297,4 @@ INCLUDE_ERROR_FIELDS = get_include_error_fields()
 EMBEDDING_BACKEND = get_embedding_backend()
 EMBED_REMOTE_URL = get_embed_remote_url()
 EMBED_SERVER_PORT = get_embed_server_port()
+EMBEDDING_DIMENSION = get_embedding_dimension()

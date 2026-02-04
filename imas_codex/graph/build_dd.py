@@ -35,6 +35,7 @@ from imas_codex.core.exclusions import ExclusionChecker
 from imas_codex.core.physics_categorization import physics_categorizer
 from imas_codex.core.progress_monitor import create_progress_monitor
 from imas_codex.graph.client import GraphClient
+from imas_codex.settings import get_embedding_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -1330,6 +1331,8 @@ def _ensure_vector_indexes(client: GraphClient) -> None:
     Creates two vector indexes:
     - imas_path_embedding: For searching IMASPath nodes by embedding
     - cluster_centroid: For hierarchical cluster-first search
+
+    Dimension is determined by the configured embedding model.
     """
     # Check if vector indexes already exist
     try:
@@ -1338,37 +1341,40 @@ def _ensure_vector_indexes(client: GraphClient) -> None:
     except Exception:
         existing_names = set()
 
-    # Create IMASPath embedding index (384 dims for all-MiniLM-L6-v2)
+    # Get dimension from configured embedding model
+    dim = get_embedding_dimension()
+
+    # Create IMASPath embedding index
     if "imas_path_embedding" not in existing_names:
         try:
-            client.query("""
+            client.query(f"""
                 CREATE VECTOR INDEX imas_path_embedding IF NOT EXISTS
                 FOR (p:IMASPath) ON p.embedding
-                OPTIONS {
-                    indexConfig: {
-                        `vector.dimensions`: 384,
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: {dim},
                         `vector.similarity_function`: 'cosine'
-                    }
-                }
+                    }}
+                }}
             """)
-            logger.info("Created vector index: imas_path_embedding")
+            logger.info(f"Created vector index: imas_path_embedding ({dim} dims)")
         except Exception as e:
             logger.warning(f"Failed to create imas_path_embedding index: {e}")
 
     # Create IMASSemanticCluster centroid index
     if "cluster_centroid" not in existing_names:
         try:
-            client.query("""
+            client.query(f"""
                 CREATE VECTOR INDEX cluster_centroid IF NOT EXISTS
                 FOR (c:IMASSemanticCluster) ON c.centroid
-                OPTIONS {
-                    indexConfig: {
-                        `vector.dimensions`: 384,
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: {dim},
                         `vector.similarity_function`: 'cosine'
-                    }
-                }
+                    }}
+                }}
             """)
-            logger.info("Created vector index: cluster_centroid")
+            logger.info(f"Created vector index: cluster_centroid ({dim} dims)")
         except Exception as e:
             logger.warning(f"Failed to create cluster_centroid index: {e}")
 

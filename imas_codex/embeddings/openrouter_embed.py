@@ -31,6 +31,8 @@ from dataclasses import dataclass
 import httpx
 import numpy as np
 
+from imas_codex.settings import get_embedding_dimension
+
 logger = logging.getLogger(__name__)
 
 # OpenRouter embedding API endpoint
@@ -311,7 +313,7 @@ class OpenRouterEmbeddingClient:
 
         return OpenRouterServerInfo(
             model=self.model_name,
-            dimension=1024,  # Qwen3-Embedding-0.6B dimension
+            dimension=get_embedding_dimension(self.model_name),
         )
 
     def embed(

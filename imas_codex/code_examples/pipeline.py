@@ -26,6 +26,7 @@ from llama_index.vector_stores.neo4jvector import Neo4jVectorStore
 
 from imas_codex.embeddings.llama_index import get_llama_embed_model
 from imas_codex.graph import GraphClient
+from imas_codex.settings import get_embedding_dimension
 
 from .facility_reader import TEXT_SPLITTER_LANGUAGES, fetch_remote_files
 from .graph_linker import (
@@ -70,7 +71,7 @@ def create_vector_store(
         username=neo4j_user,
         password=neo4j_password,
         url=neo4j_uri,
-        embedding_dimension=384,  # all-MiniLM-L6-v2
+        embedding_dimension=get_embedding_dimension(),
         index_name="code_chunk_embedding",
         node_label="CodeChunk",
         text_node_property="content",

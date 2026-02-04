@@ -167,6 +167,38 @@ Before ANY operation that modifies or deletes graph nodes:
 - Never use `DETACH DELETE` on production data without user confirmation
 - For re-embedding: update nodes in place, don't delete and recreate
 
+### Vector Indexes for Embeddings
+
+When adding embeddings to graph nodes, you **MUST** create a vector index:
+
+- Embeddings are stored as regular node properties
+- Without an index, `db.index.vector.queryNodes()` fails
+- Indexes can be created before or after embedding (no impact on running processes)
+- Use `IF NOT EXISTS` for idempotent index creation
+
+**Required pattern:**
+```python
+from imas_codex.settings import get_embedding_dimension
+
+dim = get_embedding_dimension()  # Dynamic: 1024 for Qwen3, 384 for MiniLM
+gc.query(f"""
+    CREATE VECTOR INDEX my_embedding_index IF NOT EXISTS
+    FOR (n:MyNodeType) ON n.embedding
+    OPTIONS {{
+        indexConfig: {{
+            `vector.dimensions`: {dim},
+            `vector.similarity_function`: 'cosine'
+        }}
+    }}
+""")
+```
+
+**Existing indexes:**
+- `imas_path_embedding`: IMASPath nodes
+- `cluster_centroid`: IMASSemanticCluster centroids
+- `code_chunk_embedding`: CodeChunk nodes
+- `wiki_chunk_embedding`: WikiChunk nodes
+
 ### Token Cost Optimization
 
 Graph queries can be expensive. Follow these rules:

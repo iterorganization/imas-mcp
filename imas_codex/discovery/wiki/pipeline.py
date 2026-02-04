@@ -34,6 +34,7 @@ from llama_index.core import Document
 from llama_index.core.node_parser import SentenceSplitter
 
 from imas_codex.graph import GraphClient
+from imas_codex.settings import get_embedding_dimension
 
 from .monitor import WikiProgressMonitor, set_current_monitor
 from .scraper import WikiPage, fetch_wiki_page
@@ -1066,25 +1067,46 @@ class WikiIngestionPipeline:
         )
 
 
-def create_wiki_vector_index() -> None:
-    """Create Neo4j vector index for WikiChunk embeddings.
+def ensure_wiki_vector_index() -> bool:
+    """Ensure Neo4j vector index exists for WikiChunk embeddings.
 
-    Call this once after first ingestion to enable semantic search.
+    Creates the index if it doesn't exist. Safe to call multiple times.
+    Dimension is determined by the configured embedding model.
+
+    Returns:
+        True if index was created, False if it already existed.
     """
     with GraphClient() as gc:
+        # Check if index already exists
+        existing = gc.query(
+            "SHOW INDEXES YIELD name WHERE name = 'wiki_chunk_embedding' RETURN name"
+        )
+        if existing:
+            logger.debug("wiki_chunk_embedding index already exists")
+            return False
+
+        # Get dimension from configured embedding model
+        dim = get_embedding_dimension()
         gc.query(
-            """
+            f"""
             CREATE VECTOR INDEX wiki_chunk_embedding IF NOT EXISTS
             FOR (c:WikiChunk) ON c.embedding
-            OPTIONS {
-                indexConfig: {
-                    `vector.dimensions`: 384,
+            OPTIONS {{
+                indexConfig: {{
+                    `vector.dimensions`: {dim},
                     `vector.similarity_function`: 'cosine'
-                }
-            }
+                }}
+            }}
             """
         )
-        logger.info("Created wiki_chunk_embedding vector index")
+        logger.info(f"Created wiki_chunk_embedding vector index ({dim} dims)")
+        return True
+
+
+# Backward compatibility alias
+def create_wiki_vector_index() -> None:
+    """Deprecated: Use ensure_wiki_vector_index() instead."""
+    ensure_wiki_vector_index()
 
 
 def get_wiki_stats(facility_id: str) -> dict:
