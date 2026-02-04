@@ -1,15 +1,16 @@
 """Tests for OpenRouter embedding client and cost tracking."""
 
+from unittest.mock import MagicMock, Mock, patch
+
 import numpy as np
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 from imas_codex.embeddings.openrouter_embed import (
+    EMBEDDING_MODEL_COSTS,
+    MODEL_NAME_MAP,
     EmbeddingBudgetExhaustedError,
     EmbeddingCostTracker,
     EmbeddingResult,
-    EMBEDDING_MODEL_COSTS,
-    MODEL_NAME_MAP,
     OpenRouterEmbeddingClient,
     OpenRouterEmbeddingError,
     OpenRouterServerInfo,
@@ -39,7 +40,7 @@ class TestModelNameMapping:
 
     def test_model_name_map_consistency(self):
         """Test MODEL_NAME_MAP values are all lowercase."""
-        for hf_name, openrouter_name in MODEL_NAME_MAP.items():
+        for _hf_name, openrouter_name in MODEL_NAME_MAP.items():
             assert openrouter_name == openrouter_name.lower()
 
 
@@ -145,16 +146,14 @@ class TestOpenRouterEmbeddingClient:
     def test_init_with_hf_model_name(self):
         """Test client accepts HuggingFace model name."""
         client = OpenRouterEmbeddingClient(
-            api_key="test-key",
-            model_name="Qwen/Qwen3-Embedding-0.6B"
+            api_key="test-key", model_name="Qwen/Qwen3-Embedding-0.6B"
         )
         assert client.model_name == "qwen/qwen3-embedding-0.6b"
 
     def test_init_with_openrouter_model_name(self):
         """Test client accepts OpenRouter model name."""
         client = OpenRouterEmbeddingClient(
-            api_key="test-key",
-            model_name="qwen/qwen3-embedding-0.6b"
+            api_key="test-key", model_name="qwen/qwen3-embedding-0.6b"
         )
         assert client.model_name == "qwen/qwen3-embedding-0.6b"
 
@@ -218,14 +217,14 @@ class TestOpenRouterEmbeddingClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "data": [{"index": 0, "embedding": [0.1] * 1024}],
-            "usage": {"total_tokens": 100}
+            "usage": {"total_tokens": 100},
         }
-        
+
         mock_client = MagicMock()
         mock_client.post.return_value = mock_response
         mock_client_class.return_value.__enter__ = Mock(return_value=mock_client)
         mock_client_class.return_value.__exit__ = Mock(return_value=False)
-        
+
         client = OpenRouterEmbeddingClient(api_key="test-key")
         client._client = mock_client
 
@@ -245,17 +244,17 @@ class TestOpenRouterEmbeddingClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "data": [{"index": 0, "embedding": [3.0, 4.0] + [0.0] * 1022}],
-            "usage": {"total_tokens": 10}
+            "usage": {"total_tokens": 10},
         }
-        
+
         mock_client = MagicMock()
         mock_client.post.return_value = mock_response
-        
+
         client = OpenRouterEmbeddingClient(api_key="test-key")
         client._client = mock_client
 
         result = client.embed(["test"], normalize=True)
-        
+
         # Check L2 norm is 1.0
         norm = np.linalg.norm(result[0])
         assert abs(norm - 1.0) < 0.001
@@ -267,7 +266,9 @@ class TestGetOpenRouterClient:
     def test_returns_none_without_api_key(self):
         """Test returns None when API key not configured."""
         with patch.dict("os.environ", {}, clear=True):
-            with patch("imas_codex.embeddings.openrouter_embed.os.getenv", return_value=None):
+            with patch(
+                "imas_codex.embeddings.openrouter_embed.os.getenv", return_value=None
+            ):
                 client = get_openrouter_client(api_key=None)
                 # Client created but not available
                 assert client is None or not client.is_available()
@@ -275,7 +276,7 @@ class TestGetOpenRouterClient:
     def test_returns_client_with_api_key(self):
         """Test returns configured client with API key."""
         client = get_openrouter_client(api_key="test-key")
-        
+
         assert client is not None
         assert isinstance(client, OpenRouterEmbeddingClient)
         assert client.is_available()
@@ -291,7 +292,7 @@ class TestEmbeddingResult:
             total_tokens=100,
             cost_usd=0.002,
             model="qwen/qwen3-embedding-0.6b",
-            elapsed_seconds=1.5
+            elapsed_seconds=1.5,
         )
 
         assert result.embeddings.shape == (1, 1024)
@@ -299,3 +300,91 @@ class TestEmbeddingResult:
         assert result.cost_usd == 0.002
         assert result.model == "qwen/qwen3-embedding-0.6b"
         assert result.elapsed_seconds == 1.5
+
+    def test_source_field_default(self):
+        """Test source field defaults to openrouter."""
+        result = EmbeddingResult(
+            embeddings=np.array([[0.1] * 1024]),
+            total_tokens=100,
+            cost_usd=0.002,
+            model="qwen/qwen3-embedding-0.6b",
+            elapsed_seconds=1.5,
+        )
+        assert result.source == "openrouter"
+
+    def test_source_field_local(self):
+        """Test source field can be set to local."""
+        result = EmbeddingResult(
+            embeddings=np.array([[0.1] * 1024]),
+            total_tokens=0,
+            cost_usd=0.0,
+            model="Qwen/Qwen3-Embedding-0.6B",
+            elapsed_seconds=1.5,
+            source="local",
+        )
+        assert result.source == "local"
+        assert result.cost_usd == 0.0
+        assert result.total_tokens == 0
+
+    def test_source_field_remote(self):
+        """Test source field can be set to remote."""
+        result = EmbeddingResult(
+            embeddings=np.array([[0.1] * 1024]),
+            total_tokens=0,
+            cost_usd=0.0,
+            model="Qwen/Qwen3-Embedding-0.6B",
+            elapsed_seconds=0.5,
+            source="remote",
+        )
+        assert result.source == "remote"
+        assert result.cost_usd == 0.0
+        assert result.total_tokens == 0
+
+
+class TestCalculateEmbeddingCost:
+    """Tests for calculate_embedding_cost function (actual cost calculation)."""
+
+    def test_calculate_uses_actual_tokens(self):
+        """Test calculate_embedding_cost uses actual token count."""
+        from imas_codex.embeddings.openrouter_embed import calculate_embedding_cost
+
+        # With actual token count from API response
+        cost = calculate_embedding_cost(1000, "qwen/qwen3-embedding-0.6b")
+        expected = (
+            1000 * EMBEDDING_MODEL_COSTS["qwen/qwen3-embedding-0.6b"]
+        ) / 1_000_000
+        assert cost == expected
+
+    def test_estimate_is_alias_for_calculate(self):
+        """Test estimate_embedding_cost is alias for calculate_embedding_cost."""
+        from imas_codex.embeddings.openrouter_embed import calculate_embedding_cost
+
+        tokens = 5000
+        model = "qwen/qwen3-embedding-0.6b"
+        assert estimate_embedding_cost(tokens, model) == calculate_embedding_cost(
+            tokens, model
+        )
+
+
+class TestEmbeddingCostTrackerWithActualCost:
+    """Tests for EmbeddingCostTracker with actual cost values."""
+
+    def test_record_with_explicit_cost(self):
+        """Test record accepts explicit cost from API response."""
+        tracker = EmbeddingCostTracker()
+        # Simulate actual cost from API (if available)
+        cost = tracker.record(1000, "qwen/qwen3-embedding-0.6b", cost_usd=0.00005)
+
+        assert cost == 0.00005
+        assert tracker.total_cost_usd == 0.00005
+        assert tracker.total_tokens == 1000
+
+    def test_record_calculates_cost_when_not_provided(self):
+        """Test record calculates cost when not explicitly provided."""
+        tracker = EmbeddingCostTracker()
+        cost = tracker.record(1000, "qwen/qwen3-embedding-0.6b")
+
+        expected = (
+            1000 * EMBEDDING_MODEL_COSTS["qwen/qwen3-embedding-0.6b"]
+        ) / 1_000_000
+        assert cost == expected

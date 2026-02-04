@@ -31,6 +31,7 @@ from .client import RemoteEmbeddingClient
 from .config import EmbeddingBackend, EncoderConfig
 from .openrouter_embed import (
     EmbeddingCostTracker,
+    EmbeddingResult,
     OpenRouterEmbeddingClient,
 )
 
@@ -274,6 +275,105 @@ class Encoder:
             **kwargs,
         }
         return model.encode(texts, **encode_kwargs)
+
+    def embed_texts_with_result(self, texts: list[str], **kwargs) -> EmbeddingResult:
+        """Embed ad-hoc texts and return result with source and cost tracking.
+
+        Returns EmbeddingResult with:
+        - source: "local", "remote", or "openrouter"
+        - cost_usd: 0.0 for local/remote, actual cost for openrouter
+        - total_tokens: 0 for local/remote, actual tokens for openrouter
+
+        Uses the configured backend with transparent fallback for remote.
+
+        Raises:
+            EmbeddingBackendError: If all backends are unavailable.
+        """
+        if not texts:
+            return EmbeddingResult(
+                embeddings=np.array([]),
+                total_tokens=0,
+                cost_usd=0.0,
+                model=self.config.model_name,
+                elapsed_seconds=0.0,
+                source="local",
+            )
+
+        backend = self.config.backend or EmbeddingBackend.LOCAL
+        start = time.time()
+
+        if backend == EmbeddingBackend.REMOTE:
+            self._validate_remote_backend()
+
+            # Check if using fallback (set by _validate_remote_backend)
+            if self._using_fallback:
+                return self._embed_via_openrouter_with_result(texts)
+
+            try:
+                embeddings = self._remote_client.embed(  # type: ignore[union-attr]
+                    texts, normalize=self.config.normalize_embeddings
+                )
+                elapsed = time.time() - start
+                return EmbeddingResult(
+                    embeddings=embeddings,
+                    total_tokens=0,
+                    cost_usd=0.0,
+                    model=self.config.model_name,
+                    elapsed_seconds=elapsed,
+                    source="remote",
+                )
+            except (ConnectionError, RuntimeError) as e:
+                # Try fallback on connection failure during embedding
+                if self._try_openrouter_fallback():
+                    return self._embed_via_openrouter_with_result(texts)
+                raise EmbeddingBackendError(
+                    f"Remote embedding failed: {e}. Check SSH tunnel."
+                ) from e
+
+        elif backend == EmbeddingBackend.OPENROUTER:
+            return self._embed_via_openrouter_with_result(texts)
+
+        # Local backend
+        model = self.get_model()
+        encode_kwargs = {
+            "convert_to_numpy": True,
+            "normalize_embeddings": self.config.normalize_embeddings,
+            "batch_size": self.config.batch_size,
+            "show_progress_bar": False,
+            **kwargs,
+        }
+        embeddings = model.encode(texts, **encode_kwargs)
+        elapsed = time.time() - start
+        return EmbeddingResult(
+            embeddings=embeddings,
+            total_tokens=0,
+            cost_usd=0.0,
+            model=self.config.model_name,
+            elapsed_seconds=elapsed,
+            source="local",
+        )
+
+    def _embed_via_openrouter_with_result(self, texts: list[str]) -> EmbeddingResult:
+        """Embed texts using OpenRouter with full result and cost tracking.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            EmbeddingResult with embeddings, actual cost, and source="openrouter"
+
+        Raises:
+            EmbeddingBackendError: If OpenRouter unavailable or fails
+        """
+        if not self._openrouter_client:
+            raise EmbeddingBackendError("OpenRouter client not initialized")
+
+        result = self._openrouter_client.embed_with_cost(
+            texts,
+            normalize=self.config.normalize_embeddings,
+            cost_tracker=self.cost_tracker,
+        )
+        return result
 
     @property
     def is_using_remote(self) -> bool:

@@ -81,6 +81,14 @@ class EmbeddingResult:
     """Result of an embedding operation with cost tracking.
 
     Separates embeddings from cost metadata for clean API.
+
+    Attributes:
+        embeddings: The embedding vectors
+        total_tokens: Actual token count from API response (0 for local/remote)
+        cost_usd: Actual cost from API (0.0 for local/remote)
+        model: Model identifier used
+        elapsed_seconds: Time taken for the operation
+        source: Embedding source - "local", "remote", or "openrouter"
     """
 
     embeddings: np.ndarray
@@ -88,6 +96,7 @@ class EmbeddingResult:
     cost_usd: float
     model: str
     elapsed_seconds: float
+    source: str = "openrouter"  # "local" | "remote" | "openrouter"
 
 
 @dataclass
@@ -113,17 +122,22 @@ class EmbeddingCostTracker:
         self,
         tokens: int,
         model: str,
+        cost_usd: float | None = None,
     ) -> float:
         """Record a request and return its cost.
 
         Args:
-            tokens: Number of tokens processed
+            tokens: Actual number of tokens processed
             model: Model identifier for pricing lookup
+            cost_usd: Actual cost from API (if available). If None, calculates from tokens.
 
         Returns:
             Cost of this request in USD
         """
-        cost = estimate_embedding_cost(tokens, model)
+        if cost_usd is not None:
+            cost = cost_usd
+        else:
+            cost = calculate_embedding_cost(tokens, model)
         self.total_cost_usd += cost
         self.total_tokens += tokens
         self.request_count += 1
@@ -151,20 +165,24 @@ class EmbeddingCostTracker:
         return " ".join(parts)
 
 
-def estimate_embedding_cost(tokens: int, model: str) -> float:
-    """Estimate cost for an embedding request.
+def calculate_embedding_cost(tokens: int, model: str) -> float:
+    """Calculate cost for an embedding request using actual token count.
 
     Args:
-        tokens: Number of tokens to embed
+        tokens: Actual number of tokens (from API response)
         model: Model identifier for pricing lookup
 
     Returns:
-        Estimated cost in USD
+        Cost in USD based on actual token usage
     """
     cost_per_1m = EMBEDDING_MODEL_COSTS.get(
         model.lower(), DEFAULT_EMBEDDING_COST_PER_1M
     )
     return (tokens * cost_per_1m) / 1_000_000
+
+
+# Keep estimate_embedding_cost as alias for backwards compatibility
+estimate_embedding_cost = calculate_embedding_cost
 
 
 @dataclass
@@ -354,6 +372,7 @@ class OpenRouterEmbeddingClient:
                 cost_usd=0.0,
                 model=self.model_name,
                 elapsed_seconds=0.0,
+                source="openrouter",
             )
 
         if not self.is_available():
@@ -433,11 +452,11 @@ class OpenRouterEmbeddingClient:
                 elapsed = time.time() - start
                 usage = data.get("usage", {})
                 total_tokens = usage.get("total_tokens", 0)
-                cost_usd = estimate_embedding_cost(total_tokens, self.model_name)
+                cost_usd = calculate_embedding_cost(total_tokens, self.model_name)
 
                 # Record cost if tracker provided
                 if cost_tracker:
-                    cost_tracker.record(total_tokens, self.model_name)
+                    cost_tracker.record(total_tokens, self.model_name, cost_usd)
 
                 logger.debug(
                     f"OpenRouter embedding: {len(texts)} texts in {elapsed:.2f}s "
@@ -450,6 +469,7 @@ class OpenRouterEmbeddingClient:
                     cost_usd=cost_usd,
                     model=self.model_name,
                     elapsed_seconds=elapsed,
+                    source="openrouter",
                 )
 
             except httpx.ConnectError as e:
@@ -530,7 +550,8 @@ __all__ = [
     "OpenRouterEmbeddingClient",
     "OpenRouterEmbeddingError",
     "OpenRouterServerInfo",
-    "estimate_embedding_cost",
+    "calculate_embedding_cost",
+    "estimate_embedding_cost",  # backwards compatibility alias
     "get_openrouter_client",
     "get_openrouter_model_name",
 ]

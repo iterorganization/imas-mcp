@@ -24,6 +24,7 @@ from .openrouter_embed import (
     OpenRouterEmbeddingClient,
     OpenRouterEmbeddingError,
     OpenRouterServerInfo,
+    calculate_embedding_cost,
     estimate_embedding_cost,
     get_openrouter_client,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "RemoteEmbeddingClient",
     "RemoteLlamaEmbedding",
     "RemoteServerInfo",
+    "calculate_embedding_cost",
     "estimate_embedding_cost",
     "get_llama_embed_model",
     "get_openrouter_client",
