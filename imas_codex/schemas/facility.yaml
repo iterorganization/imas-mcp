@@ -1525,7 +1525,7 @@ classes:
       
       Signal discovery automation strategy:
         Each data system requires bespoke discovery:
-        - MDSplus: mdsvalue("\$SHOTNAME"), tree traversal via getnci/treeNodeWild
+        - MDSplus: mdsvalue("$SHOTNAME"), tree traversal via getnci/treeNodeWild
         - IMAS: IDS schema is already known, enumerate from DD
         - HDF5: h5py file.visit() to enumerate paths
         - REST: OpenAPI/Swagger spec parsing
