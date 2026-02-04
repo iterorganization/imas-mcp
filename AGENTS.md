@@ -21,7 +21,7 @@ All graph node types, relationships, and properties are defined in LinkML schema
 
 **Schema files:**
 - `imas_codex/schemas/facility.yaml` - Facility graph: SourceFile, TreeNode, CodeChunk, etc.
-- `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASPath, DDVersion, Unit, CoordinateSpec
+- `imas_codex/schemas/imas_dd.yaml` - DD graph: IMASPath, DDVersion, Unit, IMASCoordinateSpec
 - `imas_codex/schemas/common.yaml` - Shared: status enums, PhysicsDomain
 
 **Build pipeline:**

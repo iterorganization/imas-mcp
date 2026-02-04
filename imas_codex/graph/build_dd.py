@@ -5,7 +5,7 @@ This module provides functions to populate Neo4j with IMAS DD structure:
 - DDVersion nodes for all available DD versions
 - IDS nodes for top-level structures
 - IMASPath nodes with hierarchical relationships
-- Unit and CoordinateSpec nodes
+- Unit and IMASCoordinateSpec nodes
 - Version tracking (INTRODUCED_IN, DEPRECATED_IN, RENAMED_TO)
 - IMASPathChange nodes for metadata changes with semantic classification
 - IMASSemanticCluster nodes from existing clusters (optional)
@@ -1111,11 +1111,17 @@ def build_dd_graph(
         _create_unit_nodes(client, all_units)
     stats["units_created"] = len(all_units)
 
-    # Create CoordinateSpec nodes for index-based coordinates
-    logger.debug("Creating CoordinateSpec nodes...")
-    coord_specs = {"1...N", "1...1", "1...2", "1...3", "1...4", "1...6"}
+    # Collect and create IMASCoordinateSpec nodes for index-based coordinates
+    # Dynamically discover specs from extracted path data instead of hardcoding
+    all_coord_specs: set[str] = set()
+    for ver_data in version_data.values():
+        for path_info in ver_data["paths"].values():
+            for coord_str in path_info.get("coordinates", []):
+                if coord_str and coord_str.startswith("1..."):
+                    all_coord_specs.add(coord_str)
+    logger.debug(f"Creating {len(all_coord_specs)} IMASCoordinateSpec nodes...")
     if not dry_run:
-        _create_coordinate_spec_nodes(client, coord_specs)
+        _create_coordinate_spec_nodes(client, all_coord_specs)
 
     # Phase 2: Create IDS and IMASPath nodes, tracking version changes
     logger.debug("Creating IDS and IMASPath nodes with version tracking...")
@@ -1381,7 +1387,7 @@ def _create_unit_nodes(client: GraphClient, units: set[str]) -> None:
 
 
 def _create_coordinate_spec_nodes(client: GraphClient, specs: set[str]) -> None:
-    """Create CoordinateSpec nodes for index-based coordinates."""
+    """Create IMASCoordinateSpec nodes for index-based coordinates."""
     spec_list = []
     for spec in specs:
         is_bounded = spec != "1...N"
@@ -1403,7 +1409,7 @@ def _create_coordinate_spec_nodes(client: GraphClient, specs: set[str]) -> None:
         client.query(
             """
             UNWIND $specs AS spec
-            MERGE (c:CoordinateSpec {id: spec.id})
+            MERGE (c:IMASCoordinateSpec {id: spec.id})
             SET c.is_bounded = spec.is_bounded,
                 c.max_size = spec.max_size
         """,
@@ -1555,7 +1561,7 @@ def _batch_create_path_nodes(
             )
 
         # Step 5: Create HAS_COORDINATE relationships
-        # Each coordinate links to either a CoordinateSpec (e.g., "1...N") or IMASPath
+        # Each coordinate links to either an IMASCoordinateSpec (e.g., "1...N") or IMASPath
         coord_rels = []
         for p in batch:
             if not p["coordinates"]:
@@ -1564,7 +1570,7 @@ def _batch_create_path_nodes(
             for dim, coord_str in enumerate(p["coordinates"], start=1):
                 if not coord_str:
                     continue
-                # Index-based coordinates link to CoordinateSpec nodes
+                # Index-based coordinates link to IMASCoordinateSpec nodes
                 if coord_str.startswith("1..."):
                     coord_rels.append(
                         {
@@ -1586,14 +1592,14 @@ def _batch_create_path_nodes(
                         }
                     )
 
-        # Create relationships to CoordinateSpec nodes
+        # Create relationships to IMASCoordinateSpec nodes
         spec_rels = [r for r in coord_rels if r["is_spec"]]
         if spec_rels:
             client.query(
                 """
                 UNWIND $rels AS r
                 MATCH (path:IMASPath {id: r.source_id})
-                MATCH (spec:CoordinateSpec {id: r.target_id})
+                MATCH (spec:IMASCoordinateSpec {id: r.target_id})
                 MERGE (path)-[rel:HAS_COORDINATE]->(spec)
                 SET rel.dimension = r.dimension
             """,

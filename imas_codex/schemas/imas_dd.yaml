@@ -326,11 +326,12 @@ classes:
 
   # Unit is now defined in common.yaml and imported
 
-  CoordinateSpec:
+  IMASCoordinateSpec:
     description: >-
-      An index-based coordinate specification (e.g., "1...N", "1...3").
-      Path references are handled via COORDINATE relationships to IMASPath.
-    class_uri: imas_dd:CoordinateSpec
+      An index-based coordinate specification from the IMAS Data Dictionary
+      (e.g., "1...N", "1...3"). Path references are handled via
+      HAS_COORDINATE relationships to IMASPath nodes.
+    class_uri: imas_dd:IMASCoordinateSpec
     attributes:
       id:
         identifier: true
@@ -453,7 +454,7 @@ classes:
   CoordinateRelationship:
     description: >-
       Represents a coordinate relationship between an IMASPath and its coordinate
-      (either another IMASPath or a CoordinateSpec). Stored as relationship properties.
+      (either another IMASPath or an IMASCoordinateSpec). Stored as relationship properties.
     class_uri: imas_dd:CoordinateRelationship
     attributes:
       dimension:
@@ -475,7 +476,7 @@ classes:
         range: IMASPath
       target_spec:
         description: The coordinate spec (for index coordinates)
-        range: CoordinateSpec
+        range: IMASCoordinateSpec
 
   # Relationship class for cluster membership
   ClusterMembership:

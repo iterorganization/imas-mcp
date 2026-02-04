@@ -85,7 +85,7 @@ def imas_build(
     - IDS nodes for top-level structures (core_profiles, equilibrium, etc.)
     - IMASPath nodes with hierarchical relationships (PARENT, IDS)
     - Unit nodes with HAS_UNIT relationships
-    - CoordinateSpec nodes with HAS_COORDINATE relationships
+    - IMASCoordinateSpec nodes with HAS_COORDINATE relationships
     - IMASPathChange nodes for metadata evolution between versions
     - RENAMED_TO relationships for path migrations
     - HAS_ERROR relationships linking data paths to error fields
@@ -264,7 +264,7 @@ def imas_status(version_filter: str | None) -> None:
                 MATCH (p:IMASPath) WITH count(p) AS total_paths
                 MATCH (i:IDS) WITH total_paths, count(i) AS ids_count
                 MATCH (u:Unit) WITH total_paths, ids_count, count(u) AS unit_count
-                MATCH (c:CoordinateSpec) WITH total_paths, ids_count, unit_count, count(c) AS coord_count
+                MATCH (c:IMASCoordinateSpec) WITH total_paths, ids_count, unit_count, count(c) AS coord_count
                 MATCH (p2:IMASPath) WHERE p2.embedding IS NOT NULL
                 WITH total_paths, ids_count, unit_count, coord_count, count(p2) AS with_embeddings
                 OPTIONAL MATCH (:IMASPath)-[r:HAS_UNIT]->(:Unit)
@@ -282,7 +282,7 @@ def imas_status(version_filter: str | None) -> None:
                 stats_table.add_row("IMASPath nodes", str(s["total_paths"]))
                 stats_table.add_row("IDS nodes", str(s["ids_count"]))
                 stats_table.add_row("Unit nodes", str(s["unit_count"]))
-                stats_table.add_row("CoordinateSpec nodes", str(s["coord_count"]))
+                stats_table.add_row("IMASCoordinateSpec nodes", str(s["coord_count"]))
                 stats_table.add_row("Paths with embeddings", str(s["with_embeddings"]))
                 stats_table.add_row("HAS_UNIT relationships", str(s["unit_rels"]))
                 stats_table.add_row(
