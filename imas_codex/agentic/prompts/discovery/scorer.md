@@ -72,16 +72,35 @@ Set `should_expand=true` when subdirectories likely contain valuable content to 
 - System directories, build artifacts, archives
 - Paths with combined score < 0.3
 
-**Git/SVN/VCS repositories:** Score them based on value, but set `should_expand=false` since code can be fetched from the remote. We catalog their presence, not their contents.
+**Software repositories (Git/SVN/VCS):** Score them based on value, but set `should_expand=false` since code can be fetched from the remote. We catalog their presence, not their contents.
 
 ## Enrichment Decision
 
-Set `should_enrich=true` for directories worth running deep analysis (file sizes, line counts, pattern matching).
+Set `should_enrich=true` for directories worth running deep pattern analysis.
+
+**What enrichment does:**
+1. **Pattern matching** via `rg` - searches for imports, function calls, and API patterns mapped to each score dimension
+2. **Language breakdown** via `tokei` - counts lines of code by programming language
+3. **Disk usage** via `dust` - measures total bytes
+
+**Patterns searched by dimension:**
+- **Data Access**: MDSplus, PPF, UFile, shotfile, HDF5, NetCDF patterns
+- **IMAS**: IDS access, put_slice, get_slice, Access Layer patterns
+- **Modeling Code**: EFIT, JETTO, JOREK, equilibrium, transport solver patterns
+- **Analysis Code**: curve_fit, FFT, spectral, diagnostic names
+- **Operations Code**: real-time control, PCS, feedback patterns
+- **Workflow**: Airflow, SLURM, pipeline patterns
+- **Visualization**: matplotlib, plotting, GUI patterns
+- **Documentation**: Sphinx, README, tutorial patterns
+
+**Pattern evidence enables rescoring.** Without enrichment, rescoring has no new information. Directories with `should_enrich=false` will keep their initial scores.
+
+**Automatic enrichment threshold:** Consider directories scoring ≥ 0.5 on any dimension as candidates for enrichment - pattern evidence can confirm or refute the initial classification.
 
 **Skip enrichment for:**
-- Root containers (`/work`, `/home`) - too large
-- Data-only directories - nothing to count
-- Archives and system directories
+- Root containers (`/work`, `/home`) - too many files, patterns would be noise
+- Pure data directories - no code to pattern match
+- Archives and build artifacts - not worth the SSH cost
 
 {% if dimension_calibration %}
 {% include "schema/dimension-calibration.md" %}

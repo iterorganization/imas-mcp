@@ -532,31 +532,26 @@ def _provide_access_method_fields() -> dict[str, Any]:
 
 @lru_cache(maxsize=1)
 def _provide_format_patterns() -> dict[str, Any]:
-    """Provide format read/write patterns from enrichment module.
+    """Provide enrichment patterns organized by score dimension.
 
     These patterns are what the enricher searches for with rg.
-    Injecting them into the rescorer prompt lets the LLM understand
-    what was actually searched for.
+    Injecting them into prompts lets the LLM understand what was searched.
     """
-    from imas_codex.discovery.paths.enrichment import (
-        FORMAT_READ_PATTERNS,
-        FORMAT_WRITE_PATTERNS,
-    )
+    from imas_codex.discovery.paths.enrichment import PATTERN_REGISTRY
 
-    # Format for prompt display
-    read_patterns = []
-    for name, pattern in FORMAT_READ_PATTERNS.items():
-        read_patterns.append(f"- **{name}**: `{pattern}`")
+    # Build dimension-organized pattern display
+    patterns_by_dimension = []
+    all_categories = []
 
-    write_patterns = []
-    for name, pattern in FORMAT_WRITE_PATTERNS.items():
-        write_patterns.append(f"- **{name}**: `{pattern}`")
+    for group_name, (patterns_dict, score_dim) in PATTERN_REGISTRY.items():
+        patterns_by_dimension.append(f"\n**{group_name.title()}** → `{score_dim}`:")
+        for name, pattern in patterns_dict.items():
+            patterns_by_dimension.append(f"- `{name}`: `{pattern}`")
+            all_categories.append(name)
 
     return {
-        "format_read_patterns": "\n".join(read_patterns),
-        "format_write_patterns": "\n".join(write_patterns),
-        "format_categories": list(FORMAT_READ_PATTERNS.keys())
-        + list(FORMAT_WRITE_PATTERNS.keys()),
+        "enrichment_patterns": "\n".join(patterns_by_dimension),
+        "pattern_categories": all_categories,
     }
 
 

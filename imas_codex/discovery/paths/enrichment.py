@@ -30,32 +30,117 @@ from imas_codex.remote.executor import run_python_script
 
 logger = logging.getLogger(__name__)
 
-# Common format loading/reading patterns by data system
-FORMAT_READ_PATTERNS = {
-    "eqdsk": r"(read_eqdsk|load_eqdsk|eqdsk\.read|from_eqdsk|ReadEQDSK)",
-    "geqdsk": r"(read_geqdsk|load_geqdsk|geqdsk\.read|from_geqdsk)",
-    "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree)",
-    "hdf5": r"(h5py\.File|hdf5\.open|\.h5|netCDF4\.Dataset)",
-    "netcdf": r"(xr\.open|xarray\.open|netcdf\.open|\.nc)",
-    "mat": r"(scipy\.io\.loadmat|loadmat|sio\.loadmat|\.mat)",
-    "json": r"(json\.load|json\.loads|\.json)",
-    "csv": r"(pd\.read_csv|csv\.reader|\.csv)",
-    "pickle": r"(pickle\.load|\.pkl|\.pickle)",
-    "imas_read": r"(imas\.database|ids_get|get_ids|imas\.open|\.get_slice)",
-    "ppf": r"(ppf\.read|ppfget|jet\.ppf)",
-    "ufile": r"(ufile\.read|read_ufile|ufiles)",
+# ============================================================================
+# Pattern Definitions - Mapped to Score Dimensions
+# ============================================================================
+#
+# These patterns are searched by `rg` during enrichment. Results inform rescoring.
+# Patterns are grouped by the score dimension they primarily inform.
+
+# -- Data Access Patterns (score_data_access) --
+# Facility-native data systems: MDSplus, PPF, UFile, shotfiles
+DATA_ACCESS_PATTERNS = {
+    "mdsplus": r"(mdsconnect|mdsopen|mdsvalue|MDSplus|TdiExecute|connection\.openTree|TreeNode)",
+    "ppf": r"(ppf\.read|ppfget|jet\.ppf|ppfuid|ppfgo|ppfdat)",
+    "ufile": r"(ufile\.read|read_ufile|ufiles|UFILE)",
+    "shotfile": r"(shotfile\.open|sfread|dd\.shotfile|kk\()",
+    "hdf5": r"(h5py\.File|hdf5\.open|\.h5\"|\.hdf5\"|HDFStore)",
+    "netcdf": r"(xr\.open|xarray\.open|netCDF4|\.nc\"|Dataset)",
 }
 
-# Common format writing patterns by data system
+# -- IMAS Patterns (score_imas) --
+# IMAS data dictionary, IDS access, Access Layer
+IMAS_PATTERNS = {
+    "imas_read": r"(imas\.database|ids_get|get_ids|imas\.open|\.get_slice|DBEntry)",
+    "imas_write": r"(put_slice|ids\.put|imas\.create|ids_put|partial_get)",
+    "ids_struct": r"(ids_properties|homogeneous_time|ids\.[a-z_]+\.[a-z_]+)",
+    "al_core": r"(imas_core|imas\.imasdef|uda_imas|al_|acces_layer)",
+}
+
+# -- Modeling Code Patterns (score_modeling_code) --
+# Physics simulation codes and equilibrium tools
+MODELING_CODE_PATTERNS = {
+    "equilibrium": r"(EFIT|LIUQE|CLISTE|CREATE|HELENA|CHEASE|equilibrium|flux_surface)",
+    "eqdsk": r"(read_eqdsk|load_eqdsk|write_eqdsk|geqdsk|from_eqdsk)",
+    "transport": r"(JETTO|ASTRA|TRANSP|CRONOS|ETS|transport\.solve)",
+    "mhd": r"(JOREK|MARS|KINX|MISHKA|stability|tearing|mhd)",
+    "heating": r"(NUBEAM|RABBIT|NEMO|PENCIL|TORIC|heating|nbi|icrf|ecrh)",
+    "core_profiles": r"(core_profiles|profiles_1d|electron_density|electron_temperature)",
+}
+
+# -- Analysis Code Patterns (score_analysis_code) --
+# Data analysis, signal processing, fitting
+ANALYSIS_PATTERNS = {
+    "fitting": r"(curve_fit|lmfit|scipy\.optimize|least_squares|minimize)",
+    "signal": r"(fft|spectral|bandpass|lowpass|savgol|butterworth|filtering)",
+    "statistics": r"(bootstrap|monte_carlo|bayesian|mcmc|uncertainty)",
+    "diagnostics": r"(thomson|ece|interferometer|mse|cxrs|bolo|bolometer)",
+}
+
+# -- Operations Code Patterns (score_operations_code) --
+# Real-time plasma control systems
+OPERATIONS_PATTERNS = {
+    "control": r"(controller|pid|feedback|setpoint|actuator|plasma_control)",
+    "realtime": r"(real_time|real-time|rtc|realtime|pcs|dcs)",
+    "interlock": r"(interlock|safety|limit|protection|alarm|watchdog)",
+}
+
+# -- Workflow Patterns (score_workflow) --
+# Orchestration, job submission, pipelines
+WORKFLOW_PATTERNS = {
+    "orchestration": r"(airflow|luigi|snakemake|nextflow|dask\.delayed)",
+    "batch": r"(sbatch|slurm|pbs|qsub|job_submit|htcondor)",
+    "pipeline": r"(pipeline|workflow|dag|task_graph|kepler)",
+}
+
+# -- Visualization Patterns (score_visualization) --
+# Plotting and GUI tools
+VISUALIZATION_PATTERNS = {
+    "plotting": r"(matplotlib|plotly|bokeh|seaborn|plt\.plot|ax\.)",
+    "gui": r"(tkinter|PyQt|PySide|wxPython|gui|widget)",
+    "interactive": r"(jupyter|ipywidgets|panel|dash|streamlit)",
+}
+
+# -- Documentation Patterns (score_documentation) --
+# Documentation tools and references
+DOCUMENTATION_PATTERNS = {
+    "doctools": r"(sphinx|mkdocs|doxygen|docstring|restructuredtext)",
+    "readme": r"(README|CONTRIBUTING|CHANGELOG|LICENSE|AUTHORS)",
+    "tutorial": r"(tutorial|example|demo|notebook|getting_started)",
+}
+
+# Combined read/write patterns for legacy compatibility
+FORMAT_READ_PATTERNS = {
+    **DATA_ACCESS_PATTERNS,
+    **{k: v for k, v in IMAS_PATTERNS.items() if "read" in k},
+    "eqdsk": MODELING_CODE_PATTERNS["eqdsk"],
+    "mat": r"(scipy\.io\.loadmat|loadmat|sio\.loadmat|\.mat\")",
+    "json": r"(json\.load|json\.loads)",
+    "csv": r"(pd\.read_csv|csv\.reader)",
+    "pickle": r"(pickle\.load|\.pkl|\.pickle)",
+}
+
 FORMAT_WRITE_PATTERNS = {
-    "imas_write": r"(put_slice|ids\.put|imas\.create|ids_put|\.close\(\))",
-    "hdf5_write": r"(h5py.*create|\.to_hdf|hdf5\.write|\.h5)",
+    **{k: v for k, v in IMAS_PATTERNS.items() if "write" in k},
+    "hdf5_write": r"(h5py.*create|\.to_hdf|hdf5\.write|\.h5\")",
     "netcdf_write": r"(\.to_netcdf|xr\.to_netcdf|netcdf\.create)",
     "mat_write": r"(scipy\.io\.savemat|savemat|sio\.savemat)",
     "json_write": r"(json\.dump|\.to_json)",
     "csv_write": r"(\.to_csv|csv\.writer)",
     "pickle_write": r"(pickle\.dump)",
     "eqdsk_write": r"(write_eqdsk|to_eqdsk|save_eqdsk)",
+}
+
+# Master pattern registry: category -> (patterns_dict, primary_score_dimension)
+PATTERN_REGISTRY = {
+    "data_access": (DATA_ACCESS_PATTERNS, "score_data_access"),
+    "imas": (IMAS_PATTERNS, "score_imas"),
+    "modeling": (MODELING_CODE_PATTERNS, "score_modeling_code"),
+    "analysis": (ANALYSIS_PATTERNS, "score_analysis_code"),
+    "operations": (OPERATIONS_PATTERNS, "score_operations_code"),
+    "workflow": (WORKFLOW_PATTERNS, "score_workflow"),
+    "visualization": (VISUALIZATION_PATTERNS, "score_visualization"),
+    "documentation": (DOCUMENTATION_PATTERNS, "score_documentation"),
 }
 
 

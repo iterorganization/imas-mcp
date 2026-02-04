@@ -211,14 +211,15 @@ class RescoreResult(BaseModel):
     """LLM rescoring result for a single directory.
 
     Used after enrichment to refine per-dimension scores with concrete
-    metrics (lines of code, language breakdown, multiformat detection).
+    metrics (pattern matches, language breakdown, multiformat detection).
 
     Each dimension can be independently adjusted based on enrichment evidence.
+    Pattern match evidence is persisted to the graph for traceability.
     """
 
     path: str = Field(description="The directory path (echo from input)")
 
-    # Per-dimension rescored values (0.0-1.0, or None to keep original)
+    # Per-dimension rescored values (0.0-1.0+, or None to keep original)
     score_modeling_code: float | None = Field(
         default=None, description="Adjusted modeling code score"
     )
@@ -253,6 +254,16 @@ class RescoreResult(BaseModel):
     # Combined score (computed from dimension scores)
     new_score: float = Field(
         description="Adjusted combined score (0.0-1.5, allows boosting)"
+    )
+
+    # Evidence for score adjustments (persisted to graph)
+    primary_evidence: list[str] = Field(
+        default_factory=list,
+        description="Key pattern categories that informed the adjustment (e.g., ['mdsplus', 'imas_write'])",
+    )
+    evidence_summary: str = Field(
+        default="",
+        description="Brief summary of pattern evidence (e.g., '15 MDSplus, 3 IMAS writes')",
     )
 
     adjustment_reason: str = Field(

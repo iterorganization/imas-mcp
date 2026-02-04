@@ -613,13 +613,16 @@ def mark_rescore_complete(
 ) -> int:
     """Mark paths with refined scores after rescoring.
 
+    Persists adjusted scores and evidence from pattern matching.
+
     Args:
         facility: Facility ID
-        rescore_results: List of dicts with path and new score data
+        rescore_results: List of dicts with path, new scores, and evidence
 
     Returns:
         Number of paths updated
     """
+    import json
     from datetime import UTC, datetime
 
     from imas_codex.graph import GraphClient
@@ -630,18 +633,30 @@ def mark_rescore_complete(
     with GraphClient() as gc:
         for result in rescore_results:
             path_id = f"{facility}:{result['path']}"
+
+            # Serialize evidence lists to JSON
+            primary_evidence = result.get("primary_evidence", [])
+            if isinstance(primary_evidence, list):
+                primary_evidence = json.dumps(primary_evidence)
+
             gc.query(
                 """
                 MATCH (p:FacilityPath {id: $id})
                 SET p.rescored_at = $now,
                     p.score = $score,
                     p.score_cost = coalesce(p.score_cost, 0) + $score_cost,
+                    p.adjustment_reason = $adjustment_reason,
+                    p.primary_evidence = $primary_evidence,
+                    p.evidence_summary = $evidence_summary,
                     p.claimed_at = null
                 """,
                 id=path_id,
                 now=now,
                 score=result.get("score"),
                 score_cost=result.get("score_cost", 0.0),
+                adjustment_reason=result.get("adjustment_reason", ""),
+                primary_evidence=primary_evidence,
+                evidence_summary=result.get("evidence_summary", ""),
             )
             updated += 1
 
@@ -1362,6 +1377,8 @@ async def rescore_worker(
                     "score_cost": cost_per_path,
                     "should_expand": orig.get("should_expand", True),
                     "adjustment_reason": llm_r.get("adjustment_reason", ""),
+                    "primary_evidence": llm_r.get("primary_evidence", []),
+                    "evidence_summary": llm_r.get("evidence_summary", ""),
                 }
                 # Copy per-dimension scores from LLM results
                 for dim in [

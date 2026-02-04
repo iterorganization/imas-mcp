@@ -1,79 +1,87 @@
 ---
 name: discovery/rescorer
-description: Score refinement using enrichment data from deep filesystem analysis
+description: Score refinement using pattern match evidence from enrichment
 used_by: imas_codex.discovery.parallel.rescore_worker
 task: score
 dynamic: true
 ---
 
-You are refining directory scores using enrichment data from deep filesystem analysis. The initial scoring was based on path names and directory listings. Now you have concrete metrics from pattern matching and code analysis tools.
+You are refining directory scores using **pattern match evidence** from deep filesystem analysis. The initial scorer only saw file names and directory structure. Now you have concrete evidence: regex pattern matches that prove what code actually exists.
 
 ## Task
 
-For each directory, use the enrichment data to refine the per-dimension scores. You have:
-- **Initial scores** from the first-pass scorer (path and contents)
-- **Initial description** from the scorer explaining the directory's purpose
-- **Enrichment metrics** from deep analysis (pattern matches, languages, file sizes)
+For each directory, compare the initial scores to the pattern match evidence. **Adjust scores aggressively** when evidence contradicts or strongly supports the initial classification — this is not fine-tuning, this is correction.
 
-Decide whether the enrichment evidence justifies adjusting scores up or down.
+## Evidence Available
 
-## Enrichment Metrics
+Each path comes with:
 
-The enricher ran `rg` (ripgrep) to search for data format patterns, `tokei` to count lines by language, and `dust` to measure disk usage.
+### Pattern Match Results
+- **pattern_categories**: Dict mapping category → match count (e.g., `{"mdsplus": 15, "imas_write": 3, "equilibrium": 8}`)
+- **read_matches**: Total data read pattern matches
+- **write_matches**: Total data write pattern matches
+- **is_multiformat**: True if directory reads AND writes data (format conversion code)
 
-### Pattern Matching Results
-
-The enricher searched for these **read patterns** (data loading):
-{{ format_read_patterns }}
-
-And these **write patterns** (data output):
-{{ format_write_patterns }}
-
-Results are provided as:
-- **pattern_categories**: Dict mapping category name → match count (e.g., `{"mdsplus": 15, "imas_write": 3}`)
-- **read_matches**: Total count of read pattern matches
-- **write_matches**: Total count of write pattern matches
-- **is_multiformat**: True if both read AND write patterns matched (indicates format conversion code)
+### Initial Scorer Context
+- **description**: The initial scorer's interpretation of directory purpose
+- **path_purpose**: Initial classification
+- **Initial dimension scores**: The scores to adjust
 
 ### Other Metrics
+- **total_lines**: Lines of code (excludes comments)
+- **language_breakdown**: Language → line count
 
-- **total_lines**: Lines of code counted by tokei (code only, excludes comments/blanks)
-- **total_bytes**: Disk usage from dust
-- **language_breakdown**: Dict mapping language → line count (e.g., `{"Python": 1500, "Fortran": 3200}`)
+## Patterns → Score Dimensions
 
-## Scoring Principles
+Pattern categories map directly to score dimensions:
 
-**Pattern matches are the primary signal.** Directories with high pattern match counts are interacting with data systems. Match counts > 10 indicate substantial data access code.
+{{ enrichment_patterns }}
 
-**is_multiformat is highly valuable.** If `is_multiformat=true`, this directory converts between data formats (e.g., loads MDSplus, writes IMAS). Boost `score_data_access` and potentially `score_imas`.
+## Scoring Rules
 
-**Specific pattern categories inform dimension scores:**
-- `mdsplus`, `ppf`, `ufile` matches → boost `score_data_access`
-- `imas_read`, `imas_write` matches → boost `score_imas`
-- `hdf5`, `netcdf` matches → boost `score_data_access`
-- `eqdsk`, `geqdsk` matches → boost `score_modeling_code` or `score_modeling_data`
+**Pattern matches are ground truth.** If pattern_categories shows `mdsplus: 20`, the directory definitely accesses MDSplus. The initial score was a guess; this is proof.
 
-**Language breakdown provides context, not value.** Mixed languages (Python + Fortran/C) often indicate interface code. Pure Python may indicate analysis/workflow. But language alone doesn't determine quality.
+### Strong Adjustments (±0.3 to ±0.5)
 
-**Respect initial judgments.** The initial scorer saw the directory structure and contents. If enrichment doesn't provide strong counter-evidence, keep scores similar. A directory with 0 pattern matches that scored high for documentation should stay high for documentation.
+**Boost strongly when evidence confirms:**
+- Pattern count ≥ 10 for any category → boost that dimension to 0.7+
+- Pattern count ≥ 25 → boost to 0.85+
+- `is_multiformat=true` → set `score_data_access` ≥ 0.8
 
-### Score Adjustments
+**Reduce strongly when evidence contradicts:**
+- Dimension scored ≥ 0.5 but has 0 pattern matches → reduce by 0.3+
+- Path looked like data access code but no mdsplus/ppf/hdf5 matches → reduce `score_data_access`
+- Path looked like IMAS code but no imas_read/imas_write matches → reduce `score_imas`
 
-- **Boost (+0.1 to +0.3)** when pattern matches confirm or strengthen initial classification
-- **Reduce (-0.1 to -0.2)** when enrichment contradicts initial classification (e.g., high score but 0 pattern matches)
-- **No change** when enrichment is neutral or confirms initial score
+### Moderate Adjustments (±0.1 to ±0.2)
 
-**Combined score can exceed 1.0** for exceptional directories with strong signals across multiple dimensions.
+- Pattern count 1-9 confirms relevance → boost by 0.1-0.2
+- Mixed evidence (some patterns but not the expected ones) → adjust classification
+
+### No Adjustment
+
+- Pattern counts align with initial scores
+- Dimension scored low and has 0 pattern matches (expected)
+
+## Combined Score
+
+The new combined score should reflect the evidence:
+- Use maximum of adjusted dimension scores
+- Can exceed 1.0 for directories with strong evidence across multiple dimensions
+- `is_multiformat=true` with high pattern counts → combined score 1.0+
+
+## Evidence Tracking
+
+**You must report what influenced your decision:**
+
+1. **primary_evidence**: List the pattern categories that most influenced the adjustment (e.g., `["mdsplus", "imas_write"]`)
+2. **evidence_summary**: Brief summary of match counts (e.g., "15 mdsplus, 3 imas_write, is_multiformat")
+3. **adjustment_reason**: One-line explanation of the score change
+
+This evidence is persisted to the graph for traceability.
 
 {% if dimension_calibration %}
 {% include "schema/dimension-calibration.md" %}
 {% endif %}
-
-## Required Output
-
-For each directory, provide:
-1. **Adjusted dimension scores** (or null to keep original)
-2. **New combined score** (maximum of dimension scores)
-3. **Adjustment reason** - brief explanation of why scores changed
 
 {% include "schema/rescore-output.md" %}
