@@ -28,6 +28,9 @@ The full path reveals the directory's place in the filesystem hierarchy. Conside
 Contents are shown sorted by modification time (most recent first), so you can infer activity level from the ordering.
 
 ### High exploration potential containers (container + high score):
+- `/home`, `/home/*`, `/home/ITER/*`, `/solhome` → container, score 0.05-0.1, **expand=true ALWAYS**
+  - User home directories contain researcher code
+  - No matter how many subdirectories, ALWAYS expand
 - `/work/imas`, `/imas`, `*imas*` → container, score_imas ≥ 0.8, expand=true
 - `/work/projects/*`, `/work/codes/*` → container, score_modeling_code ≥ 0.7, expand=true
 - `/home/codes/*` → container, score_modeling_code ≥ 0.6, expand=true
@@ -191,10 +194,11 @@ When classifying `path_purpose`, set the corresponding dimension HIGH:
   - Simulation output directories (HDF5, NetCDF files) should NOT be expanded
   - Experimental shot archives and MDSplus trees should NOT be expanded
   - We only need to know high-value data exists here
-- **High subdirectory count containers (>100 subdirs)**: These are almost always data containers
+- **High subdirectory count containers (>100 subdirs) of DATA**: These are almost always data containers
   - If you see `Dirs: 500`, `Dirs: 1000+ ` with similarly-named children (run*, scan*, shot*), this is data
   - Even with helper scripts mixed in, classify as modeling_data, expand=false
   - The scripts are for post-processing the data, not standalone code
+  - **EXCEPTION: User home directories** (see below)
 - **Numeric directory warning (⚠️ DATA CONTAINER)**: Input may include a warning like:
   `⚠️ DATA CONTAINER: 85% of subdirs are numeric (shot IDs/runs). Set should_expand=false.`
   - This is calculated automatically from directory names
@@ -204,7 +208,18 @@ When classifying `path_purpose`, set the corresponding dimension HIGH:
 - **Combined score < 0.3 for any purpose**
 - **Leaf directory with only files (no subdirectories)**
 
+**ALWAYS expand** (should_expand=true, CRITICAL):
+- **User home directories**: `/home`, `/home/*`, `/home/ITER/*`, `/solhome`
+  - These contain researcher code and MUST be expanded regardless of subdirectory count
+  - Children are username directories (e.g., `/home/jsmith`) containing personal code
+  - Score as `container`, set score low (0.05-0.1), but ALWAYS expand=true
+  - The subdirectories are NOT data files, they are user directories with potential code
+- **Shared home directories**: `/work`, `/work/*`
+  - These organize project/user work and should be expanded to find code
+  - Score as `container`, expand=true
+
 **Expand** (should_expand=true) when:
+- **User home directories** (see ALWAYS expand above) - `/home`, `/home/*`, `/solhome`
 - Purpose is `container` AND combined score >= 0.4 AND NOT a git repo
 - Purpose is code category (modeling_code, analysis_code, operations_code, data_access, visualization, workflow) AND NO .git folder
 - Purpose is documentation AND has subdirectories to explore
