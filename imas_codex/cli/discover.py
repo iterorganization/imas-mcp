@@ -1518,14 +1518,17 @@ def discover_wiki(
                         display.update_ingest(msg, stats, result_dicts)
 
                     def on_artifact(msg, stats, results=None):
-                        # Artifact progress is logged, not displayed in rich UI
-                        if results and "ingested" in msg:
-                            for r in results:
-                                logger.info(
-                                    "Artifact ingested: %s (%d chunks)",
-                                    r.get("filename", "?"),
-                                    r.get("chunk_count", 0),
-                                )
+                        result_dicts = None
+                        if results:
+                            result_dicts = [
+                                {
+                                    "filename": r.get("filename", "unknown"),
+                                    "artifact_type": r.get("artifact_type", ""),
+                                    "chunk_count": r.get("chunk_count", 0),
+                                }
+                                for r in results[:5]
+                            ]
+                        display.update_artifact(msg, stats, result_dicts)
 
                     try:
                         result = await run_parallel_wiki_discovery(

@@ -71,6 +71,15 @@ class IngestItem:
     chunk_count: int = 0
 
 
+@dataclass
+class ArtifactItem:
+    """Current artifact ingestion activity."""
+
+    filename: str
+    artifact_type: str
+    chunk_count: int = 0
+
+
 # =============================================================================
 # Progress State
 # =============================================================================
@@ -108,14 +117,21 @@ class ProgressState:
     score_rate: float | None = None
     ingest_rate: float | None = None
 
+    # Artifact stats
+    artifacts_ingested: int = 0
+    run_artifacts: int = 0
+    artifact_rate: float | None = None
+
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
 
     # Current items (and their processing state)
     current_score: ScoreItem | None = None
     current_ingest: IngestItem | None = None
+    current_artifact: ArtifactItem | None = None
     score_processing: bool = False
     ingest_processing: bool = False
+    artifact_processing: bool = False
 
     # Streaming queues - adaptive rate based on worker speed
     score_queue: StreamQueue = field(
@@ -126,6 +142,11 @@ class ProgressState:
     ingest_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.5, min_display_time=0.4
+        )
+    )
+    artifact_queue: StreamQueue = field(
+        default_factory=lambda: StreamQueue(
+            rate=0.3, max_rate=1.0, min_display_time=0.5
         )
     )
 
@@ -331,6 +352,21 @@ class WikiProgressDisplay:
             if self.state.ingest_rate and self.state.ingest_rate > 0:
                 section.append(f" {self.state.ingest_rate:>5.1f}/s", style="dim")
 
+        # ARTIFACTS row - shows artifact ingestion progress (no percentage)
+        section.append("\n")
+        if self.state.scan_only:
+            section.append("  ARTFCT", style="dim")
+            section.append("─" * bar_width, style="dim")
+            section.append("    disabled", style="dim italic")
+        else:
+            section.append("  ARTFCT", style="bold yellow")
+            # Artifacts don't have a total, just show count
+            section.append("─" * bar_width, style="dim")
+            section.append(f" {self.state.run_artifacts:>6,}", style="bold")
+            section.append("     ", style="dim")  # No percentage for artifacts
+            if self.state.artifact_rate and self.state.artifact_rate > 0:
+                section.append(f" {self.state.artifact_rate:>5.1f}/s", style="dim")
+
         return section
 
     def _clip_title(self, title: str, max_len: int = 70) -> str:
@@ -471,6 +507,34 @@ class WikiProgressDisplay:
             else:
                 section.append(" ...", style="dim italic")
                 section.append("\n    ", style="dim")
+
+        # ARTIFACT section - single line showing filename with extension
+        artifact = self.state.current_artifact
+        if not self.state.scan_only:
+            section.append("\n")
+            section.append("  ARTFCT", style="bold yellow")
+            if artifact:
+                # Show filename.ext (chunks) format
+                title_width = content_width - 9  # 9 = "  ARTFCT "
+                display_name = artifact.filename
+                if artifact.chunk_count > 0:
+                    suffix = f" ({artifact.chunk_count} chunks)"
+                    if len(display_name) + len(suffix) > title_width:
+                        display_name = (
+                            display_name[: title_width - len(suffix) - 3] + "..."
+                        )
+                    display_name += suffix
+                section.append(
+                    " " + self._clip_title(display_name, title_width), style="white"
+                )
+            elif self.state.artifact_processing:
+                section.append(" processing...", style="cyan italic")
+            elif should_show_idle(
+                self.state.artifact_processing, self.state.artifact_queue
+            ):
+                section.append(" idle", style="dim italic")
+            else:
+                section.append(" ...", style="dim italic")
 
         return section
 
@@ -639,6 +703,14 @@ class WikiProgressDisplay:
                 chunk_count=item.get("chunk_count", 0),
             )
 
+        # Pop from artifact queue
+        if item := self.state.artifact_queue.pop():
+            self.state.current_artifact = ArtifactItem(
+                filename=item.get("filename", ""),
+                artifact_type=item.get("artifact_type", ""),
+                chunk_count=item.get("chunk_count", 0),
+            )
+
         self._refresh()
 
     def update_scan(
@@ -732,6 +804,41 @@ class WikiProgressDisplay:
             max_display_rate = 2.0
             display_rate = min(stats.rate, max_display_rate) if stats.rate else 1.0
             self.state.ingest_queue.add(items, display_rate)
+
+        self._refresh()
+
+    def update_artifact(
+        self,
+        message: str,
+        stats: WorkerStats,
+        results: list[dict] | None = None,
+    ) -> None:
+        """Update artifact worker state."""
+        self.state.run_artifacts = stats.processed
+        self.state.artifact_rate = stats.rate
+
+        # Track processing state
+        if "waiting" in message.lower() or message == "idle":
+            self.state.artifact_processing = False
+        elif "ingesting" in message.lower():
+            self.state.artifact_processing = True
+        else:
+            self.state.artifact_processing = False
+
+        # Queue results for streaming
+        if results:
+            items = []
+            for r in results:
+                items.append(
+                    {
+                        "filename": r.get("filename", "unknown"),
+                        "artifact_type": r.get("artifact_type", ""),
+                        "chunk_count": r.get("chunk_count", 0),
+                    }
+                )
+            max_display_rate = 1.0
+            display_rate = min(stats.rate, max_display_rate) if stats.rate else 0.5
+            self.state.artifact_queue.add(items, display_rate)
 
         self._refresh()
 

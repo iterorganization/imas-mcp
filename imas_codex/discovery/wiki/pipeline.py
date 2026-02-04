@@ -1498,6 +1498,350 @@ class WikiArtifactPipeline:
         finally:
             temp_path.unlink(missing_ok=True)
 
+    async def ingest_docx(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest a Word document artifact.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw document content
+
+        Returns:
+            Ingestion stats
+        """
+        import tempfile
+        from pathlib import Path
+
+        from docx import Document as DocxDocument
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "docx",
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
+            f.write(content_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            doc = DocxDocument(temp_path)
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            full_text = "\n\n".join(paragraphs)
+
+            if not full_text.strip():
+                logger.warning("No content extracted from DOCX: %s", artifact_id)
+                return stats
+
+            stats["content_preview"] = full_text[:300]
+            stats = await self._create_artifact_chunks(
+                artifact_id, full_text, "docx", stats
+            )
+            return stats
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    async def ingest_pptx(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest a PowerPoint artifact.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw presentation content
+
+        Returns:
+            Ingestion stats
+        """
+        import tempfile
+        from pathlib import Path
+
+        from pptx import Presentation
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "pptx",
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as f:
+            f.write(content_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            prs = Presentation(temp_path)
+            text_parts = []
+
+            for slide_num, slide in enumerate(prs.slides, 1):
+                slide_text = []
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        slide_text.append(shape.text.strip())
+                if slide_text:
+                    text_parts.append(f"[Slide {slide_num}]\n" + "\n".join(slide_text))
+
+            full_text = "\n\n".join(text_parts)
+
+            if not full_text.strip():
+                logger.warning("No content extracted from PPTX: %s", artifact_id)
+                return stats
+
+            stats["content_preview"] = full_text[:300]
+            stats = await self._create_artifact_chunks(
+                artifact_id, full_text, "pptx", stats
+            )
+            return stats
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    async def ingest_xlsx(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest an Excel artifact.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw spreadsheet content
+
+        Returns:
+            Ingestion stats
+        """
+        import tempfile
+        from pathlib import Path
+
+        from openpyxl import load_workbook
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "xlsx",
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            f.write(content_bytes)
+            temp_path = Path(f.name)
+
+        try:
+            wb = load_workbook(temp_path, data_only=True)
+            text_parts = []
+
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                sheet_text = [f"[Sheet: {sheet_name}]"]
+                for row in ws.iter_rows(values_only=True):
+                    row_values = [str(c) for c in row if c is not None]
+                    if row_values:
+                        sheet_text.append(" | ".join(row_values))
+                if len(sheet_text) > 1:  # Has content beyond header
+                    text_parts.append("\n".join(sheet_text))
+
+            full_text = "\n\n".join(text_parts)
+
+            if not full_text.strip():
+                logger.warning("No content extracted from XLSX: %s", artifact_id)
+                return stats
+
+            stats["content_preview"] = full_text[:300]
+            stats = await self._create_artifact_chunks(
+                artifact_id, full_text, "xlsx", stats
+            )
+            return stats
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+    async def ingest_notebook(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+    ) -> ArtifactIngestionStats:
+        """Ingest a Jupyter notebook artifact.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw notebook content
+
+        Returns:
+            Ingestion stats
+        """
+        import json
+
+        import nbformat
+
+        stats: ArtifactIngestionStats = {
+            "chunks": 0,
+            "content_preview": "",
+            "artifact_type": "ipynb",
+        }
+
+        try:
+            nb = nbformat.reads(content_bytes.decode("utf-8"), as_version=4)
+        except (json.JSONDecodeError, nbformat.reader.NotJSONError) as e:
+            logger.warning("Failed to parse notebook %s: %s", artifact_id, e)
+            return stats
+
+        text_parts = []
+        for cell_num, cell in enumerate(nb.cells, 1):
+            if cell.cell_type == "markdown":
+                text_parts.append(f"[Cell {cell_num} - Markdown]\n{cell.source}")
+            elif cell.cell_type == "code":
+                text_parts.append(
+                    f"[Cell {cell_num} - Code]\n```python\n{cell.source}\n```"
+                )
+
+        full_text = "\n\n".join(text_parts)
+
+        if not full_text.strip():
+            logger.warning("No content extracted from notebook: %s", artifact_id)
+            return stats
+
+        stats["content_preview"] = full_text[:300]
+        stats = await self._create_artifact_chunks(
+            artifact_id, full_text, "ipynb", stats
+        )
+        return stats
+
+    async def ingest_artifact(
+        self,
+        artifact_id: str,
+        content_bytes: bytes,
+        artifact_type: str,
+    ) -> ArtifactIngestionStats:
+        """Dispatch to appropriate extraction method based on artifact type.
+
+        Args:
+            artifact_id: WikiArtifact node ID
+            content_bytes: Raw artifact content
+            artifact_type: Type of artifact (pdf, docx, pptx, xlsx, ipynb)
+
+        Returns:
+            Ingestion stats as dict
+
+        Raises:
+            ValueError: If artifact type is not supported
+        """
+        handlers = {
+            "pdf": self.ingest_pdf,
+            "docx": self.ingest_docx,
+            "doc": self.ingest_docx,  # Try docx parser for .doc files
+            "pptx": self.ingest_pptx,
+            "ppt": self.ingest_pptx,  # Try pptx parser for .ppt files
+            "xlsx": self.ingest_xlsx,
+            "xls": self.ingest_xlsx,  # Try xlsx parser for .xls files
+            "ipynb": self.ingest_notebook,
+        }
+
+        handler = handlers.get(artifact_type.lower())
+        if handler is None:
+            raise ValueError(f"Unsupported artifact type: {artifact_type}")
+
+        return await handler(artifact_id, content_bytes)
+
+    async def _create_artifact_chunks(
+        self,
+        artifact_id: str,
+        full_text: str,
+        artifact_type: str,
+        stats: ArtifactIngestionStats,
+    ) -> ArtifactIngestionStats:
+        """Create chunks from extracted text and persist to graph.
+
+        Common implementation used by all artifact type extractors.
+        """
+        from .scraper import (
+            extract_conventions,
+            extract_imas_paths,
+            extract_mdsplus_paths,
+            extract_units,
+        )
+
+        # Split into chunks
+        combined_doc = Document(
+            text=full_text,
+            metadata={
+                "artifact_id": artifact_id,
+                "facility_id": self.facility_id,
+            },
+        )
+        nodes = self.splitter.get_nodes_from_documents([combined_doc])
+        stats["chunks"] = len(nodes)
+
+        if not nodes:
+            return stats
+
+        # Generate embeddings in batch
+        chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
+        embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+
+        # Prepare batch with pre-computed embeddings
+        chunk_batch: list[dict] = []
+        for i, node in enumerate(nodes):
+            chunk_text: str = node.text  # type: ignore[attr-defined]
+            node.embedding = embeddings[i]
+
+            chunk_mdsplus = extract_mdsplus_paths(chunk_text)
+            chunk_imas = extract_imas_paths(chunk_text)
+            chunk_units = extract_units(chunk_text)
+            chunk_conventions = extract_conventions(chunk_text)
+
+            chunk_batch.append(
+                {
+                    "id": f"{artifact_id}:chunk_{i}",
+                    "artifact_id": artifact_id,
+                    "facility_id": self.facility_id,
+                    "content": chunk_text,
+                    "embedding": node.embedding,
+                    "mdsplus_paths": chunk_mdsplus,
+                    "imas_paths": chunk_imas,
+                    "units": chunk_units,
+                    "conventions": [c.get("name", "") for c in chunk_conventions],
+                }
+            )
+
+        # Persist chunks
+        with GraphClient() as gc:
+            # Update artifact status
+            gc.query(
+                """
+                MATCH (wa:WikiArtifact {id: $id})
+                SET wa.status = 'ingested',
+                    wa.chunk_count = $chunks,
+                    wa.ingested_at = datetime()
+                """,
+                id=artifact_id,
+                chunks=len(nodes),
+            )
+
+            # Batch persist chunks
+            for i in range(0, len(chunk_batch), BATCH_SIZE):
+                batch = chunk_batch[i : i + BATCH_SIZE]
+                gc.query(
+                    """
+                    UNWIND $chunks AS chunk
+                    MERGE (c:WikiChunk {id: chunk.id})
+                    SET c.artifact_id = chunk.artifact_id,
+                        c.facility_id = chunk.facility_id,
+                        c.content = chunk.content,
+                        c.embedding = chunk.embedding,
+                        c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
+                        c.imas_paths_mentioned = chunk.imas_paths,
+                        c.units_mentioned = chunk.units,
+                        c.conventions_mentioned = chunk.conventions
+                    WITH c, chunk
+                    MATCH (wa:WikiArtifact {id: chunk.artifact_id})
+                    MERGE (wa)-[:HAS_CHUNK]->(c)
+                    """,
+                    chunks=batch,
+                )
+
+        return stats
+
     async def ingest_from_graph(
         self,
         limit: int | None = None,

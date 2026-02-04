@@ -184,11 +184,15 @@ class WikiDiscoveryState:
         return False
 
 
+# Artifact types we can extract text from
+SUPPORTED_ARTIFACT_TYPES = {"pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "ipynb"}
+
+
 def has_pending_artifact_work(facility: str) -> bool:
     """Check if there are pending artifacts for ingestion.
 
     Artifacts are ready for ingestion when:
-    - status = 'discovered' AND artifact_type = 'pdf' (skip scoring for now)
+    - status = 'discovered' AND artifact_type in SUPPORTED_ARTIFACT_TYPES
     - claimed_at is null or expired
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
@@ -197,12 +201,13 @@ def has_pending_artifact_work(facility: str) -> bool:
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE wa.status = $discovered
-              AND wa.artifact_type = 'pdf'
+              AND wa.artifact_type IN $types
               AND (wa.claimed_at IS NULL OR wa.claimed_at < datetime() - duration($cutoff))
             RETURN count(wa) AS pending
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
+            types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
         )
         return result[0]["pending"] > 0 if result else False
@@ -615,12 +620,12 @@ def claim_artifacts_for_ingesting(
     facility: str,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
-    """Claim discovered PDF artifacts for ingestion.
+    """Claim discovered artifacts for ingestion.
 
-    Claims artifacts with status='discovered' and artifact_type='pdf'.
-    Other artifact types are currently deferred (no parser available).
+    Claims artifacts with status='discovered' and supported artifact_type.
+    Supported types: pdf, docx, pptx, xlsx, ipynb.
 
-    Workflow: discovered + pdf + unclaimed → set claimed_at
+    Workflow: discovered + supported_type + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
     """
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
@@ -629,7 +634,7 @@ def claim_artifacts_for_ingesting(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE wa.status = $discovered
-              AND wa.artifact_type = 'pdf'
+              AND wa.artifact_type IN $types
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
@@ -643,6 +648,7 @@ def claim_artifacts_for_ingesting(
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
             ingesting=WikiArtifactStatus.ingesting.value,
+            types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
         )
@@ -1650,12 +1656,13 @@ async def artifact_worker(
     on_progress: Callable | None = None,
     max_size_mb: float = 5.0,
 ) -> None:
-    """Artifact worker: Download and ingest PDF artifacts.
+    """Artifact worker: Download and ingest wiki artifacts.
 
     Transitions: discovered → ingesting → ingested
 
-    Claims discovered PDF artifacts, downloads content, and extracts text.
-    Non-PDF artifacts are marked as deferred (require specialized parsers).
+    Claims discovered artifacts with supported types (pdf, docx, pptx, xlsx, ipynb),
+    downloads content, and extracts text.
+    Unsupported artifact types are marked as deferred.
 
     Args:
         state: Shared discovery state
@@ -1710,23 +1717,25 @@ async def artifact_worker(
                     mark_artifact_deferred(artifact_id, reason)
                     continue
 
-                if artifact_type == "pdf":
-                    _, content = await fetch_artifact_content(
-                        url, facility=state.facility
-                    )
-                    stats = await pipeline.ingest_pdf(artifact_id, content)
-                    results.append(
-                        {
-                            "id": artifact_id,
-                            "chunk_count": stats["chunks"],
-                            "filename": filename,
-                            "artifact_type": artifact_type,
-                        }
-                    )
-                else:
-                    # Mark non-PDF as deferred
-                    reason = f"Artifact type '{artifact_type}' not yet supported"
+                # Check if type is supported
+                if artifact_type.lower() not in SUPPORTED_ARTIFACT_TYPES:
+                    reason = f"Artifact type '{artifact_type}' not supported"
                     mark_artifact_deferred(artifact_id, reason)
+                    continue
+
+                # Download and ingest
+                _, content = await fetch_artifact_content(url, facility=state.facility)
+                stats = await pipeline.ingest_artifact(
+                    artifact_id, content, artifact_type
+                )
+                results.append(
+                    {
+                        "id": artifact_id,
+                        "chunk_count": stats["chunks"],
+                        "filename": filename,
+                        "artifact_type": artifact_type,
+                    }
+                )
 
             except Exception as e:
                 logger.warning("Error ingesting artifact %s: %s", artifact_id, e)
