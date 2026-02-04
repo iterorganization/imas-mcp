@@ -15,7 +15,7 @@ You MUST return valid JSON matching this EXACT structure. The response MUST be p
 ### Critical Rules
 
 1. Return ONE result per input directory, in the same order
-2. All dimension scores must be 0.0-0.95 (NEVER 1.0) or null to keep original
+2. All dimension scores must be 0.0-1.0 or null to keep original
 3. new_score can be 0.0-1.50 for exceptional directories
 4. Use 2 decimal places for scores
 5. Ensure valid JSON - no trailing commas, proper quoting

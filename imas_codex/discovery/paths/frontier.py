@@ -2103,7 +2103,7 @@ def sample_scored_paths(
         "low": (0.0, 0.25),
         "medium": (0.25, 0.5),
         "high": (0.5, 0.75),
-        "very_high": (0.75, 0.95),  # Cap at 0.95, we forbid 1.0
+        "very_high": (0.75, 1.01),  # Include 1.0
     }
 
     samples: dict[str, list[dict[str, Any]]] = {}
@@ -2619,7 +2619,7 @@ def sample_dimension_calibration_examples(
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
     """Sample calibration examples for each dimension at 5 score levels.
 
-    Returns representative examples at score levels 0.0, 0.2, 0.5, 0.8, and 0.95
+    Returns representative examples at score levels 0.0, 0.2, 0.5, 0.8, and 1.0
     for each scoring dimension. This enables LLMs to calibrate their scoring
     by seeing what historically received each score level.
 
@@ -2653,7 +2653,7 @@ def sample_dimension_calibration_examples(
         "low": 0.2,  # Range: 0.1-0.3
         "medium": 0.5,  # Range: 0.4-0.6
         "high": 0.8,  # Range: 0.7-0.9
-        "highest": 0.95,  # Range: 0.85-0.95
+        "highest": 1.0,  # Range: 0.9-1.0
     }
 
     samples: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -2667,7 +2667,7 @@ def sample_dimension_calibration_examples(
                 if level_name == "lowest":
                     min_score, max_score = 0.0, 0.15
                 elif level_name == "highest":
-                    min_score, max_score = 0.85, 0.96
+                    min_score, max_score = 0.9, 1.01  # Include 1.0
                 else:
                     min_score = max(0.0, target_score - tolerance)
                     max_score = min(0.96, target_score + tolerance)
