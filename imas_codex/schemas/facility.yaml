@@ -2336,10 +2336,18 @@ classes:
       Uses same embedding model as CodeChunk for unified semantic search.
       
       Relationships created during ingestion:
+      - HAS_CHUNK <- WikiPage (parent page, inbound from page)
+      - NEXT_CHUNK -> WikiChunk (sequential navigation to next chunk)
       - DOCUMENTS -> TreeNode (MDSplus paths documented in chunk)
       - MENTIONS_IMAS -> IMASPath
       - MENTIONS_UNIT -> Unit
       - MENTIONS_CONVENTION -> SignConvention
+      
+      Navigation pattern (best practice from neo4j-graphrag):
+      - Use NEXT_CHUNK for forward traversal in reading order
+      - Query: (c)-[:NEXT_CHUNK]->(next) for next chunk
+      - Query: (c)<-[:NEXT_CHUNK]-(prev) for previous chunk
+      - chunk_index property for absolute positioning
     class_uri: facility:WikiChunk
     attributes:
       id:
@@ -2354,6 +2362,10 @@ classes:
         description: Facility for efficient filtering
         required: true
         range: Facility
+      chunk_index:
+        description: Zero-based position in parent page (0, 1, 2, ...)
+        required: true
+        range: integer
       section:
         description: Section heading this chunk belongs to
       content:

@@ -726,6 +726,7 @@ class WikiIngestionPipeline:
                     "id": self._generate_chunk_id(page_id, i),
                     "wiki_page_id": page_id,
                     "facility_id": self.facility_id,
+                    "chunk_index": i,
                     "content": chunk_text,
                     "embedding": node.embedding,
                     "mdsplus_paths": chunk_mdsplus,
@@ -777,6 +778,7 @@ class WikiIngestionPipeline:
                     MERGE (c:WikiChunk {id: chunk.id})
                     SET c.wiki_page_id = chunk.wiki_page_id,
                         c.facility_id = chunk.facility_id,
+                        c.chunk_index = chunk.chunk_index,
                         c.content = chunk.content,
                         c.embedding = chunk.embedding,
                         c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
@@ -788,6 +790,21 @@ class WikiIngestionPipeline:
                     MERGE (p)-[:HAS_CHUNK]->(c)
                     """,
                     chunks=batch,
+                )
+
+            # Create NEXT_CHUNK relationships for sequential navigation
+            # Best practice from neo4j-graphrag: linked list pattern for chunk traversal
+            if len(chunk_batch) > 1:
+                gc.query(
+                    """
+                    MATCH (p:WikiPage {id: $page_id})-[:HAS_CHUNK]->(c:WikiChunk)
+                    WITH c ORDER BY c.chunk_index
+                    WITH collect(c) AS chunks
+                    UNWIND range(0, size(chunks) - 2) AS idx
+                    WITH chunks[idx] AS current, chunks[idx + 1] AS next
+                    MERGE (current)-[:NEXT_CHUNK]->(next)
+                    """,
+                    page_id=page_id,
                 )
 
             # Batch link chunks to TreeNodes
