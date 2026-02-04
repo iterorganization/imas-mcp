@@ -857,7 +857,63 @@ async def scan_worker(
     """Scanner worker: Extract links from pending pages.
 
     Transitions: pending → scanning → scanned
+
+    Uses concurrent SSH calls with bounded parallelism (max 10 concurrent).
     """
+    # Semaphore to limit concurrent SSH connections
+    ssh_semaphore = asyncio.Semaphore(10)
+
+    async def process_page(page: dict) -> dict | None:
+        """Process a single page with semaphore-bounded concurrency."""
+        async with ssh_semaphore:
+            page_id = page["id"]
+            title = page.get("title", "")
+            url = page.get("url", "")
+
+            try:
+                # Run blocking SSH call in thread pool
+                if state.site_type == "twiki" and state.ssh_host:
+                    page_links, artifact_links = await asyncio.to_thread(
+                        extract_links_twiki, title, state.base_url, state.ssh_host
+                    )
+                elif state.ssh_host:
+                    page_links, artifact_links = await asyncio.to_thread(
+                        extract_links_mediawiki, url, state.ssh_host, state.base_url
+                    )
+                else:
+                    # No SSH host - can't scan remote wiki
+                    page_links, artifact_links = [], []
+
+                # Create new pending pages for discovered links
+                await asyncio.to_thread(
+                    _create_discovered_pages,
+                    state.facility,
+                    page_links,
+                    page.get("depth", 0) + 1,
+                    state.max_depth,
+                    state.base_url,
+                    state.site_type,
+                )
+
+                # Create artifact nodes
+                await asyncio.to_thread(
+                    _create_discovered_artifacts, state.facility, artifact_links
+                )
+
+                return {
+                    "id": page_id,
+                    "out_degree": len(page_links) + len(artifact_links),
+                    "page_links": len(page_links),
+                    "artifact_links": len(artifact_links),
+                }
+
+            except Exception as e:
+                logger.warning("Error scanning %s: %s", page_id, e)
+                await asyncio.to_thread(
+                    mark_page_failed, page_id, str(e), WikiPageStatus.discovered.value
+                )
+                return None
+
     while not state.should_stop_scanning():
         pages = claim_pages_for_scanning(state.facility, limit=50)
 
@@ -873,51 +929,13 @@ async def scan_worker(
         if on_progress:
             on_progress(f"scanning {len(pages)} pages", state.scan_stats)
 
-        results = []
-        for page in pages:
-            page_id = page["id"]
-            title = page.get("title", "")
-            url = page.get("url", "")
+        # Process pages concurrently with bounded parallelism
+        tasks = [process_page(page) for page in pages]
+        results_raw = await asyncio.gather(*tasks)
+        results = [r for r in results_raw if r is not None]
 
-            try:
-                # Extract links based on site type
-                if state.site_type == "twiki" and state.ssh_host:
-                    page_links, artifact_links = extract_links_twiki(
-                        title, state.base_url, state.ssh_host
-                    )
-                elif state.ssh_host:
-                    page_links, artifact_links = extract_links_mediawiki(
-                        url, state.ssh_host, state.base_url
-                    )
-                else:
-                    # No SSH host - can't scan remote wiki
-                    page_links, artifact_links = [], []
-
-                # Create new pending pages for discovered links
-                _create_discovered_pages(
-                    state.facility,
-                    page_links,
-                    page.get("depth", 0) + 1,
-                    state.max_depth,
-                    base_url=state.base_url,
-                    site_type=state.site_type,
-                )
-
-                # Create artifact nodes
-                _create_discovered_artifacts(state.facility, artifact_links)
-
-                results.append(
-                    {
-                        "id": page_id,
-                        "out_degree": len(page_links) + len(artifact_links),
-                        "page_links": len(page_links),
-                        "artifact_links": len(artifact_links),
-                    }
-                )
-
-            except Exception as e:
-                logger.warning("Error scanning %s: %s", page_id, e)
-                mark_page_failed(page_id, str(e), WikiPageStatus.discovered.value)
+        # Log progress after batch completes
+        logger.debug("Scanned batch: %d/%d pages succeeded", len(results), len(pages))
 
         # Mark pages as scanned
         mark_pages_scanned(state.facility, results)
@@ -936,7 +954,34 @@ async def prefetch_worker(
     """Prefetch worker: Fetch content and generate summaries.
 
     Transitions: scanned → prefetching → prefetched
+
+    Uses concurrent SSH calls with bounded parallelism (max 10 concurrent).
     """
+    # Semaphore to limit concurrent SSH connections
+    ssh_semaphore = asyncio.Semaphore(10)
+
+    async def process_page(page: dict) -> dict:
+        """Process a single page with semaphore-bounded concurrency."""
+        async with ssh_semaphore:
+            page_id = page["id"]
+            url = page.get("url", "")
+
+            try:
+                # Fetch content and generate summary
+                summary = await _fetch_and_summarize(url, state.ssh_host)
+                return {
+                    "id": page_id,
+                    "summary": summary,
+                    "error": None,
+                }
+            except Exception as e:
+                logger.warning("Error prefetching %s: %s", page_id, e)
+                return {
+                    "id": page_id,
+                    "summary": None,
+                    "error": str(e),
+                }
+
     while not state.should_stop_scanning():
         pages = claim_pages_for_prefetching(state.facility, limit=20)
 
@@ -952,39 +997,20 @@ async def prefetch_worker(
         if on_progress:
             on_progress(f"prefetching {len(pages)} pages", state.prefetch_stats)
 
-        results = []
-        for page in pages:
-            page_id = page["id"]
-            url = page.get("url", "")
+        # Process pages concurrently with bounded parallelism
+        tasks = [process_page(page) for page in pages]
+        results = await asyncio.gather(*tasks)
 
-            try:
-                # Fetch content and generate summary
-                summary = await _fetch_and_summarize(url, state.ssh_host)
-                results.append(
-                    {
-                        "id": page_id,
-                        "summary": summary,
-                        "error": None,
-                    }
-                )
-            except Exception as e:
-                logger.warning("Error prefetching %s: %s", page_id, e)
-                results.append(
-                    {
-                        "id": page_id,
-                        "summary": None,
-                        "error": str(e),
-                    }
-                )
+        logger.debug("Prefetched batch: %d pages", len(results))
 
-        mark_pages_prefetched(state.facility, results)
+        mark_pages_prefetched(state.facility, list(results))
         state.prefetch_stats.processed += len(results)
 
         if on_progress:
             on_progress(
                 f"prefetched {len(results)} pages",
                 state.prefetch_stats,
-                results=results,
+                results=list(results),
             )
 
 
@@ -1239,8 +1265,8 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
         fetch_page_content,
     )
 
-    if ssh_host:
-        # Fetch via SSH proxy using curl
+    def _ssh_fetch() -> str:
+        """Blocking SSH fetch - run in thread pool."""
         cmd = f'curl -sk "{url}" 2>/dev/null'
         try:
             result = subprocess.run(
@@ -1250,7 +1276,7 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
                 timeout=30,
             )
             if result.returncode == 0 and result.stdout:
-                return extract_text_from_html(result.stdout, max_chars=2000)
+                return result.stdout
             return ""
         except subprocess.TimeoutExpired:
             logger.warning("Timeout fetching %s via SSH", url)
@@ -1258,6 +1284,13 @@ async def _fetch_and_summarize(url: str, ssh_host: str | None) -> str:
         except Exception as e:
             logger.warning("Error fetching %s via SSH: %s", url, e)
             return ""
+
+    if ssh_host:
+        # Fetch via SSH proxy using curl in thread pool
+        html = await asyncio.to_thread(_ssh_fetch)
+        if html:
+            return extract_text_from_html(html, max_chars=2000)
+        return ""
     else:
         # Direct HTTP fetch
         html, error = await fetch_page_content(url)
