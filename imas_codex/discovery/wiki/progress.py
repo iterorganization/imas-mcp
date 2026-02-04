@@ -343,11 +343,15 @@ class WikiProgressDisplay:
         """Build the current activity section showing SCORE and INGEST.
 
         Shows physics domain and LLM description for both workers.
+        All content is clipped to fit within the panel width.
         """
         section = Text()
 
         score = self.state.current_score
         ingest = self.state.current_ingest
+
+        # Maximum content width for the panel (account for padding and border)
+        content_width = self.WIDTH - 6  # Panel padding + border
 
         # Helper to determine if worker should show "idle"
         def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
@@ -357,14 +361,16 @@ class WikiProgressDisplay:
         if not self.state.scan_only:
             section.append("  SCORE ", style="bold blue")
             if score:
-                # Line 1: Page title (clipped to fit)
+                # Line 1: Page title (clipped to fit remaining space)
+                title_width = content_width - 8  # 8 = "  SCORE "
                 section.append(
-                    self._clip_title(score.title, self.WIDTH - 10), style="white"
+                    self._clip_title(score.title, title_width), style="white"
                 )
                 section.append("\n")
 
                 # Line 2: Score, physics domain, description
                 section.append("    ", style="dim")
+                score_str = ""
                 if score.score is not None:
                     if score.score >= 0.7:
                         style = "bold green"
@@ -372,24 +378,34 @@ class WikiProgressDisplay:
                         style = "yellow"
                     else:
                         style = "red"
-                    section.append(f"{score.score:.2f}  ", style=style)
+                    score_str = f"{score.score:.2f}"
+                    section.append(f"{score_str}  ", style=style)
 
                 # Physics domain without brackets (matching paths CLI)
+                domain_str = ""
                 if score.physics_domain:
-                    section.append(f"{score.physics_domain}  ", style="cyan")
+                    domain_str = score.physics_domain
+                    section.append(f"{domain_str}  ", style="cyan")
                 elif score.is_physics:
-                    section.append("physics  ", style="cyan")
+                    domain_str = "physics"
+                    section.append(f"{domain_str}  ", style="cyan")
 
                 if score.description:
                     desc = clean_text(score.description)
-                    # Calculate width: 4 indent + 5 score + 2 space + domain + 2 space
-                    used = 11
-                    if score.physics_domain:
-                        used += len(score.physics_domain) + 2
-                    desc_width = self.WIDTH - used
-                    section.append(clip_text(desc, desc_width), style="italic dim")
+                    # Calculate remaining width for description
+                    # 4 indent + score (5) + space (2) + domain + space (2)
+                    used = (
+                        4
+                        + (len(score_str) + 2 if score_str else 0)
+                        + (len(domain_str) + 2 if domain_str else 0)
+                    )
+                    desc_width = content_width - used
+                    section.append(
+                        clip_text(desc, max(10, desc_width)), style="italic dim"
+                    )
                 elif score.skipped:
-                    section.append(f"skipped: {score.skip_reason}", style="yellow dim")
+                    reason = score.skip_reason[:40] if score.skip_reason else ""
+                    section.append(f"skipped: {reason}", style="yellow dim")
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
@@ -405,14 +421,16 @@ class WikiProgressDisplay:
         if not self.state.scan_only:
             section.append("  INGEST", style="bold magenta")
             if ingest:
-                # Line 1: Page title
+                # Line 1: Page title (clipped to fit remaining space)
+                title_width = content_width - 9  # 9 = "  INGEST "
                 section.append(
-                    " " + self._clip_title(ingest.title, self.WIDTH - 12), style="white"
+                    " " + self._clip_title(ingest.title, title_width), style="white"
                 )
                 section.append("\n")
 
                 # Line 2: score + physics domain + description + chunk count
                 section.append("    ", style="dim")
+                score_str = ""
                 if ingest.score is not None:
                     if ingest.score >= 0.7:
                         style = "bold green"
@@ -420,22 +438,34 @@ class WikiProgressDisplay:
                         style = "yellow"
                     else:
                         style = "dim"
-                    section.append(f"{ingest.score:.2f}  ", style=style)
+                    score_str = f"{ingest.score:.2f}"
+                    section.append(f"{score_str}  ", style=style)
 
                 # Physics domain without brackets (matching paths CLI)
+                domain_str = ""
                 if ingest.physics_domain:
-                    section.append(f"{ingest.physics_domain}  ", style="cyan")
+                    domain_str = ingest.physics_domain
+                    section.append(f"{domain_str}  ", style="cyan")
+
+                # Chunk count suffix (calculate length first)
+                chunk_suffix = f"  {ingest.chunk_count} chunks"
 
                 if ingest.description:
                     desc = clean_text(ingest.description)
-                    # Calculate width: 4 indent + 5 score + 2 sp + domain + 2 sp + chunks (~12)
-                    used = 23
-                    if ingest.physics_domain:
-                        used += len(ingest.physics_domain) + 2
-                    desc_width = self.WIDTH - used
-                    section.append(clip_text(desc, desc_width), style="italic dim")
+                    # Calculate remaining width for description
+                    # 4 indent + score + domain + chunk_suffix
+                    used = (
+                        4
+                        + (len(score_str) + 2 if score_str else 0)
+                        + (len(domain_str) + 2 if domain_str else 0)
+                        + len(chunk_suffix)
+                    )
+                    desc_width = content_width - used
+                    section.append(
+                        clip_text(desc, max(10, desc_width)), style="italic dim"
+                    )
 
-                section.append(f"  {ingest.chunk_count} chunks", style="cyan")
+                section.append(chunk_suffix, style="cyan")
             elif self.state.ingest_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")

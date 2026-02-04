@@ -149,13 +149,18 @@ class WikiDiscoveryState:
         ingest queue. This ensures all scorable content gets ingested
         before termination. They only stop when:
         1. Explicitly requested
-        2. Idle for 3+ iterations with no pending ingest work
+        2. Idle for 3+ iterations with no pending ingest work AND
+           score workers are also idle (no more scoring happening)
         """
         if self.stop_requested:
             return True
         # Continue even when budget exhausted - drain the ingest queue
-        if self.ingest_idle_count >= 3 and not has_pending_ingest_work(self.facility):
-            return True
+        # BUT don't exit early if scoring is still running - pages may arrive soon
+        if self.ingest_idle_count >= 3:
+            # Only stop if scoring is also idle AND no pending ingest work
+            scoring_done = self.score_idle_count >= 3 or self.budget_exhausted
+            if scoring_done and not has_pending_ingest_work(self.facility):
+                return True
         return False
 
 

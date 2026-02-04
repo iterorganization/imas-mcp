@@ -30,7 +30,21 @@ Examples:
 See __main__.py in the root directory for complete documentation and examples.
 """
 
-from imas_codex.cli import main
+# Filter deprecation warnings BEFORE any imports that might trigger them
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=".*enable_cleanup_closed.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module=r"aiohttp\..*",
+)
+
+from imas_codex.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     # Expose the full Click CLI interface

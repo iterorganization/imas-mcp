@@ -108,6 +108,20 @@ More Information:
 """
 
 if __name__ == "__main__":
+    # Filter deprecation warnings BEFORE any imports that might trigger them
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore",
+        message=".*enable_cleanup_closed.*",
+        category=DeprecationWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        module=r"aiohttp\..*",
+    )
+
     from imas_codex.cli import main
 
     # Expose the Click CLI interface directly

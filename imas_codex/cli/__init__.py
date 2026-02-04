@@ -9,11 +9,17 @@ import warnings
 # Suppress third-party deprecation warnings before importing other modules
 warnings.filterwarnings("ignore", message=".*Relying on Driver's destructor.*")
 # Suppress aiohttp's enable_cleanup_closed warning (fixed in Python 3.12.7+)
-# Don't use module= filter as it may not match the module path correctly
+# Must filter BEFORE any aiohttp imports occur
 warnings.filterwarnings(
     "ignore",
     message=".*enable_cleanup_closed.*",
     category=DeprecationWarning,
+)
+# Also filter by module pattern for robustness
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    module=r"aiohttp\..*",
 )
 
 import click  # noqa: E402
