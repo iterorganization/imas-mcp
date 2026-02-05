@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import httpx
 import requests
 import urllib3
 
@@ -657,4 +658,489 @@ def get_mediawiki_client(facility: str, site_index: int = 0) -> MediaWikiClient:
         base_url=config.base_url,
         credential_service=config.credential_service or f"{facility}-wiki",
         verify_ssl=False,  # Most MediaWiki sites have self-signed certs
+    )
+
+
+class AsyncMediaWikiClient:
+    """Async HTTP client for MediaWiki sites with Tequila (EPFL SSO) authentication.
+
+    This is the async version of MediaWikiClient using httpx.AsyncClient
+    for native async HTTP operations instead of blocking requests.
+
+    Handles the Tequila SSO redirect flow:
+    1. Access wiki → redirect to tequila.epfl.ch
+    2. Submit credentials to Tequila login form
+    3. Follow redirects back to wiki with session
+    4. Cache session cookies in keyring
+
+    Example:
+        async with AsyncMediaWikiClient(
+            base_url="https://spcwiki.epfl.ch/wiki",
+            credential_service="tcv-wiki",
+        ) as client:
+            if await client.authenticate():
+                page = await client.get_page("Portal:TCV")
+                print(page.content_html)
+
+    Attributes:
+        base_url: MediaWiki base URL (e.g., "https://spcwiki.epfl.ch/wiki")
+        credential_service: Keyring service name for credentials
+        timeout: Request timeout in seconds
+    """
+
+    # Tequila SSO endpoints
+    TEQUILA_HOST = "tequila.epfl.ch"
+    TEQUILA_LOGIN_URL = "https://tequila.epfl.ch/cgi-bin/tequila/login"
+
+    def __init__(
+        self,
+        base_url: str,
+        credential_service: str,
+        timeout: float = DEFAULT_TIMEOUT,
+        verify_ssl: bool = False,  # SPC wiki has self-signed cert
+    ) -> None:
+        """Initialize async MediaWiki client.
+
+        Args:
+            base_url: MediaWiki base URL (e.g., "https://spcwiki.epfl.ch/wiki")
+            credential_service: Keyring service name for credentials
+            timeout: Request timeout in seconds
+            verify_ssl: Whether to verify SSL certificates
+        """
+        import asyncio
+
+        self.base_url = base_url.rstrip("/")
+        self.credential_service = credential_service
+        self.timeout = timeout
+        self.verify_ssl = verify_ssl
+
+        self._client: httpx.AsyncClient | None = None
+        self._creds = CredentialManager()
+        self._last_request_time = 0.0
+        self._authenticated = False
+        self._redirect_retry_attempted = False
+        # Async lock for session operations
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self) -> AsyncMediaWikiClient:
+        """Async context manager entry."""
+        await self._get_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit."""
+        await self.close()
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create httpx async client with restored cookies.
+
+        Configures client for optimal performance:
+        - gzip/deflate compression
+        - HTTP/2 support
+        - Connection pooling
+        """
+        import httpx
+
+        if self._client is None:
+            # Restore session cookies from keyring
+            cookies = self._creds.get_session(self.credential_service)
+            cookie_jar = httpx.Cookies()
+            if cookies:
+                for name, value in cookies.items():
+                    cookie_jar.set(name, value)
+                logger.debug("Restored session cookies from keyring")
+
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout),
+                follow_redirects=True,
+                verify=self.verify_ssl,
+                cookies=cookie_jar,
+                headers={
+                    "User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                },
+                limits=httpx.Limits(
+                    max_connections=20,
+                    max_keepalive_connections=10,
+                    keepalive_expiry=30.0,
+                ),
+            )
+
+        return self._client
+
+    async def _rate_limit(self) -> None:
+        """Apply rate limiting between requests."""
+        import asyncio
+
+        elapsed = time.time() - self._last_request_time
+        if elapsed < RATE_LIMIT_DELAY:
+            await asyncio.sleep(RATE_LIMIT_DELAY - elapsed)
+        self._last_request_time = time.time()
+
+    def _is_tequila_redirect(self, response: httpx.Response) -> bool:
+        """Check if response is a Tequila login redirect."""
+        return self.TEQUILA_HOST in str(response.url)
+
+    def _extract_tequila_params(self, html: str, url: str) -> dict[str, str]:
+        """Extract hidden form parameters from Tequila login page."""
+        params = {}
+
+        # Extract requestkey from URL
+        requestkey_match = re.search(r"requestkey=([^&]+)", url)
+        if requestkey_match:
+            params["requestkey"] = requestkey_match.group(1)
+
+        # Extract any hidden form fields
+        hidden_pattern = re.compile(
+            r'<input[^>]*type=["\']hidden["\'][^>]*name=["\']([^"\']+)["\'][^>]*value=["\']([^"\']*)["\']',
+            re.IGNORECASE,
+        )
+        for match in hidden_pattern.finditer(html):
+            params[match.group(1)] = match.group(2)
+
+        # Also try reversed order (value before name)
+        hidden_pattern2 = re.compile(
+            r'<input[^>]*value=["\']([^"\']*)["\'][^>]*name=["\']([^"\']+)["\'][^>]*type=["\']hidden["\']',
+            re.IGNORECASE,
+        )
+        for match in hidden_pattern2.finditer(html):
+            params[match.group(2)] = match.group(1)
+
+        return params
+
+    async def _perform_tequila_login(
+        self,
+        login_page_html: str,
+        login_url: str,
+        username: str,
+        password: str,
+    ) -> httpx.Response:
+        """Submit Tequila login form and follow redirects.
+
+        Args:
+            login_page_html: HTML of Tequila login page
+            login_url: URL of Tequila login page
+            username: EPFL username
+            password: EPFL password
+
+        Returns:
+            Final response after authentication
+
+        Raises:
+            TequilaAuthError: If login fails
+        """
+        client = await self._get_client()
+
+        # Extract form parameters
+        params = self._extract_tequila_params(login_page_html, login_url)
+
+        # Add credentials and submit button
+        params["username"] = username
+        params["password"] = password
+        params["login"] = ""  # Submit button field
+
+        logger.debug("Submitting Tequila login form to %s", self.TEQUILA_LOGIN_URL)
+
+        # POST to Tequila
+        response = await client.post(
+            self.TEQUILA_LOGIN_URL,
+            data=params,
+        )
+
+        # Check if login failed (still on Tequila page)
+        if self.TEQUILA_HOST in str(response.url):
+            if (
+                "Invalid username" in response.text
+                or "Invalid password" in response.text
+            ):
+                raise TequilaAuthError("Invalid username or password")
+            if "form" in response.text.lower() and "login" in response.text.lower():
+                raise TequilaAuthError("Login failed - still on login page")
+
+        return response
+
+    async def authenticate(self, force: bool = False) -> bool:
+        """Authenticate with Tequila SSO.
+
+        Attempts to use existing session, falls back to fresh login.
+        Thread-safe: uses async lock to prevent concurrent authentication races.
+
+        Args:
+            force: Force re-authentication even if session exists
+
+        Returns:
+            True if authenticated successfully
+        """
+        # Quick check without lock for already-authenticated case
+        if not force and self._authenticated:
+            return True
+
+        # All other operations need the lock
+        async with self._lock:
+            # Double-check after acquiring lock
+            if not force and self._authenticated:
+                return True
+
+            return await self._authenticate_impl(force)
+
+    async def _authenticate_impl(self, force: bool) -> bool:
+        """Internal authentication implementation (must be called with lock held)."""
+        import httpx
+
+        client = await self._get_client()
+
+        if not force:
+            try:
+                # Test session with a simple page request
+                response = await client.get(self.base_url)
+
+                # If we don't get redirected to Tequila, session is valid
+                if not self._is_tequila_redirect(response):
+                    logger.debug("Session valid (no Tequila redirect)")
+                    self._authenticated = True
+                    return True
+
+                logger.debug("Session expired, need to re-authenticate")
+                # Clear stale cookies
+                client.cookies.clear()
+                self._creds.delete_session(self.credential_service)
+
+            except Exception as e:
+                logger.debug("Session check failed: %s", e)
+                client.cookies.clear()
+
+        # Need to authenticate with credentials
+        username, password = require_credentials(self.credential_service)
+
+        try:
+            # Access wiki to trigger Tequila redirect
+            response = await client.get(self.base_url)
+
+            if not self._is_tequila_redirect(response):
+                # No auth needed? Unusual but possible
+                logger.info("No Tequila redirect - site may be public")
+                self._authenticated = True
+                return True
+
+            # Perform Tequila login
+            response = await self._perform_tequila_login(
+                login_page_html=response.text,
+                login_url=str(response.url),
+                username=username,
+                password=password,
+            )
+
+            # Verify we're back on the wiki
+            if self._is_tequila_redirect(response):
+                logger.error("Still on Tequila after login - authentication failed")
+                return False
+
+            logger.info("Authenticated successfully via Tequila")
+
+            # Save session cookies
+            cookie_dict = dict(client.cookies.items())
+            self._creds.set_session(
+                self.credential_service,
+                cookie_dict,
+                ttl=MEDIAWIKI_SESSION_TTL,
+            )
+
+            self._authenticated = True
+            return True
+
+        except TequilaAuthError as e:
+            logger.error("Tequila authentication failed: %s", e)
+            return False
+        except httpx.TooManyRedirects:
+            # Redirect loop during auth - only retry once
+            if self._redirect_retry_attempted:
+                logger.error(
+                    "Redirect loop persists after retry - check Tequila credentials"
+                )
+                return False
+
+            logger.warning(
+                "Redirect loop during authentication - clearing cookies and retrying"
+            )
+            self._redirect_retry_attempted = True
+            client.cookies.clear()
+            self._creds.delete_session(self.credential_service)
+
+            # Create fresh client
+            if self._client:
+                await self._client.aclose()
+            self._client = None
+            client = await self._get_client()
+
+            # Retry authentication once with fresh client
+            try:
+                response = await client.get(self.base_url)
+                if self._is_tequila_redirect(response):
+                    response = await self._perform_tequila_login(
+                        login_page_html=response.text,
+                        login_url=str(response.url),
+                        username=username,
+                        password=password,
+                    )
+                    if not self._is_tequila_redirect(response):
+                        cookie_dict = dict(client.cookies.items())
+                        self._creds.set_session(
+                            self.credential_service,
+                            cookie_dict,
+                            ttl=MEDIAWIKI_SESSION_TTL,
+                        )
+                        self._authenticated = True
+                        self._redirect_retry_attempted = False
+                        logger.info("Re-authenticated successfully after redirect loop")
+                        return True
+            except httpx.TooManyRedirects:
+                logger.error("Redirect loop persists after retry")
+            except Exception as retry_e:
+                logger.error("Retry after redirect loop failed: %s", retry_e)
+            return False
+        except httpx.RequestError as e:
+            logger.error("Request failed during authentication: %s", e)
+            return False
+
+    async def get_page(self, page_name: str) -> MediaWikiPage | None:
+        """Fetch a MediaWiki page.
+
+        Thread-safe: uses lock to prevent concurrent session access.
+
+        Args:
+            page_name: Page name (e.g., "Portal:TCV", "Thomson/DDJ")
+
+        Returns:
+            MediaWikiPage or None if fetch failed
+        """
+        import httpx
+
+        if not self._authenticated:
+            if not await self.authenticate():
+                return None
+
+        await self._rate_limit()
+
+        # URL-encode page name (preserve slashes for subpages)
+        from urllib.parse import quote
+
+        encoded_name = quote(page_name, safe="/")
+        url = f"{self.base_url}/{encoded_name}"
+
+        async with self._lock:
+            client = await self._get_client()
+            try:
+                response = await client.get(url)
+
+                # Check if session expired mid-request
+                if self._is_tequila_redirect(response):
+                    logger.warning("Session expired during request, re-authenticating")
+                    self._authenticated = False
+                    if not await self._authenticate_impl(force=True):
+                        return None
+                    # Retry request
+                    response = await client.get(url)
+
+                response.raise_for_status()
+
+                # Extract title
+                title_match = re.search(r"<title>([^<]+)</title>", response.text)
+                title = (
+                    title_match.group(1).replace(" - SPCwiki", "")
+                    if title_match
+                    else page_name
+                )
+
+                # Extract text content (strip tags for entity extraction)
+                text_content = re.sub(r"<[^>]+>", " ", response.text)
+                text_content = re.sub(r"\s+", " ", text_content)
+
+                return MediaWikiPage(
+                    title=title,
+                    url=url,
+                    content_html=response.text,
+                    content_text=text_content,
+                )
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.debug("Page not found: %s", page_name)
+                else:
+                    logger.error("HTTP error fetching %s: %s", page_name, e)
+                return None
+            except httpx.TooManyRedirects:
+                logger.warning(
+                    "Redirect loop for %s - clearing session and retrying", page_name
+                )
+                self._authenticated = False
+                client.cookies.clear()
+                self._creds.delete_session(self.credential_service)
+                if await self._authenticate_impl(force=True):
+                    try:
+                        response = await client.get(url)
+                        if not self._is_tequila_redirect(response):
+                            response.raise_for_status()
+                            title_match = re.search(
+                                r"<title>([^<]+)</title>", response.text
+                            )
+                            title = (
+                                title_match.group(1).replace(" - SPCwiki", "")
+                                if title_match
+                                else page_name
+                            )
+                            text_content = re.sub(r"<[^>]+>", " ", response.text)
+                            text_content = re.sub(r"\s+", " ", text_content)
+                            return MediaWikiPage(
+                                title=title,
+                                url=url,
+                                content_html=response.text,
+                                content_text=text_content,
+                            )
+                    except Exception as retry_e:
+                        logger.error(
+                            "Retry after redirect loop failed for %s: %s",
+                            page_name,
+                            retry_e,
+                        )
+                return None
+            except httpx.RequestError as e:
+                logger.error("Request failed for %s: %s", page_name, e)
+                return None
+
+    async def close(self) -> None:
+        """Close the async client."""
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+            self._authenticated = False
+
+
+async def get_async_mediawiki_client(
+    facility: str, site_index: int = 0
+) -> AsyncMediaWikiClient:
+    """Create an async MediaWiki client for a facility.
+
+    Args:
+        facility: Facility identifier (e.g., "tcv")
+        site_index: Index of wiki site in facility config
+
+    Returns:
+        Configured AsyncMediaWikiClient
+
+    Raises:
+        ValueError: If facility has no wiki sites or invalid index
+    """
+    from imas_codex.discovery.wiki.config import WikiConfig
+
+    config = WikiConfig.from_facility(facility, site_index)
+
+    if config.site_type != "mediawiki":
+        raise ValueError(f"Site type {config.site_type} is not mediawiki")
+
+    return AsyncMediaWikiClient(
+        base_url=config.base_url,
+        credential_service=config.credential_service or f"{facility}-wiki",
+        verify_ssl=False,
     )

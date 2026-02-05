@@ -71,6 +71,10 @@ class WikiDiscoveryState:
     _wiki_client: Any = field(default=None, repr=False)
     _wiki_client_lock: Any = field(default=None, repr=False)
 
+    # Async wiki client for native async HTTP
+    _async_wiki_client: Any = field(default=None, repr=False)
+    _async_wiki_client_lock: Any = field(default=None, repr=False)
+
     # Limits
     cost_limit: float = 10.0
     page_limit: int | None = None
@@ -241,6 +245,48 @@ class WikiDiscoveryState:
             except Exception:
                 pass
             self._wiki_client = None
+
+    async def get_async_wiki_client(self):
+        """Get shared AsyncMediaWikiClient for Tequila auth.
+
+        Lazily initializes an async client that persists session cookies
+        across all page fetches. Uses native async HTTP for better performance.
+        """
+        if self._async_wiki_client is None:
+            from imas_codex.discovery.wiki.mediawiki import AsyncMediaWikiClient
+
+            if self._async_wiki_client_lock is None:
+                self._async_wiki_client_lock = asyncio.Lock()
+
+            async with self._async_wiki_client_lock:
+                if self._async_wiki_client is None:
+                    self._async_wiki_client = AsyncMediaWikiClient(
+                        base_url=self.base_url,
+                        credential_service=self.credential_service
+                        or f"{self.facility}-wiki",
+                        verify_ssl=False,
+                    )
+                    # Pre-authenticate to warm up session
+                    try:
+                        await self._async_wiki_client.authenticate()
+                        logger.info(
+                            "Initialized shared AsyncMediaWikiClient with Tequila auth"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to pre-authenticate AsyncMediaWikiClient: %s", e
+                        )
+
+        return self._async_wiki_client
+
+    async def close_async_wiki_client(self):
+        """Close the shared async wiki client."""
+        if self._async_wiki_client is not None:
+            try:
+                await self._async_wiki_client.close()
+            except Exception:
+                pass
+            self._async_wiki_client = None
 
 
 # Artifact types we can extract text from
@@ -1723,9 +1769,9 @@ async def score_worker(
     # Increased from 15 to 25 for better throughput with connection pooling
     fetch_semaphore = asyncio.Semaphore(25)
 
-    # Get shared wiki client for Tequila auth (reuses session across fetches)
-    shared_wiki_client = (
-        state.get_wiki_client() if state.auth_type == "tequila" else None
+    # Get shared async wiki client for Tequila auth (native async HTTP)
+    shared_async_wiki_client = (
+        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
     )
 
     async def fetch_content_for_page(page: dict) -> dict:
@@ -1739,7 +1785,7 @@ async def score_worker(
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
                     max_chars=1500,  # Reduced for scoring
-                    wiki_client=shared_wiki_client,  # Reuse session
+                    async_wiki_client=shared_async_wiki_client,  # Native async HTTP
                 )
                 return {
                     "id": page["id"],
@@ -1841,9 +1887,9 @@ async def ingest_worker(
     The ingest worker continues running even after cost limit is reached
     to drain the ingest queue. This ensures all scored content gets ingested.
     """
-    # Get shared wiki client for Tequila auth (reuses session across fetches)
-    shared_wiki_client = (
-        state.get_wiki_client() if state.auth_type == "tequila" else None
+    # Get shared async wiki client for Tequila auth (native async HTTP)
+    shared_async_wiki_client = (
+        await state.get_async_wiki_client() if state.auth_type == "tequila" else None
     )
 
     while not state.should_stop_ingesting():
@@ -1876,7 +1922,7 @@ async def ingest_worker(
                     ssh_host=state.ssh_host,
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
-                    wiki_client=shared_wiki_client,
+                    async_wiki_client=shared_async_wiki_client,
                 )
                 # Include score, description, physics_domain for display
                 results.append(
@@ -2188,6 +2234,7 @@ async def _fetch_and_summarize(
     credential_service: str | None = None,
     max_chars: int = 2000,
     wiki_client: Any = None,
+    async_wiki_client: Any = None,
 ) -> str:
     """Fetch page content and extract text preview.
 
@@ -2200,7 +2247,8 @@ async def _fetch_and_summarize(
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
         max_chars: Maximum characters to extract (default 2000, use 1500 for scoring)
-        wiki_client: Optional shared MediaWikiClient for session reuse
+        wiki_client: Optional shared MediaWikiClient for session reuse (sync, deprecated)
+        async_wiki_client: Optional shared AsyncMediaWikiClient for native async HTTP
 
     Returns:
         Extracted text preview or empty string on error
@@ -2227,65 +2275,74 @@ async def _fetch_and_summarize(
             logger.warning("Error fetching %s via SSH: %s", url, e)
             return ""
 
-    def _tequila_fetch() -> str:
-        """Fetch with Tequila authentication - uses shared client if provided."""
+    async def _async_tequila_fetch() -> str:
+        """Fetch with Tequila authentication using async client."""
         # Extract page name from URL
         page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
         if "?" in page_name:
-            # Handle index.php?title=Page format
             import urllib.parse as urlparse
 
             parsed = urlparse.parse_qs(urlparse.urlparse(url).query)
             page_name = parsed.get("title", [page_name])[0]
 
-        # Decode URL encoding
         import urllib.parse as urlparse
 
         page_name = urlparse.unquote(page_name)
 
-        # Use shared client if provided
-        if wiki_client is not None:
+        # Use provided async client
+        if async_wiki_client is not None:
             try:
-                page = wiki_client.get_page(page_name)
+                page = await async_wiki_client.get_page(page_name)
                 if page:
                     return page.content_html
                 return ""
             except Exception as e:
-                logger.debug("Shared client fetch failed for %s: %s", url, e)
+                logger.debug("Async client fetch failed for %s: %s", url, e)
                 return ""
 
-        # Fallback: create new client (for backwards compatibility)
-        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+        # Fallback: Use sync client in thread (for backwards compatibility)
+        if wiki_client is not None:
+            try:
+                page = await asyncio.to_thread(wiki_client.get_page, page_name)
+                if page:
+                    return page.content_html
+                return ""
+            except Exception as e:
+                logger.debug("Sync client fetch failed for %s: %s", url, e)
+                return ""
+
+        # Last resort: create a new async client
+        from imas_codex.discovery.wiki.mediawiki import AsyncMediaWikiClient
 
         base_url = url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]
         if "/wiki" in base_url:
             base_url = base_url.rsplit("/wiki", 1)[0] + "/wiki"
 
-        client = MediaWikiClient(
+        client = AsyncMediaWikiClient(
             base_url=base_url,
             credential_service=credential_service or "tcv-wiki",
             verify_ssl=False,
         )
         try:
-            if not client.authenticate():
+            if not await client.authenticate():
                 logger.warning("Tequila auth failed for %s", url)
                 return ""
-            page = client.get_page(page_name)
+            page = await client.get_page(page_name)
             if page:
                 return page.content_html
             return ""
         finally:
-            client.close()
+            await client.close()
 
     # Determine fetch strategy
     if ssh_host:
-        # Fetch via SSH proxy using curl in thread pool
+        # Fetch via SSH proxy using curl in thread pool (subprocess is blocking)
         html = await asyncio.to_thread(_ssh_fetch)
     elif auth_type in ("tequila", "session"):
-        # Fetch via Tequila SSO authentication
-        html = await asyncio.to_thread(_tequila_fetch)
+        # Fetch via Tequila SSO authentication using native async HTTP
+        html = await _async_tequila_fetch()
     else:
-        # Direct HTTP fetch (no auth) - will fail for protected wikis
+        # Direct HTTP fetch (no auth) - already async
         from imas_codex.discovery.wiki.prefetch import fetch_page_content
 
         html, error = await fetch_page_content(url)
@@ -2579,6 +2636,7 @@ async def _ingest_page(
     auth_type: str | None = None,
     credential_service: str | None = None,
     wiki_client: Any = None,
+    async_wiki_client: Any = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -2592,7 +2650,8 @@ async def _ingest_page(
         ssh_host: Optional SSH host for proxied fetching
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
-        wiki_client: Optional shared MediaWikiClient for session reuse
+        wiki_client: Optional shared MediaWikiClient for session reuse (sync, deprecated)
+        async_wiki_client: Optional shared AsyncMediaWikiClient for native async HTTP
 
     Returns:
         Number of chunks created
@@ -2610,6 +2669,7 @@ async def _ingest_page(
         auth_type=auth_type,
         credential_service=credential_service,
         wiki_client=wiki_client,
+        async_wiki_client=async_wiki_client,
     )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
@@ -2659,6 +2719,7 @@ async def _fetch_html(
     auth_type: str | None = None,
     credential_service: str | None = None,
     wiki_client: Any = None,
+    async_wiki_client: Any = None,
 ) -> str:
     """Fetch HTML content from URL.
 
@@ -2667,7 +2728,8 @@ async def _fetch_html(
         ssh_host: Optional SSH host for proxied fetching
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
-        wiki_client: Optional shared MediaWikiClient for session reuse
+        wiki_client: Optional shared MediaWikiClient for session reuse (sync, deprecated)
+        async_wiki_client: Optional shared AsyncMediaWikiClient for native async HTTP
 
     Returns:
         HTML content string or empty string on error
@@ -2690,8 +2752,8 @@ async def _fetch_html(
             logger.warning("SSH fetch failed for %s: %s", url, e)
             return ""
 
-    def _tequila_fetch() -> str:
-        """Fetch with Tequila authentication - uses shared client if provided."""
+    async def _async_tequila_fetch() -> str:
+        """Fetch with Tequila authentication using async client."""
         # Extract page name from URL
         page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
         if "?" in page_name:
@@ -2704,19 +2766,30 @@ async def _fetch_html(
 
         page_name = urlparse.unquote(page_name)
 
-        # Use shared client if provided
-        if wiki_client is not None:
+        # Use provided async client
+        if async_wiki_client is not None:
             try:
-                page = wiki_client.get_page(page_name)
+                page = await async_wiki_client.get_page(page_name)
                 if page:
                     return page.content_html
                 return ""
             except Exception as e:
-                logger.debug("Shared client fetch failed for %s: %s", url, e)
+                logger.debug("Async client fetch failed for %s: %s", url, e)
                 return ""
 
-        # Fallback: create new client
-        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+        # Fallback: Use sync client in thread (for backwards compatibility)
+        if wiki_client is not None:
+            try:
+                page = await asyncio.to_thread(wiki_client.get_page, page_name)
+                if page:
+                    return page.content_html
+                return ""
+            except Exception as e:
+                logger.debug("Sync client fetch failed for %s: %s", url, e)
+                return ""
+
+        # Last resort: create a new async client
+        from imas_codex.discovery.wiki.mediawiki import AsyncMediaWikiClient
 
         base_url_local = (
             url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]
@@ -2724,29 +2797,29 @@ async def _fetch_html(
         if "/wiki" in base_url_local:
             base_url_local = base_url_local.rsplit("/wiki", 1)[0] + "/wiki"
 
-        client = MediaWikiClient(
+        client = AsyncMediaWikiClient(
             base_url=base_url_local,
             credential_service=credential_service or "tcv-wiki",
             verify_ssl=False,
         )
         try:
-            if not client.authenticate():
+            if not await client.authenticate():
                 logger.warning("Tequila auth failed for %s", url)
                 return ""
-            page = client.get_page(page_name)
+            page = await client.get_page(page_name)
             if page:
                 return page.content_html
             return ""
         finally:
-            client.close()
+            await client.close()
 
     # Determine fetch strategy
     if ssh_host:
         return await asyncio.to_thread(_ssh_fetch)
     elif auth_type in ("tequila", "session"):
-        return await asyncio.to_thread(_tequila_fetch)
+        return await _async_tequila_fetch()
     else:
-        # Direct HTTP fetch (no auth)
+        # Direct HTTP fetch (no auth) - already async
         from imas_codex.discovery.wiki.prefetch import fetch_page_content
 
         html, error = await fetch_page_content(url)
@@ -3013,6 +3086,9 @@ async def run_parallel_wiki_discovery(
     # Stop workers
     state.stop_requested = True
     await worker_group.cancel_all()
+
+    # Clean up async wiki client
+    await state.close_async_wiki_client()
 
     elapsed = time.time() - start_time
 
