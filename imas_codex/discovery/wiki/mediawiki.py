@@ -739,11 +739,15 @@ class AsyncMediaWikiClient:
         - HTTP/2 support
         - Connection pooling
         """
+        import asyncio
+
         import httpx
 
         if self._client is None:
-            # Restore session cookies from keyring
-            cookies = self._creds.get_session(self.credential_service)
+            # Restore session cookies from keyring (non-blocking)
+            cookies = await asyncio.to_thread(
+                self._creds.get_session, self.credential_service
+            )
             cookie_jar = httpx.Cookies()
             if cookies:
                 for name, value in cookies.items():
@@ -887,6 +891,8 @@ class AsyncMediaWikiClient:
 
     async def _authenticate_impl(self, force: bool) -> bool:
         """Internal authentication implementation (must be called with lock held)."""
+        import asyncio
+
         import httpx
 
         client = await self._get_client()
@@ -939,12 +945,13 @@ class AsyncMediaWikiClient:
 
             logger.info("Authenticated successfully via Tequila")
 
-            # Save session cookies
+            # Save session cookies (non-blocking)
             cookie_dict = dict(client.cookies.items())
-            self._creds.set_session(
+            await asyncio.to_thread(
+                self._creds.set_session,
                 self.credential_service,
                 cookie_dict,
-                ttl=MEDIAWIKI_SESSION_TTL,
+                MEDIAWIKI_SESSION_TTL,
             )
 
             self._authenticated = True
@@ -966,7 +973,7 @@ class AsyncMediaWikiClient:
             )
             self._redirect_retry_attempted = True
             client.cookies.clear()
-            self._creds.delete_session(self.credential_service)
+            await asyncio.to_thread(self._creds.delete_session, self.credential_service)
 
             # Create fresh client
             if self._client:
@@ -986,10 +993,11 @@ class AsyncMediaWikiClient:
                     )
                     if not self._is_tequila_redirect(response):
                         cookie_dict = dict(client.cookies.items())
-                        self._creds.set_session(
+                        await asyncio.to_thread(
+                            self._creds.set_session,
                             self.credential_service,
                             cookie_dict,
-                            ttl=MEDIAWIKI_SESSION_TTL,
+                            MEDIAWIKI_SESSION_TTL,
                         )
                         self._authenticated = True
                         self._redirect_retry_attempted = False
@@ -1007,7 +1015,8 @@ class AsyncMediaWikiClient:
     async def get_page(self, page_name: str) -> MediaWikiPage | None:
         """Fetch a MediaWiki page.
 
-        Thread-safe: uses lock to prevent concurrent session access.
+        Uses httpx AsyncClient for concurrent requests with connection pooling.
+        Includes a backstop timeout to prevent indefinite hangs.
 
         Args:
             page_name: Page name (e.g., "Portal:TCV", "Thomson/DDJ")
@@ -1015,6 +1024,8 @@ class AsyncMediaWikiClient:
         Returns:
             MediaWikiPage or None if fetch failed
         """
+        import asyncio
+
         import httpx
 
         if not self._authenticated:
@@ -1029,57 +1040,71 @@ class AsyncMediaWikiClient:
         encoded_name = quote(page_name, safe="/")
         url = f"{self.base_url}/{encoded_name}"
 
-        async with self._lock:
-            client = await self._get_client()
-            try:
-                response = await client.get(url)
+        # Backstop timeout (2x the client timeout) in case httpx timeout fails
+        backstop_timeout = self.timeout * 2
 
-                # Check if session expired mid-request
-                if self._is_tequila_redirect(response):
-                    logger.warning("Session expired during request, re-authenticating")
-                    self._authenticated = False
+        client = await self._get_client()
+        try:
+            # Wrap request in wait_for as backstop against hanging connections
+            response = await asyncio.wait_for(client.get(url), timeout=backstop_timeout)
+
+            # Check if session expired mid-request
+            if self._is_tequila_redirect(response):
+                logger.warning("Session expired during request, re-authenticating")
+                self._authenticated = False
+                async with self._lock:
                     if not await self._authenticate_impl(force=True):
                         return None
-                    # Retry request
-                    response = await client.get(url)
-
-                response.raise_for_status()
-
-                # Extract title
-                title_match = re.search(r"<title>([^<]+)</title>", response.text)
-                title = (
-                    title_match.group(1).replace(" - SPCwiki", "")
-                    if title_match
-                    else page_name
+                # Retry request with backstop timeout
+                response = await asyncio.wait_for(
+                    client.get(url), timeout=backstop_timeout
                 )
 
-                # Extract text content (strip tags for entity extraction)
-                text_content = re.sub(r"<[^>]+>", " ", response.text)
-                text_content = re.sub(r"\s+", " ", text_content)
+            response.raise_for_status()
 
-                return MediaWikiPage(
-                    title=title,
-                    url=url,
-                    content_html=response.text,
-                    content_text=text_content,
-                )
+            # Extract title
+            title_match = re.search(r"<title>([^<]+)</title>", response.text)
+            title = (
+                title_match.group(1).replace(" - SPCwiki", "")
+                if title_match
+                else page_name
+            )
 
-            except httpx.HTTPStatusError as e:
-                if e.response.status_code == 404:
-                    logger.debug("Page not found: %s", page_name)
-                else:
-                    logger.error("HTTP error fetching %s: %s", page_name, e)
-                return None
-            except httpx.TooManyRedirects:
-                logger.warning(
-                    "Redirect loop for %s - clearing session and retrying", page_name
-                )
-                self._authenticated = False
-                client.cookies.clear()
-                self._creds.delete_session(self.credential_service)
+            # Extract text content (strip tags for entity extraction)
+            text_content = re.sub(r"<[^>]+>", " ", response.text)
+            text_content = re.sub(r"\s+", " ", text_content)
+
+            return MediaWikiPage(
+                title=title,
+                url=url,
+                content_html=response.text,
+                content_text=text_content,
+            )
+
+        except TimeoutError:
+            logger.warning(
+                "Request timed out for %s after %.1fs", page_name, backstop_timeout
+            )
+            return None
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.debug("Page not found: %s", page_name)
+            else:
+                logger.error("HTTP error fetching %s: %s", page_name, e)
+            return None
+        except httpx.TooManyRedirects:
+            logger.warning(
+                "Redirect loop for %s - clearing session and retrying", page_name
+            )
+            self._authenticated = False
+            client.cookies.clear()
+            await asyncio.to_thread(self._creds.delete_session, self.credential_service)
+            async with self._lock:
                 if await self._authenticate_impl(force=True):
                     try:
-                        response = await client.get(url)
+                        response = await asyncio.wait_for(
+                            client.get(url), timeout=backstop_timeout
+                        )
                         if not self._is_tequila_redirect(response):
                             response.raise_for_status()
                             title_match = re.search(
@@ -1104,10 +1129,10 @@ class AsyncMediaWikiClient:
                             page_name,
                             retry_e,
                         )
-                return None
-            except httpx.RequestError as e:
-                logger.error("Request failed for %s: %s", page_name, e)
-                return None
+            return None
+        except httpx.RequestError as e:
+            logger.error("Request failed for %s: %s", page_name, e)
+            return None
 
     async def close(self) -> None:
         """Close the async client."""

@@ -2991,6 +2991,13 @@ async def run_parallel_wiki_discovery(
         f"ingest_artifacts={ingest_artifacts}"
     )
 
+    # Send initial worker status update immediately so display shows workers
+    if on_worker_status:
+        try:
+            on_worker_status(worker_group)
+        except Exception as e:
+            logger.warning("Initial worker status callback failed: %s", e)
+
     # Wait for termination condition with periodic orphan recovery
     orphan_check_interval = 60  # Check every 60 seconds
     last_orphan_check = time.time()
@@ -3005,7 +3012,10 @@ async def run_parallel_wiki_discovery(
             on_worker_status
             and time.time() - last_status_update > status_update_interval
         ):
-            on_worker_status(worker_group)
+            try:
+                on_worker_status(worker_group)
+            except Exception as e:
+                logger.warning("Worker status callback failed: %s", e)
             last_status_update = time.time()
 
         # Periodically release orphaned claims (from crashed workers)
