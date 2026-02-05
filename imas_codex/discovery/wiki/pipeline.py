@@ -1163,11 +1163,12 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
     total_deleted = 0
 
     with GraphClient() as gc:
-        # First delete WikiChunks (they reference WikiPages)
+        # First delete WikiChunks linked to WikiPages
         while True:
             result = gc.query(
                 """
-                MATCH (wp:WikiPage {facility_id: $facility})-[:HAS_CHUNK]->(wc:WikiChunk)
+                MATCH (wp:WikiPage {facility_id: $facility})
+                      -[:HAS_CHUNK]->(wc:WikiChunk)
                 WITH wc LIMIT $batch_size
                 DETACH DELETE wc
                 RETURN count(wc) AS deleted
@@ -1179,11 +1180,29 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
             if deleted < batch_size:
                 break
 
-        # Delete WikiArtifacts
+        # Delete WikiChunks linked to WikiArtifacts
         while True:
             result = gc.query(
                 """
-                MATCH (wp:WikiPage {facility_id: $facility})-[:HAS_ARTIFACT]->(wa:WikiArtifact)
+                MATCH (wa:WikiArtifact {facility_id: $facility})
+                      -[:HAS_CHUNK]->(wc:WikiChunk)
+                WITH wc LIMIT $batch_size
+                DETACH DELETE wc
+                RETURN count(wc) AS deleted
+                """,
+                facility=facility,
+                batch_size=batch_size,
+            )
+            deleted = result[0]["deleted"] if result else 0
+            if deleted < batch_size:
+                break
+
+        # Delete WikiArtifacts by facility_id property (not relationship based,
+        # since artifacts are created via bulk discovery with facility_id)
+        while True:
+            result = gc.query(
+                """
+                MATCH (wa:WikiArtifact {facility_id: $facility})
                 WITH wa LIMIT $batch_size
                 DETACH DELETE wa
                 RETURN count(wa) AS deleted
