@@ -1094,8 +1094,8 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option(
     "--ingest-workers",
     type=int,
-    default=1,
-    help="Number of parallel ingest workers (default: 1)",
+    default=2,
+    help="Number of parallel ingest workers (default: 2)",
 )
 def discover_wiki(
     facility: str,
@@ -1374,8 +1374,8 @@ def discover_wiki(
         # Note: With bulk discovery, scan workers aren't used - show actual workers
         worker_parts = []
         if not scan_only:
-            worker_parts.append("1 score")
-            worker_parts.append("1 ingest")
+            worker_parts.append(f"{score_workers} score")
+            worker_parts.append(f"{ingest_workers} ingest")
             worker_parts.append("1 artifact")
         log_print(f"Workers: {', '.join(worker_parts)}")
         if not scan_only:
@@ -1404,6 +1404,7 @@ def discover_wiki(
                 _use_rich: bool,
                 _bulk_discover: bool,
                 _num_score_workers: int,
+                _num_ingest_workers: int,
             ):
                 # Logging-only callbacks for non-rich mode
                 # Skip idle messages to reduce log noise
@@ -1435,6 +1436,7 @@ def discover_wiki(
                         focus=_focus,
                         num_scan_workers=1,
                         num_score_workers=_num_score_workers,
+                        num_ingest_workers=_num_ingest_workers,
                         scan_only=_scan_only,
                         score_only=_score_only,
                         bulk_discover=_bulk_discover,
@@ -1563,6 +1565,7 @@ def discover_wiki(
                             focus=_focus,
                             num_scan_workers=1,
                             num_score_workers=_num_score_workers,
+                            num_ingest_workers=_num_ingest_workers,
                             scan_only=_scan_only,
                             score_only=_score_only,
                             bulk_discover=_bulk_discover,
@@ -1606,7 +1609,8 @@ def discover_wiki(
                     _score_only=score_only,
                     _use_rich=use_rich,
                     _bulk_discover=should_bulk_discover,
-                    _num_score_workers=num_score_workers,
+                    _num_score_workers=score_workers,
+                    _num_ingest_workers=ingest_workers,
                 )
             )
 

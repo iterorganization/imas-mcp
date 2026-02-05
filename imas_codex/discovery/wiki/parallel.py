@@ -1215,6 +1215,114 @@ def bulk_discover_all_pages_http(
 
 
 # =============================================================================
+# Bulk Artifact Discovery via MediaWiki API
+# =============================================================================
+
+
+def bulk_discover_artifacts(
+    facility: str,
+    base_url: str,
+    site_type: str = "mediawiki",
+    ssh_host: str | None = None,
+    wiki_client: Any = None,
+    credential_service: str | None = None,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all wiki artifacts via platform API.
+
+    This is much faster than scanning pages - uses dedicated APIs:
+    - MediaWiki: list=allimages API (returns all files in one call)
+    - TWiki: /pub/ directory listing
+    - Confluence: /rest/api/content/{id}/child/attachment
+
+    Args:
+        facility: Facility ID
+        base_url: Wiki base URL
+        site_type: Wiki platform type
+        ssh_host: SSH host for proxied access
+        wiki_client: Authenticated MediaWikiClient (for Tequila)
+        credential_service: Keyring service name
+        on_progress: Progress callback
+
+    Returns:
+        Number of artifacts discovered
+    """
+    from imas_codex.discovery.wiki.adapters import get_adapter
+    from imas_codex.graph.models import WikiArtifactStatus
+
+    logger.info(f"Starting bulk artifact discovery for {site_type}...")
+
+    # Get the appropriate adapter
+    adapter = get_adapter(
+        site_type=site_type,
+        ssh_host=ssh_host,
+        wiki_client=wiki_client,
+        credential_service=credential_service,
+    )
+
+    # Discover artifacts
+    artifacts = adapter.bulk_discover_artifacts(facility, base_url, on_progress)
+
+    if not artifacts:
+        logger.info("No artifacts discovered via API")
+        return 0
+
+    logger.info(f"Discovered {len(artifacts)} artifacts via API")
+
+    # Create artifact nodes in graph
+    created = 0
+    with GraphClient() as gc:
+        batch_size = 100
+        for i in range(0, len(artifacts), batch_size):
+            batch = artifacts[i : i + batch_size]
+            batch_data = [
+                {
+                    "id": f"{facility}:{a.filename}",
+                    "filename": a.filename,
+                    "url": a.url,
+                    "artifact_type": a.artifact_type,
+                    "size_bytes": a.size_bytes,
+                    "mime_type": a.mime_type,
+                }
+                for a in batch
+            ]
+
+            result = gc.query(
+                """
+                UNWIND $artifacts AS a
+                MERGE (wa:WikiArtifact {id: a.id})
+                ON CREATE SET wa.facility_id = $facility,
+                              wa.filename = a.filename,
+                              wa.url = a.url,
+                              wa.artifact_type = a.artifact_type,
+                              wa.size_bytes = a.size_bytes,
+                              wa.mime_type = a.mime_type,
+                              wa.status = $discovered,
+                              wa.discovered_at = datetime(),
+                              wa.bulk_discovered = true
+                ON MATCH SET wa.bulk_discovered = true
+                RETURN count(wa) AS count
+                """,
+                artifacts=batch_data,
+                facility=facility,
+                discovered=WikiArtifactStatus.discovered.value,
+            )
+            if result:
+                created += result[0]["count"]
+
+            if on_progress:
+                on_progress(
+                    f"created {i + len(batch)}/{len(artifacts)} artifacts", None
+                )
+
+    logger.info(f"Created/updated {created} artifact nodes in graph")
+    if on_progress:
+        on_progress(f"created {created} artifacts", None)
+
+    return created
+
+
+# =============================================================================
 # Link Extraction (Scanner Worker Helpers)
 # =============================================================================
 
@@ -1975,6 +2083,49 @@ def _create_discovered_pages(
     return created
 
 
+def extract_artifacts_from_html(html: str, base_url: str) -> list[tuple[str, str]]:
+    """Extract artifact links from HTML content.
+
+    Lightweight artifact extraction for use during scoring phase
+    when bulk discovery is used (no scan workers).
+
+    Args:
+        html: HTML content of the page
+        base_url: Base URL of the wiki (for resolving relative links)
+
+    Returns:
+        List of (url, artifact_type) tuples
+    """
+    import re
+    from urllib.parse import urljoin
+
+    artifacts: list[tuple[str, str]] = []
+
+    # Find all href links
+    href_pattern = re.compile(r'href=["\']([^"\']+)["\']', re.IGNORECASE)
+
+    for match in href_pattern.finditer(html):
+        link = match.group(1)
+
+        # Skip anchors, javascript, mailto
+        if link.startswith(("#", "javascript:", "mailto:")):
+            continue
+
+        # Check if it's an artifact
+        if _is_artifact(link):
+            # Resolve relative URLs
+            if not link.startswith(("http://", "https://")):
+                full_url = urljoin(base_url, link)
+            else:
+                full_url = link
+
+            artifact_type = _get_artifact_type(link)
+            artifacts.append((full_url, artifact_type))
+
+    # Deduplicate
+    return list(set(artifacts))
+
+
 def _create_discovered_artifacts(
     facility: str,
     artifact_links: list[tuple[str, str]],
@@ -2607,7 +2758,8 @@ async def run_parallel_wiki_discovery(
     max_depth: int | None = None,
     focus: str | None = None,
     num_scan_workers: int = 1,
-    num_score_workers: int = 1,
+    num_score_workers: int = 2,
+    num_ingest_workers: int = 2,
     scan_only: bool = False,
     score_only: bool = False,
     bulk_discover: bool = True,
@@ -2702,6 +2854,34 @@ async def run_parallel_wiki_discovery(
             state.scan_stats.processed = bulk_discovered
         state.scan_stats.processed = bulk_discovered
 
+    # Bulk artifact discovery: use platform API to find all artifacts
+    # This is much faster than scanning each page for links
+    bulk_artifacts_discovered = 0
+    if bulk_discover and ingest_artifacts and not score_only:
+        logger.info("Starting bulk artifact discovery via API...")
+
+        def artifact_progress(msg, _stats):
+            if on_artifact_progress:
+                on_artifact_progress(f"bulk: {msg}", state.artifact_stats)
+
+        # Get shared wiki client for Tequila auth
+        wiki_client = state.get_wiki_client() if state.auth_type == "tequila" else None
+
+        bulk_artifacts_discovered = await asyncio.to_thread(
+            bulk_discover_artifacts,
+            facility,
+            base_url,
+            site_type,
+            ssh_host,
+            wiki_client,
+            state.credential_service,
+            artifact_progress,
+        )
+
+        if bulk_artifacts_discovered:
+            logger.info(f"Bulk discovery found {bulk_artifacts_discovered} artifacts")
+            state.artifact_stats.processed = bulk_artifacts_discovered
+
     # Create portal page if not exists (may already exist from bulk discovery)
     _seed_portal_page(facility, portal_page, base_url, site_type)
 
@@ -2742,19 +2922,21 @@ async def run_parallel_wiki_discovery(
                 )
             )
 
-        ingest_status = worker_group.create_status("ingest_worker")
-        worker_group.add_task(
-            asyncio.create_task(
-                supervised_worker(
-                    ingest_worker,
-                    "ingest_worker",
-                    state,
-                    state.should_stop_ingesting,
-                    on_progress=on_ingest_progress,
-                    status_tracker=ingest_status,
+        for i in range(num_ingest_workers):
+            worker_name = f"ingest_worker_{i}"
+            ingest_status = worker_group.create_status(worker_name)
+            worker_group.add_task(
+                asyncio.create_task(
+                    supervised_worker(
+                        ingest_worker,
+                        worker_name,
+                        state,
+                        state.should_stop_ingesting,
+                        on_progress=on_ingest_progress,
+                        status_tracker=ingest_status,
+                    )
                 )
             )
-        )
 
         # Artifact worker runs by default to ingest PDFs discovered during scanning
         if ingest_artifacts:
