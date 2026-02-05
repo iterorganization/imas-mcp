@@ -49,6 +49,16 @@ logger = logging.getLogger(__name__)
 CLAIM_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
+def get_checkpoint_dir() -> Path:
+    """Get checkpoint directory for data discovery, creating if needed.
+
+    Returns ~/.local/share/imas-codex/checkpoints/data/
+    """
+    checkpoint_dir = Path.home() / ".local/share/imas-codex/checkpoints/data"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    return checkpoint_dir
+
+
 # =============================================================================
 # Data Discovery State
 # =============================================================================
@@ -942,6 +952,11 @@ async def scan_worker(
 
             epoch_callback = make_epoch_callback(tree_name)
 
+            # Create checkpoint path for resumable epoch discovery
+            checkpoint_path = (
+                get_checkpoint_dir() / f"{state.facility}_{tree_name}_epochs.json"
+            )
+
             # Discover epochs using optimized batch discovery
             try:
                 with GraphClient() as gc:
@@ -952,6 +967,7 @@ async def scan_worker(
                         tree_name,
                         start_shot=start_shot,
                         end_shot=state.reference_shot,
+                        checkpoint_path=checkpoint_path,
                         client=gc if existing_epochs else None,
                         on_progress=epoch_callback,
                     )
@@ -984,6 +1000,16 @@ async def scan_worker(
             logger.info(
                 "Ingested %d epochs for %s:%s", epoch_count, state.facility, tree_name
             )
+
+            # Clean up checkpoint file after successful ingestion
+            # (next run will skip via graph-based idempotency check)
+            if checkpoint_path.exists():
+                try:
+                    checkpoint_path.unlink()
+                except Exception as e:
+                    logger.debug(
+                        "Could not remove checkpoint %s: %s", checkpoint_path, e
+                    )
 
             # Create signals from the latest epoch's structure
             # Use the most recent epoch for signal discovery

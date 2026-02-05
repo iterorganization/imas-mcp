@@ -12,6 +12,40 @@ from imas_codex.discovery.paths.parallel import (
 )
 
 
+class TestGetCheckpointDir:
+    """Tests for checkpoint directory utility."""
+
+    def test_get_checkpoint_dir_creates_directory(self, tmp_path, monkeypatch):
+        """Test checkpoint directory is created if it doesn't exist."""
+        from pathlib import Path
+
+        # Patch home to use tmp_path
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        from imas_codex.discovery.data.parallel import get_checkpoint_dir
+
+        checkpoint_dir = get_checkpoint_dir()
+
+        expected_path = tmp_path / ".local/share/imas-codex/checkpoints/data"
+        assert checkpoint_dir == expected_path
+        assert checkpoint_dir.exists()
+        assert checkpoint_dir.is_dir()
+
+    def test_get_checkpoint_dir_idempotent(self, tmp_path, monkeypatch):
+        """Test get_checkpoint_dir can be called multiple times safely."""
+        from pathlib import Path
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+        from imas_codex.discovery.data.parallel import get_checkpoint_dir
+
+        dir1 = get_checkpoint_dir()
+        dir2 = get_checkpoint_dir()
+
+        assert dir1 == dir2
+        assert dir1.exists()
+
+
 class TestWorkerStats:
     """Tests for WorkerStats dataclass."""
 
