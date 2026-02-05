@@ -364,11 +364,11 @@ class WikiProgressDisplay:
                 state_counts[state] = state_counts.get(state, 0) + 1
 
             # Determine overall style based on states
-            if state_counts.get(WorkerState.FAILED, 0) > 0:
+            if state_counts.get(WorkerState.crashed, 0) > 0:
                 style = "red"
-            elif state_counts.get(WorkerState.BACKING_OFF, 0) > 0:
+            elif state_counts.get(WorkerState.backoff, 0) > 0:
                 style = "yellow"
-            elif state_counts.get(WorkerState.RUNNING, 0) > 0:
+            elif state_counts.get(WorkerState.running, 0) > 0:
                 style = "green"
             else:
                 style = "dim"
@@ -376,9 +376,9 @@ class WikiProgressDisplay:
             section.append(f"  {task}:{count}", style=style)
 
             # Add state breakdown if not all running
-            running = state_counts.get(WorkerState.RUNNING, 0)
-            backing_off = state_counts.get(WorkerState.BACKING_OFF, 0)
-            failed = state_counts.get(WorkerState.FAILED, 0)
+            running = state_counts.get(WorkerState.running, 0)
+            backing_off = state_counts.get(WorkerState.backoff, 0)
+            failed = state_counts.get(WorkerState.crashed, 0)
 
             if backing_off > 0 or failed > 0:
                 parts = []

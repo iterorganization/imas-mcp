@@ -1085,6 +1085,18 @@ def discover_code(facility: str, dry_run: bool) -> None:
     default=False,
     help="Force bulk discovery even if wiki pages already exist",
 )
+@click.option(
+    "--score-workers",
+    type=int,
+    default=2,
+    help="Number of parallel score workers (default: 2)",
+)
+@click.option(
+    "--ingest-workers",
+    type=int,
+    default=1,
+    help="Number of parallel ingest workers (default: 1)",
+)
 def discover_wiki(
     facility: str,
     source: str | None,
@@ -1098,6 +1110,8 @@ def discover_wiki(
     verbose: bool,
     no_rich: bool,
     force_discovery: bool,
+    score_workers: int,
+    ingest_workers: int,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -1389,6 +1403,7 @@ def discover_wiki(
                 _score_only: bool,
                 _use_rich: bool,
                 _bulk_discover: bool,
+                _num_score_workers: int,
             ):
                 # Logging-only callbacks for non-rich mode
                 # Skip idle messages to reduce log noise
@@ -1419,7 +1434,7 @@ def discover_wiki(
                         max_depth=_max_depth,
                         focus=_focus,
                         num_scan_workers=1,
-                        num_score_workers=1,
+                        num_score_workers=_num_score_workers,
                         scan_only=_scan_only,
                         score_only=_score_only,
                         bulk_discover=_bulk_discover,
@@ -1547,7 +1562,7 @@ def discover_wiki(
                             max_depth=_max_depth,
                             focus=_focus,
                             num_scan_workers=1,
-                            num_score_workers=1,
+                            num_score_workers=_num_score_workers,
                             scan_only=_scan_only,
                             score_only=_score_only,
                             bulk_discover=_bulk_discover,
@@ -1591,6 +1606,7 @@ def discover_wiki(
                     _score_only=score_only,
                     _use_rich=use_rich,
                     _bulk_discover=should_bulk_discover,
+                    _num_score_workers=num_score_workers,
                 )
             )
 

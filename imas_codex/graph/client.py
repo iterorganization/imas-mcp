@@ -22,6 +22,7 @@ from typing import Any, Self
 from neo4j import Driver, GraphDatabase, Session
 
 from imas_codex.graph.schema import GraphSchema, get_schema
+from imas_codex.settings import get_embedding_dimension
 
 # Suppress noisy Neo4j warnings about unknown property keys
 # These are harmless (e.g., retry_count doesn't exist until first failure)
@@ -125,17 +126,18 @@ class GraphClient:
                 return  # Index already exists
 
             # Create vector index for CodeChunk embeddings
-            # Using 384 dimensions for all-MiniLM-L6-v2 model
+            # Dimension is determined by configured embedding model
+            dim = get_embedding_dimension()
             try:
-                sess.run("""
+                sess.run(f"""
                     CREATE VECTOR INDEX code_chunk_embedding IF NOT EXISTS
                     FOR (c:CodeChunk) ON c.embedding
-                    OPTIONS {
-                        indexConfig: {
-                            `vector.dimensions`: 384,
+                    OPTIONS {{
+                        indexConfig: {{
+                            `vector.dimensions`: {dim},
                             `vector.similarity_function`: 'cosine'
-                        }
-                    }
+                        }}
+                    }}
                 """)
             except Exception as e:
                 # Vector indexes may not be available in all Neo4j editions

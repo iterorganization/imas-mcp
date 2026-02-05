@@ -1612,7 +1612,13 @@ async def score_worker(
     logger.info("score_worker started")
 
     # Semaphore to limit concurrent HTTP fetches
-    fetch_semaphore = asyncio.Semaphore(15)
+    # Increased from 15 to 25 for better throughput with connection pooling
+    fetch_semaphore = asyncio.Semaphore(25)
+
+    # Get shared wiki client for Tequila auth (reuses session across fetches)
+    shared_wiki_client = (
+        state.get_wiki_client() if state.auth_type == "tequila" else None
+    )
 
     async def fetch_content_for_page(page: dict) -> dict:
         """Fetch content preview for a single page."""
@@ -1625,6 +1631,7 @@ async def score_worker(
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
                     max_chars=1500,  # Reduced for scoring
+                    wiki_client=shared_wiki_client,  # Reuse session
                 )
                 return {
                     "id": page["id"],
@@ -1644,7 +1651,8 @@ async def score_worker(
                 }
 
     while not state.should_stop_scoring():
-        pages = claim_pages_for_scoring(state.facility, limit=25)
+        # Increased batch size from 25 to 50 for better LLM throughput
+        pages = claim_pages_for_scoring(state.facility, limit=50)
         logger.debug(f"score_worker claimed {len(pages)} pages")
 
         if not pages:
@@ -1725,8 +1733,14 @@ async def ingest_worker(
     The ingest worker continues running even after cost limit is reached
     to drain the ingest queue. This ensures all scored content gets ingested.
     """
+    # Get shared wiki client for Tequila auth (reuses session across fetches)
+    shared_wiki_client = (
+        state.get_wiki_client() if state.auth_type == "tequila" else None
+    )
+
     while not state.should_stop_ingesting():
-        pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=10)
+        # Increased batch size from 10 to 20 for better embedding throughput
+        pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=20)
 
         if not pages:
             state.ingest_idle_count += 1
@@ -1754,6 +1768,7 @@ async def ingest_worker(
                     ssh_host=state.ssh_host,
                     auth_type=state.auth_type,
                     credential_service=state.credential_service,
+                    wiki_client=shared_wiki_client,
                 )
                 # Include score, description, physics_domain for display
                 results.append(
@@ -1810,7 +1825,8 @@ async def artifact_worker(
     )
 
     while not state.should_stop_artifact_worker():
-        artifacts = claim_artifacts_for_ingesting(state.facility, limit=3)
+        # Increased batch size from 3 to 8 for better throughput
+        artifacts = claim_artifacts_for_ingesting(state.facility, limit=8)
 
         if not artifacts:
             state.artifact_idle_count += 1
@@ -2003,6 +2019,7 @@ async def _fetch_and_summarize(
     auth_type: str | None = None,
     credential_service: str | None = None,
     max_chars: int = 2000,
+    wiki_client: Any = None,
 ) -> str:
     """Fetch page content and extract text preview.
 
@@ -2015,6 +2032,7 @@ async def _fetch_and_summarize(
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
         max_chars: Maximum characters to extract (default 2000, use 1500 for scoring)
+        wiki_client: Optional shared MediaWikiClient for session reuse
 
     Returns:
         Extracted text preview or empty string on error
@@ -2042,22 +2060,34 @@ async def _fetch_and_summarize(
             return ""
 
     def _tequila_fetch() -> str:
-        """Fetch with Tequila authentication - run in thread pool."""
-        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
-
+        """Fetch with Tequila authentication - uses shared client if provided."""
         # Extract page name from URL
         page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
         if "?" in page_name:
             # Handle index.php?title=Page format
-            import urllib.parse
+            import urllib.parse as urlparse
 
-            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            parsed = urlparse.parse_qs(urlparse.urlparse(url).query)
             page_name = parsed.get("title", [page_name])[0]
 
         # Decode URL encoding
-        import urllib.parse
+        import urllib.parse as urlparse
 
-        page_name = urllib.parse.unquote(page_name)
+        page_name = urlparse.unquote(page_name)
+
+        # Use shared client if provided
+        if wiki_client is not None:
+            try:
+                page = wiki_client.get_page(page_name)
+                if page:
+                    return page.content_html
+                return ""
+            except Exception as e:
+                logger.debug("Shared client fetch failed for %s: %s", url, e)
+                return ""
+
+        # Fallback: create new client (for backwards compatibility)
+        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
 
         base_url = url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]
         if "/wiki" in base_url:
@@ -2380,6 +2410,7 @@ async def _ingest_page(
     ssh_host: str | None,
     auth_type: str | None = None,
     credential_service: str | None = None,
+    wiki_client: Any = None,
 ) -> int:
     """Ingest a page: fetch content, chunk, and embed.
 
@@ -2393,6 +2424,7 @@ async def _ingest_page(
         ssh_host: Optional SSH host for proxied fetching
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
+        wiki_client: Optional shared MediaWikiClient for session reuse
 
     Returns:
         Number of chunks created
@@ -2409,6 +2441,7 @@ async def _ingest_page(
         ssh_host,
         auth_type=auth_type,
         credential_service=credential_service,
+        wiki_client=wiki_client,
     )
     if not html or len(html) < 100:
         logger.warning("Insufficient content for %s", page_id)
@@ -2457,6 +2490,7 @@ async def _fetch_html(
     ssh_host: str | None,
     auth_type: str | None = None,
     credential_service: str | None = None,
+    wiki_client: Any = None,
 ) -> str:
     """Fetch HTML content from URL.
 
@@ -2465,6 +2499,7 @@ async def _fetch_html(
         ssh_host: Optional SSH host for proxied fetching
         auth_type: Authentication type (tequila, session, etc.)
         credential_service: Keyring service for credentials
+        wiki_client: Optional shared MediaWikiClient for session reuse
 
     Returns:
         HTML content string or empty string on error
@@ -2488,20 +2523,32 @@ async def _fetch_html(
             return ""
 
     def _tequila_fetch() -> str:
-        """Fetch with Tequila authentication."""
-        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
-
+        """Fetch with Tequila authentication - uses shared client if provided."""
         # Extract page name from URL
         page_name = url.split("/wiki/")[-1] if "/wiki/" in url else url.split("/")[-1]
         if "?" in page_name:
-            import urllib.parse
+            import urllib.parse as urlparse
 
-            parsed = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            parsed = urlparse.parse_qs(urlparse.urlparse(url).query)
             page_name = parsed.get("title", [page_name])[0]
 
-        import urllib.parse
+        import urllib.parse as urlparse
 
-        page_name = urllib.parse.unquote(page_name)
+        page_name = urlparse.unquote(page_name)
+
+        # Use shared client if provided
+        if wiki_client is not None:
+            try:
+                page = wiki_client.get_page(page_name)
+                if page:
+                    return page.content_html
+                return ""
+            except Exception as e:
+                logger.debug("Shared client fetch failed for %s: %s", url, e)
+                return ""
+
+        # Fallback: create new client
+        from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
 
         base_url_local = (
             url.rsplit("/", 1)[0] if "/wiki/" in url else url.rsplit("/", 1)[0]

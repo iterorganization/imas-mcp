@@ -124,16 +124,46 @@ class MediaWikiClient:
         self._creds = CredentialManager()
         self._last_request_time = 0.0
         self._authenticated = False
+        self._redirect_retry_attempted = False  # Track retry to prevent recursion
 
     def _get_session(self) -> requests.Session:
-        """Get or create requests session with restored cookies."""
+        """Get or create requests session with restored cookies.
+
+        Configures session for optimal performance:
+        - gzip/deflate compression (70-80% size reduction)
+        - Keep-alive connections (reuse TCP connections)
+        - Connection pooling via HTTPAdapter
+        """
         if self._session is None:
             self._session = requests.Session()
+
+            # Performance: Configure connection pooling
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            # Retry strategy for transient errors
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=0.5,
+                status_forcelist=[500, 502, 503, 504],
+            )
+            adapter = HTTPAdapter(
+                max_retries=retry_strategy,
+                pool_connections=10,  # Number of connection pools
+                pool_maxsize=20,  # Connections per pool
+            )
+            self._session.mount("https://", adapter)
+            self._session.mount("http://", adapter)
+
             self._session.headers.update(
                 {
                     "User-Agent": "imas-codex/1.0 (IMAS Data Mapping Tool)",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.5",
+                    # Performance: Enable gzip/deflate compression
+                    "Accept-Encoding": "gzip, deflate",
+                    # Performance: Keep connections alive
+                    "Connection": "keep-alive",
                 }
             )
 
@@ -337,12 +367,24 @@ class MediaWikiClient:
             logger.error("Tequila authentication failed: %s", e)
             return False
         except requests.TooManyRedirects:
-            # Redirect loop during auth - clear corrupted cookies and retry
+            # Redirect loop during auth - only retry once
+            if self._redirect_retry_attempted:
+                logger.error(
+                    "Redirect loop persists after retry - check Tequila credentials and network"
+                )
+                return False
+
             logger.warning(
-                "Redirect loop during authentication - clearing cookies and retrying"
+                "Redirect loop during authentication - clearing cookies and retrying once"
             )
+            self._redirect_retry_attempted = True
             session.cookies.clear()
             self._creds.delete_session(self.credential_service)
+
+            # Create fresh session to avoid stale cookie state
+            self._session = None
+            session = self._get_session()
+
             # Retry authentication once with fresh session
             try:
                 response = session.get(
@@ -368,8 +410,13 @@ class MediaWikiClient:
                             ttl=MEDIAWIKI_SESSION_TTL,
                         )
                         self._authenticated = True
+                        self._redirect_retry_attempted = False  # Reset on success
                         logger.info("Re-authenticated successfully after redirect loop")
                         return True
+            except requests.TooManyRedirects:
+                logger.error(
+                    "Redirect loop persists after retry - Tequila service may be misconfigured"
+                )
             except Exception as retry_e:
                 logger.error("Retry after redirect loop failed: %s", retry_e)
             return False
