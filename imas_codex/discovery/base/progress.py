@@ -157,9 +157,21 @@ def make_gradient_bar(ratio: float, width: int) -> Text:
 
 
 def make_resource_gauge(
-    used: float, limit: float, width: int = 20, unit: str = ""
+    used: float,
+    limit: float,
+    width: int = 20,
+    unit: str = "",
+    borders: bool = False,
 ) -> Text:
-    """Create a resource consumption gauge with color coding."""
+    """Create a resource consumption gauge with color coding.
+
+    Args:
+        used: Current value consumed
+        limit: Maximum value (100% of gauge)
+        width: Width of the gauge bar in characters
+        unit: Unused, kept for compatibility
+        borders: If True, add │ borders around gauge (legacy)
+    """
     ratio = used / limit if limit > 0 else 0
     ratio = max(0.0, min(1.0, ratio))
 
@@ -174,10 +186,12 @@ def make_resource_gauge(
     filled = int(width * ratio)
 
     gauge = Text()
-    gauge.append("│", style="dim")
+    if borders:
+        gauge.append("│", style="dim")
     gauge.append("━" * filled, style=color)
     gauge.append("─" * (width - filled), style="dim")
-    gauge.append("│", style="dim")
+    if borders:
+        gauge.append("│", style="dim")
 
     return gauge
 
@@ -432,15 +446,13 @@ def build_resource_section(
     section = Text()
 
     # TIME row
-    section.append("  TIME  ", style="bold cyan")
+    section.append("  TIME    ", style="bold cyan")
 
     if eta is not None and eta > 0:
         total_est = elapsed + eta
         section.append_text(make_resource_gauge(elapsed, total_est, gauge_width))
     else:
-        section.append("│", style="dim")
         section.append("━" * gauge_width, style="cyan")
-        section.append("│", style="dim")
 
     section.append(f"  {format_time(elapsed)}", style="bold")
 
@@ -453,7 +465,7 @@ def build_resource_section(
 
     # COST row (hidden in scan_only mode)
     if not scan_only and run_cost is not None and cost_limit is not None:
-        section.append("  COST  ", style="bold yellow")
+        section.append("  COST    ", style="bold yellow")
         section.append_text(make_resource_gauge(run_cost, cost_limit, gauge_width))
         section.append(f"  ${run_cost:.2f}", style="bold")
         section.append(f" / ${cost_limit:.2f}", style="dim")
@@ -465,7 +477,7 @@ def build_resource_section(
 
     # STATS row (if extra_stats provided)
     if extra_stats:
-        section.append("  STATS ", style="bold magenta")
+        section.append("  STATS   ", style="bold magenta")
         for i, (label, value, style) in enumerate(extra_stats):
             if i > 0:
                 section.append("  ", style="dim")

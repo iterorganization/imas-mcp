@@ -253,9 +253,9 @@ class WikiProgressDisplay:
     │  INGEST Service_Mécanique/Information_TCV/Connexion_dans_l                                       │
     │    0.65 [equilibrium] Vacuum vessel port documentation with coordinates                          │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  7m     ETA 2h 15m                                              │
-    │  COST   │━━━━━━━━━━━━━━━━━━━━━━│  $0.04 / $0.01  cost limit reached                              │
-    │  TOTAL  │━━━━━━━━━━━━━━━━━━━━━━│  $0.04  ETC $1.50                                               │
+    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━  7m     ETA 2h 15m                                              │
+    │  COST    ━━━━━━━━━━━━━━━━━━━━━━  $0.04 / $0.01  cost limit reached                              │
+    │  TOTAL   ━━━━━━━━━━━━━━━━━━━━━━  $0.04  ETC $1.50                                               │
     │  STATS  scored=388  ingested=136  skipped=0  pending=[score:7386 ingest:252]                     │
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -264,10 +264,11 @@ class WikiProgressDisplay:
     - INGEST: Chunk and embed high-value pages (scored → ingested)
     """
 
-    # Layout constants - label widths are fixed, bars expand to fill
-    LABEL_WIDTH = 10  # "  SCORE  " etc
+    # Layout constants - label widths are fixed, bars capped to prevent sprawl
+    LABEL_WIDTH = 10  # "  SCORE   " etc
     MIN_WIDTH = 80
     MAX_WIDTH = 140
+    MAX_BAR_WIDTH = 50  # Cap bar width to prevent excessive length
     METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
     GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
@@ -300,13 +301,14 @@ class WikiProgressDisplay:
 
     @property
     def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
-        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        """Calculate progress bar width, capped to prevent excessive length."""
+        raw_width = self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        return min(raw_width, self.MAX_BAR_WIDTH)
 
     @property
     def gauge_width(self) -> int:
-        """Calculate resource gauge width to fill available space."""
-        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+        """Calculate resource gauge width to match progress bars."""
+        return self.bar_width
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -428,11 +430,11 @@ class WikiProgressDisplay:
         score_pct = scored_pages / score_total * 100 if score_total > 0 else 0
 
         if self.state.scan_only:
-            section.append("  SCORE ", style="dim")
+            section.append("  SCORE   ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  SCORE ", style="bold blue")
+            section.append("  SCORE   ", style="bold blue")
             score_ratio = min(scored_pages / score_total, 1.0) if score_total > 0 else 0
             section.append(make_bar(score_ratio, bar_width), style="blue")
             section.append(f" {scored_pages:>6,}", style="bold")
@@ -450,11 +452,11 @@ class WikiProgressDisplay:
         ingest_pct = self.state.pages_ingested / ingest_total * 100
 
         if self.state.scan_only:
-            section.append("  INGEST", style="dim")
+            section.append("  INGEST  ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  INGEST", style="bold magenta")
+            section.append("  INGEST  ", style="bold magenta")
             ingest_ratio = min(self.state.pages_ingested / ingest_total, 1.0)
             section.append(make_bar(ingest_ratio, bar_width), style="magenta")
             section.append(f" {self.state.pages_ingested:>6,}", style="bold")
@@ -465,11 +467,11 @@ class WikiProgressDisplay:
         # ARTIFACTS row - shows artifact ingestion progress (no percentage)
         section.append("\n")
         if self.state.scan_only:
-            section.append("  ARTFCT", style="dim")
+            section.append("  ARTFCT  ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  ARTFCT", style="bold yellow")
+            section.append("  ARTFCT  ", style="bold yellow")
             # Artifacts don't have a total, just show count
             section.append("─" * bar_width, style="dim")
             section.append(f" {self.state.run_artifacts:>6,}", style="bold")
@@ -667,18 +669,16 @@ class WikiProgressDisplay:
         section = Text()
 
         # TIME row with ETA
-        section.append("  TIME  ", style="bold cyan")
+        section.append("  TIME    ", style="bold cyan")
 
         eta = None if self.state.scan_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
+                make_resource_gauge(self.state.elapsed, total_est, self.bar_width)
             )
         else:
-            section.append("│", style="dim")
-            section.append("━" * self.gauge_width, style="cyan")
-            section.append("│", style="dim")
+            section.append("━" * self.bar_width, style="cyan")
 
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
 
@@ -698,10 +698,10 @@ class WikiProgressDisplay:
 
         # COST row (hidden in scan_only mode)
         if not self.state.scan_only:
-            section.append("  COST  ", style="bold yellow")
+            section.append("  COST    ", style="bold yellow")
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.gauge_width
+                    self.state.run_cost, self.state.cost_limit, self.bar_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -711,7 +711,7 @@ class WikiProgressDisplay:
             # TOTAL row - cumulative cost with ETC (Estimated Total Cost)
             total_facility_cost = self.state.accumulated_cost + self.state.run_cost
             if total_facility_cost > 0 or self.state.pending_score > 0:
-                section.append("  TOTAL ", style="bold white")
+                section.append("  TOTAL   ", style="bold white")
 
                 # Calculate ETC based on cost per page
                 cpp = self.state.cost_per_page
@@ -721,12 +721,10 @@ class WikiProgressDisplay:
 
                 if etc > 0:
                     section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, self.gauge_width)
+                        make_resource_gauge(total_facility_cost, etc, self.bar_width)
                     )
                 else:
-                    section.append("│", style="dim")
-                    section.append("━" * self.gauge_width, style="white")
-                    section.append("│", style="dim")
+                    section.append("━" * self.bar_width, style="white")
 
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
                 if etc > total_facility_cost:
@@ -734,7 +732,7 @@ class WikiProgressDisplay:
                 section.append("\n")
 
         # STATS row - graph state with pending work
-        section.append("  STATS ", style="bold magenta")
+        section.append("  STATS   ", style="bold magenta")
         section.append(
             f"scored={self.state.pages_scored + self.state.pages_ingested}",
             style="blue",

@@ -229,8 +229,8 @@ class DataProgressDisplay:
     │  CHECK shot=85000 testing...                                                                  │
     │          tcv:equilibrium/elongation                                                              │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  6m 50s                                                         │
-    │  COST   │━━━━━━━━│             │  $0.00 / $0.20                                                   │
+    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━  6m 50s                                                          │
+    │  COST    ━━━━━━━━━━━━━━━━━━━━━━  $0.00 / $0.20                                                   │
     │  STATS  discovered=2944  enriched=5  checked=0  pending=[enrich:2944 check:5]                    │
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
@@ -280,10 +280,8 @@ class DataProgressDisplay:
 
     @property
     def gauge_width(self) -> int:
-        """Calculate resource gauge width, capped to match progress bars."""
-        # Gauge width = content - label(10) - metrics, capped to match bar_width
-        raw_width = self.width - 4 - self.LABEL_WIDTH - self.GAUGE_METRICS_WIDTH
-        return min(raw_width, self.MAX_BAR_WIDTH)
+        """Calculate resource gauge width to match progress bars."""
+        return self.bar_width
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -566,12 +564,10 @@ class DataProgressDisplay:
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
+                make_resource_gauge(self.state.elapsed, total_est, self.bar_width)
             )
         else:
-            section.append("│", style="dim")
-            section.append("━" * self.gauge_width, style="cyan")
-            section.append("│", style="dim")
+            section.append("━" * self.bar_width, style="cyan")
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
         if eta is not None and eta > 0:
             section.append(f"  ETA {format_time(eta)}", style="dim")
@@ -582,7 +578,7 @@ class DataProgressDisplay:
             section.append("  COST    ", style="bold yellow")
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.gauge_width
+                    self.state.run_cost, self.state.cost_limit, self.bar_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -606,13 +602,11 @@ class DataProgressDisplay:
             # Progress bar shows current cost toward ETC
             if etc > 0 and etc > total_cost:
                 section.append_text(
-                    make_resource_gauge(total_cost, etc, self.gauge_width)
+                    make_resource_gauge(total_cost, etc, self.bar_width)
                 )
             else:
                 # No estimate yet or complete - show full bar
-                section.append("│", style="dim")
-                section.append("━" * self.gauge_width, style="white")
-                section.append("│", style="dim")
+                section.append("━" * self.bar_width, style="white")
 
             section.append(f"  ${total_cost:.2f}", style="bold")
             # Show ETC (dynamic estimate)

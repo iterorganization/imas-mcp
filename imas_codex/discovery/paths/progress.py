@@ -290,14 +290,15 @@ class ParallelProgressDisplay:
     │    Score: 0.85 simulation_code                                                                   │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  COST   ▐████████████░░░░░░░░░░░░░░▌  $4.50 / $10.00                                             │
-    │  TIME   ▐██████████████████░░░░░░░░▌  12m 30s  ETA 8m                                            │
+    │  TIME    ━━━━━━━━━━━━━━━━━━━━━━━━━━  12m 30s  ETA 8m                                            │
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    # Layout constants - label widths are fixed, bars expand to fill
-    LABEL_WIDTH = 10  # "  SCAN   " etc
+    # Layout constants - label widths are fixed, bars capped to prevent sprawl
+    LABEL_WIDTH = 10  # "  SCAN    " etc
     MIN_WIDTH = 80
     MAX_WIDTH = 140
+    MAX_BAR_WIDTH = 50  # Cap bar width to prevent excessive length
     METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
     GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
@@ -332,13 +333,14 @@ class ParallelProgressDisplay:
 
     @property
     def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
-        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        """Calculate progress bar width, capped to prevent excessive length."""
+        raw_width = self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        return min(raw_width, self.MAX_BAR_WIDTH)
 
     @property
     def gauge_width(self) -> int:
-        """Calculate resource gauge width to fill available space."""
-        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+        """Calculate resource gauge width to match progress bars."""
+        return self.bar_width
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -410,11 +412,11 @@ class ParallelProgressDisplay:
 
         # SCAN row: shows full exploration scanning progress
         if self.state.score_only:
-            section.append("  SCAN  ", style="dim")
+            section.append("  SCAN    ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  SCAN  ", style="bold blue")
+            section.append("  SCAN    ", style="bold blue")
             scan_ratio = min(scanned_paths / scan_total, 1.0) if scan_total > 0 else 0
             section.append(make_bar(scan_ratio, bar_width), style="blue")
             section.append(f" {scanned_paths:>6,}", style="bold")
@@ -429,11 +431,11 @@ class ParallelProgressDisplay:
 
         # SCORE row: shows full exploration scoring progress
         if self.state.scan_only:
-            section.append("  SCORE ", style="dim")
+            section.append("  SCORE   ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  SCORE ", style="bold green")
+            section.append("  SCORE   ", style="bold green")
             score_ratio = min(scored_paths / score_total, 1.0) if score_total > 0 else 0
             section.append(make_bar(score_ratio, bar_width), style="green")
             section.append(f" {scored_paths:>6,}", style="bold")
@@ -449,11 +451,11 @@ class ParallelProgressDisplay:
         # ENRICH row: shows deep analysis progress on high-value paths
         # Enrichment runs on paths where should_enrich=true (scored by LLM)
         if self.state.scan_only:
-            section.append("  ENRICH", style="dim")
+            section.append("  ENRICH  ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("    disabled", style="dim italic")
         else:
-            section.append("  ENRICH", style="bold magenta")
+            section.append("  ENRICH  ", style="bold magenta")
             # Completed enrichment = run_enriched
             # Total = pending_enrich + run_enriched
             enrich_total = self.state.pending_enrich + self.state.run_enriched
@@ -635,20 +637,18 @@ class ParallelProgressDisplay:
         section = Text()
 
         # TIME row first - elapsed with ETA
-        section.append("  TIME  ", style="bold cyan")
+        section.append("  TIME    ", style="bold cyan")
 
         # Estimate total time if we have an ETA
         eta = None if self.state.scan_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
+                make_resource_gauge(self.state.elapsed, total_est, self.bar_width)
             )
         else:
             # Unknown total - show elapsed only with full bar (complete or unknown)
-            section.append("│", style="dim")
-            section.append("━" * self.gauge_width, style="cyan")
-            section.append("│", style="dim")
+            section.append("━" * self.bar_width, style="cyan")
 
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
 
@@ -668,11 +668,11 @@ class ParallelProgressDisplay:
 
         # COST row - this run's cost against budget (hidden in scan_only mode)
         if not self.state.scan_only:
-            section.append("  COST  ", style="bold yellow")
+            section.append("  COST    ", style="bold yellow")
             # Cost bar uses cost_limit as 100% - no estimates
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.gauge_width
+                    self.state.run_cost, self.state.cost_limit, self.bar_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -683,7 +683,7 @@ class ParallelProgressDisplay:
             # Always show if we have any cost data (accumulated or current run)
             total_facility_cost = self.state.accumulated_cost + self.state.run_cost
             if total_facility_cost > 0 or self.state.pending_score > 0:
-                section.append("  TOTAL ", style="bold white")
+                section.append("  TOTAL   ", style="bold white")
                 # Dynamic ETC based on cost per path and remaining work
                 paths_remaining = self.state.pending_scan + self.state.pending_score
                 cpp = self.state.cost_per_path
@@ -701,12 +701,10 @@ class ParallelProgressDisplay:
                 # Progress bar shows current cost toward ETC
                 if etc > 0:
                     section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, self.gauge_width)
+                        make_resource_gauge(total_facility_cost, etc, self.bar_width)
                     )
                 else:
-                    section.append("│", style="dim")
-                    section.append("━" * self.gauge_width, style="white")
-                    section.append("│", style="dim")
+                    section.append("━" * self.bar_width, style="white")
 
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
                 # Show ETC (dynamic estimate)
@@ -716,7 +714,7 @@ class ParallelProgressDisplay:
 
         # STATS row - terminal state counts from graph (not session-based)
         # Shows actual graph state, not just this run's processed counts
-        section.append("  STATS ", style="bold magenta")
+        section.append("  STATS   ", style="bold magenta")
         section.append(f"depth={self.state.max_depth}", style="cyan")
 
         # Terminal states (paths that have reached end of pipeline)
