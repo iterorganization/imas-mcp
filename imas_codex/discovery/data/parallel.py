@@ -316,7 +316,17 @@ def claim_signals_for_validation(
 def mark_signals_enriched(
     signals: list[dict],
 ) -> int:
-    """Mark signals as enriched with LLM-generated metadata."""
+    """Mark signals as enriched with LLM-generated metadata.
+
+    Expected signal dict keys:
+    - id: signal ID
+    - physics_domain: physics domain value
+    - description: physics description
+    - name: human-readable name
+    - diagnostic: diagnostic system name (optional)
+    - analysis_code: analysis code name (optional)
+    - keywords: searchable keywords (optional)
+    """
     if not signals:
         return 0
 
@@ -330,6 +340,12 @@ def mark_signals_enriched(
                     s.physics_domain = sig.physics_domain,
                     s.description = sig.description,
                     s.name = sig.name,
+                    s.diagnostic = CASE WHEN sig.diagnostic IS NOT NULL AND sig.diagnostic <> ''
+                                        THEN sig.diagnostic ELSE s.diagnostic END,
+                    s.analysis_code = CASE WHEN sig.analysis_code IS NOT NULL AND sig.analysis_code <> ''
+                                           THEN sig.analysis_code ELSE s.analysis_code END,
+                    s.keywords = CASE WHEN sig.keywords IS NOT NULL
+                                      THEN sig.keywords ELSE s.keywords END,
                     s.enriched_at = datetime(),
                     s.claimed_at = null
                 """,
@@ -1062,12 +1078,19 @@ async def scan_worker(
         on_progress("scan complete", state.discover_stats)
 
 
+# Retry configuration for rate limiting
+_ENRICH_MAX_RETRIES = 5
+_ENRICH_RETRY_BASE_DELAY = 5.0  # seconds, doubles each retry
+
+
 async def enrich_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
     """Worker that enriches signals with LLM classification.
 
+    Uses batch processing for efficiency - processes 100 signals per LLM call.
+    Uses Jinja2 prompt template with schema-injected physics domains.
     Uses centralized LLM access via get_model_for_task() with OpenRouter.
     """
     import os
@@ -1075,6 +1098,12 @@ async def enrich_worker(
     import litellm
 
     from imas_codex.agentic.agents import get_model_for_task
+    from imas_codex.agentic.prompt_loader import render_prompt
+    from imas_codex.discovery.data.models import SignalEnrichmentBatch
+
+    # Suppress LiteLLM verbose output
+    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Get API key - same pattern as wiki/paths discovery
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -1085,17 +1114,19 @@ async def enrich_worker(
         )
 
     # Get model and ensure OpenRouter prefix
-    model = get_model_for_task(
-        "enrichment"
-    )  # Use enrichment model for physics classification
+    # Using enrichment task - configured in pyproject.toml
+    model = get_model_for_task("enrichment")
     model_id = model if model.startswith("openrouter/") else f"openrouter/{model}"
 
+    # Render system prompt once (contains physics domains from schema)
+    system_prompt = render_prompt("discovery/signal-enrichment")
+
     while not state.should_stop_enriching():
-        # Claim batch of signals
+        # Claim batch of signals - larger batches for efficiency
         signals = await asyncio.to_thread(
             claim_signals_for_enrichment,
             state.facility,
-            batch_size=5,
+            batch_size=100,  # Process 100 signals per LLM call
         )
 
         if not signals:
@@ -1110,65 +1141,123 @@ async def enrich_worker(
         if on_progress:
             on_progress("enriching batch", state.enrich_stats)
 
-        # Enrich each signal with LLM
-        enriched = []
-        for signal in signals:
+        # Build user prompt with all signals
+        user_lines = [
+            f"Classify these {len(signals)} signals.\n",
+            "Return results in the same order, matching by accessor field.\n",
+        ]
+        for i, signal in enumerate(signals, 1):
+            user_lines.append(f"\n## Signal {i}")
+            user_lines.append(f"accessor: {signal['accessor']}")
+            user_lines.append(f"tree_name: {signal.get('tree_name', 'unknown')}")
+            user_lines.append(f"node_path: {signal.get('node_path', 'unknown')}")
+            user_lines.append(f"units: {signal.get('units', '')}")
+            user_lines.append(f"name: {signal.get('name', 'unknown')}")
+
+        user_prompt = "\n".join(user_lines)
+
+        # Retry loop for rate limiting / overloaded errors
+        last_error = None
+        response = None
+        for attempt in range(_ENRICH_MAX_RETRIES):
             try:
-                # Build prompt for physics domain classification
-                prompt = f"""Classify this fusion data signal into a physics domain and provide a brief description.
-
-Signal: {signal["accessor"]}
-Name: {signal.get("name", "unknown")}
-Units: {signal.get("units", "unknown")}
-Tree: {signal.get("tree_name", "unknown")}
-Node Path: {signal.get("node_path", "unknown")}
-
-Respond in JSON format:
-{{
-    "physics_domain": "one of: equilibrium, transport, magnetohydrodynamics, turbulence, auxiliary_heating, current_drive, plasma_wall_interactions, divertor_physics, edge_plasma_physics, particle_measurement_diagnostics, electromagnetic_wave_diagnostics, radiation_measurement_diagnostics, magnetic_field_diagnostics, mechanical_measurement_diagnostics, plasma_control, machine_operations, magnetic_field_systems, structural_components, plant_systems, data_management, computational_workflow, general",
-    "description": "brief physics description of what this signal measures",
-    "name": "human-readable name for the signal"
-}}"""
-
+                # Call LLM with structured output for batch
+                # max_tokens=32000 supports up to ~200 signals per batch
                 response = await litellm.acompletion(
                     model=model_id,
                     api_key=api_key,
-                    messages=[{"role": "user", "content": prompt}],
-                    response_format={"type": "json_object"},
+                    max_tokens=32000,
+                    response_format=SignalEnrichmentBatch,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
                     temperature=0.3,
                 )
+                break  # Success
+            except Exception as e:
+                last_error = e
+                error_msg = str(e).lower()
+                if any(
+                    x in error_msg
+                    for x in ["overloaded", "rate", "429", "503", "timeout"]
+                ):
+                    delay = _ENRICH_RETRY_BASE_DELAY * (2**attempt)
+                    logger.debug(
+                        f"LLM rate limited (attempt {attempt + 1}/{_ENRICH_MAX_RETRIES}), "
+                        f"waiting {delay:.1f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    # Non-retryable error - release all claims and continue
+                    logger.warning("LLM error (non-retryable): %s", e)
+                    for signal in signals:
+                        await asyncio.to_thread(release_signal_claim, signal["id"])
+                    break
 
-                content = response.choices[0].message.content
-                result = json.loads(content)
+        if response is None:
+            if last_error:
+                logger.warning(
+                    "All LLM retries exhausted for batch of %d signals: %s",
+                    len(signals),
+                    last_error,
+                )
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            continue
 
+        # Parse structured response
+        try:
+            batch_result = SignalEnrichmentBatch.model_validate_json(
+                response.choices[0].message.content
+            )
+        except Exception as e:
+            logger.warning("Failed to parse LLM response: %s", e)
+            for signal in signals:
+                await asyncio.to_thread(release_signal_claim, signal["id"])
+            continue
+
+        # Match results back to signals by accessor
+        accessor_to_signal = {s["accessor"]: s for s in signals}
+        enriched = []
+        matched_accessors = set()
+
+        for result in batch_result.results:
+            signal = accessor_to_signal.get(result.accessor)
+            if signal:
+                matched_accessors.add(result.accessor)
                 enriched.append(
                     {
                         "id": signal["id"],
-                        "physics_domain": result.get("physics_domain", "general"),
-                        "description": result.get("description", ""),
-                        "name": result.get("name", signal.get("name", "")),
+                        "physics_domain": result.physics_domain.value,
+                        "description": result.description,
+                        "name": result.name,
+                        "diagnostic": result.diagnostic,
+                        "analysis_code": result.analysis_code,
+                        "keywords": result.keywords,
                     }
                 )
 
-                # Track cost - try actual OpenRouter cost first, then fallback
-                if hasattr(response, "usage"):
-                    input_tokens = response.usage.prompt_tokens
-                    output_tokens = response.usage.completion_tokens
-
-                    if (
-                        hasattr(response, "_hidden_params")
-                        and "response_cost" in response._hidden_params
-                    ):
-                        cost = response._hidden_params["response_cost"]
-                    else:
-                        # Fallback: Gemini Pro rates via OpenRouter ($1.25/$5 per 1M tokens)
-                        cost = (input_tokens * 1.25 + output_tokens * 5) / 1_000_000
-
-                    state.enrich_stats.cost += cost
-
-            except Exception as e:
-                logger.warning("Failed to enrich signal %s: %s", signal["id"], e)
+        # Release claims for unmatched signals
+        for signal in signals:
+            if signal["accessor"] not in matched_accessors:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
+
+        # Track cost
+        if hasattr(response, "usage"):
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
+            if (
+                hasattr(response, "_hidden_params")
+                and "response_cost" in response._hidden_params
+            ):
+                cost = response._hidden_params["response_cost"]
+            else:
+                # Fallback: Gemini Flash rates via OpenRouter ($0.10/$0.40 per 1M tokens)
+                cost = (input_tokens * 0.10 + output_tokens * 0.40) / 1_000_000
+
+            state.enrich_stats.cost += cost
 
         # Update graph
         if enriched:

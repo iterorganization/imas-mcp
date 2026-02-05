@@ -687,6 +687,27 @@ def _provide_artifact_scoring_schema() -> dict[str, Any]:
     }
 
 
+@lru_cache(maxsize=1)
+def _provide_signal_enrichment_schema() -> dict[str, Any]:
+    """Provide SignalEnrichmentBatch Pydantic schema for LLM prompts.
+
+    Used by discovery/signal-enrichment prompt for batch signal classification.
+    """
+    from imas_codex.discovery.data.models import (
+        SignalEnrichmentBatch,
+        SignalEnrichmentResult,
+    )
+
+    return {
+        "signal_enrichment_schema_example": get_pydantic_schema_json(
+            SignalEnrichmentBatch
+        ),
+        "signal_enrichment_schema_fields": get_pydantic_schema_description(
+            SignalEnrichmentResult
+        ),
+    }
+
+
 # Registry mapping schema_needs names to provider functions
 _SCHEMA_PROVIDERS: dict[str, Any] = {
     "path_purposes": _provide_path_purposes,
@@ -702,6 +723,8 @@ _SCHEMA_PROVIDERS: dict[str, Any] = {
     "wiki_score_dimensions": _provide_wiki_score_dimensions,
     "wiki_scoring_schema": _provide_wiki_scoring_schema,
     "artifact_scoring_schema": _provide_artifact_scoring_schema,
+    # Signal enrichment
+    "signal_enrichment_schema": _provide_signal_enrichment_schema,
 }
 
 # Default schema needs per prompt (when not specified in frontmatter)
@@ -717,6 +740,10 @@ _DEFAULT_SCHEMA_NEEDS: dict[str, list[str]] = {
     "discovery/rescorer": ["rescore_schema", "format_patterns"],
     "discovery/roots": ["discovery_categories"],
     "discovery/data_access": ["access_method_fields"],
+    "discovery/signal-enrichment": [
+        "physics_domains",
+        "signal_enrichment_schema",
+    ],
     # Wiki prompts
     "wiki/scorer": [
         "wiki_page_purposes",

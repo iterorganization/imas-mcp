@@ -1575,6 +1575,17 @@ classes:
           Facility-specific diagnostic name if different from physics_domain.
           E.g., "bolometer_array", "thomson_scattering", "FIR_interferometer"
           This preserves facility naming while physics_domain provides consistency.
+      analysis_code:
+        description: >-
+          Analysis code that produces this signal if applicable.
+          E.g., "liuqe", "efit", "astra", "chease"
+          Empty for raw diagnostic data.
+      keywords:
+        description: >-
+          Searchable keywords for discovery. Include physics terms,
+          diagnostic names, and common abbreviations.
+          E.g., ["plasma current", "ip", "equilibrium"]
+        multivalued: true
       aliases:
         description: >-
           Alternative names for fuzzy search. Include common abbreviations,

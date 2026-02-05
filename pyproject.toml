@@ -235,8 +235,10 @@ default = "anthropic/claude-haiku-4.5"
 discovery = "google/gemini-3-flash-preview"
 # More capable model for evaluation/scoring (better reasoning)
 evaluation = "anthropic/claude-sonnet-4.5"
-# Best model for physics understanding and enrichment
-enrichment = "google/gemini-3-pro-preview"
+# Model for high-volume signal enrichment (batched, fast, cost-effective)
+# Flash: 1M context, 65k output, $0.10/$0.40 per 1M tokens
+# Processes ~100 signals per batch at ~20 signals/second
+enrichment = "google/gemini-3-flash-preview"
 # Model for facility exploration (good at planning, tool use)
 exploration = "anthropic/claude-sonnet-4.5"
 # Cheap model for summarization (context window compression)
