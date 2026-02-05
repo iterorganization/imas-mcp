@@ -442,9 +442,9 @@ class MediaWikiAdapter(WikiAdapter):
         # Ensure client is authenticated before using session
         if hasattr(self.wiki_client, "authenticate"):
             try:
-                logger.info("Authenticating wiki client for artifact discovery...")
+                logger.debug("Authenticating wiki client for artifact discovery...")
                 self.wiki_client.authenticate()
-                logger.info("Wiki client authenticated successfully")
+                logger.debug("Wiki client authenticated successfully")
             except Exception as e:
                 logger.warning(f"Failed to authenticate wiki client: {e}")
                 return []
@@ -455,7 +455,7 @@ class MediaWikiAdapter(WikiAdapter):
             return artifacts
 
         # API didn't work, fall back to HTML scraping
-        logger.info(
+        logger.debug(
             "API unavailable, falling back to HTML scraping of Special:ListFiles"
         )
         return self._discover_artifacts_via_html(facility, base_url, on_progress)
@@ -499,14 +499,13 @@ class MediaWikiAdapter(WikiAdapter):
                     logger.warning(f"Non-200 response: {response.status_code}")
                     break
 
-                # Check if response is HTML (auth redirect) instead of JSON
+                # Check if response is HTML (API unavailable) instead of JSON
                 content_type = response.headers.get("content-type", "")
                 if "text/html" in content_type:
-                    logger.warning(
-                        f"Got HTML instead of JSON - auth may have failed. URL: {response.url}"
-                    )
+                    # Old MediaWiki versions don't support list=allimages API
+                    # This is expected - HTML fallback will be used
                     logger.debug(
-                        f"Response content (first 500 chars): {response.text[:500]}"
+                        f"API returned HTML, falling back to HTML scraping. URL: {response.url}"
                     )
                     break
 
@@ -644,7 +643,7 @@ class MediaWikiAdapter(WikiAdapter):
                 logger.warning(f"Error scraping Special:ListFiles: {e}")
                 break
 
-        logger.info(f"Discovered {len(artifacts)} artifacts via HTML scraping")
+        logger.debug(f"Discovered {len(artifacts)} artifacts via HTML scraping")
         return artifacts
 
     def _get_artifact_type(self, filename: str, mime: str | None = None) -> str:

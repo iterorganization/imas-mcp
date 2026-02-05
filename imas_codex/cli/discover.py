@@ -1385,13 +1385,9 @@ def discover_wiki(
         if should_discover_artifacts and site_type == "mediawiki":
             from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
 
-            log_print("[cyan]Discovering artifacts via API...[/cyan]")
-
-            def artifact_progress(msg, _):
-                if use_rich:
-                    log_print(f"[dim]Artifact discovery: {msg}[/dim]")
-                else:
-                    wiki_logger.info(f"ARTIFACTS: {msg}")
+            def artifact_progress_log(msg, _):
+                """Log-only progress for artifact discovery."""
+                wiki_logger.info(f"ARTIFACTS: {msg}")
 
             # Get wiki client for Tequila auth
             wiki_client = None
@@ -1405,15 +1401,42 @@ def discover_wiki(
                 )
                 wiki_client.authenticate()
 
-            artifacts_discovered = bulk_discover_artifacts(
-                facility=facility,
-                base_url=base_url,
-                site_type=site_type,
-                ssh_host=ssh_host,
-                wiki_client=wiki_client,
-                credential_service=credential_service,
-                on_progress=artifact_progress,
-            )
+            if use_rich:
+                from rich.status import Status
+
+                with Status(
+                    "[cyan]Artifact discovery: scanning Special:ListFiles...[/cyan]",
+                    console=console,
+                    spinner="dots",
+                ) as status:
+
+                    def artifact_progress_rich(msg, _):
+                        """Update status spinner during artifact discovery."""
+                        if "batch" in msg:
+                            status.update(f"[cyan]Artifact discovery: {msg}[/cyan]")
+                        elif "created" in msg:
+                            status.update(f"[green]Artifacts: {msg}[/green]")
+
+                    artifacts_discovered = bulk_discover_artifacts(
+                        facility=facility,
+                        base_url=base_url,
+                        site_type=site_type,
+                        ssh_host=ssh_host,
+                        wiki_client=wiki_client,
+                        credential_service=credential_service,
+                        on_progress=artifact_progress_rich,
+                    )
+            else:
+                # Non-rich mode: log only
+                artifacts_discovered = bulk_discover_artifacts(
+                    facility=facility,
+                    base_url=base_url,
+                    site_type=site_type,
+                    ssh_host=ssh_host,
+                    wiki_client=wiki_client,
+                    credential_service=credential_service,
+                    on_progress=artifact_progress_log,
+                )
 
             if wiki_client:
                 wiki_client.close()
@@ -1423,7 +1446,7 @@ def discover_wiki(
                     f"[green]Discovered {artifacts_discovered:,} artifacts[/green]"
                 )
             else:
-                log_print("[yellow]No artifacts discovered via API[/yellow]")
+                log_print("[yellow]No artifacts discovered[/yellow]")
 
         # Display worker configuration (above the progress panel)
         # Note: With bulk discovery, scan workers aren't used - show actual workers
