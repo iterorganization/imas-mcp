@@ -186,24 +186,30 @@ enums:
   WikiArtifactStatus:
     description: >-
       Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
-      Uses same async worker pattern as WikiPageStatus.
+      Uses claimed_at timestamp for transient worker coordination
+      (same pattern as WikiPageStatus - no separate transient states).
+      
+      Workflow: discovered → scored → ingested (simple 3-phase)
+      - Bulk discovery sets status=discovered
+      - Score: download preview + LLM scoring in single pass
+        Artifacts with score >= 0.5 proceed to ingestion
+      - Ingest: download full content, parse, chunk, embed
     permissible_values:
       discovered:
-        description: Artifact link found but not yet processed
-      scoring:
-        description: Scorer worker active (fallback to discovered on timeout)
+        description: >-
+          Artifact link found but not yet scored. Awaiting content-aware scoring.
       scored:
-        description: Evaluated by scoring agent, interest_score set
-      ingesting:
-        description: Ingest worker active for high-score artifact
+        description: >-
+          Scoring complete. Score field set based on content preview.
+          Artifacts with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content downloaded, parsed, chunked, and embedded
       deferred:
-        description: High-value but requires unsupported parser (OCR, etc.)
+        description: High-value but requires unsupported parser (OCR, scanned PDF, etc.)
       skipped:
-        description: Low-value artifact, not worth processing
+        description: Filtered out by scoring (too low value to process)
       failed:
-        description: Error during processing (check error property)
+        description: Error during processing (check error field)
 
   FacilitySignalStatus:
     description: >-

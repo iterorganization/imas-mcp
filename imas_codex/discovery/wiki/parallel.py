@@ -764,14 +764,12 @@ def claim_artifacts_for_ingesting(
             WITH wa
             ORDER BY wa.discovered_at ASC
             LIMIT $limit
-            SET wa.claimed_at = datetime(),
-                wa.status = $ingesting
+            SET wa.claimed_at = datetime()
             RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
                    wa.artifact_type AS artifact_type
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
-            ingesting=WikiArtifactStatus.ingesting.value,
             types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
