@@ -393,27 +393,57 @@ def claim_pages_for_scoring(facility: str, limit: int = 50) -> list[dict[str, An
     Workflow: scanned + unclaimed → set claimed_at
     Score worker fetches content and scores in single pass.
     After scoring: update status to 'scored' and set score field.
+
+    Uses claim token pattern to handle race conditions between workers:
+    1. Generate unique claim token
+    2. Atomically SET token on unclaimed pages
+    3. Read back only pages with OUR token (pages we actually won)
     """
+    import uuid
+
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"  # ISO 8601 duration
+    claim_token = str(uuid.uuid4())
+
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Attempt to claim pages with our unique token
+        # Using random() in ORDER BY reduces collision probability further
+        gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scanned
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
-            ORDER BY wp.discovered_at ASC
+            ORDER BY rand()
             LIMIT $limit
-            SET wp.claimed_at = datetime()
-            RETURN wp.id AS id, wp.title AS title, wp.url AS url
+            SET wp.claimed_at = datetime(), wp.claim_token = $token
             """,
             facility=facility,
             scanned=WikiPageStatus.scanned.value,
             cutoff=cutoff,
             limit=limit,
+            token=claim_token,
         )
-        return list(result)
+
+        # Step 2: Read back only pages WE successfully claimed
+        # If another worker raced us, they have a different token
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility, claim_token: $token})
+            RETURN wp.id AS id, wp.title AS title, wp.url AS url
+            """,
+            facility=facility,
+            token=claim_token,
+        )
+        claimed = list(result)
+
+        logger.debug(
+            "claim_pages_for_scoring: requested %d, won %d (token=%s)",
+            limit,
+            len(claimed),
+            claim_token[:8],
+        )
+        return claimed
 
 
 def claim_pages_for_ingesting(
@@ -423,10 +453,17 @@ def claim_pages_for_ingesting(
 
     Workflow: scored + score >= min_score + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
+
+    Uses claim token pattern to handle race conditions between workers.
     """
+    import uuid
+
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
+
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Attempt to claim pages with our unique token
+        gc.query(
             """
             MATCH (wp:WikiPage {facility_id: $facility})
             WHERE wp.status = $scored
@@ -434,9 +471,22 @@ def claim_pages_for_ingesting(
               AND (wp.claimed_at IS NULL
                    OR wp.claimed_at < datetime() - duration($cutoff))
             WITH wp
-            ORDER BY wp.score DESC, wp.in_degree DESC
+            ORDER BY rand()
             LIMIT $limit
-            SET wp.claimed_at = datetime()
+            SET wp.claimed_at = datetime(), wp.claim_token = $token
+            """,
+            facility=facility,
+            scored=WikiPageStatus.scored.value,
+            min_score=min_score,
+            cutoff=cutoff,
+            limit=limit,
+            token=claim_token,
+        )
+
+        # Step 2: Read back only pages WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (wp:WikiPage {facility_id: $facility, claim_token: $token})
             RETURN wp.id AS id, wp.title AS title, wp.url AS url,
                    wp.score AS score, wp.description AS description,
                    wp.physics_domain AS physics_domain,
@@ -444,12 +494,17 @@ def claim_pages_for_ingesting(
                    wp.in_degree AS in_degree, wp.out_degree AS out_degree
             """,
             facility=facility,
-            scored=WikiPageStatus.scored.value,
-            min_score=min_score,
-            cutoff=cutoff,
-            limit=limit,
+            token=claim_token,
         )
-        return list(result)
+        claimed = list(result)
+
+        logger.debug(
+            "claim_pages_for_ingesting: requested %d, won %d (token=%s)",
+            limit,
+            len(claimed),
+            claim_token[:8],
+        )
+        return claimed
 
 
 # =============================================================================
@@ -751,10 +806,17 @@ def claim_artifacts_for_ingesting(
 
     Workflow: discovered + supported_type + unclaimed → set claimed_at
     After ingest: update status to 'ingested'.
+
+    Uses claim token pattern to handle race conditions between workers.
     """
+    import uuid
+
     cutoff = f"PT{CLAIM_TIMEOUT_SECONDS}S"
+    claim_token = str(uuid.uuid4())
+
     with GraphClient() as gc:
-        result = gc.query(
+        # Step 1: Attempt to claim artifacts with our unique token
+        gc.query(
             """
             MATCH (wa:WikiArtifact {facility_id: $facility})
             WHERE wa.status = $discovered
@@ -762,19 +824,37 @@ def claim_artifacts_for_ingesting(
               AND (wa.claimed_at IS NULL
                    OR wa.claimed_at < datetime() - duration($cutoff))
             WITH wa
-            ORDER BY wa.discovered_at ASC
+            ORDER BY rand()
             LIMIT $limit
-            SET wa.claimed_at = datetime()
-            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
-                   wa.artifact_type AS artifact_type
+            SET wa.claimed_at = datetime(), wa.claim_token = $token
             """,
             facility=facility,
             discovered=WikiArtifactStatus.discovered.value,
             types=list(SUPPORTED_ARTIFACT_TYPES),
             cutoff=cutoff,
             limit=limit,
+            token=claim_token,
         )
-        return list(result)
+
+        # Step 2: Read back only artifacts WE successfully claimed
+        result = gc.query(
+            """
+            MATCH (wa:WikiArtifact {facility_id: $facility, claim_token: $token})
+            RETURN wa.id AS id, wa.url AS url, wa.filename AS filename,
+                   wa.artifact_type AS artifact_type
+            """,
+            facility=facility,
+            token=claim_token,
+        )
+        claimed = list(result)
+
+        logger.debug(
+            "claim_artifacts_for_ingesting: requested %d, won %d (token=%s)",
+            limit,
+            len(claimed),
+            claim_token[:8],
+        )
+        return claimed
 
 
 def mark_artifacts_ingested(
@@ -1669,7 +1749,8 @@ async def scan_worker(
                 return None
 
     while not state.should_stop_scanning():
-        pages = claim_pages_for_scanning(state.facility, limit=50)
+        # Run blocking Neo4j call in thread pool to avoid blocking event loop
+        pages = await asyncio.to_thread(claim_pages_for_scanning, state.facility, 50)
 
         if not pages:
             state.scan_idle_count += 1
@@ -1691,8 +1772,8 @@ async def scan_worker(
         # Log progress after batch completes
         logger.debug("Scanned batch: %d/%d pages succeeded", len(results), len(pages))
 
-        # Mark pages as scanned
-        mark_pages_scanned(state.facility, results)
+        # Mark pages as scanned - run blocking Neo4j call in thread pool
+        await asyncio.to_thread(mark_pages_scanned, state.facility, results)
         state.scan_stats.processed += len(results)
 
         if on_progress:
@@ -1715,16 +1796,19 @@ async def score_worker(
     """
     from imas_codex.agentic.agents import get_model_for_task
 
-    logger.info("score_worker started")
+    worker_id = id(asyncio.current_task())
+    logger.info(f"score_worker started (task={worker_id})")
 
     # Semaphore to limit concurrent HTTP fetches
     # Increased from 15 to 25 for better throughput with connection pooling
     fetch_semaphore = asyncio.Semaphore(25)
 
     # Get shared async wiki client for Tequila auth (native async HTTP)
+    logger.debug(f"score_worker {worker_id}: getting async wiki client")
     shared_async_wiki_client = (
         await state.get_async_wiki_client() if state.auth_type == "tequila" else None
     )
+    logger.debug(f"score_worker {worker_id}: got async wiki client")
 
     async def fetch_content_for_page(page: dict) -> dict:
         """Fetch content preview for a single page."""
@@ -1758,8 +1842,10 @@ async def score_worker(
 
     while not state.should_stop_scoring():
         # Increased batch size from 25 to 50 for better LLM throughput
-        pages = claim_pages_for_scoring(state.facility, limit=50)
-        logger.debug(f"score_worker claimed {len(pages)} pages")
+        # Run blocking Neo4j call in thread pool to avoid blocking event loop
+        logger.debug(f"score_worker {worker_id}: claiming pages...")
+        pages = await asyncio.to_thread(claim_pages_for_scoring, state.facility, 50)
+        logger.debug(f"score_worker {worker_id}: claimed {len(pages)} pages")
 
         if not pages:
             state.score_idle_count += 1
@@ -1776,6 +1862,9 @@ async def score_worker(
         # Step 1: Fetch content for all pages in parallel
         fetch_tasks = [fetch_content_for_page(page) for page in pages]
         pages_with_content = await asyncio.gather(*fetch_tasks)
+        logger.debug(
+            f"score_worker {worker_id}: fetched {len(pages_with_content)} pages"
+        )
 
         if on_progress:
             on_progress(f"scoring {len(pages)} pages", state.score_stats)
@@ -1783,8 +1872,12 @@ async def score_worker(
         try:
             # Step 2: Score batch with LLM
             model = get_model_for_task("discovery")
+            logger.debug(f"score_worker {worker_id}: starting LLM scoring...")
             results, cost = await _score_pages_batch(
                 pages_with_content, model, state.focus
+            )
+            logger.debug(
+                f"score_worker {worker_id}: LLM scored {len(results)} pages, cost=${cost:.4f}"
             )
 
             # Add preview_text to results for persistence
@@ -1795,7 +1888,8 @@ async def score_worker(
                 r["preview_text"] = matching_page.get("preview_text", "")
                 r["score_cost"] = cost / len(results) if results else 0.0
 
-            mark_pages_scored(state.facility, results)
+            # Run blocking Neo4j call in thread pool to avoid blocking event loop
+            await asyncio.to_thread(mark_pages_scored, state.facility, results)
             state.score_stats.processed += len(results)
             state.score_stats.cost += cost
 
@@ -1815,13 +1909,20 @@ async def score_worker(
             )
             state.score_stats.errors = getattr(state.score_stats, "errors", 0) + 1
             # Release pages by clearing claimed_at (not marking as failed)
-            _release_claimed_pages([p["id"] for p in pages])
+            # Run blocking Neo4j call in thread pool
+            await asyncio.to_thread(_release_claimed_pages, [p["id"] for p in pages])
             # Continue processing - don't stop the whole discovery
             continue
         except Exception as e:
             logger.error("Error in scoring batch: %s", e)
+            # Run blocking Neo4j calls in thread pool
             for page in pages:
-                mark_page_failed(page["id"], str(e), WikiPageStatus.scanned.value)
+                await asyncio.to_thread(
+                    mark_page_failed,
+                    page["id"],
+                    str(e),
+                    WikiPageStatus.scanned.value,
+                )
 
 
 async def ingest_worker(
@@ -1838,15 +1939,57 @@ async def ingest_worker(
 
     The ingest worker continues running even after cost limit is reached
     to drain the ingest queue. This ensures all scored content gets ingested.
+
+    PERF: Pages are processed in parallel using asyncio.gather() with a
+    semaphore to limit concurrency. This provides ~5x speedup over sequential.
     """
     # Get shared async wiki client for Tequila auth (native async HTTP)
     shared_async_wiki_client = (
         await state.get_async_wiki_client() if state.auth_type == "tequila" else None
     )
 
+    # Semaphore to limit concurrent page ingestion
+    # Embedding server can handle ~5 concurrent requests efficiently
+    ingest_semaphore = asyncio.Semaphore(5)
+
+    async def process_single_page(page: dict) -> dict | None:
+        """Process a single page with semaphore-limited concurrency."""
+        page_id = page["id"]
+        url = page.get("url", "")
+
+        async with ingest_semaphore:
+            try:
+                chunk_count = await _ingest_page(
+                    url=url,
+                    page_id=page_id,
+                    facility=state.facility,
+                    site_type=state.site_type,
+                    ssh_host=state.ssh_host,
+                    auth_type=state.auth_type,
+                    credential_service=state.credential_service,
+                    async_wiki_client=shared_async_wiki_client,
+                )
+                return {
+                    "id": page_id,
+                    "chunk_count": chunk_count,
+                    "score": page.get("score"),
+                    "description": page.get("description", ""),
+                    "physics_domain": page.get("physics_domain"),
+                }
+            except Exception as e:
+                logger.warning("Error ingesting %s: %s", page_id, e)
+                # Run blocking Neo4j call in thread pool
+                await asyncio.to_thread(
+                    mark_page_failed, page_id, str(e), WikiPageStatus.scored.value
+                )
+                return None
+
     while not state.should_stop_ingesting():
         # Increased batch size from 10 to 20 for better embedding throughput
-        pages = claim_pages_for_ingesting(state.facility, min_score=min_score, limit=20)
+        # Run blocking Neo4j call in thread pool to avoid blocking event loop
+        pages = await asyncio.to_thread(
+            claim_pages_for_ingesting, state.facility, min_score, 20
+        )
 
         if not pages:
             state.ingest_idle_count += 1
@@ -1860,37 +2003,15 @@ async def ingest_worker(
         if on_progress:
             on_progress(f"ingesting {len(pages)} pages", state.ingest_stats)
 
-        results = []
-        for page in pages:
-            page_id = page["id"]
-            url = page.get("url", "")
+        # Process all pages in parallel with semaphore-limited concurrency
+        tasks = [process_single_page(page) for page in pages]
+        results_raw = await asyncio.gather(*tasks)
 
-            try:
-                chunk_count = await _ingest_page(
-                    url=url,
-                    page_id=page_id,
-                    facility=state.facility,
-                    site_type=state.site_type,
-                    ssh_host=state.ssh_host,
-                    auth_type=state.auth_type,
-                    credential_service=state.credential_service,
-                    async_wiki_client=shared_async_wiki_client,
-                )
-                # Include score, description, physics_domain for display
-                results.append(
-                    {
-                        "id": page_id,
-                        "chunk_count": chunk_count,
-                        "score": page.get("score"),
-                        "description": page.get("description", ""),
-                        "physics_domain": page.get("physics_domain"),
-                    }
-                )
-            except Exception as e:
-                logger.warning("Error ingesting %s: %s", page_id, e)
-                mark_page_failed(page_id, str(e), WikiPageStatus.scored.value)
+        # Filter out None results (failed pages)
+        results = [r for r in results_raw if r is not None]
 
-        mark_pages_ingested(state.facility, results)
+        # Run blocking Neo4j call in thread pool
+        await asyncio.to_thread(mark_pages_ingested, state.facility, results)
         state.ingest_stats.processed += len(results)
 
         if on_progress:
@@ -1932,7 +2053,10 @@ async def artifact_worker(
 
     while not state.should_stop_artifact_worker():
         # Increased batch size from 3 to 8 for better throughput
-        artifacts = claim_artifacts_for_ingesting(state.facility, limit=8)
+        # Run blocking Neo4j call in thread pool to avoid blocking event loop
+        artifacts = await asyncio.to_thread(
+            claim_artifacts_for_ingesting, state.facility, 8
+        )
 
         if not artifacts:
             state.artifact_idle_count += 1
@@ -1963,13 +2087,15 @@ async def artifact_worker(
                         f"File size {size_mb:.1f} MB exceeds limit {max_size_mb:.1f} MB"
                     )
                     logger.info("Deferring oversized artifact %s: %s", filename, reason)
-                    mark_artifact_deferred(artifact_id, reason)
+                    # Run blocking Neo4j call in thread pool
+                    await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
                     continue
 
                 # Check if type is supported
                 if artifact_type.lower() not in SUPPORTED_ARTIFACT_TYPES:
                     reason = f"Artifact type '{artifact_type}' not supported"
-                    mark_artifact_deferred(artifact_id, reason)
+                    # Run blocking Neo4j call in thread pool
+                    await asyncio.to_thread(mark_artifact_deferred, artifact_id, reason)
                     continue
 
                 # Download and ingest
@@ -2000,9 +2126,11 @@ async def artifact_worker(
                 logger.warning(
                     "Error ingesting artifact %s: %s", artifact_id, error_msg
                 )
-                mark_artifact_failed(artifact_id, error_msg)
+                # Run blocking Neo4j call in thread pool
+                await asyncio.to_thread(mark_artifact_failed, artifact_id, error_msg)
 
-        mark_artifacts_ingested(state.facility, results)
+        # Run blocking Neo4j call in thread pool
+        await asyncio.to_thread(mark_artifacts_ingested, state.facility, results)
         state.artifact_stats.processed += len(results)
 
         if on_progress:

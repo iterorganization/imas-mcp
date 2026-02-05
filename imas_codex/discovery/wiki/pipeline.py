@@ -646,6 +646,9 @@ class WikiIngestionPipeline:
         Deterministic pipeline: fetch → extract → chunk → embed → persist.
         No LLM calls - all entity extraction uses regex patterns.
 
+        IMPORTANT: Blocking I/O operations (embedding, Neo4j) are wrapped in
+        asyncio.to_thread() to avoid blocking the event loop.
+
         Args:
             page: Scraped WikiPage instance
 
@@ -653,6 +656,8 @@ class WikiIngestionPipeline:
             Stats dict: {chunks, tree_nodes_linked, imas_paths_linked, conventions,
                         content_preview, mdsplus_paths}
         """
+        import asyncio
+
         from .scraper import (
             extract_conventions,
             extract_imas_paths,
@@ -672,7 +677,7 @@ class WikiIngestionPipeline:
 
         page_id = self._generate_page_id(page.page_name)
 
-        # Extract text content
+        # Extract text content (CPU-bound, fast)
         text_content, sections = html_to_text(page.content_html)
         if not text_content or len(text_content) < 50:
             logger.warning("Skipping %s: insufficient content", page.page_name)
@@ -693,13 +698,15 @@ class WikiIngestionPipeline:
             },
         )
 
-        # Split into chunks
+        # Split into chunks (CPU-bound, fast)
         nodes = self.splitter.get_nodes_from_documents([doc])
         stats["chunks"] = len(nodes)
 
-        # Generate embeddings in batch for 3x speedup
+        # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
         chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
-        embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+        embeddings = await asyncio.to_thread(
+            self.embed_model.get_text_embedding_batch, chunk_texts
+        )
 
         # Prepare batch data with pre-computed embeddings
         chunk_batch: list[dict] = []
@@ -1485,9 +1492,13 @@ class WikiArtifactPipeline:
             nodes = self.splitter.get_nodes_from_documents([combined_doc])
             stats["chunks"] = len(nodes)
 
-            # Generate embeddings in batch for 3x speedup
+            # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
+            import asyncio
+
             chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
-            embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+            embeddings = await asyncio.to_thread(
+                self.embed_model.get_text_embedding_batch, chunk_texts
+            )
 
             # Prepare batch with pre-computed embeddings
             chunk_batch: list[dict] = []
@@ -1811,7 +1822,12 @@ class WikiArtifactPipeline:
         """Create chunks from extracted text and persist to graph.
 
         Common implementation used by all artifact type extractors.
+
+        IMPORTANT: Blocking I/O operations (embedding) are wrapped in
+        asyncio.to_thread() to avoid blocking the event loop.
         """
+        import asyncio
+
         from .scraper import (
             extract_conventions,
             extract_imas_paths,
@@ -1833,9 +1849,11 @@ class WikiArtifactPipeline:
         if not nodes:
             return stats
 
-        # Generate embeddings in batch
+        # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
         chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
-        embeddings = self.embed_model.get_text_embedding_batch(chunk_texts)
+        embeddings = await asyncio.to_thread(
+            self.embed_model.get_text_embedding_batch, chunk_texts
+        )
 
         # Prepare batch with pre-computed embeddings
         chunk_batch: list[dict] = []
