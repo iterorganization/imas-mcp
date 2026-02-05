@@ -39,6 +39,7 @@ from imas_codex.discovery.base.supervision import (
 )
 from imas_codex.graph import GraphClient
 from imas_codex.graph.models import FacilitySignalStatus
+from imas_codex.remote.executor import run_python_script
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1317,13 +1318,17 @@ async def validate_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that validates signals by testing data access."""
+    """Worker that validates signals by testing data access.
+
+    Uses batched SSH execution via run_python_script() to validate multiple
+    signals in a single SSH call, significantly reducing connection overhead.
+    """
     while not state.should_stop_validating():
         # Claim batch of signals
         signals = await asyncio.to_thread(
             claim_signals_for_validation,
             state.facility,
-            batch_size=3,
+            batch_size=10,  # Increased batch size - now truly batched
         )
 
         if not signals:
@@ -1338,77 +1343,100 @@ async def validate_worker(
         if on_progress:
             on_progress("validating batch", state.validate_stats)
 
-        # Validate each signal
-        validated = []
+        # Prepare batch for remote validation script
+        batch_input = []
         for signal in signals:
             shot = signal.get("example_shot") or state.reference_shot
             if not shot:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
                 continue
 
+            batch_input.append(
+                {
+                    "id": signal["id"],
+                    "accessor": signal["accessor"],
+                    "tree_name": signal.get("tree_name", "results"),
+                    "shot": shot,
+                }
+            )
+
+        if not batch_input:
+            continue
+
+        # Execute batched validation via remote script (single SSH call)
+        validated = []
+        failed = []
+        try:
+            output = await asyncio.to_thread(
+                run_python_script,
+                "validate_signals.py",
+                {"signals": batch_input, "timeout_per_signal": 10},
+                ssh_host=state.ssh_host,
+                timeout=30 + len(batch_input) * 10,  # Scale timeout with batch size
+            )
+
+            # Parse results
             try:
-                # Build validation script
-                accessor = signal["accessor"]
-                tree_name = signal.get("tree_name", "results")
+                response = json.loads(output.split("\n")[0])  # First line is JSON
+                results = response.get("results", [])
 
-                validation_script = f'''
-import json
-import MDSplus
-
-try:
-    tree = MDSplus.Tree("{tree_name}", {shot}, "readonly")
-    data = tree.tdiExecute("{accessor}").data()
-    result = {{"success": True, "shape": list(data.shape) if hasattr(data, "shape") else [len(data)]}}
-except Exception as e:
-    result = {{"success": False, "error": str(e)[:200]}}
-
-print(json.dumps(result))
-'''
-
-                escaped = validation_script.replace("'", "'\"'\"'")
-                cmd = ["ssh", state.ssh_host, f"python3 -c '{escaped}'"]
-
-                proc_result = await asyncio.to_thread(
-                    subprocess.run,
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-                if proc_result.returncode == 0:
-                    result = json.loads(proc_result.stdout)
+                for result in results:
+                    signal_id = result.get("id")
                     if result.get("success"):
-                        validated.append({"id": signal["id"]})
-                    else:
-                        await asyncio.to_thread(
-                            mark_signal_failed,
-                            signal["id"],
-                            result.get("error", "validation failed"),
-                            FacilitySignalStatus.enriched.value,
+                        validated.append(
+                            {
+                                "id": signal_id,
+                                "shape": result.get("shape"),
+                                "dtype": result.get("dtype"),
+                            }
                         )
-                else:
-                    await asyncio.to_thread(
-                        mark_signal_failed,
-                        signal["id"],
-                        proc_result.stderr[:200]
-                        if proc_result.stderr
-                        else "SSH failed",
-                        FacilitySignalStatus.enriched.value,
-                    )
+                    else:
+                        failed.append(
+                            {
+                                "id": signal_id,
+                                "error": result.get("error", "validation failed"),
+                            }
+                        )
 
-            except Exception as e:
-                logger.warning("Failed to validate signal %s: %s", signal["id"], e)
-                await asyncio.to_thread(release_signal_claim, signal["id"])
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning("Failed to parse validation response: %s", e)
+                # Release all claims on parse error
+                for sig in batch_input:
+                    await asyncio.to_thread(release_signal_claim, sig["id"])
+                continue
 
-        # Update graph
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                "Validation script failed: %s", e.stderr[:200] if e.stderr else str(e)
+            )
+            # Release all claims on script error
+            for sig in batch_input:
+                await asyncio.to_thread(release_signal_claim, sig["id"])
+            continue
+        except Exception as e:
+            logger.warning("Failed to run validation: %s", e)
+            for sig in batch_input:
+                await asyncio.to_thread(release_signal_claim, sig["id"])
+            continue
+
+        # Mark failed signals
+        for fail in failed:
+            await asyncio.to_thread(
+                mark_signal_failed,
+                fail["id"],
+                fail["error"],
+                FacilitySignalStatus.enriched.value,
+            )
+
+        # Update graph with validated signals
         if validated:
             await asyncio.to_thread(mark_signals_validated, validated)
             state.validate_stats.processed += len(validated)
 
             if on_progress:
                 results = [
-                    {"id": v["id"], "shot": shot, "success": True} for v in validated
+                    {"id": v["id"], "success": True, "shape": v.get("shape")}
+                    for v in validated
                 ]
                 on_progress("validated batch", state.validate_stats, results)
 
