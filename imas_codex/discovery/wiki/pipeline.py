@@ -1403,6 +1403,9 @@ class WikiArtifactPipeline:
 
         Returns:
             Ingestion stats
+
+        Raises:
+            ValueError: If content is not a valid PDF (wrong magic bytes)
         """
         import tempfile
         from pathlib import Path
@@ -1422,14 +1425,38 @@ class WikiArtifactPipeline:
             "artifact_type": "pdf",
         }
 
+        # Validate PDF magic bytes before attempting to parse
+        # Valid PDFs start with %PDF (possibly with leading whitespace/BOM)
+        header = pdf_bytes[:1024] if len(pdf_bytes) > 1024 else pdf_bytes
+        if b"%PDF" not in header:
+            # Identify what the file actually is
+            preview = pdf_bytes[:5].decode("latin-1", errors="replace")
+            if pdf_bytes[:2] == b"PK":
+                raise ValueError(
+                    f"Content is a ZIP/Office file, not PDF (header: {preview!r})"
+                )
+            elif pdf_bytes[:5] == b"<!DOC" or pdf_bytes[:5] == b"<html":
+                raise ValueError(f"Content is HTML, not PDF (header: {preview!r})")
+            else:
+                raise ValueError(f"Invalid PDF: missing %PDF header (got: {preview!r})")
+
         # Write to temp file for PDFReader
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(pdf_bytes)
             temp_path = Path(f.name)
 
         try:
-            reader = PDFReader()
-            documents = reader.load_data(temp_path)
+            # Suppress pypdf's verbose internal warnings about corrupt PDF objects
+            # These are benign warnings about non-critical PDF structure issues
+            pypdf_logger = logging.getLogger("pypdf")
+            original_level = pypdf_logger.level
+            pypdf_logger.setLevel(logging.ERROR)
+
+            try:
+                reader = PDFReader()
+                documents = reader.load_data(temp_path)
+            finally:
+                pypdf_logger.setLevel(original_level)
 
             if not documents:
                 logger.warning("No content extracted from PDF: %s", artifact_id)

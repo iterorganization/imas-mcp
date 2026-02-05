@@ -1543,24 +1543,34 @@ def discover_wiki(
                         )
 
                         while True:
-                            stats = get_wiki_discovery_stats(_facility)
-                            display.update_from_graph(
-                                total_pages=stats.get("total", 0),
-                                pages_scanned=stats.get("scanned", 0),
-                                pages_scored=stats.get("scored", 0),
-                                pages_ingested=stats.get("ingested", 0),
-                                pages_skipped=stats.get("skipped", 0),
-                                pending_score=stats.get(
-                                    "pending_score", stats.get("scanned", 0)
-                                ),
-                                pending_ingest=stats.get("pending_ingest", 0),
-                                accumulated_cost=stats.get("accumulated_cost", 0.0),
-                            )
+                            try:
+                                stats = get_wiki_discovery_stats(_facility)
+                                display.update_from_graph(
+                                    total_pages=stats.get("total", 0),
+                                    pages_scanned=stats.get("scanned", 0),
+                                    pages_scored=stats.get("scored", 0),
+                                    pages_ingested=stats.get("ingested", 0),
+                                    pages_skipped=stats.get("skipped", 0),
+                                    pending_score=stats.get(
+                                        "pending_score", stats.get("scanned", 0)
+                                    ),
+                                    pending_ingest=stats.get("pending_ingest", 0),
+                                    accumulated_cost=stats.get("accumulated_cost", 0.0),
+                                )
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as e:
+                                wiki_logger.debug("Graph refresh failed: %s", e)
                             await asyncio.sleep(0.5)
 
                     async def queue_ticker():
                         while True:
-                            display.tick()
+                            try:
+                                display.tick()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as e:
+                                wiki_logger.debug("Display tick failed: %s", e)
                             await asyncio.sleep(0.15)
 
                     refresh_task = asyncio.create_task(refresh_graph_state())

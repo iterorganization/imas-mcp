@@ -1989,8 +1989,20 @@ async def artifact_worker(
                 )
 
             except Exception as e:
-                logger.warning("Error ingesting artifact %s: %s", artifact_id, e)
-                mark_artifact_failed(artifact_id, str(e))
+                # Unwrap common error wrappers to get the actual error message
+                error_msg = str(e)
+                if hasattr(e, "__cause__") and e.__cause__:
+                    error_msg = str(e.__cause__)
+                elif "RetryError" in type(e).__name__ and hasattr(e, "last_attempt"):
+                    # tenacity RetryError - get the underlying exception
+                    try:
+                        error_msg = str(e.last_attempt.exception())
+                    except Exception:
+                        pass
+                logger.warning(
+                    "Error ingesting artifact %s: %s", artifact_id, error_msg
+                )
+                mark_artifact_failed(artifact_id, error_msg)
 
         mark_artifacts_ingested(state.facility, results)
         state.artifact_stats.processed += len(results)
