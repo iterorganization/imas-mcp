@@ -839,7 +839,11 @@ def discover_tdi_signals(
 
 
 def ingest_discovered_signals(signals: list[dict]) -> int:
-    """Ingest discovered signals to graph."""
+    """Ingest discovered signals to graph with epoch relationships.
+
+    Creates FacilitySignal nodes and INTRODUCED_IN relationships to
+    their TreeModelVersion epoch (if epoch_id is present).
+    """
     if not signals:
         return 0
 
@@ -852,6 +856,10 @@ def ingest_discovered_signals(signals: list[dict]) -> int:
                 ON CREATE SET s += sig,
                               s.discovered_at = datetime()
                 ON MATCH SET s.claimed_at = null
+                WITH s, sig
+                WHERE sig.epoch_id IS NOT NULL
+                MATCH (v:TreeModelVersion {id: sig.epoch_id})
+                MERGE (s)-[:INTRODUCED_IN]->(v)
                 """,
                 signals=signals,
             )
