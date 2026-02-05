@@ -235,10 +235,11 @@ class DataProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    # Layout constants - label widths are fixed, bars expand to fill
+    # Layout constants - label widths are fixed, bars capped to prevent sprawl
     LABEL_WIDTH = 10  # "  SCAN    " etc
     MIN_WIDTH = 80
     MAX_WIDTH = 140
+    MAX_BAR_WIDTH = 50  # Cap bar width to prevent excessive length
     METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
     GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
@@ -271,16 +272,18 @@ class DataProgressDisplay:
 
     @property
     def bar_width(self) -> int:
-        """Calculate progress bar width to fill available space."""
+        """Calculate progress bar width, capped to prevent excessive length."""
         # Content width = width - 4 (panel border + padding)
-        # Bar width = content - label - metrics
-        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        # Bar width = content - label - metrics, capped at MAX_BAR_WIDTH
+        raw_width = self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+        return min(raw_width, self.MAX_BAR_WIDTH)
 
     @property
     def gauge_width(self) -> int:
-        """Calculate resource gauge width to fill available space."""
-        # Gauge width = content - label(8) - metrics
-        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+        """Calculate resource gauge width, capped to match progress bars."""
+        # Gauge width = content - label(10) - metrics, capped to match bar_width
+        raw_width = self.width - 4 - self.LABEL_WIDTH - self.GAUGE_METRICS_WIDTH
+        return min(raw_width, self.MAX_BAR_WIDTH)
 
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
@@ -421,11 +424,11 @@ class DataProgressDisplay:
         check_pct = checked / check_denom * 100 if check_denom > 0 else 0
 
         if self.state.discover_only or self.state.enrich_only:
-            section.append("  CHECK ", style="dim")
+            section.append("  CHECK   ", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append("  disabled", style="dim italic")
         else:
-            section.append("  CHECK ", style="bold magenta")
+            section.append("  CHECK   ", style="bold magenta")
             ratio = min(checked / check_denom, 1.0) if check_denom > 0 else 0
             section.append(make_bar(ratio, bar_width), style="magenta")
             section.append(f" {checked:>6,}", style="bold")
@@ -474,12 +477,11 @@ class DataProgressDisplay:
                 section.append(f"tree={scan.tree_name}  ", style="cyan")
             if scan.epoch_phase and scan.epoch_boundaries_found > 0:
                 section.append(
-                    f"{scan.epoch_boundaries_found} epochs detected  ", style="yellow"
+                    f"{scan.epoch_boundaries_found} epochs detected", style="yellow"
                 )
-            if scan.signals_in_tree > 0:
-                section.append(
-                    f"{scan.signals_in_tree:,} signals discovered", style="dim"
-                )
+            elif scan.signals_in_tree > 0:
+                # Only show signal count when not in epoch detection phase
+                section.append(f"{scan.signals_in_tree:,} nodes scanned", style="dim")
         elif self.state.scan_processing:
             section.append("scanning...", style="cyan italic")
             section.append("\n")
@@ -559,7 +561,7 @@ class DataProgressDisplay:
         section = Text()
 
         # TIME row
-        section.append("  TIME  ", style="bold cyan")
+        section.append("  TIME    ", style="bold cyan")
         eta = None if self.state.discover_only else self.state.eta_seconds
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
@@ -577,7 +579,7 @@ class DataProgressDisplay:
 
         # COST row
         if not self.state.discover_only:
-            section.append("  COST  ", style="bold yellow")
+            section.append("  COST    ", style="bold yellow")
             section.append_text(
                 make_resource_gauge(
                     self.state.run_cost, self.state.cost_limit, self.gauge_width
@@ -600,7 +602,7 @@ class DataProgressDisplay:
                 etc = total_cost + (cost_per_signal * signals_remaining)
 
             # Always show TOTAL row when not discover_only (matches TIME/COST pattern)
-            section.append("  TOTAL ", style="bold white")
+            section.append("  TOTAL   ", style="bold white")
             # Progress bar shows current cost toward ETC
             if etc > 0 and etc > total_cost:
                 section.append_text(
@@ -623,7 +625,7 @@ class DataProgressDisplay:
         enriched = self.state.signals_enriched + self.state.signals_checked
         checked = self.state.signals_checked
 
-        section.append("  STATS ", style="bold magenta")
+        section.append("  STATS   ", style="bold magenta")
         section.append(f"discovered={total}", style="blue")
         section.append(f"  enriched={enriched}", style="green")
         section.append(f"  checked={checked}", style="magenta")
