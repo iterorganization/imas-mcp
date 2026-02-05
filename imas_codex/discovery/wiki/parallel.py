@@ -1937,7 +1937,13 @@ async def score_worker(
         # Increased batch size from 25 to 50 for better LLM throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
         logger.debug(f"score_worker {worker_id}: claiming pages...")
-        pages = await asyncio.to_thread(claim_pages_for_scoring, state.facility, 50)
+        try:
+            pages = await asyncio.to_thread(claim_pages_for_scoring, state.facility, 50)
+        except Exception as e:
+            # Neo4j connection error - backoff and retry
+            logger.warning("score_worker %s: claim failed: %s", worker_id, e)
+            await asyncio.sleep(5.0)
+            continue
         logger.debug(f"score_worker {worker_id}: claimed {len(pages)} pages")
 
         if not pages:
@@ -2080,9 +2086,15 @@ async def ingest_worker(
     while not state.should_stop_ingesting():
         # Increased batch size from 10 to 20 for better embedding throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
-        pages = await asyncio.to_thread(
-            claim_pages_for_ingesting, state.facility, min_score, 20
-        )
+        try:
+            pages = await asyncio.to_thread(
+                claim_pages_for_ingesting, state.facility, min_score, 20
+            )
+        except Exception as e:
+            # Neo4j connection error - backoff and retry
+            logger.warning("ingest_worker: claim failed: %s", e)
+            await asyncio.sleep(5.0)
+            continue
 
         if not pages:
             state.ingest_idle_count += 1
@@ -2147,9 +2159,15 @@ async def artifact_worker(
     while not state.should_stop_artifact_worker():
         # Increased batch size from 3 to 8 for better throughput
         # Run blocking Neo4j call in thread pool to avoid blocking event loop
-        artifacts = await asyncio.to_thread(
-            claim_artifacts_for_ingesting, state.facility, 8
-        )
+        try:
+            artifacts = await asyncio.to_thread(
+                claim_artifacts_for_ingesting, state.facility, 8
+            )
+        except Exception as e:
+            # Neo4j connection error - backoff and retry
+            logger.warning("artifact_worker: claim failed: %s", e)
+            await asyncio.sleep(5.0)
+            continue
 
         if not artifacts:
             state.artifact_idle_count += 1
