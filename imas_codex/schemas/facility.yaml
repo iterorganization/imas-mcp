@@ -443,28 +443,30 @@ enums:
   WikiArtifactStatus:
     description: >-
       Lifecycle status for wiki artifacts (PDFs, presentations, etc.).
-      Uses same async worker pattern as WikiPageStatus.
+      Uses claimed_at timestamp for transient worker coordination
+      (same pattern as WikiPageStatus - no separate transient states).
+      
+      Workflow: discovered → scored → ingested (simple 3-phase)
+      - Bulk discovery sets status=discovered
+      - Score: download preview + LLM scoring in single pass
+        Artifacts with score >= 0.5 proceed to ingestion
+      - Ingest: download full content, parse, chunk, embed
     permissible_values:
-      # === Initial state ===
       discovered:
-        description: Artifact link found but not yet processed
-      # === Score phase (filename/context evaluation) ===
-      scoring:
-        description: Scorer worker active (fallback to discovered on timeout)
+        description: >-
+          Artifact link found but not yet scored. Awaiting content-aware scoring.
       scored:
-        description: Evaluated by scoring agent, interest_score set
-      # === Ingest phase (download + parse high-value artifacts) ===
-      ingesting:
-        description: Ingest worker active for high-score artifact
+        description: >-
+          Scoring complete. Score field set based on content preview.
+          Artifacts with score >= 0.5 proceed to ingestion.
       ingested:
         description: Content downloaded, parsed, chunked, and embedded
-      # === Terminal states ===
       deferred:
-        description: High-value but requires unsupported parser (OCR, etc.)
+        description: High-value but requires unsupported parser (OCR, scanned PDF, etc.)
       skipped:
-        description: Low-value artifact, not worth processing
+        description: Filtered out by scoring (too low value to process)
       failed:
-        description: Error during processing (check terminal_reason)
+        description: Error during processing (check error field)
 
   RepoSourceType:
     description: Source hosting type for software repositories
@@ -1532,6 +1534,15 @@ classes:
           Format: facility:physics_domain/signal_name[:variant]
           Physics domain must match PhysicsDomain enum for consistency.
         required: true
+      status:
+        description: Discovery workflow status
+        range: FacilitySignalStatus
+        ifabsent: "discovered"
+      claimed_at:
+        description: >-
+          Timestamp when a worker claimed this signal for processing.
+          Used for distributed worker coordination. Stale claims (>5min) are reclaimed.
+        range: datetime
       facility_id:
         description: Parent facility
         required: true
@@ -1555,6 +1566,23 @@ classes:
           parameter names, native function arguments, and legacy names.
           E.g., ["i_p", "ip", "Ip", "I_PL", "plasma current"]
         multivalued: true
+      # MDSplus-specific fields (for signals discovered from tree traversal)
+      tree_name:
+        description: >-
+          MDSplus tree name containing this signal.
+          E.g., "results", "tcv_shot", "magnetics"
+      node_path:
+        description: >-
+          Full MDSplus node path for direct access.
+          E.g., "\\RESULTS::LIUQE:I_P", "\\MAGNETICS::IPL"
+      tdi_function:
+        description: >-
+          TDI wrapper function if signal is accessed via TDI.
+          E.g., "tcv_eq", "tcv_fir"
+      tdi_quantity:
+        description: >-
+          Quantity argument passed to TDI function.
+          E.g., "I_P", "NE_CORE"
       accessor:
         description: >-
           Native accessor expression - the ONLY access-specific field on signals.
@@ -1571,6 +1599,18 @@ classes:
         range: AccessMethod
       description:
         description: What this signal measures (physics description)
+      units:
+        description: >-
+          Physical units of the signal data. Extracted from MDSplus node.units,
+          data system metadata, or documentation.
+          E.g., "A", "V", "T", "m^-3", "eV"
+      sign_convention:
+        description: >-
+          Description of sign convention if relevant.
+          E.g., "positive direction = co-current", "positive = outward flux"
+      cocos:
+        description: COCOS index if applicable to this signal
+        range: integer
       is_primary:
         description: True if this is the default source for this quantity
         range: boolean
@@ -2385,15 +2425,12 @@ classes:
   WikiArtifact:
     description: >-
       A linked artifact (PDF, PowerPoint, image, etc.) discovered during wiki scan.
-      Created during Phase 1 when links to non-wiki files are found.
+      Uses same state machine pattern as WikiPage with claimed_at for coordination.
       
-      These artifacts are NOT scannable wiki pages - they are binary files.
-      The scoring phase (Phase 2) evaluates them based on:
-      - Filename keywords (e.g., "ASTRA_manual", "IpB0signs")
-      - in_degree: how many wiki pages link to this artifact
-      - Linking page context (if linked from diagnostic pages -> likely technical)
-      
-      Phase 3 ingestion is deferred - requires OCR or specialized parsers.
+      Workflow: discovered → scored → ingested
+      - Bulk discovery creates artifacts with status=discovered
+      - Score worker downloads preview, LLM scores based on content
+      - Ingest worker downloads full content, parses, chunks, embeds
       
       Relationships:
       - FACILITY_ID -> Facility
@@ -2417,7 +2454,7 @@ classes:
         description: Extracted filename (e.g., "ASTRA_manual_with_index.pdf")
         required: true
       artifact_type:
-        description: Type of artifact
+        description: Type of artifact (pdf, docx, pptx, xlsx, ipynb, etc.)
         range: ArtifactType
         required: true
       status:
@@ -2425,7 +2462,14 @@ classes:
         range: WikiArtifactStatus
         required: true
       
-      # Graph metrics (computed during scan)
+      # Worker coordination (same pattern as WikiPage)
+      claimed_at:
+        description: >-
+          Timestamp when a worker claimed this artifact for processing.
+          Null when not being processed. Used for orphan recovery (>5min = reclaim).
+        range: datetime
+      
+      # Graph metrics (computed during discovery)
       in_degree:
         description: Number of wiki pages linking TO this artifact
         range: integer
@@ -2433,31 +2477,59 @@ classes:
         description: Minimum link depth of pages linking to this artifact
         range: integer
       
-      # Scoring fields (set by agent during score phase)
-      interest_score:
+      # Scoring fields (set by score worker - aligns with WikiPage)
+      score:
         description: >-
-          Agent-assigned priority score (0.0-1.0). Computed from:
-          filename keywords, in_degree, linking page context.
+          Content-aware score (0.0-1.0) based on preview text analysis.
+          Artifacts with score >= 0.5 proceed to ingestion.
         range: float
-      score_reasoning:
-        description: Agent's explanation for the interest_score assignment
+      artifact_purpose:
+        description: Classification of artifact content (manual, presentation, data, etc.)
+        range: WikiPageType
+      description:
+        description: Concise description of artifact contents (1-2 sentences)
+      reasoning:
+        description: Brief explanation for the score assignment (max 80 chars)
+      preview_text:
+        description: Extracted text preview from first pages (for scoring context)
+      keywords:
+        description: Searchable keywords extracted from content
+        multivalued: true
+      physics_domain:
+        description: Primary physics domain inferred from content
+        range: PhysicsDomain
+      should_ingest:
+        description: LLM decision on whether to fully ingest (score >= 0.5 override)
+        range: boolean
       skip_reason:
-        description: Why the agent marked this artifact as skipped
+        description: Why the artifact was marked as skipped (if should_ingest=false)
       
-      # Content hints inferred from filename/context
-      physics_domains:
-        description: Physics domains inferred from filename/context
-        multivalued: true
-      codes_mentioned:
-        description: Analysis codes inferred from filename
-        multivalued: true
+      # Per-dimension scores (same dimensions as WikiPage for consistency)
+      score_data_documentation:
+        description: Signal tables, node lists, shot databases (0.0-1.0)
+        range: float
+      score_physics_content:
+        description: Physics explanations, methodology, theory (0.0-1.0)
+        range: float
+      score_code_documentation:
+        description: Software docs, API references, usage guides (0.0-1.0)
+        range: float
+      score_data_access:
+        description: MDSplus paths, TDI expressions, access methods (0.0-1.0)
+        range: float
+      score_calibration:
+        description: Calibration info, conversion factors, sensor specs (0.0-1.0)
+        range: float
+      score_imas_relevance:
+        description: IMAS integration, IDS references, mapping hints (0.0-1.0)
+        range: float
       
       # Size and resource tracking
       size_bytes:
-        description: File size in bytes (fetched via HTTP HEAD during ingest)
+        description: File size in bytes (fetched via HTTP HEAD)
         range: integer
       page_count:
-        description: Number of pages (for PDFs)
+        description: Number of pages (for PDFs and presentations)
         range: integer
       chunk_count:
         description: Number of WikiChunk nodes created from this artifact
@@ -2468,7 +2540,7 @@ classes:
         description: When this artifact was first discovered
         range: datetime
       scored_at:
-        description: When the agent assigned interest_score
+        description: When the score worker completed scoring
         range: datetime
       ingested_at:
         description: When content was extracted and embedded
@@ -2478,4 +2550,4 @@ classes:
       error:
         description: Error message if status is failed
       defer_reason:
-        description: Why this artifact was deferred (e.g., size limit, unsupported format)
+        description: Why this artifact was deferred (e.g., size limit, OCR required)
