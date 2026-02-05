@@ -264,9 +264,12 @@ class WikiProgressDisplay:
     - INGEST: Chunk and embed high-value pages (scored → ingested)
     """
 
-    WIDTH = 100
-    BAR_WIDTH = 48
-    GAUGE_WIDTH = 24
+    # Layout constants - label widths are fixed, bars expand to fill
+    LABEL_WIDTH = 10  # "  SCORE  " etc
+    MIN_WIDTH = 80
+    MAX_WIDTH = 140
+    METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
+    GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
     def __init__(
         self,
@@ -289,6 +292,22 @@ class WikiProgressDisplay:
         )
         self._live: Live | None = None
 
+    @property
+    def width(self) -> int:
+        """Get display width based on terminal size."""
+        term_width = self.console.width or 100
+        return max(self.MIN_WIDTH, min(self.MAX_WIDTH, term_width))
+
+    @property
+    def bar_width(self) -> int:
+        """Calculate progress bar width to fill available space."""
+        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+
+    @property
+    def gauge_width(self) -> int:
+        """Calculate resource gauge width to fill available space."""
+        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
         header = Text()
@@ -299,13 +318,13 @@ class WikiProgressDisplay:
             title += " (SCAN ONLY)"
         elif self.state.score_only:
             title += " (SCORE ONLY)"
-        header.append(title.center(self.WIDTH - 4), style="bold cyan")
+        header.append(title.center(self.width - 4), style="bold cyan")
 
         # Focus (if set and not scan_only)
         if self.state.focus and not self.state.scan_only:
             header.append("\n")
             focus_line = f"Focus: {self.state.focus}"
-            header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
+            header.append(focus_line.center(self.width - 4), style="italic dim")
 
         return header
 
@@ -399,7 +418,7 @@ class WikiProgressDisplay:
         This shows true coverage of the wiki.
         """
         section = Text()
-        bar_width = self.BAR_WIDTH
+        bar_width = self.bar_width
 
         # SCORE row - scoring progress against total pages
         # Total to score = total_pages (all wiki pages for this facility)
@@ -478,7 +497,7 @@ class WikiProgressDisplay:
         ingest = self.state.current_ingest
 
         # Maximum content width for the panel (account for padding and border)
-        content_width = self.WIDTH - 6  # Panel padding + border
+        content_width = self.width - 6  # Panel padding + border
 
         # Helper to determine if worker should show "idle"
         def should_show_idle(processing: bool, queue: StreamQueue) -> bool:
@@ -654,11 +673,11 @@ class WikiProgressDisplay:
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
+                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
             )
         else:
             section.append("│", style="dim")
-            section.append("━" * self.GAUGE_WIDTH, style="cyan")
+            section.append("━" * self.gauge_width, style="cyan")
             section.append("│", style="dim")
 
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
@@ -682,7 +701,7 @@ class WikiProgressDisplay:
             section.append("  COST  ", style="bold yellow")
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
+                    self.state.run_cost, self.state.cost_limit, self.gauge_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -702,11 +721,11 @@ class WikiProgressDisplay:
 
                 if etc > 0:
                     section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, self.GAUGE_WIDTH)
+                        make_resource_gauge(total_facility_cost, etc, self.gauge_width)
                     )
                 else:
                     section.append("│", style="dim")
-                    section.append("━" * self.GAUGE_WIDTH, style="white")
+                    section.append("━" * self.gauge_width, style="white")
                     section.append("│", style="dim")
 
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
@@ -738,13 +757,13 @@ class WikiProgressDisplay:
         """Build the complete display."""
         sections = [
             self._build_header(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_worker_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_progress_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_activity_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_resources_section(),
         ]
 
@@ -757,7 +776,7 @@ class WikiProgressDisplay:
         return Panel(
             content,
             border_style="cyan",
-            width=self.WIDTH,
+            width=self.width,
             padding=(0, 1),
         )
 
@@ -995,7 +1014,7 @@ class WikiProgressDisplay:
                 self._build_summary(),
                 title=f"{self.state.facility.upper()} Wiki Discovery Complete",
                 border_style="green",
-                width=self.WIDTH,
+                width=self.width,
             )
         )
 

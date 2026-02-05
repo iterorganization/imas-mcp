@@ -294,9 +294,12 @@ class ParallelProgressDisplay:
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 100
-    BAR_WIDTH = 48
-    GAUGE_WIDTH = 24
+    # Layout constants - label widths are fixed, bars expand to fill
+    LABEL_WIDTH = 10  # "  SCAN   " etc
+    MIN_WIDTH = 80
+    MAX_WIDTH = 140
+    METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
+    GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
     def __init__(
         self,
@@ -321,6 +324,22 @@ class ParallelProgressDisplay:
         )
         self._live: Live | None = None
 
+    @property
+    def width(self) -> int:
+        """Get display width based on terminal size."""
+        term_width = self.console.width or 100
+        return max(self.MIN_WIDTH, min(self.MAX_WIDTH, term_width))
+
+    @property
+    def bar_width(self) -> int:
+        """Calculate progress bar width to fill available space."""
+        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+
+    @property
+    def gauge_width(self) -> int:
+        """Calculate resource gauge width to fill available space."""
+        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
         header = Text()
@@ -331,13 +350,13 @@ class ParallelProgressDisplay:
             title += " (SCAN ONLY)"
         elif self.state.score_only:
             title += " (SCORE ONLY)"
-        header.append(title.center(self.WIDTH - 4), style="bold cyan")
+        header.append(title.center(self.width - 4), style="bold cyan")
 
         # Focus (if set and not scan_only)
         if self.state.focus and not self.state.scan_only:
             header.append("\n")
             focus_line = f"Focus: {self.state.focus}"
-            header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
+            header.append(focus_line.center(self.width - 4), style="italic dim")
 
         return header
 
@@ -360,7 +379,7 @@ class ParallelProgressDisplay:
         """
         section = Text()
 
-        bar_width = self.BAR_WIDTH
+        bar_width = self.bar_width
 
         # SCAN progress: paths that have finished scanning vs all that need scanning
         # Completed scan = scanned + scoring + scored + (skipped - excluded)
@@ -473,7 +492,7 @@ class ParallelProgressDisplay:
         # SCAN section - always 2 lines for consistent height
         section.append("  SCAN ", style="bold blue")
         if scan:
-            section.append(clip_path(scan.path, self.WIDTH - 10), style="white")
+            section.append(clip_path(scan.path, self.width - 10), style="white")
             section.append("\n")
             # Stats indented below
             section.append("    ", style="dim")
@@ -500,7 +519,7 @@ class ParallelProgressDisplay:
             section.append("  SCORE ", style="bold green")
             if score:
                 # Show path with terminal indicator
-                path_display = clip_path(score.path, self.WIDTH - 20)
+                path_display = clip_path(score.path, self.width - 20)
                 section.append(path_display, style="white")
                 if not score.should_expand:
                     section.append(" terminal", style="magenta")
@@ -521,7 +540,7 @@ class ParallelProgressDisplay:
 
                     # Calculate available width for description
                     # Layout: "    0.85  " = 10 chars, leave 2 for padding
-                    desc_width = self.WIDTH - 12
+                    desc_width = self.width - 12
 
                     # Build description for line 2
                     # Priority: description (LLM reasoning) > purpose (category)
@@ -541,7 +560,7 @@ class ParallelProgressDisplay:
                         section.append(f"  {clipped_desc}", style="italic dim")
                 elif score.skipped:
                     # No score available, just show skipped status
-                    desc_width = self.WIDTH - 16  # "    skipped  " = ~12 chars
+                    desc_width = self.width - 16  # "    skipped  " = ~12 chars
                     section.append("skipped", style="yellow")
                     if score.skip_reason:
                         reason = clean_text(score.skip_reason)
@@ -568,7 +587,7 @@ class ParallelProgressDisplay:
             # Show current item if queue still has items OR we're still processing
             # Once queue is drained and worker is idle, show "idle" instead of stale item
             if enrich and (not queue_empty or self.state.enrich_processing):
-                section.append(clip_path(enrich.path, self.WIDTH - 11), style="white")
+                section.append(clip_path(enrich.path, self.width - 11), style="white")
                 section.append("\n")
                 # Stats indented below
                 section.append("    ", style="dim")
@@ -623,12 +642,12 @@ class ParallelProgressDisplay:
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
+                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
             )
         else:
             # Unknown total - show elapsed only with full bar (complete or unknown)
             section.append("│", style="dim")
-            section.append("━" * self.GAUGE_WIDTH, style="cyan")
+            section.append("━" * self.gauge_width, style="cyan")
             section.append("│", style="dim")
 
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
@@ -653,7 +672,7 @@ class ParallelProgressDisplay:
             # Cost bar uses cost_limit as 100% - no estimates
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
+                    self.state.run_cost, self.state.cost_limit, self.gauge_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -682,11 +701,11 @@ class ParallelProgressDisplay:
                 # Progress bar shows current cost toward ETC
                 if etc > 0:
                     section.append_text(
-                        make_resource_gauge(total_facility_cost, etc, self.GAUGE_WIDTH)
+                        make_resource_gauge(total_facility_cost, etc, self.gauge_width)
                     )
                 else:
                     section.append("│", style="dim")
-                    section.append("━" * self.GAUGE_WIDTH, style="white")
+                    section.append("━" * self.gauge_width, style="white")
                     section.append("│", style="dim")
 
                 section.append(f"  ${total_facility_cost:.2f}", style="bold")
@@ -728,11 +747,11 @@ class ParallelProgressDisplay:
         """Build the complete display."""
         sections = [
             self._build_header(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_progress_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_activity_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_resources_section(),
         ]
 
@@ -745,7 +764,7 @@ class ParallelProgressDisplay:
         return Panel(
             content,
             border_style="cyan",
-            width=self.WIDTH,
+            width=self.width,
             padding=(0, 1),
         )
 

@@ -216,7 +216,7 @@ class DataProgressDisplay:
     ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
     │                               TCV Signal Discovery                                               │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
-    │  WORKERS  scan:1 (running)  enrich:2 (1 active)  validate:1                                      │
+    │  WORKERS  scan:1 (running)  enrich:2 (1 active)  check:1                                        │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────   2944        83.4/s             │
     │  ENRICH ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────       5   0%    0.0/s             │
@@ -231,13 +231,16 @@ class DataProgressDisplay:
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  6m 50s                                                         │
     │  COST   │━━━━━━━━│             │  $0.00 / $0.20                                                   │
-    │  STATS  discovered=2944  enriched=5  validated=0  pending=[enrich:2944 validate:5]               │
+    │  STATS  discovered=2944  enriched=5  checked=0  pending=[enrich:2944 check:5]                    │
     └──────────────────────────────────────────────────────────────────────────────────────────────────┘
     """
 
-    WIDTH = 100
-    BAR_WIDTH = 48
-    GAUGE_WIDTH = 24
+    # Layout constants - label widths are fixed, bars expand to fill
+    LABEL_WIDTH = 10  # "  SCAN    " etc
+    MIN_WIDTH = 80
+    MAX_WIDTH = 140
+    METRICS_WIDTH = 22  # " {count:>6,} {pct:>3.0f}% {rate:>5.1f}/s"
+    GAUGE_METRICS_WIDTH = 28  # "  {time}  ETA {eta}" or "  ${cost:.2f} / ${limit:.2f}"
 
     def __init__(
         self,
@@ -260,6 +263,25 @@ class DataProgressDisplay:
         )
         self._live: Live | None = None
 
+    @property
+    def width(self) -> int:
+        """Get display width based on terminal size."""
+        term_width = self.console.width or 100
+        return max(self.MIN_WIDTH, min(self.MAX_WIDTH, term_width))
+
+    @property
+    def bar_width(self) -> int:
+        """Calculate progress bar width to fill available space."""
+        # Content width = width - 4 (panel border + padding)
+        # Bar width = content - label - metrics
+        return self.width - 4 - self.LABEL_WIDTH - self.METRICS_WIDTH
+
+    @property
+    def gauge_width(self) -> int:
+        """Calculate resource gauge width to fill available space."""
+        # Gauge width = content - label(8) - metrics
+        return self.width - 4 - 8 - self.GAUGE_METRICS_WIDTH
+
     def _build_header(self) -> Text:
         """Build centered header with facility and focus."""
         header = Text()
@@ -269,12 +291,12 @@ class DataProgressDisplay:
             title += " (SCAN ONLY)"
         elif self.state.enrich_only:
             title += " (ENRICH ONLY)"
-        header.append(title.center(self.WIDTH - 4), style="bold cyan")
+        header.append(title.center(self.width - 4), style="bold cyan")
 
         if self.state.focus:
             header.append("\n")
             focus_line = f"Focus: {self.state.focus}"
-            header.append(focus_line.center(self.WIDTH - 4), style="italic dim")
+            header.append(focus_line.center(self.width - 4), style="italic dim")
 
         return header
 
@@ -352,15 +374,15 @@ class DataProgressDisplay:
         are enriched.
         """
         section = Text()
-        bar_width = self.BAR_WIDTH
+        bar_width = self.bar_width
 
         # Total signals in graph is our TEC (total eventually consistent)
         total = max(self.state.total_signals, 1)
         enriched = self.state.signals_enriched + self.state.signals_checked
-        validated = self.state.signals_checked
+        checked = self.state.signals_checked
 
         # SCAN row - shows total signals discovered
-        # Progress = (enriched + validated) / total when scan is done,
+        # Progress = (enriched + checked) / total when scan is done,
         # or scan progress during active scanning
         section.append("  SCAN    ", style="bold blue")
         if self.state.scan_processing or self.state.signals_discovered > 0:
@@ -393,21 +415,21 @@ class DataProgressDisplay:
                 section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # CHECK row - shows validated relative to enriched
-        # Denominator is (enriched + validated) = signals that passed enrichment
-        validate_denom = max(enriched, 1)
-        validate_pct = validated / validate_denom * 100 if validate_denom > 0 else 0
+        # CHECK row - shows checked relative to enriched
+        # Denominator is (enriched + checked) = signals that passed enrichment
+        check_denom = max(enriched, 1)
+        check_pct = checked / check_denom * 100 if check_denom > 0 else 0
 
         if self.state.discover_only or self.state.enrich_only:
-            section.append("  CHECK", style="dim")
+            section.append("  CHECK ", style="dim")
             section.append("─" * bar_width, style="dim")
-            section.append(" disabled", style="dim italic")
+            section.append("  disabled", style="dim italic")
         else:
-            section.append("  CHECK", style="bold magenta")
-            ratio = min(validated / validate_denom, 1.0) if validate_denom > 0 else 0
+            section.append("  CHECK ", style="bold magenta")
+            ratio = min(checked / check_denom, 1.0) if check_denom > 0 else 0
             section.append(make_bar(ratio, bar_width), style="magenta")
-            section.append(f" {validated:>6,}", style="bold")
-            section.append(f" {validate_pct:>3.0f}%", style="cyan")
+            section.append(f" {checked:>6,}", style="bold")
+            section.append(f" {check_pct:>3.0f}%", style="cyan")
             if self.state.check_rate and self.state.check_rate > 0:
                 section.append(f" {self.state.check_rate:>5.1f}/s", style="dim")
 
@@ -416,7 +438,7 @@ class DataProgressDisplay:
     def _build_activity_section(self) -> Text:
         """Build the current activity section with two lines per streamer."""
         section = Text()
-        content_width = self.WIDTH - 6
+        content_width = self.width - 6
 
         # SCAN section (2 lines)
         scan = self.state.current_scan
@@ -505,7 +527,7 @@ class DataProgressDisplay:
         # CHECK section (2 lines)
         if not self.state.discover_only and not self.state.enrich_only:
             validate = self.state.current_check
-            section.append("  CHECK ", style="bold magenta")
+            section.append("  CHECK   ", style="bold magenta")
             if validate:
                 shot_str = f"shot={validate.shot}" if validate.shot else ""
                 if validate.success is True:
@@ -517,18 +539,18 @@ class DataProgressDisplay:
                     section.append(f"{shot_str} testing...", style="cyan italic")
                 section.append("\n")
                 # Second line: signal ID
-                section.append("           ", style="dim")  # 11 spaces for CHECK
+                section.append("          ", style="dim")  # 10 spaces for CHECK
                 section.append(
-                    clip_text(validate.signal_id, content_width - 11), style="dim"
+                    clip_text(validate.signal_id, content_width - 10), style="dim"
                 )
             elif self.state.check_processing:
                 section.append("testing...", style="cyan italic")
                 section.append("\n")
-                section.append("           ", style="dim")
+                section.append("          ", style="dim")
             else:
                 section.append("idle", style="dim italic")
                 section.append("\n")
-                section.append("           ", style="dim")
+                section.append("          ", style="dim")
 
         return section
 
@@ -542,11 +564,11 @@ class DataProgressDisplay:
         if eta is not None and eta > 0:
             total_est = self.state.elapsed + eta
             section.append_text(
-                make_resource_gauge(self.state.elapsed, total_est, self.GAUGE_WIDTH)
+                make_resource_gauge(self.state.elapsed, total_est, self.gauge_width)
             )
         else:
             section.append("│", style="dim")
-            section.append("━" * self.GAUGE_WIDTH, style="cyan")
+            section.append("━" * self.gauge_width, style="cyan")
             section.append("│", style="dim")
         section.append(f"  {format_time(self.state.elapsed)}", style="bold")
         if eta is not None and eta > 0:
@@ -558,7 +580,7 @@ class DataProgressDisplay:
             section.append("  COST  ", style="bold yellow")
             section.append_text(
                 make_resource_gauge(
-                    self.state.run_cost, self.state.cost_limit, self.GAUGE_WIDTH
+                    self.state.run_cost, self.state.cost_limit, self.gauge_width
                 )
             )
             section.append(f"  ${self.state.run_cost:.2f}", style="bold")
@@ -582,12 +604,12 @@ class DataProgressDisplay:
             # Progress bar shows current cost toward ETC
             if etc > 0 and etc > total_cost:
                 section.append_text(
-                    make_resource_gauge(total_cost, etc, self.GAUGE_WIDTH)
+                    make_resource_gauge(total_cost, etc, self.gauge_width)
                 )
             else:
                 # No estimate yet or complete - show full bar
                 section.append("│", style="dim")
-                section.append("━" * self.GAUGE_WIDTH, style="white")
+                section.append("━" * self.gauge_width, style="white")
                 section.append("│", style="dim")
 
             section.append(f"  ${total_cost:.2f}", style="bold")
@@ -599,19 +621,19 @@ class DataProgressDisplay:
         # STATS row - show counts and pending work
         total = self.state.total_signals
         enriched = self.state.signals_enriched + self.state.signals_checked
-        validated = self.state.signals_checked
+        checked = self.state.signals_checked
 
         section.append("  STATS ", style="bold magenta")
         section.append(f"discovered={total}", style="blue")
         section.append(f"  enriched={enriched}", style="green")
-        section.append(f"  validated={validated}", style="magenta")
+        section.append(f"  checked={checked}", style="magenta")
 
         # Show pending work counts
         pending_parts = []
         if self.state.pending_enrich > 0:
             pending_parts.append(f"enrich:{self.state.pending_enrich}")
         if self.state.pending_check > 0:
-            pending_parts.append(f"validate:{self.state.pending_check}")
+            pending_parts.append(f"check:{self.state.pending_check}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
@@ -627,13 +649,13 @@ class DataProgressDisplay:
         """Build the complete display."""
         sections = [
             self._build_header(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_worker_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_progress_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_activity_section(),
-            Text("─" * (self.WIDTH - 4), style="dim"),
+            Text("─" * (self.width - 4), style="dim"),
             self._build_resources_section(),
         ]
 
@@ -646,7 +668,7 @@ class DataProgressDisplay:
         return Panel(
             content,
             border_style="cyan",
-            width=self.WIDTH,
+            width=self.width,
             padding=(0, 1),
         )
 
@@ -868,7 +890,7 @@ class DataProgressDisplay:
                 self._build_summary(),
                 title=f"{self.state.facility.upper()} Signal Discovery Complete",
                 border_style="green",
-                width=self.WIDTH,
+                width=self.width,
             )
         )
 
@@ -878,7 +900,7 @@ class DataProgressDisplay:
 
         total = self.state.total_signals
         enriched = self.state.signals_enriched + self.state.signals_checked
-        validated = self.state.signals_checked
+        checked = self.state.signals_checked
 
         # SCAN stats
         summary.append("  SCAN   ", style="bold blue")
@@ -897,8 +919,8 @@ class DataProgressDisplay:
         summary.append("\n")
 
         # CHECK stats
-        summary.append("  CHECK", style="bold magenta")
-        summary.append(f" validated={validated:,}", style="magenta")
+        summary.append("  CHECK  ", style="bold magenta")
+        summary.append(f"checked={checked:,}", style="magenta")
         summary.append(f"  failed={self.state.signals_failed:,}", style="red")
         if self.state.check_rate:
             summary.append(f"  {self.state.check_rate:.1f}/s", style="dim")

@@ -1982,7 +1982,7 @@ def discover_signals(
         worker_parts.append("1 scan")
     if not scan_only:
         worker_parts.append(f"{enrich_workers} enrich")
-        worker_parts.append(f"{check_workers} validate")
+        worker_parts.append(f"{check_workers} check")
     log_print(f"Workers: {', '.join(worker_parts)}")
     if force:
         log_print("[yellow]Force mode: re-scanning all trees[/yellow]")
