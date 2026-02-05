@@ -1726,16 +1726,377 @@ def discover_wiki(
 
 @discover.command("data")
 @click.argument("facility")
-@click.option("--dry-run", is_flag=True, help="Show what would be discovered")
-def discover_data(facility: str, dry_run: bool) -> None:
-    """Discover data sources: MDSplus trees, HDF5 files, IMAS databases.
+@click.option(
+    "--cost-limit",
+    "-c",
+    type=float,
+    default=10.0,
+    help="Maximum LLM spend in USD (default: $10)",
+)
+@click.option(
+    "--signal-limit",
+    "-l",
+    type=int,
+    default=None,
+    help="Maximum signals to enrich (for debugging)",
+)
+@click.option(
+    "--tree",
+    "-t",
+    multiple=True,
+    help="MDSplus tree name(s) to scan",
+)
+@click.option(
+    "--shot",
+    "-s",
+    type=int,
+    default=None,
+    help="Reference shot number for tree traversal",
+)
+@click.option(
+    "--tdi-path",
+    type=str,
+    default=None,
+    help="Path to TDI function files",
+)
+@click.option(
+    "--focus",
+    "-f",
+    type=str,
+    default=None,
+    help="Focus on specific physics domain (e.g., 'equilibrium')",
+)
+@click.option(
+    "--discover-only",
+    is_flag=True,
+    default=False,
+    help="Only discover signals, skip LLM enrichment",
+)
+@click.option(
+    "--enrich-only",
+    is_flag=True,
+    default=False,
+    help="Only enrich already-discovered signals",
+)
+@click.option(
+    "--enrich-workers",
+    type=int,
+    default=2,
+    help="Number of parallel enrich workers (default: 2)",
+)
+@click.option(
+    "--validate-workers",
+    type=int,
+    default=1,
+    help="Number of parallel validate workers (default: 1)",
+)
+@click.option(
+    "--no-rich",
+    is_flag=True,
+    default=False,
+    help="Use logging output instead of rich progress display",
+)
+def discover_data(
+    facility: str,
+    cost_limit: float,
+    signal_limit: int | None,
+    tree: tuple[str, ...],
+    shot: int | None,
+    tdi_path: str | None,
+    focus: str | None,
+    discover_only: bool,
+    enrich_only: bool,
+    enrich_workers: int,
+    validate_workers: int,
+    no_rich: bool,
+) -> None:
+    """Discover and document facility data signals.
 
-    (NOT YET IMPLEMENTED)
+    Walks MDSplus trees, TDI functions, and other data definitions to discover
+    signals, then uses LLM to classify physics domains and generate descriptions.
+
+    \b
+    Pipeline stages:
+      DISCOVER: Enumerate signals from data sources (MDSplus trees, TDI functions)
+      ENRICH: LLM classification of physics_domain, description generation
+      VALIDATE: Test data access with example_shot, verify units
+
+    \b
+    Examples:
+      # Discover signals from MDSplus tree
+      imas-codex discover data tcv --tree results --shot 84469
+
+      # Discover TDI function signals
+      imas-codex discover data tcv --tdi-path /home/tdi/epfl
+
+      # Discover only, no LLM enrichment
+      imas-codex discover data tcv --tree results --shot 84469 --discover-only
+
+      # Enrich already-discovered signals
+      imas-codex discover data tcv --enrich-only -c 5.0
     """
-    console = Console()
-    console.print("[yellow]discover data: Not yet implemented[/yellow]")
-    console.print("\nThis feature will discover:")
-    console.print("  - MDSplus servers and tree structures")
-    console.print("  - HDF5 datasets and schemas")
-    console.print("  - IMAS database entries")
-    raise SystemExit(1)
+    from imas_codex.discovery.base.facility import get_facility
+    from imas_codex.discovery.data import (
+        get_data_discovery_stats,
+        reset_transient_signals,
+        run_parallel_data_discovery,
+    )
+
+    # Auto-detect if rich can run (TTY check) or use no_rich flag
+    use_rich = not no_rich and sys.stdout.isatty()
+
+    if use_rich:
+        console = Console()
+    else:
+        console = None
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
+    data_logger = logging.getLogger("imas_codex.discovery.data")
+    if not use_rich:
+        data_logger.setLevel(logging.INFO)
+
+    def log_print(msg: str, style: str = "") -> None:
+        """Print to console or log, stripping rich markup."""
+        clean_msg = re.sub(r"\[[^\]]+\]", "", msg)
+        if console:
+            console.print(msg)
+        else:
+            data_logger.info(clean_msg)
+
+    # Get facility config
+    try:
+        config = get_facility(facility)
+        ssh_host = config.get("ssh_host", facility)
+    except Exception as e:
+        log_print(f"[red]Error loading facility config: {e}[/red]")
+        raise SystemExit(1) from e
+
+    # Validate inputs
+    tree_names = list(tree) if tree else []
+
+    if not enrich_only and not tree_names and not tdi_path:
+        # Try to get tree names from facility config
+        data_sources = config.get("data_sources", {})
+        mdsplus_config = data_sources.get("mdsplus", {})
+        default_trees = mdsplus_config.get("trees", [])
+        if default_trees:
+            tree_names = default_trees
+            log_print(f"[dim]Using trees from config: {', '.join(tree_names)}[/dim]")
+        else:
+            log_print(
+                "[yellow]No data sources specified. Use --tree or --tdi-path.[/yellow]"
+            )
+            log_print("Or configure data_sources.mdsplus.trees in the facility config.")
+            raise SystemExit(1)
+
+    if not enrich_only and tree_names and not shot:
+        # Try to get reference shot from config
+        data_sources = config.get("data_sources", {})
+        mdsplus_config = data_sources.get("mdsplus", {})
+        shot = mdsplus_config.get("reference_shot")
+        if shot:
+            log_print(f"[dim]Using reference shot from config: {shot}[/dim]")
+        else:
+            log_print(
+                "[yellow]No reference shot specified. Use --shot for MDSplus discovery.[/yellow]"
+            )
+            raise SystemExit(1)
+
+    # Reset orphaned claims
+    log_print(f"[bold]Starting data discovery for {facility.upper()}[/bold]")
+    reset_transient_signals(facility, silent=True)
+
+    # Show current state
+    stats = get_data_discovery_stats(facility)
+    if stats.get("total", 0) > 0:
+        log_print(
+            f"[dim]Existing signals: {stats.get('total', 0)} "
+            f"(discovered={stats.get('discovered', 0)}, "
+            f"enriched={stats.get('enriched', 0)}, "
+            f"validated={stats.get('validated', 0)})[/dim]"
+        )
+
+    # Display configuration
+    if not discover_only:
+        log_print(f"Cost limit: ${cost_limit:.2f}")
+    if signal_limit:
+        log_print(f"Signal limit: {signal_limit}")
+    if tree_names:
+        log_print(f"Trees: {', '.join(tree_names)}")
+    if shot:
+        log_print(f"Reference shot: {shot}")
+    if tdi_path:
+        log_print(f"TDI path: {tdi_path}")
+    if focus:
+        log_print(f"Focus: {focus}")
+
+    worker_parts = []
+    if not enrich_only:
+        worker_parts.append("1 discover")
+    if not discover_only:
+        worker_parts.append(f"{enrich_workers} enrich")
+        worker_parts.append(f"{validate_workers} validate")
+    log_print(f"Workers: {', '.join(worker_parts)}")
+
+    try:
+
+        async def run_data_discovery():
+            if use_rich:
+                from imas_codex.discovery.data.progress import DataProgressDisplay
+
+                with DataProgressDisplay(
+                    facility=facility,
+                    cost_limit=cost_limit,
+                    signal_limit=signal_limit,
+                    focus=focus or "",
+                    console=console,
+                    discover_only=discover_only,
+                    enrich_only=enrich_only,
+                ) as display:
+                    # Periodic graph state refresh
+                    async def refresh_graph_state():
+                        while True:
+                            try:
+                                graph_stats = get_data_discovery_stats(facility)
+                                display.update_from_graph(
+                                    total_signals=graph_stats.get("total", 0),
+                                    signals_discovered=graph_stats.get("discovered", 0),
+                                    signals_enriched=graph_stats.get("enriched", 0),
+                                    signals_validated=graph_stats.get("validated", 0),
+                                    signals_skipped=graph_stats.get("skipped", 0),
+                                    signals_failed=graph_stats.get("failed", 0),
+                                    pending_enrich=graph_stats.get("pending_enrich", 0),
+                                    pending_validate=graph_stats.get(
+                                        "pending_validate", 0
+                                    ),
+                                )
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as e:
+                                data_logger.debug("Graph refresh failed: %s", e)
+                            await asyncio.sleep(0.5)
+
+                    async def queue_ticker():
+                        while True:
+                            try:
+                                display.tick()
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as e:
+                                data_logger.debug("Display tick failed: %s", e)
+                            await asyncio.sleep(0.15)
+
+                    refresh_task = asyncio.create_task(refresh_graph_state())
+                    ticker_task = asyncio.create_task(queue_ticker())
+
+                    def on_discover(msg, stats, results=None):
+                        display.update_discover(msg, stats, results)
+
+                    def on_enrich(msg, stats, results=None):
+                        display.update_enrich(msg, stats, results)
+
+                    def on_validate(msg, stats, results=None):
+                        display.update_validate(msg, stats, results)
+
+                    def on_worker_status(worker_group):
+                        display.update_worker_status(worker_group)
+
+                    try:
+                        result = await run_parallel_data_discovery(
+                            facility=facility,
+                            ssh_host=ssh_host,
+                            tree_names=tree_names,
+                            tdi_path=tdi_path,
+                            reference_shot=shot,
+                            cost_limit=cost_limit,
+                            signal_limit=signal_limit,
+                            focus=focus,
+                            num_enrich_workers=enrich_workers,
+                            num_validate_workers=validate_workers,
+                            discover_only=discover_only,
+                            enrich_only=enrich_only,
+                            on_discover_progress=on_discover,
+                            on_enrich_progress=on_enrich,
+                            on_validate_progress=on_validate,
+                            on_worker_status=on_worker_status,
+                        )
+                    finally:
+                        refresh_task.cancel()
+                        ticker_task.cancel()
+                        try:
+                            await refresh_task
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            await ticker_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    display.print_summary()
+
+                return result
+            else:
+                # Non-rich mode: logging only
+                def log_on_discover(msg, stats, results=None):
+                    if msg != "idle":
+                        data_logger.info(
+                            f"DISCOVER: {msg} (processed={stats.processed})"
+                        )
+
+                def log_on_enrich(msg, stats, results=None):
+                    if msg != "idle":
+                        data_logger.info(
+                            f"ENRICH: {msg} (processed={stats.processed}, "
+                            f"cost=${stats.cost:.3f})"
+                        )
+
+                def log_on_validate(msg, stats, results=None):
+                    if msg != "idle":
+                        data_logger.info(
+                            f"VALIDATE: {msg} (processed={stats.processed})"
+                        )
+
+                result = await run_parallel_data_discovery(
+                    facility=facility,
+                    ssh_host=ssh_host,
+                    tree_names=tree_names,
+                    tdi_path=tdi_path,
+                    reference_shot=shot,
+                    cost_limit=cost_limit,
+                    signal_limit=signal_limit,
+                    focus=focus,
+                    num_enrich_workers=enrich_workers,
+                    num_validate_workers=validate_workers,
+                    discover_only=discover_only,
+                    enrich_only=enrich_only,
+                    on_discover_progress=log_on_discover,
+                    on_enrich_progress=log_on_enrich,
+                    on_validate_progress=log_on_validate,
+                )
+                return result
+
+        result = asyncio.run(run_data_discovery())
+
+        # Final summary for non-rich mode
+        if not use_rich:
+            data_logger.info(
+                f"Discovery complete: discovered={result.get('discovered', 0)}, "
+                f"enriched={result.get('enriched', 0)}, "
+                f"validated={result.get('validated', 0)}, "
+                f"cost=${result.get('cost', 0):.3f}, "
+                f"elapsed={result.get('elapsed_seconds', 0):.1f}s"
+            )
+
+    except KeyboardInterrupt:
+        log_print("\n[yellow]Discovery interrupted by user[/yellow]")
+        raise SystemExit(130) from None
+    except Exception as e:
+        log_print(f"\n[red]Error: {e}[/red]")
+        import traceback
+
+        traceback.print_exc()
+        raise SystemExit(1) from e
