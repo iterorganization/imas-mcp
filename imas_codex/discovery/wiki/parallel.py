@@ -2378,6 +2378,7 @@ async def _score_pages_batch(
                 ],
                 temperature=0.3,
                 max_tokens=32000,
+                timeout=120,  # 2 minute timeout to prevent indefinite hangs
             )
 
             # Extract actual cost from OpenRouter response

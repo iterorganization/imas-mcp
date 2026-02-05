@@ -536,6 +536,11 @@ class WikiProgressDisplay:
             elif self.state.score_processing:
                 section.append("processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
+            elif not self.state.score_queue.is_empty():
+                # Items in queue but not yet popped - show waiting state
+                queued = len(self.state.score_queue)
+                section.append(f"streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
             elif should_show_idle(self.state.score_processing, self.state.score_queue):
                 section.append("idle", style="dim italic")
                 section.append("\n    ", style="dim")
@@ -590,6 +595,11 @@ class WikiProgressDisplay:
             elif self.state.ingest_processing:
                 section.append(" processing batch...", style="cyan italic")
                 section.append("\n    ", style="dim")
+            elif not self.state.ingest_queue.is_empty():
+                # Items in queue but not yet popped - show waiting state
+                queued = len(self.state.ingest_queue)
+                section.append(f" streaming {queued} items...", style="cyan italic")
+                section.append("\n    ", style="dim")
             elif should_show_idle(
                 self.state.ingest_processing, self.state.ingest_queue
             ):
@@ -620,6 +630,10 @@ class WikiProgressDisplay:
                 )
             elif self.state.artifact_processing:
                 section.append(" processing...", style="cyan italic")
+            elif not self.state.artifact_queue.is_empty():
+                # Items in queue but not yet popped - show waiting state
+                queued = len(self.state.artifact_queue)
+                section.append(f" streaming {queued} items...", style="cyan italic")
             elif should_show_idle(
                 self.state.artifact_processing, self.state.artifact_queue
             ):
@@ -828,11 +842,15 @@ class WikiProgressDisplay:
         self.state.score_rate = stats.rate
         self.state._run_score_cost = stats.cost
 
-        # Track processing state
+        # Track processing state - keep processing=True if queue has items pending
         if "waiting" in message.lower() or message == "idle":
             self.state.score_processing = False
         elif "scoring" in message.lower() or "fetching" in message.lower():
             self.state.score_processing = True
+        elif "scored" in message.lower() and results:
+            # Results arriving - keep processing True until queue drains
+            # This prevents the "..." flicker between batch completion and display
+            self.state.score_processing = not self.state.score_queue.is_empty()
         else:
             self.state.score_processing = False
 
@@ -871,11 +889,14 @@ class WikiProgressDisplay:
         self.state.ingest_rate = stats.rate
         self.state._run_ingest_cost = stats.cost
 
-        # Track processing state
+        # Track processing state - keep processing=True if queue has items pending
         if "waiting" in message.lower() or message == "idle":
             self.state.ingest_processing = False
         elif "ingesting" in message.lower():
             self.state.ingest_processing = True
+        elif "ingested" in message.lower() and results:
+            # Results arriving - keep processing True until queue drains
+            self.state.ingest_processing = not self.state.ingest_queue.is_empty()
         else:
             self.state.ingest_processing = False
 
@@ -910,11 +931,14 @@ class WikiProgressDisplay:
         self.state.run_artifacts = stats.processed
         self.state.artifact_rate = stats.rate
 
-        # Track processing state
+        # Track processing state - keep processing=True if queue has items pending
         if "waiting" in message.lower() or message == "idle":
             self.state.artifact_processing = False
         elif "ingesting" in message.lower():
             self.state.artifact_processing = True
+        elif "ingested" in message.lower() and results:
+            # Results arriving - keep processing True until queue drains
+            self.state.artifact_processing = not self.state.artifact_queue.is_empty()
         else:
             self.state.artifact_processing = False
 
