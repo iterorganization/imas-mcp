@@ -457,18 +457,18 @@ for node in nodes:
         # Only include data-bearing nodes
         if usage not in ("SIGNAL", "NUMERIC", "AXIS"):
             continue
-        
+
         path = str(node.path)
-        
+
         # Extract units
         try:
             units = str(node.units).strip() if hasattr(node, "units") else ""
         except:
             units = ""
-        
+
         # Extract node name for human-readable display
         name = path.split(":")[-1].split(".")[-1]
-        
+
         signals.append({{
             "path": path,
             "name": name,
@@ -510,15 +510,15 @@ print(json.dumps(signals))
         path = raw["path"]
         name = raw["name"]
 
-        # Generate signal ID: facility:unknown/signal_name
+        # Generate signal ID: facility:general/signal_name
         # Physics domain will be classified during enrichment
-        signal_id = f"{facility}:unknown/{tree_name}/{name.lower()}"
+        signal_id = f"{facility}:general/{tree_name}/{name.lower()}"
 
         signals.append(
             {
                 "id": signal_id,
                 "facility_id": facility,
-                "physics_domain": "unknown",  # Will be enriched
+                "physics_domain": "general",  # Will be enriched
                 "name": name,
                 "accessor": f"data({path})",
                 "access_method": access_method_id,
@@ -592,13 +592,13 @@ def discover_tdi_signals(
 
         for qty in quantities:
             qty_upper = qty.upper()
-            signal_id = f"{facility}:unknown/{func_name}/{qty_upper.lower()}"
+            signal_id = f"{facility}:general/{func_name}/{qty_upper.lower()}"
 
             signals.append(
                 {
                     "id": signal_id,
                     "facility_id": facility,
-                    "physics_domain": "unknown",  # Will be enriched
+                    "physics_domain": "general",  # Will be enriched
                     "name": qty_upper,
                     "accessor": f"{func_name}('{qty_upper}')",
                     "access_method": access_method_id,
@@ -720,7 +720,7 @@ Node Path: {signal.get("node_path", "unknown")}
 
 Respond in JSON format:
 {{
-    "physics_domain": "one of: equilibrium, kinetic_profiles, mhd_instabilities, magnetic_field_diagnostics, radiation_measurement_diagnostics, heating_current_drive, plasma_control, core_transport, edge_pedestal, impurities, neutral_beam_injection, electron_cyclotron, ion_cyclotron, lower_hybrid, fueling_wall_pumping, unknown",
+    "physics_domain": "one of: equilibrium, transport, magnetohydrodynamics, turbulence, auxiliary_heating, current_drive, plasma_wall_interactions, divertor_physics, edge_plasma_physics, particle_measurement_diagnostics, electromagnetic_wave_diagnostics, radiation_measurement_diagnostics, magnetic_field_diagnostics, mechanical_measurement_diagnostics, plasma_control, machine_operations, magnetic_field_systems, structural_components, plant_systems, data_management, computational_workflow, general",
     "description": "brief physics description of what this signal measures",
     "name": "human-readable name for the signal"
 }}"""
@@ -739,7 +739,7 @@ Respond in JSON format:
                 enriched.append(
                     {
                         "id": signal["id"],
-                        "physics_domain": result.get("physics_domain", "unknown"),
+                        "physics_domain": result.get("physics_domain", "general"),
                         "description": result.get("description", ""),
                         "name": result.get("name", signal.get("name", "")),
                     }
