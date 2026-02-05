@@ -19,20 +19,42 @@ data_systems:
 
 # Data source configuration for signal discovery
 # Used by: imas-codex discover data tcv
+# Discovered via SSH queries 2026-02-05, shot 84000
 data_sources:
   mdsplus:
-    reference_shot: 84000
+    reference_shot: 85000  # Recent shot with good data coverage
+    
+    # Experimental data trees (processed diagnostics)
+    # Verified accessible via MDSplus.Tree(name, 84000, 'READONLY')
     trees:
-      - results      # Equilibrium reconstruction (LIUQE, FBTE)
-      - magnetics    # Magnetic measurements
-      - thomson      # Thomson scattering
-      - ecrh         # Electron cyclotron heating
-      - tcv_shot     # Shot metadata
-      - diagz        # Diagnostics
+      # Core diagnostics
+      - results      # Equilibrium reconstruction (LIUQE, FBTE) - 11463 nodes
+      - magnetics    # Magnetic measurements - 514 nodes
+      - thomson      # Thomson scattering Te/ne profiles - 1354 nodes
+      - ecrh         # Electron cyclotron heating - 1017 nodes
+      - diagz        # General diagnostics collection - 2057 nodes
+      - power        # Power measurements (Ohmic, radiated) - 1715 nodes
+      
+      # Heating and plasma control
+      - hybrid       # Hybrid heating system - 20055 nodes
+      - pcs          # Plasma control system - 19121 nodes
+      
+      # Plasma analysis
+      - atlas        # Plasma analysis framework - 42728 nodes
+      
+      # Shot metadata
+      - tcv_shot     # Shot parameters and metadata - 82225 nodes
+      
+      # Support trees
+      - base         # Base utilities and calibrations - 1176 nodes
+    
+    # TDI function directories for signal definitions
+    # Count: tcv=246, devices=179, base=122, bitbus=96
     tdi_paths:
-      - /usr/local/CRPP/tdi/tcv     # TCV-specific TDI functions
-      - /usr/local/CRPP/tdi         # General CRPP TDI
-      - /usr/local/mdsplus/tdi      # Base MDSplus TDI
+      - /usr/local/CRPP/tdi/tcv       # Main TCV data access functions
+      - /usr/local/CRPP/tdi/devices   # Device drivers (ACQ400, DT196, etc)
+      - /usr/local/CRPP/tdi/base      # Base MDSplus utilities
+      - /usr/local/mdsplus/tdi        # Standard MDSplus TDI
 
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)
