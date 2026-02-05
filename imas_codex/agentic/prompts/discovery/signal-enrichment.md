@@ -73,7 +73,7 @@ Units will be validated separately from authoritative sources.
 
 You will receive multiple signals per request. Process each independently but maintain consistent classification standards across the batch.
 
-Return results in the same order as input signals. Match each result to its input by the `accessor` field.
+**Return results in the same order as input signals using `signal_index`** (1-based: Signal 1 = signal_index 1).
 
 {{ signal_enrichment_schema_fields }}
 
@@ -81,6 +81,7 @@ Return results in the same order as input signals. Match each result to its inpu
 
 For signal:
 ```
+## Signal 1
 accessor: data(\RESULTS::LIUQE:I_P)
 tree_name: results
 node_path: \RESULTS::LIUQE:I_P
@@ -91,7 +92,7 @@ name: I_P
 Classification:
 ```json
 {
-  "accessor": "data(\\RESULTS::LIUQE:I_P)",
+  "signal_index": 1,
   "physics_domain": "equilibrium",
   "name": "Plasma Current",
   "description": "Total plasma current from LIUQE equilibrium reconstruction.",
@@ -101,6 +102,7 @@ Classification:
   "confidence": 0.95,
   "keywords": ["plasma current", "ip", "liuqe", "equilibrium"]
 }
+```
 ```
 
 {% include "safety.md" %}

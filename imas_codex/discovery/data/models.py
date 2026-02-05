@@ -58,7 +58,9 @@ class SignalEnrichmentResult(BaseModel):
     - Structured metadata for graph storage
     """
 
-    accessor: str = Field(description="Signal accessor (echo from input for matching)")
+    signal_index: int = Field(
+        description="1-based index matching the input signal order (Signal 1 = index 1)"
+    )
 
     physics_domain: PhysicsDomain = Field(
         description="Physics domain classification. Use the category that best "

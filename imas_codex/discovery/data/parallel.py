@@ -29,6 +29,7 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from imas_codex.discovery.base.progress import WorkerStats
@@ -1122,11 +1123,13 @@ async def enrich_worker(
     system_prompt = render_prompt("discovery/signal-enrichment")
 
     while not state.should_stop_enriching():
-        # Claim batch of signals - larger batches for efficiency
+        # Claim batch of signals
+        # Batch size 25 balances throughput vs LLM reliability
+        # Larger batches can cause truncation with complex MDSplus paths
         signals = await asyncio.to_thread(
             claim_signals_for_enrichment,
             state.facility,
-            batch_size=100,  # Process 100 signals per LLM call
+            batch_size=25,
         )
 
         if not signals:
@@ -1144,13 +1147,13 @@ async def enrich_worker(
         # Build user prompt with all signals
         user_lines = [
             f"Classify these {len(signals)} signals.\n",
-            "Return results in the same order, matching by accessor field.\n",
+            "Return results in the same order using signal_index (1-based).\n",
         ]
         for i, signal in enumerate(signals, 1):
             user_lines.append(f"\n## Signal {i}")
-            user_lines.append(f"accessor: {signal['accessor']}")
             user_lines.append(f"tree_name: {signal.get('tree_name', 'unknown')}")
             user_lines.append(f"node_path: {signal.get('node_path', 'unknown')}")
+            user_lines.append(f"accessor: {signal['accessor']}")
             user_lines.append(f"units: {signal.get('units', '')}")
             user_lines.append(f"name: {signal.get('name', 'unknown')}")
 
@@ -1206,26 +1209,42 @@ async def enrich_worker(
                 await asyncio.to_thread(release_signal_claim, signal["id"])
             continue
 
-        # Parse structured response
-        try:
-            batch_result = SignalEnrichmentBatch.model_validate_json(
-                response.choices[0].message.content
+        # Log token usage for debugging truncation issues
+        if hasattr(response, "usage"):
+            output_tokens = response.usage.completion_tokens
+            logger.debug(
+                "LLM response: %d output tokens for %d signals",
+                output_tokens,
+                len(signals),
             )
+
+        # Parse structured response
+        raw_content = response.choices[0].message.content
+        try:
+            batch_result = SignalEnrichmentBatch.model_validate_json(raw_content)
         except Exception as e:
-            logger.warning("Failed to parse LLM response: %s", e)
+            # Log truncated content for debugging (first 500 chars)
+            content_preview = raw_content[:500] if raw_content else "<empty>"
+            logger.warning(
+                "Failed to parse LLM response (len=%d, preview=%s...): %s",
+                len(raw_content) if raw_content else 0,
+                content_preview,
+                e,
+            )
             for signal in signals:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
             continue
 
-        # Match results back to signals by accessor
-        accessor_to_signal = {s["accessor"]: s for s in signals}
+        # Match results back to signals by index (1-based signal_index)
         enriched = []
-        matched_accessors = set()
+        matched_indices = set()
 
         for result in batch_result.results:
-            signal = accessor_to_signal.get(result.accessor)
-            if signal:
-                matched_accessors.add(result.accessor)
+            # signal_index is 1-based, list is 0-based
+            idx = result.signal_index - 1
+            if 0 <= idx < len(signals):
+                signal = signals[idx]
+                matched_indices.add(idx)
                 enriched.append(
                     {
                         "id": signal["id"],
@@ -1239,8 +1258,8 @@ async def enrich_worker(
                 )
 
         # Release claims for unmatched signals
-        for signal in signals:
-            if signal["accessor"] not in matched_accessors:
+        for idx, signal in enumerate(signals):
+            if idx not in matched_indices:
                 await asyncio.to_thread(release_signal_claim, signal["id"])
 
         # Track cost
