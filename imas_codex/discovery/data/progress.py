@@ -577,23 +577,24 @@ class DataProgressDisplay:
                 cost_per_signal = self.state.run_cost / signals_enriched
                 etc = total_cost + (cost_per_signal * signals_remaining)
 
-            if total_cost > 0 or signals_remaining > 0:
-                section.append("  TOTAL ", style="bold white")
-                # Progress bar shows current cost toward ETC
-                if etc > 0:
-                    section.append_text(
-                        make_resource_gauge(total_cost, etc, self.GAUGE_WIDTH)
-                    )
-                else:
-                    section.append("│", style="dim")
-                    section.append("━" * self.GAUGE_WIDTH, style="white")
-                    section.append("│", style="dim")
+            # Always show TOTAL row when not discover_only (matches TIME/COST pattern)
+            section.append("  TOTAL ", style="bold white")
+            # Progress bar shows current cost toward ETC
+            if etc > 0 and etc > total_cost:
+                section.append_text(
+                    make_resource_gauge(total_cost, etc, self.GAUGE_WIDTH)
+                )
+            else:
+                # No estimate yet or complete - show full bar
+                section.append("│", style="dim")
+                section.append("━" * self.GAUGE_WIDTH, style="white")
+                section.append("│", style="dim")
 
-                section.append(f"  ${total_cost:.2f}", style="bold")
-                # Show ETC (dynamic estimate)
-                if etc > total_cost:
-                    section.append(f"  ETC ${etc:.2f}", style="dim")
-                section.append("\n")
+            section.append(f"  ${total_cost:.2f}", style="bold")
+            # Show ETC (dynamic estimate)
+            if etc > total_cost:
+                section.append(f"  ETC ${etc:.2f}", style="dim")
+            section.append("\n")
 
         # STATS row - show counts and pending work
         total = self.state.total_signals
