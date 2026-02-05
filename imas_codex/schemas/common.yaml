@@ -210,17 +210,17 @@ enums:
       Lifecycle status for facility data signal discovery. Uses claimed_at timestamp
       for transient worker coordination (same pattern as WikiPageStatus).
       
-      Discovery workflow: discovered → enriched → validated
+      Discovery workflow: discovered → enriched → checked
       - Discover: enumerate signals from data sources (MDSplus trees, TDI functions)
       - Enrich: LLM classification of physics domain, description generation
-      - Validate: test data access with example_shot, verify units/sign conventions
+      - Check: test data access with example_shot, verify accessor works
     permissible_values:
       discovered:
         description: Signal found via introspection (tree traversal, TDI parsing). Awaiting enrichment.
       enriched:
         description: LLM enrichment complete - physics_domain classified, description generated
-      validated:
-        description: Data access tested successfully with example_shot
+      checked:
+        description: Data access tested successfully - creates CHECKED_VIA link to AccessMethod
       skipped:
         description: Filtered out (duplicate, internal node, or low value)
       failed:

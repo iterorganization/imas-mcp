@@ -8,4 +8,4 @@
 # - scan_directories.py: Fast directory enumeration for discovery pipeline
 # - enrich_directories.py: Directory metadata enrichment
 # - get_user_info.py: User/group information extraction
-# - validate_signals.py: Batched MDSplus signal validation
+# - check_signals.py: Batched MDSplus signal validation

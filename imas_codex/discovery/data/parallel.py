@@ -2,11 +2,11 @@
 Parallel data signal discovery engine with async workers.
 
 Architecture:
-- Three async workers: Discover, Enrich, Validate
+- Three async workers: Discover, Enrich, Check
 - Graph + claimed_at timestamp for coordination (same pattern as wiki/paths)
 - Status transitions:
   - discovered → enriched (LLM classification)
-  - enriched → validated (data access test)
+  - enriched → checked (data access test)
 - Workers claim signals by setting claimed_at, release by clearing it
 - Orphan recovery: signals with claimed_at > 5 min old are reclaimed
 
@@ -18,7 +18,7 @@ Resilience:
 Workflow:
 1. SCAN: Enumerate signals from data sources (MDSplus trees, TDI functions)
 2. ENRICH: LLM classification of physics_domain, description generation
-3. VALIDATE: Test data access with example_shot, verify units/sign conventions
+3. CHECK: Test data access with example_shot, verify units/sign conventions
 """
 
 from __future__ import annotations
@@ -88,13 +88,13 @@ class DataDiscoveryState:
     # Worker stats
     discover_stats: WorkerStats = field(default_factory=WorkerStats)
     enrich_stats: WorkerStats = field(default_factory=WorkerStats)
-    validate_stats: WorkerStats = field(default_factory=WorkerStats)
+    check_stats: WorkerStats = field(default_factory=WorkerStats)
 
     # Control
     stop_requested: bool = False
     discover_idle_count: int = 0
     enrich_idle_count: int = 0
-    validate_idle_count: int = 0
+    check_idle_count: int = 0
 
     @property
     def total_cost(self) -> float:
@@ -117,13 +117,13 @@ class DataDiscoveryState:
         all_idle = (
             self.discover_idle_count >= 3
             and self.enrich_idle_count >= 3
-            and self.validate_idle_count >= 3
+            and self.check_idle_count >= 3
         )
         if all_idle:
             if has_pending_work(self.facility):
                 self.discover_idle_count = 0
                 self.enrich_idle_count = 0
-                self.validate_idle_count = 0
+                self.check_idle_count = 0
                 return False
             return True
         return False
@@ -146,14 +146,14 @@ class DataDiscoveryState:
             return True
         return False
 
-    def should_stop_validating(self) -> bool:
-        """Check if validate workers should stop."""
+    def should_stop_checking(self) -> bool:
+        """Check if check workers should stop."""
         if self.stop_requested:
             return True
-        if self.validate_idle_count >= 3:
+        if self.check_idle_count >= 3:
             # Only stop if enriching is done AND no pending validation work
             enriching_done = self.enrich_idle_count >= 3 or self.budget_exhausted
-            if enriching_done and not has_pending_validate_work(self.facility):
+            if enriching_done and not has_pending_check_work(self.facility):
                 return True
         return False
 
@@ -165,7 +165,7 @@ class DataDiscoveryState:
 
 def has_pending_work(facility: str) -> bool:
     """Check if there's any pending work for this facility."""
-    return has_pending_enrich_work(facility) or has_pending_validate_work(facility)
+    return has_pending_enrich_work(facility) or has_pending_check_work(facility)
 
 
 def has_pending_enrich_work(facility: str) -> bool:
@@ -187,8 +187,12 @@ def has_pending_enrich_work(facility: str) -> bool:
         return False
 
 
-def has_pending_validate_work(facility: str) -> bool:
-    """Check if there are signals awaiting validation."""
+def has_pending_check_work(facility: str) -> bool:
+    """Check if there are epoch-aware signals awaiting check.
+
+    Only counts signals with defined epochs (epoch_id IS NOT NULL) since
+    the check worker requires epoch context to determine valid shot ranges.
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
@@ -196,6 +200,7 @@ def has_pending_validate_work(facility: str) -> bool:
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
                   AND s.claimed_at IS NULL
+                  AND s.epoch_id IS NOT NULL
                 RETURN count(s) > 0 AS has_work
                 """,
                 facility=facility,
@@ -217,16 +222,16 @@ def get_data_discovery_stats(facility: str) -> dict[str, Any]:
                     count(s) AS total,
                     sum(CASE WHEN s.status = $discovered THEN 1 ELSE 0 END) AS discovered,
                     sum(CASE WHEN s.status = $enriched THEN 1 ELSE 0 END) AS enriched,
-                    sum(CASE WHEN s.status = $validated THEN 1 ELSE 0 END) AS validated,
+                    sum(CASE WHEN s.status = $checked THEN 1 ELSE 0 END) AS checked,
                     sum(CASE WHEN s.status = $skipped THEN 1 ELSE 0 END) AS skipped,
                     sum(CASE WHEN s.status = $failed THEN 1 ELSE 0 END) AS failed,
                     sum(CASE WHEN s.status = $discovered AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_enrich,
-                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_validate
+                    sum(CASE WHEN s.status = $enriched AND s.claimed_at IS NULL THEN 1 ELSE 0 END) AS pending_check
                 """,
                 facility=facility,
                 discovered=FacilitySignalStatus.discovered.value,
                 enriched=FacilitySignalStatus.enriched.value,
-                validated=FacilitySignalStatus.validated.value,
+                checked=FacilitySignalStatus.checked.value,
                 skipped=FacilitySignalStatus.skipped.value,
                 failed=FacilitySignalStatus.failed.value,
             )
@@ -298,22 +303,39 @@ def claim_signals_for_enrichment(
         return []
 
 
-def claim_signals_for_validation(
+def claim_signals_for_check(
     facility: str,
     batch_size: int = 5,
 ) -> list[dict]:
-    """Claim a batch of enriched signals for validation."""
+    """Claim a batch of enriched signals for check.
+
+    Only claims signals that have a defined epoch (TreeModelVersion), using a shot
+    from within the epoch's valid range. This ensures we only check signals against
+    shots where they are known to exist.
+    """
     try:
         with GraphClient() as gc:
             result = gc.query(
                 """
+                // Only claim signals with defined epochs
                 MATCH (s:FacilitySignal {facility_id: $facility})
                 WHERE s.status = $enriched
                   AND s.claimed_at IS NULL
-                WITH s LIMIT $batch_size
+                  AND s.epoch_id IS NOT NULL
+                // Join to TreeModelVersion to get valid shot range
+                MATCH (v:TreeModelVersion {id: s.epoch_id})
+                WITH s, v LIMIT $batch_size
                 SET s.claimed_at = datetime()
+                // Derive access_method ID if signal has tree_name (MDSplus)
+                WITH s, v,
+                     CASE WHEN s.tree_name IS NOT NULL
+                          THEN $facility + ':mdsplus:tree_tdi'
+                          ELSE null END AS derived_access_method
+                // Use first_shot from epoch (guaranteed valid)
                 RETURN s.id AS id, s.accessor AS accessor, s.tree_name AS tree_name,
-                       s.example_shot AS example_shot, s.physics_domain AS physics_domain
+                       v.first_shot AS check_shot, s.epoch_id AS epoch_id,
+                       s.physics_domain AS physics_domain,
+                       COALESCE(s.access_method, derived_access_method) AS access_method
                 """,
                 facility=facility,
                 enriched=FacilitySignalStatus.enriched.value,
@@ -321,7 +343,7 @@ def claim_signals_for_validation(
             )
             return list(result) if result else []
     except Exception as e:
-        logger.warning("Could not claim signals for validation: %s", e)
+        logger.warning("Could not claim signals for check: %s", e)
         return []
 
 
@@ -370,10 +392,19 @@ def mark_signals_enriched(
         return 0
 
 
-def mark_signals_validated(
+def mark_signals_checked(
     signals: list[dict],
 ) -> int:
-    """Mark signals as validated."""
+    """Mark signals as checked and create CHECKED_VIA relationship to AccessMethod.
+
+    Creates a CHECKED_VIA relationship from each FacilitySignal to its AccessMethod,
+    indicating that the accessor was tested and works with this access method.
+    This leaves checked signals linked to verified working data access methods.
+
+    Expected signal dict keys:
+    - id: signal ID
+    - access_method: AccessMethod ID (optional, creates CHECKED_VIA if present)
+    """
     if not signals:
         return 0
 
@@ -383,17 +414,21 @@ def mark_signals_validated(
                 """
                 UNWIND $signals AS sig
                 MATCH (s:FacilitySignal {id: sig.id})
-                SET s.status = $validated,
-                    s.validated = true,
-                    s.validated_at = datetime(),
+                SET s.status = $checked,
+                    s.checked = true,
+                    s.checked_at = datetime(),
                     s.claimed_at = null
+                WITH s, sig
+                WHERE sig.access_method IS NOT NULL
+                MATCH (am:AccessMethod {id: sig.access_method})
+                MERGE (s)-[:CHECKED_VIA]->(am)
                 """,
                 signals=signals,
-                validated=FacilitySignalStatus.validated.value,
+                checked=FacilitySignalStatus.checked.value,
             )
         return len(signals)
     except Exception as e:
-        logger.warning("Could not mark signals validated: %s", e)
+        logger.warning("Could not mark signals checked: %s", e)
         return 0
 
 
@@ -1314,46 +1349,55 @@ async def enrich_worker(
                 on_progress("enriched batch", state.enrich_stats, enriched)
 
 
-async def validate_worker(
+async def check_worker(
     state: DataDiscoveryState,
     on_progress: Callable | None = None,
 ) -> None:
-    """Worker that validates signals by testing data access.
+    """Worker that checks signals by testing data access.
 
-    Uses batched SSH execution via run_python_script() to validate multiple
+    Uses batched SSH execution via run_python_script() to check multiple
     signals in a single SSH call, significantly reducing connection overhead.
     """
-    while not state.should_stop_validating():
-        # Claim batch of signals
+    while not state.should_stop_checking():
+        # Claim batch of signals (only those with defined epochs)
         signals = await asyncio.to_thread(
-            claim_signals_for_validation,
+            claim_signals_for_check,
             state.facility,
             batch_size=10,  # Increased batch size - now truly batched
         )
 
         if not signals:
-            state.validate_idle_count += 1
+            state.check_idle_count += 1
             if on_progress:
-                on_progress("idle", state.validate_stats)
+                on_progress("idle", state.check_stats)
             await asyncio.sleep(1.0)
             continue
 
-        state.validate_idle_count = 0
+        state.check_idle_count = 0
 
         if on_progress:
-            on_progress("validating batch", state.validate_stats)
+            on_progress("checking batch", state.check_stats)
 
-        # Prepare batch for remote validation script
+        # Prepare batch for remote check script
+        # Each signal comes with check_shot from its epoch (guaranteed valid)
+        # Also build a map of signal ID -> access_method for CHECKED_VIA relationship
         batch_input = []
+        signal_access_methods: dict[str, str | None] = {}
         for signal in signals:
-            shot = signal.get("example_shot") or state.reference_shot
+            # Use epoch-derived check_shot (from TreeModelVersion.first_shot)
+            shot = signal.get("check_shot")
             if not shot:
+                # Should not happen with epoch-aware query, but be defensive
+                logger.warning("Signal %s has no check_shot", signal["id"])
                 await asyncio.to_thread(release_signal_claim, signal["id"])
                 continue
 
+            signal_id = signal["id"]
+            signal_access_methods[signal_id] = signal.get("access_method")
+
             batch_input.append(
                 {
-                    "id": signal["id"],
+                    "id": signal_id,
                     "accessor": signal["accessor"],
                     "tree_name": signal.get("tree_name", "results"),
                     "shot": shot,
@@ -1363,13 +1407,13 @@ async def validate_worker(
         if not batch_input:
             continue
 
-        # Execute batched validation via remote script (single SSH call)
-        validated = []
+        # Execute batched check via remote script (single SSH call)
+        checked = []
         failed = []
         try:
             output = await asyncio.to_thread(
                 run_python_script,
-                "validate_signals.py",
+                "check_signals.py",
                 {"signals": batch_input, "timeout_per_signal": 10},
                 ssh_host=state.ssh_host,
                 timeout=30 + len(batch_input) * 10,  # Scale timeout with batch size
@@ -1383,23 +1427,24 @@ async def validate_worker(
                 for result in results:
                     signal_id = result.get("id")
                     if result.get("success"):
-                        validated.append(
+                        checked.append(
                             {
                                 "id": signal_id,
                                 "shape": result.get("shape"),
                                 "dtype": result.get("dtype"),
+                                "access_method": signal_access_methods.get(signal_id),
                             }
                         )
                     else:
                         failed.append(
                             {
                                 "id": signal_id,
-                                "error": result.get("error", "validation failed"),
+                                "error": result.get("error", "check failed"),
                             }
                         )
 
             except (json.JSONDecodeError, KeyError) as e:
-                logger.warning("Failed to parse validation response: %s", e)
+                logger.warning("Failed to parse check response: %s", e)
                 # Release all claims on parse error
                 for sig in batch_input:
                     await asyncio.to_thread(release_signal_claim, sig["id"])
@@ -1407,14 +1452,14 @@ async def validate_worker(
 
         except subprocess.CalledProcessError as e:
             logger.warning(
-                "Validation script failed: %s", e.stderr[:200] if e.stderr else str(e)
+                "Check script failed: %s", e.stderr[:200] if e.stderr else str(e)
             )
             # Release all claims on script error
             for sig in batch_input:
                 await asyncio.to_thread(release_signal_claim, sig["id"])
             continue
         except Exception as e:
-            logger.warning("Failed to run validation: %s", e)
+            logger.warning("Failed to run check: %s", e)
             for sig in batch_input:
                 await asyncio.to_thread(release_signal_claim, sig["id"])
             continue
@@ -1428,17 +1473,17 @@ async def validate_worker(
                 FacilitySignalStatus.enriched.value,
             )
 
-        # Update graph with validated signals
-        if validated:
-            await asyncio.to_thread(mark_signals_validated, validated)
-            state.validate_stats.processed += len(validated)
+        # Update graph with checked signals
+        if checked:
+            await asyncio.to_thread(mark_signals_checked, checked)
+            state.check_stats.processed += len(checked)
 
             if on_progress:
                 results = [
                     {"id": v["id"], "success": True, "shape": v.get("shape")}
-                    for v in validated
+                    for v in checked
                 ]
-                on_progress("validated batch", state.validate_stats, results)
+                on_progress("checked batch", state.check_stats, results)
 
 
 # =============================================================================
@@ -1456,13 +1501,13 @@ async def run_parallel_data_discovery(
     signal_limit: int | None = None,
     focus: str | None = None,
     num_enrich_workers: int = 2,
-    num_validate_workers: int = 1,
+    num_check_workers: int = 1,
     discover_only: bool = False,
     enrich_only: bool = False,
     force: bool = False,
     on_discover_progress: Callable | None = None,
     on_enrich_progress: Callable | None = None,
-    on_validate_progress: Callable | None = None,
+    on_check_progress: Callable | None = None,
     on_worker_status: Callable[[SupervisedWorkerGroup], None] | None = None,
 ) -> dict[str, Any]:
     """Run parallel data discovery with async workers.
@@ -1477,7 +1522,7 @@ async def run_parallel_data_discovery(
         signal_limit: Maximum signals to process
         focus: Focus area for discovery
         num_enrich_workers: Number of enrich workers
-        num_validate_workers: Number of validate workers
+        num_check_workers: Number of check workers
         discover_only: Only discover, don't enrich
         enrich_only: Only enrich discovered signals
         force: Re-scan trees even if epochs exist (merges, doesn't reset)
@@ -1551,7 +1596,7 @@ async def run_parallel_data_discovery(
         return {
             "discovered": state.discover_stats.processed,
             "enriched": 0,
-            "validated": 0,
+            "checked": 0,
             "cost": 0.0,
             "elapsed_seconds": time.time() - start_time,
         }
@@ -1573,19 +1618,19 @@ async def run_parallel_data_discovery(
             )
         )
 
-    # Start validate workers (unless enrich_only)
+    # Start check workers (unless enrich_only)
     if not enrich_only:
-        for i in range(num_validate_workers):
-            worker_name = f"validate_worker_{i}"
+        for i in range(num_check_workers):
+            worker_name = f"check_worker_{i}"
             status = worker_group.create_status(worker_name)
             worker_group.add_task(
                 asyncio.create_task(
                     supervised_worker(
-                        validate_worker,
+                        check_worker,
                         worker_name,
                         state,
-                        state.should_stop_validating,
-                        on_progress=on_validate_progress,
+                        state.should_stop_checking,
+                        on_progress=on_check_progress,
                         status_tracker=status,
                     )
                 )
@@ -1611,10 +1656,10 @@ async def run_parallel_data_discovery(
     return {
         "discovered": state.discover_stats.processed,
         "enriched": state.enrich_stats.processed,
-        "validated": state.validate_stats.processed,
+        "checked": state.check_stats.processed,
         "cost": state.enrich_stats.cost,
         "elapsed_seconds": elapsed,
         "discover_rate": state.discover_stats.processed / elapsed if elapsed > 0 else 0,
         "enrich_rate": state.enrich_stats.processed / elapsed if elapsed > 0 else 0,
-        "validate_rate": state.validate_stats.processed / elapsed if elapsed > 0 else 0,
+        "check_rate": state.check_stats.processed / elapsed if elapsed > 0 else 0,
     }

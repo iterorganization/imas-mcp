@@ -5,9 +5,9 @@ units, and sign conventions. Supports multiple data formats used by the fusion
 community.
 
 Architecture:
-- Parallel async workers: Discover, Enrich, Validate
+- Parallel async workers: Discover, Enrich, Check
 - Graph as coordination (claimed_at pattern from wiki/paths)
-- Status transitions: discovered → enriched → validated
+- Status transitions: discovered → enriched → checked
 
 Supported data sources:
 - MDSplus: tree traversal, TDI function introspection

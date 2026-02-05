@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Remote signal validation script.
+"""Remote signal check script.
 
-This script is executed on remote facilities via SSH. It validates MDSplus
+This script is executed on remote facilities via SSH. It checks MDSplus
 signals by testing data access and returns structured results for the batch.
 
 Requirements:
@@ -9,7 +9,7 @@ Requirements:
 - MDSplus Python bindings
 
 Usage:
-    echo '{"signals": [...]}' | python3 validate_signals.py
+    echo '{"signals": [...]}' | python3 check_signals.py
 
 Input (JSON on stdin):
     {

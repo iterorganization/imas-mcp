@@ -10,7 +10,7 @@ Design principles (matching wiki and paths progress displays):
 Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
 - SCAN: MDSplus tree traversal, TDI introspection
 - ENRICH: LLM classification of physics domain, description
-- VALIDATE: Test data access, verify units/sign
+- CHECK: Test data access, verify units/sign
 
 Uses common progress infrastructure from base.progress module.
 """
@@ -75,8 +75,8 @@ class EnrichItem:
 
 
 @dataclass
-class ValidateItem:
-    """Current validate activity."""
+class CheckItem:
+    """Current check activity."""
 
     signal_id: str
     shot: int | None = None
@@ -110,22 +110,22 @@ class DataProgressState:
     total_signals: int = 0  # All FacilitySignal nodes for this facility
     signals_discovered: int = 0
     signals_enriched: int = 0
-    signals_validated: int = 0
+    signals_checked: int = 0
     signals_skipped: int = 0
     signals_failed: int = 0
 
     # Pending work counts
     pending_enrich: int = 0
-    pending_validate: int = 0
+    pending_check: int = 0
 
     # This run stats
     run_discovered: int = 0
     run_enriched: int = 0
-    run_validated: int = 0
+    run_checked: int = 0
     _run_enrich_cost: float = 0.0
     discover_rate: float | None = None
     enrich_rate: float | None = None
-    validate_rate: float | None = None
+    check_rate: float | None = None
 
     # Accumulated facility cost (from graph)
     accumulated_cost: float = 0.0
@@ -133,11 +133,11 @@ class DataProgressState:
     # Current items
     current_scan: ScanItem | None = None
     current_enrich: EnrichItem | None = None
-    current_validate: ValidateItem | None = None
+    current_check: CheckItem | None = None
     scan_processing: bool = False
     current_tree: str | None = None  # Currently scanning tree
     enrich_processing: bool = False
-    validate_processing: bool = False
+    check_processing: bool = False
 
     # Streaming queues
     scan_queue: StreamQueue = field(
@@ -150,7 +150,7 @@ class DataProgressState:
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
     )
-    validate_queue: StreamQueue = field(
+    check_queue: StreamQueue = field(
         default_factory=lambda: StreamQueue(
             rate=0.5, max_rate=2.0, min_display_time=0.4
         )
@@ -220,13 +220,13 @@ class DataProgressDisplay:
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  SCAN   ━━━━━━━━━━━━━━━━━━━━━━━━━━━────────────────────────────   2944        83.4/s             │
     │  ENRICH ━━━━━━━━━━━━━━━━━━━━━━━━──────────────────────────────       5   0%    0.0/s             │
-    │  VALIDATE━━━━━━━━─────────────────────────────────────────────       0   0%    0.0/s             │
+    │  CHECK━━━━━━━━─────────────────────────────────────────────       0   0%    0.0/s             │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  SCAN   \\HYBRID::PID_I                                                                          │
     │          tree=hybrid  2944 signals discovered                                                    │
     │  ENRICH tcv:equilibrium/plasma_current                                                           │
     │          equilibrium  Main plasma current from LIUQE equilibrium code                            │
-    │  VALIDATE shot=85000 testing...                                                                  │
+    │  CHECK shot=85000 testing...                                                                  │
     │          tcv:equilibrium/elongation                                                              │
     ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
     │  TIME   │━━━━━━━━━━━━━━━━━━━━━━│  6m 50s                                                         │
@@ -291,7 +291,7 @@ class DataProgressDisplay:
         task_groups: dict[str, list[tuple[str, WorkerState]]] = {
             "scan": [],
             "enrich": [],
-            "validate": [],
+            "check": [],
         }
 
         for name, status in wg.workers.items():
@@ -299,8 +299,8 @@ class DataProgressDisplay:
                 task_groups["scan"].append((name, status.state))
             elif "enrich" in name:
                 task_groups["enrich"].append((name, status.state))
-            elif "validate" in name:
-                task_groups["validate"].append((name, status.state))
+            elif "check" in name:
+                task_groups["check"].append((name, status.state))
 
         for task, workers in task_groups.items():
             if not workers:
@@ -345,7 +345,7 @@ class DataProgressDisplay:
         Progress semantics:
         - SCAN: Shows total signals discovered. Progress bar fills as scan completes.
         - ENRICH: Shows enriched count relative to total signals discovered.
-        - VALIDATE: Shows validated count relative to enriched signals.
+        - CHECK: Shows checked count relative to enriched signals.
 
         Note: total_signals is the high water mark (all signals ever discovered),
         not the current count in 'discovered' status which decreases as signals
@@ -356,8 +356,8 @@ class DataProgressDisplay:
 
         # Total signals in graph is our TEC (total eventually consistent)
         total = max(self.state.total_signals, 1)
-        enriched = self.state.signals_enriched + self.state.signals_validated
-        validated = self.state.signals_validated
+        enriched = self.state.signals_enriched + self.state.signals_checked
+        validated = self.state.signals_checked
 
         # SCAN row - shows total signals discovered
         # Progress = (enriched + validated) / total when scan is done,
@@ -393,23 +393,23 @@ class DataProgressDisplay:
                 section.append(f" {self.state.enrich_rate:>5.1f}/s", style="dim")
         section.append("\n")
 
-        # VALIDATE row - shows validated relative to enriched
+        # CHECK row - shows validated relative to enriched
         # Denominator is (enriched + validated) = signals that passed enrichment
         validate_denom = max(enriched, 1)
         validate_pct = validated / validate_denom * 100 if validate_denom > 0 else 0
 
         if self.state.discover_only or self.state.enrich_only:
-            section.append("  VALIDATE", style="dim")
+            section.append("  CHECK", style="dim")
             section.append("─" * bar_width, style="dim")
             section.append(" disabled", style="dim italic")
         else:
-            section.append("  VALIDATE", style="bold magenta")
+            section.append("  CHECK", style="bold magenta")
             ratio = min(validated / validate_denom, 1.0) if validate_denom > 0 else 0
             section.append(make_bar(ratio, bar_width), style="magenta")
             section.append(f" {validated:>6,}", style="bold")
             section.append(f" {validate_pct:>3.0f}%", style="cyan")
-            if self.state.validate_rate and self.state.validate_rate > 0:
-                section.append(f" {self.state.validate_rate:>5.1f}/s", style="dim")
+            if self.state.check_rate and self.state.check_rate > 0:
+                section.append(f" {self.state.check_rate:>5.1f}/s", style="dim")
 
         return section
 
@@ -502,10 +502,10 @@ class DataProgressDisplay:
                 section.append("           ", style="dim")
             section.append("\n")
 
-        # VALIDATE section (2 lines)
+        # CHECK section (2 lines)
         if not self.state.discover_only and not self.state.enrich_only:
-            validate = self.state.current_validate
-            section.append("  VALIDATE ", style="bold magenta")
+            validate = self.state.current_check
+            section.append("  CHECK ", style="bold magenta")
             if validate:
                 shot_str = f"shot={validate.shot}" if validate.shot else ""
                 if validate.success is True:
@@ -517,11 +517,11 @@ class DataProgressDisplay:
                     section.append(f"{shot_str} testing...", style="cyan italic")
                 section.append("\n")
                 # Second line: signal ID
-                section.append("           ", style="dim")  # 11 spaces for VALIDATE
+                section.append("           ", style="dim")  # 11 spaces for CHECK
                 section.append(
                     clip_text(validate.signal_id, content_width - 11), style="dim"
                 )
-            elif self.state.validate_processing:
+            elif self.state.check_processing:
                 section.append("testing...", style="cyan italic")
                 section.append("\n")
                 section.append("           ", style="dim")
@@ -569,7 +569,7 @@ class DataProgressDisplay:
             # Cost accumulates from enrichment, so estimate based on signals remaining
             total_cost = self.state.accumulated_cost + self.state.run_cost
             signals_enriched = self.state.run_enriched
-            signals_remaining = self.state.pending_enrich + self.state.pending_validate
+            signals_remaining = self.state.pending_enrich + self.state.pending_check
 
             # Compute ETC (Estimated Total Cost)
             etc = total_cost
@@ -598,8 +598,8 @@ class DataProgressDisplay:
 
         # STATS row - show counts and pending work
         total = self.state.total_signals
-        enriched = self.state.signals_enriched + self.state.signals_validated
-        validated = self.state.signals_validated
+        enriched = self.state.signals_enriched + self.state.signals_checked
+        validated = self.state.signals_checked
 
         section.append("  STATS ", style="bold magenta")
         section.append(f"discovered={total}", style="blue")
@@ -610,8 +610,8 @@ class DataProgressDisplay:
         pending_parts = []
         if self.state.pending_enrich > 0:
             pending_parts.append(f"enrich:{self.state.pending_enrich}")
-        if self.state.pending_validate > 0:
-            pending_parts.append(f"validate:{self.state.pending_validate}")
+        if self.state.pending_check > 0:
+            pending_parts.append(f"validate:{self.state.pending_check}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
 
@@ -703,8 +703,8 @@ class DataProgressDisplay:
                 description=item.get("description", ""),
             )
 
-        if item := self.state.validate_queue.pop():
-            self.state.current_validate = ValidateItem(
+        if item := self.state.check_queue.pop():
+            self.state.current_check = CheckItem(
                 signal_id=item.get("signal_id", ""),
                 shot=item.get("shot"),
                 success=item.get("success"),
@@ -798,20 +798,20 @@ class DataProgressDisplay:
 
         self._refresh()
 
-    def update_validate(
+    def update_check(
         self,
         message: str,
         stats: WorkerStats,
         results: list[dict] | None = None,
     ) -> None:
         """Update validate worker state."""
-        self.state.run_validated = stats.processed
-        self.state.validate_rate = stats.rate
+        self.state.run_checked = stats.processed
+        self.state.check_rate = stats.rate
 
         if "testing" in message.lower() or "validating" in message.lower():
-            self.state.validate_processing = True
+            self.state.check_processing = True
         else:
-            self.state.validate_processing = False
+            self.state.check_processing = False
 
         if results:
             items = [
@@ -826,7 +826,7 @@ class DataProgressDisplay:
             ]
             max_rate = 2.0
             display_rate = min(stats.rate, max_rate) if stats.rate else 0.5
-            self.state.validate_queue.add(items, display_rate)
+            self.state.check_queue.add(items, display_rate)
 
         self._refresh()
 
@@ -835,11 +835,11 @@ class DataProgressDisplay:
         total_signals: int = 0,
         signals_discovered: int = 0,
         signals_enriched: int = 0,
-        signals_validated: int = 0,
+        signals_checked: int = 0,
         signals_skipped: int = 0,
         signals_failed: int = 0,
         pending_enrich: int = 0,
-        pending_validate: int = 0,
+        pending_check: int = 0,
         accumulated_cost: float = 0.0,
         **kwargs,
     ) -> None:
@@ -847,11 +847,11 @@ class DataProgressDisplay:
         self.state.total_signals = total_signals
         self.state.signals_discovered = signals_discovered
         self.state.signals_enriched = signals_enriched
-        self.state.signals_validated = signals_validated
+        self.state.signals_checked = signals_checked
         self.state.signals_skipped = signals_skipped
         self.state.signals_failed = signals_failed
         self.state.pending_enrich = pending_enrich
-        self.state.pending_validate = pending_validate
+        self.state.pending_check = pending_check
         self.state.accumulated_cost = accumulated_cost
         self._refresh()
 
@@ -877,8 +877,8 @@ class DataProgressDisplay:
         summary = Text()
 
         total = self.state.total_signals
-        enriched = self.state.signals_enriched + self.state.signals_validated
-        validated = self.state.signals_validated
+        enriched = self.state.signals_enriched + self.state.signals_checked
+        validated = self.state.signals_checked
 
         # SCAN stats
         summary.append("  SCAN   ", style="bold blue")
@@ -896,12 +896,12 @@ class DataProgressDisplay:
             summary.append(f"  {self.state.enrich_rate:.1f}/s", style="dim")
         summary.append("\n")
 
-        # VALIDATE stats
-        summary.append("  VALIDATE", style="bold magenta")
+        # CHECK stats
+        summary.append("  CHECK", style="bold magenta")
         summary.append(f" validated={validated:,}", style="magenta")
         summary.append(f"  failed={self.state.signals_failed:,}", style="red")
-        if self.state.validate_rate:
-            summary.append(f"  {self.state.validate_rate:.1f}/s", style="dim")
+        if self.state.check_rate:
+            summary.append(f"  {self.state.check_rate:.1f}/s", style="dim")
         summary.append("\n")
 
         # USAGE stats

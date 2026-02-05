@@ -1785,10 +1785,10 @@ def discover_wiki(
     help="Number of parallel enrich workers (default: 2)",
 )
 @click.option(
-    "--validate-workers",
+    "--check-workers",
     type=int,
     default=1,
-    help="Number of parallel validate workers (default: 1)",
+    help="Number of parallel check workers (default: 1)",
 )
 @click.option(
     "--force",
@@ -1813,7 +1813,7 @@ def discover_signals(
     scan_only: bool,
     enrich_only: bool,
     enrich_workers: int,
-    validate_workers: int,
+    check_workers: int,
     force: bool,
     no_rich: bool,
 ) -> None:
@@ -1837,7 +1837,7 @@ def discover_signals(
     Pipeline stages:
       SCAN: Detect epochs, enumerate signals from data sources
       ENRICH: LLM classification of physics_domain, description generation
-      VALIDATE: Test data access with example_shot, verify units
+      CHECK: Test data access with example_shot, verify units
 
     \b
     Examples:
@@ -1935,7 +1935,7 @@ def discover_signals(
             f"[dim]Existing signals: {stats.get('total', 0)} "
             f"(discovered={stats.get('discovered', 0)}, "
             f"enriched={stats.get('enriched', 0)}, "
-            f"validated={stats.get('validated', 0)})[/dim]"
+            f"checked={stats.get('validated', 0)})[/dim]"
         )
 
     # Display configuration
@@ -1957,7 +1957,7 @@ def discover_signals(
         worker_parts.append("1 scan")
     if not scan_only:
         worker_parts.append(f"{enrich_workers} enrich")
-        worker_parts.append(f"{validate_workers} validate")
+        worker_parts.append(f"{check_workers} validate")
     log_print(f"Workers: {', '.join(worker_parts)}")
     if force:
         log_print("[yellow]Force mode: re-scanning all trees[/yellow]")
@@ -1986,13 +1986,11 @@ def discover_signals(
                                     total_signals=graph_stats.get("total", 0),
                                     signals_discovered=graph_stats.get("discovered", 0),
                                     signals_enriched=graph_stats.get("enriched", 0),
-                                    signals_validated=graph_stats.get("validated", 0),
+                                    signals_checked=graph_stats.get("validated", 0),
                                     signals_skipped=graph_stats.get("skipped", 0),
                                     signals_failed=graph_stats.get("failed", 0),
                                     pending_enrich=graph_stats.get("pending_enrich", 0),
-                                    pending_validate=graph_stats.get(
-                                        "pending_validate", 0
-                                    ),
+                                    pending_check=graph_stats.get("pending_check", 0),
                                 )
                             except asyncio.CancelledError:
                                 raise
@@ -2019,7 +2017,7 @@ def discover_signals(
                     def on_enrich(msg, stats, results=None):
                         display.update_enrich(msg, stats, results)
 
-                    def on_validate(msg, stats, results=None):
+                    def on_check(msg, stats, results=None):
                         display.update_validate(msg, stats, results)
 
                     def on_worker_status(worker_group):
@@ -2036,13 +2034,13 @@ def discover_signals(
                             signal_limit=signal_limit,
                             focus=focus,
                             num_enrich_workers=enrich_workers,
-                            num_validate_workers=validate_workers,
+                            num_check_workers=check_workers,
                             discover_only=scan_only,
                             enrich_only=enrich_only,
                             force=force,
                             on_discover_progress=on_discover,
                             on_enrich_progress=on_enrich,
-                            on_validate_progress=on_validate,
+                            on_check_progress=on_check,
                             on_worker_status=on_worker_status,
                         )
                     finally:
@@ -2073,11 +2071,9 @@ def discover_signals(
                             f"cost=${stats.cost:.3f})"
                         )
 
-                def log_on_validate(msg, stats, results=None):
+                def log_on_check(msg, stats, results=None):
                     if msg != "idle":
-                        data_logger.info(
-                            f"VALIDATE: {msg} (processed={stats.processed})"
-                        )
+                        data_logger.info(f"CHECK: {msg} (processed={stats.processed})")
 
                 result = await run_parallel_data_discovery(
                     facility=facility,
@@ -2089,13 +2085,13 @@ def discover_signals(
                     signal_limit=signal_limit,
                     focus=focus,
                     num_enrich_workers=enrich_workers,
-                    num_validate_workers=validate_workers,
+                    num_check_workers=check_workers,
                     discover_only=scan_only,
                     enrich_only=enrich_only,
                     force=force,
                     on_discover_progress=log_on_discover,
                     on_enrich_progress=log_on_enrich,
-                    on_validate_progress=log_on_validate,
+                    on_check_progress=log_on_check,
                 )
                 return result
 
@@ -2106,7 +2102,7 @@ def discover_signals(
             data_logger.info(
                 f"Discovery complete: discovered={result.get('discovered', 0)}, "
                 f"enriched={result.get('enriched', 0)}, "
-                f"validated={result.get('validated', 0)}, "
+                f"checked={result.get('validated', 0)}, "
                 f"cost=${result.get('cost', 0):.3f}, "
                 f"elapsed={result.get('elapsed_seconds', 0):.1f}s"
             )
