@@ -1097,6 +1097,12 @@ def discover_code(facility: str, dry_run: bool) -> None:
     default=2,
     help="Number of parallel ingest workers (default: 2)",
 )
+@click.option(
+    "--discover-artifacts",
+    is_flag=True,
+    default=False,
+    help="Force bulk artifact discovery via API (useful when pages already exist)",
+)
 def discover_wiki(
     facility: str,
     source: str | None,
@@ -1112,6 +1118,7 @@ def discover_wiki(
     force_discovery: bool,
     score_workers: int,
     ingest_workers: int,
+    discover_artifacts: bool,
 ) -> None:
     """Discover wiki pages and build documentation graph.
 
@@ -1369,6 +1376,54 @@ def discover_wiki(
 
             # Since bulk discovery ran, don't run it again in run_parallel_wiki_discovery
             should_bulk_discover = False
+
+        # Bulk artifact discovery (separate from page discovery)
+        # Runs if explicitly requested or if page discovery ran
+        should_discover_artifacts = (
+            discover_artifacts or (bulk_discovered > 0)
+        ) and not score_only
+        if should_discover_artifacts and site_type == "mediawiki":
+            from imas_codex.discovery.wiki.parallel import bulk_discover_artifacts
+
+            log_print("[cyan]Discovering artifacts via API...[/cyan]")
+
+            def artifact_progress(msg, _):
+                if use_rich:
+                    log_print(f"[dim]Artifact discovery: {msg}[/dim]")
+                else:
+                    wiki_logger.info(f"ARTIFACTS: {msg}")
+
+            # Get wiki client for Tequila auth
+            wiki_client = None
+            if auth_type == "tequila" and credential_service:
+                from imas_codex.discovery.wiki.mediawiki import MediaWikiClient
+
+                wiki_client = MediaWikiClient(
+                    base_url=base_url,
+                    credential_service=credential_service,
+                    verify_ssl=False,
+                )
+                wiki_client.authenticate()
+
+            artifacts_discovered = bulk_discover_artifacts(
+                facility=facility,
+                base_url=base_url,
+                site_type=site_type,
+                ssh_host=ssh_host,
+                wiki_client=wiki_client,
+                credential_service=credential_service,
+                on_progress=artifact_progress,
+            )
+
+            if wiki_client:
+                wiki_client.close()
+
+            if artifacts_discovered > 0:
+                log_print(
+                    f"[green]Discovered {artifacts_discovered:,} artifacts[/green]"
+                )
+            else:
+                log_print("[yellow]No artifacts discovered via API[/yellow]")
 
         # Display worker configuration (above the progress panel)
         # Note: With bulk discovery, scan workers aren't used - show actual workers
