@@ -115,6 +115,8 @@ class MediaWikiClient:
             timeout: Request timeout in seconds
             verify_ssl: Whether to verify SSL certificates
         """
+        import threading
+
         self.base_url = base_url.rstrip("/")
         self.credential_service = credential_service
         self.timeout = timeout
@@ -125,6 +127,9 @@ class MediaWikiClient:
         self._last_request_time = 0.0
         self._authenticated = False
         self._redirect_retry_attempted = False  # Track retry to prevent recursion
+        # Reentrant lock for session operations (requests.Session is not thread-safe)
+        # Uses RLock so get_page() can call _authenticate_impl() while holding the lock
+        self._lock = threading.RLock()
 
     def _get_session(self) -> requests.Session:
         """Get or create requests session with restored cookies.
@@ -289,6 +294,7 @@ class MediaWikiClient:
         """Authenticate with Tequila SSO.
 
         Attempts to use existing session, falls back to fresh login.
+        Thread-safe: uses lock to prevent concurrent authentication races.
 
         Args:
             force: Force re-authentication even if session exists
@@ -296,11 +302,21 @@ class MediaWikiClient:
         Returns:
             True if authenticated successfully
         """
-        session = self._get_session()
-
-        # Check if existing session is valid
+        # Quick check without lock for already-authenticated case
         if not force and self._authenticated:
             return True
+
+        # All other operations need the lock (session is not thread-safe)
+        with self._lock:
+            # Double-check after acquiring lock
+            if not force and self._authenticated:
+                return True
+
+            return self._authenticate_impl(force)
+
+    def _authenticate_impl(self, force: bool) -> bool:
+        """Internal authentication implementation (must be called with lock held)."""
+        session = self._get_session()
 
         if not force:
             try:
@@ -320,9 +336,14 @@ class MediaWikiClient:
                     return True
 
                 logger.debug("Session expired, need to re-authenticate")
+                # Clear stale cookies to prevent redirect loops during fresh auth
+                session.cookies.clear()
+                self._creds.delete_session(self.credential_service)
 
             except Exception as e:
                 logger.debug("Session check failed: %s", e)
+                # Clear cookies on failure to ensure clean slate
+                session.cookies.clear()
 
         # Need to authenticate with credentials
         username, password = require_credentials(self.credential_service)
@@ -432,6 +453,8 @@ class MediaWikiClient:
     def get_page(self, page_name: str) -> MediaWikiPage | None:
         """Fetch a MediaWiki page.
 
+        Thread-safe: uses lock to prevent concurrent session access.
+
         Args:
             page_name: Page name (e.g., "Portal:TCV", "Thomson/DDJ")
 
@@ -443,7 +466,6 @@ class MediaWikiClient:
                 return None
 
         self._rate_limit()
-        session = self._get_session()
 
         # URL-encode page name (preserve slashes for subpages)
         from urllib.parse import quote
@@ -451,21 +473,10 @@ class MediaWikiClient:
         encoded_name = quote(page_name, safe="/")
         url = f"{self.base_url}/{encoded_name}"
 
-        try:
-            response = session.get(
-                url,
-                timeout=self.timeout,
-                verify=self.verify_ssl,
-                allow_redirects=True,
-            )
-
-            # Check if session expired mid-request
-            if self._is_tequila_redirect(response):
-                logger.warning("Session expired during request, re-authenticating")
-                self._authenticated = False
-                if not self.authenticate(force=True):
-                    return None
-                # Retry request
+        # All session operations need the lock (not thread-safe)
+        with self._lock:
+            session = self._get_session()
+            try:
                 response = session.get(
                     url,
                     timeout=self.timeout,
@@ -473,80 +484,95 @@ class MediaWikiClient:
                     allow_redirects=True,
                 )
 
-            response.raise_for_status()
-
-            # Extract title
-            title_match = re.search(r"<title>([^<]+)</title>", response.text)
-            title = (
-                title_match.group(1).replace(" - SPCwiki", "")
-                if title_match
-                else page_name
-            )
-
-            # Extract text content (strip tags for entity extraction)
-            text_content = re.sub(r"<[^>]+>", " ", response.text)
-            text_content = re.sub(r"\s+", " ", text_content)
-
-            return MediaWikiPage(
-                title=title,
-                url=url,
-                content_html=response.text,
-                content_text=text_content,
-            )
-
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 404:
-                logger.debug("Page not found: %s", page_name)
-            else:
-                logger.error("HTTP error fetching %s: %s", page_name, e)
-            return None
-        except requests.TooManyRedirects:
-            # Redirect loop - session cookies are likely corrupt
-            # Clear cookies and force re-authentication on next request
-            logger.warning(
-                "Redirect loop for %s - clearing session and retrying", page_name
-            )
-            self._authenticated = False
-            session.cookies.clear()
-            # Clear cached session from keyring
-            self._creds.delete_session(self.credential_service)
-            # Retry once with fresh auth
-            if self.authenticate(force=True):
-                try:
+                # Check if session expired mid-request
+                if self._is_tequila_redirect(response):
+                    logger.warning("Session expired during request, re-authenticating")
+                    self._authenticated = False
+                    # Note: authenticate() will acquire lock again, but we support reentrant calls
+                    if not self._authenticate_impl(force=True):
+                        return None
+                    # Retry request
                     response = session.get(
                         url,
                         timeout=self.timeout,
                         verify=self.verify_ssl,
                         allow_redirects=True,
                     )
-                    if not self._is_tequila_redirect(response):
-                        response.raise_for_status()
-                        title_match = re.search(
-                            r"<title>([^<]+)</title>", response.text
+
+                response.raise_for_status()
+
+                # Extract title
+                title_match = re.search(r"<title>([^<]+)</title>", response.text)
+                title = (
+                    title_match.group(1).replace(" - SPCwiki", "")
+                    if title_match
+                    else page_name
+                )
+
+                # Extract text content (strip tags for entity extraction)
+                text_content = re.sub(r"<[^>]+>", " ", response.text)
+                text_content = re.sub(r"\s+", " ", text_content)
+
+                return MediaWikiPage(
+                    title=title,
+                    url=url,
+                    content_html=response.text,
+                    content_text=text_content,
+                )
+
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 404:
+                    logger.debug("Page not found: %s", page_name)
+                else:
+                    logger.error("HTTP error fetching %s: %s", page_name, e)
+                return None
+            except requests.TooManyRedirects:
+                # Redirect loop - session cookies are likely corrupt
+                # Clear cookies and force re-authentication on next request
+                logger.warning(
+                    "Redirect loop for %s - clearing session and retrying", page_name
+                )
+                self._authenticated = False
+                session.cookies.clear()
+                # Clear cached session from keyring
+                self._creds.delete_session(self.credential_service)
+                # Retry once with fresh auth
+                if self._authenticate_impl(force=True):
+                    try:
+                        response = session.get(
+                            url,
+                            timeout=self.timeout,
+                            verify=self.verify_ssl,
+                            allow_redirects=True,
                         )
-                        title = (
-                            title_match.group(1).replace(" - SPCwiki", "")
-                            if title_match
-                            else page_name
+                        if not self._is_tequila_redirect(response):
+                            response.raise_for_status()
+                            title_match = re.search(
+                                r"<title>([^<]+)</title>", response.text
+                            )
+                            title = (
+                                title_match.group(1).replace(" - SPCwiki", "")
+                                if title_match
+                                else page_name
+                            )
+                            text_content = re.sub(r"<[^>]+>", " ", response.text)
+                            text_content = re.sub(r"\s+", " ", text_content)
+                            return MediaWikiPage(
+                                title=title,
+                                url=url,
+                                content_html=response.text,
+                                content_text=text_content,
+                            )
+                    except Exception as retry_e:
+                        logger.error(
+                            "Retry after redirect loop failed for %s: %s",
+                            page_name,
+                            retry_e,
                         )
-                        text_content = re.sub(r"<[^>]+>", " ", response.text)
-                        text_content = re.sub(r"\s+", " ", text_content)
-                        return MediaWikiPage(
-                            title=title,
-                            url=url,
-                            content_html=response.text,
-                            content_text=text_content,
-                        )
-                except Exception as retry_e:
-                    logger.error(
-                        "Retry after redirect loop failed for %s: %s",
-                        page_name,
-                        retry_e,
-                    )
-            return None
-        except requests.RequestException as e:
-            logger.error("Request failed for %s: %s", page_name, e)
-            return None
+                return None
+            except requests.RequestException as e:
+                logger.error("Request failed for %s: %s", page_name, e)
+                return None
 
     def get_page_links(self, page_name: str) -> list[str]:
         """Extract internal wiki links from a page.
