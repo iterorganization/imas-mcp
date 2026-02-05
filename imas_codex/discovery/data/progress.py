@@ -347,7 +347,7 @@ class DataProgressDisplay:
         # SCAN row
         scan_total = max(self.state.total_signals, self.state.signals_discovered, 1)
         discovered = self.state.signals_discovered
-        section.append("  SCAN   ", style="bold blue")
+        section.append("  SCAN    ", style="bold blue")
         ratio = min(discovered / scan_total, 1.0) if scan_total > 0 else 0
         section.append(make_bar(ratio, bar_width), style="blue")
         section.append(f" {discovered:>6,}", style="bold")
@@ -362,11 +362,11 @@ class DataProgressDisplay:
         enrich_pct = enriched / enrich_total * 100 if enrich_total > 0 else 0
 
         if self.state.discover_only:
-            section.append("  ENRICH ", style="dim")
+            section.append("  ENRICH  ", style="dim")
             section.append("─" * bar_width, style="dim")
-            section.append("    disabled", style="dim italic")
+            section.append("   disabled", style="dim italic")
         else:
-            section.append("  ENRICH ", style="bold green")
+            section.append("  ENRICH  ", style="bold green")
             ratio = min(enriched / enrich_total, 1.0) if enrich_total > 0 else 0
             section.append(make_bar(ratio, bar_width), style="green")
             section.append(f" {enriched:>6,}", style="bold")
@@ -383,7 +383,7 @@ class DataProgressDisplay:
         if self.state.discover_only or self.state.enrich_only:
             section.append("  VALIDATE", style="dim")
             section.append("─" * bar_width, style="dim")
-            section.append("   disabled", style="dim italic")
+            section.append(" disabled", style="dim italic")
         else:
             section.append("  VALIDATE", style="bold magenta")
             ratio = min(validated / validate_total, 1.0) if validate_total > 0 else 0
@@ -402,7 +402,7 @@ class DataProgressDisplay:
 
         # SCAN section (2 lines)
         scan = self.state.current_scan
-        section.append("  SCAN   ", style="bold blue")
+        section.append("  SCAN    ", style="bold blue")
         if scan:
             # First line: show epoch phase or path
             if scan.epoch_phase:
@@ -426,10 +426,10 @@ class DataProgressDisplay:
                 section.append(status, style="cyan")
             else:
                 path = scan.node_path or scan.signal_id
-                section.append(clip_text(path, content_width - 9), style="white")
+                section.append(clip_text(path, content_width - 10), style="white")
             section.append("\n")
             # Second line: tree name, boundaries found, signal count
-            section.append("          ", style="dim")  # Align with content
+            section.append("           ", style="dim")  # 11 spaces align with content
             if scan.tree_name:
                 section.append(f"tree={scan.tree_name}  ", style="cyan")
             if scan.epoch_phase and scan.epoch_boundaries_found > 0:
@@ -443,25 +443,27 @@ class DataProgressDisplay:
         elif self.state.scan_processing:
             section.append("scanning...", style="cyan italic")
             section.append("\n")
-            section.append("          ", style="dim")
+            section.append("           ", style="dim")
             if self.state.current_tree:
                 section.append(f"tree={self.state.current_tree}", style="cyan")
         else:
             section.append("idle", style="dim italic")
             section.append("\n")
-            section.append("          ", style="dim")
+            section.append("           ", style="dim")
         section.append("\n")
 
         # ENRICH section (2 lines)
         if not self.state.discover_only:
             enrich = self.state.current_enrich
-            section.append("  ENRICH ", style="bold green")
+            section.append("  ENRICH  ", style="bold green")
             if enrich:
                 section.append(
-                    clip_text(enrich.signal_id, content_width - 9), style="white"
+                    clip_text(enrich.signal_id, content_width - 10), style="white"
                 )
                 section.append("\n")
-                section.append("          ", style="dim")  # Align with content
+                section.append(
+                    "           ", style="dim"
+                )  # 11 spaces align with content
                 if enrich.physics_domain:
                     section.append(f"{enrich.physics_domain}  ", style="cyan")
                 if enrich.description:
@@ -475,19 +477,19 @@ class DataProgressDisplay:
             elif self.state.enrich_processing:
                 section.append("classifying...", style="cyan italic")
                 section.append("\n")
-                section.append("          ", style="dim")
+                section.append("           ", style="dim")
             else:
                 section.append("idle", style="dim italic")
                 section.append("\n")
-                section.append("          ", style="dim")
+                section.append("           ", style="dim")
             section.append("\n")
 
         # VALIDATE section (2 lines)
         if not self.state.discover_only and not self.state.enrich_only:
             validate = self.state.current_validate
-            section.append("  VALIDATE", style="bold magenta")
+            section.append("  VALIDATE ", style="bold magenta")
             if validate:
-                shot_str = f" shot={validate.shot}" if validate.shot else ""
+                shot_str = f"shot={validate.shot}" if validate.shot else ""
                 if validate.success is True:
                     section.append(f"{shot_str} success", style="green")
                 elif validate.success is False:
@@ -497,18 +499,18 @@ class DataProgressDisplay:
                     section.append(f"{shot_str} testing...", style="cyan italic")
                 section.append("\n")
                 # Second line: signal ID
-                section.append("          ", style="dim")
+                section.append("           ", style="dim")  # 11 spaces for VALIDATE
                 section.append(
-                    clip_text(validate.signal_id, content_width - 10), style="dim"
+                    clip_text(validate.signal_id, content_width - 11), style="dim"
                 )
             elif self.state.validate_processing:
-                section.append(" testing...", style="cyan italic")
+                section.append("testing...", style="cyan italic")
                 section.append("\n")
-                section.append("          ", style="dim")
+                section.append("           ", style="dim")
             else:
-                section.append(" idle", style="dim italic")
+                section.append("idle", style="dim italic")
                 section.append("\n")
-                section.append("          ", style="dim")
+                section.append("           ", style="dim")
 
         return section
 
