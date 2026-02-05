@@ -378,7 +378,7 @@ ssh tcv "~/.local/share/imas-codex/venv/bin/python script.py"
 uv run ruff check --fix .
 uv run ruff format .
 
-# 2. Stage specific files (never git add -A)
+# 2. Stage specific files (never git add -A, never add gitignored files)
 git add <file1> <file2> ...
 
 # 3. Commit with conventional format
