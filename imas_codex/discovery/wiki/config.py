@@ -14,7 +14,9 @@ class WikiConfig:
     Supports multiple site types:
     - mediawiki: MediaWiki sites (SSH proxy or direct)
     - confluence: Atlassian Confluence (REST API)
-    - twiki: TWiki sites (SSH proxy)
+    - twiki: TWiki sites (SSH proxy, live server)
+    - twiki_static: Static TWiki HTML export (direct HTTP)
+    - static_html: Generic static HTML site
     - generic: Generic HTML scraping
     """
 

@@ -821,6 +821,244 @@ class TWikiAdapter(WikiAdapter):
         return "document"
 
 
+class TWikiStaticAdapter(WikiAdapter):
+    """Adapter for static TWiki HTML exports.
+
+    Used for pre-rendered TWiki exports served as static HTML (e.g., JT-60SA).
+    These exports include utility pages like WebTopicList.html that provide
+    a complete manifest of all topics without requiring crawling.
+
+    Page discovery: WebTopicList.html (bullet list of all topics)
+    Artifact discovery: Parse topic pages for linked files
+    """
+
+    site_type = "twiki_static"
+
+    def __init__(self, base_url: str | None = None):
+        """Initialize TWiki static adapter.
+
+        Args:
+            base_url: Base URL of the static TWiki export
+        """
+        self._base_url = base_url
+
+    def bulk_discover_pages(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredPage]:
+        """Discover all pages via WebTopicList.html.
+
+        TWiki static exports include a WebTopicList.html page that contains
+        a bullet list of all topics. This provides complete coverage without
+        requiring crawling.
+
+        Args:
+            facility: Facility ID
+            base_url: Base URL of the static TWiki export
+            on_progress: Progress callback (message, stats)
+
+        Returns:
+            List of discovered pages
+        """
+        import httpx
+        from bs4 import BeautifulSoup
+
+        pages: list[DiscoveredPage] = []
+        effective_base_url = base_url or self._base_url
+        if not effective_base_url:
+            logger.warning("No base URL configured for TWiki static adapter")
+            return []
+
+        # Normalize URL by stripping trailing slash
+        effective_base_url = effective_base_url.rstrip("/")
+
+        # WebTopicList.html contains a bullet list of all topics
+        topic_list_url = f"{effective_base_url}/WebTopicList.html"
+
+        try:
+            # Use httpx for sync HTTP (can't use async in this interface)
+            with httpx.Client(verify=False, timeout=30.0) as client:
+                if on_progress:
+                    on_progress("fetching WebTopicList.html", None)
+
+                response = client.get(topic_list_url)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.text, "html.parser")
+
+                # TWiki exports WebTopicList as a <ul> with one <li><a> per topic
+                # Links are like: <a href="TopicName.html">TopicName</a>
+                for link in soup.select("ul li a"):
+                    href = link.get("href", "")
+                    name = link.get_text(strip=True)
+
+                    # Skip utility pages (Web* pages are TWiki system pages)
+                    if name.startswith("Web"):
+                        continue
+
+                    # Skip external links
+                    if href.startswith(("http://", "https://")):
+                        if not href.startswith(effective_base_url):
+                            continue
+
+                    # Build full URL for the topic
+                    if href.endswith(".html"):
+                        if href.startswith("/"):
+                            # Absolute path
+                            url = f"{effective_base_url.rsplit('/', 1)[0]}{href}"
+                        elif href.startswith("http"):
+                            url = href
+                        else:
+                            # Relative path
+                            url = f"{effective_base_url}/{href}"
+                        pages.append(DiscoveredPage(name=name, url=url))
+
+                if on_progress:
+                    on_progress(f"discovered {len(pages)} pages", None)
+
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"HTTP error fetching WebTopicList.html: {e}")
+        except Exception as e:
+            logger.warning(f"Error during TWiki static page discovery: {e}")
+
+        return pages
+
+    def bulk_discover_artifacts(
+        self,
+        facility: str,
+        base_url: str,
+        on_progress: Callable[[str, Any], None] | None = None,
+    ) -> list[DiscoveredArtifact]:
+        """Discover artifacts by scanning topic pages for linked files.
+
+        Static TWiki exports may include attachments in subdirectories.
+        This scans the WebTopicList and extracts links to files with
+        relevant extensions.
+
+        Args:
+            facility: Facility ID
+            base_url: Base URL of the static TWiki export
+            on_progress: Progress callback (message, stats)
+
+        Returns:
+            List of discovered artifacts
+        """
+        import httpx
+        from bs4 import BeautifulSoup
+
+        artifacts: list[DiscoveredArtifact] = []
+        seen_urls: set[str] = set()
+        effective_base_url = base_url or self._base_url
+        if not effective_base_url:
+            return []
+
+        effective_base_url = effective_base_url.rstrip("/")
+
+        # File extensions we care about
+        artifact_extensions = (
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".ppt",
+            ".pptx",
+            ".xls",
+            ".xlsx",
+            ".ipynb",
+            ".h5",
+            ".hdf5",
+            ".mat",
+        )
+
+        # First, get list of all pages
+        pages = self.bulk_discover_pages(facility, base_url, on_progress=None)
+
+        if on_progress:
+            on_progress(f"scanning {len(pages)} pages for artifacts", None)
+
+        try:
+            with httpx.Client(verify=False, timeout=30.0) as client:
+                for i, page in enumerate(pages):
+                    if not page.url:
+                        continue
+
+                    try:
+                        response = client.get(page.url)
+                        if response.status_code != 200:
+                            continue
+
+                        soup = BeautifulSoup(response.text, "html.parser")
+
+                        # Find all links to files
+                        for link in soup.find_all("a", href=True):
+                            href = link["href"]
+                            href_lower = href.lower()
+
+                            if any(
+                                href_lower.endswith(ext) for ext in artifact_extensions
+                            ):
+                                # Build full URL
+                                if href.startswith("http"):
+                                    artifact_url = href
+                                elif href.startswith("/"):
+                                    artifact_url = (
+                                        f"{effective_base_url.rsplit('/', 1)[0]}{href}"
+                                    )
+                                else:
+                                    artifact_url = f"{effective_base_url}/{href}"
+
+                                if artifact_url in seen_urls:
+                                    continue
+                                seen_urls.add(artifact_url)
+
+                                filename = artifact_url.split("/")[-1]
+                                artifact_type = self._get_artifact_type(filename)
+
+                                artifact = DiscoveredArtifact(
+                                    filename=filename,
+                                    url=artifact_url,
+                                    artifact_type=artifact_type,
+                                )
+                                artifact.linked_pages.append(page.name)
+                                artifacts.append(artifact)
+
+                    except httpx.HTTPError:
+                        continue
+
+                    # Progress every 20 pages
+                    if on_progress and (i + 1) % 20 == 0:
+                        on_progress(
+                            f"scanned {i + 1}/{len(pages)} pages, found {len(artifacts)} artifacts",
+                            None,
+                        )
+
+            if on_progress:
+                on_progress(f"discovered {len(artifacts)} artifacts", None)
+
+        except Exception as e:
+            logger.warning(f"Error during TWiki static artifact discovery: {e}")
+
+        return artifacts
+
+    def _get_artifact_type(self, filename: str) -> str:
+        """Get artifact type from filename."""
+        filename_lower = filename.lower()
+        if filename_lower.endswith(".pdf"):
+            return "pdf"
+        if filename_lower.endswith((".doc", ".docx")):
+            return "document"
+        if filename_lower.endswith((".ppt", ".pptx")):
+            return "presentation"
+        if filename_lower.endswith((".xls", ".xlsx")):
+            return "spreadsheet"
+        if filename_lower.endswith(".ipynb"):
+            return "notebook"
+        if filename_lower.endswith((".h5", ".hdf5", ".mat")):
+            return "data"
+        return "document"
+
+
 class ConfluenceAdapter(WikiAdapter):
     """Adapter for Confluence sites.
 
@@ -931,15 +1169,17 @@ def get_adapter(
     wiki_client: MediaWikiClient | None = None,
     credential_service: str | None = None,
     api_token: str | None = None,
+    base_url: str | None = None,
 ) -> WikiAdapter:
     """Get the appropriate adapter for a wiki site type.
 
     Args:
-        site_type: Type of wiki (mediawiki, twiki, confluence)
+        site_type: Type of wiki (mediawiki, twiki, twiki_static, confluence, static_html)
         ssh_host: SSH host for proxied commands
         wiki_client: Authenticated MediaWikiClient (for Tequila)
         credential_service: Keyring service name
         api_token: API token (for Confluence)
+        base_url: Base URL (for static sites)
 
     Returns:
         WikiAdapter instance for the site type
@@ -952,6 +1192,8 @@ def get_adapter(
         )
     elif site_type == "twiki":
         return TWikiAdapter(ssh_host=ssh_host)
+    elif site_type in ("twiki_static", "static_html"):
+        return TWikiStaticAdapter(base_url=base_url)
     elif site_type == "confluence":
         return ConfluenceAdapter(api_token=api_token, ssh_host=ssh_host)
     else:

@@ -1290,6 +1290,98 @@ def bulk_discover_all_pages_http(
 
 
 # =============================================================================
+# Bulk Page Discovery for Static TWiki Exports
+# =============================================================================
+
+
+def bulk_discover_all_pages_twiki_static(
+    facility: str,
+    base_url: str,
+    on_progress: Callable | None = None,
+) -> int:
+    """Bulk discover all pages from a static TWiki HTML export.
+
+    TWiki static exports include WebTopicList.html, which contains a
+    complete manifest of all topics. This function:
+    1. Fetches WebTopicList.html via direct HTTP
+    2. Parses the bullet list for all topic links
+    3. Creates WikiPage nodes with 'scanned' status
+
+    Args:
+        facility: Facility ID
+        base_url: Base URL of the static TWiki export
+        on_progress: Progress callback
+
+    Returns:
+        Number of pages discovered
+    """
+    from imas_codex.discovery.wiki.adapters import TWikiStaticAdapter
+    from imas_codex.discovery.wiki.scraper import canonical_page_id
+
+    logger.info(f"Starting bulk TWiki static discovery from {base_url}...")
+
+    # Use the adapter to discover pages
+    adapter = TWikiStaticAdapter(base_url=base_url)
+    pages = adapter.bulk_discover_pages(facility, base_url, on_progress)
+
+    if not pages:
+        logger.warning("No pages discovered from TWiki static export")
+        return 0
+
+    logger.info(f"Discovered {len(pages)} pages from WebTopicList.html")
+
+    # Create WikiPage nodes in graph
+    batch_data = []
+    for page in pages:
+        page_id = canonical_page_id(page.name, facility)
+        batch_data.append(
+            {
+                "id": page_id,
+                "title": page.name,
+                "url": page.url,
+            }
+        )
+
+    # Insert in batches
+    batch_size = 500
+    created = 0
+    with GraphClient() as gc:
+        for i in range(0, len(batch_data), batch_size):
+            batch = batch_data[i : i + batch_size]
+            result = gc.query(
+                """
+                UNWIND $pages AS page
+                MERGE (wp:WikiPage {id: page.id})
+                ON CREATE SET wp.title = page.title,
+                              wp.url = page.url,
+                              wp.facility_id = $facility,
+                              wp.status = $scanned,
+                              wp.link_depth = 1,
+                              wp.discovered_at = datetime(),
+                              wp.bulk_discovered = true
+                ON MATCH SET wp.bulk_discovered = true
+                RETURN count(wp) AS count
+                """,
+                pages=batch,
+                facility=facility,
+                scanned=WikiPageStatus.scanned.value,
+            )
+            if result:
+                created += result[0]["count"]
+
+            if on_progress:
+                on_progress(
+                    f"creating pages ({i + len(batch)}/{len(batch_data)})", None
+                )
+
+    logger.info(f"Created/updated {created} pages in graph (scanned status)")
+    if on_progress:
+        on_progress(f"created {created} pages", None)
+
+    return created
+
+
+# =============================================================================
 # Bulk Artifact Discovery via MediaWiki API
 # =============================================================================
 
@@ -1333,6 +1425,7 @@ def bulk_discover_artifacts(
         ssh_host=ssh_host,
         wiki_client=wiki_client,
         credential_service=credential_service,
+        base_url=base_url,  # Needed for static site adapters
     )
 
     # Discover artifacts
@@ -2972,14 +3065,51 @@ async def run_parallel_wiki_discovery(
     # Create worker group for status tracking
     worker_group = SupervisedWorkerGroup()
 
-    # Bulk discovery: use Special:AllPages to find all pages instantly
-    # This replaces the slow scan phase for MediaWiki sites
+    # Bulk discovery: use platform-specific APIs to find all pages instantly
+    # This replaces the slow scan phase (crawling links page-by-page)
     bulk_discovered = 0
-    if bulk_discover and site_type == "mediawiki" and not score_only:
-        # Choose discovery method based on auth type
-        if state.auth_type == "tequila" and state.credential_service:
-            # HTTP-based discovery with Tequila auth
-            logger.info("Using bulk discovery via Special:AllPages (HTTP/Tequila)...")
+    if bulk_discover and not score_only:
+        if site_type == "mediawiki":
+            # MediaWiki: use Special:AllPages API
+            # Choose discovery method based on auth type
+            if state.auth_type == "tequila" and state.credential_service:
+                # HTTP-based discovery with Tequila auth
+                logger.info(
+                    "Using bulk discovery via Special:AllPages (HTTP/Tequila)..."
+                )
+
+                def bulk_progress(msg, _stats):
+                    if on_scan_progress:
+                        on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+                # Run bulk discovery in thread pool (blocking HTTP calls)
+                bulk_discovered = await asyncio.to_thread(
+                    bulk_discover_all_pages_http,
+                    facility,
+                    base_url,
+                    state.credential_service,
+                    bulk_progress,
+                )
+            elif ssh_host:
+                # SSH-based discovery
+                logger.info("Using bulk discovery via Special:AllPages (SSH)...")
+
+                def bulk_progress(msg, _stats):
+                    if on_scan_progress:
+                        on_scan_progress(f"bulk: {msg}", state.scan_stats)
+
+                # Run bulk discovery in thread pool (blocking SSH calls)
+                bulk_discovered = await asyncio.to_thread(
+                    bulk_discover_all_pages_mediawiki,
+                    facility,
+                    base_url,
+                    ssh_host,
+                    bulk_progress,
+                )
+
+        elif site_type in ("twiki_static", "static_html"):
+            # Static TWiki export: use WebTopicList.html for topic manifest
+            logger.info("Using bulk discovery via WebTopicList.html...")
 
             def bulk_progress(msg, _stats):
                 if on_scan_progress:
@@ -2987,26 +3117,9 @@ async def run_parallel_wiki_discovery(
 
             # Run bulk discovery in thread pool (blocking HTTP calls)
             bulk_discovered = await asyncio.to_thread(
-                bulk_discover_all_pages_http,
+                bulk_discover_all_pages_twiki_static,
                 facility,
                 base_url,
-                state.credential_service,
-                bulk_progress,
-            )
-        elif ssh_host:
-            # SSH-based discovery
-            logger.info("Using bulk discovery via Special:AllPages (SSH)...")
-
-            def bulk_progress(msg, _stats):
-                if on_scan_progress:
-                    on_scan_progress(f"bulk: {msg}", state.scan_stats)
-
-            # Run bulk discovery in thread pool (blocking SSH calls)
-            bulk_discovered = await asyncio.to_thread(
-                bulk_discover_all_pages_mediawiki,
-                facility,
-                base_url,
-                ssh_host,
                 bulk_progress,
             )
 
