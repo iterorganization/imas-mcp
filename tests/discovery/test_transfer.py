@@ -1,10 +1,11 @@
 """Tests for base transfer module."""
 
 import pytest
+
 from imas_codex.discovery.base.transfer import (
     TransferResult,
-    detect_content_type,
     decode_url,
+    detect_content_type,
 )
 
 

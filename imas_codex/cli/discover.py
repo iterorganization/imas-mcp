@@ -1880,7 +1880,8 @@ def discover_data(
 
     if not enrich_only and not tree_names and not tdi_path:
         # Try to get tree names from facility config
-        mdsplus_config = config.get("mdsplus", {})
+        data_sources = config.get("data_sources", {})
+        mdsplus_config = data_sources.get("mdsplus", {})
         default_trees = mdsplus_config.get("trees", [])
         if default_trees:
             tree_names = default_trees
@@ -1889,12 +1890,13 @@ def discover_data(
             log_print(
                 "[yellow]No data sources specified. Use --tree or --tdi-path.[/yellow]"
             )
-            log_print("Or configure mdsplus.trees in the facility config for defaults.")
+            log_print("Or configure data_sources.mdsplus.trees in the facility config.")
             raise SystemExit(1)
 
     if not enrich_only and tree_names and not shot:
         # Try to get reference shot from config
-        mdsplus_config = config.get("mdsplus", {})
+        data_sources = config.get("data_sources", {})
+        mdsplus_config = data_sources.get("mdsplus", {})
         shot = mdsplus_config.get("reference_shot")
         if shot:
             log_print(f"[dim]Using reference shot from config: {shot}[/dim]")

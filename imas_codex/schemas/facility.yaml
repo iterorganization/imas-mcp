@@ -48,6 +48,8 @@ enums:
     permissible_values:
       mdsplus:
         description: MDSplus tree-based data system
+      tdi:
+        description: TDI function-based data access layer
       uda:
         description: Universal Data Access (UDA) system
       hdf5:
@@ -574,6 +576,19 @@ classes:
           Overrides automatic path extraction from paths: structure.
         annotations:
           is_private: true
+      data_sources:
+        description: >-
+          Data source configuration for signal discovery.
+          Structure:
+            mdsplus:
+              trees: [name, ...]  # MDSplus tree names to scan
+              tdi_paths: [path, ...]  # TDI function directories
+              reference_shot: int  # Shot for tree introspection
+            hdf5:
+              paths: [path, ...]  # HDF5 file/directory paths
+            imas:
+              backends: [mdsplus, hdf5, ...]  # Available backends
+          Used by: imas-codex discover data <facility>
 
   DiscoveryRoot:
     description: >-

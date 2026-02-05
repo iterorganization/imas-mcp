@@ -16,6 +16,24 @@ ssh_host: tcv
 data_systems:
   - mdsplus
   - tdi
+
+# Data source configuration for signal discovery
+# Used by: imas-codex discover data tcv
+data_sources:
+  mdsplus:
+    reference_shot: 84000
+    trees:
+      - results      # Equilibrium reconstruction (LIUQE, FBTE)
+      - magnetics    # Magnetic measurements
+      - thomson      # Thomson scattering
+      - ecrh         # Electron cyclotron heating
+      - tcv_shot     # Shot metadata
+      - diagz        # Diagnostics
+    tdi_paths:
+      - /usr/local/CRPP/tdi/tcv     # TCV-specific TDI functions
+      - /usr/local/CRPP/tdi         # General CRPP TDI
+      - /usr/local/mdsplus/tdi      # Base MDSplus TDI
+
 # Wiki/documentation sites
 # Direct HTTP access via Tequila SSO (EPFL authentication)
 # Set credentials: imas-codex wiki credentials set tcv-wiki
