@@ -1427,13 +1427,6 @@ class WikiArtifactPipeline:
 
         from llama_index.readers.file import PDFReader
 
-        from .scraper import (
-            extract_conventions,
-            extract_imas_paths,
-            extract_mdsplus_paths,
-            extract_units,
-        )
-
         stats: ArtifactIngestionStats = {
             "chunks": 0,
             "content_preview": "",
@@ -1479,89 +1472,15 @@ class WikiArtifactPipeline:
 
             # Combine all pages
             full_text = "\n\n".join(doc.text for doc in documents if doc.text)
+
+            if not full_text.strip():
+                logger.warning("No text content in PDF: %s", artifact_id)
+                return stats
+
             stats["content_preview"] = full_text[:300]
-
-            # Split into chunks
-            combined_doc = Document(
-                text=full_text,
-                metadata={
-                    "artifact_id": artifact_id,
-                    "facility_id": self.facility_id,
-                },
+            stats = await self._create_artifact_chunks(
+                artifact_id, full_text, "pdf", stats
             )
-            nodes = self.splitter.get_nodes_from_documents([combined_doc])
-            stats["chunks"] = len(nodes)
-
-            # Generate embeddings in batch - BLOCKING HTTP, run in thread pool
-            import asyncio
-
-            chunk_texts = [node.text for node in nodes]  # type: ignore[attr-defined]
-            embeddings = await asyncio.to_thread(
-                self.embed_model.get_text_embedding_batch, chunk_texts
-            )
-
-            # Prepare batch with pre-computed embeddings
-            chunk_batch: list[dict] = []
-            for i, node in enumerate(nodes):
-                chunk_text: str = node.text  # type: ignore[attr-defined]
-                node.embedding = embeddings[i]
-
-                chunk_mdsplus = extract_mdsplus_paths(chunk_text)
-                chunk_imas = extract_imas_paths(chunk_text)
-                chunk_units = extract_units(chunk_text)
-                chunk_conventions = extract_conventions(chunk_text)
-
-                chunk_batch.append(
-                    {
-                        "id": f"{artifact_id}:chunk_{i}",
-                        "artifact_id": artifact_id,
-                        "facility_id": self.facility_id,
-                        "content": chunk_text,
-                        "embedding": node.embedding,
-                        "mdsplus_paths": chunk_mdsplus,
-                        "imas_paths": chunk_imas,
-                        "units": chunk_units,
-                        "conventions": [c.get("name", "") for c in chunk_conventions],
-                    }
-                )
-
-            # Persist chunks
-            with GraphClient() as gc:
-                # Update artifact status
-                gc.query(
-                    """
-                    MATCH (wa:WikiArtifact {id: $id})
-                    SET wa.status = 'ingested',
-                        wa.chunk_count = $chunks,
-                        wa.ingested_at = datetime(),
-                        wa.claimed_at = null
-                    """,
-                    id=artifact_id,
-                    chunks=len(nodes),
-                )
-
-                # Batch persist chunks (WikiChunk for artifacts too)
-                for i in range(0, len(chunk_batch), BATCH_SIZE):
-                    batch = chunk_batch[i : i + BATCH_SIZE]
-                    gc.query(
-                        """
-                        UNWIND $chunks AS chunk
-                        MERGE (c:WikiChunk {id: chunk.id})
-                        SET c.artifact_id = chunk.artifact_id,
-                            c.facility_id = chunk.facility_id,
-                            c.content = chunk.content,
-                            c.embedding = chunk.embedding,
-                            c.mdsplus_paths_mentioned = chunk.mdsplus_paths,
-                            c.imas_paths_mentioned = chunk.imas_paths,
-                            c.units_mentioned = chunk.units,
-                            c.conventions_mentioned = chunk.conventions
-                        WITH c, chunk
-                        MATCH (wa:WikiArtifact {id: chunk.artifact_id})
-                        MERGE (wa)-[:HAS_CHUNK]->(c)
-                        """,
-                        chunks=batch,
-                    )
-
             return stats
 
         finally:
