@@ -1646,9 +1646,12 @@ async def scan_worker(
                     state.site_type,
                 )
 
-                # Create artifact nodes
+                # Create artifact nodes and link to this page
                 await asyncio.to_thread(
-                    _create_discovered_artifacts, state.facility, artifact_links
+                    _create_discovered_artifacts,
+                    state.facility,
+                    artifact_links,
+                    page_id,
                 )
 
                 return {
@@ -2141,8 +2144,18 @@ def extract_artifacts_from_html(html: str, base_url: str) -> list[tuple[str, str
 def _create_discovered_artifacts(
     facility: str,
     artifact_links: list[tuple[str, str]],
+    source_page_id: str | None = None,
 ) -> int:
-    """Create pending artifact nodes for newly discovered links."""
+    """Create pending artifact nodes and link them to the source page.
+
+    Args:
+        facility: Facility ID
+        artifact_links: List of (url, artifact_type) tuples
+        source_page_id: WikiPage ID that links to these artifacts
+
+    Returns:
+        Number of artifacts created/linked
+    """
     from imas_codex.graph.models import WikiArtifactStatus
 
     if not artifact_links:
@@ -2154,23 +2167,48 @@ def _create_discovered_artifacts(
             filename = path.split("/")[-1]
             artifact_id = f"{facility}:{filename}"
 
-            gc.query(
-                """
-                MERGE (wa:WikiArtifact {id: $id})
-                ON CREATE SET wa.facility_id = $facility,
-                              wa.filename = $filename,
-                              wa.url = $path,
-                              wa.artifact_type = $artifact_type,
-                              wa.status = $discovered,
-                              wa.discovered_at = datetime()
-                """,
-                id=artifact_id,
-                facility=facility,
-                filename=filename,
-                path=path,
-                artifact_type=artifact_type,
-                discovered=WikiArtifactStatus.discovered.value,
-            )
+            # Create artifact and link to source page in single query
+            if source_page_id:
+                gc.query(
+                    """
+                    MERGE (wa:WikiArtifact {id: $id})
+                    ON CREATE SET wa.facility_id = $facility,
+                                  wa.filename = $filename,
+                                  wa.url = $path,
+                                  wa.artifact_type = $artifact_type,
+                                  wa.status = $discovered,
+                                  wa.discovered_at = datetime()
+                    WITH wa
+                    MATCH (wp:WikiPage {id: $page_id})
+                    MERGE (wp)-[:HAS_ARTIFACT]->(wa)
+                    """,
+                    id=artifact_id,
+                    facility=facility,
+                    filename=filename,
+                    path=path,
+                    artifact_type=artifact_type,
+                    discovered=WikiArtifactStatus.discovered.value,
+                    page_id=source_page_id,
+                )
+            else:
+                # Fallback for bulk discovery (no source page)
+                gc.query(
+                    """
+                    MERGE (wa:WikiArtifact {id: $id})
+                    ON CREATE SET wa.facility_id = $facility,
+                                  wa.filename = $filename,
+                                  wa.url = $path,
+                                  wa.artifact_type = $artifact_type,
+                                  wa.status = $discovered,
+                                  wa.discovered_at = datetime()
+                    """,
+                    id=artifact_id,
+                    facility=facility,
+                    filename=filename,
+                    path=path,
+                    artifact_type=artifact_type,
+                    discovered=WikiArtifactStatus.discovered.value,
+                )
             created += 1
 
     return created

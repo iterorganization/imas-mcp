@@ -2294,6 +2294,7 @@ classes:
       
       Relationships:
       - LINKS_TO -> WikiPage (wiki link structure, created during scan)
+      - HAS_ARTIFACT -> WikiArtifact (created during scan)
       - FACILITY_ID -> Facility
       - MENTIONS_TREE_NODE -> TreeNode (created during ingest)
       - MENTIONS_DIAGNOSTIC -> Diagnostic
@@ -2477,7 +2478,8 @@ classes:
       
       Relationships:
       - FACILITY_ID -> Facility
-      - LINKED_FROM -> WikiPage (pages that link to this artifact)
+      - HAS_ARTIFACT <- WikiPage (pages that link to this artifact)
+      - HAS_CHUNK -> WikiChunk (created during ingest)
     class_uri: facility:WikiArtifact
     mixins:
       - DiscoveryProvenance

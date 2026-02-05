@@ -1149,9 +1149,13 @@ def get_wiki_stats(facility_id: str) -> dict:
 
 
 def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
-    """Delete all WikiPage and WikiChunk nodes for a facility in batches.
+    """Delete all wiki discovery nodes for a facility in batches.
 
-    Also removes WikiArtifact nodes associated with the facility.
+    Deletion order follows referential integrity:
+    1. WikiChunks linked via HAS_CHUNK from WikiPages
+    2. WikiChunks linked via HAS_CHUNK from WikiArtifacts
+    3. WikiArtifacts linked via HAS_ARTIFACT from WikiPages (plus orphans by facility_id)
+    4. WikiPages by facility_id
 
     Args:
         facility: Facility ID
@@ -1197,8 +1201,8 @@ def clear_facility_wiki(facility: str, batch_size: int = 1000) -> int:
             if deleted < batch_size:
                 break
 
-        # Delete WikiArtifacts by facility_id property (not relationship based,
-        # since artifacts are created via bulk discovery with facility_id)
+        # Delete WikiArtifacts (uses facility_id to catch both linked and orphaned)
+        # Note: Artifacts linked via HAS_ARTIFACT are also matched by facility_id
         while True:
             result = gc.query(
                 """
