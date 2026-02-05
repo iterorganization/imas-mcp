@@ -7,6 +7,7 @@ Design principles (matching paths parallel_progress.py):
 - Gradient progress bars with percentage
 - Resource gauges for time and cost budgets
 - Compact current activity with relevant details only
+- Live embedding source indicator (shows remote/openrouter/local)
 
 Display layout: WORKERS → PROGRESS → ACTIVITY → RESOURCES
 - WORKERS: Live worker status showing counts by task and state
@@ -42,6 +43,7 @@ from imas_codex.discovery.base.supervision import (
     SupervisedWorkerGroup,
     WorkerState,
 )
+from imas_codex.embeddings import get_embedding_source
 
 if TYPE_CHECKING:
     from imas_codex.discovery.base.progress import WorkerStats
@@ -748,6 +750,17 @@ class WikiProgressDisplay:
             pending_parts.append(f"ingest:{self.state.pending_ingest}")
         if pending_parts:
             section.append(f"  pending=[{' '.join(pending_parts)}]", style="cyan dim")
+
+        # Embedding source indicator (live - changes if fallback triggered)
+        embed_source = get_embedding_source()
+        if embed_source == "remote":
+            section.append("  embed:remote", style="green")
+        elif embed_source == "openrouter":
+            section.append("  embed:openrouter", style="yellow")
+        elif embed_source == "local":
+            section.append("  embed:local", style="cyan")
+        else:
+            section.append("  embed:?", style="dim")
 
         return section
 

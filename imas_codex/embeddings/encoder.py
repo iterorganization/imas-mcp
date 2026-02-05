@@ -5,10 +5,12 @@ Supports multiple embedding backends:
 - remote: Connects to GPU server via HTTP (typically through SSH tunnel)
 - openrouter: Uses OpenRouter API for cloud embeddings
 
-Transparent fallback for remote backend:
-- If remote is unavailable, automatically falls back to OpenRouter
-- Single warning on first fallback, then silent operation
-- Cost tracking for OpenRouter usage via EmbeddingCostTracker
+Fallback for remote backend:
+1. Remote GPU server (primary)
+2. OpenRouter API (fallback - costs tracked)
+
+Remote retry: When using OpenRouter fallback, periodically retries remote
+server (every 60s) to recover when SSH tunnel reconnects.
 """
 
 import hashlib
@@ -45,9 +47,16 @@ class EmbeddingBackendError(Exception):
 class Encoder:
     """Load a sentence transformer model and produce embeddings with optional caching.
 
-    For remote backend, transparently falls back to OpenRouter if unavailable.
-    Single warning on first fallback, then silent operation with cost tracking.
+    For remote backend, transparently falls back through:
+    1. Remote GPU server (primary)
+    2. OpenRouter API (fallback)
+
+    When using OpenRouter fallback, periodically retries remote (every 60s)
+    to recover when SSH tunnel reconnects.
     """
+
+    # Retry remote every 60 seconds when in fallback mode
+    REMOTE_RETRY_INTERVAL_SECONDS = 60
 
     def __init__(
         self,
@@ -64,7 +73,8 @@ class Encoder:
         self._openrouter_client: OpenRouterEmbeddingClient | None = None
         self._backend_validated: bool = False
         self._fallback_warned: bool = False
-        self._using_fallback: bool = False
+        self._using_fallback: bool = False  # Using OpenRouter
+        self._last_remote_check: float = 0.0  # Timestamp of last remote check
 
         # Cost tracking for OpenRouter fallback
         self.cost_tracker = cost_tracker or EmbeddingCostTracker()
@@ -107,9 +117,30 @@ class Encoder:
         """Validate remote backend is available and model matches.
 
         For remote backend, falls back to OpenRouter if unavailable.
+        Periodically retries remote when in fallback mode.
         """
+        current_time = time.time()
+
+        # If using fallback, check if we should retry remote
+        if self._using_fallback:
+            time_since_check = current_time - self._last_remote_check
+            if time_since_check >= self.REMOTE_RETRY_INTERVAL_SECONDS:
+                self._last_remote_check = current_time
+                if self._remote_client and self._remote_client.is_available():
+                    # Remote is back! Recover from fallback
+                    self.logger.info(
+                        "Remote embedding server recovered. Switching back from OpenRouter."
+                    )
+                    self._using_fallback = False
+                    self._backend_validated = True
+                    return
+            # Still in fallback mode
+            return
+
         if self._backend_validated:
             return
+
+        self._last_remote_check = current_time
 
         if not self._remote_client:
             raise EmbeddingBackendError("Remote client not initialized")
@@ -161,7 +192,7 @@ class Encoder:
             self.logger.warning(
                 "Remote embedding server unavailable. "
                 f"Falling back to OpenRouter API ({self._openrouter_client.model_name}). "
-                "Costs will be tracked."
+                "Costs will be tracked. Will retry remote every 60s."
             )
             self._fallback_warned = True
 
@@ -195,6 +226,22 @@ class Encoder:
     def is_using_fallback(self) -> bool:
         """Check if currently using OpenRouter fallback."""
         return self._using_fallback
+
+    @property
+    def current_source(self) -> str:
+        """Get current embedding source identifier.
+
+        Returns:
+            'local', 'remote', or 'openrouter'
+        """
+        if self._using_fallback:
+            return "openrouter"
+        backend = self.config.backend or EmbeddingBackend.LOCAL
+        if backend == EmbeddingBackend.REMOTE:
+            return "remote"
+        elif backend == EmbeddingBackend.OPENROUTER:
+            return "openrouter"
+        return "local"
 
     @property
     def cost_summary(self) -> str:
