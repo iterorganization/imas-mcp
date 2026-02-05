@@ -1949,8 +1949,8 @@ async def ingest_worker(
     )
 
     # Semaphore to limit concurrent page ingestion
-    # Embedding server can handle ~5 concurrent requests efficiently
-    ingest_semaphore = asyncio.Semaphore(5)
+    # Remote GPU embedding server handles 8 concurrent requests well
+    ingest_semaphore = asyncio.Semaphore(8)
 
     async def process_single_page(page: dict) -> dict | None:
         """Process a single page with semaphore-limited concurrency."""
@@ -2919,8 +2919,8 @@ async def run_parallel_wiki_discovery(
     max_depth: int | None = None,
     focus: str | None = None,
     num_scan_workers: int = 1,
-    num_score_workers: int = 2,
-    num_ingest_workers: int = 2,
+    num_score_workers: int = 3,
+    num_ingest_workers: int = 4,
     scan_only: bool = False,
     score_only: bool = False,
     bulk_discover: bool = True,

@@ -189,7 +189,7 @@ def _run_iterative_discovery(
     focus: str | None,
     threshold: float,
     num_scan_workers: int = 1,
-    num_score_workers: int = 2,
+    num_score_workers: int = 3,
     scan_only: bool = False,
     score_only: bool = False,
     no_rich: bool = False,
@@ -1113,14 +1113,14 @@ def discover_code(facility: str, dry_run: bool) -> None:
 @click.option(
     "--score-workers",
     type=int,
-    default=2,
-    help="Number of parallel score workers (default: 2)",
+    default=3,
+    help="Number of parallel score workers (default: 3)",
 )
 @click.option(
     "--ingest-workers",
     type=int,
-    default=2,
-    help="Number of parallel ingest workers (default: 2)",
+    default=4,
+    help="Number of parallel ingest workers (default: 4)",
 )
 @click.option(
     "--discover-artifacts",
