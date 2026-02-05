@@ -39,8 +39,9 @@ console = Console()
 
 async def fetch_page_content(
     url: str,
-    timeout: float = 5.0,
+    timeout: float = 30.0,
     auth_handler: Callable | None = None,
+    verify_ssl: bool = False,
 ) -> tuple[str | None, str | None]:
     """
     Fetch page content via HTTP.
@@ -49,6 +50,7 @@ async def fetch_page_content(
         url: Page URL to fetch
         timeout: Request timeout in seconds
         auth_handler: Optional authentication handler
+        verify_ssl: Whether to verify SSL certificates (default False for facility wikis)
 
     Returns:
         (content_text, error_message)
@@ -56,7 +58,9 @@ async def fetch_page_content(
         If failed: (None, error_message)
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=True, verify=verify_ssl
+        ) as client:
             response = await client.get(url)
             response.raise_for_status()
             return response.text, None
